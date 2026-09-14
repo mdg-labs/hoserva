@@ -38,7 +38,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 **Status:** Maintainer · **Gate:** now · **Affects:** doc 00 §6, repo `LICENSE`
 
 **Default: AGPL-3.0.**
-The repository is already public with no `LICENSE` file, which legally means *all rights reserved* — nobody may fork, package, or contribute, which is the opposite of the positioning. The reasoning in doc 00 §6 holds: the pitch is "Unraid, but open", and the plausible commercial surface (hosted remote monitoring) is better sold as a separate service than defended with license terms. Add the file before the first code commit.
+The repository is already public with no `LICENSE` file, which legally means *all rights reserved* — nobody may fork, package, or contribute, which is the opposite of what an open project needs. The reasoning in doc 00 §6 holds: being fully open is central to what Hoserva offers, and the plausible commercial surface (hosted remote monitoring) is better offered as a separate service than protected with license terms. Add the file before the first code commit.
 
 ### Q2 — Contribution terms
 **Status:** Default · **Gate:** now · **Affects:** `CONTRIBUTING.md` (when written)
@@ -380,7 +380,7 @@ Extracting strings later is a rewrite of every component. Doing it from day one 
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §7, doc 03 §8.6
 
 **Default: none. The only outbound request Hoserva makes on its own is the update check (apt metadata), which can be disabled. Any future opt-in usage statistics require a new entry here.**
-The trust positioning against a proprietary incumbent doesn't survive a phone-home.
+A home server that phones home by default undermines the trust an open project depends on.
 
 ### Q50 — Name clearance
 **Status:** External · **Gate:** before public 1.0 announcement · **Affects:** doc 00 §6

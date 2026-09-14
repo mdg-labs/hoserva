@@ -8,9 +8,9 @@
 
 ### Why build it
 
-The app catalog is Unraid's actual killer feature. Community Applications is why many users stay on a paid product they otherwise complain about. Anyone migrating expects: pick a template → review paths and ports → running.
+A guided app catalog is what makes a home server usable day to day, and the way most homelab users run their services. Anyone migrating an existing setup expects: pick a template → review paths and ports → running.
 
-Deferring this ("just install Portainer") breaks the migration at exactly the point where it hurts, and reduces Hoserva to a storage manager competing with OMV rather than with Unraid.
+Deferring this ("just install Portainer") breaks the migration at exactly the point where it hurts, and reduces Hoserva to a storage manager rather than a complete home server.
 
 ### Why narrow
 
@@ -59,7 +59,7 @@ Consequences, all intentional:
 - A user can `cd` into a stack directory and run `docker compose` by hand
 - Uninstalling Hoserva leaves every container running and every Compose file intact — including `dpkg --purge`: the package's purge script removes Hoserva's own state but never `/var/lib/hoserva/stacks/`
 
-**The user is never locked in.** This should be stated in the marketing copy, because it is the direct counter to the main objection to Unraid's Docker implementation.
+**The user is never locked in.** This should be stated plainly in user-facing docs: lock-in is a reasonable concern with any appliance-style platform, and here the answer is simply no.
 
 ---
 
@@ -177,7 +177,7 @@ Arbitrary `docker run` flags as a raw string. Approach:
 
 - **macvlan / custom networks** — require a pre-existing equivalent network. The converter detects the reference and flags it with the exact `docker network create` command, rather than guessing or creating networks silently; v1 has no network-creation UI (Q37).
 - **Unraid-specific variables** like `$$` substitutions and `HOST_OS` are recognised and handled or flagged.
-- **Multi-container templates** (the "AIO" pattern, bundling app + database + worker) map naturally to multi-service Compose, which is actually easier in Compose than in Unraid's one-container-per-template model.
+- **Multi-container templates** (the "AIO" pattern, bundling app + database + worker) map naturally to multi-service Compose, which expresses them directly.
 - **`:latest` tags** — carried through as-is, but flagged in the UI as a reproducibility risk, since a portion of the ecosystem pins nothing.
 
 ### Output is always reviewable
@@ -192,7 +192,7 @@ Generated Compose is shown side by side with the source XML before anything runs
 - Distinguish **digest changed on the same tag** (the common `:latest` case) from **a genuinely new version tag**
 - Show both, labelled differently — "new build of `latest`" is not the same as "2.1 → 2.2"
 - Bulk update with per-container opt-out
-- **Pre-update appdata snapshot** for containers whose appdata sits on the cache, so a bad update is recoverable. This is the single most-requested thing missing from Unraid's update flow.
+- **Pre-update appdata snapshot** for containers whose appdata sits on the cache, so a bad update is recoverable. A bad container update is one of the most common ways a working homelab service breaks.
 - Rollback: keep the previous image locally for a configurable period and offer a one-click revert
 
 ---

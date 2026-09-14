@@ -154,7 +154,7 @@ The NVMe absorbs writes at SSD speed, keeps container appdata off the spinning a
 1. **Write cache** — new files land on cache, the mover relocates them to the array later
 2. **Permanent residence** — appdata, databases, container volumes live on cache and are *never* moved
 
-Conflating these is a classic Unraid support case ("my Plex database got moved to the array and everything is slow"). Hoserva makes it a per-share setting with three explicit values, each implemented as that share's own mergerfs branch list (§1):
+Conflating these is a common support case on cache-based NAS setups ("my Plex database got moved to the array and everything is slow"). Hoserva makes it a per-share setting with three explicit values, each implemented as that share's own mergerfs branch list (§1):
 
 | Setting | Behaviour |
 |---|---|

@@ -6,7 +6,7 @@ Research answers to the two kill-criteria questions from doc 07 §1. Both are an
 
 ## Spike 1 — Spindown under mergerfs
 
-**Verdict: the concern is real, but it is not a regression against Unraid. It is a property of union filesystems in general, including Unraid's own. Proceed, with mitigations.**
+**Verdict: the concern is real, but it is not specific to Hoserva. It is a property of union filesystems in general. Proceed, with mitigations.**
 
 ### What mergerfs upstream says
 
@@ -18,9 +18,9 @@ A long-standing feature request to have mergerfs maintain a file-index so a read
 
 ### Why this does not kill the project
 
-**Unraid has the same problem.** Its user-share layer (`shfs`) is also a FUSE union over per-disk filesystems, and "my disks won't stay spun down" is a perennial Unraid support topic spanning well over a decade — from browsing a share spinning up all disks, through reads landing on every array disk every few seconds with no open files, persisting after stopping VMs, containers, and the Docker service, to disks refusing to stay down for more than a few minutes after a manual spindown.
+**Other union-filesystem NAS systems have the same property.** Unraid's user-share layer (`shfs`), for example, is also a FUSE union over per-disk filesystems, and "my disks won't stay spun down" is a long-running topic in its community forums — from browsing a share spinning up all disks, through reads landing on every array disk every few seconds with no open files, persisting after stopping VMs, containers, and the Docker service, to disks refusing to stay down for more than a few minutes after a manual spindown.
 
-So the honest framing is: **this is not "Hoserva is worse than Unraid at spindown". It is "union-filesystem NASes all share this, and the difference is in how much help the tool gives you."** That reframes R1 from a kill criterion to a feature opportunity.
+So the honest framing is: **this is not a Hoserva-specific regression. It is a property union-filesystem NAS setups share, and the difference is in how much help the tool gives you.** That reframes R1 from a kill criterion to a feature opportunity.
 
 Practical reports are also more positive than the theory suggests. One user with a mixed 2×16 TB / 2×4 TB mergerfs pool reports that with a reasonable Linux setup and enough RAM (32 GB in their case), the kernel's filesystem cache keeps the other drives from spinning up frequently. Kernel dentry and attribute caching does most of the work in practice, provided nothing is actively walking the tree.
 
@@ -34,7 +34,7 @@ Recommendation: keep folder-locality as the default for balance and blast-radius
 
 **2. Cache the kernel can use.** mergerfs caching options (`cache.files`, `cache.entry`, `cache.attr`, `cache.negative_entry`, `cache.statfs`) are the actual lever. Longer entry and attribute TTLs mean fewer passthrough lookups and fewer wakeups, at the cost of staleness when things change out of band. Hoserva should expose this as a single plain-language setting — *Responsiveness vs. quiet disks* — rather than five opaque TTLs.
 
-**3. The real differentiator: tell the user what woke the disk.** The recurring theme in every Unraid thread is that users cannot find the culprit. Hoserva can, and no competitor does it well:
+**3. The real differentiator: tell the user what woke the disk.** The recurring theme in these community threads is that users cannot find the culprit. Hoserva can make that visible, which few tools do today:
 
 - Track spin-state transitions per disk with timestamps
 - Correlate each wake against process-level IO (`fanotify`, or `/proc` IO accounting sampled around the event) to attribute it to a process and, where possible, a container
@@ -125,10 +125,10 @@ Observed:
 
 | Risk | Was | Now |
 |---|---|---|
-| R1 — spindown regression | **High**, potential kill criterion | **Medium.** Not a regression; Unraid shares the flaw. Converts into a differentiator via wake attribution |
+| R1 — spindown regression | **High**, potential kill criterion | **Medium.** Not Hoserva-specific; a property of union filesystems. Converts into a useful feature via wake attribution |
 | Migration viability | Assumed, unverified | **Confirmed** by independent professional practice |
 
-Neither spike kills the plan. The spindown finding actually improves it: "we tell you which process woke your disks" is a feature nobody in this space ships, and it addresses a complaint fifteen years old in the incumbent's own forums.
+Neither spike kills the plan. The spindown finding actually improves it: "we tell you which process woke your disks" is rarely offered by NAS tooling today, and it addresses a long-standing frustration for anyone running a union-filesystem pool.
 
 ---
 

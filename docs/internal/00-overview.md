@@ -1,6 +1,6 @@
 # Hoserva — Overview
 
-*An open-source Unraid alternative: mergerfs + SnapRAID storage, modern web UI, Debian base.*
+*An open-source home server platform for mixed-size disks: mergerfs + SnapRAID storage, a modern web UI, Debian base — with a guided migration path from Unraid.*
 
 ---
 
@@ -35,9 +35,9 @@ No open-source solution today combines all three of:
 2. **Single-disk parity** — one parity drive protects `n` data drives
 3. **A polished management UI** — setup, monitoring, shares, and apps without hand-editing config files
 
-The existing options and why each falls short:
+The existing options, compared on those three properties:
 
-| Option | Mixed sizes | Single parity | Modern UI | Verdict |
+| Option | Mixed sizes | Single parity | Modern UI | Notes |
 |---|---|---|---|---|
 | **Unraid** | yes | yes | yes | Array engine and web UI are proprietary; paid license |
 | **TrueNAS SCALE** | no (matched vdevs) | no (vdev-level) | yes | Structural capacity loss with heterogeneous disks |
@@ -74,7 +74,7 @@ This is a deliberate and load-bearing decision. mergerfs and SnapRAID are battle
 
 ## 3. Target user
 
-Homelab operators migrating off Unraid, or those unwilling to buy a license. Technical enough to install Debian; unwilling to hand-maintain mergerfs policies, SnapRAID cron jobs, and Samba configs.
+Homelab operators who want mixed-size disk pooling on a fully open-source stack — including people coming from Unraid who want a guided, low-risk migration. Technical enough to install Debian; unwilling to hand-maintain mergerfs policies, SnapRAID cron jobs, and Samba configs.
 
 They are characterised by:
 
@@ -129,7 +129,7 @@ Decisions already settled, with rationale. Reopening any of these needs a new re
 | D3 | Go backend, single binary, systemd service | Easy distribution, no runtime deps, good for shelling out to system tools |
 | D4 | SQLite as source of truth; config files are generated artifacts | Prevents config drift between UI, CLI, and hand edits |
 | D5 | CLI and web UI both consume the same API | Guarantees they cannot disagree |
-| D6 | Container management: build it, but narrow | App catalog is Unraid's killer feature; generic Docker management is not |
+| D6 | Container management: build it, but narrow | A guided app catalog is what makes a home server usable day to day, and what migrating users rely on; generic Docker management is not |
 | D7 | Plain Compose files on disk, no proprietary format | Portainer/Dockge can coexist; user is never locked in |
 | D8 | Docker is a prerequisite, not shipped by the `.deb` | Clean separation; ISO bundle ships it preinstalled |
 | D9 | `.deb` first, ISO bundle second | Validates the product without also building distro release engineering |
@@ -145,7 +145,9 @@ Decisions already settled, with rationale. Reopening any of these needs a new re
 
 **License:** open, and **urgent** — the repository is already public without a `LICENSE` file, which legally means all rights reserved (Q1). Two candidate paths:
 
-- **AGPL-3.0** — maximum community trust, strong signal against a proprietary fork, consistent with the "we are the open alternative to Unraid" positioning. Given that the entire pitch is "Unraid but open", a permissive or source-available license undercuts the message.
+- **AGPL-3.0** — maximum community trust, a strong guarantee that the project and its derivatives stay open, and consistent with a project whose value is being an open, inspectable management layer. A source-available license would undercut that.
 - **ELv2** — consistent with the existing product line, preserves the option of a hosted offering (remote monitoring, fleet update management, support).
 
-**Recommendation: AGPL-3.0.** The positioning against a proprietary incumbent is the whole point, and the plausible commercial surface here (hosted remote monitoring for homelabs) is small and would be better sold as a separate optional service than defended with license terms. A source-available license on *this specific project* would invite exactly the criticism the project exists to answer.
+**Recommendation: AGPL-3.0.** Being fully open is central to what the project offers, and the plausible commercial surface here (hosted remote monitoring for homelabs) is small and would be better offered as a separate optional service than protected with license terms.
+
+**Positioning and tone.** Hoserva is described by what it does — an open-source home server platform for mixed-size disks — not by what it replaces. Other projects are mentioned factually: Unraid where migration and compatibility require it (disk adoption, template conversion, path compatibility), TrueNAS, OpenMediaVault and others where a comparison informs a design choice. No "X alternative" or "X, but open" framing, no disparaging remarks about other projects or their users, and no claims about competitors that aren't sourced facts. Unraid is a trademark of Lime Technology, Inc.; Hoserva is not affiliated with it, and user-facing copy says so wherever Unraid is named.

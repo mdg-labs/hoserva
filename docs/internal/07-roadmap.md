@@ -10,7 +10,7 @@ Short, disposable experiments that answer the questions capable of invalidating 
 
 | Spike | Question | Kill criterion |
 |---|---|---|
-| **Spindown under mergerfs** | Do array disks stay in standby during idle and during appdata-only activity? | If disks wake constantly and cannot be tuned, the product is worse than Unraid at something users care about daily |
+| **Spindown under mergerfs** | Do array disks stay in standby during idle and during appdata-only activity? | If disks wake constantly and cannot be tuned, the product fails at something users care about daily |
 | **Unraid disk adoption** | Can a real Unraid XFS array be mounted and unioned on Debian with the share structure intact? | If not, the migration story collapses and with it the main adoption argument |
 | **Template conversion rate** | What percentage of a few hundred real CA templates convert cleanly? | Below ~80% clean, the app catalog needs a different approach |
 | **CA feed licensing** | Is consuming the feed acceptable, legally and to its maintainer? | If not, fall back to a native catalog (doc 04 §4) — not fatal, but changes the plan |
@@ -38,7 +38,7 @@ Shares with SMB/NFS, users, roles and permissions, API tokens, cache and mover, 
 
 Container management, curated template catalog, Unraid XML converter, CA feed source (subject to Q34), migration tooling, documentation site. UI tier 3.
 
-**This is the phase that makes it an Unraid alternative rather than a storage manager.**
+**This is the phase that makes it a complete home server rather than a storage manager.**
 
 ### Phase 4 — Polish and release
 
@@ -64,7 +64,7 @@ Hardware beta, wake attribution (may slip past 1.0 — Q32), diagnostics, ISO bu
 
 | # | Risk | Impact | Mitigation |
 |---|---|---|---|
-| R1 | **Spindown regression vs. Unraid** | Medium (was High; doc 08 §1 — Unraid shares the flaw) — still daily-visible | Hands-on spike; acceptance test on hardware (Q31); nothing Hoserva runs on a timer walks a data disk (Q13); wake-event log, then attribution |
+| R1 | **Disks don't stay spun down** | Medium (was High; doc 08 §1 — a property of union filesystems generally, not specific to Hoserva) — still daily-visible | Hands-on spike; acceptance test on hardware (Q31); nothing Hoserva runs on a timer walks a data disk (Q13); wake-event log, then attribution |
 | R2 | **A bug destroys user data** | Fatal to the project's reputation | Storage engine is not reinvented (D1); threshold guard on every sync; parity is written only by a user-configured schedule or an explicit user action, and never past a tripped guard; two-phase array relocations (Q14); destructive tests in CI |
 | R3 | **Nightly-parity model is rejected by users** | High | Be honest about it everywhere; make the tradeoff explicit rather than discovered; make the ransomware-resistance upside visible |
 | R4 | **CA feed becomes unavailable or unacceptable** | Medium | Pluggable catalog sources from day one; native catalog fallback; converter is valuable regardless |
@@ -73,7 +73,7 @@ Hardware beta, wake attribution (may slip past 1.0 — Q32), diagnostics, ISO bu
 | R7 | **Solo maintainer burnout** | High | Ship phase 1 narrow; resist feature requests until the core is solid; the `.deb`-first decision (D9) exists partly for this reason |
 | R8 | **Security incident from an exposed instance** | High | Safe defaults (doc 01 §7); no default credentials; LAN-bound by default; an explicit "don't expose this" guide |
 | R9 | **mergerfs or SnapRAID upstream stalls** | Medium | Both are mature and stable; the abstraction interfaces mean a replacement is possible without a rewrite of everything above |
-| R10 | **Performance disappoints vs. Unraid** | Medium | Benchmark on hardware early; mergerfs options are the usual cause and are tunable |
+| R10 | **Performance disappoints compared with users' current setups** | Medium | Benchmark on hardware early; mergerfs options are the usual cause and are tunable |
 | R11 | **Untrusted PR code runs on a privileged self-hosted runner** | High — the repository is public | PR code runs only on ephemeral hosted runners; self-hosted runners only on trusted triggers; approval for first-time contributors (doc 06 §7, Q42) |
 | R12 | **Per-share mount topology fails spike S6** | Medium — per-share cache modes and allocation shrink | Two-mount tiered fallback designed in advance (Q12); decided in Phase 0, before storage code exists |
 | R13 | **An agent touches a real disk during development** | High — the dev host's own disk | Labs only via `make lab-up` in a loop-and-FUSE-only container, namespaced per lane; hard rules in `CLAUDE.md` and in every orchestrate dispatch; the real array is touched only by a human (doc 12 §5, Q45) |
@@ -106,7 +106,7 @@ Worth naming explicitly, because these are the failure modes that actually kill 
 
 1. **Building the storage engine.** Decision D1 exists for this reason. The moment this project starts writing parity code, it acquires the ability to destroy data in novel ways and a maintenance burden that never ends.
 
-2. **Chasing feature parity with Unraid before the core is solid.** Unraid has fifteen years of accumulated features. Matching them is not the goal; being the open answer to the *core* problem is.
+2. **Chasing feature parity with established NAS platforms before the core is solid.** Mature platforms have many years of accumulated features. Matching them is not the goal; solving the *core* problem well is.
 
 3. **Hiding the nightly-parity tradeoff.** The first well-publicised "Hoserva lost my data and never told me it wasn't protected" thread would be unrecoverable — and would be deserved.
 
