@@ -1,0 +1,388 @@
+# Hoserva — Open Questions and Recommended Defaults
+
+The single register of everything not yet settled. **No question here is a bare question**: each carries a recommended default and a one-line rationale, and the rest of the document set is written *as if the default were adopted*. Overriding a default means editing its entry here and the sections it lists under **Affects** — nothing else should need to change.
+
+A default is not a decision. Decisions live in the decision log (doc 00 §5) and need a new reason to reopen; defaults here need only a better idea. Promote a default to the decision log once it has survived contact with real hardware or real code.
+
+### Status legend
+
+| Status | Meaning |
+|---|---|
+| **Default** | Docs are written to this. Override freely before the phase it gates. |
+| **Spike** | Default adopted provisionally; a Phase 0 spike (doc 07 §1) confirms or replaces it. |
+| **External** | Depends on someone outside the project (a maintainer, a lawyer, a registry). Default is what we do while waiting. |
+| **Maintainer** | Default is recommended, but only the maintainer can adopt it (legal or irreversible). |
+
+### Where open questions lived before this doc
+
+Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 04 §4 (CA feed licensing posture), doc 05 §2 (variant table "Test"/"Verify" rows), doc 07 §3 (the former open-questions section), doc 08 ("Remaining hands-on work"), plus gaps and contradictions found in a full cross-read of docs 00–12. Doc 07 §3 now points here.
+
+---
+
+## Index by deadline
+
+| Gate | Questions |
+|---|---|
+| **Now** (repo is public) | Q1, Q2 |
+| **During Phase 0** | Q36 |
+| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49 |
+| **Before Phase 2** | Q26, Q27, Q41, Q43 |
+| **Before Phase 3** | Q22–Q25, Q33–Q35, Q37–Q39 |
+| **Before 1.0** | Q47, Q50 |
+
+---
+
+## Governance
+
+### Q1 — License
+**Status:** Maintainer · **Gate:** now · **Affects:** doc 00 §6, repo `LICENSE`
+
+**Default: AGPL-3.0.**
+The repository is already public with no `LICENSE` file, which legally means *all rights reserved* — nobody may fork, package, or contribute, which is the opposite of the positioning. The reasoning in doc 00 §6 holds: the pitch is "Unraid, but open", and the plausible commercial surface (hosted remote monitoring) is better sold as a separate service than defended with license terms. Add the file before the first code commit.
+
+### Q2 — Contribution terms
+**Status:** Default · **Gate:** now · **Affects:** `CONTRIBUTING.md` (when written)
+
+**Default: DCO sign-off (`Signed-off-by:`), no CLA.**
+A CLA signals an intent to relicense, which undercuts AGPL's trust signal exactly where the project needs it. A hosted monitoring service can be its own codebase and needs no relicensing of this one.
+
+### Q3 — Where the public docs site lives
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 05 §7, doc 06 §9, doc 12 §2, §7
+
+**Default: `site/` at the repo root (Astro Starlight); design docs stay in `docs/internal/`.**
+Doc 12 put the Starlight site at `docs/`, but `docs/` already holds these internal design docs. A Node project mixed into the design-doc folder makes both harder to split out later (doc 12 §7).
+
+---
+
+## Platform
+
+### Q4 — Supported base OS
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 00 D2, doc 01 §1, doc 06 §4, §7
+
+**Default: Debian 13 (trixie) only for 1.0. Debian 14 is added when it releases. Ubuntu is community best-effort, not tested.**
+Debian 12 is already oldstable. Trixie's 6.12 kernel gives FUSE passthrough and fanotify FID reporting (Q13), both of which the storage design leans on. Supporting Ubuntu doubles the L3 matrix for an audience that can usually cope.
+
+### Q5 — CPU architectures
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §1, doc 07 §1
+
+**Default: amd64 is supported. arm64 is built in CI from the first commit and labelled unsupported until an arm64 box joins L4 testing.**
+Go cross-compilation is free as long as the SQLite driver is pure Go (Q6). A support claim, though, needs hardware (spindown, SMART, controllers) that CI can't fake. That resolves the tension between doc 01 ("arm64 matters") and doc 07 ("ARM builds post-1.0").
+
+### Q6 — SQLite driver
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §1
+
+**Default: `modernc.org/sqlite` (pure Go, no CGO).**
+D3 promises a single static binary. `mattn/go-sqlite3` needs CGO, which breaks static linking and cross-compiling. Its speed advantage doesn't matter at a NAS's config-database scale.
+
+### Q7 — How mergerfs and SnapRAID are sourced
+**Status:** Default (S8 partial — both packages confirmed in Debian 13, doc 08) · **Gate:** Phase 1 · **Affects:** doc 00 D1, doc 01 §1, doc 03 §8.6, doc 06 §3, §7
+
+**Default: depend on Debian 13's own packages — `mergerfs` (2.40.2) and `snapraid` (12.4) — with a version range in the `hoserva` package. The lab and CI install the same Debian packages. Hoserva's apt repository carries an upstream mergerfs build only if spike S6 or later work proves 2.40.2 lacks something the design needs, and then pins it explicitly.** Installed versions are always read from package metadata, never from `--version` (Debian's mergerfs reports `vunknown`).
+Checked hands-on: both are in trixie (doc 08, S8 partial), so the originally assumed need to package SnapRAID ourselves is gone. Using the distribution's packages removes a packaging and security-update burden from a solo maintainer (R7). Golden files and create-policy behaviour (Q11) still depend on exact versions, which is why the version range is explicit and the lab uses the same packages.
+
+### Q8 — Frontend framework
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §1, doc 06 §8, doc 12 §2
+
+**Default: a React SPA built with Vite, using a client-side router. Next.js static export is not used.**
+Next's `output: 'export'` needs every dynamic segment known at build time (`generateStaticParams`). The spec's core routes can't meet that: `/storage/disks/[id]`, `/shares/[name]` and `/apps/[name]` only exist at runtime. Static export also discards everything Next adds (SSR, server components, route handlers). A Vite SPA is the plain form of what doc 01 actually describes: static assets plus a REST API, embedded with `go:embed`.
+
+### Q9 — Web UI port and TLS
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §5, §7, doc 03 §8.2
+
+**Default: one TCP port, `:8008`, TLS-only from first boot (self-signed). A plain-HTTP request on that port gets a short "use https://" response. Ports 80/443 are never claimed.**
+Doc 01 had HTTP on `:8008` and also "HTTPS by default, HTTP redirects" with no HTTPS port. The curated catalog seeds Nginx Proxy Manager (doc 04 §7), which needs 80/443. Hoserva taking those ports would break the most common homelab reverse-proxy setup.
+
+### Q10 — What "bind to LAN by default" means
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §7, doc 03 §8.2
+
+**Default: listen on all interfaces, but accept connections only from loopback, RFC 1918, link-local, IPv6 ULA and CGNAT `100.64.0.0/10` (Tailscale) source addresses. One warned toggle allows all sources.**
+Binding to a specific address breaks the first time DHCP hands out a new lease. Filtering on source address expresses the actual intent ("not reachable from the internet") and survives address changes. Including CGNAT keeps Tailscale, the safe remote-access path, working out of the box.
+
+---
+
+## Storage
+
+### Q11 — Create policy defaults
+**Status:** Spike (S1, S6) · **Gate:** Phase 1 · **Affects:** doc 02 §1, doc 03 §3.1, §4.2, doc 05 §4, doc 09 §1
+
+**Default: the policy is per share (Q12 makes that possible). Plain-language options:**
+
+| UI label | mergerfs policy | Default for |
+|---|---|---|
+| **Keep folders together** | `mspmfs` (fallback: `epmfs`) | New shares |
+| **Balance across disks** | `mfs` | — |
+| **Quiet disks** | `lfs` | The "Quiet mode" preset (doc 08) |
+| **Fill disks in order** | `ff` | Unraid shares imported with *Fill-up* allocation |
+
+`mspmfs` ("most shared path") keeps `epmfs`'s folder locality. When no branch holding the full path has room, it retries with the parent directory, and so on up the tree. That directly addresses the ENOSPC-instead-of-fallback edge in doc 08 and doc 09 §1. S1/S6 confirms this on the loop harness with Debian 13's mergerfs 2.40.2 (Q7) — the policy name is already known to be accepted (doc 08, S9); its fallback behaviour is what remains. If it doesn't hold, the default reverts to `epmfs` with per-disk free-space alerts and a rebalance suggestion (doc 09 §1). The imported Unraid allocation methods map as *Fill-up* → `ff` and *Most-free* → `mfs`. *High-water* has no exact equivalent: it maps to `mfs`, and the import review screen says so.
+
+### Q12 — Per-share cache modes vs. a single mergerfs mount *(architectural gap)*
+**Status:** Spike (S6) · **Gate:** Phase 1 · **Affects:** doc 01 §6, doc 02 §1, §3, doc 09 §2, doc 06 §3
+
+**The gap:** doc 02 §3 promises a per-share cache mode (cache-then-move / cache-only / array-only), and doc 05 imports per-share allocation settings. But a mergerfs mount has exactly one create policy and one branch list for the whole mount. One `/mnt/user` mount unioning cache and array can't send share A's writes to cache and share B's writes to the array.
+
+**Default topology:**
+
+```
+/mnt/user                   mergerfs: /mnt/disk*=RW  (catch-all; default policy)
+/mnt/user/<share>           mergerfs, one mount per share, branches by cache mode:
+                              cache-then-move → /mnt/cache/<share>=RW : /mnt/disk*/<share>=NC
+                              cache-only      → /mnt/cache/<share>=RW
+                              array-only      → /mnt/disk*/<share>=RW
+                            create policy = the share's own (Q11)
+/run/hoserva/array/<share>  mergerfs: /mnt/disk*/<share>=RW, same policy — the mover's write target
+```
+
+- Paths stay identical to Unraid (D10): `/mnt/user/<share>` is still where every share lives.
+- The catch-all mount means `ls /mnt/user` works, and a stray top-level directory written by a container lands on the array, not on the boot device.
+- `NC` (no-create) array branches in cache-then-move shares are still readable, so files already moved remain visible.
+- **The mover writes through `/run/hoserva/array/<share>`**, so mergerfs itself places the file. That satisfies doc 09 §2's "never a second placement algorithm" by construction, not by reimplementation.
+- mount ordering (catch-all before per-share children) is expressed with systemd `RequiresMountsFor=`.
+
+S6 validates the costs on the loop harness: one FUSE process per share (a dozen shares means a dozen processes), mounting over a FUSE directory, reboot ordering, and spindown behaviour with nested mounts. **If S6 fails, the fallback is a two-mount design** (cache+array pool and array-only pool, the mergerfs docs' "tiered cache" pattern). Per-share cache modes then shrink to cache-then-move vs. array-only, set per top-level directory by the mover rather than at write time. That fallback is a real feature regression, and doc 07 R12 tracks it.
+
+### Q13 — Counting "files changed since last sync" without waking every disk *(contradiction)*
+**Status:** Spike (S7) · **Gate:** Phase 1 · **Affects:** doc 02 §1, §2, §4, doc 03 top bar, §3.5, doc 08
+
+**The contradiction:** the permanent amber indicator ("412 files unprotected", live) implies polling `snapraid diff`. That command stats every file on every data disk, spinning all of them up. Meanwhile the spindown acceptance test requires 30 idle minutes.
+
+**Default: a change journal.** `hoservad` places a `fanotify` mark (`FAN_MARK_FILESYSTEM`, FID reporting) on each data-disk filesystem and records create/modify/delete/rename events per disk since the last sync. Events are only generated by writes that already woke the disk, so the journal never wakes anything. The UI shows the count as approximate ("≈412 files changed"). An exact `snapraid diff` runs only immediately before a sync (the disks are spinning anyway) and on explicit request, and the UI says it will wake the disks. The same journal supplies "files pending at failure, by name" for a dead disk (doc 02 §4), and it reuses the fanotify machinery that wake attribution (doc 08) needs anyway.
+
+### Q14 — Rebalance and evacuation must respect parity ordering *(data-safety gap)*
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §4, doc 09 §3, §4, §6
+
+**The gap:** doc 09 uses the mover's copy-verify-delete for rebalance and evacuation. Between two data disks that ordering is unsafe under SnapRAID. Parity reconstructs disk B's blocks using disk A's blocks *as of the last sync*. Deleting the source file on A before a sync means a failure of B in that window can't be fully recovered.
+
+**Default: array-to-array relocations are two-phase.** Copy and verify everything, run `sync` (through the guard, Q15), delete the sources, then `sync` again. Cache-to-array moves (the mover) keep single-phase copy-verify-delete, because cache is outside parity and nothing depends on its old blocks.
+
+### Q15 — The threshold guard vs. Hoserva's own relocations *(gap)*
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §2, doc 09 §3, §4
+
+**The gap:** an evacuation of a full 8 TB disk produces a diff with tens of thousands of removals, plus a data disk whose file count drops to zero. That is exactly the pattern the guard exists to block. As specified, every evacuation and rebalance would trip it.
+
+**Default:** every relocation job writes a manifest (relative path, size, mtime, source disk, target disk). The guard counts a removal as *accounted* when it matches a manifest entry and the matching file appears as added or copied on the manifest's target disk in the same diff. Accounted removals appear in the diff view as their own group and don't count toward thresholds. Unaccounted removals count exactly as before. A disk in `removing` state (doc 09 §4) is exempt from the zero-files rule, and only that disk gets `--force-empty`. **Every sync, whatever triggered it (schedule, disk add, evacuation, manual), goes through the guard.**
+
+### Q16 — Guard threshold values
+**Status:** Default · **Gate:** Phase 1 end · **Affects:** doc 02 §2
+
+**Default: keep 500 removed files / 10% removed+updated. Revisit using the author's own diff history at the end of the Phase 1 month-on-real-data gate.**
+The numbers are guesses until real nightly diffs exist. The gate in doc 07 §1 already produces that data for free.
+
+### Q17 — `snapraid touch` before syncs
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §2
+
+**Default: run `snapraid touch` automatically before a sync only when `snapraid status` reports files with a zero sub-second timestamp. Log the count.**
+SnapRAID prints exactly that warning when touch is needed. Running touch conditionally fixes the move-detection problem the community scripts address, without cargo-culting it into every run.
+
+### Q18 — Content file placement
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §2, doc 05 §4
+
+**Default: one on the boot device (`/var/lib/hoserva/snapraid.content`, listed first), one on cache if present, then data disks with the most free space, until the count reaches at least `parity disks + 2` on at least three distinct physical devices.**
+Listing the boot-device copy first means `snapraid status` polling reads a disk that is always awake (Q13). Requiring distinct physical devices turns doc 02's "3 separate disks, one not a data disk" into a rule the config generator can check.
+
+### Q19 — Number of parity disks in v1
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 00 §4, doc 03 §3.1, doc 05 §2, §3, doc 07 §1
+
+**Default: 1 or 2 parity disks supported in v1, for new pools and for migration. 3 or more are out of scope.**
+Dual parity was excluded because its "migration path [is] unclear", but it isn't. Unraid parity is never reused in either case: both Unraid parity disks are fully rewritten as SnapRAID parity, exactly like single parity. The extra cost is a `2-parity` line in the config generator, one golden file and one loop-harness case. Refusing it would force the users with the largest arrays, who most need dual parity, to downgrade their protection in order to migrate.
+
+### Q20 — Parity disk filesystem
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §2, §5, doc 03 §3.1
+
+**Default: XFS for parity disks, formatted fresh (a migrated parity disk's contents are discarded anyway).**
+The parity file is a single file roughly as large as the largest data disk. ext4 with 4 KiB blocks caps files at 16 TiB, which today's 20 TB+ disks exceed. XFS has no practical file size limit and no reserved-block overhead. The data disks' `minfreespace` (default 50G) keeps parity headroom even when parity and data disks are the same nominal size.
+
+### Q21 — Disk identity
+**Status:** Default (hands-on in S2, L4) · **Gate:** Phase 1 · **Affects:** doc 02 §4, doc 05 §4, doc 10 §1
+
+**Default: a disk's identity is its `/dev/disk/by-id` WWN, falling back to serial. Mounts use filesystem UUID. When a USB enclosure hides the serial, the disk is marked "weak identity": allowed as a data disk (matched on FS UUID + size), refused as parity, and warned about in the setup wizard and migration scan.**
+Serial matching is validated by Unraid's own model (doc 08). Enclosures that mask serials are the known exception, and a wrong parity-disk match is the most expensive mistake that exception could cause.
+
+### Q22 — Encrypted (LUKS) arrays
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 00 §4, doc 05 §2, §7, doc 06 §5, doc 07 §1
+
+**Default: v1 detects encrypted Unraid arrays and refuses to migrate them, with a clear message and a docs page on manual options. New encrypted pools are not offered. Post-1.0 design: a keyfile on the boot device, stated plainly as convenience rather than protection against physical theft.**
+Doc 08's recovery evidence and R2 outweigh the convenience. Detect-and-refuse matches the ZFS stance, keeps the fixture (it tests the refusal), and costs no support burden.
+
+### Q23 — Non-XFS Unraid data disks
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §2, §3, doc 06 §5
+
+**Default: adopt any single-device XFS, btrfs or ext4 data disk, each after its own read-only check (`xfs_repair -n`, `btrfs check --readonly` on the unmounted device, `e2fsck -n`). A disk that fails its check is refused. ZFS-formatted array disks and multi-device btrfs members are refused.**
+mergerfs and SnapRAID are filesystem-agnostic, so a single-device btrfs or ext4 disk costs one fixture each. ZFS needs OpenZFS as a dependency, which is out of scope (doc 00 §4). Doc 08's "refuse a filesystem that reports errors" extends to every filesystem, not just XFS.
+
+### Q24 — Supported Unraid versions for migration
+**Status:** Spike (S2 hands-on) · **Gate:** Phase 3 · **Affects:** doc 05 §2, §3, doc 06 §5, doc 07 R5
+
+**Default: Unraid 6.12.x and 7.x, each backed by a fixture. The scan refuses any version or config layout it doesn't recognise. `--unverified-layout` overrides that refusal with a full-screen warning and records the override in the report.**
+R5's "fail loudly on unknown layouts" needs a concrete allowlist to fail against.
+
+### Q25 — Where migration reads Unraid config from *(contradiction)*
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4, §6
+
+**The contradiction:** Phase B step 11 removes the Unraid USB stick. Step 15 then seeds shares and users from config "exported in step 3", but the doc never says where that export is stored or how Hoserva reads it. Doc 05 §3 also offers to run the scan "from a live environment", which doesn't exist until the Phase 4 ISO.
+
+**Default: the migrator reads Unraid configuration from the Flash Backup zip that step 1 already produces, uploaded through the UI or given as a path. Alternatively it reads from the stick itself, mounted read-only.** It never writes to the stick. The scan runs on the freshly installed Hoserva, before any import. That is still well before the point of no return (step 17), so it keeps the rollback guarantee without needing a live environment. Unraid-side checks that need a running Unraid (the final parity check) become a printable pre-cutover checklist.
+
+### Q26 — Share ownership and UID/GID model *(gap)*
+**Status:** Default (verify on fixture) · **Gate:** Phase 2 · **Affects:** doc 03 §4.2, §7, doc 04 §5, §7, doc 05 §4
+
+**The gap:** none of the docs define file ownership. Unraid data is conventionally owned `nobody:users` (99:100), and Unraid templates pass `PUID=99 PGID=100`. On Debian, `nobody` is UID 65534; GID 100 (`users`) is the same on both.
+
+**Default:** GID 100 (`users`) is the shared data group. Share directories are `2775` (setgid); Samba create/directory masks are `0664`/`2775`; SMB users are members of `users`. Migrated files keep their numeric UID 99 untouched. Hoserva creates a `hoserva-apps` system user pinned to UID 99 when that UID is free on the host (the pre-flight checks), and curated templates default to `PUID=99 PGID=100`. Converted Unraid templates keep working with no ownership rewrite.
+
+### Q27 — User roles *(gap)*
+**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 03 §7
+
+**Default: three roles.** *Admin*: full UI. *Viewer*: read-only UI. *Share-only*: SMB/NFS access, no UI login at all, and the default for newly created users. Setting a password writes both the UI hash and the Samba passdb entry in one action.
+Doc 03 §7 gives every user both UI login and SMB access. That means every family member with a share login can reach a UI that formats disks, which is the wrong default on a box that runs as root.
+
+### Q28 — Secrets at rest *(contradiction)*
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 10 §1, doc 11 §2, doc 03 §1
+
+**The contradiction:** doc 10 §1 encrypts secrets "with a key derived from a passphrase the user sets". But `hoservad` must use those secrets unattended, at 03:00, to deliver the alert that a disk died. A passphrase-derived key has no one to type the passphrase.
+
+**Default:** at runtime, secret columns are encrypted with a machine key in `/etc/hoserva/secret.key` (root, `0600`, generated at install). That protects against the database file leaking, via a diagnostics bundle or a copied backup. **Backups** re-encrypt the secrets section with a *backup passphrase* set during onboarding (doc 03 §1). A restore without the passphrase restores everything except secrets, and says so, as doc 10 already describes.
+
+### Q29 — Resuming interrupted jobs *(contradiction)*
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §4, doc 02 §4, doc 09 §2, §4
+
+**The contradiction:** doc 01 §4 says interrupted jobs are "never silently resumed". Doc 09 §4 says an evacuation "must survive a daemon restart and pick up where it left off".
+
+**Default: jobs are never resumed automatically. Resumable job types (mover, rebalance, evacuation, share relocation) persist a checkpoint and resume from it, never restarting from zero, when the user clicks Resume or, for the mover only, at its next scheduled run.** Sync, scrub and fix are not resumable; they are re-run. Both documents' intents survive: no surprise background work after a crash, and no repeating a day of copying.
+
+### Q30 — Nightly schedule ordering
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §2, §3, doc 03 §8.4, doc 09 §2, §6
+
+**Default: one chained nightly maintenance run, starting 02:00: mover → diff + guard → (touch, Q17) → sync → config backup. On the weekly day, scrub runs after the sync.** Each step starts when the previous one finishes, not at a clock time.
+With fixed clock times (mover "before" a 03:00 sync), a mover run longer than an hour silently breaks the ordering. Chaining makes the order structural. The schedule page's conflict detection then only matters for jobs the user schedules separately.
+
+### Q31 — Spindown acceptance criterion
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §1, doc 06 §6
+
+**Default: array disks stay in standby for ≥ 30 minutes with no SMB/NFS clients connected, no containers holding pool paths open, and appdata on cache.** The measured result is published with the release, including what breaks it.
+This is doc 08's refinement, which docs 02 and 06 hadn't picked up.
+
+### Q32 — Wake attribution scope
+**Status:** Default · **Gate:** Phase 1 / Phase 4 · **Affects:** doc 07 §1, doc 03 §3.3
+
+**Default: a spin-state event log (per-disk transitions with timestamps, polled without waking disks) ships in Phase 1. Process and container attribution via fanotify is targeted for Phase 4 and may slip past 1.0 without blocking the release.**
+The event log is cheap and makes R1 diagnosable from day one. Attribution is the differentiator doc 08 calls out, but it has no prior art, and 1.0 shouldn't wait on it.
+
+---
+
+## Containers
+
+### Q33 — Default catalog source on a fresh install
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §4, §7
+
+**Default: the curated Hoserva catalog is on. The CA feed is an opt-in source, off by default, with its one-screen explainer. The Unraid XML converter is always available for local templates.**
+Curated defaults are the safe first experience and fully under the project's control. Breadth is one toggle away for users who want it.
+
+### Q34 — Consuming the Community Applications feed
+**Status:** External · **Gate:** Phase 3 · **Affects:** doc 04 §4, doc 07 R4
+
+**Default: contact the CA maintainer before Phase 3 starts, and build the catalog behind a pluggable source interface regardless. If there is no answer, or the answer is no, by the time Phase 3 implementation starts, ship no built-in CA source.** The generic "add a catalog source URL" capability stays, so the licensing outcome changes a default, not the architecture.
+
+### Q35 — License status of the aggregated feed
+**Status:** External · **Gate:** Phase 3 release · **Affects:** doc 04 §4
+
+**Default: fetch at runtime from the upstream CDN only. Never vendor the feed. Attribute every entry. Honour moderation data and blacklists.** Get a proper review before the CA source is enabled by default for anyone.
+
+### Q36 — What counts as a "clean" template conversion
+**Status:** Default · **Gate:** Phase 0 (S3) · **Affects:** doc 06 §2, doc 07 §1
+
+**Default: "clean" means the generated Compose file needs no manual action. Informational warnings (`:latest` tag, a dropped `<Shell>`) are allowed; untranslated `ExtraParams`, unresolved networks, or paths flagged for review are not.** The 80% kill criterion and the release metric that must not regress both use this definition.
+
+### Q37 — Container networks
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 03 §5.4, doc 04 §1, §5
+
+**Default: the install flow offers bridge, host, or any *existing* custom network (macvlan/ipvlan included). v1 has no network-creation UI. When a template needs a network that doesn't exist, the converter's warning includes the exact `docker network create` command.**
+Doc 03 said "custom", doc 04 said "beyond bridge/host/macvlan selection", and doc 04 §5 said "requires a pre-existing network". This default reconciles the three while staying inside D6.
+
+### Q38 — Minimum Docker version
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §3
+
+**Default: negotiate the Engine API version at runtime rather than hard-coding "Engine 24+". Require the Compose v2 plugin. `hoserva doctor` warns when the installed Engine is a release upstream no longer supports.** Documentation points to Docker's apt repository.
+A version number frozen into a 2026 spec is already stale by the time Phase 3 starts.
+
+### Q39 — Where curated templates live
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 12 §2, §7
+
+**Default: `templates/` in this monorepo, with its CI validation, until the first external template PR, then split per doc 12 §7.**
+
+---
+
+## Backup
+
+### Q40 — Default config backup destinations
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 10 §1, §4
+
+**Default: two local destinations out of the box, `/var/lib/hoserva/backups` on the boot device and a path on the pool, plus the existing prompt to add an off-box destination.**
+Doc 02 §6 lists "boot device fails" and "array lost" as separate failure domains. One copy on each covers both at zero cost. Doc 10's own point, that a backup stored only on the array it describes is not a backup, applies to the boot device just as much.
+
+### Q41 — rclone
+**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 10 §1
+
+**Default: rclone is an optional dependency (`Recommends:`). Local destinations work without it. The UI offers the install command the first time a remote destination is configured.**
+
+---
+
+## Security, CI and workflow
+
+### Q42 — CI runners for a public repository *(security gap)*
+**Status:** Spike (S9) · **Gate:** Phase 1 · **Affects:** doc 06 §7, doc 07 R11
+
+**The gap:** doc 06 §7 runs privileged, nested-virtualisation jobs on self-hosted runners "every PR". On a public repository, a pull request from a fork can run arbitrary code on those runners, which here means a privileged host with loop devices.
+
+**Default:** everything that executes pull-request code runs on GitHub-hosted runners: L1, L2 loop devices via the runner's `sudo`, `.deb` build, and L3 if hosted KVM proves sufficient. Self-hosted runners only run on `push` to `main`, on schedule, or on `workflow_dispatch`, and never for `pull_request` events from forks. Workflows from first-time contributors require approval (a repository setting). S9 confirms hosted runners support loop devices, FUSE and `/dev/kvm` for the pinned toolchain.
+
+### Q43 — API tokens
+**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 01 §5, doc 03 §7
+
+**Default: personal API tokens, scoped to a role (admin/viewer), created and revoked on `/users`. They are used for scripting and for running the CLI against a remote host over TCP.**
+Doc 01 calls the API public and doc 12 anticipates third-party consumers, but the only credentials specified were browser sessions and the local root socket.
+
+### Q44 — Who may use the Unix socket
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §5, §7
+
+**Default: a `hoserva` group, created empty. Documentation states plainly that membership is root-equivalent (the API formats disks), exactly like the `docker` group.**
+
+### Q45 — How development agents run the storage lab on a dev machine
+**Status:** Default — **validated on the primary dev host** (S9, doc 08); hosted CI runners still to check · **Gate:** Phase 1 (foundation) · **Affects:** doc 06 §3, doc 12 §5, `CLAUDE.md`
+
+**Default: the loop-device lab (L2) runs in a Docker container started only through `make lab-up`, with *narrowed* device access instead of `--privileged`: `CAP_SYS_ADMIN`, `--device /dev/fuse`, `--device /dev/loop-control`, and `--device-cgroup-rule 'b 7:* rmw'` (loop block devices only, major 7). There is no `/dev` bind mount, and loop nodes are `mknod`-ed inside the container. Agents never run `losetup`, `mkfs`, `mount` or `wipefs` on the host itself. Every lab is namespaced by `HOSERVA_LAB_ID` (image directory, mount root, container name), so parallel agents never share loop devices or mount points. L3 uses libvirt VMs.**
+doc 06 §3's `privileged: true` plus `/dev:/dev` gives the container every host block device: one mistyped path formats the developer's real NVMe. Allowing only loop devices and FUSE makes that mistake impossible rather than merely unlikely. doc 06 §3's fixed `LAB=/tmp/hoserva-lab` path would also collide the moment the orchestrate skill runs two lanes at once. S9 confirmed the recipe on the dev host: loop devices, XFS and mergerfs work, and opening the host NVMe's device node fails with *Operation not permitted*. It also showed teardown must delete `.lab/<id>` from inside the container, since everything the lab creates is root-owned (doc 08). Hosted CI runners are still to check; if the recipe doesn't hold somewhere, the fallback there is a disposable libvirt lab VM, never `--privileged`.
+
+### Q46 — Branching and review with agent-driven development
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 12 §5, §6
+
+**Default: work is landed by the `orchestrate` skill as independently verified local commits on `main`. The maintainer reads and pushes; nothing agent-made is pushed automatically. CI runs on push. Pull requests are the path for external contributors. Commits touching `safety-critical` paths (threshold guard, mover/relocation delete path, migration import, `packaging/`) are listed separately in every orchestrate report, for a line-by-line read before pushing.**
+Doc 12 §6 prescribed "feature branches, squash-merged", and doc 12 §5 a "protected list of files requiring explicit human review". This default keeps both intents inside the issue-driven agent workflow, whose unit of review is the verified commit.
+
+---
+
+## Product
+
+### Q47 — AI assistant phasing *(contradiction)*
+**Status:** Default · **Gate:** 1.0 · **Affects:** doc 00 §4, doc 07 §1, doc 11 §8
+
+**The contradiction:** doc 11 §8 says "Not v1" and also "Phase 3 or 4", but 1.0 ships at the end of Phase 4.
+
+**Default: post-1.0.** Step 1 of doc 11 §8 (local model, docs-only chat) may land in Phase 4 only if everything else in Phase 4 is done. R7 (solo-maintainer burnout) and doc 07 §4's failure modes favour cutting it first.
+
+### Q48 — Internationalisation *(gap)*
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 03 §8.1
+
+**Default: English only for 1.0, but every UI string goes through an i18n message catalog from the first component. Community translations come post-1.0.** The "UI language" setting stays hidden until a second language exists.
+Extracting strings later is a rewrite of every component. Doing it from day one costs almost nothing.
+
+### Q49 — Telemetry *(gap)*
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §7, doc 03 §8.6
+
+**Default: none. The only outbound request Hoserva makes on its own is the update check (apt metadata), which can be disabled. Any future opt-in usage statistics require a new entry here.**
+The trust positioning against a proprietary incumbent doesn't survive a phone-home.
+
+### Q50 — Name clearance
+**Status:** External · **Gate:** before public 1.0 announcement · **Affects:** doc 00 §6
+
+**Default: search EUIPO/TMview and secure `.io`/`.com` if cheap, before the 1.0 announcement rather than before development.** The name is settled; the check exists so the announcement doesn't have to be reversed.
