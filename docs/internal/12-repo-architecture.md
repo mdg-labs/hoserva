@@ -37,7 +37,8 @@ hoserva/
 │
 ├── .claude/
 │   ├── agents/                 task-executor, task-verifier (§5)
-│   └── skills/                 github-triage, orchestrate (§5)
+│   └── skills/                 github-triage, orchestrate (§5); coss, coss-particles (symlinks into .agents/, D15)
+├── .agents/skills/             coss and coss-particles skills from cosscom/coss, pinned in skills-lock.json
 ├── .github/workflows/          CI (doc 06 §7), issue-status lifecycle (§5)
 │
 ├── cmd/
