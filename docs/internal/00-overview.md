@@ -113,6 +113,7 @@ That last point drives most of the UI decisions in doc 03.
 | Clustering, multi-node, live VM migration between hosts | Wrong audience; single-node product (doc 14) |
 | A VM image/OS gallery, mediated/vGPU passthrough | First cut is local lifecycle plus full PCI/USB passthrough only; no image marketplace, no SR-IOV slicing (doc 14) |
 | Generic Docker management | Portainer exists and is good; see doc 04 |
+| iSCSI target | Local VM vdisks (doc 14) already cover the datastore use case; a network block-device server is its own security and orchestration surface for a narrow audience (Q61) |
 | Three or more parity disks | SnapRAID supports up to six; no homelab need justifies the test matrix (Q19) |
 | Encrypted (LUKS) arrays | Detected and refused in v1; recovery risk outweighs convenience (Q22) |
 | Built-in AI assistant | Post-1.0 (doc 11, Q47) |

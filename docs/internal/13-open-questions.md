@@ -26,8 +26,8 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | **Now** (repo is public) | Q1, Q2 |
 | **During Phase 0** | Q36 |
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60 |
-| **Before Phase 2** | Q26, Q27, Q41, Q43 |
-| **Before Phase 3** | Q22–Q25, Q33–Q35, Q37–Q39 |
+| **Before Phase 2** | Q26, Q27, Q41, Q43, Q61 |
+| **Before Phase 3** | Q22–Q25, Q33–Q35, Q37–Q39, Q62 |
 | **Before Phase 3.5** | Q51–Q58 |
 | **Before 1.0** | Q47, Q50 |
 
@@ -305,6 +305,14 @@ The event log is cheap and makes R1 diagnosable from day one. Attribution is the
 
 ---
 
+### Q61 — iSCSI
+**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 00 §4, doc 03 §4
+
+**Default: no iSCSI target in v1, and not a planned post-1.0 feature either — revisit only if real demand shows up.**
+A recurring complaint about Unraid is the lack of iSCSI without a plugin, most often for a datastore backing a separate hypervisor host. Hoserva's own VM manager (doc 14) already covers that case with local qcow2 vdisks, so there is no gap to fill for Hoserva users specifically. Running an iSCSI target (LIO/`targetcli`) is its own security surface — raw block devices exposed over the network — and its own orchestration surface, for a narrow slice of the target user (doc 00 §3). Chasing feature parity with general-purpose NAS platforms before the core is solid is a named failure mode (doc 07 §4); this is exactly that temptation, stated and declined rather than left open by omission. If it does get built later, it is scoped the way containers were (D6): a handful of guided cases, not a general SAN feature set.
+
+---
+
 ## Containers
 
 ### Q33 — Default catalog source on a fresh install
@@ -339,6 +347,12 @@ Doc 03 said "custom", doc 04 said "beyond bridge/host/macvlan selection", and do
 
 **Default: negotiate the Engine API version at runtime rather than hard-coding "Engine 24+". Require the Compose v2 plugin. `hoserva doctor` warns when the installed Engine is a release upstream no longer supports.** Documentation points to Docker's apt repository.
 A version number frozen into a 2026 spec is already stale by the time Phase 3 starts.
+
+### Q62 — Docker container storage backend
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §3
+
+**Default: standard Docker Engine directory-based storage — `overlay2`, data-root a plain directory on cache (`/mnt/cache/docker`) — never a fixed-size loopback image.**
+A loopback image that must be manually resized when it fills is one of the most common Docker complaints on Unraid, and it is self-inflicted: standard Docker Engine already defaults to directory-based `overlay2` storage, and the loopback image is an Unraid-specific choice to keep Docker's storage in one movable file. Hoserva has no reason to reproduce it — the Engine is a normal prerequisite (D8) pointed at a normal directory, sized by the cache device itself, which already has its own capacity monitoring (doc 02 §3). One less way to run out of space by surprise.
 
 ### Q39 — Where curated templates live
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 12 §2, §7
