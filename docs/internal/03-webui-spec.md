@@ -26,6 +26,11 @@ Apps                          /apps
   ├ Install wizard            /apps/install/[id]
   ├ Container detail          /apps/[name]
   └ Compose editor            /apps/[name]/compose
+VMs                           /vms
+  ├ VM list                   /vms
+  ├ Create VM                 /vms/create
+  ├ VM detail (incl. console) /vms/[name]
+  └ Passthrough               /vms/passthrough
 Jobs                          /jobs
   └ Job detail                /jobs/[id]
 Users                         /users
@@ -47,7 +52,7 @@ Onboarding (first run)        /welcome
 Login                         /login
 ```
 
-Eight sidebar items (onboarding and login are not in the sidebar). Anything more and the sidebar becomes a menu nobody reads.
+Nine sidebar items (onboarding and login are not in the sidebar) — VMs is the one addition since Phase 3.5 (doc 14), kept as its own top-level item rather than folded into Apps because its lifecycle (console access, passthrough) is different enough to confuse users if merged, the same reasoning Unraid itself applies with separate Docker and VM Manager sections. Anything more and the sidebar becomes a menu nobody reads.
 
 Routes with a `[param]` segment are resolved client-side; the SPA is served for every non-API path (doc 01 §1, Q8).
 
@@ -419,9 +424,46 @@ Not everything ships at once. Order by what makes the product usable:
 | **1 — Minimum viable** (Phase 1) | `/welcome`, `/login`, `/storage/setup`, `/storage`, `/storage/disks`, `/storage/disks/wake-events` (event log), `/storage/parity`, `/`, `/jobs`, `/settings/notifications`, `/settings/schedules` (nightly chain) |
 | **2 — Actually a NAS** (Phase 2) | `/shares`, `/shares/[name]`, `/storage/cache`, `/users`, `/settings/backup` |
 | **3 — Complete home server** (Phase 3) | `/apps` and all sub-pages, `/tools/migrate` |
+| **3.5 — Virtual machines** (Phase 3.5, doc 14) | `/vms` and all sub-pages, including `/tools/migrate`'s VM-import phase |
 | **4 — Polish** (Phase 4) | `/storage/disks/[id]` history graphs, wake attribution, `/tools/logs`, `/tools/diagnostics`, `/settings/advanced`, `/tools/terminal` |
 | **Post-1.0** | `/tools/assistant` |
 
 Notifications and a sync/scrub schedule are Tier 1 because Phase 1's definition of done is running the author's own array for a month (doc 07 §1) — an array that cannot report a dead disk or a blocked sync is not one to trust with real data. Config backup exists from Phase 1 via the CLI (`hoserva config export`); its UI arrives in Tier 2.
 
 Tier 1 plus Tier 2 is a working, honest NAS. Tier 3 makes it a complete home server, and is what users migrating an existing setup need.
+
+---
+
+## 11. VMs
+
+Scope per doc 14. Numbered out of sequence because it was added after the rest of this spec (Phase 3.5) — see the nav structure above for where it actually sits in the sidebar, between Apps and Jobs.
+
+### 11.1 `/vms` — VM list
+
+Card view of every defined VM: name, OS icon (user-selected at creation, not auto-detected), state (running / stopped / paused), vCPU and RAM allocation, assigned passthrough devices if any, autostart toggle.
+
+Actions: start, stop (graceful and force), restart, console, detail, remove.
+
+### 11.2 `/vms/create` — Create VM
+
+- **Basics** — name, OS type (for sane defaults only, e.g. firmware choice), vCPUs, RAM, autostart
+- **Storage** — new qcow2 disk (size picker, share-aware placement per Q12/Q51) or an existing image path; optional ISO for installation, picked from a share
+- **Network** — bridged (`vmbr0`, default) or isolated (Q54); no network-creation UI here either, same discipline as doc 04 §5's Q37
+- **Passthrough** — optional, only shown when at least one device passed `hoserva vm passthrough check` (§11.4); each candidate device shows its compatibility verdict inline, not just its name
+- **Preview** — the generated domain XML, visible before creation, mirroring doc 04's "always reviewable" rule for Compose
+
+### 11.3 `/vms/[name]` — VM detail
+
+Tabs:
+- **Console** — embedded noVNC viewer over the existing authenticated connection (doc 14 §4); no separate login
+- **Overview** — state, uptime, resource allocation, assigned passthrough devices, disk paths and their share/disk
+- **Config** — the creation form again, editable while stopped; most fields are disabled while running, with an explanation of why
+- **Snapshots** — where supported by the storage backend; not a substitute for backup, and the UI says so
+
+Actions mirror `/vms`, plus clone and export.
+
+### 11.4 `/vms/passthrough` — Passthrough
+
+Read-only IOMMU group listing at all times (doc 14 §3): every group, its member devices, and an ACS isolation verdict per group. Devices the host itself needs (boot controller, sole console GPU) are shown but marked **not assignable**, with the reason stated rather than just disabled.
+
+Assigning a device to a VM queues a **VFIO binding change**, clearly flagged as requiring a reboot to take effect — never applied live. GPU passthrough candidates get an extra single-GPU warning where the compatibility check detects that configuration (doc 14 §3).

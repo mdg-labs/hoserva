@@ -40,13 +40,25 @@ Container management, curated template catalog, Unraid XML converter, CA feed so
 
 **This is the phase that makes it a complete home server rather than a storage manager.**
 
+### Phase 3.5 — Virtual machines
+
+libvirt/KVM integration (doc 14): `internal/vm`, domain-XML generation, VM lifecycle, disks on the pool/cache under `/mnt/user/domains`. PCI/USB passthrough with IOMMU-group detection and VFIO binding, gated behind a pre-flight compatibility check. Bridged networking (`vmbr0`). Browser console via noVNC over the existing authenticated connection. Unraid VM (libvirt domain XML) import folded into migration tooling (doc 05, doc 14 §5) — structurally easier than the container converter, since Unraid's own VM Manager already emits libvirt XML. UI tier addition (doc 03).
+
+**Gated on its own Phase 0-style spikes before it starts** (doc 13 Q51–Q58 for the design defaults):
+
+| Spike | Question | Kill criterion |
+|---|---|---|
+| **S10 — Nested KVM for VM-in-VM testing** | Does the L3 test VM (which already runs on libvirt/QEMU, doc 06 §4) support nested KVM for a domain that Hoserva-under-test creates, on both the dev host and hosted/self-hosted CI runners? | If hosted runners don't support it, the suite runs on the self-hosted nightly runner only (doc 06 §7's existing posture for L3), not a blocker |
+| **S11 — Unraid domain XML compatibility** | How much of a real exported Unraid VM's libvirt domain XML loads with only the remapping in doc 14 §5, on real Debian 13 libvirt/QEMU versions? | If divergence is larger than expected, doc 14 §5's field-remap table grows; not fatal, since the fallback is the same manual-review path doc 04 already has for containers |
+
+**Definition of done:** create, start, and use a VM with a browser console; pass PCI passthrough for one device class (GPU or USB) on the L4 hardware box; import one real Unraid VM export with checksum-verified disks.
+
 ### Phase 4 — Polish and release
 
 Hardware beta, wake attribution (may slip past 1.0 — Q32), diagnostics, ISO bundle, remaining UI tier 4, documentation completeness, name clearance (Q50), 1.0.
 
 ### Post-1.0 candidates
 
-- VM management (libvirt/KVM) — expected by Unraid users, large surface area
 - Built-in AI assistant (doc 11, Q47)
 - OIDC authentication
 - Encrypted (LUKS) pools and migration of encrypted Unraid arrays (Q22)
@@ -77,6 +89,8 @@ Hardware beta, wake attribution (may slip past 1.0 — Q32), diagnostics, ISO bu
 | R11 | **Untrusted PR code runs on a privileged self-hosted runner** | High — the repository is public | PR code runs only on ephemeral hosted runners; self-hosted runners only on trusted triggers; approval for first-time contributors (doc 06 §7, Q42) |
 | R12 | **Per-share mount topology fails spike S6** | Medium — per-share cache modes and allocation shrink | Two-mount tiered fallback designed in advance (Q12); decided in Phase 0, before storage code exists |
 | R13 | **An agent touches a real disk during development** | High — the dev host's own disk | Labs only via `make lab-up` in a loop-and-FUSE-only container, namespaced per lane; hard rules in `CLAUDE.md` and in every orchestrate dispatch; the real array is touched only by a human (doc 12 §5, Q45) |
+| R14 | **PCI/USB passthrough is unreliable across the hardware variety homelab boxes actually have** (IOMMU groups, ACS, BIOS quirks) | Medium-High — the single hardest part of doc 14 | Pre-flight `hoserva vm passthrough check` reports compatibility before commit; a device the host needs is structurally unassignable; explicitly documented as best-effort and hardware-dependent, never promised (doc 14 §3) |
+| R15 | **`libvirtd`'s privileged surface (direct device binding) widens the daemon's attack surface** | Medium | Same threat-model posture as doc 01 §7; console proxied through existing session auth, never a raw exposed port; passthrough attach/detach audit-logged; no VM image gallery to introduce an untrusted-image problem (doc 14 §6) |
 
 ---
 

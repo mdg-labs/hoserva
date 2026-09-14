@@ -6,7 +6,7 @@ The strongest adoption argument the project has. It deserves first-class tooling
 
 ## 1. Why it works — the technical basis
 
-Three properties of Unraid make a near-zero-cost migration possible.
+These properties of Unraid make a near-zero-cost migration possible.
 
 ### 1.1 Data disks are independent filesystems
 
@@ -23,6 +23,10 @@ mergerfs unions the same directories the same way. **The entire share structure 
 ### 1.3 Path parity makes container migration nearly free
 
 Mounting the pool at `/mnt/user` and cache at `/mnt/cache` (decision D10) means converted Compose files need **zero path rewrites**. A Plex container pointed at `/mnt/user/media` finds its library exactly where it left it, with the same inodes on the same disks.
+
+### 1.4 VM migration is adoption, not translation (Phase 3.5, doc 14)
+
+Unraid's VM Manager is libvirt underneath, so its domain definitions — kept in `libvirt.img` on the array, adopted along with the data disks — are already libvirt domain XML — the format Hoserva itself generates. Unlike Docker templates, there is no foreign format to convert; VM migration is closer to §1.1's disk-adoption case than to a translation problem. See doc 14 §5 for the small set of fields (network bridge name, passthrough device addresses) that still need remapping.
 
 ---
 
@@ -121,6 +125,7 @@ A written go / no-go report, downloadable, that the user reads **before** commit
 23. Configure notification channels and send a test through each.
 24. Set the sync, scrub, mover, and appdata backup schedules.
 25. Run a **restore drill**: pick one unimportant file, delete it, recover it with `snapraid fix`. A backup system that has never been restored from is a hypothesis, not a backup.
+26. **If the source array had VMs** (Phase 3.5, doc 14): `hoserva migrate vm-scan` reads the domain definitions from Unraid's `libvirt.img` on the adopted pool (read-only — they are not in the Flash Backup), vdisks under `/mnt/user/domains` are already in place and were covered by step 16's verification, and each VM's passthrough devices (if any) are re-validated against this machine's own IOMMU groups before the domain is offered for review (doc 14 §5) — never trusted from the source as-is, since the target hardware is not guaranteed to match. Reviewed and started one at a time, same as step 20.
 
 ---
 
@@ -156,6 +161,8 @@ Four phases, matching above:
 **Import** — the adoption job, with progress. Ends at the verification checkpoint, explicitly *before* parity is touched.
 
 **Verify** — side-by-side comparison of pre- and post-migration file counts and sizes per disk and per share. Green means proceed to parity; any mismatch means stop and investigate. Only from here is the "initialise parity" action offered, behind the point-of-no-return confirmation.
+
+**Once Phase 3.5 ships**, Review also lists any VMs the scan found (name, disk size, passthrough devices referenced), read from the adopted pool after Import; vdisks are adopted in place like any other data. See step 26 and doc 14 §5.
 
 ---
 
