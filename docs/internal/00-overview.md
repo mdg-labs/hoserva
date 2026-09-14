@@ -140,6 +140,7 @@ Decisions already settled, with rationale. Reopening any of these needs a new re
 | D12 | Unraid XML template conversion is a first-class feature | Doubles as migration tooling *and* a day-one app catalog |
 | D13 | VM engine is libvirt/KVM, orchestrated not reimplemented, sourced as a Debian package dependency like mergerfs/SnapRAID rather than an external prerequisite like Docker | Same engine Unraid's own VM Manager runs on; D1's principle extends cleanly; `libvirt-daemon-system`/`qemu-system-x86` are stable, slow-moving Debian packages, unlike the fast-release Docker Engine that D8 deliberately keeps external |
 | D14 | VM management is narrow: single-node lifecycle plus local PCI/USB passthrough, no live migration or clustering, no VM image gallery | Same narrowing discipline as D6 for containers; matches Unraid's own single-box VM model and the existing multi-node exclusion above |
+| D15 | The web UI is built on coss ui — Base UI primitives with Tailwind CSS v4, vendored into `web/` with the shadcn CLI, using `lucide-react` icons, zod forms and TanStack Table — and doc 03 names the component and particle for every page element | One accessible, consistent component vocabulary for a UI built largely by agents; copy-and-own means no runtime dependency on a moving design system; coss is AGPL-3.0, compatible with Hoserva's license (Q1) |
 
 ---
 

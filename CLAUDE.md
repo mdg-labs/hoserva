@@ -12,10 +12,10 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 
 | Doc | Read before working on |
 |---|---|
-| `00-overview.md` | Anything — scope and the **decision log (D1–D14)** |
+| `00-overview.md` | Anything — scope and the **decision log (D1–D15)** |
 | `01-architecture.md` | Daemon, API, CLI, jobs, security, disk layout |
 | `02-storage-engine.md` | Pool mounts, parity, threshold guard, change journal, disk lifecycle |
-| `03-webui-spec.md` | Any UI page |
+| `03-webui-spec.md` | Any UI page — including its coss component and particle choices |
 | `04-containers.md` | Apps, templates, converter, catalog |
 | `05-migration.md` | The Unraid migrator |
 | `06-dev-and-testing.md` | Tests, the loop-device lab, VMs, CI |
@@ -124,12 +124,14 @@ A `spike` issue's deliverable is **recorded findings, not product code**: a find
 - No comments unless the *why* is non-obvious. No speculative abstraction. No half-finished work. No error handling for cases that cannot happen.
 - No business logic in API handlers; the frontend computes nothing the backend should own.
 - Every UI string goes through the i18n catalog (Q48); every technical term gets a plain-language label (doc 03).
+- The UI is coss ui (D15): use the component and particle doc 03 names for each element, build shared patterns once in `web/src/components/patterns/`, and use the `coss` / `coss-particles` skills when writing them. What coss lacks uses Q59's libraries.
 - Golden files change only deliberately — a golden diff is explained in the commit message, never regenerated to make a test pass.
 - Conventional commits (`feat(parity): …`, `fix(mover): …`), one issue per commit, `Fixes #n` trailer.
 - `make test` (L1 + L2) before landing, once the Makefile exists. If a workflow isn't a `make` target, it doesn't exist.
 
 # Anti-patterns specific to this project
 
+- A second component library, or a hand-rolled control coss already provides (D15).
 - Generic Docker management features (D6) — test every Apps request against "does this get someone from *I want X* to *X is running*".
 - A second placement algorithm beside mergerfs's create policy.
 - Anything on a timer that walks a data disk.

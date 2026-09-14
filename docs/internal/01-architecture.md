@@ -14,7 +14,7 @@
 | File sharing | Samba (+ Avahi), nfs-kernel-server | SMB / NFS; Avahi for discovery and Time Machine |
 | Backend | Go | Single static binary, systemd service, good at orchestrating subprocesses |
 | State | SQLite (WAL mode), pure-Go driver `modernc.org/sqlite` (Q6) | Single-file, no server, transactional, no CGO |
-| Frontend | React SPA built with Vite (Q8) | Static assets embedded in the Go binary; no Node runtime in production |
+| Frontend | React SPA built with Vite (Q8); coss ui components on Base UI + Tailwind CSS v4 (D15) | Static assets embedded in the Go binary; no Node runtime in production; components vendored into the repo, no runtime design-system dependency |
 | API | REST + SSE, over Unix socket and TCP | Consumed by both web UI and CLI |
 | Container runtime | Docker Engine + Compose plugin | **Prerequisite**, not shipped by the `.deb` |
 | Virtualization | libvirt + QEMU/KVM — Debian 13 packages, `go-libvirt` (no cgo) | Same engine Unraid's own VM Manager runs on; PCI/USB passthrough via VFIO (doc 14, Q58) |

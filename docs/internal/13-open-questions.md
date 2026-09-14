@@ -25,7 +25,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 |---|---|
 | **Now** (repo is public) | Q1, Q2 |
 | **During Phase 0** | Q36 |
-| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49 |
+| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43 |
 | **Before Phase 3** | Q22–Q25, Q33–Q35, Q37–Q39 |
 | **Before Phase 3.5** | Q51–Q58 |
@@ -39,7 +39,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 **Status:** Maintainer · **Gate:** now · **Affects:** doc 00 §6, repo `LICENSE`
 
 **Default: AGPL-3.0.**
-The repository is already public with no `LICENSE` file, which legally means *all rights reserved* — nobody may fork, package, or contribute, which is the opposite of what an open project needs. The reasoning in doc 00 §6 holds: being fully open is central to what Hoserva offers, and the plausible commercial surface (hosted remote monitoring) is better offered as a separate service than protected with license terms. Add the file before the first code commit.
+The repository is already public with no `LICENSE` file, which legally means *all rights reserved* — nobody may fork, package, or contribute, which is the opposite of what an open project needs. The reasoning in doc 00 §6 holds: being fully open is central to what Hoserva offers, and the plausible commercial surface (hosted remote monitoring) is better offered as a separate service than protected with license terms. Add the file before the first code commit. The vendored coss ui components (D15) are themselves AGPL-3.0, which is a further reason not to move to ELv2.
 
 ### Q2 — Contribution terms
 **Status:** Default · **Gate:** now · **Affects:** `CONTRIBUTING.md` (when written)
@@ -86,6 +86,26 @@ Checked hands-on: both are in trixie (doc 08, S8 partial), so the originally ass
 
 **Default: a React SPA built with Vite, using a client-side router. Next.js static export is not used.**
 Next's `output: 'export'` needs every dynamic segment known at build time (`generateStaticParams`). The spec's core routes can't meet that: `/storage/disks/[id]`, `/shares/[name]` and `/apps/[name]` only exist at runtime. Static export also discards everything Next adds (SSR, server components, route handlers). A Vite SPA is the plain form of what doc 01 actually describes: static assets plus a REST API, embedded with `go:embed`.
+
+### Q59 — What coss ui doesn't cover
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 00 D15, doc 03 (Component system), doc 12 §2
+
+**The gap:** coss has no chart, code editor, diff view, terminal, remote-console viewer, virtualised list or stepper, and doc 03 needs every one of them.
+
+**Default: one library per gap, each wrapped once under `web/src/components/` and styled from coss tokens, so no page imports a library directly:**
+
+| Need | Library |
+|---|---|
+| Charts: throughput, temperature, SMART history, wake timeline, stats, stacked capacity | Recharts |
+| Code views, the Compose editor, raw option fields (YAML, XML, INI) | CodeMirror 6 |
+| Config drift diff | CodeMirror merge view |
+| Browser terminal | xterm.js |
+| VM console | noVNC (doc 14 §4) |
+| Long log lists | TanStack Virtual inside the coss ScrollArea |
+| Wizard steps | None — composed from coss as doc 03's `wizard` pattern |
+| Fonts | Inter and Geist Mono (coss's defaults), bundled from Fontsource |
+
+Recharts is declarative React and covers both time series and stacked bars; if live throughput graphs perform poorly on low-end hardware, the library changes inside the `chart` wrapper without touching a page. CodeMirror rather than Monaco because Monaco is large and expects web workers. Fonts are bundled because Hoserva makes no outbound requests of its own (Q49) and often runs on a LAN without internet access.
 
 ### Q9 — Web UI port and TLS
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §5, §7, doc 03 §8.2
