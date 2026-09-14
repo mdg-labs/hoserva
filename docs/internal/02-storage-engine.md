@@ -12,6 +12,8 @@ Unions several independent filesystems into one mount point. Each file lives who
 
 This is the property that makes mixed disk sizes work, and it has a consequence worth stating plainly to users: **if a disk dies and parity cannot recover it, only the files on that disk are lost.** The rest of the pool is intact and readable. That is a materially better failure mode than RAID/ZFS, where a pool loss is total, and it is a selling point Hoserva should communicate.
 
+The same "whole file on one disk" property has a cost that deserves the same plain statement, not just the upside: **a single file transfer runs at one disk's speed, never striped across the pool.** A large sequential copy tops out around what one spinning disk delivers, well below a striped array (RAIDZ, RAID10, btrfs raid) built from the same disks — the same tradeoff Unraid ships with, since it is inherent to pooling rather than striping, and there is no configuration that removes it. Multiple *concurrent* transfers to different files still spread across disks, which covers the common home-server pattern (several people streaming, several containers writing at once); a single big transfer does not get faster by adding disks. The UI and docs state this plainly rather than let someone discover it mid-copy (doc 07 R3).
+
 ### Mount topology — one mount per share
 
 A single mergerfs mount has exactly one create policy and one branch list. That cannot express per-share cache modes (§3) or the per-share allocation settings Unraid users migrate with (doc 05). Hoserva therefore mounts (Q12, validated by spike S6):

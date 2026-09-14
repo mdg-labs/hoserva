@@ -76,6 +76,8 @@ Behaviour:
 
 Version policy (Q38): negotiate the Docker Engine API version at runtime rather than pinning an Engine release number; require the Compose v2 plugin; `hoserva doctor` warns when the installed Engine is a release upstream no longer supports. Documentation points to Docker's own apt repository.
 
+**Storage backend: a plain directory, never a loopback image (Q62).** Docker's data-root points at a directory on cache (`/mnt/cache/docker`), using the Engine's standard `overlay2` driver. Hoserva never creates a fixed-size loopback image for Docker's own storage — that construction is Unraid-specific, and a full loopback image needing a manual resize is one of its most common support complaints. A plain directory has no size of its own to run out of; it is sized by the cache device, which already has its own capacity monitoring and alerting (doc 02 §3).
+
 ---
 
 ## 4. The Unraid Community Applications feed — findings
