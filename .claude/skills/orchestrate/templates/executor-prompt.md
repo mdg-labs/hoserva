@@ -1,8 +1,8 @@
 # task-executor dispatch — {{UNIT_ID}}
 
 You are implementing **{{ISSUE_COUNT}} GitHub issue(s)** for Hoserva, an
-open-source Unraid alternative — a Go daemon, CLI and web UI that manage
-mergerfs and SnapRAID on Debian — in this order:
+open-source home server platform for mixed-size disks — a Go daemon, CLI and
+web UI that manage mergerfs and SnapRAID on Debian — in this order:
 
 {{ISSUE_LIST — one line per issue, in the order you must work them:
 "1. #<number> — <title>". For a single issue this is one line.}}

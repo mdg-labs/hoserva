@@ -1,6 +1,8 @@
 # Hoserva
 
-An open-source Unraid alternative: a management layer (Go daemon + CLI + web UI) over mergerfs and SnapRAID on Debian. GitHub: `mdg-labs/hoserva` (public).
+An open-source home server platform for mixed-size disks: a management layer (Go daemon + CLI + web UI) over mergerfs and SnapRAID on Debian, with a guided migration path from Unraid. GitHub: `mdg-labs/hoserva` (public).
+
+**Positioning and tone** (doc 00 §6): describe Hoserva by what it does, never as "an X alternative". Mention Unraid and other projects only factually — migration, compatibility, a design comparison. No disparaging remarks about other projects or their users. This applies to docs, issues, commit messages, UI copy and the docs site.
 
 **Current state: design phase.** No code exists yet. The design lives in `docs/internal/`, and the first implementation work is Phase 0 spikes and the Phase 1 foundation (doc 07 §1, doc 12 §5). Code conventions below are the plan; tighten them as the first real code lands.
 

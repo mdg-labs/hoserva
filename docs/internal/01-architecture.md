@@ -40,7 +40,7 @@ This is the single most important architectural decision, and the one that deter
 
 ### The problem
 
-Tools that generate config files fail when users hand-edit those files. The UI overwrites the edit, the user loses work and trust, and the tool gets a reputation for being something you must not touch. OMV has this problem. Unraid has it worse — the OS is effectively off-limits.
+Tools that generate config files fail when users hand-edit those files. The UI overwrites the edit, the user loses work and trust, and the tool gets a reputation for being something you must not touch. It is a common failure mode of appliance-style NAS software.
 
 ### The model
 
@@ -271,7 +271,7 @@ A NAS holds everything a person owns digitally and increasingly gets exposed to 
 - **Rate limiting and lockout** on login.
 - **The API runs as root** because it partitions disks and mounts filesystems. This is unavoidable, and therefore the attack surface must stay small: no arbitrary command execution endpoint, no user-supplied paths passed unsanitised to shell, template `<ExtraParams>` parsed rather than interpolated into a command line.
 - **The optional browser terminal is off by default** and gated behind a confirmation that explains it is root shell access.
-- **Container privilege warnings**: templates requesting `privileged: true`, host networking, or Docker socket mounts are flagged in the install flow with a plain-language explanation. Unraid users install these routinely without understanding them.
+- **Container privilege warnings**: templates requesting `privileged: true`, host networking, or Docker socket mounts are flagged in the install flow with a plain-language explanation. One-click catalogs make it easy to install these without seeing what they grant.
 - **Audit log** of configuration changes and destructive actions, with actor and timestamp.
 
 ### Threat model note

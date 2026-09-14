@@ -418,10 +418,10 @@ Not everything ships at once. Order by what makes the product usable:
 |---|---|
 | **1 — Minimum viable** (Phase 1) | `/welcome`, `/login`, `/storage/setup`, `/storage`, `/storage/disks`, `/storage/disks/wake-events` (event log), `/storage/parity`, `/`, `/jobs`, `/settings/notifications`, `/settings/schedules` (nightly chain) |
 | **2 — Actually a NAS** (Phase 2) | `/shares`, `/shares/[name]`, `/storage/cache`, `/users`, `/settings/backup` |
-| **3 — Replaces Unraid** (Phase 3) | `/apps` and all sub-pages, `/tools/migrate` |
+| **3 — Complete home server** (Phase 3) | `/apps` and all sub-pages, `/tools/migrate` |
 | **4 — Polish** (Phase 4) | `/storage/disks/[id]` history graphs, wake attribution, `/tools/logs`, `/tools/diagnostics`, `/settings/advanced`, `/tools/terminal` |
 | **Post-1.0** | `/tools/assistant` |
 
 Notifications and a sync/scrub schedule are Tier 1 because Phase 1's definition of done is running the author's own array for a month (doc 07 §1) — an array that cannot report a dead disk or a blocked sync is not one to trust with real data. Config backup exists from Phase 1 via the CLI (`hoserva config export`); its UI arrives in Tier 2.
 
-Tier 1 plus Tier 2 is a working, honest NAS. Tier 3 is what makes an Unraid user switch.
+Tier 1 plus Tier 2 is a working, honest NAS. Tier 3 makes it a complete home server, and is what users migrating an existing setup need.
