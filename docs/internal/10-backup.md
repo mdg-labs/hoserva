@@ -86,7 +86,7 @@ Two paths:
 
 **Bare-metal restore** — the important one. `hoserva config import <archive>` on a freshly installed system (the same command as in-place restore; it detects a fresh install and runs this flow):
 
-1. Read the manifest, check version compatibility
+1. Read the manifest and check compatibility: an archive from an older Hoserva is upgraded by the same schema-migration runner as a normal upgrade (doc 01 §4, D16); an archive from a newer Hoserva is refused
 2. Scan attached disks and match against the recorded serials
 3. **Show the mapping and require confirmation** — disks may have moved, been replaced, or be absent
 4. Restore the DB, regenerate configs, remount the pool

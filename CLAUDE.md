@@ -12,7 +12,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 
 | Doc | Read before working on |
 |---|---|
-| `00-overview.md` | Anything — scope and the **decision log (D1–D15)** |
+| `00-overview.md` | Anything — scope and the **decision log (D1–D16)** |
 | `01-architecture.md` | Daemon, API, CLI, jobs, security, disk layout |
 | `02-storage-engine.md` | Pool mounts, parity, threshold guard, change journal, disk lifecycle |
 | `03-webui-spec.md` | Any UI page — including its coss component and particle choices |
@@ -40,6 +40,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 - **Never interpolate user or template input into a shell command.** Parse into structured arguments; `exec` with an argv, never `sh -c`.
 - **One placement algorithm**: mergerfs's. The mover writes through a mergerfs mount; nothing computes placement itself (doc 09 §2).
 - **`api/openapi.yaml` is the hand-written contract**; generated Go and TS types are committed.
+- **One central database schema; schema migrations are generated and immutable** (D16). Change `internal/store/schema/schema.sql` and run `make db-migration`; never hand-write or edit a file in `internal/store/migrations/`.
 - **Nothing on a timer walks a data disk** — no polled `snapraid diff`, no live `du`; spindown is a product requirement (doc 02 §1, Q13).
 
 # Safety rules — hard constraints
@@ -48,8 +49,9 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 - **The threshold guard is not optional, and its tests may never be weakened, skipped or loosened** — not to make a build pass, not "temporarily".
 - **Copy-verify-delete, never move-and-hope.** Array-to-array relocations are **two-phase**: copy, verify, sync, then delete (Q14).
 - **Anything that can lose data gets its test before its implementation.**
+- **Every schema migration is data-safe** (D16): no drop, type change or table rebuild except as the contract step of an expand/contract change whose data already has a new home, and every data transform passes the upgrade test against every released fixture database before it lands.
 - **Migration is never destructive before the point of no return** (doc 05 §5), and verifies with checksums, not counts.
-- Issues touching the guard, the mover/relocation delete path, the migration import, `packaging/`, or PCI/USB passthrough's VFIO/bootloader changes (doc 14 §3) carry `safety-critical`.
+- Issues touching the guard, the mover/relocation delete path, the Unraid migration import, schema migrations and data transforms (D16), `packaging/`, or PCI/USB passthrough's VFIO/bootloader changes (doc 14 §3) carry `safety-critical`.
 
 # Real disks are off-limits — the lab is the only storage environment
 
@@ -99,7 +101,7 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 | Area | Paths |
 |---|---|
 | `area:storage` | `internal/disk/`, `internal/pool/`, `internal/parity/`, `internal/cache/`, `testdata/configs/` |
-| `area:api` | `api/`, `internal/api/`, `internal/store/`, `internal/model/`, `internal/job/`, `internal/config/`, `internal/notify/`, `cmd/hoservad/`, `cmd/mockapi/`, `web/fixtures/` |
+| `area:api` | `api/`, `internal/api/`, `internal/store/`, `internal/model/`, `internal/job/`, `internal/config/`, `internal/notify/`, `cmd/hoservad/`, `cmd/mockapi/`, `web/fixtures/`, `testdata/db/` |
 | `area:web` | `web/` |
 | `area:cli` | `cmd/hoserva/` |
 | `area:shares` | `internal/share/` |
@@ -112,7 +114,7 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 | `area:site` | `site/` |
 | `docs` (type, no area) | `docs/internal/` |
 
-**Always-shared files** — any change touching them serializes against every other change that does: `CLAUDE.md`, `Makefile`, `go.mod`, `go.sum`, `go.work`, `api/openapi.yaml`, `api/gen/`, `web/package.json` and its lockfile, `docs/internal/13-open-questions.md`, `.gitignore`, `LICENSE`.
+**Always-shared files** — any change touching them serializes against every other change that does: `CLAUDE.md`, `Makefile`, `go.mod`, `go.sum`, `go.work`, `api/openapi.yaml`, `api/gen/`, `web/package.json` and its lockfile, `docs/internal/13-open-questions.md`, `internal/store/schema/`, `internal/store/migrations/`, `.gitignore`, `LICENSE`.
 
 ## Spikes
 
@@ -136,5 +138,6 @@ A `spike` issue's deliverable is **recorded findings, not product code**: a find
 - A second placement algorithm beside mergerfs's create policy.
 - Anything on a timer that walks a data disk.
 - Weakening the threshold guard or its tests.
+- Editing an existing schema migration, or a schema migration that drops data without a new home for it.
 - Deleting a source file on a data disk before the sync that covers its copy.
 - Vendoring the Community Applications feed or its templates into the repo (doc 04 §4, doc 06 §2).

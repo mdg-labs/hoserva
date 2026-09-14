@@ -154,7 +154,7 @@ cmd/hoserva/          # CLI entry point
 cmd/hoservad/         # daemon entry point
 internal/
   api/                 # REST handlers, SSE hub, auth middleware
-  store/               # SQLite access, migrations
+  store/               # central schema, generated schema migrations + runner, sqlc queries (D16)
   model/               # domain types: Disk, Pool, Share, Stack, Job
   disk/                # block device enumeration, identity (Q21), SMART, spin state + wake events, partitioning
   pool/                # mergerfs orchestration: catch-all + per-share mounts (Q12), mount units
@@ -220,6 +220,30 @@ Every long-running operation (sync, scrub, rebuild, mover, disk format, containe
 
   The nightly maintenance chain (Q30) runs its steps in sequence and holds each class in turn.
 - **Every sync goes through the threshold guard** (doc 02 §2), whatever triggered it — schedule, disk add, evacuation, or a manual click.
+
+### Database schema and schema migrations (D16, Q60)
+
+The SQLite database is the system's definition (D4): a schema migration that loses data loses the user's shares, users or disk mapping. Three rules follow from that.
+
+**One central schema.** `internal/store/schema/schema.sql` is the only hand-edited description of the database. Typed Go query code is generated from it with sqlc (`internal/store/queries/*.sql` in, `internal/store/db/` out, committed like `api/gen/`). Nothing else declares a table.
+
+**Schema migrations are generated and immutable.** `make db-migration NAME=<slug>` compares the schema the existing migrations produce with `schema.sql` and writes the next numbered file to `internal/store/migrations/`. After that, the file is never edited; a mistake is corrected by changing `schema.sql` and generating another migration.
+
+- `internal/store/migrations/checksums` records every file's hash. `make db-check` fails when an existing file changes, and on drift: replaying every migration into an empty database must produce exactly `schema.sql`.
+- The daemon records the hash of every migration it applies and refuses to start if an embedded migration no longer matches what was applied.
+
+**Every schema migration is data-safe.**
+
+- The generator never emits drops. A migration containing `DROP TABLE`, `DROP COLUMN`, a column type change or a table rebuild fails `make db-check`, unless it is registered as the *contract* step of an expand/contract change whose data already has a new home.
+- Moving data needs knowledge no schema diff has (`size_mb` becoming `size_bytes`). Only in that case is there a **data transform** — the single exception to generation: a Go function in `internal/store/transforms/`, bound to a migration version and tested against every fixture database. It stays out of the migration files so those remain purely generated, and it runs in the same transaction as its migration. Every change a generated migration can carry safely on its own gets no transform.
+- The order is expand (add the new structure), transform (copy and convert), then contract (remove the old structure) — the contract in a later release than the transform, never the same one. Data with no new home is never dropped.
+
+**Applying schema migrations at startup.**
+
+1. The daemon compares the database's schema version with its embedded migrations. A database newer than the binary is refused: an older binary never runs against a newer schema.
+2. Before the first pending migration, it writes a consistent snapshot with `VACUUM INTO` to `/var/lib/hoserva/backups/pre-migration/` (doc 10 §1's consistency rule), keeping the snapshots of the last three upgrades.
+3. All pending migrations and their data transforms run in one transaction. Foreign-key enforcement is suspended for that transaction and `PRAGMA foreign_key_check` runs before commit — SQLite's documented procedure for table rebuilds — followed by `PRAGMA integrity_check`.
+4. Any failure rolls the transaction back, and the daemon exits with the failing migration and the snapshot path in its log and systemd status. There are no down migrations; returning to an older release means restoring that release's snapshot.
 
 ---
 

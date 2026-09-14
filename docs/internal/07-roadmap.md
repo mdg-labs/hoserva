@@ -24,7 +24,7 @@ Short, disposable experiments that answer the questions capable of invalidating 
 
 ### Phase 1 — Storage core (MVP)
 
-**Starts with the foundation, before any feature code** (doc 12 §5): loop-device harness and lab container, provider interfaces and fakes, golden-file infrastructure, `openapi.yaml` and generation, mock API server.
+**Starts with the foundation, before any feature code** (doc 12 §5): loop-device harness and lab container, provider interfaces and fakes, golden-file infrastructure, `openapi.yaml` and generation, the central database schema with schema-migration generation, checksums and fixture upgrade tests (D16, Q60), mock API server.
 
 Then: array setup (one or two parity disks), pool management with the per-share mount topology, parity with the threshold guard and change journal, the nightly maintenance chain, disks and SMART, spin-state event log, dashboard, jobs, notifications, config backup (CLI, local destinations), CLI, `.deb` and the apt repository, depending on Debian 13's mergerfs and SnapRAID packages with an explicit version range (Q7). UI tier 1 from doc 03 §10.
 
@@ -91,6 +91,7 @@ Hardware beta, wake attribution (may slip past 1.0 — Q32), diagnostics, ISO bu
 | R13 | **An agent touches a real disk during development** | High — the dev host's own disk | Labs only via `make lab-up` in a loop-and-FUSE-only container, namespaced per lane; hard rules in `CLAUDE.md` and in every orchestrate dispatch; the real array is touched only by a human (doc 12 §5, Q45) |
 | R14 | **PCI/USB passthrough is unreliable across the hardware variety homelab boxes actually have** (IOMMU groups, ACS, BIOS quirks) | Medium-High — the single hardest part of doc 14 | Pre-flight `hoserva vm passthrough check` reports compatibility before commit; a device the host needs is structurally unassignable; explicitly documented as best-effort and hardware-dependent, never promised (doc 14 §3) |
 | R15 | **`libvirtd`'s privileged surface (direct device binding) widens the daemon's attack surface** | Medium | Same threat-model posture as doc 01 §7; console proxied through existing session auth, never a raw exposed port; passthrough attach/detach audit-logged; no VM image gallery to introduce an untrusted-image problem (doc 14 §6) |
+| R16 | **A schema migration silently loses configuration** | High — shares, users and disk mappings live in the database | One central schema with generated, immutable schema migrations; drops only as the contract step of expand/contract; pre-migration snapshot and single-transaction apply; every released schema's fixture database upgraded in CI (D16) |
 
 ---
 
