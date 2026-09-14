@@ -10,11 +10,11 @@ Short, disposable experiments that answer the questions capable of invalidating 
 
 | Spike | Question | Kill criterion |
 |---|---|---|
-| **Spindown under mergerfs** | Do array disks stay in standby during idle and during appdata-only activity? | If disks wake constantly and cannot be tuned, the product fails at something users care about daily |
-| **Unraid disk adoption** | Can a real Unraid XFS array be mounted and unioned on Debian with the share structure intact? | If not, the migration story collapses and with it the main adoption argument |
-| **Template conversion rate** | What percentage of a few hundred real CA templates convert cleanly? | Below ~80% clean, the app catalog needs a different approach |
-| **CA feed licensing** | Is consuming the feed acceptable, legally and to its maintainer? | If not, fall back to a native catalog (doc 04 §4) — not fatal, but changes the plan |
-| **Loop-device harness fidelity** | Does SnapRAID behave identically on loop devices? | If not, the entire dev workflow needs rethinking before any code is written |
+| **S1 — Spindown under mergerfs** | Do array disks stay in standby during idle and during appdata-only activity? | If disks wake constantly and cannot be tuned, the product fails at something users care about daily |
+| **S2 — Unraid disk adoption** | Can a real Unraid XFS array be mounted and unioned on Debian with the share structure intact? | If not, the migration story collapses and with it the main adoption argument |
+| **S3 — Template conversion rate** | What percentage of a few hundred real CA templates convert cleanly? | Below ~80% clean, the app catalog needs a different approach |
+| **S4 — CA feed licensing** | Is consuming the feed acceptable, legally and to its maintainer? | If not, fall back to a native catalog (doc 04 §4) — not fatal, but changes the plan |
+| **S5 — Loop-device harness fidelity** | Does SnapRAID behave identically on loop devices? | If not, the entire dev workflow needs rethinking before any code is written |
 | **S6 — Per-share mount topology** | Do per-share mergerfs mounts over a catch-all mount (doc 02 §1, Q12) mount reliably at boot, stay quiet for spindown, and does `mspmfs` fall back as documented (Q11)? | If not, fall back to the two-mount tiered design and shrink per-share cache modes (R12) |
 | **S7 — Change journal** | Does a fanotify filesystem mark on each data disk count changes accurately without waking disks (Q13)? | If not, the parity indicator shows "last synced" only, and a timer diff stays forbidden |
 | **S8 — Dependency sourcing** | Do Debian 13's mergerfs and SnapRAID packages cover what the design needs, or must Hoserva's apt repo carry its own builds (Q7)? | Not fatal; decides packaging work in Phase 1 |

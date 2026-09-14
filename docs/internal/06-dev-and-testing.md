@@ -302,6 +302,7 @@ Per doc 05 §2, build a snapshot for each variant that must be supported or expl
 - `unraid-named-pools` — two pools; assert mapping and path flags (doc 04 §5)
 - `unraid-no-cache`
 - `unraid-encrypted`, `unraid-zfs-disk` — **refusal fixtures**: assert the scan detects and refuses with the right message (Q22, Q23)
+- `unraid-with-vms` — a handful of domains in `libvirt.img` on the array, at least one with a passthrough device referenced; feeds doc 07 Phase 3.5's definition of done and spike S11 (doc 14 §5)
 
 ### Migration test procedure
 
@@ -364,8 +365,10 @@ Before 1.0, a small beta group running varied hardware will surface more than an
 | Golden-file config diff | Hosted | Every push and PR |
 | Frontend build + component tests | Hosted | Every push and PR |
 | Loop-device integration (L2) | Hosted (`sudo`, ephemeral) | Every push and PR |
+| Schema-migration fixture upgrade (D16) | Hosted | Every push and PR |
 | `.deb` build (amd64 + arm64) | Hosted | Every push and PR |
 | VM end-to-end (L3) | Self-hosted, nested virt — or hosted if S9 allows | Nightly on `main` + pre-release |
+| Hoserva's own VM-management suite (Phase 3.5, nested KVM) | Self-hosted — or hosted if S10 allows | Nightly on `main` + pre-release |
 | Migration suite | Self-hosted | Nightly on `main` + pre-release |
 | Playwright | Self-hosted | Nightly on `main` + pre-release |
 

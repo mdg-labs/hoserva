@@ -457,7 +457,7 @@ doc 06 §3's `privileged: true` plus `/dev:/dev` gives the container every host 
 ### Q46 — Branching and review with agent-driven development
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 12 §5, §6
 
-**Default: work is landed by the `orchestrate` skill as independently verified local commits on `main`. The maintainer reads and pushes; nothing agent-made is pushed automatically. CI runs on push. Pull requests are the path for external contributors. Commits touching `safety-critical` paths (threshold guard, mover/relocation delete path, migration import, `packaging/`) are listed separately in every orchestrate report, for a line-by-line read before pushing.**
+**Default: work is landed by the `orchestrate` skill as independently verified local commits on `main`. The maintainer reads and pushes; nothing agent-made is pushed automatically. CI runs on push. Pull requests are the path for external contributors. Commits touching `safety-critical` paths (threshold guard, mover/relocation delete path, migration import, schema migrations and data transforms — D16, `packaging/`, PCI/USB passthrough's VFIO/bootloader changes — doc 14 §3) are listed separately in every orchestrate report, for a line-by-line read before pushing.**
 Doc 12 §6 prescribed "feature branches, squash-merged", and doc 12 §5 a "protected list of files requiring explicit human review". This default keeps both intents inside the issue-driven agent workflow, whose unit of review is the verified commit.
 
 ---

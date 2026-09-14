@@ -232,7 +232,7 @@ That ordering feels slow for the first week and pays back continuously afterward
 
 - **Pre-commit hooks** running lint and unit tests, so broken code doesn't accumulate
 - **CI as the arbiter**, not local runs — doc 06 §7's pipeline
-- **Safety-critical paths** requiring a human line-by-line read before push: the threshold guard, the mover/relocation delete path, the migration import, schema migrations and data transforms (D16), anything in `packaging/`. Issues touching them carry the `safety-critical` label; the verifier applies an extra data-safety review to them, and every orchestrate report lists their commits separately (Q46)
+- **Safety-critical paths** requiring a human line-by-line read before push: the threshold guard, the mover/relocation delete path, the migration import, schema migrations and data transforms (D16), anything in `packaging/`, or PCI/USB passthrough's VFIO/bootloader changes (doc 14 §3). Issues touching them carry the `safety-critical` label; the verifier applies an extra data-safety review to them, and every orchestrate report lists their commits separately (Q46)
 - **Never point the agent at real hardware.** Doc 06 §5's hard rule applies with more force when an agent is driving: the lab container and the VMs are the only environments, and the real array is touched only by a human who has read the diff. The lab container exposes loop devices and FUSE only, so a mistyped device path cannot reach a real disk (doc 06 §3, Q45)
 
 ### Issue-driven workflow
