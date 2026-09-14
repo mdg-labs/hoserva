@@ -69,8 +69,11 @@ hoserva/
 │   └── gen/                    generated Go + TS types — committed
 │
 ├── web/                        Vite + React SPA, embedded via go:embed (Q8)
+│   ├── components.json         shadcn CLI config for the @coss registry (D15)
 │   ├── src/routes/
-│   ├── src/components/
+│   ├── src/components/ui/      coss primitives, added and updated with the shadcn CLI
+│   ├── src/components/patterns/ shared UI patterns from doc 03's component system
+│   ├── src/components/         wrappers for Q59's libraries (chart, editor, terminal, console)
 │   ├── src/lib/api/            uses api/gen TS types
 │   └── fixtures/               shared with backend tests
 │
@@ -188,7 +191,7 @@ Subdirectory-level files for areas with their own rules:
 - `internal/parity/CLAUDE.md` — SnapRAID invariants, what must never be run without confirmation, the threshold guard contract
 - `internal/cache/CLAUDE.md` — the copy-verify-delete contract, open-file checks, resumability requirements
 - `internal/migrate/CLAUDE.md` — never destructive, checksum verification, the point-of-no-return boundary
-- `web/CLAUDE.md` — component conventions, the plain-language labelling rule, fixtures
+- `web/CLAUDE.md` — coss-first rule and doc 03's component map (D15), local edits to `src/components/ui/` kept minimal so `shadcn add --diff` stays readable, the plain-language labelling rule, fixtures
 - `internal/assistant/CLAUDE.md` — the safety boundaries from doc 11 §6
 
 These are the areas where a wrong-but-plausible implementation destroys data, and where local, specific instructions beat general ones.
