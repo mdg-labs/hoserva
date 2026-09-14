@@ -12,7 +12,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 
 | Doc | Read before working on |
 |---|---|
-| `00-overview.md` | Anything — scope and the **decision log (D1–D12)** |
+| `00-overview.md` | Anything — scope and the **decision log (D1–D14)** |
 | `01-architecture.md` | Daemon, API, CLI, jobs, security, disk layout |
 | `02-storage-engine.md` | Pool mounts, parity, threshold guard, change journal, disk lifecycle |
 | `03-webui-spec.md` | Any UI page |
@@ -26,6 +26,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 | `11-ai-assistant.md` | Post-1.0 assistant |
 | `12-repo-architecture.md` | Repo layout, agent workflow |
 | `13-open-questions.md` | **Every unsettled question, each with a recommended default** |
+| `14-virtual-machines.md` | VM management, libvirt/KVM, PCI/USB passthrough, Unraid VM migration |
 
 **Decisions vs. defaults.** A `Dn` in doc 00 §5 is settled — reopening it needs a new reason, not a new preference. A `Qn` in doc 13 is a recommended default the docs are written to — follow it, and if your work shows it is wrong, say so in your report or issue rather than silently diverging. Work that settles or changes a default updates its doc 13 entry in the same change.
 
@@ -48,7 +49,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 - **Copy-verify-delete, never move-and-hope.** Array-to-array relocations are **two-phase**: copy, verify, sync, then delete (Q14).
 - **Anything that can lose data gets its test before its implementation.**
 - **Migration is never destructive before the point of no return** (doc 05 §5), and verifies with checksums, not counts.
-- Issues touching the guard, the mover/relocation delete path, the migration import, or `packaging/` carry `safety-critical`.
+- Issues touching the guard, the mover/relocation delete path, the migration import, `packaging/`, or PCI/USB passthrough's VFIO/bootloader changes (doc 14 §3) carry `safety-critical`.
 
 # Real disks are off-limits — the lab is the only storage environment
 
@@ -89,7 +90,7 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 | Kind | Labels |
 |---|---|
 | Type (exactly one) | `feat`, `bug`, `chore`, `docs`, `spike` |
-| Area | `area:storage`, `area:api`, `area:web`, `area:cli`, `area:shares`, `area:containers`, `area:migration`, `area:backup`, `area:packaging`, `area:devenv`, `area:site` |
+| Area | `area:storage`, `area:api`, `area:web`, `area:cli`, `area:shares`, `area:containers`, `area:vm`, `area:migration`, `area:backup`, `area:packaging`, `area:devenv`, `area:site` |
 | Extras | `epic`, `safety-critical`, `needs-sudo`, `needs-hardware`, `blocked` |
 | Status (machine-managed) | `status:new`, `status:ready`, `status:in-progress`, `status:in-review`, `status:implemented`, `status:closed`, `status:cancelled` |
 
@@ -103,6 +104,7 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 | `area:cli` | `cmd/hoserva/` |
 | `area:shares` | `internal/share/` |
 | `area:containers` | `internal/container/`, `internal/template/`, `templates/`, `testdata/unraid-templates/` |
+| `area:vm` | `internal/vm/` (Hoserva's own VM-management feature, doc 14 — not `scripts/vm/`, which is the L3 test harness) |
 | `area:migration` | `internal/migrate/` |
 | `area:backup` | `internal/backup/` |
 | `area:packaging` | `packaging/`, `scripts/release/` |

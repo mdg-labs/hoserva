@@ -25,6 +25,7 @@ labels=(
   "area:cli|0e8a16|The hoserva CLI (cmd/hoserva)"
   "area:shares|bfdadc|SMB/NFS shares, users, permissions (internal/share)"
   "area:containers|0052cc|Container management, templates, catalog, converter"
+  "area:vm|5b0bb5|VM management: libvirt/KVM, passthrough (internal/vm) — not the L3 test-VM harness"
   "area:migration|b60205|Unraid migration (internal/migrate)"
   "area:backup|fbca04|Config and appdata backup (internal/backup)"
   "area:packaging|e99695|.deb, apt repo, ISO (packaging/, scripts/release)"

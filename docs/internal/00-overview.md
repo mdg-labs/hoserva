@@ -22,6 +22,7 @@
 | **11-ai-assistant.md** | Built-in assistant (post-1.0): BYOK and local models, tools, redaction, safety boundaries |
 | **12-repo-architecture.md** | Monorepo layout, `CLAUDE.md` strategy, agent-driven development workflow |
 | **13-open-questions.md** | **Every unsettled question, each with a recommended default** — the docs are written to those defaults |
+| **14-virtual-machines.md** | VM management scope, libvirt/KVM architecture, PCI/USB passthrough, Unraid VM migration |
 
 Where a section says *(Qn)*, the choice it describes is a recommended default from doc 13, not a settled decision.
 
@@ -101,6 +102,7 @@ That last point drives most of the UI decisions in doc 03.
 - Local users, TOTP
 - Config backup/restore and appdata backup (doc 10)
 - CLI with parity to the web UI
+- VM management via libvirt/KVM: lifecycle and PCI/USB passthrough, single node — Phase 3.5 (doc 14)
 
 ### v1 explicitly out of scope
 
@@ -108,8 +110,8 @@ That last point drives most of the UI decisions in doc 03.
 |---|---|
 | Custom storage backend or kernel module | Enormous risk and work for no differentiation |
 | ZFS support | Different model entirely; TrueNAS already serves it well |
-| Clustering, multi-node | Wrong audience |
-| VM management (libvirt/KVM) | Large surface area; roadmap, not v1 |
+| Clustering, multi-node, live VM migration between hosts | Wrong audience; single-node product (doc 14) |
+| A VM image/OS gallery, mediated/vGPU passthrough | First cut is local lifecycle plus full PCI/USB passthrough only; no image marketplace, no SR-IOV slicing (doc 14) |
 | Generic Docker management | Portainer exists and is good; see doc 04 |
 | Three or more parity disks | SnapRAID supports up to six; no homelab need justifies the test matrix (Q19) |
 | Encrypted (LUKS) arrays | Detected and refused in v1; recovery risk outweighs convenience (Q22) |
@@ -136,6 +138,8 @@ Decisions already settled, with rationale. Reopening any of these needs a new re
 | D10 | Pool at `/mnt/user`, cache at `/mnt/cache` | Path-identical to Unraid → zero rewrites in migrated Compose files |
 | D11 | Real boot device (small SSD or NVMe partition), not USB | Debian writes far too much for a stick; Unraid's RAM-boot model is not replicable |
 | D12 | Unraid XML template conversion is a first-class feature | Doubles as migration tooling *and* a day-one app catalog |
+| D13 | VM engine is libvirt/KVM, orchestrated not reimplemented, sourced as a Debian package dependency like mergerfs/SnapRAID rather than an external prerequisite like Docker | Same engine Unraid's own VM Manager runs on; D1's principle extends cleanly; `libvirt-daemon-system`/`qemu-system-x86` are stable, slow-moving Debian packages, unlike the fast-release Docker Engine that D8 deliberately keeps external |
+| D14 | VM management is narrow: single-node lifecycle plus local PCI/USB passthrough, no live migration or clustering, no VM image gallery | Same narrowing discipline as D6 for containers; matches Unraid's own single-box VM model and the existing multi-node exclusion above |
 
 ---
 

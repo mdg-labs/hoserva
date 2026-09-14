@@ -28,6 +28,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43 |
 | **Before Phase 3** | Q22–Q25, Q33–Q35, Q37–Q39 |
+| **Before Phase 3.5** | Q51–Q58 |
 | **Before 1.0** | Q47, Q50 |
 
 ---
@@ -309,6 +310,58 @@ A version number frozen into a 2026 spec is already stale by the time Phase 3 st
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 12 §2, §7
 
 **Default: `templates/` in this monorepo, with its CI validation, until the first external template PR, then split per doc 12 §7.**
+
+---
+
+## Virtual machines
+
+### Q51 — VM disk image placement and format
+**Status:** Default · **Gate:** Phase 3.5 · **Affects:** doc 02 §3, doc 09, doc 14 §2
+
+**Default: vdisks are qcow2, sparse, under `/mnt/user/domains/<vm-name>/` — a share like any other, using the same cache-mode choices as Q12.** A running VM's vdisk is never touched by the mover; relocating between cache and array is a stop-VM, relocate, restart operation.
+The `domains` share path matches Unraid's own exactly (D10-style path compatibility), so a migrated VM's domain XML disk paths need no rewriting at all.
+
+### Q52 — The threshold guard vs. large VM disk images
+**Status:** Default · **Gate:** Phase 3.5 · **Affects:** doc 02 §2, Q13, Q15, Q16, doc 14 §2
+
+**The gap:** a running VM can dirty gigabytes inside one qcow2 file between syncs. That's one file rewriting, not many files deleted, so it doesn't trip the guard by count — but the guard's ransomware-detection value (doc 01 §7's threat-model note) doesn't reach *inside* a VM's own filesystem, and a nightly sync can move a large amount of parity data for what looks like a single, unremarkable file change.
+
+**Default:** vdisk shares are **not** given special guard exemptions — the existing count/percentage logic already doesn't trip on one large file rewrite — but the UI marks VM disk shares as "not diff-protected against changes inside the VM," so the guard's silence there isn't mistaken for a stronger guarantee than it is.
+
+### Q53 — PCI/USB passthrough and VFIO binding
+**Status:** Default · **Gate:** Phase 3.5 · **Affects:** doc 01 §7, doc 06 §6, doc 14 §3
+
+**Default: IOMMU groups are detected and shown read-only at any time; a device is bound to `vfio-pci` only on explicit user assignment, applied at boot (IOMMU kernel parameter where needed, generated `vfio-pci` device list) and requiring a reboot** — static binding at boot, as Unraid also does, never a live unbind. A device the host itself depends on (boot controller, sole console GPU) is never offered as assignable. `hoserva vm passthrough check` reports IOMMU/ACS group isolation before the user commits to the reboot.
+Live, in-session device unbinding is the single most common way passthrough bricks a box's own boot storage or networking; the reboot-applied model avoids that class of failure entirely.
+
+### Q54 — VM networking
+**Status:** Default · **Gate:** Phase 3.5 · **Affects:** doc 03, Q37, doc 14 §4
+
+**Default: VMs default to a bridged interface (`vmbr0`) over the host's physical NIC, giving a real LAN-visible DHCP address** — the model Unraid uses and what homelab users expect from a VM that should act as its own network host (a router VM, a game server). An isolated/NAT network is offered as the alternative.
+This is a separate layer from container networks (Q37), sharing only the narrowing discipline of offering the handful of options that cover real use cases, not a general network-topology editor.
+
+### Q55 — Unraid VM migration mechanics
+**Status:** Default · **Gate:** Phase 3.5 (feeds doc 05) · **Affects:** doc 05, doc 14 §5
+
+**The finding:** Unraid's VM Manager is libvirt underneath, so an exported domain is already libvirt domain XML — the format Hoserva itself generates. This is closer to doc 05's array-adoption problem than to doc 04's format-conversion problem.
+
+**Default:** after disk adoption, the migrator attaches Unraid's `libvirt.img` (default `/mnt/user/system/libvirt/`, on the array — not in the Flash Backup) read-only, parses each domain's XML, rewrites only the fields that diverge (network bridge name, OVMF firmware path) and **re-validates passthrough device addresses against the target machine's own IOMMU scan rather than trusting the source** — those addresses are hardware-specific and the target is not guaranteed to be the same box. Vdisks under `/mnt/user/domains` are adopted in place with the rest of the array and verified by checksum like other adopted data, not copied. Nothing autostarts on import; rewritten XML is reviewed side by side with the source first, mirroring doc 04 §5.
+
+### Q56 — Where VMs sit in the job system
+**Status:** Default · **Gate:** Phase 3.5 · **Affects:** doc 01 §4, doc 14 §2
+
+**Default: a new VM job class** (start, stop, create, delete, snapshot, clone, migration-import), mutually exclusive with other VM jobs on the *same* VM, independent of the Parity/Array-write/Topology/Service classes otherwise. Relocating a VM's disk between cache and array is instead an **Array-write**-class job, same as any mover/relocation action, and requires the VM to be stopped first.
+
+### Q57 — VM console access
+**Status:** Default · **Gate:** Phase 3.5 · **Affects:** doc 01 §5, doc 03, doc 14 §4
+
+**Default: libvirt's VNC/SPICE graphics device is never exposed as a raw port.** The API proxies it over the existing authenticated TCP/TLS connection via a WebSocket to an embedded noVNC client in the web UI — same session auth as everything else, no separate credential or port.
+Matches doc 01 §7's small-attack-surface posture; a raw VNC port is exactly the kind of second, usually-unauthenticated protocol that posture exists to avoid.
+
+### Q58 — libvirt/QEMU dependency sourcing
+**Status:** Default · **Gate:** Phase 3.5 · **Affects:** doc 00 D13, doc 14 §7
+
+**Default: depend on Debian 13's own `libvirt-daemon-system` and `qemu-system-x86` packages directly**, the same sourcing posture as mergerfs/SnapRAID (Q7) rather than Docker's external-prerequisite model (D8) — these are stable, Debian-maintained packages without the fast-release version-churn problem that keeps Docker external.
 
 ---
 

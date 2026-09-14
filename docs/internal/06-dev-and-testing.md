@@ -259,6 +259,10 @@ Runs against the VM's UI over the network. Covers the critical journeys:
 
 Test 5 is the one that must never be allowed to regress.
 
+### Testing Hoserva's own VM management (doc 14)
+
+The L3 test VM already runs on libvirt/QEMU to test Hoserva itself. Testing Hoserva's *own* VM-management feature end to end means running KVM **inside** that VM, for a domain Hoserva-under-test creates — nested virtualization. Whether hosted CI runners support nested KVM (as opposed to the outer `/dev/kvm` access S9 already confirmed) is a Phase 3.5 spike (S10, doc 07 §1); if not, that suite runs on the self-hosted nightly runner only, the same posture the rest of L3 already has (§7 below). PCI/USB/GPU passthrough itself is never simulated here — it's L4-only (§6), since it depends on real IOMMU topology and BIOS behaviour.
+
 ---
 
 ## 5. Testing the Unraid migration
@@ -328,6 +332,7 @@ An old desktop or a cheap mini PC with 3–4 second-hand disks is sufficient. Sm
 - **Thermals** under a full scrub with every disk active
 - **Actual throughput** over SMB, to catch mergerfs option mistakes that a loop device would hide
 - **Controller behaviour** — HBA and onboard SATA enumerate differently; disk identification must be robust across both
+- **PCI/USB/GPU passthrough** (doc 14 §3) — IOMMU group isolation, VFIO binding, and GPU reacquisition after VM shutdown are real-hardware-only; no VM or loop device reproduces IOMMU topology
 
 ### Beta hardware diversity
 
@@ -402,7 +407,8 @@ The authoritative layout is doc 12 §2. The testing-specific parts:
 
 ```
 scripts/devenv/         loop-device harness: create-array.sh, destroy-array.sh, seed-data.sh, inject-failure.sh
-scripts/vm/             VM lifecycle, snapshots, provisioning
+scripts/vm/             the L3 *test* VM harness (lifecycle, snapshots, provisioning) — not Hoserva's own
+                        VM-management feature, which lives in internal/vm/ (doc 14)
 testdata/configs/       golden files
 testdata/parsers/       real-world tool output corpus
 testdata/unraid-templates/  committable XML corpus (the CA corpus is fetched, §2)

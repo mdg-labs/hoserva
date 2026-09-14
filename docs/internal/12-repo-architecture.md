@@ -56,6 +56,7 @@ hoserva/
 │   ├── share/
 │   ├── container/
 │   ├── template/
+│   ├── vm/                  libvirt/QEMU orchestration, passthrough (doc 14)
 │   ├── migrate/
 │   ├── backup/                 config + appdata backup (doc 10)
 │   ├── assistant/              AI assistant (doc 11)

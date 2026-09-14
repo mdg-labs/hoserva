@@ -17,6 +17,7 @@
 | Frontend | React SPA built with Vite (Q8) | Static assets embedded in the Go binary; no Node runtime in production |
 | API | REST + SSE, over Unix socket and TCP | Consumed by both web UI and CLI |
 | Container runtime | Docker Engine + Compose plugin | **Prerequisite**, not shipped by the `.deb` |
+| Virtualization | libvirt + QEMU/KVM — Debian 13 packages, `go-libvirt` (no cgo) | Same engine Unraid's own VM Manager runs on; PCI/USB passthrough via VFIO (doc 14, Q58) |
 | Remote backup transport | rclone (optional) | Every remote backup destination (doc 10, Q41) |
 
 ### Why Go
@@ -119,8 +120,17 @@ hoserva app list
 hoserva app install <template-id>
 hoserva app convert <unraid-template.xml>
 
+hoserva vm list
+hoserva vm create --name winvm --vcpus 4 --mem 8G --disk 100G --iso win11.iso
+hoserva vm start|stop|restart|rm <name>
+hoserva vm console <name>                   # browser console over the existing session (doc 14 §4)
+hoserva vm passthrough list|check           # IOMMU groups, ACS report (doc 14 §3)
+hoserva vm passthrough assign <name> --pci 01:00.0
+
 hoserva migrate scan --flash-backup <zip>   # Unraid pre-flight (doc 05, Q25)
 hoserva migrate import
+hoserva migrate vm-scan                         # Unraid VM definitions from the adopted pool (doc 14 §5)
+hoserva migrate vm-import <domain-name>
 
 hoserva config export -o hoserva-config.tar.zst   # archive format per doc 10 §1
 hoserva config import hoserva-config.tar.zst      # in-place, or bare-metal on a fresh install
@@ -153,7 +163,8 @@ internal/
   share/               # Samba + NFS config generation, user/permission mapping
   container/           # Docker Engine API client, compose orchestration
   template/            # Unraid XML parsing, catalog, Compose generation
-  migrate/             # Unraid detection, pre-flight, import
+  vm/                  # libvirt/QEMU orchestration: domain XML generation, passthrough (doc 14)
+  migrate/             # Unraid detection, pre-flight, import (containers and VMs)
   backup/              # config + appdata backup, destinations, restore drill (doc 10)
   job/                 # job queue, progress, cancellation, checkpoints, history
   notify/              # email, Gotify, ntfy, Discord, webhook
@@ -202,9 +213,10 @@ Every long-running operation (sync, scrub, rebuild, mover, disk format, containe
   | Class | Jobs | Excludes |
   |---|---|---|
   | **Parity** | sync, scrub, fix, check | Parity, Array-write, Topology |
-  | **Array-write** | rebalance, evacuation, share relocation, mover | Parity, Topology, other Array-write on the same disks |
+  | **Array-write** | rebalance, evacuation, share relocation, mover, VM disk relocation | Parity, Topology, other Array-write on the same disks |
   | **Topology** | disk format, add/remove/replace disk, pool remount | Everything in the three storage classes |
   | **Service** | appdata backup, container update | Other Service jobs on the same container |
+  | **VM** | VM start, stop, create, delete, snapshot, clone, migration-import (doc 14 §2, Q56) | Other VM jobs on the same VM |
 
   The nightly maintenance chain (Q30) runs its steps in sequence and holds each class in turn.
 - **Every sync goes through the threshold guard** (doc 02 §2), whatever triggered it — schedule, disk add, evacuation, or a manual click.
