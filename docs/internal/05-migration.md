@@ -47,6 +47,7 @@ These properties hold for a standard single-parity XFS Unraid array. Each of the
 | Multiple named pools (Unraid 6.9+) | **Supported, flagged** | One pool maps to `/mnt/cache`; paths into other `/mnt/<pool>` names are flagged in template conversion (doc 04 §5) |
 | Parity disk smaller than largest data disk | Impossible in Unraid | Non-issue |
 | Unraid 6.12.x and 7.x | **Supported, fixture-verified** (Q24) | Any other version or unrecognised flash layout is refused unless overridden with a recorded warning |
+| VMs present (Phase 3.5) | **Supported, fixture-verified** (Q55, S11) | Domain XML read from `libvirt.img` on the adopted pool, not the Flash Backup; see §1.4, step 26, and doc 14 §5 |
 
 **Every one of these — including every refusal — gets a VM test case in doc 06.** Assumptions about someone else's on-disk format are exactly the kind of thing that is right in testing and wrong on a stranger's hardware.
 
@@ -208,6 +209,7 @@ Migration needs its own documentation, not a README section.
   recovering-files         Including "undelete" via the guided fix flow, and its limits
   backing-up-appdata
   backing-up-your-data     Pool data backup with the curated backup containers (doc 10 §3)
+  migrating-vms            Domain XML and passthrough remapping, once Phase 3.5 ships (doc 14 §5)
   exposing-safely          The "don't put this on the internet" guide
 /reference/
   cli

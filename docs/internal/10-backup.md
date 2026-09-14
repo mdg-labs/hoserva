@@ -10,6 +10,7 @@
 |---|---|---|
 | **Hoserva config** (SQLite, generated configs, templates) | **Hoserva** | Only Hoserva knows its own schema and what a consistent snapshot looks like |
 | **Container appdata** (on cache, outside parity) | **Hoserva** | Requires stopping containers in the right order; Hoserva is the only thing that knows which containers exist and which are running |
+| **VM vdisks and domain definitions** (Phase 3.5, doc 14) | **Hoserva**, off by default | Only Hoserva knows which VMs exist, whether they're running, and that a vdisk must not be copied while its QEMU process holds it open — but a full vdisk copy is large enough that opting in should be a deliberate choice, not a silent default |
 | **Bulk user data** (media, documents, the pool itself) | **The user** | Terabytes, wildly varying requirements, mature tools already exist |
 | **Off-site replication** | **The user**, with Hoserva making it easy | rclone, restic, Borg, Duplicati all do this better than a NAS UI would |
 
@@ -164,5 +165,22 @@ The onboarding flow should end with backups configured, not leave it as an exerc
 | Pre-update appdata snapshot | **On** | Local |
 | Restore drill | **On**, monthly | n/a |
 | Pool data backup | Off | User's choice, with a pointer to the guide |
+| VM backup (Phase 3.5) | Off | Local path on the pool, once enabled |
 
 Defaults that protect people who never open the settings page are worth more than options for people who do.
+
+---
+
+## 5. VM backup (Phase 3.5, doc 14)
+
+VM vdisks are large files living on cache or array (doc 14 §2), covered by neither config backup (too big, not what it's for) nor appdata backup (scoped to `/mnt/cache/appdata`, not `/mnt/user/domains`). Same reasoning as §2, applied to a different kind of file.
+
+### What ships
+
+- **Domain backup.** On schedule or on demand, `hoserva vm backup <name>` stops the VM, copies its domain XML and vdisk(s) to a destination through the same multi-destination, rclone-backed system as config and appdata backup (§1, §2), verifies, restarts the VM. Live, non-disruptive snapshotting (a libvirt external snapshot while the guest quiesces) is a post-1.0 refinement, not required for Phase 3.5.
+- **Not continuous, not incremental.** A full vdisk copy on a schedule — the same deliberately narrow posture as appdata backup's per-container archives (§2), consistent with doc 00 §4's refusal to build general-purpose backup tooling.
+- **Snapshots are not backup.** The libvirt/qcow2 internal snapshots doc 03 §11.3 offers are a convenience for undoing a recent change inside the guest — they live on the same disk as the vdisk they snapshot, and are lost with it. Stated plainly in the UI, the same posture as §3's "parity is not backup."
+
+### Schedule
+
+**Off by default** — a full VM image can be large, so enabling this is a deliberate choice, not an assumption. Weekly when enabled, plus automatically before a VM's domain definition changes materially (vCPU/RAM/passthrough edits), the same "back up before the risky moment" pattern as the appdata backup's pre-update snapshot (§2).

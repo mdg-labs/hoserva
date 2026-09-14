@@ -64,7 +64,7 @@ Connects to `libvirtd` over its local Unix socket via `go-libvirt` (pure Go, no 
 
 ### Storage placement
 
-Virtual disks live under a dedicated share, `/mnt/user/domains/<vm-name>/`, the same path Unraid itself uses — chosen for the same reason as D10: a migrated VM's domain XML disk paths need no rewriting. Cache-then-move and array-only placement (Q12) both apply, but **a VM's vdisk is never moved by the mover while the VM is running** — the mover skips any path a running domain holds open, the same "don't move what's open" discipline doc 09 already requires elsewhere. Moving a VM's storage tier is a stop-VM, relocate, restart operation, not a live one.
+Virtual disks live under a dedicated share, `/mnt/user/domains/<vm-name>/`, the same path Unraid itself uses — chosen for the same reason as D10: a migrated VM's domain XML disk paths need no rewriting. Cache-then-move and array-only placement (Q12) both apply, but **a VM's vdisk is never moved by the mover while the VM is running** — the mover skips any path a running domain holds open, the same "don't move what's open" discipline doc 09 already requires elsewhere. Moving a VM's storage tier is a stop-VM, relocate, restart operation, not a live one (doc 09's VM disk relocation subsection has the mechanics). Backing up a VM's domain and vdisks is a separate, off-by-default job — doc 10 §5.
 
 ### Job system
 

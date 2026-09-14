@@ -18,7 +18,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 | `03-webui-spec.md` | Any UI page — including its coss component and particle choices |
 | `04-containers.md` | Apps, templates, converter, catalog |
 | `05-migration.md` | The Unraid migrator |
-| `06-dev-and-testing.md` | Tests, the loop-device lab, VMs, CI |
+| `06-dev-and-testing.md` | Tests, the loop-device lab, the L3 test-VM harness (not Hoserva's own VM feature — that's doc 14), CI |
 | `07-roadmap.md` | Phases, spikes, risks |
 | `08-spike-findings.md` | Spindown and adoption research |
 | `09-allocation-and-mover.md` | Mover, rebalance, evacuation, share relocation |

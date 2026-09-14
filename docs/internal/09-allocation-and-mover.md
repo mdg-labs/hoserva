@@ -124,6 +124,14 @@ A one-shot move of a whole share between cache and array, using the same machine
 - **Cache → array:** identical to a mover run restricted to one share, ignoring the grace period.
 - Containers using the share are listed before starting, with an offer to stop them — relocating a live database is the same hazard as moving an open file.
 
+### VM disk relocation (Phase 3.5, doc 14 §2, Q56)
+
+Same machinery again, for one VM's vdisk between cache and array. `hoserva vm relocate-disk <name> --to cache|array`, or from the VM's cache-mode picker in the UI.
+
+- **The VM must already be stopped.** A vdisk is one large file a running QEMU process holds open for the VM's entire lifetime — copying it out from under a live domain is the open-file hazard above, except here the "process" is the VM itself, not a client. Hoserva refuses to start the relocation while the domain is running, rather than trying to detect the open handle mid-copy.
+- **Array-involved moves are two-phase** (Q14), same as rebalance and evacuation: copy and verify to the target, sync parity, then delete the source. Cache-only moves (both ends outside parity) are single-phase copy-verify-delete, same as a normal mover run.
+- The VM stays stopped for the whole job. The UI states this plainly rather than leaving the user to wonder why *Start* is greyed out mid-relocation.
+
 ---
 
 ## 3. Rebalancing
@@ -201,6 +209,7 @@ Every one of these runs on the loop-device harness:
 - **Evacuation does not trip the threshold guard**, and an unrelated mass deletion during the same window still does (Q15)
 - Evacuation empties a disk completely and the pool remounts cleanly without it
 - Share relocation array → cache moves the share and follows the two-phase order on the array side
+- VM disk relocation refuses to start while the domain is running, and array-involved moves follow the two-phase order (Phase 3.5)
 - ENOSPC-under-path-preserving-policy is detected and surfaced as a rebalance suggestion; `mspmfs` falls back to the parent path instead (spike S6)
 - Free-space reporting distinguishes pool-free from largest-disk-free
 - Mover ordering: the nightly chain starts the sync only after the mover finishes, however long it runs
