@@ -48,6 +48,11 @@ hoserva/
 ├── internal/                   per doc 01 §4
 │   ├── api/
 │   ├── store/
+│   │   ├── schema/schema.sql   the central schema, the only hand-edited schema file (D16)
+│   │   ├── migrations/         generated schema migrations, immutable once created, with checksums
+│   │   ├── transforms/         hand-written, tested data transforms bound to a migration
+│   │   ├── queries/            SQL for sqlc
+│   │   └── db/                 sqlc-generated Go — committed
 │   ├── model/
 │   ├── disk/
 │   ├── pool/
@@ -138,7 +143,9 @@ make test-integration
 make test-e2e         # L3, needs a VM
 make test-migration
 
-make gen              # openapi → go + ts types
+make gen              # openapi → go + ts types; sqlc queries
+make db-migration NAME=  # generate the next schema migration from schema.sql (D16)
+make db-check         # migration checksums, schema drift, data-safety scan
 make lint
 make deb
 make iso
@@ -191,6 +198,7 @@ Subdirectory-level files for areas with their own rules:
 - `internal/parity/CLAUDE.md` — SnapRAID invariants, what must never be run without confirmation, the threshold guard contract
 - `internal/cache/CLAUDE.md` — the copy-verify-delete contract, open-file checks, resumability requirements
 - `internal/migrate/CLAUDE.md` — never destructive, checksum verification, the point-of-no-return boundary
+- `internal/store/CLAUDE.md` — D16: edit `schema.sql`, never a migration file; drops only as a contract step; data transforms tested against every fixture database
 - `web/CLAUDE.md` — coss-first rule and doc 03's component map (D15), local edits to `src/components/ui/` kept minimal so `shadcn add --diff` stays readable, the plain-language labelling rule, fixtures
 - `internal/assistant/CLAUDE.md` — the safety boundaries from doc 11 §6
 
@@ -213,7 +221,7 @@ Build the harness and the test infrastructure **first**, before feature work. An
 1. `scripts/devenv/` loop-device harness + Makefile targets
 2. Provider interfaces + fakes
 3. Golden-file test infrastructure
-4. `openapi.yaml` + generation pipeline
+4. `openapi.yaml` + generation pipeline, and the central schema with `make db-migration` / `make db-check` (D16)
 5. Mock API server
 6. *Then* features
 
@@ -223,7 +231,7 @@ That ordering feels slow for the first week and pays back continuously afterward
 
 - **Pre-commit hooks** running lint and unit tests, so broken code doesn't accumulate
 - **CI as the arbiter**, not local runs — doc 06 §7's pipeline
-- **Safety-critical paths** requiring a human line-by-line read before push: the threshold guard, the mover/relocation delete path, the migration import, anything in `packaging/`. Issues touching them carry the `safety-critical` label; the verifier applies an extra data-safety review to them, and every orchestrate report lists their commits separately (Q46)
+- **Safety-critical paths** requiring a human line-by-line read before push: the threshold guard, the mover/relocation delete path, the migration import, schema migrations and data transforms (D16), anything in `packaging/`. Issues touching them carry the `safety-critical` label; the verifier applies an extra data-safety review to them, and every orchestrate report lists their commits separately (Q46)
 - **Never point the agent at real hardware.** Doc 06 §5's hard rule applies with more force when an agent is driving: the lab container and the VMs are the only environments, and the real array is touched only by a human who has read the diff. The lab container exposes loop devices and FUSE only, so a mistyped device path cannot reach a real disk (doc 06 §3, Q45)
 
 ### Issue-driven workflow

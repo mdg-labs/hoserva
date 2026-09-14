@@ -25,7 +25,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 |---|---|
 | **Now** (repo is public) | Q1, Q2 |
 | **During Phase 0** | Q36 |
-| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59 |
+| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43 |
 | **Before Phase 3** | Q22–Q25, Q33–Q35, Q37–Q39 |
 | **Before Phase 3.5** | Q51–Q58 |
@@ -74,6 +74,20 @@ Go cross-compilation is free as long as the SQLite driver is pure Go (Q6). A sup
 
 **Default: `modernc.org/sqlite` (pure Go, no CGO).**
 D3 promises a single static binary. `mattn/go-sqlite3` needs CGO, which breaks static linking and cross-compiling. Its speed advantage doesn't matter at a NAS's config-database scale.
+
+### Q60 — Schema, schema-migration and query tooling
+**Status:** Default · **Gate:** Phase 1 (foundation) · **Affects:** doc 00 D16, doc 01 §4, doc 06 §2, doc 12 §2, §3
+
+**Default:**
+
+| Job | Tool |
+|---|---|
+| Generate the next schema migration from `schema.sql` | `sqlite3def` from sqldef (MIT), comparing the schema the existing migrations produce with `schema.sql` as two SQL files, never with `--enable-drop` |
+| Checksum, drift and data-safety checks | `make db-check`, Hoserva's own Go test code |
+| Typed queries | sqlc (MIT), `engine: sqlite`, reading `schema.sql` |
+| Applying migrations on the user's machine | A small runner in `internal/store` with migrations embedded via `go:embed` — no migration tool ships in the `.deb` |
+
+sqldef skips destructive changes unless `--enable-drop` is passed, which is D16's rule as a tool default, and it compares SQL files without needing a live database. Atlas was the other candidate, but its `migrate lint` — the part that detects destructive changes — requires an Atlas Pro login since v0.38, so it can't be this project's safety check. The foundation issue confirms sqldef's SQLite output for the changes Hoserva needs (added columns, table rebuilds) before the first table lands. If it falls short, another generator goes behind the same `make db-migration` target, and the Hoserva-owned checks stay unchanged.
 
 ### Q7 — How mergerfs and SnapRAID are sourced
 **Status:** Default (S8 partial — both packages confirmed in Debian 13, doc 08) · **Gate:** Phase 1 · **Affects:** doc 00 D1, doc 01 §1, doc 03 §8.6, doc 06 §3, §7

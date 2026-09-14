@@ -77,6 +77,13 @@ testdata/
 
 Any change to generated output shows up as a reviewable diff in the PR. This is the highest-value, lowest-cost testing in the project, because config generation is where correctness actually lives.
 
+### Schema-migration upgrade tests (D16)
+
+- `testdata/db/<schema-version>.db` holds one fixture database per released schema version, with representative rows in every table: shares, users, encrypted secrets, job history, an imported Unraid setup. It is created when a release is cut and never regenerated, like a golden file.
+- CI upgrades every fixture to head through the real runner and asserts that every row and value survives, or equals its data transform's tested output.
+- Replaying all migrations into an empty database must produce exactly `schema.sql`, and no existing migration may differ from its recorded checksum.
+- A failure injected partway through an upgrade must leave the database unchanged (`PRAGMA integrity_check` clean, every row equal to the pre-migration snapshot) and the daemon stopped.
+
 ### Parser tests against real-world corpus
 
 `snapraid diff`, `snapraid status`, `smartctl -j`, `docker` output, and Unraid XML all get parsed. Collect real outputs into `testdata/` and test against them — including malformed and edge cases. Unraid XML especially: pull a few hundred templates from the CA feed and assert the converter handles all of them without panicking, with a tracked count of how many convert cleanly vs. with warnings (clean as defined in Q36). **That number is a release metric.**
