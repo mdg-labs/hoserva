@@ -1,0 +1,5 @@
+# Per-lab loop-device images and mount roots (doc 06 §3)
+.lab/
+
+# Fetched CA template corpus — fetched, never committed (doc 06 §2)
+testdata/.cache/
