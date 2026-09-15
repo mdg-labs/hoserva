@@ -90,6 +90,7 @@ Shown above page content, dismissible only when the underlying condition clears:
 - **Empty states teach.** A blank Shares page explains what a share is and links to creating one, rather than showing an empty table.
 - **Dark and light mode**, following system preference by default.
 - **Every UI string through the i18n message catalog** from the first component; English only for 1.0 (Q48).
+- **Every action and every piece of data goes through a documented API operation** (D18), via the generated TypeScript client. The UI has no private endpoints — anything it can do, a script with an API token can do.
 - **Nothing on a page load or poll walks a data disk.** Per-disk and per-share breakdowns come from data recorded at the last sync; anything that must stat live files (browse, run diff) is an explicit user action and says it will wake the disks.
 - **Mobile**: dashboard, job progress, notifications, container start/stop and logs must be fully usable on a phone. Setup wizards and the compose editor may be desktop-first.
 

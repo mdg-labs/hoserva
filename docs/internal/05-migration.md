@@ -213,7 +213,7 @@ Migration needs its own documentation, not a README section.
   exposing-safely          The "don't put this on the internet" guide
 /reference/
   cli
-  api
+  api                      Generated from api/openapi.yaml on every site build (D18)
   config-files
   template-format
 ```

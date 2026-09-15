@@ -363,6 +363,7 @@ Before 1.0, a small beta group running varied hardware will surface more than an
 |---|---|---|
 | Lint, vet, unit tests (L1) | Hosted | Every push and PR |
 | Golden-file config diff | Hosted | Every push and PR |
+| API contract checks — spec lint, generated code up to date, breaking-change diff (D18, Q63) | Hosted | Every push and PR |
 | Frontend build + component tests | Hosted | Every push and PR |
 | Loop-device integration (L2) | Hosted (`sudo`, ephemeral) | Every push and PR |
 | Schema-migration fixture upgrade (D16) | Hosted | Every push and PR |
@@ -382,6 +383,7 @@ L1 + L2 + `.deb` build must pass on every push to `main` and on every external P
 - Migration suite green on every supported variant
 - Config backup/restore round-trip verified
 - Upgrade from the previous version verified
+- No breaking API change since the previous release without a new API version (oasdiff)
 - `.deb` installs cleanly on a fresh Debian
 - Template converter clean-conversion rate has not regressed
 - Spindown acceptance test passed on the hardware box
@@ -392,7 +394,7 @@ L1 + L2 + `.deb` build must pass on every push to `main` and on every external P
 
 The frontend must be developable without any of the above running.
 
-**Mock API server** — a Go binary serving the same API from fixtures, with scenarios selectable by flag:
+**Mock API server** — a Go binary implementing the same generated server interfaces as `hoservad` (D18), backed by fixtures, with scenarios selectable by flag:
 
 ```
 go run ./cmd/mockapi --scenario=healthy
@@ -405,7 +407,7 @@ go run ./cmd/mockapi --scenario=migration-pending
 
 This lets UI work happen on any machine with `npm run dev`, and it makes the hard-to-reach states — degraded array, blocked sync, mid-rebuild — trivially reachable for design work. Those are exactly the screens that matter most and that would otherwise be designed blind.
 
-**Fixtures are shared with backend tests**, so the mock cannot drift from reality. If the API response shape changes, both break together.
+**Fixtures are shared with backend tests**, so the mock cannot drift from reality. If the API response shape changes, both break together — and because the mock implements the generated interfaces, a spec change it doesn't follow fails to compile.
 
 **Component development** in Storybook or equivalent for the complex pieces: disk tiles, capacity visualisations, diff viewer, job progress.
 

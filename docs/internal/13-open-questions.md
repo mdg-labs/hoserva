@@ -26,7 +26,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 |---|---|
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
 | **During Phase 0** | Q36 |
-| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60 |
+| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61 |
 | **Before Phase 3** | Q22–Q25, Q33–Q35, Q37–Q39, Q62 |
 | **Before Phase 3.5** | Q51–Q58 |
@@ -88,6 +88,22 @@ D3 promises a single static binary. `mattn/go-sqlite3` needs CGO, which breaks s
 | Applying migrations on the user's machine | A small runner in `internal/store` with migrations embedded via `go:embed` — no migration tool ships in the `.deb` |
 
 sqldef skips destructive changes unless `--enable-drop` is passed, which is D16's rule as a tool default, and it compares SQL files without needing a live database. Atlas was the other candidate, but its `migrate lint` — the part that detects destructive changes — requires an Atlas Pro login since v0.38, so it can't be this project's safety check. The foundation issue confirms sqldef's SQLite output for the changes Hoserva needs (added columns, table rebuilds) before the first table lands. If it falls short, another generator goes behind the same `make db-migration` target, and the Hoserva-owned checks stay unchanged.
+
+### Q63 — API contract tooling
+**Status:** Default · **Gate:** Phase 1 (foundation) · **Affects:** doc 00 D18, doc 01 §5, doc 05 §7, doc 06 §7, §8, doc 12 §2, §3
+
+**Default:**
+
+| Job | Tool |
+|---|---|
+| Spec | OpenAPI 3.1, hand-written in `api/openapi.yaml` |
+| Go server interfaces, request validation, the CLI's Go client | ogen (Apache-2.0) |
+| TypeScript client for the web UI | openapi-typescript with openapi-fetch (MIT) |
+| Spec lint, including "every operation has an `operationId` and an `x-hoserva-role`" | Spectral (Apache-2.0) with a Hoserva ruleset |
+| Breaking-change check against the last release | oasdiff (Apache-2.0) |
+| API reference on the docs site | starlight-openapi (MIT) |
+
+ogen generates a statically typed server interface and client with validation derived from the spec, and supports Server-Sent Events, which the event stream needs; a handler missing from its interface fails to compile. oapi-codegen's strict server (Apache-2.0, OpenAPI 3.0 and 3.1) is the fallback if ogen can't express something the spec needs — the foundation issue confirms ogen on the jobs, errors and SSE parts of the spec before handlers are written. Authoring the spec in TypeSpec instead of YAML is not adopted unless the hand-written YAML proves painful in practice.
 
 ### Q7 — How mergerfs and SnapRAID are sourced
 **Status:** Default (S8 partial — both packages confirmed in Debian 13, doc 08) · **Gate:** Phase 1 · **Affects:** doc 00 D1, doc 01 §1, doc 03 §8.6, doc 06 §3, §7

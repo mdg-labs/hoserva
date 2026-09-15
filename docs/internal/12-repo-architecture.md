@@ -71,8 +71,8 @@ hoserva/
 │   └── config/
 │
 ├── api/
-│   ├── openapi.yaml            hand-written, the contract
-│   └── gen/                    generated Go + TS types — committed
+│   ├── openapi.yaml            hand-written OpenAPI 3.1 — the contract and the whole API (D18)
+│   └── gen/                    generated Go server interfaces and client, TS client — committed
 │
 ├── web/                        Vite + React SPA, embedded via go:embed (Q8)
 │   ├── components.json         shadcn CLI config for the @coss registry (D15)
@@ -80,7 +80,7 @@ hoserva/
 │   ├── src/components/ui/      coss primitives, added and updated with the shadcn CLI
 │   ├── src/components/patterns/ shared UI patterns from doc 03's component system
 │   ├── src/components/         wrappers for Q59's libraries (chart, editor, terminal, console)
-│   ├── src/lib/api/            uses api/gen TS types
+│   ├── src/lib/api/            the only API access: the generated TS client from api/gen
 │   └── fixtures/               shared with backend tests
 │
 ├── templates/                  curated app catalog (doc 04 §7, Q39)
@@ -113,7 +113,7 @@ hoserva/
 
 **Generated API types are committed.** Not generated at build time. Committing them means the diff is visible in review — an accidentally breaking API change shows up as a large generated diff, which is exactly the signal wanted. It also means an agent can read the current types without running a generator first.
 
-**`openapi.yaml` is hand-written and authoritative.** Both Go and TS types generate from it. The alternative (generating the spec from Go annotations) makes the contract a side effect of the implementation, which is backwards when the CLI, the UI, and potentially third parties all consume it.
+**`openapi.yaml` is hand-written and authoritative (D18).** The Go server interfaces, the Go client the CLI uses and the TypeScript client the UI uses all generate from it, so a handler that doesn't match the spec fails to compile and neither client can call anything the spec doesn't declare. The alternative (generating the spec from Go code) makes the contract a side effect of the implementation, which is backwards when the CLI, the UI, and third parties all consume it: a renamed struct field would silently change the public API, and the mock server and frontend would have to wait for backend code.
 
 **Fixtures are shared.** `web/fixtures/` is consumed by both the mock API server and backend tests. They cannot drift because breaking one breaks both.
 
@@ -144,9 +144,10 @@ make test-integration
 make test-e2e         # L3, needs a VM
 make test-migration
 
-make gen              # openapi → go + ts types; sqlc queries
+make gen              # openapi → go server interfaces + go client + ts client; sqlc queries
 make db-migration NAME=  # generate the next schema migration from schema.sql (D16)
 make db-check         # migration checksums, schema drift, data-safety scan
+make api-check        # spec lint, generated code up to date, breaking-change diff (D18)
 make lint
 make deb
 make iso
@@ -213,7 +214,7 @@ These are the areas where a wrong-but-plausible implementation destroys data, an
 
 - **The loop-device harness is the key enabler.** An agent can create a real array, run a real sync, break a disk, and verify recovery — all in a container, in seconds, with no risk. Very few systems-level projects have a fast, safe, real-behaviour test loop. This one can, and it is worth the upfront investment in `scripts/devenv/` before writing feature code.
 - **Golden-file config tests give unambiguous feedback.** Config generation either matches or produces a reviewable diff.
-- **The OpenAPI contract is machine-checkable.** Drift between layers surfaces as a build failure, not a runtime surprise.
+- **The OpenAPI contract is machine-checkable.** Handlers implement generated interfaces and both clients are generated, so drift between layers is a compile error, not a runtime surprise.
 
 ### Recommended sequencing
 
@@ -222,7 +223,7 @@ Build the harness and the test infrastructure **first**, before feature work. An
 1. `scripts/devenv/` loop-device harness + Makefile targets
 2. Provider interfaces + fakes
 3. Golden-file test infrastructure
-4. `openapi.yaml` + generation pipeline, and the central schema with `make db-migration` / `make db-check` (D16)
+4. `openapi.yaml` + generated server interfaces and clients (D18), and the central schema with `make db-migration` / `make db-check` (D16)
 5. Mock API server
 6. *Then* features
 

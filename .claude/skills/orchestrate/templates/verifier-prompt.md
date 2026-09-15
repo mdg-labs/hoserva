@@ -93,7 +93,7 @@ commit holds only its own issue's files and only its own `Fixes #` trailer.
    them*? Unrelated refactors and drive-by fixes are findings, as is missing
    work and a bad commit split.
 3. **Design conformance.** Does it follow the design docs it touches? Does it
-   contradict a decision (`D1`–`D17`) or silently diverge from a doc 13
+   contradict a decision (`D1`–`D18`) or silently diverge from a doc 13
    default (`Qn`) without saying so? Does it respect the architecture rules
    in `CLAUDE.md` — generated config never written directly, system-touching
    code behind an interface with a fake, long work as a job, one placement

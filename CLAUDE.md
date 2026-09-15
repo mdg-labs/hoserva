@@ -12,7 +12,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 
 | Doc | Read before working on |
 |---|---|
-| `00-overview.md` | Anything — scope and the **decision log (D1–D17)** |
+| `00-overview.md` | Anything — scope and the **decision log (D1–D18)** |
 | `01-architecture.md` | Daemon, API, CLI, jobs, security, disk layout |
 | `02-storage-engine.md` | Pool mounts, parity, threshold guard, change journal, disk lifecycle |
 | `03-webui-spec.md` | Any UI page — including its coss component and particle choices |
@@ -39,7 +39,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 - **Every long-running operation is a job** — never bypass the job system; respect the mutually exclusive job classes (doc 01 §4).
 - **Never interpolate user or template input into a shell command.** Parse into structured arguments; `exec` with an argv, never `sh -c`.
 - **One placement algorithm**: mergerfs's. The mover writes through a mergerfs mount; nothing computes placement itself (doc 09 §2).
-- **`api/openapi.yaml` is the hand-written contract**; generated Go and TS types are committed.
+- **`api/openapi.yaml` is the hand-written contract, and the whole API** (D18). Every UI and CLI capability is an operation in it — no undocumented endpoints. Handlers implement the generated server interfaces; the web UI and CLI call the API only through the generated clients. Change the spec first, run `make gen`, commit `api/gen/`.
 - **One central database schema; schema migrations are generated and immutable** (D16). Change `internal/store/schema/schema.sql` and run `make db-migration`; never hand-write or edit a file in `internal/store/migrations/`.
 - **Nothing on a timer walks a data disk** — no polled `snapraid diff`, no live `du`; spindown is a product requirement (doc 02 §1, Q13).
 
@@ -133,6 +133,7 @@ A `spike` issue's deliverable is **recorded findings, not product code**: a find
 
 # Anti-patterns specific to this project
 
+- An endpoint that isn't in `api/openapi.yaml`, or a UI or CLI call that bypasses the generated client (D18).
 - A second component library, or a hand-rolled control coss already provides (D15).
 - Generic Docker management features (D6) — test every Apps request against "does this get someone from *I want X* to *X is running*".
 - A second placement algorithm beside mergerfs's create policy.
