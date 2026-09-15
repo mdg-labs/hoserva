@@ -25,9 +25,9 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | Gate | Questions |
 |---|---|
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
-| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63 |
-| **Before Phase 2** | Q26, Q27, Q41, Q43, Q61 |
-| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65 (Q33–Q35 settled → D19) |
+| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79 |
+| **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
+| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81, Q82 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
 | **Before 1.0** | Q47, Q50 |
 
@@ -147,6 +147,48 @@ Doc 01 had HTTP on `:8008` and also "HTTPS by default, HTTP redirects" with no H
 
 **Default: listen on all interfaces, but accept connections only from loopback, RFC 1918, link-local, IPv6 ULA and CGNAT `100.64.0.0/10` (Tailscale) source addresses. One warned toggle allows all sources.**
 Binding to a specific address breaks the first time DHCP hands out a new lease. Filtering on source address expresses the actual intent ("not reachable from the internet") and survives address changes. Including CGNAT keeps Tailscale, the safe remote-access path, working out of the box.
+
+### Q66 — Where releases, the apt repository and the catalog are published
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 04 §7, doc 05 §7, doc 12 §6, Q3, Q50, Q65
+
+**Default: one static project site, deployed by a single workflow — the docs site at the root, the apt repository under `/apt/` and the catalog under `/catalog/` — served from GitHub Pages at `hoserva.dev`. CI builds the apt repository with aptly and signs it with a key held only as a CI secret; users trust it through a `hoserva-archive-keyring` package and a `signed-by` source entry. Each channel keeps the last five releases per architecture.**
+A repository gets exactly one GitHub Pages site, and Q3 and Q65 both wanted it, so they share it by path. The apt source users add and the catalog URL compiled into `hoservad` must never change, which is why they live on a domain the project owns rather than on `*.github.io`; the domain is registered before the first public release (Q50). Five single-binary releases per channel and architecture fit well inside Pages' 1 GB site limit; if they ever don't, the same paths move to another static host without changing a URL.
+
+### Q67 — How Hoserva updates and rolls back itself
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §3, §7, doc 03 §8.6, doc 12 §6, Q49
+
+**Default: the update check fetches only Hoserva's own signed release index for the configured channel — never a system-wide `apt update`. The channel is a Hoserva-managed sources file. Updating installs the chosen version in a transient systemd unit after a config backup, and is refused while a Parity, Array-write or Topology job runs. `hoserva rollback` installs the previous version kept in the repository (Q66) and restores that version's pre-migration database snapshot (doc 01 §4).**
+`apt update` refreshes every source on the host — an outbound request per source the user never asked Hoserva to make — and changes what the next unrelated upgrade does. There are no down migrations (D16), so rollback is only safe as "previous package plus its snapshot", which is why the repository keeps old versions.
+
+### Q68 — Debian updates and reboots
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §6, doc 03 §8.6
+
+**Default: the `.deb` recommends `unattended-upgrades`, configured for Debian security updates only. Hoserva never reboots on its own: `/settings/updates` shows pending Debian updates and whether a reboot is required, and a reboot the user starts waits for Parity, Array-write and Topology jobs, then runs the clean shutdown sequence (Q70).**
+A home server that falls behind on security updates is a real risk for the target user, and unattended security updates are Debian's own mechanism for it. An unplanned reboot mid-sync or mid-evacuation is worse than a delayed kernel update, so the reboot stays the user's action.
+
+### Q74 — Metrics, job logs and history retention
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §4, §6, doc 03 §2, §3.4, doc 10 §1
+
+**Default: time series — SMART attributes, temperatures, throughput, CPU and RAM — live in a separate `metrics.db`, excluded from config backups and downsampled: raw samples for 48 hours, hourly for 90 days, daily for two years. Spin-state events and the audit log stay in the main database for two years. Job stdout/stderr goes to compressed files under `/var/lib/hoserva/jobs/`, kept 90 days and capped at 1 GB, oldest first; each job's summary row stays in the database.**
+Unbounded history in the main database would break doc 10 §1's single-digit-MB config backup and wear the boot SSD. Losing `metrics.db` loses graphs, never configuration, so it doesn't belong in the backup.
+
+### Q75 — Host network configuration
+**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 03 §8.2, doc 14 §4, Q54
+
+**Default: Hoserva changes host networking only when the host uses ifupdown, writing one managed file under `/etc/network/interfaces.d/`; on NetworkManager or systemd-networkd hosts the network page is read-only in v1 and says why. Every network change — address, DNS, gateway, the `vmbr0` bridge — applies with a 60-second confirm-or-revert: unless the browser confirms over the new configuration, the previous one is restored. The ISO (Phase 4) installs ifupdown.**
+A wrong address on a headless box means carrying a monitor to it; confirm-or-revert makes the mistake recoverable. One backend done well beats three done badly, and ifupdown is what a minimal Debian server install uses — confirmed on a fresh Debian 13 install in L3 when this is built.
+
+### Q76 — Installing onto a Debian system that is already in use
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §2, doc 03 §1, doc 04 §3, Q62
+
+**Default: installing never overwrites existing configuration. Onboarding's system check lists what it finds — Samba shares, NFS exports, fstab mounts, Docker containers and images — and offers each managed file for import into the database or to be left unmanaged under the drift model (doc 01 §2). Docker's data-root moves to the cache (Q62) only when the user accepts it and Docker holds no containers or images; with existing Docker data, or with no cache disk, it stays at `/var/lib/docker`.**
+The `.deb` installs onto a user's own Debian (D9), so a host with Samba shares or running containers is the normal case, not an edge. Silently replacing `smb.conf` or moving Docker's data-root would make shares and containers vanish — the loss of trust doc 01 §2 exists to prevent.
+
+### Q77 — UPS support
+**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 01 §1, doc 02 §6, doc 03 §8.1, §8.3
+
+**Default: NUT (`Recommends: nut`), with its configuration generated from the database, for a USB-attached UPS or a network NUT server. On battery: notify, pause the mover and hold scheduled syncs. At low battery, or after a configurable runtime on battery: bring running Array-write jobs to their next checkpoint, mark a running sync interrupted, and run the shutdown sequence (Q70).**
+A power cut mid-sync is recoverable (doc 02 §6), but a clean shutdown is better, and a home server without UPS integration sends users back to hand-edited NUT configuration — exactly what Hoserva exists to remove. NUT is Debian's packaged standard.
 
 ---
 
@@ -318,6 +360,39 @@ This is doc 08's refinement. It is measured by doc 06 §6's zero-IO proxy in the
 **Default: a spin-state event log (per-disk transitions with timestamps, polled without waking disks) ships in Phase 1. Process and container attribution via fanotify is targeted for Phase 4 and may slip past 1.0 without blocking the release.**
 The event log is cheap and makes R1 diagnosable from day one. Attribution is the differentiator doc 08 calls out, but it has no prior art, and 1.0 shouldn't wait on it.
 
+### Q69 — Startup order and a disk missing at boot
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §1, §6, doc 04 §3, Q12, Q21
+
+**Default: data, parity and cache mounts are `nofail` with a device timeout, so a dead disk never hangs boot, and every mountpoint directory is made immutable while empty, so a write to an unmounted path fails instead of landing on the boot device. Samba, NFS, Docker and libvirt start after `hoserva-storage.target` through managed systemd drop-ins; `hoservad` reaches that target only when every expected disk is present by identity (Q21), or once the user acknowledges the degraded state.**
+Without this, a container that starts before `/mnt/user` is mounted writes its data onto the boot device and shows the user an empty app — a quiet, common homelab failure. A missing disk is also exactly when the guard's zero-files rule has to hold (doc 02 §2), so nothing that writes to the pool runs before a human has seen the degraded state.
+
+### Q70 — Stopping the array and shutting down
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §3, §4, doc 02 §4, doc 03 §3.2, Q29
+
+**Default: `hoserva array stop` — *Stop array* on `/storage` — puts the system in maintenance mode: new jobs are refused, running resumable jobs stop at their next checkpoint and the rest are marked interrupted, VMs shut down (gracefully, then forced after a timeout), containers stop, Samba and NFS stop, then the per-share mounts, the catch-all and the disks unmount. `hoserva array start` reverses it. System shutdown and reboot run the same sequence through `hoserva-storage.target`. The replace and upgrade flows require maintenance mode, or a powered-off box, before a disk is physically touched.**
+Every NAS owner eventually needs "stop everything so I can swap a disk". Without a defined order, a container holding a file open blocks the unmount, or a disk is pulled mid-write.
+
+### Q71 — Replacing a healthy disk with a larger one
+**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 02 §4, doc 03 §3.2, Q14, Q20
+
+**Default: two guided flows, each keeping the old disk untouched until the new one verifies.**
+- **Larger parity disk:** copy the parity file to the new disk, verify it byte for byte, switch the configuration, and pass `snapraid check` before the old parity disk is released — the array stays protected throughout. When a new data disk would be larger than the current parity, the flow offers this first and then reuses the old parity disk as a data disk.
+- **Larger data disk:** in maintenance mode (Q70), copy the old disk's files to the new one, preserving ownership, xattrs and timestamps; mount the new disk at the same `/mnt/diskN`; and require `snapraid diff` to show no removed or updated files before the old disk is released.
+
+Both follow SnapRAID's documented replacement procedures, and the exact diff expectations are confirmed against SnapRAID 12.4 in the lab before this ships. Rebuilding from parity (`snapraid fix`) stays reserved for failed disks: it leaves the array without redundancy for the rebuild's duration, which is needless while a healthy source disk exists.
+
+### Q72 — Disks outside the array
+**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 00 §4, doc 01 §3, §6, doc 03 §3.3, doc 10 §1
+
+**Default: a narrow "external disks" feature. A disk with the Ignore role, or a USB disk plugged in later, can be mounted by filesystem UUID at `/mnt/disks/<label>` and ejected safely (unmount, then spin down). External disks are never in the pool or parity, are ignored by the threshold guard and the change journal, and can be a backup destination (doc 10) or a container path. Nothing mounts automatically on plug-in, and formatting one takes the same typed confirmation as an array disk.**
+Doc 10 already names an unassigned disk as a backup destination, and the same `/mnt/disks/` convention Unraid users know keeps migrated container paths meaningful.
+
+### Q73 — Share size limits
+**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 00 §4, doc 03 §4.2
+
+**Default: no per-share quotas in v1. The one exception is Time Machine: a Time Machine share has a maximum size, enforced by Samba's `fruit:time machine max size`.**
+mergerfs has no quota across branches, and per-disk XFS project quotas can't express a share-wide limit. Time Machine grows until its destination is full, which on a pool means until every other share stops accepting writes; everything else is covered by per-disk free-space alerts (doc 09 §5).
+
 ---
 
 ### Q61 — iSCSI
@@ -384,8 +459,21 @@ A custom YAML schema would need its own converter to Compose and its own validat
 ### Q65 — How the catalog reaches installations
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §4, §7, doc 01 §7, Q49
 
-**Default: CI publishes one signed `catalog.tar.zst` as static files on GitHub Pages. `hoservad` embeds a snapshot at build time, keeps the refreshed copy in `/var/lib/hoserva/catalog/`, and refreshes once a day with a conditional request. A new archive is used only if its Ed25519 signature verifies against a compiled-in key and its serial is higher; an installed app never changes — a newer template revision is offered as a diff.**
+**Default: CI publishes one signed `catalog.tar.zst` as static files under `/catalog/` on the project site (Q66). `hoservad` embeds a snapshot at build time, keeps the refreshed copy in `/var/lib/hoserva/catalog/`, and refreshes once a day with a conditional request. A new archive is used only if its Ed25519 signature verifies against a compiled-in key and its serial is higher; an installed app never changes — a newer template revision is offered as a diff.**
 One static, conditional request a day stays clear of any rate limit, works behind a CDN and degrades to the on-disk copy offline, where per-template fetches through the GitHub API would hit the unauthenticated limit. Templates can request privileged access, so an unsigned or replayed catalog must never be trusted.
+
+
+### Q81 — Checking containers for updates
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 01 §7, doc 04 §6, Q49
+
+**Default: at most once a day, with random jitter, Hoserva compares each managed container's image digest with the registry's by requesting only the manifest — never pulling. Credentials can be added per registry and are stored as secrets (Q28). A registry that answers with a rate limit is skipped until the next day, and the UI says the check was skipped. The check can be disabled, and it counts as an outbound request under Q49.**
+Pulling to compare would count against registries' limits on anonymous pulls and waste bandwidth; one manifest request per image per day is cheap. Docker Hub's current limit policy is re-checked when this is built, since it has changed before.
+
+### Q82 — GPUs for containers
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 14 §3, Q53
+
+**Default: an Intel or AMD GPU is offered to containers through `/dev/dri`, as a template input of kind `device` with role `gpu`, and the stack gets the host's `render` group. NVIDIA GPUs need the proprietary driver and the NVIDIA container toolkit on the host — a prerequisite like Docker (D8): `hoserva doctor` reports whether both are present and working, and the docs give the install steps. A GPU bound to `vfio-pci` for a VM is never offered to containers, and a GPU in use by a container is flagged in the passthrough check.**
+Hardware transcoding for Plex and Jellyfin is one of the most common reasons to put a GPU in a home server. Installing a proprietary kernel driver needs root and ties the host to NVIDIA's release cadence — the same reasoning that keeps Docker external.
 
 ## Virtual machines
 
@@ -452,6 +540,12 @@ Doc 02 §6 lists "boot device fails" and "array lost" as separate failure domain
 
 **Default: rclone is an optional dependency (`Recommends:`). Local destinations work without it. The UI offers the install command the first time a remote destination is configured.**
 
+### Q80 — Encryption of backup archives
+**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 10 §1, §2, Q28
+
+**Default: every archive written to a destination other than a local path is encrypted with age (`filippo.io/age`) before it leaves the box; local destinations can opt in. Archives are encrypted to an age recipient generated at onboarding — the box keeps only that public recipient, and the matching private identity is stored inside every archive under the backup passphrase (age's scrypt mode), so encryption runs unattended and a restore needs only the passphrase. A remote destination can't be added until a backup passphrase is set. Inside config backups, stacks' `.env` files — which hold template-generated secrets (Q64) — go in the passphrase-protected secrets section, never in plain text.**
+Appdata archives hold application databases and credentials in plain files, and remote destinations are someone else's storage. age is small, audited and pure Go, and encrypting before rclone keeps the key out of rclone's configuration. Without the `.env` rule, Q28's protection of database secrets would be bypassed by the files sitting next to them in the same archive.
+
 ---
 
 ## Security, CI and workflow
@@ -461,7 +555,7 @@ Doc 02 §6 lists "boot device fails" and "array lost" as separate failure domain
 
 **The gap:** doc 06 §7 runs privileged, nested-virtualisation jobs on self-hosted runners "every PR". On a public repository, a pull request from a fork can run arbitrary code on those runners, which here means a privileged host with loop devices.
 
-**Default:** everything that executes pull-request code runs on GitHub-hosted runners: L1, L2 loop devices via the runner's `sudo`, `.deb` build, and L3 if hosted KVM proves sufficient. Self-hosted runners only run on `push` to `main`, on schedule, or on `workflow_dispatch`, and never for `pull_request` events from forks. Workflows from first-time contributors require approval (a repository setting). S9 confirms hosted runners support loop devices, FUSE and `/dev/kvm` for the pinned toolchain.
+**Default:** everything that executes pull-request code runs on GitHub-hosted runners: L1, L2 loop devices via the runner's `sudo`, `.deb` build, and L3 if hosted KVM proves sufficient. There are no self-hosted runners (Q79). Workflows from first-time contributors require approval (a repository setting). S9 confirms hosted runners support loop devices, FUSE and `/dev/kvm` for the pinned toolchain.
 
 ### Q43 — API tokens
 **Status:** Default · **Gate:** Phase 2 · **Affects:** doc 01 §5, doc 03 §7
@@ -486,6 +580,18 @@ doc 06 §3's `privileged: true` plus `/dev:/dev` gives the container every host 
 **Default: work is landed by the `orchestrate` skill as independently verified local commits on `main`. The maintainer reads and pushes; nothing agent-made is pushed automatically. CI runs on push. Pull requests are the path for external contributors. Commits touching `safety-critical` paths (threshold guard, mover/relocation delete path, migration import, schema migrations and data transforms — D16, `packaging/`, PCI/USB passthrough's VFIO/bootloader changes — doc 14 §3) are listed separately in every orchestrate report, for a line-by-line read before pushing.**
 Doc 12 §6 prescribed "feature branches, squash-merged", and doc 12 §5 a "protected list of files requiring explicit human review". This default keeps both intents inside the issue-driven agent workflow, whose unit of review is the verified commit.
 
+### Q78 — Recovering the admin account
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §3, §7, doc 03 §7, Q44
+
+**Default: `hoserva user reset-password <name>` and `hoserva user disable-totp <name>`, accepted only from root over the Unix socket — checked by the caller's peer credentials, so the `hoserva` group and TCP can't use them — each audit-logged and announced through every notification channel. There is no email or security-question reset.**
+Anyone with a root shell already controls the box, so root is the right authority for recovery, and it adds no secret to lose. Announcing the reset means a recovery nobody asked for doesn't go unnoticed.
+
+### Q79 — Where the long-running test suites run
+**Status:** Default (S9 and S10 decide the hosted part) · **Gate:** Phase 1 · **Affects:** doc 06 §4, §7, doc 14 §8, Q42, D20
+
+**Default: no self-hosted runners. L3, the migration suite, Playwright and the VM-management suite run nightly on GitHub-hosted runners wherever S9 (and S10, for nested KVM) confirm support. Whatever hosted runners can't run, agents run on the development host — in the lab and user-session VMs (D20) — as a required step before every release, recorded in the release checklist with the commit it ran against.**
+A self-hosted runner is a machine the maintainer owns and exposes to CI, which D20 rules out. A mandatory pre-release agent run keeps every suite required without any new infrastructure.
+
 ---
 
 ## Product
@@ -506,7 +612,7 @@ Extracting strings later is a rewrite of every component. Doing it from day one 
 ### Q49 — Telemetry *(gap)*
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §7, doc 03 §8.6
 
-**Default: none. The only outbound requests Hoserva makes on its own are the update check (apt metadata) and the daily catalog refresh (Q65); neither sends anything beyond a plain HTTP request, and both can be disabled. Any future opt-in usage statistics require a new entry here.**
+**Default: none. The only outbound requests Hoserva makes on its own are its update check against its own release index (Q67), the daily catalog refresh (Q65) and the daily container update check (Q81); none sends anything beyond a plain HTTP request, and each can be disabled. Any future opt-in usage statistics require a new entry here.**
 A home server that phones home by default undermines the trust an open project depends on.
 
 ### Q50 — Name clearance

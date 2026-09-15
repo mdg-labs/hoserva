@@ -19,6 +19,8 @@
 | Container runtime | Docker Engine + Compose plugin | **Prerequisite**, not shipped by the `.deb` |
 | Virtualization | libvirt + QEMU/KVM — Debian 13 packages, `go-libvirt` (no cgo) | Same engine Unraid's own VM Manager runs on; PCI/USB passthrough via VFIO (doc 14, Q58) |
 | Remote backup transport | rclone (optional) | Every remote backup destination (doc 10, Q41) |
+| Backup encryption | age (`filippo.io/age`) | Archives encrypted before they leave the box (doc 10, Q80) |
+| UPS | NUT (optional) | Clean shutdown on battery (Q77) |
 
 ### Why Go
 
@@ -89,6 +91,8 @@ The third option matters. A user who genuinely needs a Samba feature Hoserva doe
 
 The principle: *Hoserva should be the easy path, never the only path.*
 
+**On a host that is already in use**, the first apply finds files Hoserva didn't write — an existing `smb.conf`, `/etc/exports`, fstab mounts. They are never overwritten: onboarding offers each for import into the database or to be left unmanaged (Q76).
+
 ---
 
 ## 3. CLI
@@ -102,6 +106,9 @@ hoserva disk list
 hoserva disk add /dev/sdX --role data [--format xfs]
 hoserva disk remove /dev/sdX --evacuate
 hoserva disk replace --failed /dev/sdX --new /dev/sdY
+hoserva disk upgrade --old /dev/sdX --new /dev/sdY   # larger disk, old one kept until verified (Q71)
+hoserva disk external mount|eject <label>          # disks outside the array (Q72)
+hoserva array stop|start                # maintenance mode (Q70)
 
 hoserva pool rebalance [--dry-run]      # doc 09 §3
 hoserva disk resume <job-id>            # resume a checkpointed relocation (Q29)
@@ -138,6 +145,10 @@ hoserva backup run [config|appdata] [--destination <name>]
 hoserva backup list
 hoserva logs [--job <id>] [--follow]
 hoserva doctor                          # prerequisite + sanity checks
+hoserva update [--check]                # Hoserva itself, from its own release index (Q67)
+hoserva rollback                        # previous version plus its database snapshot (Q67)
+hoserva user reset-password <name>      # root only, over the Unix socket (Q78)
+hoserva user disable-totp <name>        # root only, over the Unix socket (Q78)
 hoserva diagnostics -o bundle.tar.zst   # redacted bug-report bundle (doc 03 §9.4)
 ```
 
@@ -207,7 +218,7 @@ Every long-running operation (sync, scrub, rebuild, mover, disk format, containe
 - **Resumable job types** (mover, rebalance, evacuation, share relocation) persist a checkpoint and continue from it — not from zero — when the user resumes them, or for the mover at its next scheduled run. Sync, scrub and fix are re-run, not resumed (Q29).
 - Progress streamed over SSE to the UI
 - Cancellable where the underlying tool supports it, and honestly marked non-cancellable where it doesn't
-- Full stdout/stderr captured and downloadable
+- Full stdout/stderr captured to compressed files and downloadable, kept 90 days (Q74)
 - **Mutually exclusive classes**, enforced by the job scheduler rather than trusted to the UI:
 
   | Class | Jobs | Excludes |
@@ -220,6 +231,7 @@ Every long-running operation (sync, scrub, rebuild, mover, disk format, containe
 
   The nightly maintenance chain (Q30) runs its steps in sequence and holds each class in turn.
 - **Every sync goes through the threshold guard** (doc 02 §2), whatever triggered it — schedule, disk add, evacuation, or a manual click.
+- **Maintenance mode** (`hoserva array stop`, Q70) refuses new jobs, stops resumable jobs at their next checkpoint and marks the rest interrupted.
 
 ### Database schema and schema migrations (D16, Q60)
 
@@ -291,18 +303,21 @@ Hoserva needs a real boot device.
 ### Layout principle
 
 ```
-Boot device     ──  Debian root, /etc/hoserva, /var/lib/hoserva (DB, stacks, first SnapRAID content file, local backups)
+Boot device     ──  Debian root, /etc/hoserva, /var/lib/hoserva (DB, metrics DB, job logs, stacks, catalog, first SnapRAID content file, local backups — Q74)
 NVMe (cache)    ──  /mnt/cache                  (appdata, write cache)
 Parity disks    ──  /mnt/parity1[, /mnt/parity2] (SnapRAID parity, XFS, not in the pool — Q19, Q20)
 Data disks      ──  /mnt/disk1..N               (individual filesystems, XFS by default)
 Pool            ──  /mnt/user                   (mergerfs catch-all over /mnt/disk*)
 Shares          ──  /mnt/user/<share>           (one mergerfs mount per share, branches by cache mode — Q12)
 Mover target    ──  /run/hoserva/array/<share>  (array-only mergerfs mount per share, internal)
+External disks  ──  /mnt/disks/<label>          (outside the pool and parity, mounted on request — Q72)
 ```
 
 Paths deliberately mirror Unraid (decision D10). A migrated Compose file referencing `/mnt/user/media` works unchanged.
 
 **The OS is disposable.** A reinstall plus `hoserva config import hoserva-config.tar.zst` must fully restore the system. This has to be true from the first release, and it has to be tested as a routine case (doc 06), not assumed.
+
+**Debian keeps itself patched.** Security updates install unattended; a reboot is always the user's action, and it runs the clean shutdown sequence (Q68, Q70).
 
 ---
 
@@ -314,9 +329,10 @@ A NAS holds everything a person owns digitally and increasingly gets exposed to 
 - **HTTPS only** on `:8008`, with a self-signed cert generated on first boot, plus one-click Let's Encrypt via DNS-01 for those with a domain (Q9).
 - **LAN-only by default**: the listener accepts connections only from loopback, RFC 1918, link-local, IPv6 ULA and CGNAT `100.64.0.0/10` (Tailscale) source addresses — a source filter rather than an address binding, so it survives DHCP changes. One explicit, warned-about toggle accepts all sources (Q10).
 - **Secrets at rest** (SMTP passwords, notification tokens, API keys, ACME keys) are encrypted in the DB with a machine key in `/etc/hoserva/secret.key` (root, `0600`); backups re-encrypt them under a user-set backup passphrase (Q28, doc 10 §1).
-- **No telemetry.** The update check and the daily catalog refresh (Q65) are the only outbound requests Hoserva makes on its own; neither sends anything beyond a plain HTTP request, and both can be disabled (Q49).
+- **No telemetry.** Hoserva's own update check (Q67), the daily catalog refresh (Q65) and the daily container update check (Q81) are the only outbound requests it makes on its own; none sends anything beyond a plain HTTP request, and each can be disabled (Q49).
 - **TOTP available from v1**, and prompted for (not silently optional) when the UI is reachable from a non-private address.
 - **Rate limiting and lockout** on login.
+- **Account recovery is root-only.** A forgotten admin password or lost TOTP is reset with `hoserva user reset-password` over the Unix socket, accepted only from root by peer credentials, audit-logged and announced through every notification channel (Q78).
 - **The API runs as root** because it partitions disks and mounts filesystems. This is unavoidable, and therefore the attack surface must stay small: no arbitrary command execution endpoint, no user-supplied paths passed unsanitised to shell, template `<ExtraParams>` parsed rather than interpolated into a command line.
 - **The optional browser terminal is off by default** and gated behind a confirmation that explains it is root shell access.
 - **Container privilege warnings**: templates requesting `privileged: true`, host networking, or Docker socket mounts are flagged in the install flow with a plain-language explanation. One-click catalogs make it easy to install these without seeing what they grant.

@@ -26,17 +26,17 @@ Short, disposable experiments that answer the questions capable of invalidating 
 
 **Starts with the foundation, before any feature code** (doc 12 §5): loop-device harness and lab container, provider interfaces and fakes, golden-file infrastructure, `openapi.yaml` with generated server interfaces and clients (D18), the central database schema with schema-migration generation, checksums and fixture upgrade tests (D16, Q60), mock API server.
 
-Then: array setup (one or two parity disks), pool management with the per-share mount topology, parity with the threshold guard and change journal, the nightly maintenance chain, disks and SMART, spin-state event log, dashboard, jobs, notifications, config backup (CLI, local destinations), CLI, `.deb` and the apt repository, depending on Debian 13's mergerfs and SnapRAID packages with an explicit version range (Q7). UI tier 1 from doc 03 §10.
+Then: array setup (one or two parity disks), pool management with the per-share mount topology, parity with the threshold guard and change journal, the nightly maintenance chain, disks and SMART, spin-state event log, dashboard, jobs, notifications, config backup (CLI, local destinations), CLI, `.deb` and the signed apt repository with self-update and rollback (Q66, Q67), startup ordering and maintenance mode (Q69, Q70), metrics retention (Q74), depending on Debian 13's mergerfs and SnapRAID packages with an explicit version range (Q7). UI tier 1 from doc 03 §10.
 
 **Definition of done:** the storage suite passes in the lab and L3, and the soak test (doc 06 §6) has run clean — its diff history is what tunes the guard thresholds (Q16). Nothing ships publicly before that.
 
 ### Phase 2 — NAS completeness
 
-Shares with SMB/NFS, users, roles and permissions, API tokens, cache and mover, share relocation, rebalance and evacuation, appdata backup, multi-destination backup with restore drill, backup and restore UI. UI tier 2 from doc 03 §10.
+Shares with SMB/NFS, users, roles and permissions, API tokens, cache and mover, share relocation, rebalance and evacuation, appdata backup, multi-destination backup with restore drill and off-box encryption (Q80), disk upgrades (Q71), external disks (Q72), UPS support (Q77), host network settings (Q75), backup and restore UI. UI tier 2 from doc 03 §10.
 
 ### Phase 3 — Apps and migration
 
-Container management, curated template catalog (D19), Unraid XML converter, migration tooling, documentation site. UI tier 3.
+Container management, curated template catalog (D19), GPU access for containers (Q82), Unraid XML converter, migration tooling, documentation site. UI tier 3.
 
 **This is the phase that makes it a complete home server rather than a storage manager.**
 
@@ -48,7 +48,7 @@ libvirt/KVM integration (doc 14): `internal/vm`, domain-XML generation, VM lifec
 
 | Spike | Question | Kill criterion |
 |---|---|---|
-| **S10 — Nested KVM for VM-in-VM testing** | Does the L3 test VM (which already runs on libvirt/QEMU, doc 06 §4) support nested KVM for a domain that Hoserva-under-test creates, on both the dev host and hosted/self-hosted CI runners? | If hosted runners don't support it, the suite runs on the self-hosted nightly runner only (doc 06 §7's existing posture for L3), not a blocker |
+| **S10 — Nested KVM for VM-in-VM testing** | Does the L3 test VM (which already runs on libvirt/QEMU, doc 06 §4) support nested KVM for a domain that Hoserva-under-test creates, on both the dev host and hosted CI runners? | If hosted runners don't support it, agents run the suite on the dev host before every release (Q79), not a blocker |
 | **S11 — Unraid domain XML compatibility** | How much of a real exported Unraid VM's libvirt domain XML loads with only the remapping in doc 14 §5, on real Debian 13 libvirt/QEMU versions? | If divergence is larger than expected, doc 14 §5's field-remap table grows; not fatal, since the fallback is the same manual-review path doc 04 already has for containers |
 
 **Definition of done:** create, start, and use a VM with a browser console; pass passthrough of one PCI and one USB device in a nested guest with an emulated IOMMU (doc 06 §6); import one Unraid VM fixture with checksum-verified disks.
@@ -86,7 +86,7 @@ Opt-in public beta, wake attribution (may slip past 1.0 — Q32), diagnostics, I
 | R8 | **Security incident from an exposed instance** | High | Safe defaults (doc 01 §7); no default credentials; LAN-bound by default; an explicit "don't expose this" guide |
 | R9 | **mergerfs or SnapRAID upstream stalls** | Medium | Both are mature and stable; the abstraction interfaces mean a replacement is possible without a rewrite of everything above |
 | R10 | **Performance disappoints compared with users' current setups** | Medium | Relative benchmarks in L3 early; public beta; mergerfs options are the usual cause and are tunable |
-| R11 | **Untrusted PR code runs on a privileged self-hosted runner** | High — the repository is public | PR code runs only on ephemeral hosted runners; self-hosted runners only on trusted triggers; approval for first-time contributors (doc 06 §7, Q42) |
+| R11 | **Untrusted PR code runs on a privileged self-hosted runner** | High — the repository is public | PR code runs only on ephemeral hosted runners; there are no self-hosted runners (Q79); approval for first-time contributors (doc 06 §7, Q42) |
 | R12 | **Per-share mount topology fails spike S6** | Medium — per-share cache modes and allocation shrink | Two-mount tiered fallback designed in advance (Q12); decided in Phase 0, before storage code exists |
 | R13 | **An agent touches a real disk during development** | High — the dev host's own disk | Labs only via `make lab-up` in a loop-and-FUSE-only container, namespaced per lane; hard rules in `CLAUDE.md` and in every orchestrate dispatch; no agent ever connects to the maintainer's own machines (D20, doc 12 §5, Q45) |
 | R14 | **PCI/USB passthrough is unreliable across the hardware variety homelab boxes actually have** (IOMMU groups, ACS, BIOS quirks) | Medium-High — the single hardest part of doc 14 | Pre-flight `hoserva vm passthrough check` reports compatibility before commit; a device the host needs is structurally unassignable; explicitly documented as best-effort and hardware-dependent, never promised (doc 14 §3) |

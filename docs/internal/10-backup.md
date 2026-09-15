@@ -30,12 +30,15 @@ Building a general-purpose backup product inside a NAS is also the road to becom
 hoserva-config-2026-09-14T03-00.tar.zst
 ├── manifest.json            version, timestamp, host, checksums
 ├── state.db                 SQLite, consistent snapshot via VACUUM INTO
+├── secrets.age              secret columns and stack .env files, under the backup passphrase (Q28, Q80)
 ├── generated/               snapraid.conf, smb.conf, exports, mount units
-├── stacks/                  every docker-compose.yml + .env
+├── stacks/                  every docker-compose.yml (their .env files are in secrets.age)
 ├── templates/               installed app templates
 ├── custom/                  user-owned config (smb.custom.conf etc.)
 └── snapraid-content/        SnapRAID content files (optional, large)
 ```
+
+Not included: `metrics.db` and job logs (Q74) — history, not configuration.
 
 ### Consistency
 
@@ -45,6 +48,7 @@ hoserva-config-2026-09-14T03-00.tar.zst
 
 - **At runtime**, secret columns are encrypted with a machine key in `/etc/hoserva/secret.key` (root, `0600`, generated at install). This protects against the database file leaking — in a diagnostics bundle or a copied backup.
 - **In backups**, the secrets section is re-encrypted under a **backup passphrase** the user sets during onboarding (doc 03 §1). The machine key itself is never included. A backup restored without the passphrase restores everything except secrets, and says so clearly.
+- **Off-box, the whole archive is encrypted** with age before it leaves the box (Q80). The box keeps only the public recipient generated at onboarding; the matching private identity travels inside every archive under the backup passphrase, so encryption runs unattended and a restore needs only the passphrase. A remote destination can't be added until a backup passphrase is set.
 
 ### Schedule and retention
 
@@ -60,7 +64,7 @@ Destination types:
 
 | Type | Notes |
 |---|---|
-| **Local path** | Anywhere on the pool or an unassigned disk. Always available. |
+| **Local path** | Anywhere on the pool or an external disk (Q72). Always available. |
 | **SMB / NFS share** | Another NAS, a router USB disk |
 | **S3-compatible** | Backblaze B2, Wasabi, MinIO, Hetzner Storage Box |
 | **SFTP / SSH** | A VPS, another homelab box |
@@ -69,7 +73,7 @@ Destination types:
 
 Implementation: **rclone as an optional dependency (`Recommends:`, Q41) covers everything except local paths.** Rather than writing six protocol clients, Hoserva writes the archive locally and shells out to `rclone copy` for remote destinations. This is the same "orchestrate, don't reinvent" principle as D1, and it means every backend rclone gains, Hoserva gains.
 
-Per-destination configuration: enabled, schedule, retention, encryption, and a **Test connection** button that actually writes and reads back a file. An untested backup destination is decoration.
+Per-destination configuration: enabled, schedule, retention, encryption (always on for remote destinations, optional for local paths — Q80), and a **Test connection** button that actually writes and reads back a file. An untested backup destination is decoration.
 
 ### Verification
 
@@ -125,7 +129,7 @@ prune per retention
 
 **Per-container archives**, not one monolith. Restoring one broken service should not require unpacking 80 GB.
 
-**Same destination system** as config backup — multi-destination, rclone-backed, verified.
+**Same destination system** as config backup — multi-destination, rclone-backed, verified, and encrypted off-box (Q80).
 
 **Restore is per-container**, with a preview of what will be overwritten and an automatic pre-restore snapshot of the current state.
 

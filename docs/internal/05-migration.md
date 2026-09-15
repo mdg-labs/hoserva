@@ -171,7 +171,7 @@ Four phases, matching above:
 
 Migration needs its own documentation, not a README section.
 
-**Astro Starlight on GitHub Pages** — consistent with the existing Astro stack, with versioning, search, and dark mode out of the box, and it builds in CI without a server. Lives in `site/` at the repo root; `docs/internal/` holds the design docs (Q3).
+**Astro Starlight, at the root of the project site on GitHub Pages (Q66)** — consistent with the existing Astro stack, with versioning, search, and dark mode out of the box, and it builds in CI without a server. Lives in `site/` at the repo root; `docs/internal/` holds the design docs (Q3).
 
 ### Structure
 
@@ -180,7 +180,7 @@ Migration needs its own documentation, not a README section.
 /getting-started/
   requirements             Hardware, disks, boot device
   install-deb              Install onto existing Debian
-  install-iso              ISO bundle (phase 2)
+  install-iso              ISO bundle (Phase 4)
   first-array              Creating your first array
 /migrating-from-unraid/
   overview                 What migrates, what doesn't, what it costs
