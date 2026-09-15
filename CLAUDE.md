@@ -12,7 +12,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 
 | Doc | Read before working on |
 |---|---|
-| `00-overview.md` | Anything — scope and the **decision log (D1–D18)** |
+| `00-overview.md` | Anything — scope and the **decision log (D1–D20)** |
 | `01-architecture.md` | Daemon, API, CLI, jobs, security, disk layout |
 | `02-storage-engine.md` | Pool mounts, parity, threshold guard, change journal, disk lifecycle |
 | `03-webui-spec.md` | Any UI page — including its coss component and particle choices |
@@ -66,7 +66,8 @@ Storage behaviour is exercised **only inside the lab**:
 - Docker is root-equivalent on this host. Use it only through `make` targets and for read-only tool containers (linters) with your workspace mounted read-only. Never stop, remove or prune a container, image or volume you did not create; never `docker system prune`.
 - Until `scripts/devenv/` and the `lab-*` targets exist, **no storage command runs anywhere** — work that needs one is blocked on the foundation issue, not improvised.
 - A dev `hoservad` uses a workspace-local state directory. Never write `/etc/hoserva`, `/var/lib/hoserva`, `/run/hoserva`, or anything under `/mnt`; never install the `.deb` on the host; never touch system systemd units.
-- The L4 hardware box and the author's real array are touched only by the maintainer (`needs-hardware`).
+- **VMs (L3) run only as the invoking user under `qemu:///session`**, through the `vm-*` `make` targets, with disk images inside the workspace and every domain name carrying `HOSERVA_LAB_ID`. Never `qemu:///system`, never `sudo virsh`, never touch a domain you did not create. Until `scripts/vm/` and the `vm-*` targets exist, no VM runs.
+- **There is no hardware tier (D20).** Every test — spindown, SMART, Unraid adoption, passthrough, the soak test — runs in the lab or an agent-started VM. No agent connects to the maintainer's homelab, Unraid server or any other machine, not even read-only, and nothing is handed to the maintainer to test.
 
 # Root access is the maintainer's
 
@@ -93,7 +94,7 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 |---|---|
 | Type (exactly one) | `feat`, `bug`, `chore`, `docs`, `spike` |
 | Area | `area:storage`, `area:api`, `area:web`, `area:cli`, `area:shares`, `area:containers`, `area:vm`, `area:migration`, `area:backup`, `area:packaging`, `area:devenv`, `area:site` |
-| Extras | `epic`, `safety-critical`, `needs-sudo`, `needs-hardware`, `blocked` |
+| Extras | `epic`, `safety-critical`, `needs-sudo`, `blocked` |
 | Status (machine-managed) | `status:new`, `status:ready`, `status:in-progress`, `status:in-review`, `status:implemented`, `status:closed`, `status:cancelled` |
 
 ## Area → paths
@@ -118,7 +119,7 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 
 ## Spikes
 
-A `spike` issue's deliverable is **recorded findings, not product code**: a findings section in `docs/internal/` (extend doc 08 or add a doc), the exact commands and outputs that support it, any experiment scripts under `spikes/<spike-id>/`, and the doc 13 entries it confirms or overturns. A spike that needs real disks is `needs-hardware`; one that runs in the loop-device lab is agent work once the lab exists.
+A `spike` issue's deliverable is **recorded findings, not product code**: a findings section in `docs/internal/` (extend doc 08 or add a doc), the exact commands and outputs that support it, any experiment scripts under `spikes/<spike-id>/`, and the doc 13 entries it confirms or overturns. Every spike is agent work: research on the dev host, or experiments in the loop-device lab or an L3 VM once those exist (D20).
 
 # Conventions (planned — enforce as code lands)
 
@@ -141,4 +142,4 @@ A `spike` issue's deliverable is **recorded findings, not product code**: a find
 - Weakening the threshold guard or its tests.
 - Editing an existing schema migration, or a schema migration that drops data without a new home for it.
 - Deleting a source file on a data disk before the sync that covers its copy.
-- Vendoring the Community Applications feed or its templates into the repo (doc 04 §4, doc 06 §2).
+- A curated template copied or adapted from another catalog's template, rather than written from the application's upstream documentation (doc 04 §7, D19).

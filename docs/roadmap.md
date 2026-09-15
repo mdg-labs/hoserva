@@ -54,7 +54,6 @@ P4: Phase 4 — Polish and release
 | `status` | `todo` · `doing` · `blocked` · `done` |
 | `labels` | exactly one type, at most one `area:*`, plus extras — the set in `scripts/bootstrap-labels.sh` |
 | `sudo` | `true` exactly when labelled `needs-sudo` — the maintainer runs those steps |
-| `hardware` | `true` exactly when labelled `needs-hardware` — L4 box or real disks, maintainer only |
 | `depends` | item ids, or `[]` — cross-epic and cross-phase allowed |
 | `issue` | `null` until synced, then the issue number |
 
@@ -80,114 +79,62 @@ Short, disposable experiments answering the questions that could invalidate
 the plan (doc 07 §1). Each deliverable is recorded findings, not product code
 (`CLAUDE.md`, "Spikes"): a findings section in doc 08, the exact commands and
 outputs, experiment scripts under `spikes/<id>/`, and the doc 13 entries it
-confirms or overturns. Spikes that run in the loop-device lab wait for the
-lab (M1.2); spikes on real disks are the maintainer's.
+confirms or overturns. Every spike is agent work (D20); spikes that run in the
+loop-device lab wait for the lab (M1.2).
 
-### S1 — Spindown under mergerfs on real disks
+### S1 — Spindown under mergerfs
 
 ```meta
 id: M0.1
 epic: M0
 status: todo
-labels: [spike, area:storage, needs-hardware]
+labels: [spike, area:storage]
 sudo: false
-hardware: true
-depends: []
+depends: [M1.2]
 issue: 2
 ```
 
-**Summary** Confirm hands-on what doc 08 §1 established from research: array
-disks stay in standby while idle and during appdata-only activity, with
-Hoserva's intended mergerfs options.
+**Summary** Confirm with agent-run measurements what doc 08 §1 established from
+research: with Hoserva's intended mergerfs options, no IO reaches idle array
+disks while idle or during appdata-only activity — the property that keeps
+real disks in standby (doc 06 §6).
 
-**Design references** doc 08 §1, doc 02 §1 (Spindown), Q31, Q13, R1
+**Design references** doc 08 §1, doc 06 §6, doc 02 §1 (Spindown), Q31, Q13, Q32, R1, D20
 
 **Acceptance criteria**
-- [ ] On the L4 box, with appdata on cache and no clients connected, array disks stay in standby ≥ 30 minutes (Q31), measured with `smartctl -n standby` polling
-- [ ] The cache options behind doc 08's "Quiet mode" preset are measured against the defaults
-- [ ] Findings, commands and outputs recorded in doc 08; Q31 confirmed or updated
+- [ ] In the lab, per-disk read and write counters on every array disk stay flat for ≥ 30 minutes in three scenarios — fully idle; a container writing appdata on cache; that plus a connected, idle SMB client — each with default and raised `cache.*` timeouts
+- [ ] Every IO that reaches an array disk is attributed to a process (fanotify or blktrace) and recorded
+- [ ] A recommendation for the "Quiet mode" timeouts with the staleness tradeoff, or a finding that the defaults suffice
+- [ ] Residual risk (firmware- and controller-level wakes) stated; doc 08 S1 updated with commands and raw outputs; Q31 confirmed or updated; R1 revisited
 
 **Scope** `docs/internal/08-spike-findings.md`, `spikes/s1/`
 
-### S2 — Unraid disk adoption on real disks
+### S2 — Unraid disk adoption
 
 ```meta
 id: M0.2
 epic: M0
 status: todo
-labels: [spike, area:migration, needs-hardware]
+labels: [spike, area:migration]
 sudo: false
-hardware: true
-depends: []
+depends: [M1.2]
 issue: 3
 ```
 
-**Summary** Mount a real Unraid XFS array read-only on Debian 13, union it
-with mergerfs, and confirm the share structure survives intact.
+**Summary** Prove the adoption path against synthetic Unraid-layout disks: data
+disks formatted the way Unraid formats them mount read-only on Debian 13, union
+with mergerfs, and keep their share structure and checksums. No agent runs
+Unraid or connects to a real Unraid server (D20).
 
-**Design references** doc 08 §2, doc 05 §1, Q21, Q23, Q24, R5
+**Design references** doc 08 §2, doc 06 §5 (Building Unraid fixtures without Unraid), doc 05 §1–§3, Q21, Q23, Q24, Q25, Q55, R5, D20
 
 **Acceptance criteria**
-- [ ] Every data disk of a real (or disposable test) Unraid array passes `xfs_repair -n` and mounts read-only by filesystem UUID
-- [ ] A mergerfs union over those mounts shows the same `/mnt/user/<share>` trees and checksums as Unraid did
-- [ ] Disk identity by WWN/serial matches the Flash Backup's assignments (Q21)
-- [ ] Unraid version and flash layout differences for 6.12 and 7.x recorded (Q24)
-- [ ] Findings recorded in doc 08
+- [ ] A throwaway fixture script under `spikes/s2/` builds XFS data disks in the lab with Unraid's partition layout and share directories, from public sources cited in doc 08
+- [ ] Every disk passes `xfs_repair -n` and mounts read-only by filesystem UUID; the mergerfs union shows every file with a matching sha256
+- [ ] The flash configuration layout for 6.12 and 7.x — shares, users, disk assignments, `templates-user/`, `libvirt.img` — documented from public sources (Q24, Q25, Q55)
+- [ ] What synthetic fixtures cannot prove stated as residual risk; doc 08 S2 updated; Q24 and Q25 confirmed or updated
 
 **Scope** `docs/internal/08-spike-findings.md`, `spikes/s2/`
-
-### S3 — Template conversion rate
-
-```meta
-id: M0.3
-epic: M0
-status: todo
-labels: [spike, area:containers]
-sudo: false
-hardware: false
-depends: []
-issue: 4
-```
-
-**Summary** Measure what share of real Community Applications templates a
-prototype converter turns into Compose cleanly, against the 80% kill
-criterion.
-
-**Design references** doc 04 §5, doc 06 §2, Q36, doc 07 §1
-
-**Acceptance criteria**
-- [ ] A throwaway converter under `spikes/s3/` parses a few hundred templates fetched at runtime into a gitignored cache — none committed (doc 04 §4)
-- [ ] Clean / warnings / failed counts computed with Q36's definition of clean, pinned to a recorded feed commit
-- [ ] The most common untranslatable `ExtraParams` flags listed
-- [ ] Pass/fail against 80% recorded in doc 08, with the implication for Phase 3
-
-**Scope** `spikes/s3/`, `docs/internal/08-spike-findings.md`
-
-### S4 — Community Applications feed licensing
-
-```meta
-id: M0.4
-epic: M0
-status: todo
-labels: [spike, area:containers]
-sudo: false
-hardware: false
-depends: []
-issue: 5
-```
-
-**Summary** Establish whether consuming the CA feed at runtime is acceptable
-legally and to its maintainer. The contact itself is the maintainer's to
-make; an agent drafts the message and the license review notes.
-
-**Design references** doc 04 §4, Q33, Q34, Q35, R4
-
-**Acceptance criteria**
-- [ ] The aggregated feed's and moderation repository's license status documented, with sources
-- [ ] A message to the CA maintainer drafted for the maintainer to send
-- [ ] The outcome (or "no answer yet") recorded in Q34, with its effect on the Phase 3 default
-
-**Scope** `docs/internal/04-containers.md`, `docs/internal/13-open-questions.md`
 
 ### S5 — SnapRAID fidelity on loop devices
 
@@ -197,7 +144,6 @@ epic: M0
 status: todo
 labels: [spike, area:devenv]
 sudo: false
-hardware: false
 depends: [M1.2]
 issue: 6
 ```
@@ -224,7 +170,6 @@ epic: M0
 status: todo
 labels: [spike, area:storage]
 sudo: false
-hardware: false
 depends: [M1.2]
 issue: 7
 ```
@@ -251,7 +196,6 @@ epic: M0
 status: todo
 labels: [spike, area:storage]
 sudo: false
-hardware: false
 depends: [M1.2]
 issue: 8
 ```
@@ -278,7 +222,6 @@ epic: M0
 status: todo
 labels: [spike, area:packaging]
 sudo: false
-hardware: false
 depends: [M0.6]
 issue: 9
 ```
@@ -304,7 +247,6 @@ epic: M0
 status: todo
 labels: [spike, area:devenv]
 sudo: false
-hardware: false
 depends: [M1.3]
 issue: 10
 ```
@@ -349,7 +291,6 @@ epic: M1
 status: todo
 labels: [chore, area:devenv]
 sudo: false
-hardware: false
 depends: []
 issue: 12
 ```
@@ -376,7 +317,6 @@ epic: M1
 status: todo
 labels: [chore, area:devenv, safety-critical]
 sudo: false
-hardware: false
 depends: [M1.1]
 issue: 13
 ```
@@ -405,7 +345,6 @@ epic: M1
 status: todo
 labels: [chore, area:devenv]
 sudo: false
-hardware: false
 depends: [M1.1, M1.2]
 issue: 14
 ```
@@ -432,7 +371,6 @@ epic: M1
 status: todo
 labels: [feat, area:storage]
 sudo: false
-hardware: false
 depends: [M1.1]
 issue: 15
 ```
@@ -459,7 +397,6 @@ epic: M1
 status: todo
 labels: [chore, area:storage]
 sudo: false
-hardware: false
 depends: [M1.1]
 issue: 16
 ```
@@ -484,7 +421,6 @@ epic: M1
 status: todo
 labels: [feat, area:api]
 sudo: false
-hardware: false
 depends: [M1.1]
 issue: 17
 ```
@@ -512,7 +448,6 @@ epic: M1
 status: todo
 labels: [feat, area:api, safety-critical]
 sudo: false
-hardware: false
 depends: [M1.1]
 issue: 18
 ```
@@ -542,7 +477,6 @@ epic: M1
 status: todo
 labels: [feat, area:api]
 sudo: false
-hardware: false
 depends: [M1.7]
 issue: 19
 ```
@@ -569,7 +503,6 @@ epic: M1
 status: todo
 labels: [feat, area:api]
 sudo: false
-hardware: false
 depends: [M1.6]
 issue: 20
 ```
@@ -595,7 +528,6 @@ epic: M1
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M1.6, M1.9]
 issue: 21
 ```
@@ -624,7 +556,6 @@ epic: M1
 status: todo
 labels: [feat, area:api]
 sudo: false
-hardware: false
 depends: [M1.6, M1.7]
 issue: 22
 ```
@@ -672,7 +603,6 @@ epic: M2
 status: todo
 labels: [feat, area:storage]
 sudo: false
-hardware: false
 depends: [M1.4, M1.8]
 issue: 24
 ```
@@ -700,7 +630,6 @@ epic: M2
 status: todo
 labels: [feat, area:api]
 sudo: false
-hardware: false
 depends: [M1.5, M1.7]
 issue: 25
 ```
@@ -727,7 +656,6 @@ epic: M2
 status: todo
 labels: [feat, area:storage, safety-critical]
 sudo: false
-hardware: false
 depends: [M2.1, M2.2]
 issue: 26
 ```
@@ -756,7 +684,6 @@ epic: M2
 status: todo
 labels: [feat, area:storage]
 sudo: false
-hardware: false
 depends: [M2.3, M0.6]
 issue: 27
 ```
@@ -783,7 +710,6 @@ epic: M2
 status: todo
 labels: [feat, area:storage]
 sudo: false
-hardware: false
 depends: [M1.4, M2.3]
 issue: 28
 ```
@@ -810,7 +736,6 @@ epic: M2
 status: todo
 labels: [feat, area:storage, safety-critical]
 sudo: false
-hardware: false
 depends: [M2.5]
 issue: 29
 ```
@@ -838,7 +763,6 @@ epic: M2
 status: todo
 labels: [feat, area:storage]
 sudo: false
-hardware: false
 depends: [M0.7, M2.3]
 issue: 30
 ```
@@ -865,7 +789,6 @@ epic: M2
 status: todo
 labels: [feat, area:api]
 sudo: false
-hardware: false
 depends: [M1.8, M2.6]
 issue: 31
 ```
@@ -892,7 +815,6 @@ epic: M2
 status: todo
 labels: [feat, area:storage, safety-critical]
 sudo: false
-hardware: false
 depends: [M2.4, M2.6]
 issue: 32
 ```
@@ -910,34 +832,35 @@ the guided replace flow and an honest statement of what cannot be recovered.
 
 **Scope** `internal/disk/`, `internal/pool/`, `internal/parity/`
 
-### Spindown acceptance test on hardware
+### Spindown acceptance test
 
 ```meta
 id: M2.10
 epic: M2
 status: todo
-labels: [chore, area:storage, needs-hardware]
+labels: [chore, area:storage]
 sudo: false
-hardware: true
-depends: [M0.1, M2.4, M2.7]
+depends: [M0.1, M2.4, M2.7, M3.9]
 issue: 33
 ```
 
-**Summary** The v1 acceptance criterion measured on the L4 box with the real
-daemon running: array disks stay down, and Hoserva is not the culprit.
+**Summary** The v1 spindown criterion as an automated test with the real daemon
+running: no IO reaches idle array disks, and Hoserva is never the source of any
+that does (doc 06 §6).
 
-**Design references** Q31, doc 02 §1 (Spindown), doc 06 §6, R1
+**Design references** Q31, Q32, doc 02 §1 (Spindown), doc 06 §6, R1, D20
 
 **Acceptance criteria**
-- [ ] With no SMB/NFS clients, no containers holding pool paths, appdata on cache, and SMART polling and the change journal running, array disks stay in standby for 30+ minutes
-- [ ] The spin-state event log shows no wake caused by `hoservad`
-- [ ] Result and anything that breaks it recorded for publication with the release
+- [ ] With no SMB/NFS clients, no containers holding pool paths, appdata on cache, and SMART polling and the change journal running, per-disk read and write counters on every array disk stay flat for 30+ minutes, in the lab and in L3
+- [ ] In L3, the SMART poller issues only standby-aware queries and causes no read IO on an idle disk
+- [ ] The spin-state event log and IO attribution show no IO caused by `hoservad`
+- [ ] Runs nightly; the result and its stated residual risk recorded for publication with the release
 
-**Scope** `docs/internal/08-spike-findings.md`
+**Scope** `docs/internal/08-spike-findings.md`, `scripts/vm/`
 
 ---
 
-## M3 — Phase 1: surfaces, packaging and the month-on-real-data gate
+## M3 — Phase 1: surfaces, packaging and the soak-test gate
 
 ```epic
 id: M3
@@ -949,8 +872,8 @@ issue: 34
 
 What turns the storage engine into something the author can run their own
 array on: notifications, config backup, the CLI, UI tier 1, the `.deb`, the
-L3 VM harness, and the Phase 1 definition of done — a month on the author's
-own data (doc 07 §1).
+L3 VM harness, and the Phase 1 definition of done — a clean soak test
+(doc 07 §1).
 
 ### Notifications
 
@@ -960,7 +883,6 @@ epic: M3
 status: todo
 labels: [feat, area:api]
 sudo: false
-hardware: false
 depends: [M1.8]
 issue: 35
 ```
@@ -987,7 +909,6 @@ epic: M3
 status: todo
 labels: [feat, area:backup]
 sudo: false
-hardware: false
 depends: [M1.7, M2.2]
 issue: 36
 ```
@@ -1015,7 +936,6 @@ epic: M3
 status: todo
 labels: [feat, area:cli]
 sudo: false
-hardware: false
 depends: [M1.11, M2.8]
 issue: 37
 ```
@@ -1042,7 +962,6 @@ epic: M3
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M1.10, M1.11]
 issue: 38
 ```
@@ -1069,7 +988,6 @@ epic: M3
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M1.10, M2.3]
 issue: 39
 ```
@@ -1096,7 +1014,6 @@ epic: M3
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M1.10, M2.1, M2.6]
 issue: 40
 ```
@@ -1125,7 +1042,6 @@ epic: M3
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M3.1, M2.8]
 issue: 41
 ```
@@ -1150,7 +1066,6 @@ epic: M3
 status: todo
 labels: [chore, area:packaging, safety-critical]
 sudo: false
-hardware: false
 depends: [M1.11, M0.8]
 issue: 42
 ```
@@ -1176,7 +1091,6 @@ epic: M3
 status: todo
 labels: [chore, area:devenv]
 sudo: false
-hardware: false
 depends: [M3.8]
 issue: 43
 ```
@@ -1195,32 +1109,32 @@ disk-yank cases.
 
 **Scope** `scripts/vm/`, `.github/workflows/`, `web/`
 
-### A month on the author's own array
+### Soak test
 
 ```meta
 id: M3.10
 epic: M3
 status: todo
-labels: [chore, area:storage, needs-hardware]
+labels: [chore, area:devenv]
 sudo: false
-hardware: true
 depends: [M2.10, M3.2, M3.6, M3.8, M3.9]
 issue: 44
 ```
 
-**Summary** Phase 1's definition of done: the author runs their own array on
-Hoserva for a month, and that month's diff history tunes the guard
-thresholds before anything ships publicly.
+**Summary** Phase 1's definition of done: Hoserva runs in an L3 VM through a
+month of simulated use and failures, and that run's diff history tunes the
+guard thresholds before anything ships publicly (doc 06 §6).
 
-**Design references** doc 07 §1 (Phase 1 definition of done), Q16, R2, R7, doc 06 §5 (A hard rule)
+**Design references** doc 07 §1 (Phase 1 definition of done), doc 06 §6 (Soak test), Q16, R2, R7, D20
 
 **Acceptance criteria**
-- [ ] A verified backup and written rollback exist before the real array is touched
-- [ ] Thirty days of nightly chains complete; every blocked sync reviewed and explained
+- [ ] A scripted L3 soak run of at least 30 nightly chains back to back — sync, scrub, mover — over seeded daily churn: adds, edits, renames, and mass deletes that must trip the guard
+- [ ] Injected failures during the run — a yanked disk, a full disk, power loss mid-sync — each recovered with checksums verified
+- [ ] Every blocked sync reviewed and explained in the run report
 - [ ] Q16's thresholds revisited against the recorded diff history and updated or confirmed
 - [ ] Every problem found filed as an issue
 
-**Scope** `docs/internal/13-open-questions.md`
+**Scope** `scripts/vm/`, `docs/internal/13-open-questions.md`
 
 ---
 
@@ -1246,7 +1160,6 @@ epic: M4
 status: todo
 labels: [feat, area:shares]
 sudo: false
-hardware: false
 depends: [M2.2, M2.4]
 issue: 46
 ```
@@ -1274,7 +1187,6 @@ epic: M4
 status: todo
 labels: [feat, area:shares]
 sudo: false
-hardware: false
 depends: [M4.1]
 issue: 47
 ```
@@ -1299,7 +1211,6 @@ epic: M4
 status: todo
 labels: [feat, area:shares]
 sudo: false
-hardware: false
 depends: [M4.1]
 issue: 48
 ```
@@ -1326,7 +1237,6 @@ epic: M4
 status: todo
 labels: [feat, area:api]
 sudo: false
-hardware: false
 depends: [M1.11, M4.1]
 issue: 49
 ```
@@ -1354,7 +1264,6 @@ epic: M4
 status: todo
 labels: [feat, area:api]
 sudo: false
-hardware: false
 depends: [M4.4]
 issue: 50
 ```
@@ -1380,7 +1289,6 @@ epic: M4
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M4.1, M4.2, M4.4, M4.5]
 issue: 51
 ```
@@ -1423,7 +1331,6 @@ epic: M5
 status: todo
 labels: [feat, area:storage, safety-critical]
 sudo: false
-hardware: false
 depends: [M2.4, M2.8]
 issue: 53
 ```
@@ -1450,7 +1357,6 @@ epic: M5
 status: todo
 labels: [feat, area:storage, safety-critical]
 sudo: false
-hardware: false
 depends: [M5.1, M2.6]
 issue: 54
 ```
@@ -1476,7 +1382,6 @@ epic: M5
 status: todo
 labels: [feat, area:storage, safety-critical]
 sudo: false
-hardware: false
 depends: [M5.1, M2.6]
 issue: 55
 ```
@@ -1502,7 +1407,6 @@ epic: M5
 status: todo
 labels: [feat, area:storage, safety-critical]
 sudo: false
-hardware: false
 depends: [M5.3, M2.9]
 issue: 56
 ```
@@ -1530,7 +1434,6 @@ epic: M5
 status: todo
 labels: [feat, area:storage]
 sudo: false
-hardware: false
 depends: [M2.1, M3.1]
 issue: 57
 ```
@@ -1556,7 +1459,6 @@ epic: M5
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M5.1, M5.2, M5.3, M5.4]
 issue: 58
 ```
@@ -1598,7 +1500,6 @@ epic: M6
 status: todo
 labels: [feat, area:backup]
 sudo: false
-hardware: false
 depends: [M3.2]
 issue: 60
 ```
@@ -1625,7 +1526,6 @@ epic: M6
 status: todo
 labels: [feat, area:backup]
 sudo: false
-hardware: false
 depends: [M6.1]
 issue: 61
 ```
@@ -1653,7 +1553,6 @@ epic: M6
 status: todo
 labels: [feat, area:backup, safety-critical]
 sudo: false
-hardware: false
 depends: [M3.2, M2.3, M1.7]
 issue: 62
 ```
@@ -1680,7 +1579,6 @@ epic: M6
 status: todo
 labels: [feat, area:backup]
 sudo: false
-hardware: false
 depends: [M6.1]
 issue: 63
 ```
@@ -1705,7 +1603,6 @@ epic: M6
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M6.1, M6.2, M6.3, M6.4]
 issue: 64
 ```
@@ -1731,7 +1628,6 @@ epic: M6
 status: todo
 labels: [chore, area:devenv]
 sudo: false
-hardware: false
 depends: [M6.3, M3.9]
 issue: 65
 ```
@@ -1773,7 +1669,6 @@ epic: M7
 status: todo
 labels: [feat, area:containers]
 sudo: false
-hardware: false
 depends: [M6.2]
 issue: 67
 ```
@@ -1801,7 +1696,6 @@ epic: M7
 status: todo
 labels: [feat, area:containers]
 sudo: false
-hardware: false
 depends: [M7.1]
 issue: 68
 ```
@@ -1828,8 +1722,7 @@ epic: M7
 status: todo
 labels: [feat, area:containers]
 sudo: false
-hardware: false
-depends: [M0.3, M7.2]
+depends: [M7.2]
 issue: 69
 ```
 
@@ -1843,12 +1736,12 @@ clean-conversion rate as a release metric.
 - [ ] Field mapping per doc 04 §5; `ExtraParams` parsed with a flag parser, never a regex and never a shell
 - [ ] Untranslatable flags emitted as a Compose comment and a warning; flagged paths (`/boot`, `/mnt/disks/`, `/mnt/user0`, other pools) listed for review
 - [ ] Missing networks reported with the exact `docker network create` command
-- [ ] `make test-corpus` fetches the CA corpus into a gitignored cache at a pinned commit; the clean rate is computed and CI fails if it regresses
+- [ ] `make test-corpus` converts the project-authored template corpus in `testdata/unraid-templates/` (doc 06 §2); the clean rate is computed and CI fails if it regresses
 - [ ] Output always shown beside the source XML before anything runs
 
 **Scope** `internal/template/`, `testdata/unraid-templates/`
 
-### Catalog sources and the opt-in CA feed
+### Catalog sources
 
 ```meta
 id: M7.4
@@ -1856,23 +1749,19 @@ epic: M7
 status: todo
 labels: [feat, area:containers]
 sudo: false
-hardware: false
-depends: [M7.2, M0.4]
+depends: [M7.2]
 issue: 70
 ```
 
-**Summary** Pluggable catalog sources — the curated catalog, user-added
-repositories, and the Community Applications feed as an off-by-default source
-that honours moderation data.
+**Summary** Pluggable catalog sources — the curated Hoserva catalog as the only
+built-in source, plus repositories a user adds themselves (D19).
 
-**Design references** doc 04 §4, Q33, Q34, Q35, R4
+**Design references** doc 04 §4, §7, D19, Q33
 
 **Acceptance criteria**
-- [ ] One source interface; curated catalog on by default (Q33)
-- [ ] CA source fetches from the upstream CDN at runtime only, polls the last-updated endpoint, and never vendors the feed
-- [ ] Moderation data and blacklists applied; removed or blacklisted templates never offered
-- [ ] Every CA entry attributed and badged; enabling the source shows the one-screen explainer
-- [ ] The CA source ships enabled-able only if Q34's outcome allows it
+- [ ] One source interface; the curated catalog is the only built-in source and is on by default
+- [ ] A user can add, refresh and remove a catalog source URL; entries from it are badged as user-added
+- [ ] Every entry shows its source
 
 **Scope** `internal/template/`
 
@@ -1884,7 +1773,6 @@ epic: M7
 status: todo
 labels: [feat, area:containers]
 sudo: false
-hardware: false
 depends: [M7.1, M6.2]
 issue: 71
 ```
@@ -1910,7 +1798,6 @@ epic: M7
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M7.2, M7.3, M7.5]
 issue: 72
 ```
@@ -1953,23 +1840,23 @@ epic: M8
 status: todo
 labels: [chore, area:devenv]
 sudo: false
-hardware: false
 depends: [M3.9]
 issue: 74
 ```
 
-**Summary** Build and snapshot the Unraid source VMs every migration test
-starts from, including the refusal fixtures.
+**Summary** Build the synthetic Unraid source fixtures every migration test
+starts from, including the refusal fixtures — without running Unraid.
 
-**Design references** doc 06 §5 (Building an Unraid source VM, Variant fixtures), doc 05 §2, Q22, Q23, Q24
+**Design references** doc 06 §5 (Building Unraid fixtures without Unraid, Variant fixtures), doc 05 §2, Q22, Q23, Q24, D20
 
 **Acceptance criteria**
-- [ ] `unraid-source` built and snapshotted per doc 06 §5, with seeded data, containers and varied cache settings
+- [ ] `unraid-fixtures` built synthetically per doc 06 §5 — Unraid partition layout and filesystems, share directories with seeded data and varied cache settings, a flash tree with authored `templates-user/` XML — and snapshotted
+- [ ] Optional calibration against an anonymised Unraid Diagnostics zip at a gitignored local path, with divergences recorded in doc 05; nothing from it committed
 - [ ] Variant snapshots from doc 06 §5's list, including `unraid-encrypted`, `unraid-zfs-disk` and `unraid-with-vms`
 - [ ] Each fixture records per-disk file counts, sizes and checksums plus its Flash Backup zip
-- [ ] Build steps scripted and documented; no third-party templates committed
+- [ ] Build steps scripted and documented; no third-party templates committed; no agent runs Unraid or connects to a real Unraid server
 
-**Scope** `scripts/vm/`, `testdata/`
+**Scope** `scripts/devenv/`, `scripts/vm/`, `testdata/`, `.gitignore`
 
 ### Migration scan
 
@@ -1979,7 +1866,6 @@ epic: M8
 status: todo
 labels: [feat, area:migration]
 sudo: false
-hardware: false
 depends: [M2.1, M8.1]
 issue: 75
 ```
@@ -2007,7 +1893,6 @@ epic: M8
 status: todo
 labels: [feat, area:migration, safety-critical]
 sudo: false
-hardware: false
 depends: [M8.2, M2.4, M4.1, M4.3, M4.4]
 issue: 76
 ```
@@ -2035,7 +1920,6 @@ epic: M8
 status: todo
 labels: [feat, area:migration, safety-critical]
 sudo: false
-hardware: false
 depends: [M8.3, M2.5, M2.6]
 issue: 77
 ```
@@ -2063,7 +1947,6 @@ epic: M8
 status: todo
 labels: [feat, area:migration]
 sudo: false
-hardware: false
 depends: [M8.4, M5.2, M7.3]
 issue: 78
 ```
@@ -2089,7 +1972,6 @@ epic: M8
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M8.2, M8.3, M8.4]
 issue: 79
 ```
@@ -2115,7 +1997,6 @@ epic: M8
 status: todo
 labels: [chore, area:devenv]
 sudo: false
-hardware: false
 depends: [M8.1, M8.5]
 issue: 80
 ```
@@ -2156,7 +2037,6 @@ epic: M9
 status: todo
 labels: [chore, area:site]
 sudo: false
-hardware: false
 depends: [M1.1]
 issue: 82
 ```
@@ -2182,7 +2062,6 @@ epic: M9
 status: todo
 labels: [docs, area:site]
 sudo: false
-hardware: false
 depends: [M9.1, M8.4]
 issue: 83
 ```
@@ -2207,7 +2086,6 @@ epic: M9
 status: todo
 labels: [docs, area:site]
 sudo: false
-hardware: false
 depends: [M9.1]
 issue: 84
 ```
@@ -2233,7 +2111,6 @@ epic: M9
 status: todo
 labels: [docs, area:site]
 sudo: false
-hardware: false
 depends: [M9.1, M1.6]
 issue: 85
 ```
@@ -2276,7 +2153,6 @@ epic: M10
 status: todo
 labels: [spike, area:devenv]
 sudo: false
-hardware: false
 depends: [M3.9, M0.9]
 issue: 87
 ```
@@ -2301,7 +2177,6 @@ epic: M10
 status: todo
 labels: [spike, area:vm]
 sudo: false
-hardware: false
 depends: [M8.1]
 issue: 88
 ```
@@ -2327,7 +2202,6 @@ epic: M10
 status: todo
 labels: [feat, area:vm]
 sudo: false
-hardware: false
 depends: [M1.4, M1.5, M1.7]
 issue: 89
 ```
@@ -2353,7 +2227,6 @@ epic: M10
 status: todo
 labels: [feat, area:vm]
 sudo: false
-hardware: false
 depends: [M10.3, M1.8]
 issue: 90
 ```
@@ -2380,7 +2253,6 @@ epic: M10
 status: todo
 labels: [feat, area:vm, safety-critical]
 sudo: false
-hardware: false
 depends: [M10.4, M5.2]
 issue: 91
 ```
@@ -2407,7 +2279,6 @@ epic: M10
 status: todo
 labels: [feat, area:vm]
 sudo: false
-hardware: false
 depends: [M10.4]
 issue: 92
 ```
@@ -2433,7 +2304,6 @@ epic: M10
 status: todo
 labels: [feat, area:vm]
 sudo: false
-hardware: false
 depends: [M10.4, M1.11]
 issue: 93
 ```
@@ -2459,7 +2329,6 @@ epic: M10
 status: todo
 labels: [feat, area:vm]
 sudo: false
-hardware: false
 depends: [M10.3]
 issue: 94
 ```
@@ -2483,9 +2352,8 @@ marking host-critical devices unassignable by construction.
 id: M10.9
 epic: M10
 status: todo
-labels: [feat, area:vm, safety-critical, needs-hardware]
+labels: [feat, area:vm, safety-critical]
 sudo: false
-hardware: true
 depends: [M10.8]
 issue: 95
 ```
@@ -2500,7 +2368,7 @@ configuration that takes effect on reboot — never a live unbind.
 - [ ] Assignment refused for any device the check marks unassignable or that shares a group with one
 - [ ] Removing an assignment restores the previous boot configuration
 - [ ] Attach and detach audit-logged
-- [ ] Verified on the L4 box for one GPU and one USB controller; generated files golden-tested at L1
+- [ ] Verified in a nested L3 guest with an emulated IOMMU for one PCI and one USB device (doc 06 §6); generated files golden-tested at L1
 
 **Scope** `internal/vm/`, `internal/config/`
 
@@ -2512,7 +2380,6 @@ epic: M10
 status: todo
 labels: [feat, area:backup]
 sudo: false
-hardware: false
 depends: [M10.4, M6.1]
 issue: 96
 ```
@@ -2538,7 +2405,6 @@ epic: M10
 status: todo
 labels: [feat, area:migration, safety-critical]
 sudo: false
-hardware: false
 depends: [M10.2, M10.4, M10.8, M8.4]
 issue: 97
 ```
@@ -2566,7 +2432,6 @@ epic: M10
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M10.4, M10.7, M10.8, M10.9]
 issue: 98
 ```
@@ -2592,7 +2457,6 @@ epic: M10
 status: todo
 labels: [chore, area:devenv]
 sudo: false
-hardware: false
 depends: [M10.1, M10.4, M10.5]
 issue: 99
 ```
@@ -2605,7 +2469,7 @@ relocation and console, on the runners S10 found capable.
 **Acceptance criteria**
 - [ ] Lifecycle, relocation of a stopped VM, and console connection covered end to end
 - [ ] Runs where S10 allows, otherwise on the trusted self-hosted runner only
-- [ ] Passthrough explicitly excluded, with a pointer to the L4 test in M10.9
+- [ ] Passthrough covered by M10.9's nested emulated-IOMMU test, not duplicated here
 
 **Scope** `scripts/vm/`, `.github/workflows/`
 
@@ -2622,7 +2486,7 @@ issue: 100
 ```
 
 From "the author runs it" to 1.0: diagnostics, wake attribution, the remaining
-UI, the ISO bundle, a hardware beta, name clearance and the release checklist
+UI, the ISO bundle, an opt-in public beta, name clearance and the release checklist
 (doc 07 §1, Phase 4; doc 06 §7).
 
 ### Diagnostics bundle with verifiable redaction
@@ -2633,7 +2497,6 @@ epic: M11
 status: todo
 labels: [feat, area:api]
 sudo: false
-hardware: false
 depends: [M3.3]
 issue: 101
 ```
@@ -2658,7 +2521,6 @@ epic: M11
 status: todo
 labels: [feat, area:storage]
 sudo: false
-hardware: false
 depends: [M2.7, M2.1]
 issue: 102
 ```
@@ -2684,7 +2546,6 @@ epic: M11
 status: todo
 labels: [feat, area:web]
 sudo: false
-hardware: false
 depends: [M3.6, M11.1]
 issue: 103
 ```
@@ -2711,7 +2572,6 @@ epic: M11
 status: todo
 labels: [chore, area:packaging, safety-critical]
 sudo: false
-hardware: false
 depends: [M3.8, M7.1]
 issue: 104
 ```
@@ -2729,31 +2589,31 @@ preinstalled, which refuses removable boot targets.
 
 **Scope** `packaging/iso/`, `scripts/release/`
 
-### Hardware beta
+### Opt-in public beta
 
 ```meta
 id: M11.5
 epic: M11
 status: todo
-labels: [chore, area:packaging, needs-hardware]
+labels: [chore, area:packaging]
 sudo: false
-hardware: true
 depends: [M11.1, M11.4, M3.10]
 issue: 105
 ```
 
-**Summary** A small beta group on varied hardware, with diagnostics bundles
-collected systematically rather than handled one report at a time.
+**Summary** Volunteers run the beta on their own varied hardware and send
+diagnostics bundles, exercising the real-hardware risks the lab and VMs cannot
+prove (doc 06 §6). The maintainer runs nothing (D20).
 
-**Design references** doc 06 §6 (Beta hardware diversity), doc 12 §6 (Release channels), R10
+**Design references** doc 06 §6 (Opt-in public beta), doc 12 §6 (Release channels), R1, R10, R14, D20
 
 **Acceptance criteria**
-- [ ] Beta channel in the apt repository; beta testers onboarded with the safety expectations stated
+- [ ] Beta channel in the apt repository; joining is opt-in, with the safety expectations stated up front
 - [ ] Diagnostics bundles collected against a tracking template
-- [ ] HBA and onboard SATA identification and SMART behaviour confirmed on at least two controller types
+- [ ] Results recorded against doc 06 §6's residual-risk table — each risk confirmed, refuted or still open
 - [ ] Every beta-found issue filed and triaged
 
-**Scope** `scripts/release/`
+**Scope** `scripts/release/`, `docs/internal/06-dev-and-testing.md`
 
 ### Name clearance
 
@@ -2763,7 +2623,6 @@ epic: M11
 status: todo
 labels: [chore]
 sudo: false
-hardware: false
 depends: []
 issue: 106
 ```
@@ -2789,7 +2648,6 @@ epic: M11
 status: todo
 labels: [chore, area:packaging]
 sudo: false
-hardware: false
 depends: [M11.3, M11.5, M11.6, M8.7, M9.2, M6.6]
 issue: 107
 ```

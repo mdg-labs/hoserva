@@ -35,7 +35,6 @@ labels=(
   "epic|3e4b9e|Milestone issue with sub-issues"
   "safety-critical|b60205|Touches a path where a bug loses data — human reads the diff before push"
   "needs-sudo|d93f0b|Requires root — maintainer runs this, never an agent"
-  "needs-hardware|d93f0b|Requires the L4 hardware box — maintainer runs this, never an agent"
   "blocked|000000|Cannot proceed until a dependency or external blocker is resolved"
 
   "status:new|ededed|Filed, not yet triaged"

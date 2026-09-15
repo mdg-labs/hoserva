@@ -69,7 +69,7 @@ Researched in doc 08 §1: every union filesystem shares the problem, Unraid incl
 - **Nothing Hoserva does on a timer walks a data disk**: "files changed since last sync" comes from a fanotify change journal, not a polled `snapraid diff` (§2, Q13); per-disk directory breakdowns are computed at sync time, not live
 - A spin-state event log from Phase 1, and "What woke my disks" process attribution later (doc 08 §1, Q32)
 
-**Acceptance criterion for v1** (Q31): with no SMB/NFS clients connected, no containers holding pool paths open, and appdata on cache, array disks stay in standby for at least 30 minutes. Automated in the VM harness and measured on the L4 hardware box (doc 06 §4, §6); the result is published with the release.
+**Acceptance criterion for v1** (Q31): with no SMB/NFS clients connected, no containers holding pool paths open, and appdata on cache, array disks stay in standby for at least 30 minutes. Automated in the lab and the VM harness as a zero-IO proxy (doc 06 §4, §6); the result and its stated residual risk are published with the release.
 
 ---
 
@@ -125,7 +125,7 @@ Hoserva therefore blocks the sync when:
 
 On block: the sync is held, a high-priority notification fires through every configured channel, and the dashboard shows a prominent banner with the diff and two actions — *Review the diff and sync anyway* or *Cancel and investigate*. The sync does not proceed until a human decides.
 
-The thresholds are configurable but cannot be disabled entirely; the minimum is a confirmation prompt. The defaults are revisited with real diff history at the end of the Phase 1 month-on-real-data gate (Q16).
+The thresholds are configurable but cannot be disabled entirely; the minimum is a confirmation prompt. The defaults are revisited with the soak test's diff history at the end of Phase 1 (doc 06 §6) (Q16).
 
 **The guard applies to every sync, whatever triggered it** — the nightly chain, adding a disk, the sync inside an evacuation, or a manual click.
 

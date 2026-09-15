@@ -51,6 +51,12 @@ a container you did not create. If the lab doesn't exist in this repo yet,
 storage-behaviour checks cannot run: say so, and judge whether the issue's
 acceptance could honestly be met without them (usually it could not).
 
+VMs likewise run only through the `vm-*` `make` targets, as your user under
+`qemu:///session`, with domain names carrying `{{LAB_ID}}` — never
+`qemu:///system`, never a domain you did not create. No check ever connects to
+the maintainer's own machines, and nothing is handed to the maintainer to
+test (D20).
+
 ## 🔴 Kill by PID only — never by name or pattern
 
 `pkill`, `killall`, and every pattern-matched kill are forbidden. Capture a
@@ -93,7 +99,7 @@ commit holds only its own issue's files and only its own `Fixes #` trailer.
    them*? Unrelated refactors and drive-by fixes are findings, as is missing
    work and a bad commit split.
 3. **Design conformance.** Does it follow the design docs it touches? Does it
-   contradict a decision (`D1`–`D18`) or silently diverge from a doc 13
+   contradict a decision (`D1`–`D20`) or silently diverge from a doc 13
    default (`Qn`) without saying so? Does it respect the architecture rules
    in `CLAUDE.md` — generated config never written directly, system-touching
    code behind an interface with a fake, long work as a job, one placement

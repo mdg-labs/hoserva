@@ -12,7 +12,7 @@
 | **01-architecture.md** | Stack, source-of-truth model, backend design, API, boot/disk layout, security |
 | **02-storage-engine.md** | mergerfs and SnapRAID mechanics, cache/mover, spindown, failure handling |
 | **03-webui-spec.md** | Complete page inventory and per-page functionality |
-| **04-containers.md** | Container management scope, template system, Unraid CA feed findings |
+| **04-containers.md** | Container management scope, template system, catalog sources, converter, curated catalog |
 | **05-migration.md** | Unraid migration: technical basis, pre-flight, sequence, risks, docs site |
 | **06-dev-and-testing.md** | Development environment, loop-device harness, test tiers, CI |
 | **07-roadmap.md** | Phasing, feasibility spikes, deferred features, risk register |
@@ -123,7 +123,7 @@ That last point drives most of the UI decisions in doc 03.
 
 ## 5. Decision log
 
-Decisions already settled, with rationale. Reopening any of these needs a new reason, not a new preference. Recommended defaults for everything still open live in doc 13; a default is promoted here once it has survived real code or real hardware.
+Decisions already settled, with rationale. Reopening any of these needs a new reason, not a new preference. Recommended defaults for everything still open live in doc 13; a default is promoted here once it has survived real code.
 
 | # | Decision | Rationale |
 |---|---|---|
@@ -145,6 +145,8 @@ Decisions already settled, with rationale. Reopening any of these needs a new re
 | D16 | One central database schema (`internal/store/schema/schema.sql`); schema migrations are generated from it, never edited after creation, and always data-safe | The database is the system's definition (D4) — a lost column is a lost share, user or disk mapping. Generated migrations cannot drift from the schema, immutability means an applied migration means the same thing on every install, and expand/contract with tested transforms keeps every upgrade loss-free |
 | D17 | AGPL-3.0, with the license text in `LICENSE` at the repository root | An open, inspectable management layer whose derivatives stay open; the commercial surface is small enough to serve as a separate service; compatible with the vendored coss ui components (D15) |
 | D18 | The API is REST + SSE, specified first in a hand-written `api/openapi.yaml`; the Go server interfaces, the Go client the CLI uses and the TypeScript client the web UI uses are generated from it and committed; every UI and CLI capability is a documented operation, with no undocumented endpoints | Scripts and integrations can do everything the UI can; a missing or mismatched handler fails to compile; UI, mock server and backend build in parallel from one contract; per-operation authorization keeps a root daemon's surface small — GraphQL's flexible reads don't outweigh that for an API made mostly of guarded, job-producing actions |
+| D19 | Hoserva's app catalog is its own: templates the project writes from each application's upstream documentation, plus catalog source URLs a user adds. No third-party catalog feed is built in | A catalog written from upstream docs is fully under the project's control and carries no third-party template license. The converter (D12) is unaffected — it converts a migrating user's own templates |
+| D20 | All testing is agent-run on the development host and CI: L1 unit tests, the L2 loop-device lab, and L3 QEMU VMs under the user's own `qemu:///session`. There is no physical test box, no testing on the maintainer's homelab or Unraid server, and no maintainer-run test step; behaviour only real hardware shows gets the closest lab or VM proxy, its residual risk is stated, and an opt-in public beta exercises it | Development is done entirely by agents, and the maintainer's own machines are never put at risk. A proxy with an honestly stated gap keeps the plan moving where a manual hardware step would block it (doc 06 §6) |
 
 ---
 

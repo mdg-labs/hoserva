@@ -25,7 +25,7 @@
 - Single static binary — trivial `.deb` packaging, no runtime dependency hell
 - Strong subprocess handling, which is 80% of what this backend does
 - Good SQLite and systemd story
-- Cross-compiles for arm64, which matters for the many homelab boxes that aren't x86 — built from day one, supported once it has L4 hardware coverage (Q5)
+- Cross-compiles for arm64, which matters for the many homelab boxes that aren't x86 — built from day one, supported once the public beta covers it (Q5)
 
 ### Why a static SPA rather than SSR — and why not Next.js
 

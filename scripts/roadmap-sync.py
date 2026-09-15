@@ -35,7 +35,7 @@ LABELS_FILE = REPO_ROOT / "scripts" / "bootstrap-labels.sh"
 REPO = os.environ.get("GH_REPO", "mdg-labs/hoserva")
 
 TYPE_LABELS = {"feat", "bug", "chore", "docs", "spike"}
-EXTRA_LABELS = {"epic", "safety-critical", "needs-sudo", "needs-hardware", "blocked"}
+EXTRA_LABELS = {"epic", "safety-critical", "needs-sudo", "blocked"}
 STATUSES = {"todo", "doing", "blocked", "done"}
 MIN_GH = (2, 100)
 
@@ -43,11 +43,6 @@ SUDO_PREAMBLE = (
     "> **Maintainer-run — this step needs root.** An agent prepares everything "
     "and prints the exact commands; it never runs `sudo`, `apt`, or edits "
     'anything under `/etc` itself (CLAUDE.md, "Root access is the maintainer\'s").'
-)
-HARDWARE_PREAMBLE = (
-    "> **Needs real hardware.** Acceptance requires the L4 box or real disks, "
-    "which only the maintainer touches (CLAUDE.md, \"Real disks are off-limits\"). "
-    "An agent may prepare scripts and analysis, never run them against real devices."
 )
 
 
@@ -281,9 +276,8 @@ def validate(phases: dict[str, str], epics: list[Entity], items: list[Entity]) -
             problems.append(f"{it.ident}: item ids are `{parent}.<n>` inside epic {parent}")
         if "epic" in it.labels:
             problems.append(f"{it.ident}: `epic` belongs on epics only")
-        for key, label in (("sudo", "needs-sudo"), ("hardware", "needs-hardware")):
-            if it.flag(key) != (label in it.labels):
-                problems.append(f"{it.ident}: `{key}: {it.meta.get(key, 'false')}` disagrees with label `{label}`")
+        if it.flag("sudo") != ("needs-sudo" in it.labels):
+            problems.append(f"{it.ident}: `sudo: {it.meta.get('sudo', 'false')}` disagrees with label `needs-sudo`")
         for dep in it.depends:
             if dep == it.ident:
                 problems.append(f"{it.ident}: depends on itself")
@@ -321,8 +315,6 @@ def render_body(e: Entity) -> str:
     chunks: list[str] = []
     if e.flag("sudo"):
         chunks.append(SUDO_PREAMBLE)
-    if e.flag("hardware"):
-        chunks.append(HARDWARE_PREAMBLE)
     chunks.append(e.body)
     chunks.append(f"---\nRoadmap: `{e.ident}` (docs/roadmap.md)")
     return "\n\n".join(c for c in chunks if c).strip() + "\n"
@@ -428,7 +420,7 @@ def main() -> int:
                 num = f"#{ep.issue}" if ep.issue else "new"
                 print(f"  [epic {num}] {ep.title}   ({milestone_of(ep)})")
                 for it in ep_items:
-                    flags = "".join(f" [{f}]" for f in ("safety-critical", "needs-sudo", "needs-hardware") if f in it.labels)
+                    flags = "".join(f" [{f}]" for f in ("safety-critical", "needs-sudo") if f in it.labels)
                     deps = f"  ← {', '.join(it.depends)}" if it.depends else ""
                     print(f"      {it.ident:<7} {it.title}{flags}{deps}")
             return 0

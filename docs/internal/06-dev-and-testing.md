@@ -10,16 +10,15 @@ The entire development approach has to be built around this constraint from day 
 
 ---
 
-## 1. The four-layer test pyramid
+## 1. The three-layer test pyramid
 
 | Layer | Runs on | Speed | What it covers |
 |---|---|---|---|
 | **L1 — Unit** | Dev machine, any OS | seconds | Config generation, parsers, business logic, API handlers |
 | **L2 — Loop-device integration** | Container or VM, Linux | seconds to minutes | Real mergerfs, real SnapRAID, real filesystems, on fake disks |
-| **L3 — VM end-to-end** | Local libvirt/QEMU | minutes | Full install, real block devices, disk failure injection, UI flows |
-| **L4 — Hardware** | Dedicated test box | hours | Real disks, spindown, SMART, thermals, performance |
+| **L3 — VM end-to-end** | QEMU/KVM under the user's `qemu:///session` | minutes to hours | Full install, virtual block devices, disk failure injection, UI flows, soak test, nested passthrough |
 
-Nearly all development happens at L1 and L2. L3 runs in CI and before releases. L4 runs before a release and for anything involving physical disk behaviour.
+Nearly all development happens at L1 and L2. L3 runs nightly and before releases. **There is no hardware layer (D20):** every test is run by an agent, never on the maintainer's machines, and behaviour only physical disks show is covered by the proxies in §6 with its residual risk stated.
 
 ---
 
@@ -86,9 +85,9 @@ Any change to generated output shows up as a reviewable diff in the PR. This is 
 
 ### Parser tests against real-world corpus
 
-`snapraid diff`, `snapraid status`, `smartctl -j`, `docker` output, and Unraid XML all get parsed. Collect real outputs into `testdata/` and test against them — including malformed and edge cases. Unraid XML especially: pull a few hundred templates from the CA feed and assert the converter handles all of them without panicking, with a tracked count of how many convert cleanly vs. with warnings (clean as defined in Q36). **That number is a release metric.**
+`snapraid diff`, `snapraid status`, `smartctl -j`, `docker` output, and Unraid XML all get parsed. Collect real outputs into `testdata/` and test against them — including malformed and edge cases. Unraid XML especially: the converter must handle every template in the corpus below without panicking, with a tracked count of how many convert cleanly vs. with warnings (clean as defined in Q36). **That number is a release metric.**
 
-**The CA corpus is fetched, not committed.** This repository is public, and committing hundreds of third-party templates is exactly the redistribution doc 04 §4 says not to do. `make test-corpus` downloads the feed into a gitignored cache, pinned to a recorded feed commit so the metric is reproducible. Only self-written templates and templates from repositories whose license clearly permits it are committed under `testdata/unraid-templates/`.
+**The template corpus is written by the project.** `testdata/unraid-templates/` holds Unraid-format XML templates authored for testing — every field in doc 04 §5, common `ExtraParams` flags, path and network edge cases, and malformed input — never copied from a third-party catalog. `make test-corpus` converts all of them and reports the clean-conversion rate (Q36); CI fails if it regresses.
 
 ---
 
@@ -134,7 +133,7 @@ mergerfs -o category.create=epmfs,moveonenospc=true,minfreespace=50G \
 - Actual `moveonenospc` behaviour when a disk fills
 - Actual mover behaviour between cache and array
 
-**What it does not give you:** SMART data, spindown, real IO timing, hardware failure modes. Those are L3 and L4.
+**What it does not give you:** SMART data, spindown, real IO timing, hardware failure modes. L3 and the proxies in §6 cover what can be covered; the rest is stated residual risk.
 
 **The lab is namespaced and self-guarding** (Q45). Every image, mount point and container name carries `HOSERVA_LAB_ID`, so two labs — two developers' shells, or two agent lanes from the `orchestrate` skill — never collide. Every script refuses to operate on any device that is not a loop device whose backing file lives under its own `$LAB/img/`. `losetup -D` (detach *all*) is never used anywhere.
 
@@ -220,7 +219,8 @@ Where loop devices stop, VMs start: real block devices, real boot, real install,
 
 ### Base VM
 
-- libvirt/QEMU, Debian 13 (Q4), 4 vCPU, 4 GB RAM
+- QEMU/KVM under the invoking user's `qemu:///session` — never `qemu:///system`, never root — Debian 13 (Q4), 4 vCPU, 4 GB RAM
+- Disk images, snapshots and domain names live under the workspace and carry `HOSERVA_LAB_ID`, so parallel agent lanes never collide and teardown removes only its own domains
 - 1 virtual disk for the OS, 7 virtual disks for the array (sparse qcow2, sized realistically)
 - Managed via a `Makefile` or Vagrant-equivalent scripts, provisioned with the `.deb` under test
 
@@ -233,7 +233,7 @@ make vm-up                 # fresh Debian + Hoserva installed
 make vm-snapshot NAME=clean
 make vm-snapshot NAME=array-configured
 make vm-snapshot NAME=array-with-data
-make vm-snapshot NAME=unraid-source      # for migration testing
+make vm-snapshot NAME=unraid-fixtures    # synthetic Unraid disks for migration testing (§5)
 make vm-restore NAME=array-with-data     # seconds, not a reinstall
 ```
 
@@ -249,6 +249,7 @@ Every destructive test starts from a named snapshot and restores afterwards. A p
 - Power-loss simulation: `virsh destroy` mid-sync, then assert recovery on boot
 - **Config backup and full restore onto a fresh VM** — this is the "OS is disposable" claim from doc 01 §6, and it must be a routine test, not an assumption
 - UI end-to-end with Playwright against the real UI
+- **The soak test** (§6) — the long-running run whose diff history tunes the guard thresholds (Q16)
 
 ### Playwright suite
 
@@ -268,31 +269,29 @@ Test 5 is the one that must never be allowed to regress.
 
 ### Testing Hoserva's own VM management (doc 14)
 
-The L3 test VM already runs on libvirt/QEMU to test Hoserva itself. Testing Hoserva's *own* VM-management feature end to end means running KVM **inside** that VM, for a domain Hoserva-under-test creates — nested virtualization. Whether hosted CI runners support nested KVM (as opposed to the outer `/dev/kvm` access S9 already confirmed) is a Phase 3.5 spike (S10, doc 07 §1); if not, that suite runs on the self-hosted nightly runner only, the same posture the rest of L3 already has (§7 below). PCI/USB/GPU passthrough itself is never simulated here — it's L4-only (§6), since it depends on real IOMMU topology and BIOS behaviour.
+The L3 test VM already runs on libvirt/QEMU to test Hoserva itself. Testing Hoserva's *own* VM-management feature end to end means running KVM **inside** that VM, for a domain Hoserva-under-test creates — nested virtualization. Whether hosted CI runners support nested KVM (as opposed to the outer `/dev/kvm` access S9 already confirmed) is a Phase 3.5 spike (S10, doc 07 §1); if not, that suite runs on the self-hosted nightly runner only, the same posture the rest of L3 already has (§7 below). PCI/USB passthrough is exercised in a nested guest with an emulated IOMMU (§6); real IOMMU topology and BIOS behaviour stay stated residual risk.
 
 ---
 
 ## 5. Testing the Unraid migration
 
-The hardest thing to test, because it needs a real Unraid array as the source.
+The hardest thing to test, because the source is a system Hoserva doesn't control — so the source is built synthetically.
 
-### Building an Unraid source VM
+### Building Unraid fixtures without Unraid
 
-Unraid boots from USB and validates a license against the stick's GUID. In a VM this means either passing through a real cheap USB stick (`virsh attach-device` with a USB host device) or using a virtual USB device with a readable serial — the trial license covers 30 days, which is enough to build and snapshot a source image.
+No agent runs Unraid or connects to a real Unraid server — not the maintainer's, not even read-only (D20). Unraid's array disks are plain XFS, btrfs or ext4 filesystems with one top-level directory per share, and its configuration is plain files on the flash drive, so the migration source is **built synthetically**:
 
-Once built:
+1. `scripts/devenv/unraid-fixture.sh` partitions and formats loop disks (L2) or virtual disks (L3) the way Unraid does — partition layout, filesystem and mkfs options per supported version (Q24) — from Unraid's public documentation and its public `webgui` source
+2. Seeds share directories with realistic data and varied cache settings, plus `appdata`, `domains` and `system`
+3. Writes a matching flash tree — disk assignments, share and user configuration, `plugins/dockerMan/templates-user/*.xml` authored for the fixture (never copied from any catalog), and `libvirt.img` for VM variants — packed as a Flash Backup zip
+4. Records per-disk file lists, sizes and sha256 as the fixture's expected result
+5. **Snapshots** the result (`unraid-fixtures`) so every migration test restores it in seconds
 
-1. Install Unraid to the stick, create an array across virtual disks
-2. Seed it with realistic data and directory structures
-3. Install a handful of containers so `templates-user/` is populated
-4. Create shares with varied cache settings
-5. **Snapshot the whole thing** as `unraid-source`
-
-That snapshot is then the fixture for every migration test. Build it once; restore it in seconds thereafter.
+**Optional calibration.** If the maintainer places an Unraid **Diagnostics** zip (Tools → Diagnostics, which Unraid anonymises for public posting) at a gitignored local path, agents compare the fixtures' partition layout, filesystem parameters and config file shapes against it and record any divergence in doc 05. Nothing from it is committed, and no agent ever fetches it from the server. Without it, the fixtures rest on public sources alone, and quirks of disks Unraid itself formatted are stated residual risk.
 
 ### Variant fixtures
 
-Per doc 05 §2, build a snapshot for each variant that must be supported or explicitly declared unsupported:
+Per doc 05 §2, build a fixture for each variant that must be supported or explicitly declared unsupported:
 
 - `unraid-6.12-xfs-single-parity` — the primary path
 - `unraid-7x-xfs-single-parity` — verify the flash config layout hasn't moved (Q24)
@@ -306,10 +305,10 @@ Per doc 05 §2, build a snapshot for each variant that must be supported or expl
 
 ### Migration test procedure
 
-1. Restore the source snapshot, record file counts, sizes, and checksums per disk; export the fixture's Flash Backup zip
-2. Shut down, detach the Unraid stick, attach a fresh OS disk
+1. Restore the fixture snapshot; its recorded file counts, sizes, checksums and Flash Backup zip are the expected result
+2. Attach the fixture's data disks to a fresh VM
 3. Install Debian + Hoserva
-4. Run `hoserva migrate scan --flash-backup <zip>`, assert the report matches the known array; repeat once with the stick attached read-only and assert it was not written (Q25)
+4. Run `hoserva migrate scan --flash-backup <zip>`, assert the report matches the known array; repeat once with the fixture's flash image attached read-only and assert it was not written (Q25)
 5. Run the import, assert **every file is present with matching checksums**
 6. Assert share structure and permissions survived
 7. Convert templates, assert containers start and find their data
@@ -320,31 +319,30 @@ Step 5 is the one that decides whether this feature ships. Checksums, not file c
 
 ### A hard rule
 
-**Never test the migrator against a real user array, including your own, without a verified backup and a written rollback.** The migrator's failure mode is losing 24 TB. The temptation to "just try it on the real box" is exactly how that happens.
+**Never test the migrator against a real user array, including the maintainer's.** Agents never do (D20); a user does so only through the released product, with a verified backup and a written rollback. The migrator's failure mode is losing 24 TB. The temptation to "just try it on the real box" is exactly how that happens.
 
 ---
 
-## 6. L4 — Hardware testing
+## 6. Behaviour only hardware shows — proxies and residual risk
 
-Some things only a real machine shows: spindown, SMART, thermals, actual throughput, controller quirks.
+There is no hardware test layer (D20): no test box, no testing on the maintainer's homelab or Unraid server, no maintainer-run step. Each behaviour that physical disks would show gets the closest agent-runnable proxy, and what the proxy cannot prove is written down rather than assumed.
 
-### The test box
+| Behaviour | Agent-run proxy | Residual risk — not proven |
+|---|---|---|
+| **Spindown** (Q31) | In the lab and L3, with the daemon, SMART polling and the change journal running: per-disk read and write counters (`/sys/block/<dev>/stat`) stay flat for 30+ minutes of the Q31 scenario, and any IO that does arrive is attributed to a process (fanotify, blktrace). A disk only leaves standby when IO reaches it, so zero IO is the property Hoserva owns | A drive's firmware or controller waking it with no host IO |
+| **SMART polling without waking disks** | Real `smartctl -j` output from many drive models as parser fixtures (L1); in L3, assert the poller issues only standby-aware queries and causes no read IO on an idle disk | Firmware that spins up on a SMART query despite `-n standby` |
+| **Disk identity** (Q21) | L3 virtual disks with configured WWN and serial, and USB-attached virtual disks with the serial hidden | Enclosures and HBAs that report identity inconsistently |
+| **Reconstruction timing, throughput** | Measured in L3 on realistically sized sparse disks, as relative comparisons between mergerfs options and releases — never absolute numbers | Absolute speeds and thermals on real disks |
+| **PCI/USB passthrough** (doc 14 §3) | A nested L3 guest with an emulated IOMMU and emulated PCI and USB devices: group detection, the generated boot-time VFIO configuration, reboot, the device visible in the guest, assignment removal | Real IOMMU/ACS topology, BIOS quirks, GPU reset and reacquisition |
+| **arm64** (Q5) | Cross-built in CI; install and the storage suite in L3 under emulation | Real arm64 boards' storage controllers |
 
-An old desktop or a cheap mini PC with 3–4 second-hand disks is sufficient. Small disks are better — a 500 GB disk rebuilds in minutes where an 8 TB one takes hours, and the behaviour is the same.
+### Soak test
 
-### What must be tested here
+The long-running check that is Phase 1's definition of done (doc 07 §1): an L3 VM runs Hoserva through at least 30 nightly chains back to back — sync, scrub, mover — over seeded daily churn that includes mass deletes and renames, with injected failures (a yanked disk, a full disk, power loss mid-sync). Every blocked sync is reviewed and explained, and the run's diff history is what tunes the guard thresholds (Q16).
 
-- **Spindown** — doc 02 §1, doc 08 §1. Acceptance criterion (Q31): with no SMB/NFS clients connected, no containers holding pool paths open, and appdata on cache, array disks stay in standby for 30+ minutes. Verified with `smartctl -n standby` polling and the wake-event log; the change journal (Q13) must be running during the test, so it is proven not to wake anything.
-- **SMART polling without waking disks** — assert that the monitoring loop itself doesn't defeat spindown, which is a classic self-inflicted bug
-- **Real reconstruction timing** — so the UI's ETA estimates are not fiction
-- **Thermals** under a full scrub with every disk active
-- **Actual throughput** over SMB, to catch mergerfs option mistakes that a loop device would hide
-- **Controller behaviour** — HBA and onboard SATA enumerate differently; disk identification must be robust across both
-- **PCI/USB/GPU passthrough** (doc 14 §3) — IOMMU group isolation, VFIO binding, and GPU reacquisition after VM shutdown are real-hardware-only; no VM or loop device reproduces IOMMU topology
+### Opt-in public beta
 
-### Beta hardware diversity
-
-Before 1.0, a small beta group running varied hardware will surface more than any lab. What matters is collecting `hoserva diagnostics` bundles systematically rather than handling reports one by one in a Discord channel.
+The residual risks above are exercised by volunteers on their own hardware, never by the maintainer: an opt-in beta channel (doc 12 §6), with `hoserva diagnostics` bundles collected against a tracking template rather than handled one report at a time. Beta results update the right-hand column — a risk the beta confirms or refutes is recorded, never silently dropped.
 
 ---
 
@@ -386,7 +384,7 @@ L1 + L2 + `.deb` build must pass on every push to `main` and on every external P
 - No breaking API change since the previous release without a new API version (oasdiff)
 - `.deb` installs cleanly on a fresh Debian
 - Template converter clean-conversion rate has not regressed
-- Spindown acceptance test passed on the hardware box
+- Spindown acceptance test (§6 zero-IO proxy) and soak test green
 
 ---
 
@@ -423,7 +421,7 @@ scripts/vm/             the L3 *test* VM harness (lifecycle, snapshots, provisio
                         VM-management feature, which lives in internal/vm/ (doc 14)
 testdata/configs/       golden files
 testdata/parsers/       real-world tool output corpus
-testdata/unraid-templates/  committable XML corpus (the CA corpus is fetched, §2)
+testdata/unraid-templates/  project-authored Unraid XML template corpus (§2)
 web/fixtures/           API fixtures shared by the mock server and backend tests
 .lab/                   gitignored per-lab image and mount roots
 ```

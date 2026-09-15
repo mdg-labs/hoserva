@@ -2,7 +2,7 @@
 
 The single register of everything not yet settled. **No question here is a bare question**: each carries a recommended default and a one-line rationale, and the rest of the document set is written *as if the default were adopted*. Overriding a default means editing its entry here and the sections it lists under **Affects** — nothing else should need to change.
 
-A default is not a decision. Decisions live in the decision log (doc 00 §5) and need a new reason to reopen; defaults here need only a better idea. Promote a default to the decision log once it has survived contact with real hardware or real code.
+A default is not a decision. Decisions live in the decision log (doc 00 §5) and need a new reason to reopen; defaults here need only a better idea. Promote a default to the decision log once it has survived contact with real code.
 
 ### Status legend
 
@@ -16,7 +16,7 @@ A default is not a decision. Decisions live in the decision log (doc 00 §5) and
 
 ### Where open questions lived before this doc
 
-Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 04 §4 (CA feed licensing posture), doc 05 §2 (variant table "Test"/"Verify" rows), doc 07 §3 (the former open-questions section), doc 08 ("Remaining hands-on work"), plus gaps and contradictions found in a full cross-read of docs 00–12. Doc 07 §3 now points here.
+Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 04 §4 (catalog licensing posture), doc 05 §2 (variant table "Test"/"Verify" rows), doc 07 §3 (the former open-questions section), doc 08 ("Remaining hands-on work"), plus gaps and contradictions found in a full cross-read of docs 00–12. Doc 07 §3 now points here.
 
 ---
 
@@ -25,10 +25,9 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | Gate | Questions |
 |---|---|
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
-| **During Phase 0** | Q36 |
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61 |
-| **Before Phase 3** | Q22–Q25, Q33–Q35, Q37–Q39, Q62 |
+| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
 | **Before 1.0** | Q47, Q50 |
 
@@ -66,8 +65,8 @@ Debian 12 is already oldstable. Trixie's 6.12 kernel gives FUSE passthrough and 
 ### Q5 — CPU architectures
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §1, doc 07 §1
 
-**Default: amd64 is supported. arm64 is built in CI from the first commit and labelled unsupported until an arm64 box joins L4 testing.**
-Go cross-compilation is free as long as the SQLite driver is pure Go (Q6). A support claim, though, needs hardware (spindown, SMART, controllers) that CI can't fake. That resolves the tension between doc 01 ("arm64 matters") and doc 07 ("ARM builds post-1.0").
+**Default: amd64 is supported. arm64 is built in CI from the first commit and labelled unsupported until the public beta covers arm64 boards (doc 06 §6).**
+Go cross-compilation is free as long as the SQLite driver is pure Go (Q6). A support claim needs real boards' storage controllers, which emulation can't show. That resolves the tension between doc 01 ("arm64 matters") and doc 07 ("ARM builds post-1.0").
 
 ### Q6 — SQLite driver
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §1
@@ -216,8 +215,8 @@ S6 validates the costs on the loop harness: one FUSE process per share (a dozen 
 ### Q16 — Guard threshold values
 **Status:** Default · **Gate:** Phase 1 end · **Affects:** doc 02 §2
 
-**Default: keep 500 removed files / 10% removed+updated. Revisit using the author's own diff history at the end of the Phase 1 month-on-real-data gate.**
-The numbers are guesses until real nightly diffs exist. The gate in doc 07 §1 already produces that data for free.
+**Default: keep 500 removed files / 10% removed+updated. Revisit using the soak test's diff history (doc 06 §6) at the end of Phase 1.**
+The numbers are guesses until real nightly diffs exist. The soak test already produces that data.
 
 ### Q17 — `snapraid touch` before syncs
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §2
@@ -244,7 +243,7 @@ Dual parity was excluded because its "migration path [is] unclear", but it isn't
 The parity file is a single file roughly as large as the largest data disk. ext4 with 4 KiB blocks caps files at 16 TiB, which today's 20 TB+ disks exceed. XFS has no practical file size limit and no reserved-block overhead. The data disks' `minfreespace` (default 50G) keeps parity headroom even when parity and data disks are the same nominal size.
 
 ### Q21 — Disk identity
-**Status:** Default (hands-on in S2, L4) · **Gate:** Phase 1 · **Affects:** doc 02 §4, doc 05 §4, doc 10 §1
+**Status:** Default (confirmed in S2 against synthetic fixtures and L3 virtual disks) · **Gate:** Phase 1 · **Affects:** doc 02 §4, doc 05 §4, doc 10 §1
 
 **Default: a disk's identity is its `/dev/disk/by-id` WWN, falling back to serial. Mounts use filesystem UUID. When a USB enclosure hides the serial, the disk is marked "weak identity": allowed as a data disk (matched on FS UUID + size), refused as parity, and warned about in the setup wizard and migration scan.**
 Serial matching is validated by Unraid's own model (doc 08). Enclosures that mask serials are the known exception, and a wrong parity-disk match is the most expensive mistake that exception could cause.
@@ -262,7 +261,7 @@ Doc 08's recovery evidence and R2 outweigh the convenience. Detect-and-refuse ma
 mergerfs and SnapRAID are filesystem-agnostic, so a single-device btrfs or ext4 disk costs one fixture each. ZFS needs OpenZFS as a dependency, which is out of scope (doc 00 §4). Doc 08's "refuse a filesystem that reports errors" extends to every filesystem, not just XFS.
 
 ### Q24 — Supported Unraid versions for migration
-**Status:** Spike (S2 hands-on) · **Gate:** Phase 3 · **Affects:** doc 05 §2, §3, doc 06 §5, doc 07 R5
+**Status:** Spike (S2, synthetic fixtures) · **Gate:** Phase 3 · **Affects:** doc 05 §2, §3, doc 06 §5, doc 07 R5
 
 **Default: Unraid 6.12.x and 7.x, each backed by a fixture. The scan refuses any version or config layout it doesn't recognise. `--unverified-layout` overrides that refusal with a full-screen warning and records the override in the report.**
 R5's "fail loudly on unknown layouts" needs a concrete allowlist to fail against.
@@ -311,7 +310,7 @@ With fixed clock times (mover "before" a 03:00 sync), a mover run longer than an
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §1, doc 06 §6
 
 **Default: array disks stay in standby for ≥ 30 minutes with no SMB/NFS clients connected, no containers holding pool paths open, and appdata on cache.** The measured result is published with the release, including what breaks it.
-This is doc 08's refinement, which docs 02 and 06 hadn't picked up.
+This is doc 08's refinement. It is measured by doc 06 §6's zero-IO proxy in the lab and L3; firmware-level wakes are stated residual risk.
 
 ### Q32 — Wake attribution scope
 **Status:** Default · **Gate:** Phase 1 / Phase 4 · **Affects:** doc 07 §1, doc 03 §3.3
@@ -332,25 +331,24 @@ A recurring complaint about Unraid is the lack of iSCSI without a plugin, most o
 ## Containers
 
 ### Q33 — Default catalog source on a fresh install
-**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §4, §7
+**Status:** Settled → D19 · **Affects:** doc 04 §4, §7
 
-**Default: the curated Hoserva catalog is on. The CA feed is an opt-in source, off by default, with its one-screen explainer. The Unraid XML converter is always available for local templates.**
-Curated defaults are the safe first experience and fully under the project's control. Breadth is one toggle away for users who want it.
+**The curated Hoserva catalog is the only built-in source; users may add their own catalog source URLs. The Unraid XML converter is always available for local templates.**
 
-### Q34 — Consuming the Community Applications feed
-**Status:** External · **Gate:** Phase 3 · **Affects:** doc 04 §4, doc 07 R4
+### Q34 — Third-party catalog feeds
+**Status:** Settled → D19 · **Affects:** doc 04 §4, doc 07 R4
 
-**Default: contact the CA maintainer before Phase 3 starts, and build the catalog behind a pluggable source interface regardless. If there is no answer, or the answer is no, by the time Phase 3 implementation starts, ship no built-in CA source.** The generic "add a catalog source URL" capability stays, so the licensing outcome changes a default, not the architecture.
+**No third-party catalog feed is built in.** The catalog is Hoserva's own (doc 04 §7).
 
-### Q35 — License status of the aggregated feed
-**Status:** External · **Gate:** Phase 3 release · **Affects:** doc 04 §4
+### Q35 — Licensing of catalog templates
+**Status:** Settled → D19 · **Affects:** doc 04 §7
 
-**Default: fetch at runtime from the upstream CDN only. Never vendor the feed. Attribute every entry. Honour moderation data and blacklists.** Get a proper review before the CA source is enabled by default for anyone.
+**Every curated template is written by the project from the application's upstream documentation, so the catalog carries no third-party template license.** Each packaged application keeps its own upstream license.
 
 ### Q36 — What counts as a "clean" template conversion
-**Status:** Default · **Gate:** Phase 0 (S3) · **Affects:** doc 06 §2, doc 07 §1
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §5, doc 06 §2
 
-**Default: "clean" means the generated Compose file needs no manual action. Informational warnings (`:latest` tag, a dropped `<Shell>`) are allowed; untranslated `ExtraParams`, unresolved networks, or paths flagged for review are not.** The 80% kill criterion and the release metric that must not regress both use this definition.
+**Default: "clean" means the generated Compose file needs no manual action. Informational warnings (`:latest` tag, a dropped `<Shell>`) are allowed; untranslated `ExtraParams`, unresolved networks, or paths flagged for review are not.** The converter's clean-conversion release metric, which must not regress, uses this definition.
 
 ### Q37 — Container networks
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 03 §5.4, doc 04 §1, §5

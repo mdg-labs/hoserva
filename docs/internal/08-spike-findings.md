@@ -1,6 +1,6 @@
 # Hoserva — Spike Findings
 
-Research answers to the two kill-criteria questions from doc 07 §1. Both are answered from public sources; both still need hands-on confirmation, but the plan does not need to wait on that.
+Research answers to the two kill-criteria questions from doc 07 §1. Both are answered from public sources; both still need agent-run confirmation in the lab (doc 06 §5, §6), but the plan does not need to wait on that.
 
 ---
 
@@ -49,9 +49,9 @@ Recommendation: keep folder-locality as the default for balance and blast-radius
 
 ### Remaining hands-on work
 
-- Measure wake frequency under a realistic container load on the test box
+- Measure IO reaching array disks under a realistic container load, with the zero-IO proxy in the lab (doc 06 §6)
 - Quantify what the cache TTL settings actually buy
-- Verify `smartctl -n standby` genuinely avoids waking disks across both HBA and onboard SATA
+- Verify in L3 that SMART polling causes no read IO on an idle disk; firmware behaviour across controllers is residual risk for the public beta (doc 06 §6)
 - Build and validate the wake-attribution mechanism — this is the piece with no prior art to copy
 
 ---
@@ -79,7 +79,7 @@ Supporting details from Unraid's own documentation: XFS is described as generall
 
 ### Remaining hands-on work
 
-Unchanged from doc 06 §5 — build the Unraid source VM, snapshot it, and run the checksum-verified migration. The point is no longer "does this work" but "does our implementation of it work", which is a normal testing problem.
+Unchanged from doc 06 §5 — build the synthetic Unraid fixtures, snapshot them, and run the checksum-verified migration against them. The point is no longer "does this work" but "does our implementation of it work", which is a normal testing problem.
 
 ---
 

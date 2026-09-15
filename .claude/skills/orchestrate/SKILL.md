@@ -15,9 +15,8 @@ allowed-tools:
 
 Turns one GitHub issue on `mdg-labs/hoserva` — a single item, or an epic
 with sub-issues — into landed, verified commits on local `main`, with no
-human in the loop except at a genuine blocker (a `needs-sudo` or
-`needs-hardware` step, a repeated verification failure, or an external
-unmet dependency). **Nothing is pushed**: the maintainer reads and pushes.
+human in the loop except at a genuine blocker (a `needs-sudo` step, a
+repeated verification failure, or an external unmet dependency). **Nothing is pushed**: the maintainer reads and pushes.
 
 **You (the current session) are the orchestrator.** You spawn
 `task-executor` and `task-verifier` subagents and drive the loop yourself —
@@ -45,6 +44,12 @@ baked into both templates; **never soften them when filling one in**:
 - **Docker is root-equivalent here.** Agents use it only through `make`
   targets and for read-only linter containers with their workspace mounted
   read-only. They never stop, remove or prune anything they did not create.
+- **VMs run only through the `vm-*` targets under `qemu:///session`**, with
+  images in the agent's workspace and domain names carrying the lab id. Never
+  `qemu:///system`; never touch a domain an agent did not create — the
+  maintainer has VMs of their own on this host.
+- **No agent connects to the maintainer's homelab or Unraid server**, not even
+  read-only, and nothing is handed to the maintainer to test (D20).
 - **No `sudo`, no package installs, no writes under `/etc`, `/var/lib/hoserva`,
   `/run/hoserva` or `/mnt`, no host systemd units, no `.deb` installed on the host.**
 - **Kill by PID only** — never `pkill`/`killall`/pattern kills. (A sibling
@@ -63,11 +68,15 @@ docker info --format '{{.ServerVersion}}' 2>&1 | head -1
 command -v go node npm shellcheck golangci-lint actionlint 2>&1
 docker ps --filter name=hoserva-lab- --format '{{.Names}}' 2>&1
 losetup -a 2>&1 | wc -l
+ls -l /dev/kvm 2>&1; command -v qemu-system-x86_64 qemu-img 2>&1; grep -E '^vm-(up|destroy):' Makefile 2>&1
+virsh -c qemu:///session list --all --name 2>&1
 ```
 
 That tells you whether the lab exists (`LAB_AVAILABLE`), whether Docker is
 reachable by this user, which checkers are installed, and whether a stale
-lab from an earlier run is still up. A stale `hoserva-lab-*` container from a
+lab from an earlier run is still up — and whether the VM harness exists
+(`VM_AVAILABLE`) and which session VMs already exist (report them, never touch
+them). A stale `hoserva-lab-*` container from a
 previous run is reported to the user, not removed by you.
 
 ## 0. Resolve the target
@@ -119,17 +128,23 @@ For each `d` in `blockedBy` (uppercase state here):
 Also read the design context each issue cites (`## Design references`) —
 you are about to judge its scope, and the docs are where scope lives.
 
-## 2. Pull out `needs-sudo` and `needs-hardware` issues — they never go through an agent
+## 2. Pull out `needs-sudo` issues — they never go through an agent
 
-No agent may run root commands or touch real hardware. For each such issue in T:
+No agent may run root commands. For each such issue in T:
 
-1. Read it yourself. For `needs-sudo`, stage whatever files it describes in
-   the real repo and print the exact commands for the maintainer, prefixed
-   `! ` and fish-compatible. For `needs-hardware`, write out the exact test
-   procedure the maintainer runs on the L4 box and what result means pass.
+1. Read it yourself. Stage whatever files it describes in the real repo and
+   print the exact commands for the maintainer, prefixed `! ` and
+   fish-compatible.
 2. Do **not** commit, do **not** close. Report it as "prepared, awaiting
    maintainer" and remove it from T — its dependents stay blocked until the
    maintainer confirms and you're re-invoked.
+
+**There is no hardware tier.** Every test — spindown, SMART, Unraid
+adoption, passthrough included — runs in the loop-device lab or an
+agent-started VM (doc 06). The maintainer runs no tests and no agent ever
+connects to the maintainer's homelab. An issue whose acceptance seems to
+need physical disks is mis-scoped: send it back through `github-triage`,
+never to the maintainer.
 
 ## 3. Determine each remaining issue's file scope
 
@@ -162,7 +177,7 @@ first, delete that edge, re-layer the waves.
 - an issue whose thread carries a verification FAIL, or that is entering a fix round;
 - a `safety-critical` issue — it gets its own agent, its own verifier, and its own line in the report;
 - a `spike` — findings deserve an agent's undivided attention;
-- anything `needs-sudo` or `needs-hardware` (already removed).
+- anything `needs-sudo` (already removed).
 
 Cap a bundle at **3 issues**. Its scope is the union of its members'. Every commit stays one issue.
 
@@ -374,7 +389,7 @@ Record the work; don't do it. Never fold a finding into an unrelated landing com
 
 - What landed (issue → commit SHA → one line)
 - **Safety-critical commits — read line by line before pushing** (their own list, even if empty: "none this run")
-- What's blocked and why (`needs-sudo`/`needs-hardware` prepared, external dependency, lab not yet available, escalated after 3 FAILs)
+- What's blocked and why (`needs-sudo` prepared, external dependency, lab not yet available, escalated after 3 FAILs)
 - Bundles and why
 - What step 11 filed or fixed
 - Any stale lab containers or loop devices step 0 found
@@ -400,7 +415,7 @@ report as your final message.
 
 - **Commits land on local `main` only — never pushed by you or any agent.** A scratch clone's branch is internal and disposable.
 - **No agent ever runs `gh issue close`.** Closing happens via a pushed commit's trailer.
-- **No agent ever touches a real block device, a real mount, or runs `sudo`** — storage runs only in its own namespaced lab; `needs-sudo` and `needs-hardware` issues never reach an agent.
+- **No agent ever touches a real block device, a real mount, or runs `sudo`** — storage runs only in its own namespaced lab; `needs-sudo` issues never reach an agent.
 - **Every lab is destroyed** before its clone is deleted, and no lane ever uses another lane's lab id.
 - **Never poll or self-schedule while agents run.**
 - **Exactly one `status:*` label per issue**, only via `scripts/issue-status.sh` / `scripts/epic-status.sh`.
