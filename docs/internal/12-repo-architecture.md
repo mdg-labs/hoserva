@@ -256,10 +256,10 @@ Minimal, since there is one developer (Q46):
 - `main` is always releasable
 - **Agent work lands as verified local commits on `main`** via the `orchestrate` skill — one commit per issue, closed by its `Fixes #n` trailer. The maintainer reads (safety-critical commits line by line) and pushes; nothing agent-made is pushed automatically. CI runs on every push.
 - **External contributors** use pull requests from forks, squash-merged, with CI on hosted runners only (doc 06 §7)
-- Tags drive releases; CI builds the `.deb`, publishes it to the signed apt repository under `/apt/` on the project site, and keeps the last five releases per channel and architecture so a rollback has somewhere to go (Q66, Q67)
+- Tags drive releases; CI builds the `.deb` for amd64 and arm64, attaches it with signed checksums to a GitHub Release, and updates the signed release index on the project site. GitHub keeps every version, so a rollback always has somewhere to go. From 1.0 the same workflow also publishes to the signed apt repository (Q66, Q67)
 - Conventional commits (`feat(parity): …`), since the changelog generates from them and the agent will write most of them
 
-**Release channels:** `stable` and `beta` in the apt repo. Beta exists for the opt-in public beta (doc 06 §6) and for anything touching the mover, parity, or migration — the three areas where a bad release costs someone their data.
+**Release channels:** `stable` and `beta` — GitHub releases and pre-releases until 1.0, then channels in the apt repository. Beta exists for the opt-in public beta (doc 06 §6) and for anything touching the mover, parity, or migration — the three areas where a bad release costs someone their data.
 
 ---
 

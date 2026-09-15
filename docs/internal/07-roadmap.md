@@ -17,7 +17,7 @@ Short, disposable experiments that answer the questions capable of invalidating 
 | **S5 — Loop-device harness fidelity** | Does SnapRAID behave identically on loop devices? | If not, the entire dev workflow needs rethinking before any code is written |
 | **S6 — Per-share mount topology** | Do per-share mergerfs mounts over a catch-all mount (doc 02 §1, Q12) mount reliably at boot, stay quiet for spindown, and does `mspmfs` fall back as documented (Q11)? | If not, fall back to the two-mount tiered design and shrink per-share cache modes (R12) |
 | **S7 — Change journal** | Does a fanotify filesystem mark on each data disk count changes accurately without waking disks (Q13)? | If not, the parity indicator shows "last synced" only, and a timer diff stays forbidden |
-| **S8 — Dependency sourcing** | Do Debian 13's mergerfs and SnapRAID packages cover what the design needs, or must Hoserva's apt repo carry its own builds (Q7)? | Not fatal; decides packaging work in Phase 1 |
+| **S8 — Dependency sourcing** | Do Debian 13's mergerfs and SnapRAID packages cover what the design needs, or must Hoserva ship its own builds (Q7)? | Not fatal; decides packaging work in Phase 1 |
 | **S9 — Lab container and CI runners** | Does the narrowed lab container (loop + FUSE only, no `--privileged`) work on the dev host and hosted CI runners, and do hosted runners offer KVM (Q42, Q45)? | If not, labs run in a disposable libvirt VM; never fall back to `--privileged` |
 
 **Status:** spindown and adoption are answered from public research in doc 08 — neither kills the plan — and both get agent-run confirmation in the lab: S1 through the zero-IO proxy (doc 06 §6), S2 against synthetic Unraid fixtures (doc 06 §5). S3 and S4 were cancelled when the app catalog became Hoserva's own (D19). **S9 is confirmed on the dev host** (hosted runners pending) and **S8 is partly answered** — both packages are in Debian 13 (doc 08). The rest are open. The spindown and adoption spikes are still the two that matter most; S6 is the one most likely to change the storage design.
@@ -26,7 +26,7 @@ Short, disposable experiments that answer the questions capable of invalidating 
 
 **Starts with the foundation, before any feature code** (doc 12 §5): loop-device harness and lab container, provider interfaces and fakes, golden-file infrastructure, `openapi.yaml` with generated server interfaces and clients (D18), the central database schema with schema-migration generation, checksums and fixture upgrade tests (D16, Q60), mock API server.
 
-Then: array setup (one or two parity disks), pool management with the per-share mount topology, parity with the threshold guard and change journal, the nightly maintenance chain, disks and SMART, spin-state event log, dashboard, jobs, notifications, config backup (CLI, local destinations), CLI, `.deb` and the signed apt repository with self-update and rollback (Q66, Q67), startup ordering and maintenance mode (Q69, Q70), metrics retention (Q74), depending on Debian 13's mergerfs and SnapRAID packages with an explicit version range (Q7). UI tier 1 from doc 03 §10.
+Then: array setup (one or two parity disks), pool management with the per-share mount topology, parity with the threshold guard and change journal, the nightly maintenance chain, disks and SMART, spin-state event log, dashboard, jobs, notifications, config backup (CLI, local destinations), CLI, `.deb` published on GitHub Releases with self-update and rollback (Q66, Q67), startup ordering and maintenance mode (Q69, Q70), metrics retention (Q74), depending on Debian 13's mergerfs and SnapRAID packages with an explicit version range (Q7). UI tier 1 from doc 03 §10.
 
 **Definition of done:** the storage suite passes in the lab and L3, and the soak test (doc 06 §6) has run clean — its diff history is what tunes the guard thresholds (Q16). Nothing ships publicly before that.
 
@@ -55,7 +55,7 @@ libvirt/KVM integration (doc 14): `internal/vm`, domain-XML generation, VM lifec
 
 ### Phase 4 — Polish and release
 
-Opt-in public beta, wake attribution (may slip past 1.0 — Q32), diagnostics, ISO bundle, remaining UI tier 4, documentation completeness, name clearance (Q50), 1.0.
+Opt-in public beta, wake attribution (may slip past 1.0 — Q32), diagnostics, ISO bundle, the signed apt repository (Q66), remaining UI tier 4, documentation completeness, name clearance (Q50), 1.0.
 
 ### Post-1.0 candidates
 
