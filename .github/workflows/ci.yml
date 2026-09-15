@@ -1,0 +1,98 @@
+name: CI
+
+# The every-push part of doc 06 §7's pipeline (Q42, R11). This repository is
+# public, so a pull request from a fork can make any job here run arbitrary
+# code. Every job below runs only on GitHub-hosted, ephemeral runners — there
+# are no self-hosted runners (D20, Q79) and none is ever referenced — and
+# triggers on `pull_request`, never `pull_request_target`, so PR code never
+# runs with base-branch permissions or secrets.
+#
+# ! Repository setting the maintainer must enable by hand — no workflow or
+# ! `gh` call can flip it from in here:
+# !   Settings -> Actions -> General -> Fork pull request workflows for
+# !   the mdg-labs organisation, or Actions -> General on the repo itself ->
+# !   "Require approval for first-time contributors"
+#
+# What this does NOT run yet, and why: no API contract check (no
+# api/openapi.yaml yet), no frontend build (no web/ yet), no .deb build (no
+# packaging/ yet, area:packaging, a later issue). Each arrives with the
+# issue that builds what it needs — this workflow runs what `make` actually
+# offers today (CLAUDE.md).
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned to go.mod's `go` directive — update both together.
+  GO_VERSION: "1.27.1"
+
+jobs:
+  lint-and-unit:
+    name: Lint, vet, unit tests (L1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - run: make lint
+      - run: make test
+
+  build:
+    name: Cross-compile (${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      # CGO_ENABLED=0 (set by `make build` itself) means this is a plain
+      # cross-compile, no cross toolchain needed — a compile-only check,
+      # since there is no arm64 hardware to run anything on anyway (D20).
+      - run: make build
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+
+  lab:
+    name: Loop-device lab (L2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Every lab is namespaced by HOSERVA_LAB_ID (Q45); this run's id and
+      # attempt number make it unique across concurrent workflow runs on
+      # this same runner pool.
+      - name: Derive this run's lab id
+        id: lab
+        run: echo "id=ci-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+      - name: lab-up
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make lab-up
+      - name: lab-seed
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make lab-seed
+      - name: lab-verify-refusal
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make lab-verify-refusal
+      # Always tears down, even if a step above failed — an ephemeral
+      # hosted runner is destroyed after the job anyway, but leaving this
+      # conditional would mean a failed run never proves teardown works.
+      - name: lab-destroy
+        if: always()
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make lab-destroy
