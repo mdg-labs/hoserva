@@ -39,7 +39,7 @@ hoserva/
 │   ├── agents/                 task-executor, task-verifier (§5)
 │   └── skills/                 github-triage, orchestrate (§5); coss, coss-particles (symlinks into .agents/, D15)
 ├── .agents/skills/             coss and coss-particles skills from cosscom/coss, pinned in skills-lock.json
-├── .github/workflows/          CI (doc 06 §7), issue-status lifecycle (§5)
+├── .github/workflows/          CI (doc 06 §7), issue-status.yml lifecycle (§5)
 │
 ├── cmd/
 │   ├── hoservad/              daemon
@@ -90,6 +90,7 @@ hoserva/
 │   ├── vm/                     VM lifecycle and snapshots
 │   ├── release/
 │   ├── bootstrap-labels.sh     creates the issue label set (§5)
+│   ├── roadmap-sync.py         files docs/roadmap.md as epics and sub-issues (§5)
 │   ├── issue-status.sh         the one way to set a status:* label
 │   ├── epic-status.sh          rolls an epic's status up from its sub-issues
 │   └── notify-discord.sh       end-of-run notification for orchestrate
@@ -103,6 +104,7 @@ hoserva/
 │   ├── debian/
 │   └── iso/
 │
+├── docs/roadmap.md             machine-parsable epics and sub-issues, the seed for GitHub issues
 ├── docs/internal/              design docs (this document set)
 └── site/                       Astro Starlight public docs (Q3; split out later)
 ```
