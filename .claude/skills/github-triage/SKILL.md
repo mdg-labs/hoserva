@@ -58,7 +58,7 @@ the codebase. Ground every issue in them.
 1. `gh repo view mdg-labs/hoserva --json nameWithOwner,defaultBranchRef` to confirm the target.
 2. **Read the design docs the report touches** — `CLAUDE.md`'s documentation map says which. Note the exact sections (`doc 02 §2`) the issue implements or changes.
 3. **Check the decision log and the open questions.**
-   - Conflicts with a decision (`D1`–`D12`, doc 00 §5)? Say so in `## Constraints`; the issue does not quietly reopen it. A genuine new reason to reopen one becomes its own `docs` issue.
+   - Conflicts with a decision (`D1`–`D17`, doc 00 §5)? Say so in `## Constraints`; the issue does not quietly reopen it. A genuine new reason to reopen one becomes its own `docs` issue.
    - Touches an open question (`Qn`, doc 13)? The issue follows the recommended default and names it. If investigation shows the default is wrong, the issue proposes the change *and* its acceptance criteria include updating the doc 13 entry.
 4. Grep/Read any code, scripts or workflows the report mentions; `git log`/`git blame`/`git show` for recent history on them.
 5. `gh issue list --repo mdg-labs/hoserva --state all --search ...` for related or duplicate issues.

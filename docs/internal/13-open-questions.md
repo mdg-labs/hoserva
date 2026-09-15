@@ -12,6 +12,7 @@ A default is not a decision. Decisions live in the decision log (doc 00 §5) and
 | **Spike** | Default adopted provisionally; a Phase 0 spike (doc 07 §1) confirms or replaces it. |
 | **External** | Depends on someone outside the project (a maintainer, a lawyer, a registry). Default is what we do while waiting. |
 | **Maintainer** | Default is recommended, but only the maintainer can adopt it (legal or irreversible). |
+| **Settled → Dn** | Promoted to the decision log; the entry stays only so its number keeps resolving. |
 
 ### Where open questions lived before this doc
 
@@ -23,7 +24,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 
 | Gate | Questions |
 |---|---|
-| **Now** (repo is public) | Q1, Q2 |
+| **Now** (repo is public) | Q2 (Q1 settled → D17) |
 | **During Phase 0** | Q36 |
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61 |
@@ -36,10 +37,9 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 ## Governance
 
 ### Q1 — License
-**Status:** Maintainer · **Gate:** now · **Affects:** doc 00 §6, repo `LICENSE`
+**Status:** Settled → D17 · **Affects:** doc 00 §6, repo `LICENSE`
 
-**Default: AGPL-3.0.**
-The repository is already public with no `LICENSE` file, which legally means *all rights reserved* — nobody may fork, package, or contribute, which is the opposite of what an open project needs. The reasoning in doc 00 §6 holds: being fully open is central to what Hoserva offers, and the plausible commercial surface (hosted remote monitoring) is better offered as a separate service than protected with license terms. Add the file before the first code commit. The vendored coss ui components (D15) are themselves AGPL-3.0, which is a further reason not to move to ELv2.
+**Settled: AGPL-3.0**, promoted to the decision log as D17, with `LICENSE` added at the repository root. The reasoning stays in doc 00 §6.
 
 ### Q2 — Contribution terms
 **Status:** Default · **Gate:** now · **Affects:** `CONTRIBUTING.md` (when written)

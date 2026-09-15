@@ -12,7 +12,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 
 | Doc | Read before working on |
 |---|---|
-| `00-overview.md` | Anything — scope and the **decision log (D1–D16)** |
+| `00-overview.md` | Anything — scope and the **decision log (D1–D17)** |
 | `01-architecture.md` | Daemon, API, CLI, jobs, security, disk layout |
 | `02-storage-engine.md` | Pool mounts, parity, threshold guard, change journal, disk lifecycle |
 | `03-webui-spec.md` | Any UI page — including its coss component and particle choices |
