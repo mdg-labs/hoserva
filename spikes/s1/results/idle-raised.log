@@ -1,0 +1,28 @@
+=== WINDOW scenario=idle mode=raised duration=1800s started=2026-09-15T19:44:15Z ===
+=== MOUNT ===
+1:2:3 /lab/2-a1/mnt/user fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other 0 0
+=== BEFORE ===
+# snapshot 2026-09-15T19:44:15Z
+parity1 /dev/loop0     3630        0    83212       16     3568        0 10347034     4196        0      516     4214       19        0 39845888        0      128        0
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk2 /dev/loop2     3730        0    84531       16     6374       83 13463257     5393        0      837     5412       19        0 39845888        0      230        1
+disk3 /dev/loop3     3780        0    84634       16     3759       83 10349021     3592        0      448     3610       19        0 39845888        0      228        1
+cache /dev/loop4     3649        0    82721       15     9742     2663  5179089     1913        0      283     1946       19        0 19922944        0     1673       17
+=== AFTER ===
+# snapshot 2026-09-15T20:14:15Z
+parity1 /dev/loop0     3630        0    83212       16     3568        0 10347034     4196        0      516     4214       19        0 39845888        0      128        0
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk2 /dev/loop2     3730        0    84531       16     6374       83 13463257     5393        0      837     5412       19        0 39845888        0      230        1
+disk3 /dev/loop3     3780        0    84634       16     3759       83 10349021     3592        0      448     3610       19        0 39845888        0      228        1
+cache /dev/loop4     3649        0    82721       15     9750     2664  5179152     1913        0      283     1946       19        0 19922944        0     1677       17
+=== DELTA (named per-field deltas, computed by stat-delta.sh — never by eye) ===
+disk1: (no field changed)
+disk2: (no field changed)
+disk3: (no field changed)
+=== FATRACE disk1 log (scoped to /lab/2-a1/mnt/disk1 only — doc 06 §6) ===
+=== FATRACE disk1 stderr (per-event open_by_handle_at noise expected, see header comment) ===
+=== FATRACE disk2 log (scoped to /lab/2-a1/mnt/disk2 only — doc 06 §6) ===
+=== FATRACE disk2 stderr (per-event open_by_handle_at noise expected, see header comment) ===
+=== FATRACE disk3 log (scoped to /lab/2-a1/mnt/disk3 only — doc 06 §6) ===
+=== FATRACE disk3 stderr (per-event open_by_handle_at noise expected, see header comment) ===
+=== WINDOW DONE scenario=idle mode=raised finished=2026-09-15T20:14:15Z ===
