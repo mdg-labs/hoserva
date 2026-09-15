@@ -1,0 +1,220 @@
+version:none
+unixtime:1789513914
+time:2026-09-15 23:11:54
+command:fix
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/6-a1/s5/snapraid.conf
+argv:3:-d
+argv:4:d1
+argv:5:-d
+argv:6:d3
+argv:7:-l
+argv:8:/lab/6-a1/s5/fix-dual.log
+argv:9:fix
+selftest:
+msg:progress: Self test...
+conf:file:/lab/6-a1/s5/snapraid.conf
+uuid:by-uuid:7:1: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:1: blkid support not compiled in
+uuid:notfound:7:1:
+uuid:by-uuid:7:2: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:2: blkid support not compiled in
+uuid:notfound:7:2:
+uuid:by-uuid:7:3: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:3: blkid support not compiled in
+uuid:notfound:7:3:
+blocksize:262144
+data:d1:/lab/6-a1/mnt/disk1/
+data:d2:/lab/6-a1/mnt/disk2/
+data:d3:/lab/6-a1/mnt/disk3/
+mode:par2
+parity:0:/lab/6-a1/mnt/parity1/snapraid.parity
+2-parity:0:/lab/6-a1/mnt/parity2/snapraid.parity
+content:/lab/6-a1/mnt/parity1/snapraid.content
+msg:progress: Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+msg:verbose:       16 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        1 empty dirs
+uuid:by-uuid:7:0: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:0: blkid support not compiled in
+uuid:notfound:7:0:
+uuid:by-uuid:7:5: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:5: blkid support not compiled in
+uuid:notfound:7:5:
+msg:progress: Searching disk d1...
+msg:progress: Searching disk d2...
+msg:progress: Searching disk d3...
+msg:progress: Selecting...
+msg:verbose: 	d1//
+msg:verbose: 	d3//
+memory:used:284352
+memory:block:17
+memory:extent:88
+memory:file:192
+memory:link:88
+memory:dir:80
+msg:progress: Using 0 MiB of memory for the file-system.
+msg:progress: Initializing...
+msg:progress: Selecting...
+msg:progress: Fixing...
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/apollo-11.bin' at offset 0.
+error:0:d1:movies/apollo-11.bin: Read error at position 0
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at offset 0.
+error:0:d3:backup/weekly.bin: Read error at position 0
+entry:0:block:known:bad:d1:movies/apollo-11.bin:0:
+entry:1:block:known:bad:d3:backup/weekly.bin:0:
+fixed:0:d1:movies/apollo-11.bin: Fixed data error at position 0
+fixed:0:d3:backup/weekly.bin: Fixed data error at position 0
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/apollo-11.bin' at offset 262144.
+error:1:d1:movies/apollo-11.bin: Read error at position 1
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at offset 262144.
+error:1:d3:backup/weekly.bin: Read error at position 1
+entry:0:block:known:bad:d1:movies/apollo-11.bin:1:
+entry:1:block:known:bad:d3:backup/weekly.bin:1:
+fixed:1:d1:movies/apollo-11.bin: Fixed data error at position 1
+fixed:1:d3:backup/weekly.bin: Fixed data error at position 1
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/apollo-11.bin' at offset 524288.
+error:2:d1:movies/apollo-11.bin: Read error at position 2
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at offset 524288.
+error:2:d3:backup/weekly.bin: Read error at position 2
+entry:0:block:known:bad:d1:movies/apollo-11.bin:2:
+entry:1:block:known:bad:d3:backup/weekly.bin:2:
+fixed:2:d1:movies/apollo-11.bin: Fixed data error at position 2
+fixed:2:d3:backup/weekly.bin: Fixed data error at position 2
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/apollo-11.bin' at offset 786432.
+error:3:d1:movies/apollo-11.bin: Read error at position 3
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at offset 786432.
+error:3:d3:backup/weekly.bin: Read error at position 3
+entry:0:block:known:bad:d1:movies/apollo-11.bin:3:
+entry:1:block:known:bad:d3:backup/weekly.bin:3:
+fixed:3:d1:movies/apollo-11.bin: Fixed data error at position 3
+fixed:3:d3:backup/weekly.bin: Fixed data error at position 3
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/apollo-11.bin' at offset 1048576.
+error:4:d1:movies/apollo-11.bin: Read error at position 4
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at offset 1048576.
+error:4:d3:backup/weekly.bin: Read error at position 4
+entry:0:block:known:bad:d1:movies/apollo-11.bin:4:
+entry:1:block:known:bad:d3:backup/weekly.bin:4:
+fixed:4:d1:movies/apollo-11.bin: Fixed data error at position 4
+fixed:4:d3:backup/weekly.bin: Fixed data error at position 4
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/apollo-11.bin' at offset 1310720.
+error:5:d1:movies/apollo-11.bin: Read error at position 5
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at offset 1310720.
+error:5:d3:backup/weekly.bin: Read error at position 5
+entry:0:block:known:bad:d1:movies/apollo-11.bin:5:
+entry:1:block:known:bad:d3:backup/weekly.bin:5:
+fixed:5:d1:movies/apollo-11.bin: Fixed data error at position 5
+fixed:5:d3:backup/weekly.bin: Fixed data error at position 5
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/apollo-11.bin' at offset 1572864.
+error:6:d1:movies/apollo-11.bin: Read error at position 6
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at offset 1572864.
+error:6:d3:backup/weekly.bin: Read error at position 6
+entry:0:block:known:bad:d1:movies/apollo-11.bin:6:
+entry:1:block:known:bad:d3:backup/weekly.bin:6:
+fixed:6:d1:movies/apollo-11.bin: Fixed data error at position 6
+fixed:6:d3:backup/weekly.bin: Fixed data error at position 6
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/apollo-11.bin' at offset 1835008.
+error:7:d1:movies/apollo-11.bin: Read error at position 7
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at offset 1835008.
+error:7:d3:backup/weekly.bin: Read error at position 7
+entry:0:block:known:bad:d1:movies/apollo-11.bin:7:
+entry:1:block:known:bad:d3:backup/weekly.bin:7:
+fixed:7:d1:movies/apollo-11.bin: Fixed data error at position 7
+fixed:7:d3:backup/weekly.bin: Fixed data error at position 7
+status:recovered:d1:movies/apollo-11.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/archive/gattaca.bin' at offset 0.
+error:8:d1:movies/archive/gattaca.bin: Read error at position 0
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at offset 2097152.
+error:8:d3:backup/weekly.bin: Read error at position 8
+entry:0:block:known:bad:d1:movies/archive/gattaca.bin:0:
+entry:1:block:known:bad:d3:backup/weekly.bin:8:
+fixed:8:d1:movies/archive/gattaca.bin: Fixed data error at position 0
+fixed:8:d3:backup/weekly.bin: Fixed data error at position 8
+status:recovered:d3:backup/weekly.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/archive/gattaca.bin' at offset 262144.
+error:9:d1:movies/archive/gattaca.bin: Read error at position 1
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk3/touchtest/dstC-elsewhere/f.bin' at offset 0.
+error:9:d3:touchtest/dstC-elsewhere/f.bin: Read error at position 0
+entry:0:block:known:bad:d1:movies/archive/gattaca.bin:1:
+entry:1:block:known:bad:d3:touchtest/dstC-elsewhere/f.bin:0:
+fixed:9:d1:movies/archive/gattaca.bin: Fixed data error at position 1
+fixed:9:d3:touchtest/dstC-elsewhere/f.bin: Fixed data error at position 0
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/archive/gattaca.bin' at offset 524288.
+error:10:d1:movies/archive/gattaca.bin: Read error at position 2
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk3/touchtest/dstC-elsewhere/f.bin' at offset 262144.
+error:10:d3:touchtest/dstC-elsewhere/f.bin: Read error at position 1
+entry:0:block:known:bad:d1:movies/archive/gattaca.bin:2:
+entry:1:block:known:bad:d3:touchtest/dstC-elsewhere/f.bin:1:
+fixed:10:d1:movies/archive/gattaca.bin: Fixed data error at position 2
+fixed:10:d3:touchtest/dstC-elsewhere/f.bin: Fixed data error at position 1
+status:recovered:d3:touchtest/dstC-elsewhere/f.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/archive/gattaca.bin' at offset 786432.
+error:11:d1:movies/archive/gattaca.bin: Read error at position 3
+entry:0:block:known:bad:d1:movies/archive/gattaca.bin:3:
+fixed:11:d1:movies/archive/gattaca.bin: Fixed data error at position 3
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/archive/gattaca.bin' at offset 1048576.
+error:12:d1:movies/archive/gattaca.bin: Read error at position 4
+entry:0:block:known:bad:d1:movies/archive/gattaca.bin:4:
+fixed:12:d1:movies/archive/gattaca.bin: Fixed data error at position 4
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/movies/archive/gattaca.bin' at offset 1310720.
+error:13:d1:movies/archive/gattaca.bin: Read error at position 5
+entry:0:block:known:bad:d1:movies/archive/gattaca.bin:5:
+fixed:13:d1:movies/archive/gattaca.bin: Fixed data error at position 5
+status:recovered:d1:movies/archive/gattaca.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/photos/img0001.bin' at offset 0.
+error:14:d1:photos/img0001.bin: Read error at position 0
+entry:0:block:known:bad:d1:photos/img0001.bin:0:
+fixed:14:d1:photos/img0001.bin: Fixed data error at position 0
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/photos/img0001.bin' at offset 262144.
+error:15:d1:photos/img0001.bin: Read error at position 1
+entry:0:block:known:bad:d1:photos/img0001.bin:1:
+fixed:15:d1:photos/img0001.bin: Fixed data error at position 1
+status:recovered:d1:photos/img0001.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/photos/img0002.bin' at offset 0.
+error:16:d1:photos/img0002.bin: Read error at position 0
+entry:0:block:known:bad:d1:photos/img0002.bin:0:
+fixed:16:d1:photos/img0002.bin: Fixed data error at position 0
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/photos/img0002.bin' at offset 262144.
+error:17:d1:photos/img0002.bin: Read error at position 1
+entry:0:block:known:bad:d1:photos/img0002.bin:1:
+fixed:17:d1:photos/img0002.bin: Fixed data error at position 1
+status:recovered:d1:photos/img0002.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/touchtest/srcA/f.bin' at offset 0.
+error:18:d1:touchtest/srcA/f.bin: Read error at position 0
+entry:0:block:known:bad:d1:touchtest/srcA/f.bin:0:
+fixed:18:d1:touchtest/srcA/f.bin: Fixed data error at position 0
+status:recovered:d1:touchtest/srcA/f.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/touchtest/srcB/f.bin' at offset 0.
+error:19:d1:touchtest/srcB/f.bin: Read error at position 0
+entry:0:block:known:bad:d1:touchtest/srcB/f.bin:0:
+fixed:19:d1:touchtest/srcB/f.bin: Fixed data error at position 0
+status:recovered:d1:touchtest/srcB/f.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/touchtest/srcC/f.bin' at offset 0.
+error:20:d1:touchtest/srcC/f.bin: Read error at position 0
+entry:0:block:known:bad:d1:touchtest/srcC/f.bin:0:
+fixed:20:d1:touchtest/srcC/f.bin: Fixed data error at position 0
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/touchtest/srcC/f.bin' at offset 262144.
+error:21:d1:touchtest/srcC/f.bin: Read error at position 1
+entry:0:block:known:bad:d1:touchtest/srcC/f.bin:1:
+fixed:21:d1:touchtest/srcC/f.bin: Fixed data error at position 1
+status:recovered:d1:touchtest/srcC/f.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk1/touchtest/srcA/f-renamed.bin' at offset 0.
+error:22:d1:touchtest/srcA/f-renamed.bin: Read error at position 0
+entry:0:block:known:bad:d1:touchtest/srcA/f-renamed.bin:0:
+fixed:22:d1:touchtest/srcA/f-renamed.bin: Fixed data error at position 0
+status:recovered:d1:touchtest/srcA/f-renamed.bin
+msg:error: Error stating dir '/lab/6-a1/mnt/disk3/isos'. No such file or directory.
+dir_error:d3:isos: Dir stat error
+dir_fixed:d3:isos: Fixed dir error
+status:recovered:d3:isos
+msg:status: 
+msg:status:       35 errors
+msg:status:       35 recovered errors
+msg:status:        0 unrecoverable errors
+msg:status: Everything OK
+summary:error:35
+summary:error_recovered:35
+summary:error_unrecoverable:0
+summary:exit:recovered

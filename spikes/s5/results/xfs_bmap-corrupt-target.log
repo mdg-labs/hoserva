@@ -1,0 +1,3 @@
+/lab/6-a1/mnt/disk3/backup/weekly.bin:
+ EXT: FILE-OFFSET      BLOCK-RANGE      AG AG-OFFSET        TOTAL
+   0: [0..4303]:       192..4495         0 (192..4495)       4304

@@ -1,0 +1,38 @@
++ snapraid -c /lab/6-a1/s5/snapraid.conf -p 100 -o 0 scrub
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Using 0 MiB of memory for the file-system.
+Initializing...
+Using 80 MiB of memory for 64 cached blocks.
+Selecting...
+Scrubbing...
+4%, 0 MB          Data error in file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at position '1', diff bits 59/128
+Data error in file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at position '2', diff bits 49/128
+Data error in file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at position '3', diff bits 60/128
+100% completed, 13 MB accessed in 0:00    
+
+     d1 29% | ******************
+     d2 16% | **********
+     d3  2% | *
+ parity  7% | ****
+   raid 31% | *******************
+   hash 23% | **************
+  sched  4% | **
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+
+       0 file errors
+       0 io errors
+       3 data errors
+DANGER! Unexpected data errors! The failing blocks are now marked as bad!
+Use 'snapraid status' to list the bad blocks.
+Use 'snapraid -e fix' to recover them.
+Use 'snapraid -p bad scrub' to recheck after fixing to clear the bad state.
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 1]

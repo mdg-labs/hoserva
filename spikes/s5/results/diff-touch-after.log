@@ -1,0 +1,15 @@
++ snapraid -c /lab/6-a1/s5/snapraid.conf diff
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Comparing...
+copy touchtest/srcC/f.bin -> touchtest/dstC-elsewhere/f.bin
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+      15 equal
+       0 added
+       0 removed
+       0 updated
+       0 moved
+       1 copied
+       0 restored
+There are differences!
+[exit 2]
