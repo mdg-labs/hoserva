@@ -1,5 +1,26 @@
-# Per-lab loop-device images and mount roots (doc 06 §3)
+# Build output
+/bin/
+/dist/
+*.deb
+
+# The loop-device lab's per-lab image and mount roots (doc 06 §9, doc 12 §2) —
+# owned by root once the lab container touches them, so they are never
+# committed and must be destroyed with `make lab-destroy`, never `rm -rf`.
 .lab/
 
-# Fetched CA template corpus — fetched, never committed (doc 06 §2)
-testdata/.cache/
+# Corpora fetched at test or build time rather than committed. The
+# project-authored corpora (testdata/parsers/, testdata/unraid-templates/,
+# testdata/configs/) are committed and are not covered by this rule.
+scripts/vm/images/
+*.qcow2
+*.iso
+
+# Go
+*.test
+
+# Node (web/)
+web/node_modules/
+web/dist/
+
+# Editors and OS
+.DS_Store
