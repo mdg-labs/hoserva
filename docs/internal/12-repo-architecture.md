@@ -90,7 +90,6 @@ hoserva/
 │   ├── vm/                     VM lifecycle and snapshots
 │   ├── release/
 │   ├── bootstrap-labels.sh     creates the issue label set (§5)
-│   ├── roadmap-sync.py         files docs/roadmap.md as epics and sub-issues (§5)
 │   ├── issue-status.sh         the one way to set a status:* label
 │   ├── epic-status.sh          rolls an epic's status up from its sub-issues
 │   └── notify-discord.sh       end-of-run notification for orchestrate
@@ -104,7 +103,6 @@ hoserva/
 │   ├── debian/
 │   └── iso/
 │
-├── docs/roadmap.md             machine-parsable epics and sub-issues, the seed for GitHub issues
 ├── docs/internal/              design docs (this document set)
 └── site/                       Astro Starlight public docs (Q3; split out later)
 ```
