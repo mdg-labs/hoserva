@@ -1700,17 +1700,19 @@ depends: [M7.1]
 issue: 68
 ```
 
-**Summary** YAML templates with pool-aware defaults, the seeded curated
-catalog in `templates/`, CI validation, and the privilege summary.
+**Summary** The template format — Compose files with an `x-hoserva` block — the
+seeded curated catalog in `templates/`, CI validation and signed publishing, and
+the privilege summary.
 
-**Design references** doc 04 §7, §1, Q39, Q26, doc 01 §7 (Container privilege warnings)
+**Design references** doc 04 §7, §1, Q39, Q64, Q65, Q26, D19, doc 01 §7 (Container privilege warnings)
 
 **Acceptance criteria**
-- [ ] Template schema with ports, paths, variables, devices, networks and metadata
-- [ ] Seeded with the doc 04 §7 app list, each with appdata on cache, explicit tags where published, `PUID=99`/`PGID=100` where supported
-- [ ] CI validates schema, image existence, path conventions and privileges on every change to `templates/`
-- [ ] Privilege summary computed for privileged mode, host networking, Docker socket and paths outside the pool
-- [ ] Install generates Compose with port-conflict detection and share-aware path defaults
+- [ ] `x-hoserva` schema version 1 per doc 04 §7: inputs with kind, path role and default; metadata; revision
+- [ ] Seeded with the doc 04 §7 app list, each written from its official or linuxserver.io image documentation, with appdata on cache, explicit tags where published, `PUID=99`/`PGID=100` where supported
+- [ ] CI validates the schema, `docker compose config`, image and tag existence, path conventions and privileges on every change to `templates/`
+- [ ] On merge, CI builds `catalog.tar.zst` with its `index.json`, signs it with a key held only as a CI secret, and publishes it as static files; the serial only ever increases
+- [ ] Privilege summary computed from the Compose content for privileged mode, host networking, Docker socket and paths outside the pool
+- [ ] Install resolves inputs, writes Compose and `.env` with port-conflict detection and share-aware path defaults, and records source, id and revision in `meta.json`
 
 **Scope** `internal/template/`, `templates/`, `.github/workflows/`
 
@@ -1741,7 +1743,7 @@ clean-conversion rate as a release metric.
 
 **Scope** `internal/template/`, `testdata/unraid-templates/`
 
-### Catalog sources
+### Catalog distribution and sources
 
 ```meta
 id: M7.4
@@ -1753,14 +1755,19 @@ depends: [M7.2]
 issue: 70
 ```
 
-**Summary** Pluggable catalog sources — the curated Hoserva catalog as the only
-built-in source, plus repositories a user adds themselves (D19).
+**Summary** How the catalog reaches an installation and stays current: the
+embedded snapshot, the signed daily refresh, template-update diffs, and catalog
+source URLs a user adds (D19).
 
-**Design references** doc 04 §4, §7, D19, Q33
+**Design references** doc 04 §4, §7, Q33, Q64, Q65, D19, doc 01 §7
 
 **Acceptance criteria**
 - [ ] One source interface; the curated catalog is the only built-in source and is on by default
-- [ ] A user can add, refresh and remove a catalog source URL; entries from it are badged as user-added
+- [ ] `hoservad` embeds a catalog snapshot at build time and works offline from the on-disk copy in `/var/lib/hoserva/catalog/`
+- [ ] Refresh is one conditional request a day with jitter, plus manual refresh; an unchanged catalog downloads nothing; refresh can be disabled
+- [ ] A catalog replaces the on-disk copy only if its signature verifies against the compiled-in key and its serial is higher; a failed check keeps the previous catalog and notifies
+- [ ] A newer template revision is offered as "template update available" with a diff against the installed Compose file; nothing changes without the user's action
+- [ ] A user can add, refresh and remove a catalog source URL in the same archive format; its entries are badged as user-added, and unsigned sources as unsigned
 - [ ] Every entry shows its source
 
 **Scope** `internal/template/`

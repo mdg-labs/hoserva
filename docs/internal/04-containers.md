@@ -47,7 +47,7 @@ Stacks are plain Compose files:
 ```
 /var/lib/hoserva/stacks/<name>/docker-compose.yml
 /var/lib/hoserva/stacks/<name>/.env
-/var/lib/hoserva/stacks/<name>/meta.json     # Hoserva metadata: template source, icon, install time
+/var/lib/hoserva/stacks/<name>/meta.json     # Hoserva metadata: template source, id and revision, install time
 ```
 
 Driven through the Docker Engine API and `docker compose`. No proprietary format, no exclusive claim on the daemon.
@@ -82,7 +82,7 @@ Version policy (Q38): negotiate the Docker Engine API version at runtime rather 
 
 ## 4. Catalog sources
 
-Hoserva's catalog is its own (D19): the curated template repository in §7 is the only built-in source. Beyond it, a user can add a catalog source URL of their own — a Git repository of templates in Hoserva's format — which Hoserva fetches only because the user added it and badges as user-added.
+Hoserva's catalog is its own (D19): the curated template repository in §7 is the only built-in source. Beyond it, a user can add a catalog source URL of their own — a catalog archive in Hoserva's format (§7) — which Hoserva fetches only because the user added it and badges as user-added.
 
 **Design implication:** catalog sources sit behind one interface, so a new source changes a config default, not the architecture.
 
@@ -169,12 +169,64 @@ Generated Compose is shown side by side with the source XML before anything runs
 
 ## 7. Curated catalog
 
-Hoserva's catalog is its own template repository (D19) — `templates/` in the monorepo until the first external template PR, then split out (doc 12 §7, Q39). It is the only built-in catalog source:
+Hoserva's catalog is its own template repository (D19) — `templates/` in the monorepo until the first external template PR, then split out (doc 12 §7, Q39). It is the only built-in catalog source.
 
-- Templates as YAML (more readable than XML, diffable in PRs)
-- Community contributions via pull request with CI validation: schema check, image existence check, path convention check, privilege audit
+### What goes in it
+
 - Seeded with the highest-value homelab containers, which also serve as the migration test corpus (doc 06): Jellyfin, Plex, the \*arr stack, qBittorrent, Immich, Nextcloud, Home Assistant, Vaultwarden, Paperless-ngx, Uptime Kuma, Gitea, Grafana/Prometheus, Pi-hole/AdGuard, Nginx Proxy Manager, Syncthing, Audiobookshelf
 - Grown in order of what homelab users run most, every template written from the application's upstream documentation and image — never copied or adapted from another catalog's template
+- **Preferred images:** the application's official image, or the [linuxserver.io](https://www.linuxserver.io/) image where one exists. linuxserver.io images are built consistently and documented image by image at `docs.linuxserver.io`, and their `PUID`/`PGID` convention is the one Q26 already uses. Each template links the image documentation it was written from.
 
 **Every curated template must set sane pool-aware defaults**: appdata on cache, media on the pool, no unnecessary privileges, explicit tags rather than `:latest` where the upstream publishes versions, `PUID=99`/`PGID=100` where the image supports them.
 
+### Template format (Q64)
+
+A template is a directory — `templates/<id>/compose.yaml` plus its icon — and `compose.yaml` is **a valid Compose file with an `x-hoserva` extension block**. Compose ignores `x-` fields, so every template can be checked with `docker compose config` and run by hand; the block carries only what the install flow needs:
+
+```yaml
+services:
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:<pinned tag>
+    environment:
+      PUID: "99"
+      PGID: "100"
+      TZ: ${TZ}
+    volumes:
+      - ${APPDATA}/jellyfin:/config
+      - ${MEDIA}:/data/media
+    ports:
+      - ${WEBUI_PORT}:8096
+    restart: unless-stopped
+
+x-hoserva:
+  schema: 1
+  id: jellyfin
+  revision: 4
+  title: Jellyfin
+  categories: [media]
+  icon: icon.svg
+  docs: https://docs.linuxserver.io/images/docker-jellyfin/
+  webui: http://{host}:${WEBUI_PORT}
+  inputs:
+    APPDATA:    { kind: path, role: appdata, default: /mnt/cache/appdata }
+    MEDIA:      { kind: path, role: share, label: Media library }
+    WEBUI_PORT: { kind: port, default: 8096 }
+    TZ:         { kind: timezone }
+```
+
+- **Inputs** are the only values the install form asks for. Each has a kind — `path`, `port`, `string`, `secret`, `timezone`, `device` — and a path also has a role (`appdata`, `share`, `media`, `downloads`) that drives share-aware path picking (doc 03 §5).
+- **Secrets** (`kind: secret`) are generated at install time and written only to the stack's `.env`.
+- **`revision`** increases with every change to a template. An installed stack records the source, id and revision it came from (§2), which is what "template update available" compares against.
+- **The privilege summary is computed from the Compose content** (doc 01 §7) — privileged mode, host networking, the Docker socket, paths outside the pool — never declared by the template, so a template cannot understate what it asks for.
+- **CI on every change to `templates/`:** the `x-hoserva` schema, `docker compose config`, image and tag existence, path conventions, and the privilege audit.
+
+**Installing** resolves the inputs, writes the Compose file — keeping its `x-hoserva` block for later comparison — and `.env` into `/var/lib/hoserva/stacks/<name>/` (§2), and records the template's source, id and revision in `meta.json`.
+
+### Distribution (Q65)
+
+- **CI builds one signed catalog archive** from `templates/` on every merge: `catalog.tar.zst`, holding an `index.json` (each template's id, revision, metadata and content hash, plus the archive's serial) with the templates and icons, and a detached Ed25519 signature. It is published as static files on GitHub Pages of the repository that holds `templates/` — never served through the GitHub API. The URL is a setting with a compiled-in default, so moving the catalog repository (Q39) is a configuration change.
+- **Every installation has the catalog on disk.** `hoservad` embeds a snapshot at build time, so the first run and offline installs have a working catalog; the refreshed copy lives in `/var/lib/hoserva/catalog/`.
+- **Refresh is one conditional request a day**, with random jitter, plus a manual refresh button. An unchanged catalog answers `304 Not Modified` and nothing is downloaded. GitHub's API rate limit never applies: nothing comes from `api.github.com`, and nothing is fetched per template. Refresh can be disabled; the on-disk copy keeps working.
+- **Nothing unverified is used.** The archive replaces the on-disk copy only after its signature verifies against the public key compiled into `hoservad` and its serial is higher than the current one, so an older signed catalog cannot be replayed. A failed check keeps the previous catalog and raises a notification.
+- **A catalog update never changes an installed app.** A newer revision shows as "template update available" with a diff against the installed Compose file; applying it is the user's action.
+- **User-added sources** (§4) publish the same archive format. Their signature is optional, and an unsigned source is badged as unsigned.

@@ -27,7 +27,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61 |
-| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62 (Q33–Q35 settled → D19) |
+| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
 | **Before 1.0** | Q47, Q50 |
 
@@ -375,6 +375,18 @@ A loopback image that must be manually resized when it fills is one of the most 
 
 ---
 
+### Q64 — Template format
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §7, doc 12 §2
+
+**Default: a template is `templates/<id>/compose.yaml` plus an icon — a valid Compose file with an `x-hoserva` extension block holding its inputs (kind, path role, default), metadata and a revision. The privilege summary is computed from the Compose content, never declared by the template.**
+A custom YAML schema would need its own converter to Compose and its own validator. A Compose file with an extension block is checkable with `docker compose config` and runnable as-is, and it is the format contributors already know.
+
+### Q65 — How the catalog reaches installations
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 04 §4, §7, doc 01 §7, Q49
+
+**Default: CI publishes one signed `catalog.tar.zst` as static files on GitHub Pages. `hoservad` embeds a snapshot at build time, keeps the refreshed copy in `/var/lib/hoserva/catalog/`, and refreshes once a day with a conditional request. A new archive is used only if its Ed25519 signature verifies against a compiled-in key and its serial is higher; an installed app never changes — a newer template revision is offered as a diff.**
+One static, conditional request a day stays clear of any rate limit, works behind a CDN and degrades to the on-disk copy offline, where per-template fetches through the GitHub API would hit the unauthenticated limit. Templates can request privileged access, so an unsigned or replayed catalog must never be trusted.
+
 ## Virtual machines
 
 ### Q51 — VM disk image placement and format
@@ -494,7 +506,7 @@ Extracting strings later is a rewrite of every component. Doing it from day one 
 ### Q49 — Telemetry *(gap)*
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §7, doc 03 §8.6
 
-**Default: none. The only outbound request Hoserva makes on its own is the update check (apt metadata), which can be disabled. Any future opt-in usage statistics require a new entry here.**
+**Default: none. The only outbound requests Hoserva makes on its own are the update check (apt metadata) and the daily catalog refresh (Q65); neither sends anything beyond a plain HTTP request, and both can be disabled. Any future opt-in usage statistics require a new entry here.**
 A home server that phones home by default undermines the trust an open project depends on.
 
 ### Q50 — Name clearance

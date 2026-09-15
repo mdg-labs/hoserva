@@ -83,7 +83,7 @@ hoserva/
 │   ├── src/lib/api/            the only API access: the generated TS client from api/gen
 │   └── fixtures/               shared with backend tests
 │
-├── templates/                  curated app catalog (doc 04 §7, Q39)
+├── templates/                  curated app catalog: <id>/compose.yaml + icon (doc 04 §7, Q39, Q64)
 │
 ├── scripts/
 │   ├── devenv/                 loop-device harness + lab container (doc 06 §3)
