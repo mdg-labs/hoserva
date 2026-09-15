@@ -31,7 +31,7 @@ This will be built entirely with Claude Code, and that strengthens the monorepo 
 ```
 hoserva/
 ├── CLAUDE.md                   agent instructions — see §4
-├── LICENSE                     AGPL-3.0 once adopted (Q1)
+├── LICENSE                     AGPL-3.0 (D17)
 ├── Makefile                    every workflow, one entry point
 ├── go.work                     if multiple Go modules become necessary
 │
