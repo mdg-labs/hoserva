@@ -29,6 +29,15 @@ A single mergerfs mount has exactly one create policy and one branch list. That 
 
 `NC` (no-create) keeps already-moved files readable through the share while new files land on cache. The catch-all keeps `ls /mnt/user` and stray top-level directories on the array rather than the boot device. Mount ordering is expressed with systemd `RequiresMountsFor=`. If S6 rejects this topology, the fallback and its feature cost are recorded in Q12 and doc 07 R12.
 
+### Startup order and a disk missing at boot
+
+A container that starts before `/mnt/user` is mounted writes its data onto the boot device, and the user sees an empty app. Hoserva prevents that structurally (Q69):
+
+- Every data, parity and cache mount is `nofail` with a device timeout, so a dead disk never hangs boot
+- Every mountpoint directory is made immutable while empty, so a write to an unmounted path fails instead of landing on the boot device
+- Samba, NFS, Docker and libvirt start after `hoserva-storage.target`, through managed systemd drop-ins; `hoservad` reaches that target only when every expected disk is present by identity (Q21), or once the user acknowledges the degraded state
+- With a disk missing, the pool still mounts from the remaining disks, and the guard's zero-files rule holds (§2)
+
 ### Configuration
 
 Key options Hoserva sets — **starting values**, validated against Debian 13's mergerfs package (2.40.2, Q7) by spikes S1 and S6:
@@ -188,6 +197,10 @@ Because "cache only" data is outside parity, Hoserva ships a built-in scheduled 
 
 ## 4. Disk lifecycle
 
+### Stopping the array
+
+*Stop array* (`hoserva array stop`) puts the system in maintenance mode (Q70): new jobs are refused, running resumable jobs stop at their next checkpoint and the rest are marked interrupted, VMs shut down (gracefully, then forced after a timeout), containers stop, Samba and NFS stop, and the per-share mounts, the catch-all and the disks unmount in that order. *Start array* reverses it. System shutdown and reboot run the same sequence. No disk is physically touched outside maintenance mode or a powered-off box.
+
 ### Adding a disk
 
 1. Detect and show the disk with model, serial, size, existing filesystem, SMART status
@@ -206,10 +219,17 @@ Full procedure in doc 09 §4. The ordering is SnapRAID-driven (Q14): files are c
 
 Long-running, interruptible, resumable on user action (Q29). Progress in files and bytes.
 
+### Upgrading a disk to a larger one
+
+A healthy disk is never rebuilt from parity to replace it — that would leave the array without redundancy while a perfectly good source exists. Two guided flows, each keeping the old disk untouched until the new one verifies (Q71):
+
+- **Larger parity disk:** copy the parity file to the new disk, verify it byte for byte, switch the configuration, pass `snapraid check`, then release the old parity disk. Protection is continuous. When a new data disk would be larger than the current parity, the flow offers this first and reuses the old parity disk as a data disk.
+- **Larger data disk:** in maintenance mode, copy the old disk's files to the new one with ownership, xattrs and timestamps; mount it at the same `/mnt/diskN`; require `snapraid diff` to show no removed or updated files; then release the old disk.
+
 ### Replacing a failed disk
 
 1. Mark the disk failed; pool continues serving the remaining disks (degraded, with a persistent banner)
-2. User physically swaps the disk
+2. User stops the array (maintenance mode) or powers off, and physically swaps the disk
 3. Identify the new disk, format, mount at the same `/mnt/diskN`
 4. `snapraid fix -d dN` reconstructs the contents from parity + remaining disks
 5. Verify, then resume the normal schedule
@@ -223,6 +243,11 @@ Long-running, interruptible, resumable on user action (Q29). Progress in files a
 - Alert on: any increase in reallocated/pending, temperature above threshold, self-test failure
 - Scheduled short self-tests weekly, long self-tests monthly, configurable
 - **Trend, not just current value** — reallocated sector count going from 0 to 4 is the signal; the absolute number is not
+- History is kept in a separate, downsampled `metrics.db` (Q74)
+
+### Disks outside the array
+
+A disk with the Ignore role, or a USB disk plugged in later, can be mounted by filesystem UUID at `/mnt/disks/<label>` and ejected safely (Q72). External disks are never in the pool or parity and are ignored by the threshold guard and the change journal; they exist to be a backup destination or a container path. Nothing mounts automatically on plug-in.
 
 ---
 
@@ -247,7 +272,9 @@ Long-running, interruptible, resumable on user action (Q29). Progress in files a
 | Parity disk fails | Data intact and fully accessible, no redundancy; alert; replace and full re-sync |
 | Cache disk fails | Pending writes and all "cache only" data lost; array intact; restore appdata from backup |
 | Disk unmounts unexpectedly | Sync blocked by threshold guard; pool marked degraded; alert |
+| Disk missing at boot | Boot completes; pool mounts from the remaining disks; shares, containers and VMs wait until the user acknowledges the degraded state (Q69) |
 | Boot device fails | Array data untouched; reinstall Debian + Hoserva, restore config from backup |
+| Power loss with a UPS | On battery: mover paused, syncs held; at low battery: jobs checkpointed and a clean shutdown (Q77) |
 | Power loss mid-sync | Sync marked interrupted on restart; not auto-resumed; user prompted to re-run |
 | Power loss mid-mover / rebalance / evacuation | Job marked interrupted; copy-verify-delete leaves a duplicate, never a gap; resumes from its checkpoint on user action (doc 09, Q29) |
 | Pool full | `moveonenospc` handles in-flight writes; `minfreespace` prevents total fill; alert at configurable threshold |

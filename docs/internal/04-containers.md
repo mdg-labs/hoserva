@@ -76,7 +76,7 @@ Behaviour:
 
 Version policy (Q38): negotiate the Docker Engine API version at runtime rather than pinning an Engine release number; require the Compose v2 plugin; `hoserva doctor` warns when the installed Engine is a release upstream no longer supports. Documentation points to Docker's own apt repository.
 
-**Storage backend: a plain directory, never a loopback image (Q62).** Docker's data-root points at a directory on cache (`/mnt/cache/docker`), using the Engine's standard `overlay2` driver. Hoserva never creates a fixed-size loopback image for Docker's own storage — that construction is Unraid-specific, and a full loopback image needing a manual resize is one of its most common support complaints. A plain directory has no size of its own to run out of; it is sized by the cache device, which already has its own capacity monitoring and alerting (doc 02 §3).
+**Storage backend: a plain directory, never a loopback image (Q62).** Docker's data-root points at a directory on cache (`/mnt/cache/docker`), using the Engine's standard `overlay2` driver. Hoserva never creates a fixed-size loopback image for Docker's own storage — that construction is Unraid-specific, and a full loopback image needing a manual resize is one of its most common support complaints. A plain directory has no size of its own to run out of; it is sized by the cache device, which already has its own capacity monitoring and alerting (doc 02 §3). The move is offered, never applied silently: with no cache disk, or when Docker already holds containers or images, the data-root stays at `/var/lib/docker` (Q76). Docker starts only once storage is up, through a managed systemd drop-in (Q69).
 
 ---
 
@@ -158,7 +158,7 @@ Generated Compose is shown side by side with the source XML before anything runs
 
 ## 6. Update handling
 
-- Poll registries for new tags on the configured schedule, respecting rate limits
+- Check registries at most once a day, with jitter, by requesting only each image's manifest — never pulling; optional per-registry credentials stored as secrets; a rate-limited registry is skipped until the next day, and the UI says so (Q81)
 - Distinguish **digest changed on the same tag** (the common `:latest` case) from **a genuinely new version tag**
 - Show both, labelled differently — "new build of `latest`" is not the same as "2.1 → 2.2"
 - Bulk update with per-container opt-out
@@ -214,7 +214,7 @@ x-hoserva:
     TZ:         { kind: timezone }
 ```
 
-- **Inputs** are the only values the install form asks for. Each has a kind — `path`, `port`, `string`, `secret`, `timezone`, `device` — and a path also has a role (`appdata`, `share`, `media`, `downloads`) that drives share-aware path picking (doc 03 §5).
+- **Inputs** are the only values the install form asks for. Each has a kind — `path`, `port`, `string`, `secret`, `timezone`, `device` — and a path also has a role (`appdata`, `share`, `media`, `downloads`) that drives share-aware path picking (doc 03 §5). A `device` input with role `gpu` offers the host's `/dev/dri` render devices; NVIDIA GPUs need the host driver and container toolkit as a prerequisite checked by `hoserva doctor`, and a GPU bound to a VM is never offered (Q82).
 - **Secrets** (`kind: secret`) are generated at install time and written only to the stack's `.env`.
 - **`revision`** increases with every change to a template. An installed stack records the source, id and revision it came from (§2), which is what "template update available" compares against.
 - **The privilege summary is computed from the Compose content** (doc 01 §7) — privileged mode, host networking, the Docker socket, paths outside the pool — never declared by the template, so a template cannot understate what it asks for.
@@ -224,7 +224,7 @@ x-hoserva:
 
 ### Distribution (Q65)
 
-- **CI builds one signed catalog archive** from `templates/` on every merge: `catalog.tar.zst`, holding an `index.json` (each template's id, revision, metadata and content hash, plus the archive's serial) with the templates and icons, and a detached Ed25519 signature. It is published as static files on GitHub Pages of the repository that holds `templates/` — never served through the GitHub API. The URL is a setting with a compiled-in default, so moving the catalog repository (Q39) is a configuration change.
+- **CI builds one signed catalog archive** from `templates/` on every merge: `catalog.tar.zst`, holding an `index.json` (each template's id, revision, metadata and content hash, plus the archive's serial) with the templates and icons, and a detached Ed25519 signature. It is published under `/catalog/` on the project site (Q66) — never served through the GitHub API. The URL is a setting with a compiled-in default on the project's own domain, so moving the catalog repository (Q39) changes nothing for installations.
 - **Every installation has the catalog on disk.** `hoservad` embeds a snapshot at build time, so the first run and offline installs have a working catalog; the refreshed copy lives in `/var/lib/hoserva/catalog/`.
 - **Refresh is one conditional request a day**, with random jitter, plus a manual refresh button. An unchanged catalog answers `304 Not Modified` and nothing is downloaded. GitHub's API rate limit never applies: nothing comes from `api.github.com`, and nothing is fetched per template. Refresh can be disabled; the on-disk copy keeps working.
 - **Nothing unverified is used.** The archive replaces the on-disk copy only after its signature verifies against the public key compiled into `hoservad` and its serial is higher than the current one, so an older signed catalog cannot be replayed. A failed check keeps the previous catalog and raises a notification.

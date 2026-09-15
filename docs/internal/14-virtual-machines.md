@@ -97,6 +97,8 @@ The single hardest part of this feature, and the one most likely to produce a br
 - **A device the host itself needs is never offered for passthrough**: the boot device's controller, and (unless a headless iGPU or second GPU is present) the console GPU, are excluded from the assignable list by construction, not by a warning the user can click past.
 - `hoserva vm passthrough check` is a pre-flight report: IOMMU group membership, ACS (Access Control Services) isolation per group, and a plain-language verdict — "this device shares a group with your boot controller, passthrough would also detach that" — run **before** the user commits to a reboot-requiring change, not discovered after.
 
+- **A GPU belongs to a VM or to containers, never both.** A GPU bound to `vfio-pci` is never offered to containers, and one a container uses through `/dev/dri` or the NVIDIA runtime is flagged in the passthrough check (Q82).
+
 ### GPU passthrough specifically
 
 Offered, but explicitly flagged **best-effort**: single-GPU passthrough (the common budget case, where the host has only one GPU and must release it entirely to the VM and reacquire it after) is a well-known source of platform-specific breakage across the whole KVM ecosystem, not something Hoserva's abstraction can paper over. The passthrough-check report calls this configuration out by name when detected, with a link to what it means and its risks, rather than presenting it as equivalent to a dual-GPU setup.
@@ -111,7 +113,7 @@ Real passthrough behaviour is IOMMU-topology- and BIOS-dependent in ways no VM f
 
 ### Networking
 
-VMs default to a bridged interface, `vmbr0`, that Hoserva creates over the host's physical NIC — a VM gets a real LAN-visible address via DHCP, appearing as its own device on the network rather than NAT'd behind the host. This is the model Unraid uses and what homelab users expect (a VM running a router or a game server needs to *be* a network host, not be port-forwarded to). An isolated/NAT network is offered as the alternative for VMs that shouldn't be LAN-visible.
+VMs default to a bridged interface, `vmbr0`, that Hoserva creates over the host's physical NIC through the same ifupdown backend and 60-second confirm-or-revert as every host network change (Q75) — a VM gets a real LAN-visible address via DHCP, appearing as its own device on the network rather than NAT'd behind the host. This is the model Unraid uses and what homelab users expect (a VM running a router or a game server needs to *be* a network host, not be port-forwarded to). An isolated/NAT network is offered as the alternative for VMs that shouldn't be LAN-visible.
 
 This is a separate network layer from container networks (doc 04, Q37): containers get `bridge`/`host`/an existing custom network, VMs get their own bridge interface over a physical NIC. Both share the same narrowing discipline — no general-purpose network-topology editor, just the handful of options that cover the real use cases.
 
@@ -171,7 +173,7 @@ Unlike Docker (D8: external prerequisite, not shipped by the `.deb`, because the
 Extends doc 06's three-layer pyramid:
 
 - **L1** — `vm.Engine`'s fake: domain-XML generation is pure (state in, XML out) and gets the same golden-file treatment as SnapRAID/Samba config (doc 06 §2); job orchestration, IOMMU-group-based passthrough eligibility logic, and the Unraid domain-XML remapping (§5) are all testable against the fake with no KVM present.
-- **L2/L3** — the loop-device lab has no VM concept; **L3's own test VM already runs on libvirt/QEMU** (doc 06 §4) to test *Hoserva itself*. Testing Hoserva's *own* VM-management feature end to end therefore means **nested virtualization**: KVM running inside the L3 test VM, for a domain that Hoserva-under-test creates. Whether hosted CI runners support nested KVM (`/dev/kvm` was already confirmed present for L3 itself in spike S9, doc 08) is a **new spike, tracked in doc 07 §1 as a Phase 3.5 prerequisite** — if nested KVM isn't available on hosted runners, this suite runs on the self-hosted nightly runner only, same posture as the rest of L3 (doc 06 §7).
+- **L2/L3** — the loop-device lab has no VM concept; **L3's own test VM already runs on libvirt/QEMU** (doc 06 §4) to test *Hoserva itself*. Testing Hoserva's *own* VM-management feature end to end therefore means **nested virtualization**: KVM running inside the L3 test VM, for a domain that Hoserva-under-test creates. Whether hosted CI runners support nested KVM (`/dev/kvm` was already confirmed present for L3 itself in spike S9, doc 08) is a **new spike, tracked in doc 07 §1 as a Phase 3.5 prerequisite** — if nested KVM isn't available on hosted runners, agents run this suite on the development host before every release, same posture as the rest of L3 (doc 06 §7, Q79).
 - **Passthrough** — there is no hardware layer (D20): a nested L3 guest with an emulated IOMMU covers group detection, the generated boot-time VFIO configuration and assignment removal; real-hardware quirks are residual risk listed in doc 06 §6 and exercised by the public beta.
 
 ---

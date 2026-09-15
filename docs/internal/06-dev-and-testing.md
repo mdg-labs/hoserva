@@ -269,7 +269,7 @@ Test 5 is the one that must never be allowed to regress.
 
 ### Testing Hoserva's own VM management (doc 14)
 
-The L3 test VM already runs on libvirt/QEMU to test Hoserva itself. Testing Hoserva's *own* VM-management feature end to end means running KVM **inside** that VM, for a domain Hoserva-under-test creates — nested virtualization. Whether hosted CI runners support nested KVM (as opposed to the outer `/dev/kvm` access S9 already confirmed) is a Phase 3.5 spike (S10, doc 07 §1); if not, that suite runs on the self-hosted nightly runner only, the same posture the rest of L3 already has (§7 below). PCI/USB passthrough is exercised in a nested guest with an emulated IOMMU (§6); real IOMMU topology and BIOS behaviour stay stated residual risk.
+The L3 test VM already runs on libvirt/QEMU to test Hoserva itself. Testing Hoserva's *own* VM-management feature end to end means running KVM **inside** that VM, for a domain Hoserva-under-test creates — nested virtualization. Whether hosted CI runners support nested KVM (as opposed to the outer `/dev/kvm` access S9 already confirmed) is a Phase 3.5 spike (S10, doc 07 §1); if not, agents run that suite on the development host before every release, the same posture as the rest of L3 (§7 below, Q79). PCI/USB passthrough is exercised in a nested guest with an emulated IOMMU (§6); real IOMMU topology and BIOS behaviour stay stated residual risk.
 
 ---
 
@@ -351,9 +351,10 @@ The residual risks above are exercised by volunteers on their own hardware, neve
 **The repository is public, and that decides where code runs** (Q42). A pull request from a fork can run arbitrary code on whatever runner its workflow targets. A self-hosted runner with privileged loop devices and nested virtualisation is exactly the host that must never execute an untrusted PR.
 
 - **Anything that executes pull-request code runs on GitHub-hosted runners** — they are ephemeral, and their passwordless `sudo` gives loop devices and FUSE for L2.
-- **Self-hosted runners run only on trusted triggers** — `push` to `main`, `schedule`, `workflow_dispatch` — never on `pull_request` from forks, and never via `pull_request_target` checking out PR code.
+- **There are no self-hosted runners** (Q79, D20). What hosted runners can't run, agents run on the development host — in the lab and user-session VMs — as a required step before every release.
+- **No workflow uses `pull_request_target` to check out PR code.**
 - **First-time contributors' workflows require approval** (repository setting).
-- Spike S9 confirms hosted runners support loop devices, FUSE and `/dev/kvm` for the pinned toolchain; if hosted KVM suffices, L3 moves to hosted runners too.
+- Spike S9 confirms hosted runners support loop devices, FUSE and `/dev/kvm` for the pinned toolchain; wherever hosted KVM suffices, L3 runs there nightly.
 
 ### Pipeline
 
@@ -366,14 +367,14 @@ The residual risks above are exercised by volunteers on their own hardware, neve
 | Loop-device integration (L2) | Hosted (`sudo`, ephemeral) | Every push and PR |
 | Schema-migration fixture upgrade (D16) | Hosted | Every push and PR |
 | `.deb` build (amd64 + arm64) | Hosted | Every push and PR |
-| VM end-to-end (L3) | Self-hosted, nested virt — or hosted if S9 allows | Nightly on `main` + pre-release |
-| Hoserva's own VM-management suite (Phase 3.5, nested KVM) | Self-hosted — or hosted if S10 allows | Nightly on `main` + pre-release |
-| Migration suite | Self-hosted | Nightly on `main` + pre-release |
-| Playwright | Self-hosted | Nightly on `main` + pre-release |
+| VM end-to-end (L3) | Hosted if S9 allows; otherwise agents on the dev host | Nightly on `main` where hosted; before every release |
+| Hoserva's own VM-management suite (Phase 3.5, nested KVM) | Hosted if S10 allows; otherwise agents on the dev host | Nightly on `main` where hosted; before every release |
+| Migration suite | Hosted if S9 allows; otherwise agents on the dev host | Nightly on `main` where hosted; before every release |
+| Playwright | Hosted if S9 allows; otherwise agents on the dev host | Nightly on `main` where hosted; before every release |
 
 ### Merge gate
 
-L1 + L2 + `.deb` build must pass on every push to `main` and on every external PR. With agent-driven development, work lands as locally verified commits pushed by the maintainer (doc 12 §6), so a red push is fixed forward immediately. L3 is nightly, because a 30-minute VM suite on every push kills iteration speed — but a red nightly blocks the next release.
+L1 + L2 + `.deb` build must pass on every push to `main` and on every external PR. With agent-driven development, work lands as locally verified commits pushed by the maintainer (doc 12 §6), so a red push is fixed forward immediately. L3 is nightly where hosted runners can run it, because a 30-minute VM suite on every push kills iteration speed — but a red nightly, or a missing pre-release agent run, blocks the next release.
 
 ### Release checklist, automated where possible
 
@@ -385,6 +386,7 @@ L1 + L2 + `.deb` build must pass on every push to `main` and on every external P
 - `.deb` installs cleanly on a fresh Debian
 - Template converter clean-conversion rate has not regressed
 - Spindown acceptance test (§6 zero-IO proxy) and soak test green
+- Every suite hosted runners can't run was run by agents on the development host against the release commit (Q79)
 
 ---
 
@@ -458,4 +460,4 @@ make test                        # L1 + L2
 make lint
 ```
 
-The point of all of this: **the inner loop stays on the dev machine and stays fast.** Loop devices give real storage-engine behaviour in seconds. VMs exist for the cases where reality genuinely differs. Hardware exists for the handful of things neither can fake.
+The point of all of this: **the inner loop stays on the dev machine and stays fast.** Loop devices give real storage-engine behaviour in seconds. VMs exist for the cases where reality genuinely differs. What neither can reproduce is stated as residual risk (§6), never tested on someone's own hardware.

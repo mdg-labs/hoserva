@@ -167,7 +167,7 @@ Blocks all other routes until complete. Cannot be skipped.
 
 **Step 1 — Create admin account.** Username, password with strength meter, optional TOTP enrolment. No default credentials exist at any point.
 
-**Step 2 — System check.** Runs `hoserva doctor`. Reports: Docker Engine present and API version, Compose plugin, mergerfs, SnapRAID, smartmontools, Samba, free space on the boot device, whether the boot device is removable (warn). Each item pass/fail with a remediation command for failures. Severity is explicit: a missing storage dependency blocks (it should be impossible, they are `.deb` dependencies); missing Docker is a **warning** — onboarding continues and Apps shows the prerequisite banner (doc 04 §3).
+**Step 2 — System check.** Runs `hoserva doctor`. Reports: Docker Engine present and API version, Compose plugin, mergerfs, SnapRAID, smartmontools, Samba, free space on the boot device, whether the boot device is removable (warn), and configuration already on the host — Samba shares, NFS exports, fstab mounts, Docker containers and images — each offered for import or to be left unmanaged (Q76). Each item pass/fail with a remediation command for failures. Severity is explicit: a missing storage dependency blocks (it should be impossible, they are `.deb` dependencies); missing Docker is a **warning** — onboarding continues and Apps shows the prerequisite banner (doc 04 §3).
 
 **Step 3 — Basics.** Hostname, timezone, one notification channel (strongly encouraged, with a "you will not be told about disk failures without this" warning if skipped), and the **backup passphrase** that protects secrets inside config backups (Q28) — skippable, with the consequence stated: a backup restored without it restores everything except secrets.
 
@@ -245,10 +245,10 @@ Runs on a system with no array. Steps:
 - Pool mount point and health
 - Create policy, editable
 - Per-disk fill levels, highlighting imbalance
-- Actions: **Add disk**, **Remove disk**, **Replace disk**, **Rebalance** (move files between disks to even out fill — a background job, not a rebuild)
+- Actions: **Add disk**, **Remove disk**, **Replace disk**, **Upgrade disk** (a larger disk for a healthy one, Q71), **Rebalance** (move files between disks to even out fill — a background job, not a rebuild), **Stop array** / **Start array** (maintenance mode, Q70)
 - Explanatory note that adding a disk requires no rebuild, stated on the page rather than buried in docs
 
-**Components:** `section-nav` for the Storage routes; capacity `metric-tile` plus a stacked per-disk `chart`; the create policy shown with `plain-term` and edited through `form-overlay` with `choice-cards`; actions as a button Group (`p-group-1`), with Remove and Replace going through `typed-confirm`; the no-rebuild explanation is an `inline-note`.
+**Components:** `section-nav` for the Storage routes; capacity `metric-tile` plus a stacked per-disk `chart`; the create policy shown with `plain-term` and edited through `form-overlay` with `choice-cards`; actions as a button Group (`p-group-1`), with Remove, Replace and Upgrade going through `typed-confirm` and Stop array through `confirm` listing what will stop; the no-rebuild explanation is an `inline-note`.
 
 ### 3.3 `/storage/disks` — Disk list
 
@@ -258,7 +258,9 @@ Sortable and filterable. Bulk actions: spin down all, run short self-test on all
 
 Row actions: detail, spin down, run self-test, identify (blink the drive LED if the controller supports it — small feature, disproportionately useful when physically finding a failed disk in a case with eight drives).
 
-**Components:** `data-table` with selection (`p-table-6`) and sorting (`p-table-8`); `table-filters`; bulk actions in a Group above the table; `row-actions`; identify and spin down confirm with `feedback-toast`; self-tests are jobs.
+**External disks** (Q72) are listed as their own group — mount, eject, format, and whether one is a backup destination. They are never in the pool or parity.
+
+**Components:** `data-table` with selection (`p-table-6`) and sorting (`p-table-8`); `table-filters`; bulk actions in a Group above the table; `row-actions`; identify and spin down confirm with `feedback-toast`; self-tests are jobs; external disks as a second `data-table` with mount and eject in `row-actions` and format through `typed-confirm`.
 
 ### 3.3a `/storage/disks/wake-events` — Wake events
 
@@ -347,7 +349,7 @@ Actions: create share, edit, delete (with explicit warning about data), browse.
 
 **Cache** — mode selector (three options per doc 02 §3), with the consequence of each stated inline. Changing the mode offers a share relocation job for existing files (doc 09 §2); nothing moves silently.
 
-**SMB** — enable, guest access, read-only, browseable, recycle bin, Time Machine support, per-user and per-group access (no access / read-only / read-write), export path preview.
+**SMB** — enable, guest access, read-only, browseable, recycle bin, Time Machine support with a maximum size (Q73), per-user and per-group access (no access / read-only / read-write), export path preview.
 
 **NFS** — enable, allowed hosts and subnets, squash options, export line preview.
 
@@ -355,7 +357,7 @@ Actions: create share, edit, delete (with explicit warning about data), browse.
 
 **Danger zone** — delete share, with a clear statement of whether data is deleted or only the share definition removed. These must be two distinct actions with different confirmations.
 
-**Components:** vertical `detail-tabs` (`p-tabs-4`), one tab per section above. Allocation and Cache: `choice-cards` with `plain-term`; changing the cache mode opens a `form-overlay` offering the relocation job. SMB: `setting-switch`es; per-user and per-group access as a `data-table` with a `segmented-choice` per row (No access / Read-only / Read-write); export preview as `code-view`. NFS: `list-input` for hosts, squash Select (`p-select-23`), export line as `copy-value`. Browse: Breadcrumb with folder menu (`p-breadcrumb-4`) over a `data-table`; the wake warning is an `inline-note` shown before the first listing; delete through `confirm`. Danger zone: `danger-zone` with two separate actions — remove the definition (`confirm`) and delete the data (`typed-confirm`).
+**Components:** vertical `detail-tabs` (`p-tabs-4`), one tab per section above. Allocation and Cache: `choice-cards` with `plain-term`; changing the cache mode opens a `form-overlay` offering the relocation job. SMB: `setting-switch`es, the Time Machine size as `number-unit`; per-user and per-group access as a `data-table` with a `segmented-choice` per row (No access / Read-only / Read-write); export preview as `code-view`. NFS: `list-input` for hosts, squash Select (`p-select-23`), export line as `copy-value`. Browse: Breadcrumb with folder menu (`p-breadcrumb-4`) over a `data-table`; the wake warning is an `inline-note` shown before the first listing; delete through `confirm`. Danger zone: `danger-zone` with two separate actions — remove the definition (`confirm`) and delete the data (`typed-confirm`).
 
 ---
 
@@ -456,6 +458,7 @@ Full metadata, progress, complete captured stdout/stderr with search, downloadab
 - Group management; share data is group `users` (GID 100), identical to Unraid (Q26)
 - Per-user share permissions, editable from either side (here or on the share)
 - Session list with revoke
+- **A locked-out admin** is not recovered here: `hoserva user reset-password` over the root socket does it (Q78); every other user is reset by an admin on this page
 - Personal API tokens, role-scoped, with revoke (Q43)
 - **Note:** a user account can carry both UI login and SMB access. The UI must be explicit about which a given account has, because the dual purpose surprises people.
 - OIDC configuration — roadmap, shown as a disabled section with a note rather than hidden
@@ -469,21 +472,21 @@ Full metadata, progress, complete captured stdout/stderr with search, downloadab
 **Components (all settings pages):** `section-nav` across the seven routes; each page is a `form` split into framed Cards with header and footer (`p-card-6`), with the save/cancel pair (`p-button-33`) in the footer.
 
 ### 8.1 `/settings` — General
-Hostname, timezone, NTP servers, UI language, theme default, session timeout.
+Hostname, timezone, NTP servers, UI language, theme default, session timeout. **UPS** (Q77): connection (USB, or a network NUT server), on-battery behaviour, and the battery level or runtime that triggers the clean shutdown.
 
-**Components:** hostname Input; `timezone`; NTP servers via `list-input`; default theme as a RadioGroup of image cards (`p-radio-group-6`); session timeout Select (`p-select-23`). UI language stays hidden (Q48).
+**Components:** hostname Input; `timezone`; NTP servers via `list-input`; default theme as a RadioGroup of image cards (`p-radio-group-6`); session timeout Select (`p-select-23`); UPS as a Card with the connection type as `choice-cards` and thresholds as `number-unit`. UI language stays hidden (Q48).
 
 ### 8.2 `/settings/network`
-Interfaces, IP configuration (DHCP / static), DNS, gateway. HTTPS settings: self-signed cert regeneration, Let's Encrypt via DNS-01, certificate expiry. Access scope for the UI — LAN-only source filter by default (doc 01 §7, Q10) — with an explicit warning when allowing all sources. Port configuration (default `:8008`, TLS-only).
+Interfaces, IP configuration (DHCP / static), DNS, gateway — editable when the host uses ifupdown and read-only with the reason otherwise; every change applies with a 60-second confirm-or-revert (Q75). HTTPS settings: self-signed cert regeneration, Let's Encrypt via DNS-01, certificate expiry. Access scope for the UI — LAN-only source filter by default (doc 01 §7, Q10) — with an explicit warning when allowing all sources. Port configuration (default `:8008`, TLS-only).
 
-**Components:** interfaces as a `data-table` (`p-table-7`); DHCP/static as `segmented-choice`; certificate expiry as a `status-badge`; Let's Encrypt setup via `form-overlay`; access scope as a switch card (`p-switch-4`), where allowing all sources goes through `confirm`; port as `number-unit`.
+**Components:** interfaces as a `data-table` (`p-table-7`); DHCP/static as `segmented-choice`; certificate expiry as a `status-badge`; Let's Encrypt setup via `form-overlay`; access scope as a switch card (`p-switch-4`), where allowing all sources goes through `confirm`; port as `number-unit`; applying a network change shows a countdown `banner` with a confirm Button, and the previous configuration returns when it runs out.
 
 ### 8.3 `/settings/notifications`
 Channels: email (SMTP), Gotify, ntfy, Discord webhook, generic webhook. Each with a **Send test notification** button — untested notification config is the same as no notification config.
 
 Per-event routing matrix: which events go to which channels, at which severity.
 
-Events to cover: SMART warning, SMART failure, disk offline, array degraded, sync succeeded (opt-in, off by default), sync failed, **sync blocked by threshold**, scrub found errors, pool above threshold, **any single disk near `minfreespace`** (doc 09 §5), cache above threshold, mover repeatedly skipping files, config drift detected, container unhealthy or crash-looping, container update available, Hoserva update available, login failure burst, certificate expiring, config backup failed, appdata backup failed, backup destination stale, restore drill failed.
+Events to cover: SMART warning, SMART failure, disk offline, array degraded, sync succeeded (opt-in, off by default), sync failed, **sync blocked by threshold**, scrub found errors, pool above threshold, **any single disk near `minfreespace`** (doc 09 §5), cache above threshold, mover repeatedly skipping files, config drift detected, container unhealthy or crash-looping, container update available, Hoserva update available, reboot required, UPS on battery, UPS battery low, login failure burst, admin password or TOTP reset, certificate expiring, config backup failed, appdata backup failed, backup destination stale, restore drill failed.
 
 Quiet hours, with a "critical alerts always deliver" override that cannot be disabled.
 
@@ -514,11 +517,11 @@ Full design in doc 10.
 **Components:** destinations as a `data-table` with a *Test connection* Button (`loading`) reporting through `feedback-toast`; add destination via `form-overlay`; config backup Card with run and download Buttons (`p-button-16`); passphrase via `form-overlay` with `secret-input`; restore as `file-upload`, then a `grouped-results` preview, then `typed-confirm`; appdata backup as a `form` with a per-container stop-policy `data-table` and warning `status-badge`s on database images; restore drill as a Card with a `status-badge`.
 
 ### 8.6 `/settings/updates`
-Current Hoserva version, available version, changelog, update channel (stable / beta), update action, update check on/off (one of the two outbound requests Hoserva makes on its own, beside the catalog refresh — Q49, Q65). Also: available updates for mergerfs and SnapRAID, and whether they fall inside the version range the installed Hoserva release was tested against (Q7); installed versions are read from package metadata.
+Current Hoserva version, available version, changelog, update channel (stable / beta), update action, **rollback to the previous version** (Q67), update check on/off (read from Hoserva's own release index, never a system-wide `apt update` — Q49, Q67). Pending Debian updates and whether a reboot is required: security updates install unattended, and **Reboot** is always the user's action (Q68). Also: available updates for mergerfs and SnapRAID, and whether they fall inside the version range the installed Hoserva release was tested against (Q7); installed versions are read from package metadata.
 
-Updating runs `apt` in a transient systemd unit so the daemon can restart itself. It is refused while a Parity, Array-write or Topology job is running (doc 01 §4), and a config backup runs automatically first (doc 10 §1).
+Updating runs `apt` in a transient systemd unit so the daemon can restart itself. It is refused while a Parity, Array-write or Topology job is running (doc 01 §4), and a config backup runs automatically first (doc 10 §1). Reboot waits for the same jobs and runs the clean shutdown sequence (Q70).
 
-**Components:** version Card with `status-badge`; changelog in a ScrollArea with fading edges (`p-scroll-area-4`); channel as `segmented-choice`; update check as `setting-switch`; dependency versions as a `data-table` (`p-table-7`) with in-range `status-badge`s; *Update* goes through `confirm`, and when refused, a `banner` names the job that blocks it.
+**Components:** version Card with `status-badge`; changelog in a ScrollArea with fading edges (`p-scroll-area-4`); channel as `segmented-choice`; update check as `setting-switch`; dependency versions as a `data-table` (`p-table-7`) with in-range `status-badge`s; *Update*, *Rollback* and *Reboot* go through `confirm`, and when refused, a `banner` names the job that blocks it.
 
 ### 8.7 `/settings/advanced`
 Raw mergerfs options, raw SnapRAID extra options, custom Samba include file, API bind settings, debug logging level, and the config-drift management view (which files are managed, which are unmanaged, hashes, and the option to take or release ownership of each).
@@ -567,8 +570,8 @@ Not everything ships at once. Order by what makes the product usable:
 
 | Tier | Pages |
 |---|---|
-| **1 — Minimum viable** (Phase 1) | `/welcome`, `/login`, `/storage/setup`, `/storage`, `/storage/disks`, `/storage/disks/wake-events` (event log), `/storage/parity`, `/`, `/jobs`, `/settings/notifications`, `/settings/schedules` (nightly chain) |
-| **2 — Actually a NAS** (Phase 2) | `/shares`, `/shares/[name]`, `/storage/cache`, `/users`, `/settings/backup` |
+| **1 — Minimum viable** (Phase 1) | `/welcome`, `/login`, `/storage/setup`, `/storage`, `/storage/disks`, `/storage/disks/wake-events` (event log), `/storage/parity`, `/`, `/jobs`, `/settings/notifications`, `/settings/schedules` (nightly chain), `/settings`, `/settings/updates` |
+| **2 — Actually a NAS** (Phase 2) | `/shares`, `/shares/[name]`, `/storage/cache`, `/users`, `/settings/backup`, `/settings/network` |
 | **3 — Complete home server** (Phase 3) | `/apps` and all sub-pages, `/tools/migrate` |
 | **3.5 — Virtual machines** (Phase 3.5, doc 14) | `/vms` and all sub-pages, including `/tools/migrate`'s VM-import phase |
 | **4 — Polish** (Phase 4) | `/storage/disks/[id]` history graphs, wake attribution, `/tools/logs`, `/tools/diagnostics`, `/settings/advanced`, `/tools/terminal` |

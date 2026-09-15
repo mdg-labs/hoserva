@@ -95,12 +95,14 @@ That last point drives most of the UI decisions in doc 03.
 - Pool management (create, add disk, remove disk, replace disk, rebalance)
 - SnapRAID parity with one or two parity disks (Q19): scheduling, diff preview, threshold guards, scrub
 - NVMe cache pool with per-share cache modes and mover (Q12)
-- SMB and NFS shares with per-user access
+- SMB shares with per-user access, NFS exports with per-host access
 - SMART monitoring and alerting; disk spin-state event log (Q32)
 - Container management via templates (narrow scope — see doc 04)
 - Unraid migration tooling and template conversion
 - Local users, TOTP
-- Config backup/restore and appdata backup (doc 10)
+- Config backup/restore and appdata backup, encrypted off-box (doc 10, Q80)
+- External disks outside the array, for backups and container paths (Q72)
+- UPS integration via NUT (Q77)
 - CLI with parity to the web UI
 - VM management via libvirt/KVM: lifecycle and PCI/USB passthrough, single node — Phase 3.5 (doc 14)
 
@@ -114,6 +116,7 @@ That last point drives most of the UI decisions in doc 03.
 | A VM image/OS gallery, mediated/vGPU passthrough | First cut is local lifecycle plus full PCI/USB passthrough only; no image marketplace, no SR-IOV slicing (doc 14) |
 | Generic Docker management | Portainer exists and is good; see doc 04 |
 | iSCSI target | Local VM vdisks (doc 14) already cover the datastore use case; a network block-device server is its own security and orchestration surface for a narrow audience (Q61) |
+| Per-share quotas | mergerfs has no quota across branches; per-disk free-space alerts cover the need, and Time Machine shares get a Samba size limit (Q73) |
 | Three or more parity disks | SnapRAID supports up to six; no homelab need justifies the test matrix (Q19) |
 | Encrypted (LUKS) arrays | Detected and refused in v1; recovery risk outweighs convenience (Q22) |
 | Built-in AI assistant | Post-1.0 (doc 11, Q47) |
