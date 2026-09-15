@@ -103,7 +103,7 @@ Offered, but explicitly flagged **best-effort**: single-GPU passthrough (the com
 
 ### Testing implication
 
-Passthrough behaviour is IOMMU-topology- and BIOS-dependent in ways no VM or loop device can simulate. `internal/vm`'s domain-XML generation and job orchestration are L1/L2-testable against the fake engine; **actual passthrough — device binding, VFIO, GPU reacquisition — is `needs-hardware`, L4-only**, and results vary per motherboard. This is stated plainly in user-facing docs: passthrough compatibility is reported per-system, not guaranteed by the product.
+Real passthrough behaviour is IOMMU-topology- and BIOS-dependent in ways no VM fully reproduces. `internal/vm`'s domain-XML generation and job orchestration are L1/L2-testable against the fake engine; **passthrough itself is exercised in a nested L3 guest with an emulated IOMMU** (doc 06 §6); real IOMMU topology, BIOS quirks and GPU reacquisition stay stated residual risk, and results vary per motherboard. This is stated plainly in user-facing docs: passthrough compatibility is reported per-system, not guaranteed by the product.
 
 ---
 
@@ -153,7 +153,7 @@ A handful of fields diverge and need remapping rather than a wholesale rewrite:
 Extends doc 01 §7's threat model rather than introducing a new one:
 
 - **`libvirtd` runs with elevated privilege** (device access, `vfio-pci` binding) — this doesn't change the trust boundary, since the API already runs as root for the same class of reason (disk partitioning). No new privilege escalation surface is introduced beyond what the daemon already has.
-- **No VM image gallery** removes the "malicious pre-built VM image" risk that a curated-source approach would otherwise need to manage (the equivalent of the CA feed moderation problem in doc 04 §4, sidestepped entirely rather than solved).
+- **No VM image gallery** removes the "malicious pre-built VM image" risk that a curated-source approach would otherwise need to manage.
 - **Console access requires the same session auth as the rest of the UI** (§4) — no separate credential to leak.
 - **Passthrough attach/detach is audit-logged** (doc 01 §7), with actor and timestamp, the same as any other destructive-adjacent configuration change.
 - **A device the host depends on is structurally unassignable** (§3) — this is a safety property, not just a UX nicety, since a bricked boot controller on a box someone can't reach in person is a real support scenario.
@@ -168,11 +168,11 @@ Unlike Docker (D8: external prerequisite, not shipped by the `.deb`, because the
 
 ## 8. Testing
 
-Extends doc 06's four-layer pyramid:
+Extends doc 06's three-layer pyramid:
 
 - **L1** — `vm.Engine`'s fake: domain-XML generation is pure (state in, XML out) and gets the same golden-file treatment as SnapRAID/Samba config (doc 06 §2); job orchestration, IOMMU-group-based passthrough eligibility logic, and the Unraid domain-XML remapping (§5) are all testable against the fake with no KVM present.
 - **L2/L3** — the loop-device lab has no VM concept; **L3's own test VM already runs on libvirt/QEMU** (doc 06 §4) to test *Hoserva itself*. Testing Hoserva's *own* VM-management feature end to end therefore means **nested virtualization**: KVM running inside the L3 test VM, for a domain that Hoserva-under-test creates. Whether hosted CI runners support nested KVM (`/dev/kvm` was already confirmed present for L3 itself in spike S9, doc 08) is a **new spike, tracked in doc 07 §1 as a Phase 3.5 prerequisite** — if nested KVM isn't available on hosted runners, this suite runs on the self-hosted nightly runner only, same posture as the rest of L3 (doc 06 §7).
-- **L4** — PCI/USB/GPU passthrough is real-hardware-only (§3), `needs-hardware`, and joins the existing spindown/SMART/thermal set of things only the physical test box proves.
+- **Passthrough** — there is no hardware layer (D20): a nested L3 guest with an emulated IOMMU covers group detection, the generated boot-time VFIO configuration and assignment removal; real-hardware quirks are residual risk listed in doc 06 §6 and exercised by the public beta.
 
 ---
 

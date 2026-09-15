@@ -58,7 +58,7 @@ the codebase. Ground every issue in them.
 1. `gh repo view mdg-labs/hoserva --json nameWithOwner,defaultBranchRef` to confirm the target.
 2. **Read the design docs the report touches** — `CLAUDE.md`'s documentation map says which. Note the exact sections (`doc 02 §2`) the issue implements or changes.
 3. **Check the decision log and the open questions.**
-   - Conflicts with a decision (`D1`–`D18`, doc 00 §5)? Say so in `## Constraints`; the issue does not quietly reopen it. A genuine new reason to reopen one becomes its own `docs` issue.
+   - Conflicts with a decision (`D1`–`D20`, doc 00 §5)? Say so in `## Constraints`; the issue does not quietly reopen it. A genuine new reason to reopen one becomes its own `docs` issue.
    - Touches an open question (`Qn`, doc 13)? The issue follows the recommended default and names it. If investigation shows the default is wrong, the issue proposes the change *and* its acceptance criteria include updating the doc 13 entry.
 4. Grep/Read any code, scripts or workflows the report mentions; `git log`/`git blame`/`git show` for recent history on them.
 5. `gh issue list --repo mdg-labs/hoserva --state all --search ...` for related or duplicate issues.
@@ -74,7 +74,6 @@ issue actually touches; clone into `../reference/<name>` with `git clone
 
 - **mergerfs** (`github.com/trapexit/mergerfs`) — create policies, branch modes, caching options, mount behaviour.
 - **SnapRAID** (`github.com/amadvance/snapraid`, manual at `snapraid.it/manual`) — sync/diff/fix semantics, content files, parity layout.
-- **Unraid Community Applications** (`github.com/Squidly271/AppFeed`, `github.com/Squidly271/Community-Applications-Moderators`) — template format, moderation data. **Read only; never copy templates into this repo** (doc 04 §4, doc 06 §2).
 - **Comparable projects** (OpenMediaVault, TrueNAS, Dockge, …) when the report names one or is clearly "how do others solve X".
 
 Read for **behaviour and intent**, never to transcribe code. When any of
@@ -103,9 +102,12 @@ Every issue gets, per `CLAUDE.md` ("Label set"):
 - **Extras when true:**
   - `epic` on an epic
   - `safety-critical` when the work touches the threshold guard, the mover/relocation delete path, the migration import, or `packaging/` — or anything else where a plausible bug loses data
-  - `needs-hardware` when acceptance requires the L4 hardware box or real disks (spindown on real drives, SMART across controllers, thermals)
   - `needs-sudo` when the work requires root on the host
   - `blocked` only for an external blocker that isn't expressible as a native blocked-by relationship
+
+There is no hardware label. Acceptance that seems to need real disks gets an
+agent-runnable lab or VM test instead, with the residual real-hardware risk
+stated (doc 06 §6); nothing is ever routed to the maintainer to test.
 
 `gh label list --repo mdg-labs/hoserva` shows what exists. Never apply a
 `status:*` label directly — see below.

@@ -91,6 +91,16 @@ make -C {{WORKSPACE_PATH}} lab-destroy HOSERVA_LAB_ID={{LAB_ID}}
   for read-only linter containers with your workspace mounted read-only
   (`docker run --rm -v {{WORKSPACE_PATH}}:/src:ro …`). Never stop, remove or
   prune any container, image or volume you did not create.
+- VMs run only through the `vm-*` `make` targets, as your user under
+  `qemu:///session`, with images inside `WORKSPACE` and domain names carrying
+  `{{LAB_ID}}`. Never `qemu:///system`, never `sudo virsh`, never touch a
+  domain you did not create — the maintainer has VMs of their own on this
+  host. If the `vm-*` targets don't exist yet, an issue that needs a VM is
+  `blocked`, not improvised.
+- No agent connects to the maintainer's homelab, Unraid server or any other
+  machine, not even read-only, and nothing is handed to the maintainer to
+  test (D20). Real-hardware behaviour gets a lab or VM proxy with its residual
+  risk stated (doc 06 §6).
 - A dev `hoservad` or any test binary uses a state directory inside
   `WORKSPACE` (or a `mktemp -d` you delete). Never write `/etc/hoserva`,
   `/var/lib/hoserva`, `/run/hoserva` or anything under `/mnt`; never install

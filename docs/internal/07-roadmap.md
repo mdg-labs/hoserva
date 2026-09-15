@@ -12,17 +12,15 @@ Short, disposable experiments that answer the questions capable of invalidating 
 
 | Spike | Question | Kill criterion |
 |---|---|---|
-| **S1 — Spindown under mergerfs** | Do array disks stay in standby during idle and during appdata-only activity? | If disks wake constantly and cannot be tuned, the product fails at something users care about daily |
-| **S2 — Unraid disk adoption** | Can a real Unraid XFS array be mounted and unioned on Debian with the share structure intact? | If not, the migration story collapses and with it the main adoption argument |
-| **S3 — Template conversion rate** | What percentage of a few hundred real CA templates convert cleanly? | Below ~80% clean, the app catalog needs a different approach |
-| **S4 — CA feed licensing** | Is consuming the feed acceptable, legally and to its maintainer? | If not, fall back to a native catalog (doc 04 §4) — not fatal, but changes the plan |
+| **S1 — Spindown under mergerfs** | Does any IO reach idle array disks during idle and appdata-only activity (the zero-IO proxy, doc 06 §6)? | If disks wake constantly and cannot be tuned, the product fails at something users care about daily |
+| **S2 — Unraid disk adoption** | Can data disks laid out the way Unraid formats them be mounted read-only and unioned on Debian with the share structure intact (synthetic fixtures, doc 06 §5)? | If not, the migration story collapses and with it the main adoption argument |
 | **S5 — Loop-device harness fidelity** | Does SnapRAID behave identically on loop devices? | If not, the entire dev workflow needs rethinking before any code is written |
 | **S6 — Per-share mount topology** | Do per-share mergerfs mounts over a catch-all mount (doc 02 §1, Q12) mount reliably at boot, stay quiet for spindown, and does `mspmfs` fall back as documented (Q11)? | If not, fall back to the two-mount tiered design and shrink per-share cache modes (R12) |
 | **S7 — Change journal** | Does a fanotify filesystem mark on each data disk count changes accurately without waking disks (Q13)? | If not, the parity indicator shows "last synced" only, and a timer diff stays forbidden |
 | **S8 — Dependency sourcing** | Do Debian 13's mergerfs and SnapRAID packages cover what the design needs, or must Hoserva's apt repo carry its own builds (Q7)? | Not fatal; decides packaging work in Phase 1 |
 | **S9 — Lab container and CI runners** | Does the narrowed lab container (loop + FUSE only, no `--privileged`) work on the dev host and hosted CI runners, and do hosted runners offer KVM (Q42, Q45)? | If not, labs run in a disposable libvirt VM; never fall back to `--privileged` |
 
-**Status:** spindown and adoption are answered from public research in doc 08 — neither kills the plan — but both still need their hands-on confirmation, listed there. **S9 is confirmed on the dev host** (hosted runners pending) and **S8 is partly answered** — both packages are in Debian 13 (doc 08). The rest are open. The spindown and adoption spikes are still the two that matter most; S6 is the one most likely to change the storage design.
+**Status:** spindown and adoption are answered from public research in doc 08 — neither kills the plan — and both get agent-run confirmation in the lab: S1 through the zero-IO proxy (doc 06 §6), S2 against synthetic Unraid fixtures (doc 06 §5). S3 and S4 were cancelled when the app catalog became Hoserva's own (D19). **S9 is confirmed on the dev host** (hosted runners pending) and **S8 is partly answered** — both packages are in Debian 13 (doc 08). The rest are open. The spindown and adoption spikes are still the two that matter most; S6 is the one most likely to change the storage design.
 
 ### Phase 1 — Storage core (MVP)
 
@@ -30,7 +28,7 @@ Short, disposable experiments that answer the questions capable of invalidating 
 
 Then: array setup (one or two parity disks), pool management with the per-share mount topology, parity with the threshold guard and change journal, the nightly maintenance chain, disks and SMART, spin-state event log, dashboard, jobs, notifications, config backup (CLI, local destinations), CLI, `.deb` and the apt repository, depending on Debian 13's mergerfs and SnapRAID packages with an explicit version range (Q7). UI tier 1 from doc 03 §10.
 
-**Definition of done:** you can run your own array on it. Nothing ships publicly until it has run the author's own data for a month — and that month's diff history is what tunes the guard thresholds (Q16).
+**Definition of done:** the storage suite passes in the lab and L3, and the soak test (doc 06 §6) has run clean — its diff history is what tunes the guard thresholds (Q16). Nothing ships publicly before that.
 
 ### Phase 2 — NAS completeness
 
@@ -38,7 +36,7 @@ Shares with SMB/NFS, users, roles and permissions, API tokens, cache and mover, 
 
 ### Phase 3 — Apps and migration
 
-Container management, curated template catalog, Unraid XML converter, CA feed source (subject to Q34), migration tooling, documentation site. UI tier 3.
+Container management, curated template catalog (D19), Unraid XML converter, migration tooling, documentation site. UI tier 3.
 
 **This is the phase that makes it a complete home server rather than a storage manager.**
 
@@ -53,11 +51,11 @@ libvirt/KVM integration (doc 14): `internal/vm`, domain-XML generation, VM lifec
 | **S10 — Nested KVM for VM-in-VM testing** | Does the L3 test VM (which already runs on libvirt/QEMU, doc 06 §4) support nested KVM for a domain that Hoserva-under-test creates, on both the dev host and hosted/self-hosted CI runners? | If hosted runners don't support it, the suite runs on the self-hosted nightly runner only (doc 06 §7's existing posture for L3), not a blocker |
 | **S11 — Unraid domain XML compatibility** | How much of a real exported Unraid VM's libvirt domain XML loads with only the remapping in doc 14 §5, on real Debian 13 libvirt/QEMU versions? | If divergence is larger than expected, doc 14 §5's field-remap table grows; not fatal, since the fallback is the same manual-review path doc 04 already has for containers |
 
-**Definition of done:** create, start, and use a VM with a browser console; pass PCI passthrough for one device class (GPU or USB) on the L4 hardware box; import one real Unraid VM export with checksum-verified disks.
+**Definition of done:** create, start, and use a VM with a browser console; pass passthrough of one PCI and one USB device in a nested guest with an emulated IOMMU (doc 06 §6); import one Unraid VM fixture with checksum-verified disks.
 
 ### Phase 4 — Polish and release
 
-Hardware beta, wake attribution (may slip past 1.0 — Q32), diagnostics, ISO bundle, remaining UI tier 4, documentation completeness, name clearance (Q50), 1.0.
+Opt-in public beta, wake attribution (may slip past 1.0 — Q32), diagnostics, ISO bundle, remaining UI tier 4, documentation completeness, name clearance (Q50), 1.0.
 
 ### Post-1.0 candidates
 
@@ -69,7 +67,7 @@ Hardware beta, wake attribution (may slip past 1.0 — Q32), diagnostics, ISO bu
 - Multiple pools
 - Native cloud backup for pool data (currently served by backup containers)
 - Plugin or extension system
-- Official arm64 support, once an arm64 box joins L4 (builds exist from Phase 1 — Q5)
+- Official arm64 support, once the public beta covers arm64 boards (builds and emulated tests exist from Phase 1 — Q5)
 - Ubuntu LTS as a tested base (Q4)
 
 ---
@@ -78,19 +76,19 @@ Hardware beta, wake attribution (may slip past 1.0 — Q32), diagnostics, ISO bu
 
 | # | Risk | Impact | Mitigation |
 |---|---|---|---|
-| R1 | **Disks don't stay spun down** | Medium (was High; doc 08 §1 — a property of union filesystems generally, not specific to Hoserva) — still daily-visible | Hands-on spike; acceptance test on hardware (Q31); nothing Hoserva runs on a timer walks a data disk (Q13); wake-event log, then attribution |
+| R1 | **Disks don't stay spun down** | Medium (was High; doc 08 §1 — a property of union filesystems generally, not specific to Hoserva) — still daily-visible | Zero-IO proxy spike and acceptance test in the lab and L3 (Q31, doc 06 §6); public beta for firmware-level wakes; nothing Hoserva runs on a timer walks a data disk (Q13); wake-event log, then attribution |
 | R2 | **A bug destroys user data** | Fatal to the project's reputation | Storage engine is not reinvented (D1); threshold guard on every sync; parity is written only by a user-configured schedule or an explicit user action, and never past a tripped guard; two-phase array relocations (Q14); destructive tests in CI |
 | R3 | **Nightly-parity model is rejected by users** | High | Be honest about it everywhere; make the tradeoff explicit rather than discovered, including the per-file throughput ceiling that comes from the same non-striped pooling design (doc 02 §1); make the ransomware-resistance upside visible |
-| R4 | **CA feed becomes unavailable or unacceptable** | Medium | Pluggable catalog sources from day one; native catalog fallback; converter is valuable regardless |
+| R4 | **The curated catalog is too small to be useful** | Medium | Seed it with the applications homelab users run most (doc 04 §7); user-added catalog sources; the converter covers users' own templates regardless (D12) |
 | R5 | **Unraid changes its on-disk or config layout** | Medium | Version detection in the migration scan; test fixtures per Unraid version; fail loudly on unknown layouts rather than guessing |
 | R6 | **Scope creep into a general Docker manager** | High — it is the most tempting direction | Decision D6 is written down; every Apps feature request gets tested against "does this help someone get from *I want X* to *X is running*" |
 | R7 | **Solo maintainer burnout** | High | Ship phase 1 narrow; resist feature requests until the core is solid; the `.deb`-first decision (D9) exists partly for this reason |
 | R8 | **Security incident from an exposed instance** | High | Safe defaults (doc 01 §7); no default credentials; LAN-bound by default; an explicit "don't expose this" guide |
 | R9 | **mergerfs or SnapRAID upstream stalls** | Medium | Both are mature and stable; the abstraction interfaces mean a replacement is possible without a rewrite of everything above |
-| R10 | **Performance disappoints compared with users' current setups** | Medium | Benchmark on hardware early; mergerfs options are the usual cause and are tunable |
+| R10 | **Performance disappoints compared with users' current setups** | Medium | Relative benchmarks in L3 early; public beta; mergerfs options are the usual cause and are tunable |
 | R11 | **Untrusted PR code runs on a privileged self-hosted runner** | High — the repository is public | PR code runs only on ephemeral hosted runners; self-hosted runners only on trusted triggers; approval for first-time contributors (doc 06 §7, Q42) |
 | R12 | **Per-share mount topology fails spike S6** | Medium — per-share cache modes and allocation shrink | Two-mount tiered fallback designed in advance (Q12); decided in Phase 0, before storage code exists |
-| R13 | **An agent touches a real disk during development** | High — the dev host's own disk | Labs only via `make lab-up` in a loop-and-FUSE-only container, namespaced per lane; hard rules in `CLAUDE.md` and in every orchestrate dispatch; the real array is touched only by a human (doc 12 §5, Q45) |
+| R13 | **An agent touches a real disk during development** | High — the dev host's own disk | Labs only via `make lab-up` in a loop-and-FUSE-only container, namespaced per lane; hard rules in `CLAUDE.md` and in every orchestrate dispatch; no agent ever connects to the maintainer's own machines (D20, doc 12 §5, Q45) |
 | R14 | **PCI/USB passthrough is unreliable across the hardware variety homelab boxes actually have** (IOMMU groups, ACS, BIOS quirks) | Medium-High — the single hardest part of doc 14 | Pre-flight `hoserva vm passthrough check` reports compatibility before commit; a device the host needs is structurally unassignable; explicitly documented as best-effort and hardware-dependent, never promised (doc 14 §3) |
 | R15 | **`libvirtd`'s privileged surface (direct device binding) widens the daemon's attack surface** | Medium | Same threat-model posture as doc 01 §7; console proxied through existing session auth, never a raw exposed port; passthrough attach/detach audit-logged; no VM image gallery to introduce an untrusted-image problem (doc 14 §6) |
 | R16 | **A schema migration silently loses configuration** | High — shares, users and disk mappings live in the database | One central schema with generated, immutable schema migrations; drops only as the contract step of expand/contract; pre-migration snapshot and single-transaction apply; every released schema's fixture database upgraded in CI (D16) |
@@ -130,4 +128,4 @@ Worth naming explicitly, because these are the failure modes that actually kill 
 
 4. **Becoming a Docker manager with a storage feature.** Container management is more immediately gratifying to build than parity scheduling. Decision D6 is the guardrail.
 
-5. **Shipping before running it personally for a long time.** The author's own 24 TB array is the first and most important test. If it isn't trustworthy enough for that, it isn't ready for anyone.
+5. **Shipping before it has run for a long time.** The soak test (doc 06 §6) is the first and most important test. If a month of simulated churn and failures isn't clean, it isn't ready for anyone's 24 TB.

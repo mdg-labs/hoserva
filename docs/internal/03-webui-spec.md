@@ -381,7 +381,7 @@ Searchable, category-filtered grid of templates. Per entry: icon, name, maintain
 
 Filters: category, maintainer, installed / not installed, verified / community.
 
-**Source indicator** on every entry — Hoserva curated, Unraid Community Applications, or user-added repository. Users should know where a template came from.
+**Source indicator** on every entry — Hoserva curated or user-added repository. Users should know where a template came from.
 
 **Components:** search InputGroup (`p-input-group-20`); category `multi-pick`; installed and verified filters as a ToggleGroup (`p-toggle-group-4`), since they are clearable filters; a grid of Cards (`p-card-1`) with the app icon as an Avatar with fallback (`p-avatar-1`) and a source `status-badge`; Pagination with page size (`p-pagination-3`); `empty-state` for no results.
 
@@ -574,7 +574,7 @@ Not everything ships at once. Order by what makes the product usable:
 | **4 — Polish** (Phase 4) | `/storage/disks/[id]` history graphs, wake attribution, `/tools/logs`, `/tools/diagnostics`, `/settings/advanced`, `/tools/terminal` |
 | **Post-1.0** | `/tools/assistant` |
 
-Notifications and a sync/scrub schedule are Tier 1 because Phase 1's definition of done is running the author's own array for a month (doc 07 §1) — an array that cannot report a dead disk or a blocked sync is not one to trust with real data. Config backup exists from Phase 1 via the CLI (`hoserva config export`); its UI arrives in Tier 2.
+Notifications and a sync/scrub schedule are Tier 1 because Phase 1's definition of done is a clean soak test (doc 07 §1) — an array that cannot report a dead disk or a blocked sync is not one to trust with real data. Config backup exists from Phase 1 via the CLI (`hoserva config export`); its UI arrives in Tier 2.
 
 Tier 1 plus Tier 2 is a working, honest NAS. Tier 3 makes it a complete home server, and is what users migrating an existing setup need.
 

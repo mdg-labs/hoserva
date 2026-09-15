@@ -80,43 +80,11 @@ Version policy (Q38): negotiate the Docker Engine API version at runtime rather 
 
 ---
 
-## 4. The Unraid Community Applications feed — findings
+## 4. Catalog sources
 
-**Checked, and the answer is yes: there is a public, machine-readable feed.**
+Hoserva's catalog is its own (D19): the curated template repository in §7 is the only built-in source. Beyond it, a user can add a catalog source URL of their own — a Git repository of templates in Hoserva's format — which Hoserva fetches only because the user added it and badges as user-added.
 
-The Community Applications ecosystem is built on a set of public JSON artifacts in the `Squidly271/AppFeed` repository, which contains `applicationFeed.json`, `applicationFeed-raw.json`, `applicationFeed-lastUpdated.json`, `blacklistedRepos.json`, `categoryList.json`, `containerStats.json`, and `duplicatedTemplates.json`, plus a `repositories` directory — with over 21,000 commits, reflecting a continuously regenerated feed.
-
-Relevant details:
-
-- **The aggregated feed is the whole catalog.** `applicationFeed.json` is the processed feed CA itself consumes; `applicationFeed-raw.json` is the pre-processing form. Entries reference the source template path, e.g. `templates/<repositoryName>/<App>/<App>.xml`.
-- **It is CDN-mirrored.** CA's own code references `https://cdn.jsdelivr.net/gh/Squidly271/AppFeed@master/applicationFeed-lastUpdated.json`, so the `applicationFeed.json` sibling is reachable the same way — a polite, cacheable fetch path that doesn't hammer GitHub.
-- **A last-updated endpoint exists**, so Hoserva can poll cheaply and only pull the full feed when it changes.
-- **There is a separate moderation layer.** `Squidly271/Community-Applications-Moderators` holds `Repositories.json`, the list of contributing template repositories with maintainer names and contact method, alongside `Moderation.json`, which carries moderator comments, deprecation markers (`DeprecatedMaxVer`), blacklist entries, `RemoveFromCA`, and version-incompatibility flags.
-
-  **This matters more than the feed itself.** It is the mechanism by which malicious, abandoned, and broken templates get flagged. A catalog that consumed `applicationFeed.json` while ignoring `Moderation.json` and `blacklistedRepos.json` would happily offer users templates the Unraid community has already removed for cause. **Consuming the moderation data is mandatory, not optional.**
-- **An older LinuxServer-hosted feed** at `tools.linuxserver.io/unraid-docker-templates.json` also exists, but it predates the current CA infrastructure and should be treated as legacy.
-- **Prior art for the conversion itself exists**: the `unraid-templates` GitHub topic lists a project for automatically converting community application docker templates to docker compose, and selfhosters maintains `docker-compose-to-UR-template`, a Python script that reads a docker-compose file and generates an Unraid template — the same mapping in the opposite direction. Both are worth reading before writing the converter.
-
-### Licensing — must be resolved before shipping
-
-Individual template repositories carry their own licenses. IBRACORP's, for example, is GPL v3, permitting personal and commercial use and modification and distribution under the same terms, requiring source disclosure for modifications, while others are MIT, with each packaged application keeping its own upstream license.
-
-So the templates are not uniformly licensed, and the aggregated feed's own license status needs checking separately from the templates it indexes.
-
-**Recommended posture** (tracked as Q33–Q35 in doc 13):
-
-1. **Do not redistribute.** Hoserva fetches the feed at runtime from the upstream CDN rather than vendoring a copy. This sidesteps most redistribution questions.
-2. **Attribute visibly.** Every catalog entry shows its source repository and maintainer, linking upstream. Templates imported from CA are badged as such, not presented as Hoserva content.
-3. **Honour the moderation data**, including removals and blacklists — both an ethical and a safety requirement.
-4. **Make it opt-in.** The CA feed is a toggleable catalog source, off by default on first run, with a one-screen explanation of where the templates come from and that they are community-maintained and unvetted by Hoserva.
-5. **Contact the maintainer.** Squid (Squidly271) maintains this infrastructure personally. A message before building on it is both courteous and likely to surface constraints that aren't documented. This costs one email and could prevent the feature being pulled after launch.
-6. **Get the aggregated feed's license reviewed** properly before it becomes load-bearing.
-
-### Fallback if this path closes
-
-If CA consumption turns out to be unacceptable, the fallback is a Hoserva-native catalog: its own Git repository of templates, community PRs, seeded from the most-installed containers. Slower to reach parity, fully under control. **The converter remains valuable either way**, because migrating users still need their own `templates-user/` directory converted — that is local user data, with no licensing question at all.
-
-**Design implication:** build the catalog with a pluggable source interface from day one — Hoserva-native repo, CA feed, and user-added repository URLs all as sources behind one abstraction. Then the licensing outcome changes a config default rather than an architecture.
+**Design implication:** catalog sources sit behind one interface, so a new source changes a config default, not the architecture.
 
 ---
 
@@ -124,7 +92,7 @@ If CA consumption turns out to be unacceptable, the fallback is a Hoserva-native
 
 ### Source
 
-Per-container XML files under `/boot/config/plugins/dockerMan/templates-user/` on an Unraid flash drive, and the same format in the CA feed.
+Per-container XML files under `/boot/config/plugins/dockerMan/templates-user/` on an Unraid flash drive.
 
 ### Field mapping
 
@@ -201,21 +169,12 @@ Generated Compose is shown side by side with the source XML before anything runs
 
 ## 7. Curated catalog
 
-Independent of the CA feed question, Hoserva maintains its own template repository — `templates/` in the monorepo until the first external template PR, then split out (doc 12 §7, Q39). It is the default catalog source on a fresh install (Q33):
+Hoserva's catalog is its own template repository (D19) — `templates/` in the monorepo until the first external template PR, then split out (doc 12 §7, Q39). It is the only built-in catalog source:
 
 - Templates as YAML (more readable than XML, diffable in PRs)
 - Community contributions via pull request with CI validation: schema check, image existence check, path convention check, privilege audit
 - Seeded with the highest-value homelab containers, which also serve as the migration test corpus (doc 06): Jellyfin, Plex, the \*arr stack, qBittorrent, Immich, Nextcloud, Home Assistant, Vaultwarden, Paperless-ngx, Uptime Kuma, Gitea, Grafana/Prometheus, Pi-hole/AdGuard, Nginx Proxy Manager, Syncthing, Audiobookshelf
+- Grown in order of what homelab users run most, every template written from the application's upstream documentation and image — never copied or adapted from another catalog's template
 
 **Every curated template must set sane pool-aware defaults**: appdata on cache, media on the pool, no unnecessary privileges, explicit tags rather than `:latest` where the upstream publishes versions, `PUID=99`/`PGID=100` where the image supports them.
 
----
-
-## Sources
-
-The research behind §4 originally carried citation markers without URLs; those markers have been removed. Primary sources to re-link before any of it is quoted publicly:
-
-- Community Applications feed: `github.com/Squidly271/AppFeed`
-- CA moderation data: `github.com/Squidly271/Community-Applications-Moderators`
-- Legacy feed: `tools.linuxserver.io/unraid-docker-templates.json`
-- Individual template repositories' own `LICENSE` files (licensing varies per repository)
