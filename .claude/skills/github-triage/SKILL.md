@@ -1,6 +1,6 @@
 ---
 name: github-triage
-description: Enrich an existing GitHub issue or draft new ones from a raw report (including seeding a roadmap phase as an epic with sub-issues), using `gh` CLI only. Use when the user gives an issue number to clean up/enrich, or a raw bug/feature/spike report to turn into a well-structured issue. Never edits local files — read-only against the repo, all writes go through `gh issue edit`/`gh issue create`/`scripts/issue-status.sh`.
+description: Enrich an existing GitHub issue or draft new ones from a raw report (including seeding a phase as an epic with sub-issues), using `gh` CLI only. Use when the user gives an issue number to clean up/enrich, or a raw bug/feature/spike report to turn into a well-structured issue. Never edits local files — read-only against the repo, all writes go through `gh issue edit`/`gh issue create`/`scripts/issue-status.sh`.
 argument-hint: <issue-number> | <free-form report text>
 allowed-tools:
   - Read
@@ -148,7 +148,7 @@ GitHub's native fields. **Never** as body prose ("Part of #N", "Depends on
 
 1. Investigate as above, starting from the raw report.
 2. Draft title + body in the shape above. If the report is more than one piece of work, decide the epic/sub-issue split here.
-   - **Seeding a phase** ("seed Phase 0"): don't hand-create it. Phases are already broken into epics and sub-issues in `docs/roadmap.md`; run `scripts/roadmap-sync.py <ids>` (dry run) and hand the maintainer the `--apply` command. Triage then enriches the created issues one by one (Mode 1). Work that isn't in the roadmap yet is created here as usual.
+   - **Seeding a phase** ("seed Phase 5"): create the epic first, then each sub-issue with the phase's milestone, then wire parent and blocked-by natively — the same shape as the existing phase epics. The mass-creation guard below applies.
    - **Mass-creation guard:** if this would create more than ~12 issues, state the count and list the titles, and confirm via `AskUserQuestion` before creating anything.
 3. `gh issue create --repo mdg-labs/hoserva --title "..." --body-file <tmpfile> --label ...` — epic first, then each sub-issue, so every number a relationship needs exists.
 4. Wire relationships via the native flags. If a body referenced another issue's number before it existed, patch it in with `gh issue edit --body-file` now — no placeholders left behind.

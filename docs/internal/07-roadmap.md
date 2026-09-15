@@ -4,7 +4,7 @@
 
 ## 1. Phasing
 
-This section is the rationale; **`docs/roadmap.md` is the same plan broken into epics and sub-issues**, which `scripts/roadmap-sync.py` turns into GitHub issues with native parent, blocked-by and milestone relationships. Once an item is an issue, the issue is authoritative.
+This section is the rationale; **the plan itself lives in GitHub issues** — one epic per phase, with its sub-issues, blocked-by relationships and milestone. The issues are authoritative for status and scope.
 
 ### Phase 0 — Feasibility spikes (before committing to the build)
 
