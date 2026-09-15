@@ -314,12 +314,13 @@ A NAS holds everything a person owns digitally and increasingly gets exposed to 
 - **HTTPS only** on `:8008`, with a self-signed cert generated on first boot, plus one-click Let's Encrypt via DNS-01 for those with a domain (Q9).
 - **LAN-only by default**: the listener accepts connections only from loopback, RFC 1918, link-local, IPv6 ULA and CGNAT `100.64.0.0/10` (Tailscale) source addresses — a source filter rather than an address binding, so it survives DHCP changes. One explicit, warned-about toggle accepts all sources (Q10).
 - **Secrets at rest** (SMTP passwords, notification tokens, API keys, ACME keys) are encrypted in the DB with a machine key in `/etc/hoserva/secret.key` (root, `0600`); backups re-encrypt them under a user-set backup passphrase (Q28, doc 10 §1).
-- **No telemetry.** The update check is the only outbound request Hoserva makes on its own, and it can be disabled (Q49).
+- **No telemetry.** The update check and the daily catalog refresh (Q65) are the only outbound requests Hoserva makes on its own; neither sends anything beyond a plain HTTP request, and both can be disabled (Q49).
 - **TOTP available from v1**, and prompted for (not silently optional) when the UI is reachable from a non-private address.
 - **Rate limiting and lockout** on login.
 - **The API runs as root** because it partitions disks and mounts filesystems. This is unavoidable, and therefore the attack surface must stay small: no arbitrary command execution endpoint, no user-supplied paths passed unsanitised to shell, template `<ExtraParams>` parsed rather than interpolated into a command line.
 - **The optional browser terminal is off by default** and gated behind a confirmation that explains it is root shell access.
 - **Container privilege warnings**: templates requesting `privileged: true`, host networking, or Docker socket mounts are flagged in the install flow with a plain-language explanation. One-click catalogs make it easy to install these without seeing what they grant.
+- **The catalog is signed.** A catalog archive is used only after its signature verifies against a key compiled into `hoservad`, and an archive older than the current one is rejected (Q65).
 - **Audit log** of configuration changes and destructive actions, with actor and timestamp.
 
 ### Threat model note

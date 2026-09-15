@@ -514,7 +514,7 @@ Full design in doc 10.
 **Components:** destinations as a `data-table` with a *Test connection* Button (`loading`) reporting through `feedback-toast`; add destination via `form-overlay`; config backup Card with run and download Buttons (`p-button-16`); passphrase via `form-overlay` with `secret-input`; restore as `file-upload`, then a `grouped-results` preview, then `typed-confirm`; appdata backup as a `form` with a per-container stop-policy `data-table` and warning `status-badge`s on database images; restore drill as a Card with a `status-badge`.
 
 ### 8.6 `/settings/updates`
-Current Hoserva version, available version, changelog, update channel (stable / beta), update action, update check on/off (the only outbound request Hoserva makes on its own, Q49). Also: available updates for mergerfs and SnapRAID, and whether they fall inside the version range the installed Hoserva release was tested against (Q7); installed versions are read from package metadata.
+Current Hoserva version, available version, changelog, update channel (stable / beta), update action, update check on/off (one of the two outbound requests Hoserva makes on its own, beside the catalog refresh — Q49, Q65). Also: available updates for mergerfs and SnapRAID, and whether they fall inside the version range the installed Hoserva release was tested against (Q7); installed versions are read from package metadata.
 
 Updating runs `apt` in a transient systemd unit so the daemon can restart itself. It is refused while a Parity, Array-write or Topology job is running (doc 01 §4), and a config backup runs automatically first (doc 10 §1).
 
