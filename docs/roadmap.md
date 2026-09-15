@@ -252,15 +252,14 @@ issue: 10
 ```
 
 **Summary** Finish S9 for GitHub-hosted runners: can they run the L2 lab and
-offer `/dev/kvm` for L3, so pull-request code never needs a self-hosted
-runner?
+offer `/dev/kvm` for L3, so no suite needs a self-hosted runner (Q79)?
 
-**Design references** doc 06 §7, doc 08 (S9), Q42, Q45, R11
+**Design references** doc 06 §7, doc 08 (S9), Q42, Q45, R11, Q79
 
 **Acceptance criteria**
 - [ ] A workflow job on a hosted runner creates loop devices, XFS and a mergerfs mount via the lab recipe
 - [ ] `/dev/kvm` availability and a minimal QEMU boot tested on a hosted runner
-- [ ] Q42 updated with which suites run hosted and which stay on self-hosted runners with trusted triggers
+- [ ] Q42 and Q79 updated with which suites run on hosted runners and which run on the dev host before releases
 
 **Scope** `.github/workflows/`, `docs/internal/08-spike-findings.md`
 
@@ -484,14 +483,15 @@ issue: 19
 **Summary** Persisted, cancellable, observable long-running jobs with the
 mutually exclusive classes enforced by the scheduler, not the UI.
 
-**Design references** doc 01 §4 (Job system), Q29, Q30
+**Design references** doc 01 §4 (Job system), Q29, Q30, Q70, Q74
 
 **Acceptance criteria**
 - [ ] Jobs persist in SQLite and are marked `interrupted` after a restart, never resumed automatically
 - [ ] Checkpoint API for resumable job types (Q29)
 - [ ] Parity, Array-write, Topology, Service and VM classes enforced as in doc 01 §4's table, with tests for each exclusion
-- [ ] Progress streams over SSE; stdout/stderr captured and downloadable
+- [ ] Progress streams over SSE; stdout/stderr captured to compressed files, downloadable, kept 90 days and capped at 1 GB (Q74)
 - [ ] Non-cancellable jobs say so rather than accepting a cancel
+- [ ] Maintenance mode refuses new jobs, stops resumable jobs at their next checkpoint and marks the rest interrupted (Q70)
 
 **Scope** `internal/job/`, `internal/api/`
 
@@ -858,6 +858,59 @@ that does (doc 06 §6).
 
 **Scope** `docs/internal/08-spike-findings.md`, `scripts/vm/`
 
+### Startup order, maintenance mode and clean shutdown
+
+```meta
+id: M2.11
+epic: M2
+status: todo
+labels: [feat, area:storage, safety-critical]
+sudo: false
+depends: [M2.4, M1.8, M2.1]
+issue: 109
+```
+
+**Summary** Storage comes up before anything writes to it and goes down after
+everything that writes to it has stopped: `hoserva-storage.target`, the
+degraded-boot acknowledgement, maintenance mode and the shutdown sequence.
+
+**Design references** doc 02 §1 (Startup order and a disk missing at boot), doc 02 §4 (Stopping the array), Q69, Q70, Q21, Q29
+
+**Acceptance criteria**
+- [ ] Data, parity and cache mounts are `nofail` with a device timeout; empty mountpoints are immutable, and a write to an unmounted mountpoint fails
+- [ ] Samba, NFS, Docker and libvirt start after `hoserva-storage.target` through managed systemd drop-ins; `hoservad` reaches the target only when every expected disk is present by identity, or once the degraded state is acknowledged through the API
+- [ ] `hoserva array stop|start` and their API operations run doc 02 §4's sequence; system shutdown and reboot run the same sequence
+- [ ] L3 test: boot with a data disk detached — boot completes, no share or container starts before acknowledgement, and nothing is written into an empty mountpoint
+- [ ] L3 test: stop the array while a container holds a file open on the pool — the container stops before the unmount and the file is intact
+
+**Scope** `internal/pool/`, `internal/disk/`, `internal/job/`, `internal/config/`
+
+### Metrics and job-log retention
+
+```meta
+id: M2.12
+epic: M2
+status: todo
+labels: [feat, area:api]
+sudo: false
+depends: [M1.8, M2.1]
+issue: 110
+```
+
+**Summary** History without unbounded growth: a separate, downsampled
+`metrics.db`, job logs as capped compressed files, and retention for events
+and the audit log.
+
+**Design references** doc 01 §4, §6, doc 10 §1, Q74
+
+**Acceptance criteria**
+- [ ] Time series in `metrics.db`: raw samples for 48 hours, hourly for 90 days, daily for two years, with downsampling tests
+- [ ] Job stdout/stderr as compressed files under `/var/lib/hoserva/jobs/`, kept 90 days and capped at 1 GB, oldest removed first; summary rows stay in the database
+- [ ] Spin-state events and the audit log pruned after two years
+- [ ] `metrics.db` and job logs are excluded from config backups, and losing `metrics.db` loses history only
+
+**Scope** `internal/store/`, `internal/job/`, `internal/disk/`
+
 ---
 
 ## M3 — Phase 1: surfaces, packaging and the soak-test gate
@@ -917,7 +970,7 @@ issue: 36
 secrets re-encrypted under the backup passphrase, verification, and the two
 local default destinations.
 
-**Design references** doc 10 §1, §4, Q28, Q40, doc 01 §6
+**Design references** doc 10 §1, §4, Q28, Q40, doc 01 §6, Q74, Q80
 
 **Acceptance criteria**
 - [ ] Archive layout per doc 10 §1; `state.db` produced with `VACUUM INTO`, never copied live
@@ -925,6 +978,7 @@ local default destinations.
 - [ ] Every archive verified after writing (checksums, snapshot opens, `integrity_check` passes)
 - [ ] Defaults: boot device and a pool path (Q40); retention 7 daily, 4 weekly, 6 monthly
 - [ ] Runs as the last step of the nightly chain and before every self-update and topology change
+- [ ] Stacks' `.env` files go into the passphrase-protected secrets section with the secret columns; `metrics.db` and job logs are excluded (Q74, Q80)
 
 **Scope** `internal/backup/`
 
@@ -944,15 +998,16 @@ issue: 37
 status, pool, disks, sync, scrub, fix, jobs, logs, config export/import and
 doctor, each with `--json`.
 
-**Design references** doc 01 §3, D5
+**Design references** doc 01 §3, D5, Q78
 
 **Acceptance criteria**
 - [ ] Commands from doc 01 §3 that Phase 1 implements, all through the generated Go client — no logic only the CLI has (D5, D18)
 - [ ] `--json` on every command; stable exit codes
 - [ ] `hoserva doctor` reports dependencies, versions from package metadata (Q7), mount state, parity freshness, SMART and free space in plain language
 - [ ] Destructive commands require the same confirmation the API requires
+- [ ] `hoserva user reset-password` and `disable-totp` accepted only from root by peer credentials, audit-logged and announced through every notification channel (Q78)
 
-**Scope** `cmd/hoserva/`
+**Scope** `cmd/hoserva/`, `internal/api/`
 
 ### UI: onboarding and login
 
@@ -969,7 +1024,7 @@ issue: 38
 **Summary** `/welcome` and `/login` as doc 03 specifies them, built from the
 coss patterns named there.
 
-**Design references** doc 03 §1 (and its Components line), doc 03 Component system, Q28, Q48
+**Design references** doc 03 §1 (and its Components line), doc 03 Component system, Q28, Q48, Q76
 
 **Acceptance criteria**
 - [ ] All four onboarding steps, blocking other routes until complete
@@ -977,6 +1032,7 @@ coss patterns named there.
 - [ ] Skipping the notification channel or the backup passphrase states the consequence
 - [ ] Login with TOTP; lockout message after repeated failures
 - [ ] Components match doc 03's Components lines; strings through the i18n catalog
+- [ ] The system check lists configuration already on the host — Samba shares, NFS exports, fstab mounts, Docker data — each offered for import or to be left unmanaged (Q76)
 
 **Scope** `web/src/routes/`, `web/src/components/patterns/`
 
@@ -1022,7 +1078,7 @@ issue: 40
 overview, disk list, wake events, parity with the guard and the guided fix
 flow, and jobs.
 
-**Design references** doc 03 §2, §3.2–§3.5, §6, §10, doc 02 §2 (Parity freshness)
+**Design references** doc 03 §2, §3.2–§3.5, §6, §10, doc 02 §2 (Parity freshness), Q70
 
 **Acceptance criteria**
 - [ ] Top bar with array status, parity freshness chip and active jobs on every page
@@ -1031,6 +1087,7 @@ flow, and jobs.
 - [ ] No page load or poll triggers anything that wakes a data disk; Run diff states that it will
 - [ ] Mobile-usable dashboard, job progress and notifications
 - [ ] Degraded, rebuilding and sync-blocked mock scenarios render correctly
+- [ ] *Stop array* and *Start array* on `/storage`, with a `confirm` listing what will stop (Q70)
 
 **Scope** `web/src/routes/`, `web/src/components/`
 
@@ -1049,12 +1106,13 @@ issue: 41
 **Summary** `/settings/notifications` and `/settings/schedules`, the two
 settings pages Phase 1 cannot ship without.
 
-**Design references** doc 03 §8.3, §8.4, Q30
+**Design references** doc 03 §8.3, §8.4, Q30, doc 03 §8.1, §8.6, Q67, Q68
 
 **Acceptance criteria**
 - [ ] Channel cards with test send, routing matrix and quiet hours as doc 03 §8.3 specifies
 - [ ] The nightly chain as ordered steps that can be disabled but not reordered, with the next run shown
 - [ ] Schedule conflicts shown as a warning banner
+- [ ] `/settings` (general) and `/settings/updates` per doc 03 §8.1 and §8.6, with *Update*, *Rollback* and *Reboot* through `confirm` (Q67, Q68)
 
 **Scope** `web/src/routes/`
 
@@ -1073,13 +1131,15 @@ issue: 42
 **Summary** The `.deb` with its dependencies, systemd unit, maintainer
 scripts and the signed apt repository with stable and beta channels.
 
-**Design references** D8, D9, Q7, Q41, doc 04 §2, doc 12 §6, doc 01 §6
+**Design references** D8, D9, Q7, Q41, doc 04 §2, doc 12 §6, doc 01 §6, Q66, Q76
 
 **Acceptance criteria**
 - [ ] Depends on Debian 13's `mergerfs` and `snapraid` within the version range from S8; `Recommends: rclone`; Docker not a dependency (D8)
 - [ ] `postinst` creates the `hoserva` group and machine key and never touches data disks; `purge` never removes `/var/lib/hoserva/stacks/`
 - [ ] Built in CI for amd64 and arm64; installs cleanly on a fresh Debian 13 in L3
-- [ ] Apt repository layout, signing and channels documented; publishing credentials are the maintainer's
+- [ ] Apt repository built with aptly for `/apt/` on the project site (Q66), signed with a key held only as a CI secret; a `hoserva-archive-keyring` package and a `signed-by` source entry
+- [ ] Each channel keeps the last five releases per architecture
+- [ ] `postinst` never overwrites existing Samba, NFS, fstab or Docker configuration (Q76)
 
 **Scope** `packaging/`, `scripts/release/`
 
@@ -1099,13 +1159,14 @@ issue: 43
 nightly L3 suite including Playwright journeys and the power-loss and
 disk-yank cases.
 
-**Design references** doc 06 §4, §7, Q42
+**Design references** doc 06 §4, §7, Q42, Q79, D20
 
 **Acceptance criteria**
 - [ ] `make vm-up`, `vm-snapshot`, `vm-restore`, `vm-deploy` driving VMs through `scripts/vm/`, never touching host disks
-- [ ] Nightly on `main` on a trusted runner: install, onboarding, array setup, disk yank and reconstruction, `virsh destroy` mid-sync recovery, reboot persistence
+- [ ] Nightly on `main` on a hosted runner where S9 allows, otherwise run by agents on the dev host before every release (Q79): install, onboarding, array setup, disk yank and reconstruction, `virsh destroy` mid-sync recovery, reboot persistence
 - [ ] Playwright journey 5 (mass deletion blocks the sync) runs and can never be skipped
 - [ ] Config backup to a fresh VM and full restore verified
+- [ ] VMs run under `qemu:///session` with images in the workspace and domain names carrying `HOSERVA_LAB_ID` (D20)
 
 **Scope** `scripts/vm/`, `.github/workflows/`, `web/`
 
@@ -1135,6 +1196,85 @@ guard thresholds before anything ships publicly (doc 06 §6).
 - [ ] Every problem found filed as an issue
 
 **Scope** `scripts/vm/`, `docs/internal/13-open-questions.md`
+
+### Project site: docs, apt repository and catalog in one deploy
+
+```meta
+id: M3.11
+epic: M3
+status: todo
+labels: [chore, area:devenv]
+sudo: false
+depends: [M3.8]
+issue: 111
+```
+
+**Summary** One GitHub Pages site at `hoserva.dev`, assembled and deployed by
+a single workflow: the docs at the root, the signed apt repository under
+`/apt/` and the catalog under `/catalog/`. Registering the domain is the
+maintainer's.
+
+**Design references** Q66, Q50, Q3, Q65, doc 12 §6
+
+**Acceptance criteria**
+- [ ] One workflow assembles and deploys the site; the docs, `/apt/` and `/catalog/` each publish into it without overwriting the others
+- [ ] Custom domain with HTTPS enforced; the apt source line and the catalog URL documented as permanent
+- [ ] The workflow fails before deploying when the site would exceed 900 MB
+- [ ] Until the docs site exists, the root is a placeholder page pointing to the repository
+
+**Scope** `.github/workflows/`, `scripts/release/`
+
+### Self-update, rollback and Debian updates
+
+```meta
+id: M3.12
+epic: M3
+status: todo
+labels: [feat, area:packaging, safety-critical]
+sudo: false
+depends: [M3.8, M3.2, M1.8, M2.11]
+issue: 112
+```
+
+**Summary** Hoserva updates itself from its own release index, rolls back to
+the previous version with its database snapshot, keeps Debian patched with
+security updates, and never reboots on its own.
+
+**Design references** doc 03 §8.6, doc 01 §4 (Applying schema migrations at startup), doc 12 §6, Q67, Q68, Q49, D16
+
+**Acceptance criteria**
+- [ ] The update check reads only Hoserva's signed release index for the configured channel — never a system-wide `apt update`; the channel is a managed sources file
+- [ ] An update runs in a transient systemd unit after a config backup and is refused while a Parity, Array-write or Topology job runs, naming the job
+- [ ] `hoserva rollback` installs the previous version and restores its pre-migration snapshot; L3 test: upgrade across a schema migration, roll back, every row intact
+- [ ] `unattended-upgrades` configured for Debian security updates only; pending updates and reboot-required reported through the API
+- [ ] A reboot waits for Parity, Array-write and Topology jobs and runs the clean shutdown sequence; Hoserva never reboots on its own
+
+**Scope** `internal/api/`, `cmd/hoservad/`, `packaging/`
+
+### Installing onto a Debian system already in use
+
+```meta
+id: M3.13
+epic: M3
+status: todo
+labels: [feat, area:api]
+sudo: false
+depends: [M2.2, M1.11]
+issue: 113
+```
+
+**Summary** The `.deb` lands on a user's own Debian without breaking what is
+already there: existing Samba, NFS, fstab and Docker configuration is
+detected, then imported or left unmanaged — never overwritten.
+
+**Design references** doc 01 §2, doc 03 §1, doc 04 §3, Q76, Q62, D9
+
+**Acceptance criteria**
+- [ ] Detection of existing `smb.conf` shares, `/etc/exports`, fstab mounts and Docker containers or images, exposed through the API for onboarding
+- [ ] Each managed file offered for import into the database or to be left unmanaged under the drift model; nothing is overwritten without that choice
+- [ ] L3 test: install onto a Debian with a Samba share, an NFS export and an fstab mount — all still work after install and onboarding
+
+**Scope** `internal/config/`, `internal/api/`
 
 ---
 
@@ -1168,11 +1308,11 @@ issue: 46
 by its per-share mergerfs mount, with Samba configuration generated from
 SQLite.
 
-**Design references** doc 03 §4, doc 02 §1, doc 01 §2 (Escape hatches), D4, D10
+**Design references** doc 03 §4, doc 02 §1, doc 01 §2 (Escape hatches), D4, D10, Q73
 
 **Acceptance criteria**
 - [ ] Creating a share creates its directory tree on the branches and its per-share mount
-- [ ] `smb.conf` generated with guest, read-only, browseable, recycle bin and Time Machine options; ends with the user-owned `include`
+- [ ] `smb.conf` generated with guest, read-only, browseable, recycle bin and Time Machine options, including a maximum size for Time Machine shares (Q73); ends with the user-owned `include`
 - [ ] Golden files for representative share sets
 - [ ] Deleting a share definition and deleting its data are two separate API operations
 - [ ] Browse endpoint lists a directory with the holding disk per file from `user.mergerfs.basepath`, as an explicit call that may wake disks
@@ -1305,6 +1445,60 @@ issue: 51
 - [ ] Browsing warns that it may wake disks before the first listing
 
 **Scope** `web/src/routes/`
+
+### Host network settings with confirm-or-revert
+
+```meta
+id: M4.7
+epic: M4
+status: todo
+labels: [feat, area:api]
+sudo: false
+depends: [M1.11]
+issue: 114
+```
+
+**Summary** Address, DNS and gateway changes through one ifupdown backend,
+each applied with a 60-second confirm-or-revert, and a read-only view on hosts
+that use another backend.
+
+**Design references** doc 03 §8.2, doc 14 §4, Q75, Q54
+
+**Acceptance criteria**
+- [ ] Backend detection; editing only on ifupdown, through one managed file under `/etc/network/interfaces.d/`; read-only with the reason on NetworkManager or systemd-networkd
+- [ ] Every change applies with a 60-second confirm-or-revert over the new configuration
+- [ ] L3 test: applying an unreachable static address reverts within the window and the UI is reachable again
+- [ ] Which backend a minimal Debian 13 server install uses is confirmed in L3, and Q75 updated if it isn't ifupdown
+- [ ] `/settings/network` built per doc 03 §8.2 and its Components line
+
+**Scope** `internal/config/`, `internal/api/`, `web/src/routes/`
+
+### External disks
+
+```meta
+id: M4.8
+epic: M4
+status: todo
+labels: [feat, area:storage]
+sudo: false
+depends: [M2.1]
+issue: 115
+```
+
+**Summary** Disks outside the array — a disk with the Ignore role, or a USB
+disk plugged in later — mounted on request at `/mnt/disks/<label>` and ejected
+safely.
+
+**Design references** doc 02 §4 (Disks outside the array), doc 03 §3.3, doc 10 §1, Q72
+
+**Acceptance criteria**
+- [ ] Mount by filesystem UUID at `/mnt/disks/<label>` and eject (unmount, then spin down) through the API and `hoserva disk external`; nothing mounts automatically
+- [ ] External disks are never in the pool, parity, threshold guard or change journal — tested
+- [ ] Formatting takes the same typed confirmation as an array disk; the boot device is never offered
+- [ ] An external disk can be a backup destination and a container path
+- [ ] External disks listed as their own group on `/storage/disks` per doc 03 §3.3
+
+**Scope** `internal/disk/`, `internal/api/`
 
 ---
 
@@ -1476,6 +1670,59 @@ change flows on the pool and share pages.
 
 **Scope** `web/src/routes/`
 
+### Disk upgrade: larger data and parity disks
+
+```meta
+id: M5.7
+epic: M5
+status: todo
+labels: [feat, area:storage, safety-critical]
+sudo: false
+depends: [M2.9, M2.11]
+issue: 116
+```
+
+**Summary** Replace a healthy disk with a larger one without ever leaving the
+array unprotected: copy the parity file or the data, verify, switch, and only
+then release the old disk.
+
+**Design references** doc 02 §4 (Upgrading a disk to a larger one), doc 03 §3.2, Q71, Q14, Q20, Q70
+
+**Acceptance criteria**
+- [ ] Lab tests first: kill the job at every step — the old disk stays valid and the array stays recoverable; fail a different data disk mid-upgrade and reconstruct it
+- [ ] Larger parity: copy the parity file, verify it byte for byte, switch the configuration, and pass `snapraid check` before the old disk is released
+- [ ] Larger data disk: in maintenance mode, copy with ownership, xattrs and timestamps, mount at the same `/mnt/diskN`, and require `snapraid diff` to show no removed or updated files before release — exact expectations confirmed against SnapRAID 12.4 in the lab
+- [ ] When a new data disk would exceed parity, the flow offers the parity upgrade first and reuses the old parity disk as a data disk
+
+**Scope** `internal/disk/`, `internal/parity/`, `internal/cache/`
+
+### UPS support
+
+```meta
+id: M5.8
+epic: M5
+status: todo
+labels: [feat, area:api]
+sudo: false
+depends: [M2.11, M5.1]
+issue: 117
+```
+
+**Summary** NUT integration with generated configuration: notify on battery,
+pause the mover and hold syncs, and at low battery checkpoint jobs and shut
+down cleanly.
+
+**Design references** doc 03 §8.1, §8.3, doc 02 §6, Q77, Q70
+
+**Acceptance criteria**
+- [ ] NUT configuration generated from the database for a USB UPS or a network NUT server; golden files
+- [ ] On battery: notification, mover paused, scheduled syncs held; when power returns, both resume
+- [ ] At low battery or the configured runtime: Array-write jobs checkpointed, a running sync marked interrupted, clean shutdown sequence
+- [ ] L3 test with NUT's `dummy-ups` driver covering on battery, power restored and low battery
+- [ ] UPS settings on `/settings` per doc 03 §8.1
+
+**Scope** `internal/config/`, `internal/job/`, `internal/notify/`
+
 ---
 
 ## M6 — Phase 2: backup and restore
@@ -1508,13 +1755,15 @@ issue: 60
 WebDAV and rclone remotes — with retention, encryption and a real test
 connection.
 
-**Design references** doc 10 §1 (Multi-destination), Q41, D1
+**Design references** doc 10 §1 (Multi-destination), Q41, D1, Q72, Q80
 
 **Acceptance criteria**
 - [ ] Local paths work without rclone; remote types go through `rclone copy` with structured arguments only
 - [ ] When rclone is missing, the API reports the install command instead of failing opaquely
 - [ ] Test connection writes, reads back and deletes a file
 - [ ] Retention pruned per destination; the last successful backup per destination tracked and stale destinations alerted
+- [ ] Archives for remote destinations are encrypted with age to the onboarding recipient, the identity travelling inside each archive under the backup passphrase; a remote destination can't be added without a passphrase (Q80)
+- [ ] An external disk (Q72) works as a local destination
 
 **Scope** `internal/backup/`
 
@@ -1677,14 +1926,16 @@ issue: 67
 `/var/lib/hoserva/stacks/`, alongside unmanaged containers, with Docker's
 storage on a plain directory.
 
-**Design references** doc 04 §1–§3, D6, D7, D8, Q38, Q62
+**Design references** doc 04 §1–§3, D6, D7, D8, Q38, Q62, Q69, Q76, Q82
 
 **Acceptance criteria**
 - [ ] Stacks stored as `docker-compose.yml`, `.env` and `meta.json`; `docker compose` runs with argv only
 - [ ] Start, stop, restart, recreate, remove (appdata deletion a separate choice), logs, stats, health
 - [ ] Unmanaged containers listed and controllable, never modified by the template system
 - [ ] Prerequisite detection: missing Docker or Compose v2 reported with install commands; Engine API version negotiated
-- [ ] Docker data-root on a plain directory on cache, never a loopback image (Q62)
+- [ ] Docker data-root on a plain directory on cache, never a loopback image (Q62) — offered, and only when a cache exists and Docker holds no containers or images (Q76)
+- [ ] Docker starts after `hoserva-storage.target` through a managed systemd drop-in (Q69)
+- [ ] `hoserva doctor` reports whether an NVIDIA driver and container toolkit are present and working (Q82)
 
 **Scope** `internal/container/`
 
@@ -1704,15 +1955,16 @@ issue: 68
 seeded curated catalog in `templates/`, CI validation and signed publishing, and
 the privilege summary.
 
-**Design references** doc 04 §7, §1, Q39, Q64, Q65, Q26, D19, doc 01 §7 (Container privilege warnings)
+**Design references** doc 04 §7, §1, Q39, Q64, Q65, Q26, D19, doc 01 §7 (Container privilege warnings), Q66, Q82
 
 **Acceptance criteria**
 - [ ] `x-hoserva` schema version 1 per doc 04 §7: inputs with kind, path role and default; metadata; revision
 - [ ] Seeded with the doc 04 §7 app list, each written from its official or linuxserver.io image documentation, with appdata on cache, explicit tags where published, `PUID=99`/`PGID=100` where supported
 - [ ] CI validates the schema, `docker compose config`, image and tag existence, path conventions and privileges on every change to `templates/`
-- [ ] On merge, CI builds `catalog.tar.zst` with its `index.json`, signs it with a key held only as a CI secret, and publishes it as static files; the serial only ever increases
+- [ ] On merge, CI builds `catalog.tar.zst` with its `index.json`, signs it with a key held only as a CI secret, and publishes it under `/catalog/` on the project site (Q66); the serial only ever increases
 - [ ] Privilege summary computed from the Compose content for privileged mode, host networking, Docker socket and paths outside the pool
 - [ ] Install resolves inputs, writes Compose and `.env` with port-conflict detection and share-aware path defaults, and records source, id and revision in `meta.json`
+- [ ] A `device` input with role `gpu` maps the host's `/dev/dri` render devices and adds the `render` group (Q82)
 
 **Scope** `internal/template/`, `templates/`, `.github/workflows/`
 
@@ -1787,10 +2039,11 @@ issue: 71
 **Summary** Detect new builds and new versions separately, update in bulk
 with opt-outs, snapshot appdata first, and offer a one-click revert.
 
-**Design references** doc 04 §6, doc 10 §2 (Schedule)
+**Design references** doc 04 §6, doc 10 §2 (Schedule), Q81
 
 **Acceptance criteria**
-- [ ] Registry polling respects rate limits and distinguishes a digest change on the same tag from a new version tag
+- [ ] Registry checks at most once a day with jitter, manifest-only, with per-registry credentials stored as secrets and rate-limited registries skipped until the next day (Q81)
+- [ ] A digest change on the same tag is distinguished from a new version tag
 - [ ] Pre-update appdata snapshot before every update of a container with appdata on cache
 - [ ] Previous image kept for a configurable period; revert restores image and snapshot
 - [ ] Updates run as Service-class jobs
@@ -2011,12 +2264,13 @@ issue: 80
 **Summary** Run doc 06 §5's migration test procedure against every variant
 fixture nightly and before releases.
 
-**Design references** doc 06 §5 (Migration test procedure), §7, doc 05 §2
+**Design references** doc 06 §5 (Migration test procedure), §7, doc 05 §2, Q79
 
 **Acceptance criteria**
 - [ ] All nine procedure steps automated against each supported variant
 - [ ] Refusal fixtures assert the right refusal message and that nothing was written
 - [ ] A red migration suite blocks the next release
+- [ ] Runs nightly on a hosted runner where S9 allows, otherwise by agents on the dev host before every release (Q79)
 
 **Scope** `scripts/vm/`, `.github/workflows/`
 
@@ -2051,13 +2305,14 @@ issue: 82
 **Summary** An Astro Starlight site under `site/` with the doc 05 §7
 structure, built in CI.
 
-**Design references** Q3, doc 05 §7 (Structure), doc 12 §7
+**Design references** Q3, doc 05 §7 (Structure), doc 12 §7, Q66
 
 **Acceptance criteria**
 - [ ] Starlight project under `site/`, built on every push that touches it
 - [ ] Navigation matches doc 05 §7's outline, with placeholder pages marked as drafts
 - [ ] No external analytics or font CDNs
 - [ ] The Unraid trademark notice appears wherever Unraid is named (doc 00 §6)
+- [ ] Published at the root of the project site (Q66) through its shared deploy workflow
 
 **Scope** `site/`, `.github/workflows/`
 
@@ -2167,11 +2422,11 @@ issue: 87
 **Summary** Find out whether an L3 test VM can run nested KVM for a domain
 Hoserva-under-test creates, on the dev host and on CI runners.
 
-**Design references** doc 14 §8, doc 06 §4 (Testing Hoserva's own VM management), doc 07 §1 (S10)
+**Design references** doc 14 §8, doc 06 §4 (Testing Hoserva's own VM management), doc 07 §1 (S10), Q79
 
 **Acceptance criteria**
 - [ ] A guest domain boots inside the L3 VM with KVM acceleration on the dev host
-- [ ] Same test on a hosted runner and on the self-hosted runner, results recorded
+- [ ] Same test on a hosted runner, result recorded
 - [ ] Doc 06 §7's pipeline row for the VM suite updated with where it runs
 
 **Scope** `spikes/s10/`, `docs/internal/08-spike-findings.md`
@@ -2286,17 +2541,17 @@ epic: M10
 status: todo
 labels: [feat, area:vm]
 sudo: false
-depends: [M10.4]
+depends: [M10.4, M4.7]
 issue: 92
 ```
 
 **Summary** A generated `vmbr0` bridge over the host NIC so VMs get LAN
 addresses, plus an isolated network option.
 
-**Design references** doc 14 §4 (Networking), Q54
+**Design references** doc 14 §4 (Networking), Q54, Q75
 
 **Acceptance criteria**
-- [ ] Bridge configuration generated as a managed file, applied without cutting the management connection
+- [ ] Bridge configuration generated through the ifupdown backend and applied with the 60-second confirm-or-revert (Q75)
 - [ ] A failed bridge apply rolls back to the previous network configuration
 - [ ] Isolated/NAT network available per VM
 - [ ] L3 test: a guest gets a DHCP address on the test network
@@ -2343,13 +2598,14 @@ issue: 94
 **Summary** Read-only IOMMU group listing and the `passthrough check` report,
 marking host-critical devices unassignable by construction.
 
-**Design references** doc 14 §3, Q53, R14
+**Design references** doc 14 §3, Q53, R14, Q82
 
 **Acceptance criteria**
 - [ ] Groups, member devices and ACS isolation read from sysfs without changing anything
 - [ ] The boot controller, and the console GPU when it is the only one, are never assignable
 - [ ] `hoserva vm passthrough check` gives a plain-language verdict per device, naming single-GPU setups explicitly
 - [ ] Parser tests against sysfs trees captured from real machines
+- [ ] A GPU bound to `vfio-pci` is never offered to containers, and a GPU a container uses is flagged in the check (Q82)
 
 **Scope** `internal/vm/`, `testdata/parsers/`
 
@@ -2471,11 +2727,11 @@ issue: 99
 **Summary** Nightly nested-KVM end-to-end tests for VM lifecycle, storage
 relocation and console, on the runners S10 found capable.
 
-**Design references** doc 06 §4, §7, doc 14 §8
+**Design references** doc 06 §4, §7, doc 14 §8, Q79
 
 **Acceptance criteria**
 - [ ] Lifecycle, relocation of a stopped VM, and console connection covered end to end
-- [ ] Runs where S10 allows, otherwise on the trusted self-hosted runner only
+- [ ] Runs nightly where S10 allows, otherwise by agents on the dev host before every release (Q79)
 - [ ] Passthrough covered by M10.9's nested emulated-IOMMU test, not duplicated here
 
 **Scope** `scripts/vm/`, `.github/workflows/`
@@ -2558,15 +2814,13 @@ issue: 103
 ```
 
 **Summary** The remaining pages: disk history graphs, logs, diagnostics,
-advanced settings with drift management, updates, network, general settings
-and the off-by-default terminal.
+advanced settings with drift management and the off-by-default terminal.
 
-**Design references** doc 03 §3.4, §8.1, §8.2, §8.6, §8.7, §9.1, §9.2, §9.4, §10, Q59
+**Design references** doc 03 §3.4, §8.7, §9.1, §9.2, §9.4, §10, Q59
 
 **Acceptance criteria**
 - [ ] Every tier 4 page from doc 03 §10 built with its Components line
 - [ ] The terminal is off by default and enabling it states that it is root shell access
-- [ ] Updates page refuses an update while a Parity, Array-write or Topology job runs, naming the job
 - [ ] Charts, editors and the terminal use Q59's wrapped libraries only
 
 **Scope** `web/src/routes/`, `web/src/components/`
@@ -2662,7 +2916,7 @@ issue: 107
 **Summary** Doc 06 §7's release checklist, automated where possible, as the
 gate for 1.0.
 
-**Design references** doc 06 §7 (Release checklist), doc 07 §4, R2, R3
+**Design references** doc 06 §7 (Release checklist), doc 07 §4, R2, R3, Q79
 
 **Acceptance criteria**
 - [ ] All test layers green, including the migration suite on every supported variant and the bare-metal restore
@@ -2671,5 +2925,6 @@ gate for 1.0.
 - [ ] Clean-conversion rate has not regressed; spindown acceptance result published
 - [ ] The nightly-parity tradeoff and throughput ceiling stated on the download page and in onboarding
 - [ ] Release notes generated from conventional commits and reviewed by the maintainer
+- [ ] Every suite hosted runners can't run was run by agents on the dev host against the release commit (Q79)
 
 **Scope** `scripts/release/`, `.github/workflows/`
