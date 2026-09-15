@@ -147,8 +147,17 @@ The harness's real power is in making disasters reproducible:
 # Kill a disk mid-operation
 losetup -d /dev/loop3
 
-# Corrupt a disk's contents to test scrub detection
-dd if=/dev/urandom of=$LAB/img/disk2.img bs=1M seek=100 count=10 conv=notrunc
+# Corrupt a disk's contents to test scrub detection — target a known
+# file's own extent (via `xfs_bmap -v`), not a blind offset: on a data
+# disk this small, a blind `seek=100` can land on XFS's superblock or an
+# early allocation-group header instead of inside a file, turning this
+# into a filesystem-corruption test rather than the silent-bit-rot test
+# scrub is for (spike S5, doc 08 §5). Unmount before writing and remount
+# after, so the next read cannot be served from a stale, still-cached
+# clean page instead of the now-corrupted on-disk bytes.
+umount $LAB/mnt/disk2
+dd if=/dev/urandom of=/dev/loopN bs=1 seek=<byte offset inside a target file's own extent> count=500000 conv=notrunc
+mount /dev/loopN $LAB/mnt/disk2
 
 # Fill a disk to test moveonenospc
 fallocate -l 3.9T $LAB/mnt/disk1/filler
@@ -332,6 +341,7 @@ There is no hardware test layer (D20): no test box, no testing on the maintainer
 | **Spindown** (Q31) | In the lab and L3, with the daemon, SMART polling and the change journal running: per-disk read and write counters (`/sys/block/<dev>/stat`) stay flat for 30+ minutes of the Q31 scenario, and any IO that does arrive is attributed to a process (fanotify, blktrace). A disk only leaves standby when IO reaches it, so zero IO is the property Hoserva owns | A drive's firmware or controller waking it with no host IO |
 | **SMART polling without waking disks** | Real `smartctl -j` output from many drive models as parser fixtures (L1); in L3, assert the poller issues only standby-aware queries and causes no read IO on an idle disk | Firmware that spins up on a SMART query despite `-n standby` |
 | **Disk identity** (Q21) | L3 virtual disks with configured WWN and serial, and USB-attached virtual disks with the serial hidden | Enclosures and HBAs that report identity inconsistently |
+| **SnapRAID UUID-dependent behaviour** — true "moved" file classification (snapraid.txt §5.5) and the `-U`/`--force-uuid` disk-identity guard | L3, with a full init system and a running `udevd` so `/dev/disk/by-uuid` is populated | In the L2 lab, SnapRAID can never read a data disk's UUID at all — no `udevd`, and Debian's `snapraid` package isn't linked against `libblkid` either (spike S5, doc 08 §5) — so intra-disk moves are always reported as remove+copy instead of moved, and `-U`'s actual trigger (a disk's UUID no longer matching what was last recorded for its mount point) can never fire. Everything else L2 exercises — sync, diff, scrub, fix, undeleting, touch, single- and dual-parity whole-disk reconstruction — is confirmed to match `snapraid.txt` exactly (doc 08 §5) |
 | **Reconstruction timing, throughput** | Measured in L3 on realistically sized sparse disks, as relative comparisons between mergerfs options and releases — never absolute numbers | Absolute speeds and thermals on real disks |
 | **PCI/USB passthrough** (doc 14 §3) | A nested L3 guest with an emulated IOMMU and emulated PCI and USB devices: group detection, the generated boot-time VFIO configuration, reboot, the device visible in the guest, assignment removal | Real IOMMU/ACS topology, BIOS quirks, GPU reset and reacquisition |
 | **arm64** (Q5) | Cross-built in CI; install and the storage suite in L3 under emulation | Real arm64 boards' storage controllers |

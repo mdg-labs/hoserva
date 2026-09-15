@@ -1,0 +1,4 @@
+snapraid dpkg version: 12.4-1
+snapraid --version: snapraid vnone by Andrea Mazzoleni, http://www.snapraid.it
+xfsprogs dpkg version: 6.13.0-2+deb13u1
+libblkid: not linked

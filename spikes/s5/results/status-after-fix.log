@@ -1,0 +1,40 @@
++ snapraid -c /lab/6-a1/s5/snapraid.conf status
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Using 0 MiB of memory for the file-system.
+SnapRAID status report:
+
+   Files Fragmented Excess  Wasted  Used    Free  Use Name
+            Files  Fragments  GB      GB      GB
+       8       0       0    -1.1       0       1   0% d1
+       6       0       0    -1.1       0       1   0% d2
+       2       0       0    -1.1       0       1   0% d3
+ --------------------------------------------------------------------------
+      16       0       0     0.0       0       5   0%
+
+
+100%|*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+ 50%|*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+  0%|*_____________________________________________________________________
+     0                    days ago of the last scrub/sync                 0
+
+The oldest block was scrubbed 0 days ago, the median 0, the newest 0.
+
+No sync is in progress.
+The full array was scrubbed at least one time.
+No file has a zero sub-second timestamp.
+No rehash is in progress or needed.
+No error detected.
+[exit 0]

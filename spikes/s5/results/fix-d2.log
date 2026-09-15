@@ -1,0 +1,149 @@
+version:none
+unixtime:1789513910
+time:2026-09-15 23:11:50
+command:fix
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/6-a1/s5/snapraid.conf
+argv:3:-d
+argv:4:d2
+argv:5:-l
+argv:6:/lab/6-a1/s5/fix-d2.log
+argv:7:fix
+selftest:
+msg:progress: Self test...
+conf:file:/lab/6-a1/s5/snapraid.conf
+uuid:by-uuid:7:1: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:1: blkid support not compiled in
+uuid:notfound:7:1:
+uuid:by-uuid:7:2: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:2: blkid support not compiled in
+uuid:notfound:7:2:
+uuid:by-uuid:7:3: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:3: blkid support not compiled in
+uuid:notfound:7:3:
+blocksize:262144
+data:d1:/lab/6-a1/mnt/disk1/
+data:d2:/lab/6-a1/mnt/disk2/
+data:d3:/lab/6-a1/mnt/disk3/
+mode:par1
+parity:0:/lab/6-a1/mnt/parity1/snapraid.parity
+content:/lab/6-a1/mnt/parity1/snapraid.content
+msg:progress: Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+msg:verbose:       16 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        1 empty dirs
+uuid:by-uuid:7:0: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:0: blkid support not compiled in
+uuid:notfound:7:0:
+msg:progress: Searching disk d1...
+msg:progress: Searching disk d2...
+msg:progress: Searching disk d3...
+msg:progress: Selecting...
+msg:verbose: 	d2//
+memory:used:276782
+memory:block:17
+memory:extent:88
+memory:file:192
+memory:link:88
+memory:dir:80
+msg:progress: Using 0 MiB of memory for the file-system.
+msg:progress: Initializing...
+msg:progress: Selecting...
+msg:progress: Fixing...
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon.bin' at offset 0.
+error:0:d2:movies/moon.bin: Read error at position 0
+entry:0:block:known:bad:d2:movies/moon.bin:0:
+fixed:0:d2:movies/moon.bin: Fixed data error at position 0
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon.bin' at offset 262144.
+error:1:d2:movies/moon.bin: Read error at position 1
+entry:0:block:known:bad:d2:movies/moon.bin:1:
+fixed:1:d2:movies/moon.bin: Fixed data error at position 1
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon.bin' at offset 524288.
+error:2:d2:movies/moon.bin: Read error at position 2
+entry:0:block:known:bad:d2:movies/moon.bin:2:
+fixed:2:d2:movies/moon.bin: Fixed data error at position 2
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon.bin' at offset 786432.
+error:3:d2:movies/moon.bin: Read error at position 3
+entry:0:block:known:bad:d2:movies/moon.bin:3:
+fixed:3:d2:movies/moon.bin: Fixed data error at position 3
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon.bin' at offset 1048576.
+error:4:d2:movies/moon.bin: Read error at position 4
+entry:0:block:known:bad:d2:movies/moon.bin:4:
+fixed:4:d2:movies/moon.bin: Fixed data error at position 4
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon.bin' at offset 1310720.
+error:5:d2:movies/moon.bin: Read error at position 5
+entry:0:block:known:bad:d2:movies/moon.bin:5:
+fixed:5:d2:movies/moon.bin: Fixed data error at position 5
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon.bin' at offset 1572864.
+error:6:d2:movies/moon.bin: Read error at position 6
+entry:0:block:known:bad:d2:movies/moon.bin:6:
+fixed:6:d2:movies/moon.bin: Fixed data error at position 6
+status:recovered:d2:movies/moon.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/documents/tax-2025.bin' at offset 0.
+error:7:d2:documents/tax-2025.bin: Read error at position 0
+entry:0:block:known:bad:d2:documents/tax-2025.bin:0:
+fixed:7:d2:documents/tax-2025.bin: Fixed data error at position 0
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/documents/tax-2025.bin' at offset 262144.
+error:8:d2:documents/tax-2025.bin: Read error at position 1
+entry:0:block:known:bad:d2:documents/tax-2025.bin:1:
+fixed:8:d2:documents/tax-2025.bin: Fixed data error at position 1
+status:recovered:d2:documents/tax-2025.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon-copy.bin' at offset 0.
+error:9:d2:movies/moon-copy.bin: Read error at position 0
+entry:0:block:known:bad:d2:movies/moon-copy.bin:0:
+fixed:9:d2:movies/moon-copy.bin: Fixed data error at position 0
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon-copy.bin' at offset 262144.
+error:10:d2:movies/moon-copy.bin: Read error at position 1
+entry:0:block:known:bad:d2:movies/moon-copy.bin:1:
+fixed:10:d2:movies/moon-copy.bin: Fixed data error at position 1
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon-copy.bin' at offset 524288.
+error:11:d2:movies/moon-copy.bin: Read error at position 2
+entry:0:block:known:bad:d2:movies/moon-copy.bin:2:
+fixed:11:d2:movies/moon-copy.bin: Fixed data error at position 2
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon-copy.bin' at offset 786432.
+error:12:d2:movies/moon-copy.bin: Read error at position 3
+entry:0:block:known:bad:d2:movies/moon-copy.bin:3:
+fixed:12:d2:movies/moon-copy.bin: Fixed data error at position 3
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon-copy.bin' at offset 1048576.
+error:13:d2:movies/moon-copy.bin: Read error at position 4
+entry:0:block:known:bad:d2:movies/moon-copy.bin:4:
+fixed:13:d2:movies/moon-copy.bin: Fixed data error at position 4
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon-copy.bin' at offset 1310720.
+error:14:d2:movies/moon-copy.bin: Read error at position 5
+entry:0:block:known:bad:d2:movies/moon-copy.bin:5:
+fixed:14:d2:movies/moon-copy.bin: Fixed data error at position 5
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/movies/moon-copy.bin' at offset 1572864.
+error:15:d2:movies/moon-copy.bin: Read error at position 6
+entry:0:block:known:bad:d2:movies/moon-copy.bin:6:
+fixed:15:d2:movies/moon-copy.bin: Fixed data error at position 6
+status:recovered:d2:movies/moon-copy.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/documents/manual.bin' at offset 0.
+error:16:d2:documents/manual.bin: Read error at position 0
+entry:0:block:known:bad:d2:documents/manual.bin:0:
+fixed:16:d2:documents/manual.bin: Fixed data error at position 0
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/documents/manual.bin' at offset 262144.
+error:17:d2:documents/manual.bin: Read error at position 1
+entry:0:block:known:bad:d2:documents/manual.bin:1:
+fixed:17:d2:documents/manual.bin: Fixed data error at position 1
+status:recovered:d2:documents/manual.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/touchtest/srcB/f.bin' at offset 0.
+error:18:d2:touchtest/srcB/f.bin: Read error at position 0
+entry:0:block:known:bad:d2:touchtest/srcB/f.bin:0:
+fixed:18:d2:touchtest/srcB/f.bin: Fixed data error at position 0
+status:recovered:d2:touchtest/srcB/f.bin
+msg:error: Reading data from missing file '/lab/6-a1/mnt/disk2/touchtest/dstA-elsewhere/f.bin' at offset 0.
+error:19:d2:touchtest/dstA-elsewhere/f.bin: Read error at position 0
+entry:0:block:known:bad:d2:touchtest/dstA-elsewhere/f.bin:0:
+fixed:19:d2:touchtest/dstA-elsewhere/f.bin: Fixed data error at position 0
+status:recovered:d2:touchtest/dstA-elsewhere/f.bin
+msg:status: 
+msg:status:       20 errors
+msg:status:       20 recovered errors
+msg:status:        0 unrecoverable errors
+msg:status: Everything OK
+summary:error:20
+summary:error_recovered:20
+summary:error_unrecoverable:0
+summary:exit:recovered

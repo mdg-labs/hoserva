@@ -1,0 +1,884 @@
+##### s5/01-seed-and-sync.sh #####
+wrote /lab/6-a1/s5/snapraid.conf:
+parity /lab/6-a1/mnt/parity1/snapraid.parity
+content /lab/6-a1/mnt/parity1/snapraid.content
+content /lab/6-a1/mnt/cache/snapraid.content
+data d1 /lab/6-a1/mnt/disk1/
+data d2 /lab/6-a1/mnt/disk2/
+data d3 /lab/6-a1/mnt/disk3/
+seeded 8 files
+/lab/6-a1/mnt/disk1/movies/apollo-11.bin 2000000
+/lab/6-a1/mnt/disk1/movies/gattaca.bin 1500000
+/lab/6-a1/mnt/disk1/photos/img0001.bin 400000
+/lab/6-a1/mnt/disk2/documents/manual.bin 250000
+/lab/6-a1/mnt/disk2/documents/tax-2025.bin 300000
+/lab/6-a1/mnt/disk2/movies/moon.bin 1800000
+/lab/6-a1/mnt/disk3/backup/weekly.bin 2200000
+/lab/6-a1/mnt/disk3/isos/debian-netinst.bin 3000000
+### diff before first sync (expect: everything 'added', nothing else) ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf diff
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Loading state from /lab/6-a1/mnt/cache/snapraid.content...
+Comparing...
+WARNING! Content file '/lab/6-a1/mnt/parity1/snapraid.content' not found, attempting with another copy...
+No content file found. Assuming empty.
+add movies/moon.bin
+add backup/weekly.bin
+add movies/apollo-11.bin
+add documents/tax-2025.bin
+add isos/debian-netinst.bin
+add movies/gattaca.bin
+add documents/manual.bin
+add photos/img0001.bin
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+       0 equal
+       8 added
+       0 removed
+       0 updated
+       0 moved
+       0 copied
+       0 restored
+There are differences!
+[exit 2]
+### first sync ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf sync
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Loading state from /lab/6-a1/mnt/cache/snapraid.content...
+Scanning...
+WARNING! Content file '/lab/6-a1/mnt/parity1/snapraid.content' not found, attempting with another copy...
+No content file found. Assuming empty.
+Scanned d1 in 0 seconds
+Scanned d2 in 0 seconds
+Scanned d3 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+4%, 0 MB          100% completed, 12 MB accessed in 0:00    
+
+     d1 14% | ********
+     d2  9% | *****
+     d3 23% | **************
+ parity  0% | 
+   raid 30% | ******************
+   hash 34% | ********************
+  sched  6% | ***
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
+### post-sync diff (expect: everything 'equal', return code 0) ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf diff
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Comparing...
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+       8 equal
+       0 added
+       0 removed
+       0 updated
+       0 moved
+       0 copied
+       0 restored
+No differences
+[exit 0]
+baseline manifest: /lab/6-a1/s5/manifest-after-initial-sync.sha256 (8 files)
+##### s5/02-diff-and-sync.sh #####
+### add: a new file on disk1 ###
+### updated: rewrite an existing file's content (same path) ###
+### removed: delete an existing file ###
+### moved: same disk, different directory, same name/size/mtime (mv preserves inode+mtime) ###
+### copied: same file content copied to a new path, same disk, mtime preserved (cp -p) ###
+### diff after all five changes ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf diff
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Comparing...
+copy movies/gattaca.bin -> movies/archive/gattaca.bin
+add photos/img0002.bin
+add movies/moon-copy.bin
+update documents/manual.bin
+remove movies/gattaca.bin
+remove isos/debian-netinst.bin
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+       5 equal
+       2 added
+       2 removed
+       1 updated
+       0 moved
+       1 copied
+       0 restored
+There are differences!
+[exit 2]
+[diff exit 2]
+### sync to commit the changes ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf sync
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d3 in 0 seconds
+Scanned d2 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Scanned d1 in 0 seconds
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+10%, 0 MB          100% completed, 5 MB accessed in 0:00    
+
+     d1  0% | 
+     d2 44% | ***************************
+     d3  2% | *
+ parity  0% | 
+   raid 17% | **********
+   hash 23% | **************
+  sched 11% | ******
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
+### post-sync diff (expect: everything equal again) ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf diff
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Comparing...
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+       9 equal
+       0 added
+       0 removed
+       0 updated
+       0 moved
+       0 copied
+       0 restored
+No differences
+[exit 0]
+manifest: /lab/6-a1/s5/manifest-after-diff-exercises.sha256 (9 files)
+##### s5/03-touch-and-copy.sh #####
+### create three zero-sub-second source files on disk1, sync them in ###
+/lab/6-a1/mnt/disk1/touchtest/srcA/f.bin mtime=2024-01-01 00:00:00.000000000 +0000
+/lab/6-a1/mnt/disk1/touchtest/srcB/f.bin mtime=2024-01-01 00:00:00.000000000 +0000
+/lab/6-a1/mnt/disk1/touchtest/srcC/f.bin mtime=2024-01-01 00:00:00.000000000 +0000
++ snapraid -c /lab/6-a1/s5/snapraid.conf sync
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d2 in 0 seconds
+Scanned d3 in 0 seconds
+Scanned d1 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+25%, 0 MB          100% completed, 1 MB accessed in 0:00    
+
+     d1 29% | ******************
+     d2  0% | 
+     d3  0% | 
+ parity  0% | 
+   raid 33% | ********************
+   hash  8% | *****
+  sched 27% | ****************
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
+### case A: copy srcA to disk2 at a DIFFERENT relative path, subsec=0 -> expect NOT copied ###
+### case B: copy srcB to disk2 at the IDENTICAL relative path, subsec=0 -> expect copied (full path matches) ###
+### negative control: copy srcA to a DIFFERENT NAME, same disk, same dir, timestamp+size preserved -> must never be 'copied' ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf diff
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Comparing...
+add touchtest/srcA/f-renamed.bin
+copy touchtest/srcB/f.bin -> touchtest/srcB/f.bin
+add touchtest/dstA-elsewhere/f.bin
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+      12 equal
+       2 added
+       0 removed
+       0 updated
+       0 moved
+       1 copied
+       0 restored
+There are differences!
+[exit 2]
+[diff exit 2]
+case A/B/rename-control all classified as documented
++ snapraid -c /lab/6-a1/s5/snapraid.conf sync
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d3 in 0 seconds
+Scanned d2 in 0 seconds
+Scanned d1 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+33%, 0 MB          100% completed, 1 MB accessed in 0:00    
+
+     d1 22% | *************
+     d2  0% | 
+     d3  0% | 
+ parity  0% | 
+   raid 22% | *************
+   hash 13% | ********
+  sched 39% | ************************
+   misc  1% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
+### snapraid touch: set sub-second time-stamps on every zero-subsecond file still in the array ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf touch
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Setting sub-second timestamps...
+touch touchtest/srcA/f.bin
+touch touchtest/srcB/f.bin
+touch touchtest/srcC/f.bin
+touch touchtest/srcA/f-renamed.bin
+touch touchtest/srcB/f.bin
+touch touchtest/dstA-elsewhere/f.bin
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+Using 0 MiB of memory for the file-system.
+[exit 0]
+srcC/f.bin before: /lab/6-a1/mnt/disk1/touchtest/srcC/f.bin 1704067200.000000000
+srcC/f.bin after:  /lab/6-a1/mnt/disk1/touchtest/srcC/f.bin 1704067200.473503577
++ snapraid -c /lab/6-a1/s5/snapraid.conf sync
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d2 in 0 seconds
+Scanned d3 in 0 seconds
+Scanned d1 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+Nothing to do
+[exit 0]
+### case C: copy the now-non-zero-subsecond, already-synced srcC to a DIFFERENT directory, SAME name, expect copied ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf diff
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Comparing...
+copy touchtest/srcC/f.bin -> touchtest/dstC-elsewhere/f.bin
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+      15 equal
+       0 added
+       0 removed
+       0 updated
+       0 moved
+       1 copied
+       0 restored
+There are differences!
+[exit 2]
+[diff exit 2]
+case C classified as documented
++ snapraid -c /lab/6-a1/s5/snapraid.conf sync
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d2 in 0 seconds
+Scanned d3 in 0 seconds
+Scanned d1 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+50%, 0 MB          100% completed, 2 MB accessed in 0:00    
+
+     d1  0% | 
+     d2  7% | ****
+     d3  7% | ****
+ parity  0% | 
+   raid 12% | *******
+   hash 36% | *********************
+  sched 43% | **************************
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
+manifest: /lab/6-a1/s5/manifest-after-touch.sha256 (16 files)
+##### s5/04-scrub-and-fix.sh #####
+### control: sha256 actually detects a single changed byte (not just asserted) ###
+control OK: single-byte flip changed sha256 (7fcc4cae65a353a9f251f01f8746fd738c0db9d295d289eac4d5d4d44ef4311f != caa4e6ab6b37d4ced6ff1418ce2704744fca08bf1d396056c6945cb60f3ef14f)
+### baseline: full scrub on a clean, synced array (-p 100 -o 0 forces literally everything, ignoring the 10-day recency default) ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf -p 100 -o 0 scrub
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Using 0 MiB of memory for the file-system.
+Initializing...
+Using 80 MiB of memory for 64 cached blocks.
+Selecting...
+Scrubbing...
+4%, 0 MB          100% completed, 13 MB accessed in 0:00    
+
+     d1  0% | 
+     d2  0% | 
+     d3  1% | 
+ parity 16% | *********
+   raid 42% | **************************
+   hash 33% | ********************
+  sched  6% | ***
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
++ snapraid -c /lab/6-a1/s5/snapraid.conf status
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Using 0 MiB of memory for the file-system.
+SnapRAID status report:
+
+   Files Fragmented Excess  Wasted  Used    Free  Use Name
+            Files  Fragments  GB      GB      GB
+       8       0       0    -1.1       0       1   0% d1
+       6       0       0    -1.1       0       1   0% d2
+       2       0       0    -1.1       0       1   0% d3
+ --------------------------------------------------------------------------
+      16       0       0     0.0       0       5   0%
+
+
+100%|*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+ 50%|*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+  0%|*_____________________________________________________________________
+     0                    days ago of the last scrub/sync                 0
+
+The oldest block was scrubbed 0 days ago, the median 0, the newest 0.
+
+No sync is in progress.
+The full array was scrubbed at least one time.
+No file has a zero sub-second timestamp.
+No rehash is in progress or needed.
+No error detected.
+[exit 0]
+### undeleting (snapraid.txt §4.3): delete a tracked file, fix -f to restore it ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf fix -f /documents/tax-2025.bin
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Searching disk d1...
+Searching disk d2...
+Searching disk d3...
+Selecting...
+Using 0 MiB of memory for the file-system.
+Initializing...
+Selecting...
+Fixing...
+Reading data from missing file '/lab/6-a1/mnt/disk2/documents/tax-2025.bin' at offset 0.
+50%, 0 MB          Reading data from missing file '/lab/6-a1/mnt/disk2/documents/tax-2025.bin' at offset 262144.
+recovered documents/tax-2025.bin
+100% completed, 1 MB accessed in 0:00    
+
+       2 errors
+       2 recovered errors
+       0 unrecoverable errors
+Everything OK
+[exit 0]
+undelete OK: /lab/6-a1/mnt/disk2/documents/tax-2025.bin restored with matching sha256 (9ba50038e99a3d0ab557b1b67bef53cb62376acb48a781b932cd14852bdbeef0)
+### corruption injection, targeted via xfs_bmap ###
+target: /lab/6-a1/mnt/disk3/backup/weekly.bin (sha256 05dab615362f5084009b0346dbe1532f3432717581184f15c98fe0135b4acb21)
+/lab/6-a1/mnt/disk3/backup/weekly.bin:
+ EXT: FILE-OFFSET      BLOCK-RANGE      AG AG-OFFSET        TOTAL
+   0: [0..4303]:       192..4495         0 (192..4495)       4304
+device byte offset: 598304
+corrupted: sha256 now 5d207ac5c7d8ed77adeb94704a6024e6e621608807fb7b4a9207e58d6fa40182 (was 05dab615362f5084009b0346dbe1532f3432717581184f15c98fe0135b4acb21)
+### scrub detects the corruption ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf -p 100 -o 0 scrub
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Using 0 MiB of memory for the file-system.
+Initializing...
+Using 80 MiB of memory for 64 cached blocks.
+Selecting...
+Scrubbing...
+4%, 0 MB          Data error in file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at position '1', diff bits 59/128
+Data error in file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at position '2', diff bits 49/128
+Data error in file '/lab/6-a1/mnt/disk3/backup/weekly.bin' at position '3', diff bits 60/128
+100% completed, 13 MB accessed in 0:00    
+
+     d1 29% | ******************
+     d2 16% | **********
+     d3  2% | *
+ parity  7% | ****
+   raid 31% | *******************
+   hash 23% | **************
+  sched  4% | **
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+
+       0 file errors
+       0 io errors
+       3 data errors
+DANGER! Unexpected data errors! The failing blocks are now marked as bad!
+Use 'snapraid status' to list the bad blocks.
+Use 'snapraid -e fix' to recover them.
+Use 'snapraid -p bad scrub' to recheck after fixing to clear the bad state.
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 1]
+[scrub exit 1]
++ snapraid -c /lab/6-a1/s5/snapraid.conf status
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Using 0 MiB of memory for the file-system.
+SnapRAID status report:
+
+   Files Fragmented Excess  Wasted  Used    Free  Use Name
+            Files  Fragments  GB      GB      GB
+       8       0       0    -1.1       0       1   0% d1
+       6       0       0    -1.1       0       1   0% d2
+       2       0       0    -1.1       0       1   0% d3
+ --------------------------------------------------------------------------
+      16       0       0     0.0       0       5   0%
+
+
+100%|*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+ 50%|*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+  0%|*_____________________________________________________________________
+     0                    days ago of the last scrub/sync                 0
+
+The oldest block was scrubbed 0 days ago, the median 0, the newest 0.
+
+No sync is in progress.
+The full array was scrubbed at least one time.
+No file has a zero sub-second timestamp.
+No rehash is in progress or needed.
+DANGER! In the array there are 3 errors!
+
+They are from block 1 to 3, specifically at blocks: 1 2 3
+
+To fix them use the command 'snapraid -e fix'.
+The errors will disappear from the 'status' at the next 'scrub' command.
+[exit 0]
+### fix -e repairs the corrupted blocks ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf -e fix
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Searching disk d1...
+Searching disk d2...
+Searching disk d3...
+Selecting...
+Using 0 MiB of memory for the file-system.
+Initializing...
+Selecting...
+Fixing...
+11%, 0 MB          recovered backup/weekly.bin
+100% completed, 7 MB accessed in 0:00    
+
+       3 errors
+       3 recovered errors
+       0 unrecoverable errors
+Everything OK
+[exit 0]
+repair OK: /lab/6-a1/mnt/disk3/backup/weekly.bin back to sha256 05dab615362f5084009b0346dbe1532f3432717581184f15c98fe0135b4acb21
+### rescrub the previously-bad blocks to clear the bad mark (snapraid.txt §5.7: 'scrub -p bad') ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf -p bad scrub
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Using 0 MiB of memory for the file-system.
+Initializing...
+Using 80 MiB of memory for 64 cached blocks.
+Selecting...
+Scrubbing...
+33%, 0 MB          100% completed, 3 MB accessed in 0:00    
+
+     d1 33% | ********************
+     d2 40% | ************************
+     d3  6% | ***
+ parity  5% | ***
+   raid 16% | *********
+   hash 19% | ***********
+  sched 17% | **********
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
++ snapraid -c /lab/6-a1/s5/snapraid.conf status
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Using 0 MiB of memory for the file-system.
+SnapRAID status report:
+
+   Files Fragmented Excess  Wasted  Used    Free  Use Name
+            Files  Fragments  GB      GB      GB
+       8       0       0    -1.1       0       1   0% d1
+       6       0       0    -1.1       0       1   0% d2
+       2       0       0    -1.1       0       1   0% d3
+ --------------------------------------------------------------------------
+      16       0       0     0.0       0       5   0%
+
+
+100%|*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+ 50%|*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+    |*                                                                     
+  0%|*_____________________________________________________________________
+     0                    days ago of the last scrub/sync                 0
+
+The oldest block was scrubbed 0 days ago, the median 0, the newest 0.
+
+No sync is in progress.
+The full array was scrubbed at least one time.
+No file has a zero sub-second timestamp.
+No rehash is in progress or needed.
+No error detected.
+[exit 0]
+manifest: /lab/6-a1/s5/manifest-after-scrub-fix.sha256 (16 files)
+##### s5/05-reconstruct-single-parity.sh #####
+pre-failure manifest: /lab/6-a1/s5/manifest-before-d2-failure.sha256 (16 files)
+### detach d2's loop device (doc 06 §3 failure injection; confirmed backed by our own image immediately before) ###
+detached disk2: dev=/dev/loop2 (image /lab/6-a1/img/disk2.img left in place, disk now 'pulled')
+### attach a brand-new, empty replacement disk at the same mount point ###
+replacement disk2 attached: /dev/loop2, mounted at /lab/6-a1/mnt/disk2, empty (0 files)
+### snapraid.txt §4.4 step 2: fix -d d2 ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf -d d2 -l /lab/6-a1/s5/fix-d2.log fix
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Searching disk d1...
+Searching disk d2...
+Searching disk d3...
+Selecting...
+Using 0 MiB of memory for the file-system.
+Initializing...
+Selecting...
+Fixing...
+5%, 0 MB          recovered movies/moon.bin
+recovered documents/tax-2025.bin
+recovered movies/moon-copy.bin
+recovered documents/manual.bin
+recovered touchtest/srcB/f.bin
+recovered touchtest/dstA-elsewhere/f.bin
+100% completed, 8 MB accessed in 0:00    
+
+      20 errors
+      20 recovered errors
+       0 unrecoverable errors
+Everything OK
+[exit 0]
+[fix -d d2 exit 0]
+### snapraid.txt §4.4 step 3: check -d d2 -a (paranoid check) ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf -d d2 -a check
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Selecting...
+Using 0 MiB of memory for the file-system.
+Initializing...
+Selecting...
+Hashing...
+5%, 0 MB          100% completed, 5 MB accessed in 0:00    
+Everything OK
+[exit 0]
+### snapraid.txt §4.4 step 4: sync (should be immediate if everything recovered) ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf sync
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d1 in 0 seconds
+Scanned d3 in 0 seconds
+Scanned d2 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+Nothing to do
+[exit 0]
+### verify: every file's sha256 matches the pre-failure manifest ###
+RECONSTRUCTION OK: /lab/6-a1/s5/manifest-after-d2-reconstruction.sha256 byte-for-byte (sha256) identical to /lab/6-a1/s5/manifest-before-d2-failure.sha256 (16 files)
+##### s5/06-dual-parity-reconstruct.sh #####
+### create the second parity disk (same size as parity1 — snapraid.txt §7.1: parity space must be >= the biggest data disk; matching parity1 keeps this simple) ###
+created parity2: image=/lab/6-a1/img/parity2.img dev=/dev/loop5 mount=/lab/6-a1/mnt/parity2
+updated /lab/6-a1/s5/snapraid.conf:
+parity /lab/6-a1/mnt/parity1/snapraid.parity
+content /lab/6-a1/mnt/parity1/snapraid.content
+content /lab/6-a1/mnt/cache/snapraid.content
+data d1 /lab/6-a1/mnt/disk1/
+data d2 /lab/6-a1/mnt/disk2/
+data d3 /lab/6-a1/mnt/disk3/
+2-parity /lab/6-a1/mnt/parity2/snapraid.parity
+content /lab/6-a1/mnt/parity2/snapraid.content
+### sync to build the second parity level over the existing data ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf --force-full sync
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d2 in 0 seconds
+Scanned d1 in 0 seconds
+Scanned d3 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+WARNING! The 2-Parity parity has only 0 blocks instead of 23.
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Saving state to /lab/6-a1/mnt/parity2/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/parity2/snapraid.content in 0 seconds
+Using 80 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+4%, 0 MB          100% completed, 13 MB accessed in 0:00    
+
+       d1  0% | 
+       d2  0% | 
+       d3  0% | 
+   parity  0% | 
+ 2-parity  0% | 
+     raid 41% | ************************
+     hash 47% | ****************************
+    sched  8% | ****
+     misc  1% | 
+              |____________________________________________________________
+                            wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Saving state to /lab/6-a1/mnt/parity2/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/parity2/snapraid.content in 0 seconds
+[exit 0]
+### post-sync diff (expect: everything equal) ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf diff
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Comparing...
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+      16 equal
+       0 added
+       0 removed
+       0 updated
+       0 moved
+       0 copied
+       0 restored
+No differences
+[exit 0]
+pre-failure manifest: /lab/6-a1/s5/manifest-before-dual-failure.sha256 (16 files)
+### detach BOTH d1 and d3 — the case single parity cannot recover from ###
+detached disk1: dev=/dev/loop1 (image /lab/6-a1/img/disk1.img left in place, disk now 'pulled')
+detached disk3: dev=/dev/loop3 (image /lab/6-a1/img/disk3.img left in place, disk now 'pulled')
+replacement disk1 attached: /dev/loop1, mounted at /lab/6-a1/mnt/disk1, empty (0 files)
+replacement disk3 attached: /dev/loop3, mounted at /lab/6-a1/mnt/disk3, empty (0 files)
+### snapraid.txt §4.4 step 2: fix -d d1 -d d3 (multiple -d options for multiple failed disks) ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf -d d1 -d d3 -l /lab/6-a1/s5/fix-dual.log fix
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Searching disk d1...
+Searching disk d2...
+Searching disk d3...
+Selecting...
+Using 0 MiB of memory for the file-system.
+Initializing...
+Selecting...
+Fixing...
+4%, 0 MB          recovered movies/apollo-11.bin
+recovered backup/weekly.bin
+recovered touchtest/dstC-elsewhere/f.bin
+recovered movies/archive/gattaca.bin
+recovered photos/img0001.bin
+recovered photos/img0002.bin
+recovered touchtest/srcA/f.bin
+recovered touchtest/srcB/f.bin
+recovered touchtest/srcC/f.bin
+recovered touchtest/srcA/f-renamed.bin
+recovered isos
+100% completed, 5 MB accessed in 0:00    
+
+      35 errors
+      35 recovered errors
+       0 unrecoverable errors
+Everything OK
+[exit 0]
+[fix -d d1 -d d3 exit 0]
+### snapraid.txt §4.4 step 3: check -d d1 -d d3 -a ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf -d d1 -d d3 -a check
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Selecting...
+Using 0 MiB of memory for the file-system.
+Initializing...
+Selecting...
+Hashing...
+4%, 0 MB          100% completed, 8 MB accessed in 0:00    
+Everything OK
+[exit 0]
+### snapraid.txt §4.4 step 4: sync ###
++ snapraid -c /lab/6-a1/s5/snapraid.conf sync
+Self test...
+Loading state from /lab/6-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d2 in 0 seconds
+Scanned d3 in 0 seconds
+Scanned d1 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/6-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/6-a1/mnt/cache/snapraid.content...
+Saving state to /lab/6-a1/mnt/parity2/snapraid.content...
+Verifying...
+Verified /lab/6-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/cache/snapraid.content in 0 seconds
+Verified /lab/6-a1/mnt/parity2/snapraid.content in 0 seconds
+Using 80 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+Nothing to do
+[exit 0]
+### verify: every file's sha256 matches the pre-failure manifest ###
+DUAL-PARITY RECONSTRUCTION OK: /lab/6-a1/s5/manifest-after-dual-reconstruction.sha256 byte-for-byte (sha256) identical to /lab/6-a1/s5/manifest-before-dual-failure.sha256 (16 files), two disks (d1, d3) lost and rebuilt at once
+run-all.sh: PASS
