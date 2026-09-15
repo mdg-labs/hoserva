@@ -66,7 +66,7 @@ That last tier matters most for honesty: a 7B model doing free-form diagnosis of
 
 ## 3. Tools available to the assistant
 
-Each is read-only, scoped, and redacted.
+Each is read-only, scoped, and redacted. Each tool is a thin wrapper over a documented read operation in `api/openapi.yaml` (D18), called with viewer authorization — the assistant has no private access to the system and sees nothing a viewer-role API token couldn't, before its own redaction on top.
 
 | Tool | Returns |
 |---|---|
@@ -147,6 +147,7 @@ These go in the system prompt *and* in a response post-filter that flags destruc
 ## 7. Implementation notes
 
 - Lives in `internal/assistant/`, behind a feature flag, with zero impact when disabled
+- Tools call the API through the generated Go client, never internal packages directly (D18)
 - Conversations stored in SQLite with a retention setting, default 30 days, and a clear-all action
 - Streaming responses over the existing SSE channel
 - **Tool results are cached briefly** so a multi-step diagnosis doesn't re-query SMART five times

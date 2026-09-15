@@ -143,7 +143,9 @@ your **only** GitHub writes. Never `gh issue edit`, `gh issue close`, or
   output, the commit message says what changed in the output and why — never
   regenerate goldens just to make a test pass.
 - **API changes** go through `api/openapi.yaml` first, then `make gen`, and
-  the regenerated `api/gen/` is committed with the change.
+  the regenerated `api/gen/` is committed with the change. Every UI or CLI
+  capability is an operation in the spec; handlers implement the generated
+  interfaces and the UI and CLI call only the generated clients (D18).
 - **Before committing an issue, run every check that applies to what you
   changed:**
   - Go: `gofmt -l`, `go vet ./...`, `go test ./...` (`make test-unit` once it

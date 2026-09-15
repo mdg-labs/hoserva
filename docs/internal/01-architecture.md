@@ -15,7 +15,7 @@
 | Backend | Go | Single static binary, systemd service, good at orchestrating subprocesses |
 | State | SQLite (WAL mode), pure-Go driver `modernc.org/sqlite` (Q6) | Single-file, no server, transactional, no CGO |
 | Frontend | React SPA built with Vite (Q8); coss ui components on Base UI + Tailwind CSS v4 (D15) | Static assets embedded in the Go binary; no Node runtime in production; components vendored into the repo, no runtime design-system dependency |
-| API | REST + SSE, over Unix socket and TCP | Consumed by both web UI and CLI |
+| API | REST + SSE over Unix socket and TCP; spec-first OpenAPI 3.1 with a generated server and clients (D18, Q63) | Consumed by the web UI, the CLI and scripts alike — nothing the UI does is unavailable to them |
 | Container runtime | Docker Engine + Compose plugin | **Prerequisite**, not shipped by the `.deb` |
 | Virtualization | libvirt + QEMU/KVM — Debian 13 packages, `go-libvirt` (no cgo) | Same engine Unraid's own VM Manager runs on; PCI/USB passthrough via VFIO (doc 14, Q58) |
 | Remote backup transport | rclone (optional) | Every remote backup destination (doc 10, Q41) |
@@ -153,7 +153,7 @@ hoserva diagnostics -o bundle.tar.zst   # redacted bug-report bundle (doc 03 §9
 cmd/hoserva/          # CLI entry point
 cmd/hoservad/         # daemon entry point
 internal/
-  api/                 # REST handlers, SSE hub, auth middleware
+  api/                 # handlers implementing the generated server interfaces (D18), SSE hub, auth middleware
   store/               # central schema, generated schema migrations + runner, sqlc queries (D16)
   model/               # domain types: Disk, Pool, Share, Stack, Job
   disk/                # block device enumeration, identity (Q21), SMART, spin state + wake events, partitioning
@@ -258,9 +258,21 @@ Same handlers, different auth middleware.
 
 Server-Sent Events at `/api/v1/events` for live data: job progress, disk state changes, container state changes, new notifications. Not WebSockets — the traffic is one-directional and SSE reconnects for free.
 
+### The contract (D18, Q63)
+
+**`api/openapi.yaml` is the API, written by hand; everything else is generated from it** — the same arrangement as the database (D16): one hand-edited source, generated code around it.
+
+- **Every capability is an operation.** Anything the web UI or the CLI can do, every destructive action and its confirmation included, is a documented operation in the spec. There are no internal or undocumented endpoints, so a script or an integration can do everything the UI can.
+- **The server implements generated interfaces.** Go server interfaces, request validation and routing are generated from the spec, and the handlers in `internal/api/` implement them. A missing handler, or one whose types don't match the spec, is a compile error, and no route exists that the spec doesn't declare.
+- **Clients are generated.** The web UI calls the API only through the generated TypeScript client, and the CLI only through the generated Go client. Neither builds URLs or request bodies by hand.
+- **Authorization is declared per operation.** Each operation names the role it requires in `x-hoserva-role` (`admin` or `viewer`; share-only users have no API access, Q27). A lint rule rejects an operation without one, middleware enforces it, and API tokens are scoped the same way (Q43).
+- **Live data is part of the contract.** Every SSE event type on `/api/v1/events` is a schema in the spec, typed in the generated clients.
+- **Reads can be shaped for pages.** A data-dense page such as the dashboard gets a purpose-built read operation rather than a dozen calls. It is a documented operation like any other, and it keeps computation in the backend.
+- **Why not GraphQL.** The API is mostly guarded, job-producing actions rather than flexible reads; per-operation authorization on a root daemon is simpler to get right than field-level authorization and query-cost limits; and server, clients, mock server and reference docs all generate from one OpenAPI file. Unraid's official API is GraphQL; Hoserva's migrator reads Unraid's files, not its API, so nothing depends on matching it.
+
 ### Versioning
 
-`/api/v1/`. The API is public by definition (the CLI uses it), so it needs to be treated as an interface with compatibility guarantees from the first release.
+`/api/v1/`. The API is public by definition (the CLI uses it), so it needs to be treated as an interface with compatibility guarantees from the first release. Breaking changes are caught mechanically: CI compares `api/openapi.yaml` with the last release's spec, and a breaking change fails unless it lands in a new API version (Q63).
 
 ---
 
