@@ -73,7 +73,7 @@ id: M0
 phase: P0
 status: todo
 labels: [spike]
-issue: null
+issue: 1
 ```
 
 Short, disposable experiments answering the questions that could invalidate
@@ -93,7 +93,7 @@ labels: [spike, area:storage, needs-hardware]
 sudo: false
 hardware: true
 depends: []
-issue: null
+issue: 2
 ```
 
 **Summary** Confirm hands-on what doc 08 §1 established from research: array
@@ -119,7 +119,7 @@ labels: [spike, area:migration, needs-hardware]
 sudo: false
 hardware: true
 depends: []
-issue: null
+issue: 3
 ```
 
 **Summary** Mount a real Unraid XFS array read-only on Debian 13, union it
@@ -146,7 +146,7 @@ labels: [spike, area:containers]
 sudo: false
 hardware: false
 depends: []
-issue: null
+issue: 4
 ```
 
 **Summary** Measure what share of real Community Applications templates a
@@ -173,7 +173,7 @@ labels: [spike, area:containers]
 sudo: false
 hardware: false
 depends: []
-issue: null
+issue: 5
 ```
 
 **Summary** Establish whether consuming the CA feed at runtime is acceptable
@@ -199,7 +199,7 @@ labels: [spike, area:devenv]
 sudo: false
 hardware: false
 depends: [M1.2]
-issue: null
+issue: 6
 ```
 
 **Summary** Confirm SnapRAID behaves on loop devices exactly as on real
@@ -226,7 +226,7 @@ labels: [spike, area:storage]
 sudo: false
 hardware: false
 depends: [M1.2]
-issue: null
+issue: 7
 ```
 
 **Summary** Validate the catch-all plus per-share mount design: reliable
@@ -253,7 +253,7 @@ labels: [spike, area:storage]
 sudo: false
 hardware: false
 depends: [M1.2]
-issue: null
+issue: 8
 ```
 
 **Summary** Prove a `FAN_MARK_FILESYSTEM` mark per data disk counts
@@ -280,7 +280,7 @@ labels: [spike, area:packaging]
 sudo: false
 hardware: false
 depends: [M0.6]
-issue: null
+issue: 9
 ```
 
 **Summary** Finish S8: confirm Debian 13's `mergerfs` 2.40.2 and `snapraid`
@@ -306,7 +306,7 @@ labels: [spike, area:devenv]
 sudo: false
 hardware: false
 depends: [M1.3]
-issue: null
+issue: 10
 ```
 
 **Summary** Finish S9 for GitHub-hosted runners: can they run the L2 lab and
@@ -331,7 +331,7 @@ id: M1
 phase: P1
 status: todo
 labels: [chore]
-issue: null
+issue: 11
 ```
 
 Everything feature work stands on, built before any feature code (doc 12 §5):
@@ -351,7 +351,7 @@ labels: [chore, area:devenv]
 sudo: false
 hardware: false
 depends: []
-issue: null
+issue: 12
 ```
 
 **Summary** Create the Go module, directory layout, Makefile entry points and
@@ -378,7 +378,7 @@ labels: [chore, area:devenv, safety-critical]
 sudo: false
 hardware: false
 depends: [M1.1]
-issue: null
+issue: 13
 ```
 
 **Summary** The narrowed lab from doc 06 §3 and Q45: loop devices and FUSE
@@ -407,7 +407,7 @@ labels: [chore, area:devenv]
 sudo: false
 hardware: false
 depends: [M1.1, M1.2]
-issue: null
+issue: 14
 ```
 
 **Summary** The every-push part of doc 06 §7's pipeline, on GitHub-hosted
@@ -434,7 +434,7 @@ labels: [feat, area:storage]
 sudo: false
 hardware: false
 depends: [M1.1]
-issue: null
+issue: 15
 ```
 
 **Summary** The `disk.Provider` and `parity.Engine` interfaces with fakes
@@ -461,7 +461,7 @@ labels: [chore, area:storage]
 sudo: false
 hardware: false
 depends: [M1.1]
-issue: null
+issue: 16
 ```
 
 **Summary** State-in, text-out testing for every generated config file, with
@@ -486,7 +486,7 @@ labels: [feat, area:api]
 sudo: false
 hardware: false
 depends: [M1.1]
-issue: null
+issue: 17
 ```
 
 **Summary** A hand-written OpenAPI 3.1 `api/openapi.yaml` with the Go server
@@ -514,7 +514,7 @@ labels: [feat, area:api, safety-critical]
 sudo: false
 hardware: false
 depends: [M1.1]
-issue: null
+issue: 18
 ```
 
 **Summary** D16 end to end: one central `schema.sql`, schema migrations
@@ -544,7 +544,7 @@ labels: [feat, area:api]
 sudo: false
 hardware: false
 depends: [M1.7]
-issue: null
+issue: 19
 ```
 
 **Summary** Persisted, cancellable, observable long-running jobs with the
@@ -571,7 +571,7 @@ labels: [feat, area:api]
 sudo: false
 hardware: false
 depends: [M1.6]
-issue: null
+issue: 20
 ```
 
 **Summary** A Go binary serving the API from fixtures shared with backend
@@ -597,7 +597,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M1.6, M1.9]
-issue: null
+issue: 21
 ```
 
 **Summary** The Vite + React SPA with coss ui, the i18n catalog, bundled
@@ -626,7 +626,7 @@ labels: [feat, area:api]
 sudo: false
 hardware: false
 depends: [M1.6, M1.7]
-issue: null
+issue: 22
 ```
 
 **Summary** `hoservad` serving the API over the Unix socket and a TLS-only
@@ -655,7 +655,7 @@ id: M2
 phase: P1
 status: todo
 labels: [feat, area:storage]
-issue: null
+issue: 23
 ```
 
 The storage core the product exists for: disks and their health, array setup,
@@ -674,7 +674,7 @@ labels: [feat, area:storage]
 sudo: false
 hardware: false
 depends: [M1.4, M1.8]
-issue: null
+issue: 24
 ```
 
 **Summary** The real `disk.Provider`: enumerate block devices, identify them
@@ -702,7 +702,7 @@ labels: [feat, area:api]
 sudo: false
 hardware: false
 depends: [M1.5, M1.7]
-issue: null
+issue: 25
 ```
 
 **Summary** The one path from SQLite state to generated files: headers,
@@ -729,7 +729,7 @@ labels: [feat, area:storage, safety-critical]
 sudo: false
 hardware: false
 depends: [M2.1, M2.2]
-issue: null
+issue: 26
 ```
 
 **Summary** Create an array from assigned disks — format or adopt, mount at
@@ -758,7 +758,7 @@ labels: [feat, area:storage]
 sudo: false
 hardware: false
 depends: [M2.3, M0.6]
-issue: null
+issue: 27
 ```
 
 **Summary** The mount topology S6 validated: a catch-all `/mnt/user`, one
@@ -785,7 +785,7 @@ labels: [feat, area:storage]
 sudo: false
 hardware: false
 depends: [M1.4, M2.3]
-issue: null
+issue: 28
 ```
 
 **Summary** The real `parity.Engine`: sync, diff, scrub, check, fix, touch and
@@ -812,7 +812,7 @@ labels: [feat, area:storage, safety-critical]
 sudo: false
 hardware: false
 depends: [M2.5]
-issue: null
+issue: 29
 ```
 
 **Summary** The single most important safety feature: every sync, whatever
@@ -840,7 +840,7 @@ labels: [feat, area:storage]
 sudo: false
 hardware: false
 depends: [M0.7, M2.3]
-issue: null
+issue: 30
 ```
 
 **Summary** Per-disk fanotify journal of changes since the last sync, giving
@@ -867,7 +867,7 @@ labels: [feat, area:api]
 sudo: false
 hardware: false
 depends: [M1.8, M2.6]
-issue: null
+issue: 31
 ```
 
 **Summary** One chained nightly run — mover, diff and guard, touch, sync,
@@ -894,7 +894,7 @@ labels: [feat, area:storage, safety-critical]
 sudo: false
 hardware: false
 depends: [M2.4, M2.6]
-issue: null
+issue: 32
 ```
 
 **Summary** Grow the pool with no rebuild, and recover from a dead disk with
@@ -920,7 +920,7 @@ labels: [chore, area:storage, needs-hardware]
 sudo: false
 hardware: true
 depends: [M0.1, M2.4, M2.7]
-issue: null
+issue: 33
 ```
 
 **Summary** The v1 acceptance criterion measured on the L4 box with the real
@@ -944,7 +944,7 @@ id: M3
 phase: P1
 status: todo
 labels: [feat]
-issue: null
+issue: 34
 ```
 
 What turns the storage engine into something the author can run their own
@@ -962,7 +962,7 @@ labels: [feat, area:api]
 sudo: false
 hardware: false
 depends: [M1.8]
-issue: null
+issue: 35
 ```
 
 **Summary** Deliver alerts through email, Gotify, ntfy, Discord and a generic
@@ -989,7 +989,7 @@ labels: [feat, area:backup]
 sudo: false
 hardware: false
 depends: [M1.7, M2.2]
-issue: null
+issue: 36
 ```
 
 **Summary** The doc 10 §1 archive with a consistent database snapshot,
@@ -1017,7 +1017,7 @@ labels: [feat, area:cli]
 sudo: false
 hardware: false
 depends: [M1.11, M2.8]
-issue: null
+issue: 37
 ```
 
 **Summary** `hoserva` over the Unix socket with parity to the Phase 1 API:
@@ -1044,7 +1044,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M1.10, M1.11]
-issue: null
+issue: 38
 ```
 
 **Summary** `/welcome` and `/login` as doc 03 specifies them, built from the
@@ -1071,7 +1071,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M1.10, M2.3]
-issue: null
+issue: 39
 ```
 
 **Summary** `/storage/setup`: discovery, role assignment, filesystems, pool
@@ -1098,7 +1098,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M1.10, M2.1, M2.6]
-issue: null
+issue: 40
 ```
 
 **Summary** The tier 1 pages that make the array observable: dashboard, pool
@@ -1127,7 +1127,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M3.1, M2.8]
-issue: null
+issue: 41
 ```
 
 **Summary** `/settings/notifications` and `/settings/schedules`, the two
@@ -1152,7 +1152,7 @@ labels: [chore, area:packaging, safety-critical]
 sudo: false
 hardware: false
 depends: [M1.11, M0.8]
-issue: null
+issue: 42
 ```
 
 **Summary** The `.deb` with its dependencies, systemd unit, maintainer
@@ -1178,7 +1178,7 @@ labels: [chore, area:devenv]
 sudo: false
 hardware: false
 depends: [M3.8]
-issue: null
+issue: 43
 ```
 
 **Summary** libvirt test VMs with named snapshots, `.deb` deployment, and the
@@ -1205,7 +1205,7 @@ labels: [chore, area:storage, needs-hardware]
 sudo: false
 hardware: true
 depends: [M2.10, M3.2, M3.6, M3.8, M3.9]
-issue: null
+issue: 44
 ```
 
 **Summary** Phase 1's definition of done: the author runs their own array on
@@ -1231,7 +1231,7 @@ id: M4
 phase: P2
 status: todo
 labels: [feat, area:shares]
-issue: null
+issue: 45
 ```
 
 SMB and NFS shares with a coherent ownership model, users and roles, API
@@ -1248,7 +1248,7 @@ labels: [feat, area:shares]
 sudo: false
 hardware: false
 depends: [M2.2, M2.4]
-issue: null
+issue: 46
 ```
 
 **Summary** Shares as first-class state: create, edit and delete, each backed
@@ -1276,7 +1276,7 @@ labels: [feat, area:shares]
 sudo: false
 hardware: false
 depends: [M4.1]
-issue: null
+issue: 47
 ```
 
 **Summary** Per-share NFS exports with allowed hosts and squash options,
@@ -1301,7 +1301,7 @@ labels: [feat, area:shares]
 sudo: false
 hardware: false
 depends: [M4.1]
-issue: null
+issue: 48
 ```
 
 **Summary** The Q26 model: group `users` as the shared data group, setgid
@@ -1328,7 +1328,7 @@ labels: [feat, area:api]
 sudo: false
 hardware: false
 depends: [M1.11, M4.1]
-issue: null
+issue: 49
 ```
 
 **Summary** Admin, Viewer and Share-only roles, with one password action that
@@ -1356,7 +1356,7 @@ labels: [feat, area:api]
 sudo: false
 hardware: false
 depends: [M4.4]
-issue: null
+issue: 50
 ```
 
 **Summary** Personal, role-scoped API tokens for scripting and the remote
@@ -1382,7 +1382,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M4.1, M4.2, M4.4, M4.5]
-issue: null
+issue: 51
 ```
 
 **Summary** `/shares`, `/shares/[name]` and `/users` with the components doc
@@ -1407,7 +1407,7 @@ id: M5
 phase: P2
 status: todo
 labels: [feat, area:storage]
-issue: null
+issue: 52
 ```
 
 The piece of original engineering where a bug loses data (doc 09): the mover,
@@ -1425,7 +1425,7 @@ labels: [feat, area:storage, safety-critical]
 sudo: false
 hardware: false
 depends: [M2.4, M2.8]
-issue: null
+issue: 53
 ```
 
 **Summary** Relocate cache-then-move shares' files from cache to the array,
@@ -1452,7 +1452,7 @@ labels: [feat, area:storage, safety-critical]
 sudo: false
 hardware: false
 depends: [M5.1, M2.6]
-issue: null
+issue: 54
 ```
 
 **Summary** Move a whole share between cache and array when its cache mode
@@ -1478,7 +1478,7 @@ labels: [feat, area:storage, safety-critical]
 sudo: false
 hardware: false
 depends: [M5.1, M2.6]
-issue: null
+issue: 55
 ```
 
 **Summary** Even out fill across data disks on request, two-phase so no
@@ -1504,7 +1504,7 @@ labels: [feat, area:storage, safety-critical]
 sudo: false
 hardware: false
 depends: [M5.3, M2.9]
-issue: null
+issue: 56
 ```
 
 **Summary** Remove a disk from the pool by moving everything off it first, in
@@ -1532,7 +1532,7 @@ labels: [feat, area:storage]
 sudo: false
 hardware: false
 depends: [M2.1, M3.1]
-issue: null
+issue: 57
 ```
 
 **Summary** Report pool-free, largest-single-disk-free and per-disk space
@@ -1558,7 +1558,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M5.1, M5.2, M5.3, M5.4]
-issue: null
+issue: 58
 ```
 
 **Summary** `/storage/cache` plus the rebalance, remove-disk and cache-mode
@@ -1583,7 +1583,7 @@ id: M6
 phase: P2
 status: todo
 labels: [feat, area:backup]
-issue: null
+issue: 59
 ```
 
 The backups only Hoserva can take correctly (doc 10): config across multiple
@@ -1600,7 +1600,7 @@ labels: [feat, area:backup]
 sudo: false
 hardware: false
 depends: [M3.2]
-issue: null
+issue: 60
 ```
 
 **Summary** Multiple destinations per backup — local path, SMB/NFS, S3, SFTP,
@@ -1627,7 +1627,7 @@ labels: [feat, area:backup]
 sudo: false
 hardware: false
 depends: [M6.1]
-issue: null
+issue: 61
 ```
 
 **Summary** Per-container appdata archives with a stop policy, minimal
@@ -1655,7 +1655,7 @@ labels: [feat, area:backup, safety-critical]
 sudo: false
 hardware: false
 depends: [M3.2, M2.3, M1.7]
-issue: null
+issue: 62
 ```
 
 **Summary** Roll back a bad config change, or rebuild a whole system from an
@@ -1682,7 +1682,7 @@ labels: [feat, area:backup]
 sudo: false
 hardware: false
 depends: [M6.1]
-issue: null
+issue: 63
 ```
 
 **Summary** A monthly automated drill that extracts the newest backup,
@@ -1707,7 +1707,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M6.1, M6.2, M6.3, M6.4]
-issue: null
+issue: 64
 ```
 
 **Summary** `/settings/backup` with destinations, config backup, restore,
@@ -1733,7 +1733,7 @@ labels: [chore, area:devenv]
 sudo: false
 hardware: false
 depends: [M6.3, M3.9]
-issue: null
+issue: 65
 ```
 
 **Summary** Make "export, wipe, reinstall, import, identical system" a
@@ -1757,7 +1757,7 @@ id: M7
 phase: P3
 status: todo
 labels: [feat, area:containers]
-issue: null
+issue: 66
 ```
 
 Container management, deliberately narrow (D6): the path from "I want
@@ -1775,7 +1775,7 @@ labels: [feat, area:containers]
 sudo: false
 hardware: false
 depends: [M6.2]
-issue: null
+issue: 67
 ```
 
 **Summary** Full lifecycle for plain Compose stacks under
@@ -1803,7 +1803,7 @@ labels: [feat, area:containers]
 sudo: false
 hardware: false
 depends: [M7.1]
-issue: null
+issue: 68
 ```
 
 **Summary** YAML templates with pool-aware defaults, the seeded curated
@@ -1830,7 +1830,7 @@ labels: [feat, area:containers]
 sudo: false
 hardware: false
 depends: [M0.3, M7.2]
-issue: null
+issue: 69
 ```
 
 **Summary** Convert Unraid XML templates to reviewable Compose, translating
@@ -1858,7 +1858,7 @@ labels: [feat, area:containers]
 sudo: false
 hardware: false
 depends: [M7.2, M0.4]
-issue: null
+issue: 70
 ```
 
 **Summary** Pluggable catalog sources — the curated catalog, user-added
@@ -1886,7 +1886,7 @@ labels: [feat, area:containers]
 sudo: false
 hardware: false
 depends: [M7.1, M6.2]
-issue: null
+issue: 71
 ```
 
 **Summary** Detect new builds and new versions separately, update in bulk
@@ -1912,7 +1912,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M7.2, M7.3, M7.5]
-issue: null
+issue: 72
 ```
 
 **Summary** `/apps` and all its sub-pages as doc 03 §5 specifies.
@@ -1937,7 +1937,7 @@ id: M8
 phase: P3
 status: todo
 labels: [feat, area:migration]
-issue: null
+issue: 73
 ```
 
 The guided, low-risk path from an Unraid array (doc 05): scan, adopt the data
@@ -1955,7 +1955,7 @@ labels: [chore, area:devenv]
 sudo: false
 hardware: false
 depends: [M3.9]
-issue: null
+issue: 74
 ```
 
 **Summary** Build and snapshot the Unraid source VMs every migration test
@@ -1981,7 +1981,7 @@ labels: [feat, area:migration]
 sudo: false
 hardware: false
 depends: [M2.1, M8.1]
-issue: null
+issue: 75
 ```
 
 **Summary** `hoserva migrate scan`: read the Flash Backup or a read-only stick,
@@ -2009,7 +2009,7 @@ labels: [feat, area:migration, safety-critical]
 sudo: false
 hardware: false
 depends: [M8.2, M2.4, M4.1, M4.3, M4.4]
-issue: null
+issue: 76
 ```
 
 **Summary** Adopt the Unraid data disks into the pool without formatting, and
@@ -2037,7 +2037,7 @@ labels: [feat, area:migration, safety-critical]
 sudo: false
 hardware: false
 depends: [M8.3, M2.5, M2.6]
-issue: null
+issue: 77
 ```
 
 **Summary** Compare the adopted pool with the scan baseline using checksums,
@@ -2065,7 +2065,7 @@ labels: [feat, area:migration]
 sudo: false
 hardware: false
 depends: [M8.4, M5.2, M7.3]
-issue: null
+issue: 78
 ```
 
 **Summary** Phase D: move appdata back to cache, convert the user's
@@ -2091,7 +2091,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M8.2, M8.3, M8.4]
-issue: null
+issue: 79
 ```
 
 **Summary** `/tools/migrate` with its four phases, the report, and the
@@ -2117,7 +2117,7 @@ labels: [chore, area:devenv]
 sudo: false
 hardware: false
 depends: [M8.1, M8.5]
-issue: null
+issue: 80
 ```
 
 **Summary** Run doc 06 §5's migration test procedure against every variant
@@ -2141,7 +2141,7 @@ id: M9
 phase: P3
 status: todo
 labels: [docs, area:site]
-issue: null
+issue: 81
 ```
 
 The public documentation site (doc 05 §7), starting with what migrating users
@@ -2158,7 +2158,7 @@ labels: [chore, area:site]
 sudo: false
 hardware: false
 depends: [M1.1]
-issue: null
+issue: 82
 ```
 
 **Summary** An Astro Starlight site under `site/` with the doc 05 §7
@@ -2184,7 +2184,7 @@ labels: [docs, area:site]
 sudo: false
 hardware: false
 depends: [M9.1, M8.4]
-issue: null
+issue: 83
 ```
 
 **Summary** The `/migrating-from-unraid/` pages, written against the real
@@ -2209,7 +2209,7 @@ labels: [docs, area:site]
 sudo: false
 hardware: false
 depends: [M9.1]
-issue: null
+issue: 84
 ```
 
 **Summary** The concepts and guides sections: pooling, parity and its timing,
@@ -2235,7 +2235,7 @@ labels: [docs, area:site]
 sudo: false
 hardware: false
 depends: [M9.1, M1.6]
-issue: null
+issue: 85
 ```
 
 **Summary** The `/reference/api` pages generated from `api/openapi.yaml` on
@@ -2260,7 +2260,7 @@ id: M10
 phase: P3.5
 status: todo
 labels: [feat, area:vm]
-issue: null
+issue: 86
 ```
 
 VM management on libvirt/KVM, deliberately narrow (doc 14, D13, D14): local
@@ -2278,7 +2278,7 @@ labels: [spike, area:devenv]
 sudo: false
 hardware: false
 depends: [M3.9, M0.9]
-issue: null
+issue: 87
 ```
 
 **Summary** Find out whether an L3 test VM can run nested KVM for a domain
@@ -2303,7 +2303,7 @@ labels: [spike, area:vm]
 sudo: false
 hardware: false
 depends: [M8.1]
-issue: null
+issue: 88
 ```
 
 **Summary** Measure how much of real Unraid VM domain XML loads on Debian 13's
@@ -2329,7 +2329,7 @@ labels: [feat, area:vm]
 sudo: false
 hardware: false
 depends: [M1.4, M1.5, M1.7]
-issue: null
+issue: 89
 ```
 
 **Summary** `vm.Engine` on go-libvirt with a scriptable fake, and domain XML
@@ -2355,7 +2355,7 @@ labels: [feat, area:vm]
 sudo: false
 hardware: false
 depends: [M10.3, M1.8]
-issue: null
+issue: 90
 ```
 
 **Summary** Create, start, stop, restart, clone and delete VMs as VM-class
@@ -2382,7 +2382,7 @@ labels: [feat, area:vm, safety-critical]
 sudo: false
 hardware: false
 depends: [M10.4, M5.2]
-issue: null
+issue: 91
 ```
 
 **Summary** vdisks under `/mnt/user/domains`, never moved while a VM runs, and
@@ -2409,7 +2409,7 @@ labels: [feat, area:vm]
 sudo: false
 hardware: false
 depends: [M10.4]
-issue: null
+issue: 92
 ```
 
 **Summary** A generated `vmbr0` bridge over the host NIC so VMs get LAN
@@ -2435,7 +2435,7 @@ labels: [feat, area:vm]
 sudo: false
 hardware: false
 depends: [M10.4, M1.11]
-issue: null
+issue: 93
 ```
 
 **Summary** Proxy each VM's graphics console over the authenticated TLS
@@ -2461,7 +2461,7 @@ labels: [feat, area:vm]
 sudo: false
 hardware: false
 depends: [M10.3]
-issue: null
+issue: 94
 ```
 
 **Summary** Read-only IOMMU group listing and the `passthrough check` report,
@@ -2487,7 +2487,7 @@ labels: [feat, area:vm, safety-critical, needs-hardware]
 sudo: false
 hardware: true
 depends: [M10.8]
-issue: null
+issue: 95
 ```
 
 **Summary** Assign a device to a VM through a generated, boot-time VFIO
@@ -2514,7 +2514,7 @@ labels: [feat, area:backup]
 sudo: false
 hardware: false
 depends: [M10.4, M6.1]
-issue: null
+issue: 96
 ```
 
 **Summary** The off-by-default VM backup job from doc 10 §5: stop, copy domain
@@ -2540,7 +2540,7 @@ labels: [feat, area:migration, safety-critical]
 sudo: false
 hardware: false
 depends: [M10.2, M10.4, M10.8, M8.4]
-issue: null
+issue: 97
 ```
 
 **Summary** `hoserva migrate vm-scan` and `vm-import`: read domain definitions
@@ -2568,7 +2568,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M10.4, M10.7, M10.8, M10.9]
-issue: null
+issue: 98
 ```
 
 **Summary** `/vms`, `/vms/create`, `/vms/[name]` and `/vms/passthrough` as
@@ -2594,7 +2594,7 @@ labels: [chore, area:devenv]
 sudo: false
 hardware: false
 depends: [M10.1, M10.4, M10.5]
-issue: null
+issue: 99
 ```
 
 **Summary** Nightly nested-KVM end-to-end tests for VM lifecycle, storage
@@ -2618,7 +2618,7 @@ id: M11
 phase: P4
 status: todo
 labels: [chore]
-issue: null
+issue: 100
 ```
 
 From "the author runs it" to 1.0: diagnostics, wake attribution, the remaining
@@ -2635,7 +2635,7 @@ labels: [feat, area:api]
 sudo: false
 hardware: false
 depends: [M3.3]
-issue: null
+issue: 101
 ```
 
 **Summary** One-click diagnostics archive whose redaction the user can inspect
@@ -2660,7 +2660,7 @@ labels: [feat, area:storage]
 sudo: false
 hardware: false
 depends: [M2.7, M2.1]
-issue: null
+issue: 102
 ```
 
 **Summary** Attach the likely process, and where possible the container, to
@@ -2686,7 +2686,7 @@ labels: [feat, area:web]
 sudo: false
 hardware: false
 depends: [M3.6, M11.1]
-issue: null
+issue: 103
 ```
 
 **Summary** The remaining pages: disk history graphs, logs, diagnostics,
@@ -2713,7 +2713,7 @@ labels: [chore, area:packaging, safety-critical]
 sudo: false
 hardware: false
 depends: [M3.8, M7.1]
-issue: null
+issue: 104
 ```
 
 **Summary** An installer ISO with Debian 13, Hoserva, and Docker
@@ -2739,7 +2739,7 @@ labels: [chore, area:packaging, needs-hardware]
 sudo: false
 hardware: true
 depends: [M11.1, M11.4, M3.10]
-issue: null
+issue: 105
 ```
 
 **Summary** A small beta group on varied hardware, with diagnostics bundles
@@ -2765,7 +2765,7 @@ labels: [chore]
 sudo: false
 hardware: false
 depends: []
-issue: null
+issue: 106
 ```
 
 **Summary** Check trademark registries and secure remaining domains before the
@@ -2791,7 +2791,7 @@ labels: [chore, area:packaging]
 sudo: false
 hardware: false
 depends: [M11.3, M11.5, M11.6, M8.7, M9.2, M6.6]
-issue: null
+issue: 107
 ```
 
 **Summary** Doc 06 §7's release checklist, automated where possible, as the
