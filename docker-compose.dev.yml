@@ -1,0 +1,29 @@
+# The narrowed loop-device lab (doc 06 §3, Q45, validated S9 — doc 08).
+# Started and destroyed only through `make lab-up` / `make lab-destroy`,
+# always with HOSERVA_LAB_ID set — never with an ad-hoc `docker run`, and
+# always with a per-lab compose project name so two ids never share a
+# network or share this container name.
+#
+# No --privileged, no /dev bind mount: the container gets exactly loop
+# devices and FUSE, and the device cgroup rule restricts it to loop block
+# devices (major 7) only, so mistyping a device path inside the lab cannot
+# reach a real host disk.
+services:
+  lab:
+    build: ./scripts/devenv
+    container_name: hoserva-lab-${HOSERVA_LAB_ID:?set HOSERVA_LAB_ID}
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+      - /dev/loop-control
+    device_cgroup_rules:
+      - "b 7:* rmw"
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - .:/src:ro
+      - ./.lab/${HOSERVA_LAB_ID:?set HOSERVA_LAB_ID}:/lab/${HOSERVA_LAB_ID:?set HOSERVA_LAB_ID}
+    environment:
+      - HOSERVA_LAB_ID=${HOSERVA_LAB_ID:?set HOSERVA_LAB_ID}
+    command: ["sleep", "infinity"]
