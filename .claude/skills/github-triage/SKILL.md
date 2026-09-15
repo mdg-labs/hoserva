@@ -146,7 +146,7 @@ GitHub's native fields. **Never** as body prose ("Part of #N", "Depends on
 
 1. Investigate as above, starting from the raw report.
 2. Draft title + body in the shape above. If the report is more than one piece of work, decide the epic/sub-issue split here.
-   - **Seeding a phase** ("seed Phase 0"): one epic for the phase, one sub-issue per spike or deliverable from doc 07 §1, ordering dependencies from the doc (the Phase 1 foundation blocks feature work — doc 12 §5). Each sub-issue is fully triaged, not a one-line stub.
+   - **Seeding a phase** ("seed Phase 0"): don't hand-create it. Phases are already broken into epics and sub-issues in `docs/roadmap.md`; run `scripts/roadmap-sync.py <ids>` (dry run) and hand the maintainer the `--apply` command. Triage then enriches the created issues one by one (Mode 1). Work that isn't in the roadmap yet is created here as usual.
    - **Mass-creation guard:** if this would create more than ~12 issues, state the count and list the titles, and confirm via `AskUserQuestion` before creating anything.
 3. `gh issue create --repo mdg-labs/hoserva --title "..." --body-file <tmpfile> --label ...` — epic first, then each sub-issue, so every number a relationship needs exists.
 4. Wire relationships via the native flags. If a body referenced another issue's number before it existed, patch it in with `gh issue edit --body-file` now — no placeholders left behind.

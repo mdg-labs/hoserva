@@ -4,7 +4,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 
 **Positioning and tone** (doc 00 §6): describe Hoserva by what it does, never as "an X alternative". Mention Unraid and other projects only factually — migration, compatibility, a design comparison. No disparaging remarks about other projects or their users. This applies to docs, issues, commit messages, UI copy and the docs site.
 
-**Current state: design phase.** No code exists yet. The design lives in `docs/internal/`, and the first implementation work is Phase 0 spikes and the Phase 1 foundation (doc 07 §1, doc 12 §5). Code conventions below are the plan; tighten them as the first real code lands.
+**Current state: design phase.** No code exists yet. The design lives in `docs/internal/`, and the work itself is broken into epics and sub-issues in `docs/roadmap.md` — Phase 0 spikes and the Phase 1 foundation first (doc 07 §1, doc 12 §5). Code conventions below are the plan; tighten them as the first real code lands.
 
 # Documentation map
 
@@ -76,8 +76,8 @@ No agent runs `sudo`, a package manager install, or edits anything under `/etc`,
 
 GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between sessions.
 
-- **Doc 07 seeds issues; issues are the truth.** Once a phase item is an issue, status, scope and discussion live there. Seed a phase as an epic with sub-issues via `github-triage` (create mode).
-- **New work starts as an issue** via `github-triage`, not as a roadmap edit.
+- **`docs/roadmap.md` seeds issues; issues are the truth.** It is doc 07's phases broken into machine-parsable epics and sub-issues. `scripts/roadmap-sync.py` creates them (`--validate` offline, no flag for a dry run, `--apply` to create), sets native parent, blocked-by and milestone relationships, and writes each issue number back. Once an item has an `issue:` number, status, scope and discussion live in the issue; where the roadmap and the issue disagree, the issue wins.
+- **New work starts as an issue** via `github-triage`, not as a roadmap edit — except planned work not yet in the roadmap before its phase is synced, which is added there so the plan stays in one place.
 - **Two levels: epic → sub-issue.** Nothing deeper.
 - **Epic membership and ordering dependencies are native GitHub relationships, never body prose.** `gh issue edit <epic> --add-sub-issue <n>`, `gh issue edit <n> --add-blocked-by <dep>` (needs `gh` ≥ 2.100); read back with `gh issue view <n> --json parent,subIssues,blockedBy,blocking`. A body may explain *why*; it is never the record *that*.
 - **Always label**: exactly one type, one `area:*` where one applies, plus any extras. The set is below and in `scripts/bootstrap-labels.sh` — don't invent labels without saying so.
@@ -114,7 +114,7 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 | `area:site` | `site/` |
 | `docs` (type, no area) | `docs/internal/` |
 
-**Always-shared files** — any change touching them serializes against every other change that does: `CLAUDE.md`, `Makefile`, `go.mod`, `go.sum`, `go.work`, `api/openapi.yaml`, `api/gen/`, `web/package.json` and its lockfile, `docs/internal/13-open-questions.md`, `internal/store/schema/`, `internal/store/migrations/`, `.gitignore`, `LICENSE`.
+**Always-shared files** — any change touching them serializes against every other change that does: `CLAUDE.md`, `Makefile`, `go.mod`, `go.sum`, `go.work`, `api/openapi.yaml`, `api/gen/`, `web/package.json` and its lockfile, `docs/internal/13-open-questions.md`, `docs/roadmap.md`, `internal/store/schema/`, `internal/store/migrations/`, `.gitignore`, `LICENSE`.
 
 ## Spikes
 
