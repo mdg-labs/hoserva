@@ -1,0 +1,11 @@
+== control 1: a single changed byte must fail the manifest check ==
+control 1 PASS: diff detects a single deliberately wrong sha256 (as used by check-fixture.sh's final comparison)
+
+== control 2: mounting by a UUID that does not exist must fail ==
+control 2 PASS: mount by a nonexistent UUID failed as expected (exit 1):
+mount: /lab/3-a1/s2/adopt/negctrl: can't find UUID=00000000-0000-0000-0000-000000000000.
+
+== control 3: a fresh scratch disk (never one of the fixture disks) is ordinary and rw-capable ==
+control 3 PASS: a normal rw mount wrote a file with no restriction — confirming every 'read-only' claim made about disk1-disk3 above is this spike's own mount-option choice, not a property of the image
+
+negative-controls.sh: PASS

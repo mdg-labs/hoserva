@@ -1,0 +1,7 @@
+built disk1: image=/lab/3-a1/s2/img/disk1.img partition-dev=/dev/loop5 mount=/lab/3-a1/s2/mnt/disk1
+  seeded, cleanly unmounted, loop device detached (disk now 'unplugged' until adoption)
+built disk2: image=/lab/3-a1/s2/img/disk2.img partition-dev=/dev/loop5 mount=/lab/3-a1/s2/mnt/disk2
+  seeded, cleanly unmounted, loop device detached (disk now 'unplugged' until adoption)
+built disk3: image=/lab/3-a1/s2/img/disk3.img partition-dev=/dev/loop5 mount=/lab/3-a1/s2/mnt/disk3
+  seeded, cleanly unmounted, loop device detached (disk now 'unplugged' until adoption)
+manifest: /lab/3-a1/s2/manifest.sha256 (11 files)

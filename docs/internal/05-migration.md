@@ -14,6 +14,8 @@ Unraid data disks are **individually formatted XFS filesystems with no striping*
 
 **Therefore no data needs to be copied.** The migrator mounts existing disks as-is into the pool. A 24 TB migration that would otherwise require 24 TB of temporary space and days of copying becomes a mount operation.
 
+**Partition layout** (spike S2, doc 08 §2, sourced from `unraid/webgui`'s `disk_default_partition_format_help`, identical in the `6.12.15` and `7.3.2` tags): array disks 2 TB or smaller get a single MBR partition starting at the 64th 512-byte sector — Unraid's "MBR: 4K-aligned" default — spanning to the end of the disk; disks over 2 TB always get a GPT table instead (Unraid's own partition-start behaviour for the GPT case is not in this public source and was not built or verified by S2). A cleanly-stopped array leaves every disk's XFS log clean; a disk pulled or crashed while the array was still started can have a dirty log, which `xfs_repair -n` reports distinctly (S2 measured this directly) and which a read-only adoption mount must never silently replay — see doc 06 §5 and doc 08 §2 for the `norecovery` mount-option finding this settles.
+
 ### 1.2 User shares are already a union of identical directory names
 
 An Unraid user share is a FUSE overlay across identically-named top-level directories on each disk. `/mnt/user/media` is the union of `/mnt/disk1/media`, `/mnt/disk2/media`, and so on.
@@ -92,7 +94,7 @@ A written go / no-go report, downloadable, that the user reads **before** commit
 
 ### Phase A — Preparation (Unraid still running, fully reversible)
 
-1. **Back up the Unraid flash drive.** Main → Flash → Flash Backup, and **copy the zip off the server** (to a laptop or another machine). It is both the rollback artifact and the migrator's input (Q25): it contains the Docker templates (`config/plugins/dockerMan/templates-user/`), share configuration (`config/shares/` — names, cache settings, export flags, allocation method), user accounts, and disk assignments.
+1. **Back up the Unraid flash drive.** Main → Flash → Flash Backup, and **copy the zip off the server** (to a laptop or another machine). It is both the rollback artifact and the migrator's input (Q25): it contains the Docker templates (`config/plugins/dockerMan/templates-user/`), share configuration (`config/shares/` — names, cache settings, export flags, allocation method), user accounts, and disk assignments. Disk assignments and per-slot filesystem type live in `config/disk.cfg`, global share defaults in `config/share.cfg`, named-pool (cache pool) assignments in `config/pools/*.cfg`, and — when VMs are present — VM Manager settings including the `libvirt.img` path in `config/domain.cfg` (spike S2, doc 08 §2, sourced from `unraid/webgui`, identical in the `6.12.15` and `7.3.2` tags).
 2. **Confirm the templates are in the backup.** The migration docs show where to look; a container installed without a saved template will not convert.
 3. **Note the share list.** Shares are pre-seeded from the backup so the user doesn't recreate twelve shares by hand; this note is the user's own cross-check.
 4. **Tell everyone who uses SMB that passwords are being reset.** User accounts are recreated from the backup, but passwords cannot be migrated (hashes differ); the user sets new ones in step 15 and must plan the client-side reconnections in advance.

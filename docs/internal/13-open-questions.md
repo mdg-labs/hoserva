@@ -285,7 +285,7 @@ Dual parity was excluded because its "migration path [is] unclear", but it isn't
 The parity file is a single file roughly as large as the largest data disk. ext4 with 4 KiB blocks caps files at 16 TiB, which today's 20 TB+ disks exceed. XFS has no practical file size limit and no reserved-block overhead. The data disks' `minfreespace` (default 50G) keeps parity headroom even when parity and data disks are the same nominal size.
 
 ### Q21 — Disk identity
-**Status:** Default (confirmed in S2 against synthetic fixtures and L3 virtual disks) · **Gate:** Phase 1 · **Affects:** doc 02 §4, doc 05 §4, doc 10 §1
+**Status:** Default (mount-by-filesystem-UUID confirmed in S2, agent-run in the lab, doc 08 §2; WWN/serial-by-id identity matching and L3 virtual-disk confirmation still open — loop devices have neither WWN nor `/dev/disk/by-id`) · **Gate:** Phase 1 · **Affects:** doc 02 §4, doc 05 §4, doc 10 §1
 
 **Default: a disk's identity is its `/dev/disk/by-id` WWN, falling back to serial. Mounts use filesystem UUID. When a USB enclosure hides the serial, the disk is marked "weak identity": allowed as a data disk (matched on FS UUID + size), refused as parity, and warned about in the setup wizard and migration scan.**
 Serial matching is validated by Unraid's own model (doc 08). Enclosures that mask serials are the known exception, and a wrong parity-disk match is the most expensive mistake that exception could cause.
@@ -294,7 +294,7 @@ Serial matching is validated by Unraid's own model (doc 08). Enclosures that mas
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 00 §4, doc 05 §2, §7, doc 06 §5, doc 07 §1
 
 **Default: v1 detects encrypted Unraid arrays and refuses to migrate them, with a clear message and a docs page on manual options. New encrypted pools are not offered. Post-1.0 design: a keyfile on the boot device, stated plainly as convenience rather than protection against physical theft.**
-Doc 08's recovery evidence and R2 outweigh the convenience. Detect-and-refuse matches the ZFS stance, keeps the fixture (it tests the refusal), and costs no support burden.
+Doc 08's recovery evidence and R2 outweigh the convenience. Detect-and-refuse matches the ZFS stance, keeps the fixture (it tests the refusal), and costs no support burden. Implementation note from S2 (doc 08 §2, sourced from `unraid/webgui`'s `DiskSettings.page`): Unraid's own `defaultFsType` setting encodes encryption as a `luks:<fs>` value (e.g. `luks:xfs`) rather than a separate flag — detection must parse that prefix, not assume a distinct boolean field.
 
 ### Q23 — Non-XFS Unraid data disks
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §2, §3, doc 06 §5
@@ -303,13 +303,13 @@ Doc 08's recovery evidence and R2 outweigh the convenience. Detect-and-refuse ma
 mergerfs and SnapRAID are filesystem-agnostic, so a single-device btrfs or ext4 disk costs one fixture each. ZFS needs OpenZFS as a dependency, which is out of scope (doc 00 §4). Doc 08's "refuse a filesystem that reports errors" extends to every filesystem, not just XFS.
 
 ### Q24 — Supported Unraid versions for migration
-**Status:** Spike (S2, synthetic fixtures) · **Gate:** Phase 3 · **Affects:** doc 05 §2, §3, doc 06 §5, doc 07 R5
+**Status:** Default (confirmed in S2 — agent-run in the lab against a synthetic XFS fixture, plus a source diff of `unraid/webgui` across its `6.12.15` and `7.3.2` tags found no version difference in the data-disk partition-format default or the `/boot/config/` flash layout; doc 08 §2) · **Gate:** Phase 3 · **Affects:** doc 05 §2, §3, doc 06 §5, doc 07 R5
 
 **Default: Unraid 6.12.x and 7.x, each backed by a fixture. The scan refuses any version or config layout it doesn't recognise. `--unverified-layout` overrides that refusal with a full-screen warning and records the override in the report.**
-R5's "fail loudly on unknown layouts" needs a concrete allowlist to fail against.
+R5's "fail loudly on unknown layouts" needs a concrete allowlist to fail against. Residual: only the ≤2TB MBR/4K-aligned partition layout and the primary XFS path are fixture-verified so far; GPT (>2TB) disks, ext4/btrfs disks and a VM/`libvirt.img` fixture remain (doc 08 §2).
 
 ### Q25 — Where migration reads Unraid config from *(contradiction)*
-**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4, §6
+**Status:** Default (flash config tree confirmed via `unraid/webgui` source, doc 08 §2 — every path Q25 depends on lives under `/boot/config/`, exactly the Flash Backup zip's own root) · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4, §6
 
 **The contradiction:** Phase B step 11 removes the Unraid USB stick. Step 15 then seeds shares and users from config "exported in step 3", but the doc never says where that export is stored or how Hoserva reads it. Doc 05 §3 also offers to run the scan "from a live environment", which doesn't exist until the Phase 4 ISO.
 
@@ -503,7 +503,7 @@ Live, in-session device unbinding is the single most common way passthrough bric
 This is a separate layer from container networks (Q37), sharing only the narrowing discipline of offering the handful of options that cover real use cases, not a general network-topology editor.
 
 ### Q55 — Unraid VM migration mechanics
-**Status:** Default · **Gate:** Phase 3.5 (feeds doc 05) · **Affects:** doc 05, doc 14 §5
+**Status:** Default (`libvirt.img`/`domains`/`isos` default paths confirmed via `unraid/webgui` source, doc 08 §2 — not yet by an adoption run against a VM fixture, which is spike S11's job) · **Gate:** Phase 3.5 (feeds doc 05) · **Affects:** doc 05, doc 14 §5
 
 **The finding:** Unraid's VM Manager is libvirt underneath, so an exported domain is already libvirt domain XML — the format Hoserva itself generates. This is closer to doc 05's array-adoption problem than to doc 04's format-conversion problem.
 
