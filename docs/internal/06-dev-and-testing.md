@@ -120,7 +120,7 @@ create_disk parity1 8T
 for i in 1 2 3 4 5; do create_disk "disk$i" 4T; done
 create_disk cache 1T
 
-mergerfs -o category.create=epmfs,moveonenospc=true,minfreespace=50G \
+mergerfs -o category.create=mspmfs,moveonenospc=true,minfreespace=50G \
   "$LAB/mnt/disk1:$LAB/mnt/disk2:$LAB/mnt/disk3:$LAB/mnt/disk4:$LAB/mnt/disk5" \
   "$LAB/mnt/user"
 ```
