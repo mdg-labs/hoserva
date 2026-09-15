@@ -287,7 +287,7 @@ No agent runs Unraid or connects to a real Unraid server — not the maintainer'
 4. Records per-disk file lists, sizes and sha256 as the fixture's expected result
 5. **Snapshots** the result (`unraid-fixtures`) so every migration test restores it in seconds
 
-**Optional calibration.** If the maintainer places an Unraid **Diagnostics** zip (Tools → Diagnostics, which Unraid anonymises for public posting) at a gitignored local path, agents compare the fixtures' partition layout, filesystem parameters and config file shapes against it and record any divergence in doc 05. Nothing from it is committed, and no agent ever fetches it from the server. Without it, the fixtures rest on public sources alone, and quirks of disks Unraid itself formatted are stated residual risk.
+**Optional calibration.** If the maintainer places an Unraid **Diagnostics** zip (Tools → Diagnostics) in `~/.local/share/hoserva/calibration/`, agents compare the fixtures' partition layout, filesystem parameters and config file shapes against it and record any divergence in doc 05 as general layout facts — never values copied from the bundle. The directory sits outside every repository and workspace, because a bundle that isn't anonymised holds hostnames, addresses, disk serials, user and share names and logs. The orchestrator names it in a dispatch as a read-only path; nothing from it is copied into a workspace, committed, or quoted in an issue, comment or commit message, and no agent ever fetches anything from the server. Without it, the fixtures rest on public sources alone, and quirks of disks Unraid itself formatted are stated residual risk.
 
 ### Variant fixtures
 

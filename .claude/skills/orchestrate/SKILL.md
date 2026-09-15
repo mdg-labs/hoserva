@@ -269,6 +269,14 @@ If an issue comes back `blocked`: report the reason, put it back to
 `status:ready`, leave it open, and continue with the rest of T that doesn't
 depend on it.
 
+**The Unraid calibration bundle.** When an issue cites the optional Diagnostics
+bundle (doc 06 §5), name `~/.local/share/hoserva/calibration/` in the executor
+and verifier dispatches as a **read-only path outside the workspace**, with
+the rule stated: read it in place, record only general layout facts, never
+copy it into the workspace, commit it, or quote any value from it in a file,
+issue, comment or commit message. Never name it for an issue that doesn't
+cite it.
+
 ### Waiting: end the turn, don't schedule anything
 
 Subagents re-invoke you when they finish. Once everything dispatchable is
