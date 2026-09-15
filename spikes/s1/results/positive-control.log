@@ -1,0 +1,46 @@
+=== POSITIVE CONTROL started 2026-09-15T18:10:06Z ===
+=== disk1.log ===
+=== disk1.err ===
+=== disk2.log ===
+18:10:07.658398 bash(2059) [0:0]: O   (deleted)
+18:10:07.658447 bash(2059) [0:0]: CW  (deleted)
+18:10:07.658967 cat(2067) [0:0]: O   (deleted)
+18:10:07.658985 cat(2067) [0:0]: RC  (deleted)
+=== disk2.err ===
+fatrace: open_by_handle_at: Operation not permitted
+fatrace: open_by_handle_at: Operation not permitted
+fatrace: open_by_handle_at: Operation not permitted
+fatrace: open_by_handle_at: Operation not permitted
+=== disk3.log ===
+=== disk3.err ===
+=== VERDICT ===
+disk1 lines: 0 (expect 0 — probe was written to disk2)
+disk2 lines: 4 (expect > 0 — the probe write+read)
+disk3 lines: 0 (expect 0 — probe was written to disk2)
+CONTROL PASSED: the probe on disk2 was attributed to disk2's tracer only
+=== POOL-ROUTED PROBE started 2026-09-15T18:10:14Z ===
+=== pool probe: disk1.log ===
+=== pool probe: disk1.err ===
+=== pool probe: disk2.log ===
+=== pool probe: disk2.err ===
+=== pool probe: disk3.log ===
+18:10:15.674766 mergerfs(1261) [0:0]: O   (deleted)
+18:10:15.674879 mergerfs(1261) [0:0]: W   (deleted)
+18:10:15.675015 mergerfs(1261) [0:0]: CW  (deleted)
+18:10:15.675414 mergerfs(1261) [0:0]: O   (deleted)
+18:10:15.675488 mergerfs(1261) [0:0]: R   (deleted)
+18:10:15.675564 mergerfs(1261) [0:0]: C   (deleted)
+=== pool probe: disk3.err ===
+fatrace: open_by_handle_at: Operation not permitted
+fatrace: open_by_handle_at: Operation not permitted
+fatrace: open_by_handle_at: Operation not permitted
+fatrace: open_by_handle_at: Operation not permitted
+fatrace: open_by_handle_at: Operation not permitted
+fatrace: open_by_handle_at: Operation not permitted
+=== POOL-ROUTED PROBE VERDICT ===
+landed on: disk3
+disk3 lines: 6 (expect > 0 — mergerfs placed the probe here)
+disk1 lines: 0 (expect 0 — mergerfs placed the probe on disk3, not disk1)
+disk2 lines: 0 (expect 0 — mergerfs placed the probe on disk3, not disk2)
+CONTROL PASSED: the pool-routed probe landed on disk3 via mergerfs's create policy and was attributed to disk3's tracer only, as the mergerfs process
+=== POSITIVE CONTROL finished 2026-09-15T18:10:22Z ===

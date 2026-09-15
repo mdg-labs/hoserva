@@ -1,0 +1,585 @@
+=== TRAILING WRITE CHARACTERIZATION disk=disk1 started=2026-09-15T18:04:06Z ===
+--- kernel/XFS writeback timers (read-only, doc 08 S1) ---
+fs.xfs.xfssyncd_centisecs: 3000
+vm.dirty_expire_centisecs: 3000
+vm.dirty_writeback_centisecs: 1500
+=== BASELINE (post-sync, pre-probe) 2026-09-15T18:04:06Z ===
+disk1 /dev/loop1     3730        0    84500       20     4086     1936 10370566     3896        0      499     3918       19        0 39845888        0      203        1
+=== PROBE 2026-09-15T18:04:06Z: create+write+unlink on /lab/2-a1/mnt/disk1, no sync after ===
+=== T+5s 2026-09-15T18:04:11Z ===
+disk1 /dev/loop1     3733        0    84548       20     4091     1937 10370621     3896        0      499     3918       19        0 39845888        0      205        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4091 (delta 5)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370621 (delta 55)
+disk1 flush_ios: 203 -> 205 (delta 2)
+=== T+10s 2026-09-15T18:04:16Z ===
+disk1 /dev/loop1     3733        0    84548       20     4091     1937 10370621     3896        0      499     3918       19        0 39845888        0      205        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4091 (delta 5)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370621 (delta 55)
+disk1 flush_ios: 203 -> 205 (delta 2)
+=== T+15s 2026-09-15T18:04:21Z ===
+disk1 /dev/loop1     3733        0    84548       20     4091     1937 10370621     3896        0      499     3918       19        0 39845888        0      205        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4091 (delta 5)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370621 (delta 55)
+disk1 flush_ios: 203 -> 205 (delta 2)
+=== T+20s 2026-09-15T18:04:26Z ===
+disk1 /dev/loop1     3733        0    84548       20     4091     1937 10370621     3896        0      499     3918       19        0 39845888        0      205        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4091 (delta 5)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370621 (delta 55)
+disk1 flush_ios: 203 -> 205 (delta 2)
+=== T+25s 2026-09-15T18:04:31Z ===
+disk1 /dev/loop1     3733        0    84548       20     4091     1937 10370621     3896        0      499     3918       19        0 39845888        0      205        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4091 (delta 5)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370621 (delta 55)
+disk1 flush_ios: 203 -> 205 (delta 2)
+=== T+30s 2026-09-15T18:04:36Z ===
+disk1 /dev/loop1     3733        0    84548       20     4091     1937 10370621     3896        0      499     3918       19        0 39845888        0      205        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4091 (delta 5)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370621 (delta 55)
+disk1 flush_ios: 203 -> 205 (delta 2)
+=== T+35s 2026-09-15T18:04:41Z ===
+disk1 /dev/loop1     3733        0    84548       20     4093     1937 10370624     3896        0      499     3918       19        0 39845888        0      207        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4093 (delta 7)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370624 (delta 58)
+disk1 flush_ios: 203 -> 207 (delta 4)
+=== T+40s 2026-09-15T18:04:46Z ===
+disk1 /dev/loop1     3733        0    84548       20     4093     1937 10370624     3896        0      499     3918       19        0 39845888        0      207        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4093 (delta 7)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370624 (delta 58)
+disk1 flush_ios: 203 -> 207 (delta 4)
+=== T+45s 2026-09-15T18:04:51Z ===
+disk1 /dev/loop1     3733        0    84548       20     4093     1937 10370624     3896        0      499     3918       19        0 39845888        0      207        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4093 (delta 7)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370624 (delta 58)
+disk1 flush_ios: 203 -> 207 (delta 4)
+=== T+50s 2026-09-15T18:04:56Z ===
+disk1 /dev/loop1     3733        0    84548       20     4093     1937 10370624     3896        0      499     3918       19        0 39845888        0      207        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4093 (delta 7)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370624 (delta 58)
+disk1 flush_ios: 203 -> 207 (delta 4)
+=== T+55s 2026-09-15T18:05:01Z ===
+disk1 /dev/loop1     3733        0    84548       20     4093     1937 10370624     3896        0      499     3918       19        0 39845888        0      207        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4093 (delta 7)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370624 (delta 58)
+disk1 flush_ios: 203 -> 207 (delta 4)
+=== T+60s 2026-09-15T18:05:06Z ===
+disk1 /dev/loop1     3733        0    84548       20     4093     1937 10370624     3896        0      499     3918       19        0 39845888        0      207        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4093 (delta 7)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370624 (delta 58)
+disk1 flush_ios: 203 -> 207 (delta 4)
+=== T+65s 2026-09-15T18:05:11Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+70s 2026-09-15T18:05:16Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+75s 2026-09-15T18:05:21Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+80s 2026-09-15T18:05:26Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+85s 2026-09-15T18:05:31Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+90s 2026-09-15T18:05:36Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+95s 2026-09-15T18:05:41Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+100s 2026-09-15T18:05:46Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+105s 2026-09-15T18:05:51Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+110s 2026-09-15T18:05:56Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+115s 2026-09-15T18:06:01Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+120s 2026-09-15T18:06:06Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+125s 2026-09-15T18:06:11Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+130s 2026-09-15T18:06:16Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+135s 2026-09-15T18:06:21Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+140s 2026-09-15T18:06:26Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+145s 2026-09-15T18:06:31Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+150s 2026-09-15T18:06:36Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+155s 2026-09-15T18:06:41Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+160s 2026-09-15T18:06:46Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+165s 2026-09-15T18:06:51Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+170s 2026-09-15T18:06:56Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+175s 2026-09-15T18:07:01Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+180s 2026-09-15T18:07:06Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+185s 2026-09-15T18:07:11Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+190s 2026-09-15T18:07:16Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+195s 2026-09-15T18:07:21Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+200s 2026-09-15T18:07:26Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+205s 2026-09-15T18:07:31Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+210s 2026-09-15T18:07:36Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+215s 2026-09-15T18:07:41Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+220s 2026-09-15T18:07:46Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+225s 2026-09-15T18:07:51Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+230s 2026-09-15T18:07:56Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+235s 2026-09-15T18:08:01Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+240s 2026-09-15T18:08:06Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+245s 2026-09-15T18:08:11Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+250s 2026-09-15T18:08:16Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+255s 2026-09-15T18:08:21Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+260s 2026-09-15T18:08:26Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+265s 2026-09-15T18:08:31Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+270s 2026-09-15T18:08:36Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+275s 2026-09-15T18:08:41Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+280s 2026-09-15T18:08:46Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+285s 2026-09-15T18:08:51Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+290s 2026-09-15T18:08:56Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+295s 2026-09-15T18:09:01Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+300s 2026-09-15T18:09:06Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+305s 2026-09-15T18:09:11Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+310s 2026-09-15T18:09:16Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+315s 2026-09-15T18:09:21Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+320s 2026-09-15T18:09:26Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+325s 2026-09-15T18:09:31Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+330s 2026-09-15T18:09:36Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+335s 2026-09-15T18:09:41Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+340s 2026-09-15T18:09:46Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+345s 2026-09-15T18:09:51Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+350s 2026-09-15T18:09:56Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+355s 2026-09-15T18:10:01Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== T+360s 2026-09-15T18:10:06Z ===
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk1 read_ios: 3730 -> 3733 (delta 3)
+disk1 read_sectors: 84500 -> 84548 (delta 48)
+disk1 write_ios: 4086 -> 4095 (delta 9)
+disk1 write_merges: 1936 -> 1937 (delta 1)
+disk1 write_sectors: 10370566 -> 10370627 (delta 61)
+disk1 flush_ios: 203 -> 209 (delta 6)
+=== TRAILING WRITE CHARACTERIZATION finished 2026-09-15T18:10:06Z ===

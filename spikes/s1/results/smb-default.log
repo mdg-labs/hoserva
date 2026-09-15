@@ -1,0 +1,40 @@
+=== WINDOW scenario=smb mode=default duration=1800s started=2026-09-15T19:14:13Z ===
+=== MOUNT ===
+1:2:3 /lab/2-a1/mnt/user fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other 0 0
+=== BEFORE ===
+# snapshot 2026-09-15T19:14:14Z
+parity1 /dev/loop0     3630        0    83212       16     3568        0 10347034     4196        0      516     4214       19        0 39845888        0      128        0
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk2 /dev/loop2     3730        0    84531       16     6374       83 13463257     5393        0      837     5412       19        0 39845888        0      230        1
+disk3 /dev/loop3     3780        0    84634       16     3759       83 10349021     3592        0      448     3610       19        0 39845888        0      228        1
+cache /dev/loop4     3649        0    82721       15     9206     2640  5172815     1901        0      279     1932       19        0 19922944        0     1549       15
+=== AFTER ===
+# snapshot 2026-09-15T19:44:15Z
+parity1 /dev/loop0     3630        0    83212       16     3568        0 10347034     4196        0      516     4214       19        0 39845888        0      128        0
+disk1 /dev/loop1     3733        0    84548       20     4095     1937 10370627     3896        0      499     3918       19        0 39845888        0      209        1
+disk2 /dev/loop2     3730        0    84531       16     6374       83 13463257     5393        0      837     5412       19        0 39845888        0      230        1
+disk3 /dev/loop3     3780        0    84634       16     3759       83 10349021     3592        0      448     3610       19        0 39845888        0      228        1
+cache /dev/loop4     3649        0    82721       15     9741     2663  5179083     1913        0      283     1946       19        0 19922944        0     1671       17
+=== DELTA (named per-field deltas, computed by stat-delta.sh — never by eye) ===
+disk1: (no field changed)
+disk2: (no field changed)
+disk3: (no field changed)
+=== FATRACE disk1 log (scoped to /lab/2-a1/mnt/disk1 only — doc 06 §6) ===
+=== FATRACE disk1 stderr (per-event open_by_handle_at noise expected, see header comment) ===
+=== FATRACE disk2 log (scoped to /lab/2-a1/mnt/disk2 only — doc 06 §6) ===
+=== FATRACE disk2 stderr (per-event open_by_handle_at noise expected, see header comment) ===
+=== FATRACE disk3 log (scoped to /lab/2-a1/mnt/disk3 only — doc 06 §6) ===
+=== FATRACE disk3 stderr (per-event open_by_handle_at noise expected, see header comment) ===
+=== SMBCLIENT LOG ===
+Try "help" to get a list of possible commands.
+=== SMBD LOG (tail) ===
+[2026/09/15 19:14:14.047787,  0] source3/smbd/server.c:1971(main)
+  smbd version 4.22.11-Debian-4.22.11+dfsg-0+deb13u1 started.
+  Copyright Andrew Tridgell and the Samba Team 1992-2025
+[2026/09/15 19:14:14.049241,  1] source3/profile/profile.c:49(set_profile_level)
+  INFO: Profiling turned OFF from pid 4890
+[2026/09/15 19:14:14.054085,  1] source3/passdb/pdb_tdb.c:540(tdbsam_open)
+  tdbsam_open: Converting version 0.0 database to version 4.0.
+[2026/09/15 19:14:14.054159,  1] source3/passdb/pdb_tdb.c:305(tdbsam_convert_backup)
+  tdbsam_convert_backup: updated /lab/2-a1/smb/run/passdb.tdb file.
+=== WINDOW DONE scenario=smb mode=default finished=2026-09-15T19:44:15Z ===
