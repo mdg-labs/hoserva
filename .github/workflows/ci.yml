@@ -88,6 +88,12 @@ jobs:
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
         run: make lab-verify-refusal
+      # The lab image carries snapraid (issue #121), so CI exercises one real
+      # sync rather than only building and destroying the array.
+      - name: lab-snapraid-check
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make lab-snapraid-check
       # Always tears down, even if a step above failed — an ephemeral
       # hosted runner is destroyed after the job anyway, but leaving this
       # conditional would mean a failed run never proves teardown works.

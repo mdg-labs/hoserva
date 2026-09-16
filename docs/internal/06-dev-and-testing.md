@@ -206,15 +206,43 @@ services:
     command: sleep infinity
 ```
 
-The entrypoint `mknod`s `/dev/loop0..N` inside the container, since the host's udev-created nodes are not visible there. Loop devices are still a host-global resource, which is why the namespacing and the "only loop devices backed by my own image files" guard above are mandatory, not tidiness.
+The entrypoint `mknod`s `/dev/loop0..N` inside the container, since the host's udev-created nodes are not visible there. Loop devices are still a host-global resource, which is why the namespacing and the "only loop devices backed by my own image files" guard above are mandatory, not tidiness — and why the host's own desktop can see them too, which the next section deals with.
+
+The image carries `snapraid`, `e2fsprogs` and `btrfs-progs` alongside `mergerfs` and `xfsprogs`, so L2 covers the SnapRAID operations doc 02 §2 drives and the ext4 and single-device btrfs disks Q23 plans, without a per-run install. `make lab-snapraid-check` runs one real `snapraid sync` against the standing array and requires SnapRAID's own `Everything OK`; CI runs it on every push. The trade-off, stated rather than lost: a passing lab run now demonstrates the recipe on Hoserva's own image, not on a near-stock `debian:trixie-slim`.
 
 Starting the lab needs access to the Docker daemon, which is root-equivalent on the host; that is the reason labs are only ever started through `make lab-up`, whose recipe is reviewed, never with an ad-hoc `docker run`.
 
 On macOS or Windows, the same container runs inside the Docker VM and works identically. **Development is not tied to a Linux desktop.**
 
+### The host's desktop will try to mount the lab's disks
+
+A loop device is **host-global**: it exists in the kernel, not in the container. So the moment the lab attaches one and puts a filesystem on it, the developer's own desktop sees a new mountable volume. On a normal Linux desktop `udisks2` then mounts it read-write under `/run/media/<user>/` and, where a polkit agent is running, raises an authentication dialog to do so.
+
+The lab's device isolation is one-directional. `docker-compose.dev.yml` stops the *container* reaching host disks; nothing stops the *host* reaching into the lab. The consequences are real:
+
+- the same filesystem is mounted read-write twice at once — by the container and by the host — and two page caches over one block device can corrupt it on unmount;
+- host-side activity on that mount lands in the very per-disk IO counters the spindown work measures (doc 08 §1) and the throughput comparison in doc 08 §6;
+- every attach *and* every detach raises another dialog, and three failed authentications trip `pam_faillock`'s default `deny=3`, locking the developer out of their own account — `sudo` included.
+
+**Install the rule before running a lab on a desktop machine** (once, needs root):
+
+```bash
+sudo install -m 0644 scripts/devenv/99-hoserva-lab-loop.rules \
+    /etc/udev/rules.d/99-hoserva-lab-loop.rules
+sudo udevadm control --reload-rules
+```
+
+It sets `UDISKS_IGNORE=1` on loop devices, so `udisks2` skips them entirely: no probing, no automount, no dialog. The cost is that a file manager no longer offers to mount an ISO for you. To check it is working, bring a lab up and confirm `ls -A /run/media/$USER` stays empty and `losetup -a` shows no `(deleted)` backing files after teardown.
+
+A per-user automounter setting (for example `udiskie`'s `automount: false` for `/dev/loop*`) stops the mounting but not the probing, so prompts can still appear. It is a stopgap, not the fix.
+
 ### Teardown
 
-`scripts/devenv/destroy-array.sh` unmounts everything under its own `$LAB`, detaches exactly the loop devices whose backing files are its own images (resolved via `losetup -j`), deletes the images and `.lab/<id>` **from inside the container**, and only then removes the container. Idempotent, and safe to run when things are half-broken — which is the normal state during development. It never touches another lab's devices.
+`scripts/devenv/destroy-array.sh` runs **from inside the container**, because everything the lab writes under `$LAB` is owned by root. In order: unmount every mount under `$LAB` deepest-first (via `findmnt --submounts`, so a per-share mergerfs mount nested inside the catch-all goes before the thing it sits on); detach every loop device whose backing path is under this lab, read from `/sys/block/loop*/loop/backing_file`; then delete the contents of `$LAB`. Only then is the container removed, and `make lab-destroy`'s final host-side step is an `rmdir` of an already-empty directory — never a recursive delete that could not have succeeded.
+
+Order is load-bearing. Deleting an image while its loop device is still attached leaves a device whose backing file reads `(deleted)`, and once the path is gone nothing can attribute that device to a lab. Such a device is **reported, never detached**: guessing would mean detaching a global device on a shared host on the strength of a name that no longer resolves. Clear those deliberately, by hand.
+
+Idempotent, and safe to run when things are half-broken — which is the normal state during development. It never touches another lab's devices.
 
 Deleting from inside matters: everything the lab creates in its bind mount is owned by root, so once the container is gone the developer's own user cannot remove it — and an agent's scratch clone containing a leftover `.lab/` cannot be deleted either (found in spike S9, doc 08).
 
