@@ -36,7 +36,9 @@ baked into both templates; **never soften them when filling one in**:
   `make lab-up` under `HOSERVA_LAB_ID=<unit-id>` and destroyed before the
   agent reports. The lab container exposes loop devices and FUSE only. No
   `mkfs`, `wipefs`, `mount`, `losetup`, `mergerfs`, `snapraid`, `sgdisk`,
-  `dd of=/dev/…` on the host, ever. Never `losetup -D`.
+  `dd of=/dev/…` on the host, ever. Never `losetup -D`, never `losetup -a`/`-l`
+  on the host either — to check what's attached, use the sanctioned
+  `/sys`-based check (`CLAUDE.md`, "Real disks are off-limits").
 - **Until `scripts/devenv/` and the `lab-*` Makefile targets exist, no storage
   command runs anywhere.** An issue whose acceptance needs one is blocked on
   the foundation issue — the agent reports `blocked`, it does not improvise
@@ -67,16 +69,18 @@ cd <real repo> && ls Makefile scripts/devenv 2>&1; grep -E '^lab-(up|destroy):' 
 docker info --format '{{.ServerVersion}}' 2>&1 | head -1
 command -v go node npm shellcheck golangci-lint actionlint 2>&1
 docker ps --filter name=hoserva-lab- --format '{{.Names}}' 2>&1
-losetup -a 2>&1 | wc -l
+find /sys/devices/virtual/block -maxdepth 3 -path '*/loop/backing_file' -exec cat {} + 2>&1
 ls -l /dev/kvm 2>&1; command -v qemu-system-x86_64 qemu-img 2>&1; grep -E '^vm-(up|destroy):' Makefile 2>&1
 virsh -c qemu:///session list --all --name 2>&1
 ```
 
 That tells you whether the lab exists (`LAB_AVAILABLE`), whether Docker is
 reachable by this user, which checkers are installed, and whether a stale
-lab from an earlier run is still up — and whether the VM harness exists
-(`VM_AVAILABLE`) and which session VMs already exist (report them, never touch
-them). A stale `hoserva-lab-*` container from a
+lab from an earlier run is still up (the `find` line prints one backing-file
+path per loop device still attached from an earlier run, and nothing on a
+clean host — never `losetup -a`/`-l` on the host for this) — and whether the
+VM harness exists (`VM_AVAILABLE`) and which session VMs already exist
+(report them, never touch them). A stale `hoserva-lab-*` container from a
 previous run is reported to the user, not removed by you.
 
 ## 0. Resolve the target

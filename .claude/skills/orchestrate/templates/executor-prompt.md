@@ -81,7 +81,11 @@ make -C {{WORKSPACE_PATH}} lab-destroy HOSERVA_LAB_ID={{LAB_ID}}
 - **Destroy your lab before you report**, success or failure, and confirm
   it: `docker ps --filter name=hoserva-lab-{{LAB_ID}}` prints nothing.
 - Loop devices are host-global. Detach only the ones backed by your own
-  lab's image files. **Never `losetup -D`.**
+  lab's image files. **Never `losetup -D`.** To confirm your own teardown
+  left nothing attached, run
+  `find /sys/devices/virtual/block -maxdepth 3 -path '*/loop/backing_file' -exec cat {} +`
+  — clean is **nothing printed, exit 0**. Never `losetup -a`/`-l` on the host
+  for this.
 - **If the lab doesn't exist yet** (see the machine state above) and an
   issue's acceptance requires storage behaviour: do everything that doesn't
   need it (unit tests against the fakes, golden files, docs), then report
