@@ -1,0 +1,40 @@
+# Excerpt of gh run view 35049304081 --repo mdg-labs/hoserva --job 104645999427 --log
+# (job '/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)',
+# run https://github.com/mdg-labs/hoserva/actions/runs/35049304081,
+# workflow_dispatch on main, 2026-09-16, conclusion: failure)
+# Fetched read-only, never re-run by this spike (no agent triggers a workflow).
+
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Set up job	2026-09-16T02:47:03.6668662Z ##[group]Runner Image
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Set up job	2026-09-16T02:47:03.6669328Z Image: ubuntu-24.04
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Set up job	2026-09-16T02:47:03.6670566Z Version: 20260907.300.1
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Record runner resources	2026-09-16T02:47:06.2815268Z nproc: 4
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Record runner resources	2026-09-16T02:47:06.2832778Z Mem:            15Gi       1.4Gi        12Gi        41Mi       2.4Gi        14Gi
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Record runner resources	2026-09-16T02:47:06.2843011Z Linux 6.17.0-1022-azure x86_64
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Record runner resources	2026-09-16T02:47:06.2860902Z svm
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	/dev/kvm before any udev rule	2026-09-16T02:47:06.3004183Z crw-rw---- 1 root kvm 10, 232 Sep 16 02:46 /dev/kvm
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Apply the kvm udev rule and settle	2026-09-16T02:47:06.3192467Z KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Apply the kvm udev rule and settle	2026-09-16T02:47:06.3625240Z crw-rw-rw- 1 root kvm 10, 232 Sep 16 02:47 /dev/kvm
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Boot a minimal guest with KVM acceleration	2026-09-16T02:47:06.3845415Z ## Installing qemu-system-x86 and busybox-static
+...
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Boot a minimal guest with KVM acceleration	2026-09-16T02:47:24.8484796Z
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Boot a minimal guest with KVM acceleration	2026-09-16T02:47:24.8485338Z Running kernel seems to be up-to-date.
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Boot a minimal guest with KVM acceleration	2026-09-16T02:47:25.6885012Z no readable kernel at /boot/vmlinuz-6.17.0-1022-azure — cannot boot a guest
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Boot a minimal guest with KVM acceleration	2026-09-16T02:47:25.6914193Z ##[error]Process completed with exit code 1.
+#
+# What this establishes, stated precisely:
+#  - /dev/kvm exists, is group `kvm`, and goes crw-rw---- -> crw-rw-rw- after
+#    the exact udev rule GitHub's 2024-04-02 changelog documents, reload,
+#    trigger, settle. The udev-rule mechanism works on this runner image.
+#  - The CPU reports `svm` (AMD-V) — this runner's underlying hardware does
+#    expose virtualization extensions.
+#  - The guest was NEVER booted. `qemu-system-x86_64` was never invoked.
+#    The failure is entirely at kernel *acquisition*: the attempt-1 script
+#    (which this excerpt shows running) tried the runner's own currently
+#    running kernel at exactly this path, which is present but 0600
+#    root:root — unreadable by the plain runner user before any
+#    privileged copy step. That is the exact bug this commit's rewritten
+#    spikes/s9/scripts/kvm-boot-check.sh (sudo cp + chown to an owned,
+#    0644 copy) targets — a fix validated under the same non-root
+#    boundary locally (results/kernel-acquisition-nonroot.log), but this
+#    fixed script has not yet run on a real hosted runner. The KVM
+#    acceleration question itself remains untested by any actual run.

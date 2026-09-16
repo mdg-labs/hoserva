@@ -43,20 +43,36 @@ jobs:
         # used, not `make lab-up` — this checks one flag in isolation, so
         # it must not touch docker-compose.dev.yml (out of scope) or the
         # namespaced lab directories a real `make lab-up` owns.
+        #
+        # Fixed after run 35049304081: the original probe never `mknod`-ed
+        # the container's own /dev/loopN nodes the way the real lab's
+        # scripts/devenv/entrypoint.sh does, so `losetup` failed identically
+        # in both the with- and without-apparmor=unconfined branches
+        # ("device node /dev/loop0 (7:0) is lost") — and the step still
+        # printed a confident-sounding "apparmor=unconfined is required"
+        # verdict from a control that had itself failed. Fixed by mknod-ing
+        # the loop nodes inline (matching the real recipe), giving each
+        # branch its own fresh image (a second mkfs.xfs on a reused image
+        # refuses with "appears to contain an existing filesystem"), and
+        # treating the with-unconfined branch as this experiment's control:
+        # if the control itself fails, the recipe is broken and the step
+        # aborts loudly instead of asserting anything about AppArmor.
         run: |
           set -euo pipefail
-          img="$(mktemp -d)/probe.img"
-          truncate -s 64M "$img"
+
           run_probe() {
-            local -a extra_opts=("$@")
+            local img="$1"; shift
             docker run --rm \
               --cap-add SYS_ADMIN --device /dev/loop-control \
               --device-cgroup-rule 'b 7:* rmw' \
-              "${extra_opts[@]}" \
+              "$@" \
               -v "$img:/probe.img" debian:trixie-slim bash -c '
                 set -euo pipefail
                 apt-get update -qq
                 apt-get install -y -qq --no-install-recommends util-linux xfsprogs >/dev/null
+                for i in $(seq 0 15); do
+                  [[ -e "/dev/loop$i" ]] || mknod -m 660 "/dev/loop$i" b 7 "$i"
+                done
                 dev=$(losetup --find --show /probe.img)
                 mkfs.xfs -q "$dev"
                 mkdir -p /mnt/probe
@@ -66,17 +82,24 @@ jobs:
                 losetup -d "$dev"
               '
           }
-          echo "## With apparmor=unconfined"
-          if run_probe --security-opt apparmor=unconfined; then
-            echo "with-unconfined: succeeded"
+
+          img_control="$(mktemp -d)/control.img"
+          truncate -s 64M "$img_control"
+          echo "## Control: apparmor=unconfined (matches the standing lab's own security_opt)"
+          if run_probe "$img_control" --security-opt apparmor=unconfined; then
+            echo "control (with-unconfined): succeeded"
           else
-            echo "with-unconfined: FAILED"
+            echo "FAIL: the control itself failed with apparmor=unconfined set — the probe recipe (mknod/loop/xfs mechanics) is broken, not an AppArmor result. This step's AppArmor verdict is VOID." >&2
+            exit 1
           fi
-          echo "## Without apparmor=unconfined (default Docker AppArmor profile)"
-          if run_probe; then
-            echo "without-unconfined: succeeded — apparmor=unconfined is not required on this runner image"
+
+          img_variant="$(mktemp -d)/variant.img"
+          truncate -s 64M "$img_variant"
+          echo "## Variant: default Docker AppArmor profile (no apparmor=unconfined)"
+          if run_probe "$img_variant"; then
+            echo "without-unconfined: succeeded — apparmor=unconfined is NOT required on this runner image for this recipe"
           else
-            echo "without-unconfined: FAILED — apparmor=unconfined is required on this runner image"
+            echo "without-unconfined: FAILED — apparmor=unconfined IS required on this runner image for this recipe"
           fi
 
       - name: Derive this run's lab id

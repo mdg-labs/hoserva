@@ -1,0 +1,77 @@
+# OPTIONAL, per this issue's dispatch: validates the boot/QMP *mechanics* of
+# the rewritten spikes/s9/scripts/kvm-boot-check.sh under pure software
+# emulation, inside a disposable container, with no /dev/kvm mapped and no
+# host device touched. This proves the script's plumbing (kernel
+# acquisition, initramfs build, QMP handshake, marker/poweroff detection)
+# runs correctly end to end. IT PROVES NOTHING ABOUT KVM ACCELERATION —
+# HOSERVA_S9_ACCEL=tcg is a local-testing-only override the real workflow
+# never sets (its default is `kvm`, with the full assertion set).
+#
+# A container shares the host kernel's `uname -r` but does not carry that
+# kernel's own /boot/vmlinuz file (unlike a real runner, which is a full
+# VM where that file genuinely exists — confirmed directly by run
+# 35049304081's own failure: "no readable kernel at
+# /boot/vmlinuz-6.17.0-1022-azure", the file was there, just unreadable).
+# So this test's *setup* (not the script under test) installs a real
+# `linux-image-generic` kernel and places its own vmlinuz at exactly the
+# path `uname -r` would need, root-owned 0600 — reproducing "a real,
+# root-owned kernel exists at that path" without changing a single line of
+# the script itself.
+#
+# Command (run twice: once with a stray `//`-based jq expression that this
+# run's own output caught as wrong, once after the fix below):
+#
+# docker run --rm -v ".../spikes/s9/scripts:/scripts:ro" ubuntu:24.04 bash -c '
+#   set -euo pipefail
+#   export DEBIAN_FRONTEND=noninteractive
+#   apt-get update -qq >/dev/null
+#   apt-get install -y -qq sudo linux-image-generic >/dev/null
+#   useradd -m runner
+#   echo "runner ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/runner
+#   chmod 0440 /etc/sudoers.d/runner
+#   KVER=$(uname -r)
+#   GENERIC=$(ls /boot/vmlinuz-*generic | head -n1)
+#   cp "$GENERIC" "/boot/vmlinuz-$KVER"
+#   chown root:root "/boot/vmlinuz-$KVER"
+#   chmod 0600 "/boot/vmlinuz-$KVER"
+#   mkdir -p /home/runner/work
+#   cp /scripts/kvm-boot-check.sh /home/runner/work/kvm-boot-check.sh
+#   chown -R runner:runner /home/runner/work
+#   runuser -u runner -- bash -c "cd /home/runner/work && HOSERVA_S9_ACCEL=tcg timeout 120 bash kvm-boot-check.sh"
+# '
+#
+# Verbatim output (post-apt-install lines trimmed; the script's own output
+# in full):
+
+## Acquiring the running kernel readably (sudo cp + chown, as the unprivileged user)
+## Kernel acquired: /boot/vmlinuz-7.2.5-1-cachyos -> /tmp/tmp.DYyqPAXZAD/vmlinuz (runner:runner 644)
+## Building a one-file initramfs (busybox init, prints a marker, powers off)
+## Booting (kernel: /tmp/tmp.DYyqPAXZAD/vmlinuz, accel: tcg, timeout 90s), started paused pending the QMP query-kvm check
+## QMP query-kvm reply: {"return": {"enabled": false, "present": true}}
+## qemu-system-x86_64 exit 0, wall time 3s
+## qemu stderr:
+## guest serial console:
+HOSERVA-S9-KVM-GUEST-BOOTED
+flags		: fpu de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush acpi mmx fxsr sse sse2 ss syscall nx mmxext pdpe1gb rdtscp lm 3dnowext 3dnow nopl cpuid pni pclmulqdq monitor ssse3 fma cx16 sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm svm cr8_legacy abm sse4a 3dnowprefetch vmmcall fsgsbase bmi1 avx2 smep bmi2 erms mpx rdseed adx smap clflushopt clwb sha_ni xsaveopt xgetbv1 xsaveerptr wbnoinvd arat npt vgif umip pku ospke vaes la57 rdpid fsrm
+HOSERVA-S9-HYPERVISOR-FLAG-PRESENT
+[    1.475418] reboot: Power down
+## (accel=tcg, not kvm) QMP reported enabled=false present=true — expected, not evidence of anything about a real KVM host
+TCG-PLUMBING-OK: boot and QMP mechanics work under software emulation (accel=tcg, 3s). This is NOT evidence of KVM acceleration on any real host.
+
+# Note on the "HOSERVA-S9-HYPERVISOR-FLAG-PRESENT" line above: this dev
+# host is itself virtualized, so its /proc/cpuinfo already carries a
+# `hypervisor` flag that -cpu max passes through to the guest even under
+# TCG — this is a property of the *local* test environment, not something
+# the script relies on: the script only requires this flag when
+# HOSERVA_S9_ACCEL=kvm (the real workflow's default), never in the tcg
+# branch this log exercises.
+#
+# What this run caught (and this commit fixes): the first version of this
+# script computed QMP_ENABLED with `jq -r '.return.enabled // "missing"'`.
+# jq's `//` treats a literal `false` the same as null/absent, so a
+# genuine "not accelerated" answer (`enabled: false`, shown correctly
+# above) printed as "missing" instead of "false" — caught by this very
+# validation run, not assumed. Fixed to
+# `if (.return.enabled|type) == "boolean" then (.return.enabled|tostring) else "missing" end`,
+# re-run, and confirmed to print `enabled=false` correctly (output above
+# is from the fixed version).

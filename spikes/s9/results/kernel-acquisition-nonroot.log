@@ -1,0 +1,54 @@
+# Validates the exact privilege boundary attempt 2 was rejected for skipping:
+# a container matching the runner's own image (ubuntu:24.04), a real
+# unprivileged user with passwordless sudo (mirroring GitHub's own hosted
+# runner), a root-owned 0600 file standing in for the runner's real
+# /boot/vmlinuz-$(uname -r) (verified to have exactly these permissions on
+# a real run — spikes/s9/results/ci-run-35049304081-kvm-job.log), and the
+# readability check run WITHOUT sudo, as the plain user, both before and
+# after the fix's own `sudo cp` + `sudo chown` + `chmod`.
+#
+# Command:
+# docker run --rm ubuntu:24.04 bash -c '
+#   apt-get update -qq >/dev/null && apt-get install -y -qq sudo >/dev/null
+#   useradd -m runner
+#   echo "runner ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/runner
+#   chmod 0440 /etc/sudoers.d/runner
+#   mkdir -p /boot
+#   echo "FAKE-KERNEL-BYTES-not-a-real-elf" > /boot/vmlinuz-fake-runner
+#   chown root:root /boot/vmlinuz-fake-runner
+#   chmod 0600 /boot/vmlinuz-fake-runner
+#   echo "-- source file as created --"; ls -l /boot/vmlinuz-fake-runner
+#   echo "-- as non-root runner, BEFORE any acquisition step (expect UNREADABLE) --"
+#   runuser -u runner -- bash -c "test -r /boot/vmlinuz-fake-runner && echo READABLE || echo UNREADABLE"
+#   echo "-- runner performs the fix: sudo cp + sudo chown + chmod, all as the unprivileged user --"
+#   runuser -u runner -- bash -c "
+#     set -euo pipefail
+#     WORK=\$(mktemp -d)
+#     sudo cp -- /boot/vmlinuz-fake-runner \"\$WORK/vmlinuz\"
+#     sudo chown \"\$(id -u):\$(id -g)\" \"\$WORK/vmlinuz\"
+#     chmod 0644 \"\$WORK/vmlinuz\"
+#     ls -l \"\$WORK/vmlinuz\"
+#     test -r \"\$WORK/vmlinuz\" && echo READABLE-AFTER-FIX || echo STILL-UNREADABLE
+#     cat \"\$WORK/vmlinuz\"
+#   "
+# '
+#
+# Verbatim output:
+
+debconf: delaying package configuration, since apt-utils is not installed
+-- source file as created --
+-rw------- 1 root root 33 Sep 16 04:11 /boot/vmlinuz-fake-runner
+-- as non-root runner, BEFORE any acquisition step (expect UNREADABLE) --
+UNREADABLE
+-- runner performs the fix: sudo cp + sudo chown + chmod, all as the unprivileged user --
+-rw-r--r-- 1 runner runner 33 Sep 16 04:11 /tmp/tmp.SD9ch8IiS5/vmlinuz
+READABLE-AFTER-FIX
+FAKE-KERNEL-BYTES-not-a-real-elf
+
+# Result: the source file is unreadable to the unprivileged user exactly as
+# the real runner's own vmlinuz is (0600 root:root), and the fixed script's
+# own mechanism (sudo cp + sudo chown + chmod, no privileged read) produces a
+# copy that same user can read without sudo — the actual test attempt 2 was
+# rejected for skipping (it validated readability only as root, which can
+# read anything regardless of permission bits and so could not have caught
+# the bug at all).
