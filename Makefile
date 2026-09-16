@@ -229,19 +229,58 @@ $(error invalid MOCK_ADDR: must not contain '$$' — no Make or shell expansion 
 endif
 export MOCK_ADDR
 
-.PHONY: build test test-unit lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check
+.PHONY: build test test-unit lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test
 
-build:
+# web/ (issue #21, Q8): the Vite build has to run before the Go binaries so
+# web/dist/ is real before cmd/hoservad's //go:embed (web/embed.go) reads
+# it — a stale or placeholder dist/ would otherwise get baked into a
+# release build silently.
+web-build:
+	@echo "web: npm ci"
+	cd web && $(NPM) ci --no-audit --no-fund
+	@echo "web: npm run build"
+	cd web && $(NPM) run build
+	@test -f web/dist/index.html || { echo "web-build: web/dist/index.html is missing after 'npm run build' — the embed (web/embed.go) would ship a placeholder, not the app" >&2; exit 1; }
+
+build: web-build
 	@mkdir -p $(BIN_DIR)
 	@for cmd in $(CMDS); do \
 		echo "building $$cmd"; \
 		CGO_ENABLED=0 $(GO) build -o $(BIN_DIR)/$$cmd ./cmd/$$cmd || exit 1; \
 	done
 
+web-lint:
+	@echo "web: npm ci"
+	cd web && $(NPM) ci --no-audit --no-fund
+	@echo "web lint"
+	cd web && $(NPM) run lint
+
+web-typecheck:
+	@echo "web: npm ci"
+	cd web && $(NPM) ci --no-audit --no-fund
+	@echo "web typecheck"
+	cd web && $(NPM) run typecheck
+
+web-test:
+	@echo "web: npm ci"
+	cd web && $(NPM) ci --no-audit --no-fund
+	@echo "web test"
+	cd web && $(NPM) run test
+
 test: test-unit
 
+# Go's own "./..." wildcard skips "vendor", "testdata" and dot/underscore
+# directories, but not "node_modules" (`go help packages`) — once web/'s
+# npm install populates web/node_modules/, a package that happens to ship a
+# .go file (as flatted, an openapi-typescript dependency, does) is
+# otherwise picked up as if it were this module's own code. Every `./...`
+# invocation below filters it out explicitly rather than relying on that
+# not to break the build.
+GO_PACKAGES = $$($(GO) list ./... | grep -v /node_modules/)
+
 test-unit:
-	CGO_ENABLED=0 $(GO) test ./...
+	CGO_ENABLED=0 $(GO) test $(GO_PACKAGES)
+	$(MAKE) web-test
 
 lint:
 	@echo "gofmt"
@@ -252,13 +291,15 @@ lint:
 		exit 1; \
 	fi
 	@echo "go vet"
-	@$(GO) vet ./...
+	@$(GO) vet $(GO_PACKAGES)
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		echo "golangci-lint"; \
 		golangci-lint run; \
 	else \
 		echo "golangci-lint not installed, skipping (gofmt and go vet above still ran)"; \
 	fi
+	$(MAKE) web-lint
+	$(MAKE) web-typecheck
 
 # api/openapi.yaml is the hand-written contract; everything under api/gen/
 # is generated from it and committed (D18, Q63). Regenerates unconditionally

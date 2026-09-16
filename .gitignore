@@ -20,8 +20,16 @@ scripts/vm/images/
 
 # Node (web/, api/'s tooling — Q63)
 web/node_modules/
-web/dist/
 api/node_modules/
+web/*.tsbuildinfo
+
+# web/dist/ (the Vite build, embedded via web/embed.go, Q8) is derived
+# output, but its .gitkeep placeholder is committed so `go:embed all:dist`
+# has something to match on a clean checkout that has never run
+# `npm run build` — see web/embed.go. Everything else `npm run build`
+# writes there stays ignored.
+web/dist/*
+!web/dist/.gitkeep
 
 # Editors and OS
 .DS_Store

@@ -1,0 +1,81 @@
+{
+  "nav": {
+    "dashboard": "Dashboard",
+    "storage": "Storage",
+    "shares": "Shares",
+    "apps": "Apps",
+    "vms": "VMs",
+    "jobs": "Jobs",
+    "users": "Users",
+    "settings": "Settings",
+    "tools": "Tools"
+  },
+  "storageNav": {
+    "pool": "Pool overview",
+    "disks": "Disks",
+    "wakeEvents": "Wake events",
+    "parity": "Parity",
+    "cache": "Cache & mover",
+    "setup": "Setup wizard"
+  },
+  "appsNav": {
+    "installed": "Installed",
+    "catalog": "Catalog"
+  },
+  "vmsNav": {
+    "list": "VM list",
+    "create": "Create VM",
+    "passthrough": "Passthrough"
+  },
+  "settingsNav": {
+    "general": "General",
+    "network": "Network",
+    "notifications": "Notifications",
+    "schedules": "Schedules",
+    "backup": "Backup & restore",
+    "updates": "Updates",
+    "advanced": "Advanced"
+  },
+  "toolsNav": {
+    "logs": "Logs",
+    "terminal": "Terminal",
+    "migrate": "Migration",
+    "diagnostics": "Diagnostics"
+  },
+  "shell": {
+    "title": "Hoserva",
+    "toggleSidebar": "Toggle sidebar",
+    "skipToContent": "Skip to content"
+  },
+  "status": {
+    "healthy": "Healthy",
+    "degraded": "Degraded",
+    "error": "Error",
+    "info": "Info",
+    "unknown": "Unknown"
+  },
+  "emptyState": {
+    "genericTitle": "Nothing here yet",
+    "genericDescription": "There is no data to show."
+  },
+  "loading": {
+    "label": "Loading…"
+  },
+  "jobProgress": {
+    "cancel": "Cancel",
+    "cancelNotAvailable": "This job cannot be cancelled",
+    "noJobs": "No jobs are running",
+    "noJobsDescription": "Long-running operations appear here with progress as they run.",
+    "pageTitle": "Jobs",
+    "pageDescription": "Every long-running operation in Hoserva runs as a job (doc 01 §4)."
+  },
+  "banner": {
+    "dismiss": "Dismiss"
+  },
+  "sectionNav": {
+    "ariaLabel": "Section"
+  },
+  "placeholderPage": {
+    "description": "This section is a placeholder — its page is built in a later issue."
+  }
+}
