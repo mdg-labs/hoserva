@@ -1,0 +1,44 @@
+# docker compose -f docker-compose.dev.yml -p hoserva-lab-$HOSERVA_LAB_ID config
+# HOSERVA_LAB_ID=s9-compose-render (arbitrary stand-in id, for rendering only)
+# Control arm: docker-compose.dev.yml alone, unmodified — must match today's standing lab exactly.
+
+name: hoserva-lab-s9-compose-render
+services:
+  lab:
+    build:
+      context: /tmp/claude-1000/-home-mdguggenbichler-projects-hoserva/ce9b80e8-dc16-42e6-8fcd-88b5f82475fb/scratchpad/orchestrate/10-i1/scripts/devenv
+      dockerfile: Dockerfile
+    cap_add:
+      - SYS_ADMIN
+    command:
+      - sleep
+      - infinity
+    container_name: hoserva-lab-s9-compose-render
+    device_cgroup_rules:
+      - b 7:* rmw
+    devices:
+      - source: /dev/fuse
+        target: /dev/fuse
+        permissions: rwm
+      - source: /dev/loop-control
+        target: /dev/loop-control
+        permissions: rwm
+    environment:
+      HOSERVA_LAB_ID: s9-compose-render
+    networks:
+      default: null
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - type: bind
+        source: /tmp/claude-1000/-home-mdguggenbichler-projects-hoserva/ce9b80e8-dc16-42e6-8fcd-88b5f82475fb/scratchpad/orchestrate/10-i1
+        target: /src
+        read_only: true
+        bind: {}
+      - type: bind
+        source: /tmp/claude-1000/-home-mdguggenbichler-projects-hoserva/ce9b80e8-dc16-42e6-8fcd-88b5f82475fb/scratchpad/orchestrate/10-i1/.lab/s9-compose-render
+        target: /lab/s9-compose-render
+        bind: {}
+networks:
+  default:
+    name: hoserva-lab-s9-compose-render_default

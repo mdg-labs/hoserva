@@ -49,6 +49,20 @@ $(error invalid HOSERVA_LAB_ID: must not contain '$$' — no Make or shell expan
 endif
 export HOSERVA_LAB_ID
 COMPOSE_DEV     := docker compose -f docker-compose.dev.yml
+# Optional second compose file, appended only when set. Lets a lab-up/
+# lab-destroy run vary one thing about the standing lab recipe through the
+# real `make` targets instead of a hand-rolled replica of them (CLAUDE.md:
+# "orchestrate, never reimplement") — e.g. S9/issue #10's
+# LAB_COMPOSE_EXTRA=scripts/devenv/docker-compose.apparmor-default.yml.
+# docker-compose.dev.yml itself is never edited for this. Unset by default,
+# so the standing lab's behaviour is unchanged; set only from a trusted
+# workflow or developer shell to a plain repo-relative compose file path
+# (this text is spliced into COMPOSE_DEV below via Make's own `$(...)`
+# substitution, not a shell variable — never set it from template or user
+# input).
+ifneq ($(strip $(LAB_COMPOSE_EXTRA)),)
+COMPOSE_DEV := docker compose -f docker-compose.dev.yml -f $(LAB_COMPOSE_EXTRA)
+endif
 LAB_ID_PATTERN  := ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$$
 LAB_SEED_PROFILE ?= mixed
 

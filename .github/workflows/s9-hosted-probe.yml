@@ -50,47 +50,115 @@ jobs:
         # already treats "container does not exist" as a no-op
         # (Makefile lab-destroy target), so this is a safe no-op when
         # lab-up was never reached.
+        #
+        # Three distinct lab ids are derived from this one base, so the
+        # AppArmor experiment's two ephemeral arms and this job's own
+        # standing lab-up/lab-seed/lab-verify-refusal/SnapRAID-sync run can
+        # never collide: `<id>-apparmor-ctrl`, `<id>-apparmor-var`, and
+        # `<id>` itself.
         id: lab
         run: echo "id=s9-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
 
-      - name: AppArmor necessity check (disposable, not the standing lab)
-        # Mirrors the raw `docker run` recipe doc 08's dev-host S9 finding
-        # used, not `make lab-up` — this checks one flag in isolation, so
-        # it must not touch docker-compose.dev.yml (out of scope) or the
-        # namespaced lab directories a real `make lab-up` owns.
-        #
-        # Full fix history (runs 35049304081, 35056076616, and this
-        # rewrite's own reason — run 35057453620) lives in
-        # spikes/s9/scripts/apparmor-classify.sh's header, not repeated
-        # here: three void verdicts in a row, never from AppArmor. The
-        # short version of the third: the variant's `mount` failed with
-        # libmount's EBUSY message ("already mounted or mount point
-        # busy") and the step's old `else` branch called that "required"
-        # anyway — but an EBUSY means the kernel's AppArmor mount
-        # mediation (`security_sb_mount()`) already let the call through;
-        # it says nothing about AppArmor at all.
-        #
-        # This step no longer classifies anything inline. All of the logic
-        # — failure classification (never inferred from exit status
-        # alone), device attribution (`scripts/devenv/lib.sh`'s own
-        # `lab_assert_own_loop()`, reused rather than reinvented), a
-        # verified detach barrier between branches, a second loop-free
-        # `mount -t tmpfs` mediation probe run alongside the faithful one,
-        # and an order-reversal consistency check — lives in
-        # spikes/s9/scripts/run-apparmor-check.sh and the scripts it calls,
-        # specifically so the pure-text classification part
-        # (spikes/s9/scripts/apparmor-classify.sh) can be exercised
-        # directly and cheaply, without Docker or a loop device, by
-        # spikes/s9/scripts/test-apparmor-classify.sh — see
-        # spikes/s9/results/apparmor-classify-test.log for that run,
-        # committed alongside this change.
-        #
-        # Exit status is the verdict: 0 for a concluded NOT-REQUIRED or
-        # REQUIRED (either is a real answer — this step's job is to reach
-        # one, not to prefer one), 1 for VOID — loud by design, unchanged
-        # from the original step's own "abort loudly instead of asserting
-        # anything" discipline.
-        run: bash spikes/s9/scripts/run-apparmor-check.sh
+      # --- AppArmor necessity check (issue #10) ---
+      #
+      # Six prior attempts (runs 35049304081, 35056076616, 35057453620,
+      # 35068617498, 35071011877, 35075054897) hand-rolled the lab's own
+      # recipe — raw `docker run`, manual `mknod`, `losetup`, `mkfs.xfs`,
+      # `mount` — in a disposable probe script, to test a property of the
+      # REAL lab. CLAUDE.md's first architecture rule is "orchestrate,
+      # never reimplement the storage engine", and every one of those six
+      # voids traced to a bug in the hand-rolled replica (a missing
+      # `mknod`, an undersized image, an EBUSY misread as a denial, a
+      # `set -e` abort, a stale result file, and finally a correct-but-
+      # inconclusive EBUSY) — never to an actual AppArmor finding. A
+      # parallel host-side `sudo dmesg`/`journalctl -k` audit-log capture,
+      # added to try to corroborate a denial, also proved nothing: Docker's
+      # default AppArmor profile denies with a plain `deny mount,` rule,
+      # and in AppArmor a plain `deny` suppresses the audit record — only
+      # `audit deny` logs — so "0 denials found" in that capture was never
+      # evidence of anything.
+      #
+      # This rewrite retires all of that (spikes/s9/scripts/
+      # apparmor-loop-probe.sh, apparmor-tmpfs-probe.sh,
+      # apparmor-classify.sh, run-apparmor-check.sh,
+      # test-apparmor-classify.sh, and the host audit capture) and instead
+      # runs the REAL lab twice through the real `make lab-up`/
+      # `make lab-destroy` targets, with exactly one variable:
+      # docker-compose.dev.yml (the artifact under test, never edited for
+      # this) already sets `security_opt: [apparmor=unconfined]` — the
+      # control arm below runs it completely unmodified; the variant arm
+      # adds `-f scripts/devenv/docker-compose.apparmor-default.yml` (via
+      # the Makefile's own `LAB_COMPOSE_EXTRA` hook), which puts the lab
+      # container back on Docker's default AppArmor profile instead
+      # (rendered and read with `docker compose ... config` before being
+      # trusted — spikes/s9/results/compose-config-{control,variant}.txt).
+      #
+      # The success criterion is the one the real lab recipe already has:
+      # `scripts/devenv/create-array.sh` runs under `set -euo pipefail`,
+      # calls `die` on any failure, and prints "lab <id> ready:" only on
+      # success — `make lab-up` already fails loudly (nonzero exit) on
+      # anything short of that, so no separate text classification of
+      # stderr is needed or attempted here.
+      #
+      # Verdict discipline, unchanged from every prior attempt:
+      #   - control fails  -> the job fails at THIS step, and that failure
+      #     is self-evidently not an AppArmor result: the control step
+      #     doesn't vary AppArmor at all, it's byte-for-byte today's
+      #     already-confirmed lab recipe (run 35057453620). A failure here
+      #     means the recipe itself is broken on this runner — investigate
+      #     that, not AppArmor.
+      #   - variant fails, control succeeded -> reported as REQUIRED,
+      #     without failing the job (a concluded finding is not a workflow
+      #     failure) — `continue-on-error: true` on the variant step lets
+      #     its own real `make lab-up` output stand as the actual error
+      #     text, never re-classified or assumed to be a denial.
+      #   - both succeed -> NOT-REQUIRED.
+      - name: "AppArmor necessity check: control arm (docker-compose.dev.yml unmodified, apparmor=unconfined)"
+        id: apparmor_control
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}-apparmor-ctrl
+        run: make lab-up
+
+      - name: "AppArmor necessity check: control arm teardown"
+        # always(): tears the control lab down whether lab-up above
+        # succeeded or failed (a failed lab-up can still have created a
+        # container/mounts partway through) — the same reasoning as the
+        # standing lab-destroy step at the end of this job.
+        if: always()
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}-apparmor-ctrl
+        run: make lab-destroy
+
+      - name: "AppArmor necessity check: variant arm (scripts/devenv/docker-compose.apparmor-default.yml added — Docker's default AppArmor profile)"
+        # This step only runs if the control step above succeeded (GitHub
+        # Actions' default `if: success()` for a step with no `if:`) — a
+        # failed control already stopped the job before this point, so the
+        # variant is never evaluated against a broken recipe.
+        id: apparmor_variant
+        continue-on-error: true
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}-apparmor-var
+          LAB_COMPOSE_EXTRA: scripts/devenv/docker-compose.apparmor-default.yml
+        run: make lab-up
+
+      - name: "AppArmor necessity check: variant arm teardown"
+        if: always()
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}-apparmor-var
+          LAB_COMPOSE_EXTRA: scripts/devenv/docker-compose.apparmor-default.yml
+        run: make lab-destroy
+
+      - name: "AppArmor necessity check: verdict"
+        # Exits 0 either way: NOT-REQUIRED and REQUIRED are both real,
+        # concluded answers (the check's job is to reach one, not to
+        # prefer one) — a VOID (the control step failing, above) has
+        # already failed the job loudly before this step is ever reached.
+        run: |
+          if [ "${{ steps.apparmor_variant.outcome }}" = "success" ]; then
+            echo "AppArmor necessity check: NOT-REQUIRED — control (apparmor=unconfined) and variant (Docker's default AppArmor profile) both ran the real lab recipe (make lab-up) to completion on this runner."
+          else
+            echo "AppArmor necessity check: REQUIRED — control (apparmor=unconfined) succeeded; the variant (Docker's default AppArmor profile) failed. See the 'variant arm' step's own log above for its actual error text — this verdict is read directly from that failure, never assumed or re-classified."
+          fi
 
       - name: lab-up
         env:
