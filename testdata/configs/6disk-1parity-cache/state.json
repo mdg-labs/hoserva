@@ -1,0 +1,25 @@
+{
+  "parity": "/mnt/parity/snapraid.parity",
+  "content_paths": [
+    "/var/lib/hoserva/snapraid.content",
+    "/mnt/cache/snapraid.content",
+    "/mnt/disk1/snapraid.content"
+  ],
+  "data_disks": [
+    {"name": "d1", "path": "/mnt/disk1/"},
+    {"name": "d2", "path": "/mnt/disk2/"},
+    {"name": "d3", "path": "/mnt/disk3/"},
+    {"name": "d4", "path": "/mnt/disk4/"},
+    {"name": "d5", "path": "/mnt/disk5/"},
+    {"name": "d6", "path": "/mnt/disk6/"}
+  ],
+  "excludes": [
+    "/lost+found/",
+    "/.Trash-*/",
+    "/appdata/",
+    "*.unrecoverable",
+    "/snapraid.content*",
+    "*.hoserva-moving-*",
+    ".DS_Store"
+  ]
+}
