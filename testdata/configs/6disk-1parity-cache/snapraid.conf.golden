@@ -1,0 +1,17 @@
+parity /mnt/parity/snapraid.parity
+content /var/lib/hoserva/snapraid.content
+content /mnt/cache/snapraid.content
+content /mnt/disk1/snapraid.content
+data d1 /mnt/disk1/
+data d2 /mnt/disk2/
+data d3 /mnt/disk3/
+data d4 /mnt/disk4/
+data d5 /mnt/disk5/
+data d6 /mnt/disk6/
+exclude /lost+found/
+exclude /.Trash-*/
+exclude /appdata/
+exclude *.unrecoverable
+exclude /snapraid.content*
+exclude *.hoserva-moving-*
+exclude .DS_Store
