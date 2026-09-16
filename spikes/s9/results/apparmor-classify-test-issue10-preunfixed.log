@@ -1,3 +1,26 @@
+# issue #10 fix round: verbatim output of the CURRENT test-apparmor-
+# classify.sh (including its two new "set -e survival" cases and its five
+# new decide_final_verdict cases) run against the PRE-FIX
+# apparmor-classify.sh from main@437cb25 (classify_verdict/
+# classify_branch_pair still `return 1` on VOID; decide_final_verdict does
+# not exist yet). This is the "before" half of the required before/after
+# demonstration — see apparmor-classify-test.log for the "after" run
+# against the fixed code, all 23 cases passing.
+#
+# The two "set -e survival" cases fail exactly as the bug predicts: exit=1
+# instead of the expected 0, and EMPTY stdout — proving probe 1's own
+# `bash -c` subshell died on the captured VOID return status before even
+# its own "PROBE1_RAN:..." line could print, let alone reach "PROBE2_RAN".
+# The five decide_final_verdict cases fail with "command not found"
+# (exit=127) because that function is new in this fix round and does not
+# exist in the pre-fix file at all — expected, not a second bug.
+#
+# Command run to produce this file (from spikes/s9/scripts/, with
+# apparmor-classify.sh replaced by the git-HEAD/main@437cb25 copy in that
+# same directory, so `source "$HERE/apparmor-classify.sh"` picks up the
+# unfixed file):
+#   bash test-apparmor-classify.sh
+#
 == classify_mount_failure: single-branch cases ==
 
 PASS  run-35057453620 verbatim EBUSY                exit=32   -> OTHER-FAILURE  (expected OTHER-FAILURE)
@@ -35,22 +58,26 @@ PASS  control hit sentinel 97 despite a stale result/exit=0 present -> VOID via 
 
 == set -e survival: a VOID verdict must not abort the caller (issue #10 fix round) ==
 
-PASS  a VOID at probe 1 does not stop probe 2 from running, under set -euo pipefail -> exit=0
-PASS  a VOID classify_branch_pair result does not stop the next probe from running, under set -euo pipefail -> exit=0
+FAIL  a VOID at probe 1 does not stop probe 2 from running, under set -euo pipefail -> exit=1 (expected 0)
+      stdout: ''
+      expected stdout: $'PROBE1_RAN:VOID\nPROBE2_RAN:NOT-REQUIRED'
+FAIL  a VOID classify_branch_pair result does not stop the next probe from running, under set -euo pipefail -> exit=1 (expected 0)
+      stdout: ''
+      expected stdout: $'PROBE1_RAN:VOID\nPROBE2_RAN:NOT-REQUIRED'
 
 == decide_final_verdict: the orchestrator's combined-decision step (issue #10 fix round) ==
 
-PASS  both probes agree NOT-REQUIRED, tmpfs order-consistent                 -> NOT-REQUIRED   exit=0 (expected NOT-REQUIRED exit=0)
-      reason: Both probes agree (loop: NOT-REQUIRED, tmpfs: NOT-REQUIRED), and the tmpfs probe is order-consistent — this is a strong result.
-PASS  both probes agree REQUIRED, tmpfs order-consistent                     -> REQUIRED       exit=0 (expected REQUIRED exit=0)
-      reason: Both probes agree (loop: REQUIRED, tmpfs: REQUIRED), and the tmpfs probe is order-consistent — this is a strong result.
-PASS  loop probe individually VOID -> combined VOID, non-zero exit           -> VOID           exit=1 (expected VOID exit=1)
-      reason: At least one probe was individually VOID — loop probe: VOID, tmpfs probe: NOT-REQUIRED (see each probe's own reasoning above, on stderr). A VOID probe cannot be outvoted by the other probe's result.
-PASS  tmpfs probe order-sensitive (forward != reversed) -> combined VOID, non-zero exit -> VOID           exit=1 (expected VOID exit=1)
-      reason: The tmpfs probe disagreed with itself depending on which branch ran first: forward order said NOT-REQUIRED, reversed order said REQUIRED. That is an order-sensitivity confound (requirement G) — exactly the kind of thing that produced run 35057453620's wrong verdict — and it is reported as a finding, not resolved by picking either order's answer.
-PASS  probes disagree with each other -> combined VOID, non-zero exit        -> VOID           exit=1 (expected VOID exit=1)
-      reason: The two independent probes DISAGREED: the faithful loop/XFS probe said REQUIRED, the loop-free tmpfs mediation probe said NOT-REQUIRED. Per requirement F, neither probe may claim the other's result — this disagreement is itself the finding this run establishes, and needs investigating (which operation differs between the two recipes under the default profile) before either answer can be trusted.
+FAIL  both probes agree NOT-REQUIRED, tmpfs order-consistent                 ->                exit=127 (expected NOT-REQUIRED exit=0)
+      test-apparmor-classify.sh: Zeile 350: decide_final_verdict: Kommando nicht gefunden
+FAIL  both probes agree REQUIRED, tmpfs order-consistent                     ->                exit=127 (expected REQUIRED exit=0)
+      test-apparmor-classify.sh: Zeile 350: decide_final_verdict: Kommando nicht gefunden
+FAIL  loop probe individually VOID -> combined VOID, non-zero exit           ->                exit=127 (expected VOID exit=1)
+      test-apparmor-classify.sh: Zeile 350: decide_final_verdict: Kommando nicht gefunden
+FAIL  tmpfs probe order-sensitive (forward != reversed) -> combined VOID, non-zero exit ->                exit=127 (expected VOID exit=1)
+      test-apparmor-classify.sh: Zeile 350: decide_final_verdict: Kommando nicht gefunden
+FAIL  probes disagree with each other -> combined VOID, non-zero exit        ->                exit=127 (expected VOID exit=1)
+      test-apparmor-classify.sh: Zeile 350: decide_final_verdict: Kommando nicht gefunden
 
-== summary: 23/23 passed ==
+== summary: 16/23 passed ==
 
-# exit status: 0
+# exit status: 1

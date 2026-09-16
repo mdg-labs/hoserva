@@ -1,0 +1,67 @@
+# Excerpt of gh run view 35068617498 --repo mdg-labs/hoserva --job 104704596000 --log
+# (job 'Loop-device lab + SnapRAID sync (L2)', run https://github.com/mdg-labs/hoserva/actions/runs/35068617498,
+# workflow_dispatch on main at 437cb25, 2026-09-16, conclusion: failure)
+# Fetched read-only, never re-run by this spike (no agent triggers a workflow). Trimmed here
+# to "Derive this run's lab id" (confirms it now runs before the AppArmor step), the AppArmor
+# step in full (probe 1/2 ran and correctly voided on an EBUSY; probe 2/2 never appeared —
+# the control-flow bug this commit, this fix round, fixes), and
+# lab-destroy (confirms it used the real derived id and no-op'd cleanly, not the empty-id
+# failure run 35056076616 hit). debconf and docker-pull noise inside the disposable AppArmor
+# probe container is trimmed.
+Derive this run's lab id	﻿2026-09-16T07:27:36.2818186Z ##[group]Run echo "id=s9-35068617498-1" >> "$GITHUB_OUTPUT"
+Derive this run's lab id	2026-09-16T07:27:36.2820004Z ^[[36;1mecho "id=s9-35068617498-1" >> "$GITHUB_OUTPUT"^[[0m
+Derive this run's lab id	2026-09-16T07:27:36.2855215Z shell: /usr/bin/bash -e {0}
+Derive this run's lab id	2026-09-16T07:27:36.2856417Z ##[endgroup]
+AppArmor necessity check (disposable, not the standing lab)	﻿2026-09-16T07:27:36.3010073Z ##[group]Run bash spikes/s9/scripts/run-apparmor-check.sh
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:36.3012404Z ^[[36;1mbash spikes/s9/scripts/run-apparmor-check.sh^[[0m
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:36.3046439Z shell: /usr/bin/bash -e {0}
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:36.3047594Z ##[endgroup]
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:36.3149451Z ############################################
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:36.3151332Z ## Probe 1/2: faithful loop/XFS recipe
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:36.3153476Z ############################################
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:36.3155317Z ## === loop probe: control (apparmor=unconfined) ===
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:36.3165290Z ## running apparmor-loop-probe.sh (--security-opt apparmor=unconfined) in /tmp/tmp.TBmr7FroZm
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8412165Z ## apparmor-loop-probe.sh container exit: 0
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8424849Z ### loop probe control diagnostics (/tmp/tmp.TBmr7FroZm)
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8442277Z device: /dev/loop0
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8447079Z step that failed: none
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8452066Z exit: 0
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8466755Z attribution: OK
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8481579Z detach barrier: OK
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8482183Z stderr:
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8492993Z losetup -a after attach:
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8501559Z /dev/loop0: [2049]:8939735 (/probe/img/probe.img)
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8503879Z losetup -a at end:
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8514411Z apparmor profiles listing:
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8524186Z not available in this container
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8526531Z kernel/audit apparmor lines (dmesg + journalctl -k, best-effort):
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8537848Z 
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8538300Z ## === loop probe: variant (default AppArmor profile) ===
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:45.8554365Z ## running apparmor-loop-probe.sh (default profile) in /tmp/tmp.rWtBS69jZP
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9527726Z ## apparmor-loop-probe.sh container exit: 0
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9528570Z ### loop probe variant diagnostics (/tmp/tmp.rWtBS69jZP)
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9544974Z device: /dev/loop0
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9560701Z step that failed: mount
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9577404Z exit: 32
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9594172Z attribution: OK
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9610003Z detach barrier: OK
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9610502Z stderr:
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9620471Z mount: /probe/mnt: /dev/loop0 already mounted or mount point busy.
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9621621Z        dmesg(1) may have more information after failed mount system call.
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9622361Z losetup -a after attach:
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9632105Z /dev/loop0: [2049]:8939751 (/probe/img/probe.img)
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9633637Z losetup -a at end:
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9645271Z apparmor profiles listing:
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9654537Z not available in this container
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9656039Z kernel/audit apparmor lines (dmesg + journalctl -k, best-effort):
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9667316Z 
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9765668Z reason: control succeeded, but the variant failed for a reason other than a confirmed AppArmor denial [exit=32]. An EBUSY, a missing device node, an undersized filesystem, or any other non-denial failure says nothing about AppArmor necessity — see run 35057453620, whose EBUSY ("already mounted or mount point busy") was wrongly read as a denial by the probe this file replaces.
+AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:27:51.9780522Z ##[error]Process completed with exit code 1.
+lab-destroy	﻿2026-09-16T07:27:51.9864669Z ##[group]Run make lab-destroy
+lab-destroy	2026-09-16T07:27:51.9864988Z ^[[36;1mmake lab-destroy^[[0m
+lab-destroy	2026-09-16T07:27:51.9902729Z shell: /usr/bin/bash -e {0}
+lab-destroy	2026-09-16T07:27:51.9902981Z env:
+lab-destroy	2026-09-16T07:27:51.9903179Z   HOSERVA_LAB_ID: s9-35068617498-1
+lab-destroy	2026-09-16T07:27:51.9903432Z ##[endgroup]
+lab-destroy	2026-09-16T07:27:52.2397618Z lab s9-35068617498-1: container does not exist, nothing to tear down
+lab-destroy	2026-09-16T07:27:52.2399267Z docker compose -f docker-compose.dev.yml -p "hoserva-lab-$HOSERVA_LAB_ID" down -v
