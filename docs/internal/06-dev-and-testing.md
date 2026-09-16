@@ -364,7 +364,7 @@ The residual risks above are exercised by volunteers on their own hardware, neve
 - **There are no self-hosted runners** (Q79, D20). What hosted runners can't run, agents run on the development host — in the lab and user-session VMs — as a required step before every release.
 - **No workflow uses `pull_request_target` to check out PR code.**
 - **First-time contributors' workflows require approval** (repository setting).
-- Spike S9 confirms hosted runners support loop devices, FUSE and `/dev/kvm` for the pinned toolchain; wherever hosted KVM suffices, L3 runs there nightly.
+- Spike S9 confirms hosted runners support loop devices and FUSE — `ci.yml`'s own `lab` job has run L2 successfully in production (run 34950031773). `/dev/kvm` support is not yet confirmed: a probe workflow exists (`.github/workflows/s9-hosted-probe.yml`, doc 08 §9) but has never executed, since triggering it needs a maintainer push. Until that result exists, L3 stays on the dev host (Q79).
 
 ### Pipeline
 
