@@ -1,0 +1,33 @@
+# Keep the desktop's storage daemon away from the lab's loop devices.
+#
+# Install (needs root, once per dev machine):
+#   sudo install -m 0644 scripts/devenv/99-hoserva-lab-loop.rules \
+#       /etc/udev/rules.d/99-hoserva-lab-loop.rules
+#   sudo udevadm control --reload-rules
+#
+# Why this exists (doc 06 §3, issue #119): a loop device is a host-global
+# object. The moment the lab container attaches one and puts a filesystem on
+# it, udisks2 on the developer's desktop sees a new mountable volume and
+# reacts — mounting it read-write under /run/media/<user>/ and, on a session
+# with a polkit agent, raising an authentication dialog to do so.
+#
+# That is not cosmetic:
+#   - the same filesystem ends up mounted read-write twice at once, by the
+#     container and by the host, which can corrupt it on unmount;
+#   - host-side activity lands in the very IO counters the spikes measure;
+#   - each attach and each detach raises another dialog, and three failed
+#     authentications trip pam_faillock's default deny=3 and lock the
+#     developer out of their own account, sudo included.
+#
+# UDISKS_IGNORE makes udisks2 skip loop devices entirely: no probing, no
+# automount, no dialog. The trade-off is that a file manager will no longer
+# offer to mount an ISO for you; mount it deliberately instead
+# (`udisksctl loop-setup -f file.iso` still works for a device you set up
+# yourself). To revert: delete the installed file and reload the rules.
+#
+# This matches all loop devices, not only the lab's. Matching on
+# ATTR{loop/backing_file} would be narrower, but the backing path a lab
+# device reports is the one inside the container's mount namespace
+# (/lab/<id>/img/...), not a host path, so a host-side match on the
+# workspace directory does not fire reliably.
+SUBSYSTEM=="block", KERNEL=="loop*", ENV{UDISKS_IGNORE}="1"
