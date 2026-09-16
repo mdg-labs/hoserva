@@ -1,0 +1,4 @@
+mergerfs 2.40.2-5
+snapraid 12.4-1
+attr 1:2.5.2-3
+(dpkg-query -W -f '${Package} ${Version}\n', never --version — Debian's mergerfs reports vunknown, doc 08 S9)

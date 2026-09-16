@@ -1,0 +1,152 @@
+== mergerfs pkg version (metadata, never --version) ==
+mergerfs 2.40.2-5
+== mount command ==
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,dropcacheonclose=true,minfreespace=50M,fsname=hoserva-s8,cache.files=partial,cache.statfs=0,cache.entry=1,cache.attr=1,cache.negative_entry=1 /lab/9-a1/mnt/disk1:/lab/9-a1/mnt/disk2:/lab/9-a1/mnt/disk3 /lab/9-a1/mnt/pool-s8
+pid=284
+== findmnt (fsname / mount-reported view) ==
+hoserva-s8 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+== full runtime control-file dump: getfattr -d $MNT/.mergerfs ==
+getfattr: Removing leading '/' from absolute path names
+# file: lab/9-a1/mnt/pool-s8/.mergerfs
+user.mergerfs.async_read="true"
+user.mergerfs.auto_cache="false"
+user.mergerfs.branches="/lab/9-a1/mnt/disk1=RW:/lab/9-a1/mnt/disk2=RW:/lab/9-a1/mnt/disk3=RW"
+user.mergerfs.branches-mount-timeout="0"
+user.mergerfs.cache.attr="1"
+user.mergerfs.cache.entry="1"
+user.mergerfs.cache.files="partial"
+user.mergerfs.cache.files.process-names="qbittorrent-nox|rtorrent"
+user.mergerfs.cache.negative_entry="1"
+user.mergerfs.cache.readdir="false"
+user.mergerfs.cache.statfs="0"
+user.mergerfs.cache.symlinks="false"
+user.mergerfs.cache.writeback="false"
+user.mergerfs.category.action="epall"
+user.mergerfs.category.create="mspmfs"
+user.mergerfs.category.search="ff"
+user.mergerfs.direct_io="false"
+user.mergerfs.dropcacheonclose="true"
+user.mergerfs.export-support="true"
+user.mergerfs.flush-on-close="opened-for-write"
+user.mergerfs.follow-symlinks="never"
+user.mergerfs.fsname="hoserva-s8"
+user.mergerfs.func.access="ff"
+user.mergerfs.func.chmod="epall"
+user.mergerfs.func.chown="epall"
+user.mergerfs.func.create="mspmfs"
+user.mergerfs.func.getattr="ff"
+user.mergerfs.func.getxattr="ff"
+user.mergerfs.func.link="epall"
+user.mergerfs.func.listxattr="ff"
+user.mergerfs.func.mkdir="mspmfs"
+user.mergerfs.func.mknod="mspmfs"
+user.mergerfs.func.open="ff"
+user.mergerfs.func.readdir="seq"
+user.mergerfs.func.readlink="ff"
+user.mergerfs.func.removexattr="epall"
+user.mergerfs.func.rename="epall"
+user.mergerfs.func.rmdir="epall"
+user.mergerfs.func.setxattr="epall"
+user.mergerfs.func.symlink="mspmfs"
+user.mergerfs.func.truncate="epall"
+user.mergerfs.func.unlink="epall"
+user.mergerfs.func.utimens="epall"
+user.mergerfs.fuse_msg_size="256"
+user.mergerfs.ignorepponrename="false"
+user.mergerfs.inodecalc="hybrid-hash"
+user.mergerfs.kernel_cache="false"
+user.mergerfs.lazy-umount-mountpoint="false"
+user.mergerfs.link-exdev="passthrough"
+user.mergerfs.link_cow="false"
+user.mergerfs.log.metrics="false"
+user.mergerfs.minfreespace="52428800"
+user.mergerfs.mount="/lab/9-a1/mnt/pool-s8"
+user.mergerfs.moveonenospc="mfs"
+user.mergerfs.nfsopenhack="off"
+user.mergerfs.nullrw="false"
+user.mergerfs.parallel-direct-writes="false"
+user.mergerfs.pid="284"
+user.mergerfs.pin-threads="false"
+user.mergerfs.posix_acl="false"
+user.mergerfs.process-thread-count="-1"
+user.mergerfs.process-thread-queue-depth="0"
+user.mergerfs.read-thread-count="0"
+user.mergerfs.readahead="0"
+user.mergerfs.readdirplus="false"
+user.mergerfs.rename-exdev="passthrough"
+user.mergerfs.scheduling-priority="-10"
+user.mergerfs.security_capability="true"
+user.mergerfs.srcmounts="/lab/9-a1/mnt/disk1:/lab/9-a1/mnt/disk2:/lab/9-a1/mnt/disk3"
+user.mergerfs.statfs="base"
+user.mergerfs.statfs_ignore="none"
+user.mergerfs.symlinkify="false"
+user.mergerfs.symlinkify_timeout="3600"
+user.mergerfs.threads="0"
+user.mergerfs.version="unknown"
+user.mergerfs.xattr="passthrough"
+
+== individual doc 02 §1 keys, read one at a time ==
+-- user.mergerfs.category.create --
+getfattr: Removing leading '/' from absolute path names
+# file: lab/9-a1/mnt/pool-s8/.mergerfs
+user.mergerfs.category.create="mspmfs"
+
+-- user.mergerfs.moveonenospc --
+getfattr: Removing leading '/' from absolute path names
+# file: lab/9-a1/mnt/pool-s8/.mergerfs
+user.mergerfs.moveonenospc="mfs"
+
+-- user.mergerfs.dropcacheonclose --
+getfattr: Removing leading '/' from absolute path names
+# file: lab/9-a1/mnt/pool-s8/.mergerfs
+user.mergerfs.dropcacheonclose="true"
+
+-- user.mergerfs.minfreespace --
+getfattr: Removing leading '/' from absolute path names
+# file: lab/9-a1/mnt/pool-s8/.mergerfs
+user.mergerfs.minfreespace="52428800"
+
+-- user.mergerfs.cache.files --
+getfattr: Removing leading '/' from absolute path names
+# file: lab/9-a1/mnt/pool-s8/.mergerfs
+user.mergerfs.cache.files="partial"
+
+-- user.mergerfs.cache.statfs --
+getfattr: Removing leading '/' from absolute path names
+# file: lab/9-a1/mnt/pool-s8/.mergerfs
+user.mergerfs.cache.statfs="0"
+
+-- user.mergerfs.cache.entry --
+getfattr: Removing leading '/' from absolute path names
+# file: lab/9-a1/mnt/pool-s8/.mergerfs
+user.mergerfs.cache.entry="1"
+
+-- user.mergerfs.cache.attr --
+getfattr: Removing leading '/' from absolute path names
+# file: lab/9-a1/mnt/pool-s8/.mergerfs
+user.mergerfs.cache.attr="1"
+
+-- user.mergerfs.cache.negative_entry --
+getfattr: Removing leading '/' from absolute path names
+# file: lab/9-a1/mnt/pool-s8/.mergerfs
+user.mergerfs.cache.negative_entry="1"
+
+-- user.mergerfs.branches --
+getfattr: Removing leading '/' from absolute path names
+# file: lab/9-a1/mnt/pool-s8/.mergerfs
+user.mergerfs.branches="/lab/9-a1/mnt/disk1=RW:/lab/9-a1/mnt/disk2=RW:/lab/9-a1/mnt/disk3=RW"
+
+== create-policy round-trip: setfattr then getfattr, for every doc 02 §1 policy ==
+set=mspmfs reported=mspmfs
+set=mfs reported=mfs
+set=lfs reported=lfs
+set=ff reported=ff
+set=epmfs reported=epmfs
+== a file written through the mount, to confirm the mount is genuinely live, not just reporting xattrs ==
+probe landed on: disk3
+probe read-back matches
+== cache.files effective mount-option is also visible via /proc mountinfo super options ==
+628 661 0:143 / /lab/9-a1/mnt/pool-s8 rw,nosuid,nodev,relatime - fuse.mergerfs hoserva-s8 rw,user_id=0,group_id=0,default_permissions,allow_other
+== teardown: unmount and confirm the pid exits cleanly ==
+pid 284 exited cleanly after unmount
+OK

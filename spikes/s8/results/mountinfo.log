@@ -1,0 +1,1 @@
+628 661 0:143 / /lab/9-a1/mnt/pool-s8 rw,nosuid,nodev,relatime - fuse.mergerfs hoserva-s8 rw,user_id=0,group_id=0,default_permissions,allow_other

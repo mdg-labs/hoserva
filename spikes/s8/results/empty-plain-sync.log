@@ -1,0 +1,11 @@
+Self test...
+Loading state from /lab/9-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d1 in 0 seconds
+Scanned d2 in 0 seconds
+Scanned d3 in 0 seconds
+WARNING! All the files previously present in disk 'd3' at dir '/lab/9-a1/mnt/disk3/'
+are now missing or have been rewritten!
+This could occur when some disks are not mounted
+in the expected directory.
+If you want to 'sync' anyway, use 'snapraid --force-empty sync'.
