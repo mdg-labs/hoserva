@@ -27,7 +27,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
 | **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
-| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81, Q82 (Q33–Q35 settled → D19) |
+| **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
 | **Before 1.0** | Q47, Q50 |
 
@@ -321,6 +321,16 @@ R5's "fail loudly on unknown layouts" needs a concrete allowlist to fail against
 **The contradiction:** Phase B step 11 removes the Unraid USB stick. Step 15 then seeds shares and users from config "exported in step 3", but the doc never says where that export is stored or how Hoserva reads it. Doc 05 §3 also offers to run the scan "from a live environment", which doesn't exist until the Phase 4 ISO.
 
 **Default: the migrator reads Unraid configuration from the Flash Backup zip that step 1 already produces, uploaded through the UI or given as a path. Alternatively it reads from the stick itself, mounted read-only.** It never writes to the stick. The scan runs on the freshly installed Hoserva, before any import. That is still well before the point of no return (step 17), so it keeps the rollback guarantee without needing a live environment. Unraid-side checks that need a running Unraid (the final parity check) become a printable pre-cutover checklist.
+
+### Q83 — Unraid User Scripts *(gap)*
+**Status:** Default · **Gate:** Phase 3 · **Affects:** doc 05 §3, §4
+
+**The gap:** a migrating user can carry dozens of Unraid User Scripts plugin entries encoding real operational behaviour — backups, cleanups, notifications — and doc 05 had no stated position on them: not migrate, not report, not out of scope.
+
+**Default: inventory and report, never execute or auto-translate.** The pre-flight scan lists every User Scripts entry it finds — name, schedule and enabled state — in the go/no-go report, and the user decides what to do with each one. Hoserva never runs a migrated script and never translates one into a job automatically.
+This fits the scan's existing role: it already reports things it does not migrate (appdata location, UID/GID distribution, disk serial mapping). Executing or auto-translating arbitrary third-party shell would violate `CLAUDE.md`'s "never interpolate user or template input into a shell" and has unbounded scope. It mirrors the converter's "never silently drop" principle (doc 04 §5) — the user is told what existed rather than discovering the absence later.
+
+**Unconfirmed:** where the plugin stores scripts and schedules, and whether they are inside the Flash Backup zip the scan already reads (Q25), has not been verified — there is no Unraid system or flash source available to check it against. The plugin is conventionally understood to write under `/boot/config/plugins/` on the flash drive, which would put it inside the same tree Q25 already relies on, but this doc treats that as an assumption, not a fact, until it is verified against the plugin's own source or a real config tree. If it turns out the scripts live somewhere the Flash Backup doesn't reach, the fallback is to read them from the adopted pool in Phase D instead, without widening what the pre-flight scan touches.
 
 ### Q26 — Share ownership and UID/GID model *(gap)*
 **Status:** Default (verify on fixture) · **Gate:** Phase 2 · **Affects:** doc 03 §4.2, §7, doc 04 §5, §7, doc 05 §4
