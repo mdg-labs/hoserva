@@ -32,7 +32,7 @@ Every subsystem touching the real system sits behind an interface (doc 01 §4). 
 // internal/disk/provider.go
 type Provider interface {
     List(ctx) ([]Disk, error)
-    SMART(ctx, dev string) (SMARTReport, error)
+    SMART(ctx, dev string, mode SMARTPollMode) (SMARTReport, error)
     Spindown(ctx, dev string) error
     Format(ctx, dev string, fs FilesystemType) error
 }

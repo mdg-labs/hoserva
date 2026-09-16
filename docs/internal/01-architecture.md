@@ -194,7 +194,7 @@ Every subsystem that touches the real system sits behind an interface, named by 
 // package disk
 type Provider interface {
     List(ctx context.Context) ([]Disk, error)
-    SMART(ctx context.Context, dev string) (SMARTReport, error)
+    SMART(ctx context.Context, dev string, mode SMARTPollMode) (SMARTReport, error) // mode: respect standby (smartctl -n standby) or force a wake
     Spindown(ctx context.Context, dev string) error
     Format(ctx context.Context, dev string, fs FilesystemType) error
 }
