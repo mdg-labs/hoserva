@@ -46,10 +46,14 @@ with exactly that id. The executor's lab for this unit shares the id and
 should already be gone — if `docker ps --filter name=hoserva-lab-{{LAB_ID}}`
 shows it still running, that is a finding (the executor didn't clean up), and
 you destroy it before starting yours. **Destroy your lab and confirm it is
-gone before you hand off.** Never `losetup -D`; never stop, remove or prune
-a container you did not create. If the lab doesn't exist in this repo yet,
-storage-behaviour checks cannot run: say so, and judge whether the issue's
-acceptance could honestly be met without them (usually it could not).
+gone before you hand off.** Never `losetup -D`; to confirm nothing is left
+attached, run
+`find /sys/devices/virtual/block -maxdepth 3 -path '*/loop/backing_file' -exec cat {} +`
+— clean is **nothing printed, exit 0**; never `losetup -a`/`-l` on the host
+for this. Never stop, remove or prune a container you did not create. If the
+lab doesn't exist in this repo yet, storage-behaviour checks cannot run: say
+so, and judge whether the issue's acceptance could honestly be met without
+them (usually it could not).
 
 VMs likewise run only through the `vm-*` `make` targets, as your user under
 `qemu:///session`, with domain names carrying `{{LAB_ID}}` — never
