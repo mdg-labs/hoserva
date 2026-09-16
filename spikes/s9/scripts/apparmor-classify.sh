@@ -26,6 +26,23 @@
 #     mediation is implemented as — already returned before the busy check
 #     ran; an EBUSY return is proof mediation was *passed*, not evidence it
 #     denied anything.
+#   - issue #10 host-audit fix round (this round): every prior run's
+#     "kernel/audit apparmor lines" and "apparmor profiles listing" came up
+#     empty or "not available" — not because there was nothing to find, but
+#     because apparmor-loop-probe.sh/apparmor-tmpfs-probe.sh were reading
+#     `dmesg`/`journalctl -k` *inside the unprivileged probe container*,
+#     which was never going to see the host kernel's ring buffer, and both
+#     silently fell back to an empty file (`|| : > …`) on failure — so a
+#     capture that could never work looked identical to one that ran and
+#     found nothing. run-apparmor-check.sh now also captures the runner
+#     HOST's dmesg/journalctl -k (that script runs on the host itself, not
+#     in a container) after each branch, merges any AppArmor lines into the
+#     same audit-apparmor-lines.log this file already reads, and records
+#     the capture's own success/failure distinctly (describe_audit_capture,
+#     below) so a future run's diagnostics can no longer read "could not
+#     read the kernel log at all" as "no denial happened". This file's own
+#     read_result/audit_corroborates_denial are unchanged by that — they
+#     already treated the log as best-effort evidence, never a gate.
 #   - fix round (this file's read_result/classify_branch_pair, moved here
 #     from run-apparmor-check.sh): apparmor-loop-probe.sh used to write a
 #     success-shaped placeholder result file (exit=0, step=none, empty
@@ -39,6 +56,17 @@
 #     and classify_branch_pair below now trusts a nonzero, non-97 docker
 #     exit over anything a result file claims, so neither probe script has
 #     to get its write-order exactly right for the reader to stay correct.
+#   - issue #10 fix round (hosted-runner guard, this round): the host-audit
+#     fix round above added run-apparmor-check.sh calls to `sudo dmesg`,
+#     `sudo journalctl -k` and `sudo cat
+#     /sys/kernel/security/apparmor/profiles`, guarded only by a comment
+#     saying the function "must only ever run on that hosted runner — never
+#     on a maintainer's dev host" — not a runtime check, so nothing stopped
+#     those `sudo` calls from firing, and prompting, on a dev host.
+#     hosted_runner_guard (below) is the actual check: a pure function so
+#     it can be unit-tested (test-apparmor-classify.sh) without running
+#     run-apparmor-check.sh at all — running that script, even expecting it
+#     to refuse, is exactly the hazard a faulty guard would be.
 #
 # classify_mount_failure never infers a denial from "some string on
 # stderr" or "nonzero exit" alone: it requires text that names the
@@ -48,6 +76,39 @@
 # Every other nonzero exit — EBUSY, ENODEV, "too small for mkfs.xfs", a
 # missing loop node, anything else — classifies as OTHER-FAILURE, which
 # the caller must turn into VOID, never REQUIRED.
+
+# hosted_runner_guard GITHUB_ACTIONS_VALUE
+# Echoes "allow" or "refuse" and returns 0/1 to match (same echo-status-
+# and-return-matching-bool convention as describe_audit_capture, below).
+# Positive-signal only, by design (issue #10 fix round, guarding
+# run-apparmor-check.sh's host-side `sudo dmesg` / `sudo journalctl -k` /
+# `sudo cat /sys/kernel/security/apparmor/profiles` calls): the ONLY thing
+# that allows is GITHUB_ACTIONS_VALUE being exactly the literal string
+# "true" — the value GitHub Actions sets in GITHUB_ACTIONS for every
+# workflow job
+# (https://docs.github.com/actions/learn-github-actions/variables#default-environment-variables).
+# Unset, empty, "false", "1", "TRUE" (wrong case), or anything else all
+# refuse. This is deliberately the inverse of "proceed unless something
+# looks like a dev host": a heuristic shaped like that fails open the
+# moment a dev shell happens to export a variable it doesn't check for,
+# and a false "allow" here is not a wrong test result — it is a `sudo`
+# call reaching the caller's desktop session (CLAUDE.md's absolute rule
+# on never triggering an authentication prompt on the host). No override
+# parameter is accepted, on purpose: an escape hatch (`FORCE=1` or
+# similar) is exactly how a guard like this ends up bypassed on a dev
+# host anyway. See run-apparmor-check.sh's own call site for where this
+# is enforced, and test-apparmor-classify.sh for the cases this promises.
+hosted_runner_guard() {
+  local github_actions_value="${1:-}"
+
+  if [[ "$github_actions_value" == "true" ]]; then
+    echo "allow"
+    return 0
+  fi
+
+  echo "refuse"
+  return 1
+}
 
 # classify_mount_failure EXIT_CODE STDERR_TEXT
 # Echoes exactly one of: SUCCESS DENIED OTHER-FAILURE
@@ -86,6 +147,64 @@ audit_corroborates_denial() {
   local audit_text="$1"
   grep -qiE 'apparmor="DENIED".*operation="mount"|apparmor="DENIED".*operation="mount"' <<<"$audit_text" 2>/dev/null && return 0
   grep -qiE 'apparmor="DENIED"' <<<"$audit_text" 2>/dev/null && grep -qiE 'operation="mount"' <<<"$audit_text" 2>/dev/null
+}
+
+# other_failure_with_audit_denial VARIANT_AUDIT
+# True (exit 0) if the variant's own stderr did NOT classify as a denial
+# (classify_mount_failure said OTHER-FAILURE — an EBUSY, a missing device
+# node, an undersized filesystem, anything else) but the runner's kernel
+# audit log nonetheless carries a genuine AppArmor mount-denial record for
+# that branch. This is the explicit, separately-named path issue #10's
+# review history requires for that combination (see classify_verdict's
+# OTHER-FAILURE case, immediately below, for what it does with a true
+# result and why): it must never be folded into classify_mount_failure's
+# own DENIED case by widening the stderr string match — five review rounds
+# already rejected exactly that shortcut. It is a thin, testable wrapper
+# around audit_corroborates_denial so the two call sites (a plain
+# OTHER-FAILURE, and an OTHER-FAILURE with audit corroboration) can be
+# exercised as distinct cases in test-apparmor-classify.sh without
+# duplicating the audit-format regex.
+other_failure_with_audit_denial() {
+  local variant_audit="$1"
+  [[ -n "$variant_audit" ]] && audit_corroborates_denial "$variant_audit"
+}
+
+# describe_audit_capture DMESG_RC JOURNAL_RC LINE_COUNT
+# Pure formatting for run-apparmor-check.sh's host-side kernel/audit
+# capture (issue #10 host-audit fix round) — decoupled from actually
+# running `dmesg`/`journalctl -k` so it can be unit-tested on a dev host
+# that must never invoke `sudo` itself (CLAUDE.md). DMESG_RC/JOURNAL_RC are
+# the exit statuses of the two capture commands (0 = readable); LINE_COUNT
+# is how many AppArmor-mentioning lines were found across both, once at
+# least one of them was readable.
+#
+# Echoes exactly one status line on stdout and returns 0 if at least one
+# source was readable (the "ok" case, whether or not it found any lines —
+# 0 found lines is a real answer, not a failure), or returns 1 with a
+# "failed: ..." status line if BOTH sources were unreadable — the case the
+# old `|| : > file` pattern collapsed into an indistinguishable empty file.
+# The caller (run-apparmor-check.sh) writes this echoed line to
+# result/audit-capture-status and shows it in diagnostics; it is never fed
+# back into classify_verdict/audit_corroborates_denial, which still only
+# ever see the merged audit-apparmor-lines.log content itself.
+describe_audit_capture() {
+  local dmesg_rc="$1" journal_rc="$2" line_count="$3"
+
+  if [[ "$dmesg_rc" -ne 0 && "$journal_rc" -ne 0 ]]; then
+    echo "failed: could not read host dmesg (rc=$dmesg_rc) or host journalctl -k (rc=$journal_rc) — this runner's kernel log was not reachable, not evidence of an absence of denials"
+    return 1
+  fi
+
+  local sources
+  if [[ "$dmesg_rc" -eq 0 && "$journal_rc" -eq 0 ]]; then
+    sources="host dmesg + host journalctl -k"
+  elif [[ "$dmesg_rc" -eq 0 ]]; then
+    sources="host dmesg only (journalctl -k unreadable, rc=$journal_rc)"
+  else
+    sources="host journalctl -k only (dmesg unreadable, rc=$dmesg_rc)"
+  fi
+  echo "ok: $line_count apparmor line(s) found ($sources)"
+  return 0
 }
 
 # classify_verdict CONTROL_EXIT CONTROL_STDERR VARIANT_EXIT VARIANT_STDERR [VARIANT_AUDIT]
@@ -145,7 +264,25 @@ classify_verdict() {
       ;;
     OTHER-FAILURE)
       echo "VOID"
-      echo "reason: control succeeded, but the variant failed for a reason other than a confirmed AppArmor denial [exit=$variant_exit]. An EBUSY, a missing device node, an undersized filesystem, or any other non-denial failure says nothing about AppArmor necessity — see run 35057453620, whose EBUSY (\"already mounted or mount point busy\") was wrongly read as a denial by the probe this file replaces." >&2
+      # issue #10 host-audit fix round: OTHER-FAILURE (EBUSY, etc.) on its
+      # own always VOIDs, exactly as before — but now that a variant branch
+      # can actually carry a host-captured kernel audit record, it is
+      # possible for that record to show a genuine AppArmor mount denial
+      # *alongside* a non-denial stderr. This is deliberately NOT folded
+      # into DENIED/REQUIRED (classify_mount_failure's stderr match is left
+      # exactly as it was — see this file's top-of-file comment on run
+      # 35057453620 for why widening it was rejected). It stays VOID, via
+      # this file's own explicit, separately-named path
+      # (other_failure_with_audit_denial) so the two cases get distinct
+      # reasoning text and distinct tests, rather than the audit record
+      # being silently dropped on the floor: the record itself, printed in
+      # this run's diagnostics, is the actionable evidence for a human to
+      # look at — this function does not resolve the conflict for them.
+      if other_failure_with_audit_denial "$variant_audit"; then
+        echo "reason: control succeeded; the variant failed for a reason other than a confirmed denial in its own stderr [exit=$variant_exit, classify_mount_failure=$variant_status] — BUT the runner's kernel audit log for this branch DOES contain an AppArmor mount-denial record (apparmor=\"DENIED\" ... operation=\"mount\"). Reported as VOID, not REQUIRED: classify_mount_failure keys only on the mediated operation's own stderr, by design, and a non-denial errno (most often EBUSY — see run 35057453620) can occur for reasons unrelated to AppArmor even with a denial audited nearby in time. Treating this combination as a denial by widening the stderr match was rejected across five review rounds (issue #10) as exactly the kind of guess this classifier exists not to make. The audit record itself, printed in this run's diagnostics (audit-apparmor-lines.log), is this run's real finding — investigate it directly rather than trusting this verdict word alone." >&2
+      else
+        echo "reason: control succeeded, but the variant failed for a reason other than a confirmed AppArmor denial [exit=$variant_exit]. An EBUSY, a missing device node, an undersized filesystem, or any other non-denial failure says nothing about AppArmor necessity — see run 35057453620, whose EBUSY (\"already mounted or mount point busy\") was wrongly read as a denial by the probe this file replaces." >&2
+      fi
       return 0
       ;;
   esac

@@ -48,17 +48,24 @@ PASS  describe_audit_capture: readable-but-empty is "ok: 0 ...", distinct from f
 
 == hosted_runner_guard: pure allow/refuse decision (issue #10 fix round) ==
 
-PASS  hosted-runner signal present (GITHUB_ACTIONS=true) -> allow            -> allow    rc=0 (expected allow rc=0)
-PASS  hosted-runner signal absent (empty string, e.g. unset GITHUB_ACTIONS) -> refuse -> refuse   rc=1 (expected refuse rc=1)
-PASS  hosted-runner signal explicitly false (GITHUB_ACTIONS=false) -> refuse -> refuse   rc=1 (expected refuse rc=1)
-PASS  hosted-runner signal wrong case (GITHUB_ACTIONS=True) -> refuse        -> refuse   rc=1 (expected refuse rc=1)
-PASS  hosted-runner signal wrong value (GITHUB_ACTIONS=1) -> refuse          -> refuse   rc=1 (expected refuse rc=1)
-PASS  hosted-runner signal an unrelated truthy-looking string -> refuse      -> refuse   rc=1 (expected refuse rc=1)
-PASS  hosted-runner signal missing (no argument at all) -> refuse            -> refuse   rc=1 (expected refuse rc=1)
+/tmp/claude-1000/-home-mdguggenbichler-projects-hoserva/ce9b80e8-dc16-42e6-8fcd-88b5f82475fb/scratchpad/preguard-old/test-apparmor-classify.sh: Zeile 291: hosted_runner_guard: Kommando nicht gefunden
+FAIL  hosted-runner signal present (GITHUB_ACTIONS=true) -> allow            ->          rc=127 (expected allow rc=0)
+/tmp/claude-1000/-home-mdguggenbichler-projects-hoserva/ce9b80e8-dc16-42e6-8fcd-88b5f82475fb/scratchpad/preguard-old/test-apparmor-classify.sh: Zeile 291: hosted_runner_guard: Kommando nicht gefunden
+FAIL  hosted-runner signal absent (empty string, e.g. unset GITHUB_ACTIONS) -> refuse ->          rc=127 (expected refuse rc=1)
+/tmp/claude-1000/-home-mdguggenbichler-projects-hoserva/ce9b80e8-dc16-42e6-8fcd-88b5f82475fb/scratchpad/preguard-old/test-apparmor-classify.sh: Zeile 291: hosted_runner_guard: Kommando nicht gefunden
+FAIL  hosted-runner signal explicitly false (GITHUB_ACTIONS=false) -> refuse ->          rc=127 (expected refuse rc=1)
+/tmp/claude-1000/-home-mdguggenbichler-projects-hoserva/ce9b80e8-dc16-42e6-8fcd-88b5f82475fb/scratchpad/preguard-old/test-apparmor-classify.sh: Zeile 291: hosted_runner_guard: Kommando nicht gefunden
+FAIL  hosted-runner signal wrong case (GITHUB_ACTIONS=True) -> refuse        ->          rc=127 (expected refuse rc=1)
+/tmp/claude-1000/-home-mdguggenbichler-projects-hoserva/ce9b80e8-dc16-42e6-8fcd-88b5f82475fb/scratchpad/preguard-old/test-apparmor-classify.sh: Zeile 291: hosted_runner_guard: Kommando nicht gefunden
+FAIL  hosted-runner signal wrong value (GITHUB_ACTIONS=1) -> refuse          ->          rc=127 (expected refuse rc=1)
+/tmp/claude-1000/-home-mdguggenbichler-projects-hoserva/ce9b80e8-dc16-42e6-8fcd-88b5f82475fb/scratchpad/preguard-old/test-apparmor-classify.sh: Zeile 291: hosted_runner_guard: Kommando nicht gefunden
+FAIL  hosted-runner signal an unrelated truthy-looking string -> refuse      ->          rc=127 (expected refuse rc=1)
+/tmp/claude-1000/-home-mdguggenbichler-projects-hoserva/ce9b80e8-dc16-42e6-8fcd-88b5f82475fb/scratchpad/preguard-old/test-apparmor-classify.sh: Zeile 319: hosted_runner_guard: Kommando nicht gefunden
+FAIL  hosted-runner signal missing (no argument at all) -> refuse            ->          rc=127 (expected refuse rc=1)
 
 == static check: hosted_runner_guard call precedes every sudo/docker invocation in run-apparmor-check.sh (issue #10 fix round) ==
 
-PASS  guard call site precedes the first real sudo call and the first real docker run -> guard=99 first-sudo=215 first-docker=139
+FAIL  guard call site precedes the first real sudo call and the first real docker run -> guard=<none> first-sudo=169 first-docker=93
 
 == classify_branch_pair / read_result: stale-file-vs-docker_exit contract (issue #10 fix round) ==
 
@@ -91,4 +98,4 @@ PASS  tmpfs probe order-sensitive (forward != reversed) -> combined VOID, non-ze
 PASS  probes disagree with each other -> combined VOID, non-zero exit        -> VOID           exit=1 (expected VOID exit=1)
       reason: The two independent probes DISAGREED: the faithful loop/XFS probe said REQUIRED, the loop-free tmpfs mediation probe said NOT-REQUIRED. Per requirement F, neither probe may claim the other's result — this disagreement is itself the finding this run establishes, and needs investigating (which operation differs between the two recipes under the default profile) before either answer can be trusted.
 
-== summary: 47/47 passed ==
+== summary: 39/47 passed ==

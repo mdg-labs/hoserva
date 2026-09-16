@@ -53,10 +53,56 @@
 set -euo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-REPO_ROOT=$(cd -- "$HERE/../../.." && pwd)
 
 # shellcheck source=./apparmor-classify.sh
 source "$HERE/apparmor-classify.sh"
+
+# issue #10 fix round: hosted-runner guard. Placed immediately after the
+# only two things needed to reach it — `set -euo pipefail` above and the
+# `source` immediately above it, since hosted_runner_guard itself lives in
+# apparmor-classify.sh — and before EVERYTHING else this script does:
+# REPO_ROOT is not resolved yet, void() is not defined yet, no lib.sh
+# check has run, no mktemp, no docker, no sudo. This is the actual fix for
+# the defect this round exists to close (issue #10 dispatch): the host-side
+# `sudo dmesg` / `sudo journalctl -k` / `sudo cat
+# /sys/kernel/security/apparmor/profiles` calls further down (see
+# capture_host_audit / capture_host_apparmor_state) were previously
+# guarded only by a comment on capture_host_audit ("this function must
+# only ever run on that hosted runner — never on a maintainer's dev
+# host") — a comment is not a check, and this script had no runtime guard
+# at all before this round. A `sudo` invocation on the maintainer's own
+# dev host raises a polkit/PAM prompt on their *desktop session*, and
+# three failed authentications trip `pam_faillock`'s `deny=3` and lock
+# them out of their own machine, including out of `sudo` itself
+# (CLAUDE.md's absolute rule on this outranks finishing any task).
+#
+# The check is positive, not negative: hosted_runner_guard
+# (apparmor-classify.sh) requires GITHUB_ACTIONS to be exactly "true" —
+# the literal value GitHub Actions sets in every workflow job's
+# environment
+# (https://docs.github.com/actions/learn-github-actions/variables#default-environment-variables)
+# — and refuses on anything else (unset, empty, "false", any other
+# value). It deliberately does NOT try to detect "looks like a dev host":
+# that shape of check fails open the instant a dev shell happens to
+# export something it doesn't anticipate. No override variable is
+# accepted (no `FORCE=1` or similar) — an escape hatch is exactly how a
+# guard like this ends up bypassed on a dev host anyway; see this fix
+# round's execution report for why one was rejected rather than added.
+#
+# hosted_runner_guard is a pure function — no sudo, no docker, no side
+# effect of any kind — so its allow/refuse decision is unit-tested
+# directly in test-apparmor-classify.sh without ever running this script,
+# and that same test file's static ordering check greps this file by line
+# number to assert no `sudo` or `docker run` call precedes the guard call
+# immediately below, so the property this comment block claims is proven
+# mechanically, not left to be eyeballed.
+if ! hosted_runner_guard "${GITHUB_ACTIONS:-}" >/dev/null; then
+  echo "run-apparmor-check.sh refuses to run: no GITHUB_ACTIONS=true signal found in this process's environment. This script performs host-side kernel-audit capture via passwordless sudo (dmesg, journalctl -k, /sys/kernel/security/apparmor/profiles) and is meant to run ONLY as the 'AppArmor necessity check' step of the s9-hosted-probe.yml workflow's lab job, on a GitHub-hosted runner — never on a maintainer's dev host (CLAUDE.md: never trigger a sudo/polkit/PAM prompt on a developer's desktop session)." >&2
+  echo "VOID"
+  exit 1
+fi
+
+REPO_ROOT=$(cd -- "$HERE/../../.." && pwd)
 
 void() {
   echo "$1" >&2
@@ -113,6 +159,154 @@ run_branch() {
 # fixtures, the same way it already exercises the pure classification
 # logic. See that file's own comments for what changed and why.
 
+# capture_host_audit LAB
+# issue #10 host-audit fix round. apparmor-loop-probe.sh and
+# apparmor-tmpfs-probe.sh each already do a best-effort in-container
+# `dmesg`/`journalctl -k` capture (kept, unchanged — harmless when it comes
+# up empty, and free), but that capture runs inside an unprivileged,
+# namespaced probe container, which was never going to see the HOST
+# kernel's ring buffer or audit trail — every run to date shows this:
+# "kernel/audit apparmor lines: (n/a)" on every single branch, including
+# the control branches where mediation could not have fired at all. This
+# script itself, unlike the probe scripts, runs directly on the runner
+# HOST (see the "AppArmor necessity check" step in s9-hosted-probe.yml),
+# so it is the one place in this whole check that *can* read the host's
+# own dmesg/journalctl -k. GitHub's hosted runners grant the runner user
+# passwordless sudo (the `kvm` job's own udev step already relies on
+# this); `dmesg` in particular is commonly restricted by
+# kernel.dmesg_restrict and needs it. This function must only ever run on
+# that hosted runner — never on a maintainer's dev host (CLAUDE.md).
+#
+# Merges any AppArmor lines found into the SAME
+# $LAB/result/audit-apparmor-lines.log apparmor-classify.sh's
+# audit_corroborates_denial already reads (so no classifier change is
+# needed for this to take effect), on top of whatever the in-container
+# capture already wrote there, deduplicated, order preserved. Also writes
+# $LAB/result/audit-capture-status via apparmor-classify.sh's
+# describe_audit_capture, so a runner where dmesg AND journalctl -k are
+# both unreadable is reported as "failed: ..." in diagnostics, never
+# silently indistinguishable from "captured fine, found nothing" — the
+# exact ambiguity the old `|| : > file` in-container fallback produced on
+# every run so far.
+capture_host_audit() {
+  local lab="$1"
+  local host_dmesg host_journal
+  local dmesg_rc=0 journal_rc=0
+
+  mkdir -p -- "$lab/result"
+  host_dmesg=$(mktemp)
+  host_journal=$(mktemp)
+
+  # Neither command runs under `set -e` here — both sit directly in an
+  # `if` condition, bash's one standard exception to errexit — and neither
+  # is negated with `!`, on purpose: apparmor-loop-probe.sh's own header
+  # already documents why `if ! cmd; then rc=$?; fi` is wrong here — `!`
+  # inverts the exit status being tested, so `$?` inside that `then` would
+  # read the negation's own 0/1, not the command's real rc, and every
+  # capture failure would misreport as rc=0 ("succeeded"). Using the
+  # positive form with the real rc captured in the `else` branch avoids
+  # that trap the same way apparmor-loop-probe.sh's mkfs.xfs/mount block
+  # already does.
+  # shellcheck disable=SC2024 # the redirect targets are plain files this
+  # unprivileged process already owns (mktemp/workspace paths) — only
+  # dmesg/journalctl themselves need root to read the kernel log; `sudo
+  # tee` would be needed only if the *target* required root, which it does
+  # not here.
+  if sudo dmesg > "$host_dmesg" 2>"$lab/result/host-dmesg.err"; then
+    dmesg_rc=0
+  else
+    dmesg_rc=$?
+  fi
+  # shellcheck disable=SC2024 # see above
+  if sudo journalctl -k -n 1000 --no-pager > "$host_journal" 2>"$lab/result/host-journalctl.err"; then
+    journal_rc=0
+  else
+    journal_rc=$?
+  fi
+
+  # Every command inside this group is individually guarded against
+  # `set -e`: `grep` returning 1 (no match, the expected common case on a
+  # host with AppArmor disabled or no denial) is not an error here, and a
+  # bare `cond && grep ...` would let that 1 propagate and kill the whole
+  # script on the very first branch that finds nothing — so each capture
+  # uses an `if`/`fi` body with its own `|| true`, never a bare `&&` chain.
+  local merged
+  merged=$(mktemp)
+  {
+    if [[ -r "$lab/result/audit-apparmor-lines.log" ]]; then
+      cat -- "$lab/result/audit-apparmor-lines.log"
+    fi
+    if [[ "$dmesg_rc" -eq 0 ]]; then
+      grep -i 'apparmor' -- "$host_dmesg" || true
+    fi
+    if [[ "$journal_rc" -eq 0 ]]; then
+      grep -i 'apparmor' -- "$host_journal" || true
+    fi
+  } | awk '!seen[$0]++' > "$merged"
+  mv -- "$merged" "$lab/result/audit-apparmor-lines.log"
+  rm -f -- "$host_dmesg" "$host_journal"
+
+  # describe_audit_capture (apparmor-classify.sh) returns 1 on the "both
+  # sources unreadable" case, by design (so test-apparmor-classify.sh can
+  # tell that path apart from "ok" by exit status too, not only text) —
+  # captured with `|| true` so that nonzero return doesn't hit this
+  # script's own `set -e`, the same trap classify_verdict/
+  # classify_branch_pair used to have (see apparmor-classify.sh's own
+  # comment on why those two now always `return 0`; this call sits
+  # upstream of any verdict decision, so unlike decide_final_verdict there
+  # is no reason for its return status to be terminal here).
+  local line_count status
+  line_count=$(wc -l < "$lab/result/audit-apparmor-lines.log" | tr -d '[:space:]')
+  status=$(describe_audit_capture "$dmesg_rc" "$journal_rc" "$line_count") || true
+  echo "$status" > "$lab/result/audit-capture-status"
+}
+
+# capture_host_apparmor_state LAB
+# issue #10 host-audit fix round, requirement 3 (issue dispatch): the
+# per-branch "apparmor profiles listing: not available in this container"
+# line every run has printed so far has the same root cause as the audit
+# capture above — an unprivileged probe container cannot read
+# /sys/kernel/security/apparmor/*. Captured ONCE, on the host, not
+# per-branch (this is host/runner-image state, not something either
+# branch's own mount call could change) — see print_host_apparmor_state
+# for where this is shown, once, ahead of both probes.
+capture_host_apparmor_state() {
+  local lab="$1"
+  mkdir -p -- "$lab/result"
+
+  if [[ -r /sys/module/apparmor/parameters/enabled ]]; then
+    cat -- /sys/module/apparmor/parameters/enabled > "$lab/result/apparmor-enabled" 2>/dev/null \
+      || echo "unknown: /sys/module/apparmor/parameters/enabled present but unreadable" > "$lab/result/apparmor-enabled"
+  else
+    echo "unknown: /sys/module/apparmor/parameters/enabled not present on this kernel/runner" > "$lab/result/apparmor-enabled"
+  fi
+
+  # shellcheck disable=SC2024 # see capture_host_audit's own comment above
+  if sudo cat /sys/kernel/security/apparmor/profiles > "$lab/result/host-apparmor-profiles.log" 2>"$lab/result/host-apparmor-profiles.err"; then
+    if grep -qi 'docker-default' "$lab/result/host-apparmor-profiles.log"; then
+      echo "present" > "$lab/result/docker-default-profile"
+    else
+      echo "absent (not listed in /sys/kernel/security/apparmor/profiles)" > "$lab/result/docker-default-profile"
+    fi
+  else
+    echo "unknown: could not read /sys/kernel/security/apparmor/profiles ($(cat -- "$lab/result/host-apparmor-profiles.err" 2>/dev/null))" > "$lab/result/docker-default-profile"
+  fi
+}
+
+# print_host_apparmor_state LAB -> stderr, once, ahead of both probes —
+# mirrors print_branch_diagnostics' formatting so the two are easy to
+# read side by side, but this is host/runner-image state, not a
+# per-branch result.
+print_host_apparmor_state() {
+  local lab="$1"
+  {
+    echo "### host AppArmor state (captured once, on the runner host)"
+    echo "kernel AppArmor enabled (/sys/module/apparmor/parameters/enabled): $(read_result "$lab" apparmor-enabled 'unknown')"
+    echo "docker-default profile present on host: $(read_result "$lab" docker-default-profile 'unknown')"
+    echo
+  } >&2
+}
+
 # print_branch_diagnostics LABEL LAB DOCKER_EXIT -> always writes to
 # stderr (every call site redirects it there), never to stdout:
 # requirement E's "diagnosable from its own log without guessing" is about
@@ -141,22 +335,33 @@ print_branch_diagnostics() {
     read_result "$lab" losetup-a-after-attach.log '(n/a)'
     echo "losetup -a at end:"
     read_result "$lab" losetup-a-final.log '(n/a)'
-    echo "apparmor profiles listing:"
+    echo "apparmor profiles listing (in-container, expected unavailable — see host AppArmor state above):"
     read_result "$lab" apparmor-profiles-listing.log '(n/a)'
-    echo "kernel/audit apparmor lines (dmesg + journalctl -k, best-effort):"
-    read_result "$lab" audit-apparmor-lines.log '(none captured — not available on this runner, or genuinely none)'
+    echo "kernel/audit capture status (host dmesg + host journalctl -k, this branch):"
+    read_result "$lab" audit-capture-status 'not attempted (unexpected — capture_host_audit should have run for every branch)'
+    echo "kernel/audit apparmor lines (host + in-container, merged, best-effort):"
+    read_result "$lab" audit-apparmor-lines.log '(none)'
     echo
   } >&2
 }
+
+echo "############################################" >&2
+echo "## Host state (captured once, on the runner host, ahead of both probes)" >&2
+echo "############################################" >&2
+HOST_STATE_LAB=$(mktemp -d)
+capture_host_apparmor_state "$HOST_STATE_LAB"
+print_host_apparmor_state "$HOST_STATE_LAB"
 
 echo "############################################" >&2
 echo "## Probe 1/2: faithful loop/XFS recipe" >&2
 echo "############################################" >&2
 echo "## === loop probe: control (apparmor=unconfined) ===" >&2
 run_branch LOOP_CONTROL apparmor-loop-probe.sh loop --security-opt apparmor=unconfined
+capture_host_audit "$LOOP_CONTROL_LAB"
 print_branch_diagnostics "loop probe control" "$LOOP_CONTROL_LAB" "$LOOP_CONTROL_DOCKER_EXIT"
 echo "## === loop probe: variant (default AppArmor profile) ===" >&2
 run_branch LOOP_VARIANT apparmor-loop-probe.sh loop
+capture_host_audit "$LOOP_VARIANT_LAB"
 print_branch_diagnostics "loop probe variant" "$LOOP_VARIANT_LAB" "$LOOP_VARIANT_DOCKER_EXIT"
 loop_verdict=$(classify_branch_pair "$LOOP_CONTROL_LAB" "$LOOP_CONTROL_DOCKER_EXIT" "$LOOP_VARIANT_LAB" "$LOOP_VARIANT_DOCKER_EXIT")
 echo "## loop probe verdict: $loop_verdict" >&2
@@ -167,9 +372,11 @@ echo "## Probe 2/2: loop-free tmpfs mediation probe (forward order: control, the
 echo "############################################" >&2
 echo "## === tmpfs probe: control (apparmor=unconfined) ===" >&2
 run_branch TMPFS_CONTROL apparmor-tmpfs-probe.sh no-loop --security-opt apparmor=unconfined
+capture_host_audit "$TMPFS_CONTROL_LAB"
 print_branch_diagnostics "tmpfs probe control" "$TMPFS_CONTROL_LAB" "$TMPFS_CONTROL_DOCKER_EXIT"
 echo "## === tmpfs probe: variant (default AppArmor profile) ===" >&2
 run_branch TMPFS_VARIANT apparmor-tmpfs-probe.sh no-loop
+capture_host_audit "$TMPFS_VARIANT_LAB"
 print_branch_diagnostics "tmpfs probe variant" "$TMPFS_VARIANT_LAB" "$TMPFS_VARIANT_DOCKER_EXIT"
 tmpfs_verdict=$(classify_branch_pair "$TMPFS_CONTROL_LAB" "$TMPFS_CONTROL_DOCKER_EXIT" "$TMPFS_VARIANT_LAB" "$TMPFS_VARIANT_DOCKER_EXIT")
 echo "## tmpfs probe verdict (forward order): $tmpfs_verdict" >&2
@@ -198,9 +405,11 @@ echo "## Order check: tmpfs probe run reversed (variant, then control)" >&2
 echo "############################################" >&2
 echo "## === tmpfs probe (reversed order): variant (default AppArmor profile) ===" >&2
 run_branch TMPFS_R_VARIANT apparmor-tmpfs-probe.sh no-loop
+capture_host_audit "$TMPFS_R_VARIANT_LAB"
 print_branch_diagnostics "tmpfs probe reversed variant" "$TMPFS_R_VARIANT_LAB" "$TMPFS_R_VARIANT_DOCKER_EXIT"
 echo "## === tmpfs probe (reversed order): control (apparmor=unconfined) ===" >&2
 run_branch TMPFS_R_CONTROL apparmor-tmpfs-probe.sh no-loop --security-opt apparmor=unconfined
+capture_host_audit "$TMPFS_R_CONTROL_LAB"
 print_branch_diagnostics "tmpfs probe reversed control" "$TMPFS_R_CONTROL_LAB" "$TMPFS_R_CONTROL_DOCKER_EXIT"
 tmpfs_reversed_verdict=$(classify_branch_pair "$TMPFS_R_CONTROL_LAB" "$TMPFS_R_CONTROL_DOCKER_EXIT" "$TMPFS_R_VARIANT_LAB" "$TMPFS_R_VARIANT_DOCKER_EXIT")
 echo "## tmpfs probe verdict (reversed order): $tmpfs_reversed_verdict" >&2
