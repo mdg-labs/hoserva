@@ -1,190 +1,191 @@
-# Spike S9 — hosted CI runners, issue #10
+# Spike S9 — hosted CI runners, issue #10 (closed)
 
 Findings are in `docs/internal/08-spike-findings.md` ("Hosted CI runners"
-subsection under Spike 9). This directory holds the probe workflow's
-scripts and the raw evidence this run's findings are checked against.
+subsection under Spike 9), which is the authoritative, closed verdict. This
+directory holds the probe workflow's scripts and the raw evidence the
+findings are checked against.
 
-**This is fix attempt 9 — a change of approach, not another patch.**
-Attempts 1-4 (see git history for the full blow-by-blow; not repeated here)
-landed the workflow, fixed a `mknod` bug and an undersized-image bug, and
-**confirmed the KVM half hosted for real** (run `35056076616`: QMP
-`query-kvm` → `{"enabled": true, "present": true}`) and **confirmed the lab
-half hosted for real** (run `35057453620`: `lab-up`, `lab-seed`,
-`lab-verify-refusal`, a SnapRAID sync and `lab-destroy` all green, with
-`apparmor=unconfined` set). Both of those results stand, unchanged by this
-attempt.
+**S9 is fully answered: L2 (loop devices, FUSE, a SnapRAID sync), KVM
+acceleration for a single non-nested guest, and AppArmor necessity for the
+lab's own `mount(2)` are all confirmed hosted.** S10 (nested KVM, VM-in-VM,
+issue #87, Phase 3.5) is a separate, still-open question — nothing here
+answers it.
 
-**AppArmor necessity was still open after six straight voids** (runs
+## What was established, and from which runs
+
+### KVM: CONFIRMED on a hosted runner
+
+First confirmed in run `35056076616` (`gh run view 35056076616 --repo
+mdg-labs/hoserva --job 104666440639 --log`, excerpted in
+`results/ci-run-35056076616-kvm-job.log`) and reconfirmed in five further
+runs since, most recently run `35076920766` (job `104731427908`,
+2026-09-16, head `e97c469`). On the pinned `ubuntu-24.04` image, the `kvm`
+job succeeds end to end: `/dev/kvm` goes `crw-rw----` → `crw-rw-rw-` after
+the udev rule, the runner's own running kernel is acquired readably, and
+the guest boots with KVM acceleration confirmed **by the host process**
+(QMP `query-kvm` → `{"enabled": true, "present": true}`), not only
+inferred from the guest. **This closes S9's KVM acceptance criterion**: "a
+QEMU guest boots with KVM acceleration on a standard hosted runner." It
+says nothing about S10 (nested KVM, VM-in-VM) — a different, still-open
+question, out of this spike's scope.
+
+### Lab (L2): CONFIRMED on a hosted runner
+
+First confirmed in run `35057453620` and reconfirmed since, most recently
+in run `35076920766`'s own `lab` job (`104731428284`): `lab-up`,
+`lab-seed`, `lab-verify-refusal` (both host-device-refusal checks,
+correctly `EPERM`), a SnapRAID sync against the standing array
+(`Everything OK`) and `lab-destroy` all ran green in the same run as the
+KVM confirmation above, on the pinned `ubuntu-24.04` image.
+`results/ci-run-35049304081-lab-job.log` is the earliest committed evidence
+of the same pattern; that run's own inline AppArmor verdict was separately
+retracted (see "The void history" below), but the lab steps after it were
+real passes, unaffected by that bug.
+
+### AppArmor necessity: ANSWERED — `apparmor=unconfined` is REQUIRED
+
+Run `35076920766`, job `104731428284`, ran the real lab recipe three times
+on one runner, one image, under three distinct `HOSERVA_LAB_ID`s, differing
+only in the container's AppArmor profile:
+
+1. **Control arm** — `HOSERVA_LAB_ID=<base>-apparmor-ctrl make lab-up`
+   (`docker-compose.dev.yml` alone, `apparmor=unconfined`) — succeeded:
+   `lab … ready: parity1, disk1-3, cache, pool` at 09:00:43 UTC — then
+   `make lab-destroy` for that same id.
+2. **Variant arm** — `HOSERVA_LAB_ID=<base>-apparmor-var
+   LAB_COMPOSE_EXTRA=scripts/devenv/docker-compose.apparmor-default.yml
+   make lab-up` (Docker's default AppArmor profile) — failed at 09:00:55
+   UTC: `mount: /lab/…/mnt/parity1: /dev/loop0 already mounted or mount
+   point busy.` / `make: *** [Makefile:110: lab-up] Error 32` — then
+   `make lab-destroy` for that same id and extra file.
+3. **Verdict step** — read `steps.apparmor_variant.outcome` directly
+   (`if [ "failure" = "success" ]`, never a stderr re-classification) and
+   printed `AppArmor necessity check: REQUIRED — …`.
+4. The job's own standing `lab-up`/`lab-seed`/`lab-verify-refusal`/SnapRAID
+   sync then ran under the base id at 09:01:06 UTC — a third, distinct
+   `unconfined` lab, green end to end.
+
+**The A-B-A ordering is what makes this conclusive**: `unconfined`
+succeeded both immediately before and immediately after the
+`docker-default` failure, one second after the failing variant's own
+teardown, on the same runner, against the same loop devices — ruling out
+leftover state, loop contention and ordering artifacts from inside this
+run itself. **Arm 4 was not designed as a control for this experiment** —
+it is the job's own standing lab run, which happens to supply the second
+`unconfined` success; it is reported as corroboration, not as a
+purpose-built third arm.
+
+Compose's list-merge behaviour for `security_opt` across `-f` files was
+**rendered and read, not assumed** — see `results/compose-config-control.txt`
+and `results/compose-config-variant.txt`; the committed
+`docker-compose.apparmor-default.yml` uses the `!override` YAML merge tag
+so the variant carries exactly one `security_opt` value
+(`apparmor=docker-default`), never a union of both.
+
+### What remains open: the errno
+
+The variant's failure is **EBUSY** ("already mounted or mount point
+busy"), where a mount denied by AppArmor would conventionally surface as
+**EACCES**. It arrives *after* `losetup --find --show`,
+`lab_assert_own_loop` and `mkfs.xfs -q -L parity1` all succeeded against
+the same `/dev/loop0` — only the `mount(2)` call itself failed. This is
+left as an open, unexplained observation, not a resolved mechanism: the
+established claim is necessity (removing the flag breaks the real lab
+recipe at its first mount), not an explanation of the kernel's exact error
+code. Moby's `docker-default` AppArmor template (`moby/profiles`,
+`apparmor/template.go`) denies `mount` with a plain, unaudited `deny` rule
+— consistent with a silently denied mount, cited only as upstream
+corroboration, not as the primary evidence.
+
+## The void history
+
+**AppArmor necessity was voided six times before the result above** — runs
 `35049304081`, `35056076616`, `35057453620`, `35068617498`, `35071011877`,
-`35075054897`) from attempts 4-8, which built an increasingly elaborate
-hand-rolled replica of the lab recipe — raw `docker run`, manual `mknod`,
-`losetup`, `mkfs.xfs`, `mount`, a pure-text failure classifier, a
-loop-free tmpfs mediation probe, an order-reversal consistency check, and
-finally a host-side kernel-audit capture — to test one property of the
-**real lab**. Every single void traced to a bug in that replica: a missing
-`mknod`, an undersized image, an EBUSY misread as a denial, a `set -e`
-abort swallowing a verdict, a stale result file read as success, and
-finally a correct-but-inconclusive EBUSY. The host-audit capture added in
-attempt 7 also rested on a false premise: it looked for `apparmor="DENIED"`
-records to corroborate a denial, but Docker's default AppArmor profile
-denies with a plain `deny mount,` rule, and in AppArmor a plain `deny`
-**suppresses the audit record** — only `audit deny` logs. Finding "288
-records, zero denials" in that capture proved nothing about whether a
-denial happened.
+`35075054897` — across attempts 1-8, which built an increasingly elaborate
+hand-rolled replica of the lab recipe: raw `docker run`, manual `mknod`,
+`losetup`, `mkfs.xfs`, `mount`, a pure-text failure classifier, a loop-free
+tmpfs mediation probe, an order-reversal consistency check, and finally a
+host-side kernel-audit capture. Every single void traced to a bug in that
+replica, never to AppArmor itself: a missing `mknod`, an undersized image,
+an EBUSY misread as a denial, a `set -e` abort swallowing a verdict, a
+stale result file read as success, and finally a correct-but-inconclusive
+EBUSY the replica had no way to interpret past. The host-audit capture
+added in attempt 7 also rested on a false premise: it looked for
+`apparmor="DENIED"` records to corroborate a denial, but Docker's default
+AppArmor profile denies with a plain `deny mount,` rule, and in AppArmor a
+plain `deny` **suppresses the audit record** — only `audit deny` logs.
+Finding "288 records, zero denials" in that capture proved nothing about
+whether a denial happened.
 
-**This attempt retires that entire apparatus** (`apparmor-loop-probe.sh`,
-`apparmor-tmpfs-probe.sh`, `apparmor-classify.sh`, `run-apparmor-check.sh`,
+**Run `35049304081` printed "apparmor=unconfined is required" from a
+broken experiment, and that verdict was retracted at the time** — both
+branches had failed identically from the missing-`mknod` bug, unrelated to
+AppArmor. **The confirmed result above does not retroactively validate
+that retracted verdict.** These are two separate facts: an earlier claim
+was unsupported and withdrawn; a later, independent, methodologically
+sound experiment has since established the same conclusion on its own
+evidence.
+
+**Attempt 9 (this attempt) retired that entire apparatus**
+(`apparmor-loop-probe.sh`, `apparmor-tmpfs-probe.sh`,
+`apparmor-classify.sh`, `run-apparmor-check.sh`,
 `test-apparmor-classify.sh`, and the host `sudo` audit capture — deleted,
-not superseded-but-kept) and replaces it with the one thing CLAUDE.md's
+not superseded-but-kept) and replaced it with the one thing `CLAUDE.md`'s
 first architecture rule ("orchestrate, never reimplement") already implied
-should have been used from the start: **run the real lab twice, through the
-real `make lab-up`/`make lab-destroy` targets, with exactly one variable.**
-`docker-compose.dev.yml` (the artifact under test) sets
+should have been used from the start: **run the real lab twice, through
+the real `make lab-up`/`make lab-destroy` targets, with exactly one
+variable.** `docker-compose.dev.yml` (the artifact under test) sets
 `security_opt: [apparmor=unconfined]` and is never edited for this
-experiment — the control arm runs it completely unmodified (byte-for-byte
-the already-confirmed recipe from run `35057453620`); the variant arm adds
-`scripts/devenv/docker-compose.apparmor-default.yml` as a second compose
-file (the Makefile's new `LAB_COMPOSE_EXTRA` hook), which puts the lab
+experiment — the control arm runs it completely unmodified; the variant
+arm adds `scripts/devenv/docker-compose.apparmor-default.yml` as a second
+compose file (the Makefile's `LAB_COMPOSE_EXTRA` hook), which puts the lab
 container back on Docker's default AppArmor profile instead. The success
 criterion is the one the real recipe already has:
 `scripts/devenv/create-array.sh` runs under `set -euo pipefail`, calls
 `die` on any failure, and prints `lab <id> ready:` only on success — so
 `make lab-up`'s own exit status is the whole verdict; no stderr
-classification, no audit-log corroboration, no probe apparatus of any kind.
-As a direct consequence, this removes the `sudo` risk surface the host-audit
-capture introduced entirely — the new experiment needs no `sudo` at all.
+classification, no audit-log corroboration, no probe apparatus of any
+kind. This also removed the `sudo` risk surface the host-audit capture had
+introduced entirely — the new experiment needs no `sudo` at all. This
+attempt ran hosted as run `35076920766` and produced the conclusive REQUIRED
+result recorded above.
 
-Verdict discipline is unchanged from every prior attempt, because it was
-never the problem — only the mechanics producing the inputs to it were:
+**The lesson worth carrying forward** (also recorded in
+`docs/internal/08-spike-findings.md` §9): every one of the six voids came
+from reimplementing the lab recipe instead of exercising it. The fix was to
+run the real lab through the real `make` targets with one variable — the
+most transferable finding of this spike.
 
-- **control fails → VOID.** The control step doesn't vary AppArmor at all;
-  it's today's already-confirmed recipe. A failure there means the recipe
-  itself is broken on this runner, and the job fails loudly at that step —
-  never read as an AppArmor result.
-- **variant fails, control succeeded → REQUIRED.** Reported from the
-  variant step's own real `make lab-up` output (visible directly in that
-  step's log — `continue-on-error: true` keeps the job green while
-  preserving the step's true outcome for the verdict step to read), never
-  assumed or re-classified from a stderr string.
-- **both succeed → NOT-REQUIRED.**
+## S9 / S10 boundary
 
-## What run 35057453620 and 35056076616 established (still standing, unchanged by this attempt)
-
-### KVM: CONFIRMED on a hosted runner (run 35056076616)
-
-`gh run view 35056076616 --repo mdg-labs/hoserva --job 104666440639 --log`,
-excerpted in `results/ci-run-35056076616-kvm-job.log`. On the pinned
-`ubuntu-24.04` (image `20260907.300.1`, `nproc: 4`, Azure `eastus2`), the
-`kvm` job succeeded end to end: `/dev/kvm` went `crw-rw----` →
-`crw-rw-rw-` after the udev rule, the kernel-acquisition fix worked on a
-real runner, and the guest booted with KVM acceleration confirmed **by the
-host process** (QMP `query-kvm`), not only inferred from the guest. **This
-closes S9's KVM acceptance criterion**: "A QEMU guest boots with KVM
-acceleration on a standard hosted runner." This says nothing about S10
-(nested KVM, VM-in-VM) — a different, still-open question, out of this
-spike's scope.
-
-### Lab half: CONFIRMED on a hosted runner (run 35057453620)
-
-`lab-up`, `lab-seed`, `lab-verify-refusal`, a SnapRAID sync and
-`lab-destroy` all ran green in the same run, with `apparmor=unconfined`
-set — the same steps this workflow's job still runs today, after its own
-AppArmor step. No log excerpt for run `35057453620` itself is committed in
-this directory. `results/ci-run-35049304081-lab-job.log` is the earliest
-committed evidence of the same pattern (`lab-up`/`lab-seed`/
-`lab-verify-refusal`/SnapRAID sync all succeeding in one run, on the pinned
-`ubuntu-24.04` image) — that run's own inline AppArmor verdict was
-separately retracted (both branches failed on an unrelated `mknod` bug),
-but the lab steps after it were real passes, not affected by that bug.
-`results/ci-run-35068617498-lab-job.log` does **not** show this: in that
-run the job never got past the (now-retired) AppArmor probe step, so
-`lab-up` onward never ran — it is kept here only as historical context for
-the retired probe's own bug history, not as lab-half evidence.
-
-## AppArmor necessity: the new experiment (this attempt)
-
-The workflow's `lab` job now runs, in order, after deriving this run's base
-lab id (`s9-<run>-<attempt>`):
-
-1. **Control arm** — `HOSERVA_LAB_ID=<base>-apparmor-ctrl make lab-up`
-   (`docker-compose.dev.yml` alone, `apparmor=unconfined`), then
-   `make lab-destroy` for that same id, `if: always()`.
-2. **Variant arm** (only reached if the control succeeded) —
-   `HOSERVA_LAB_ID=<base>-apparmor-var LAB_COMPOSE_EXTRA=scripts/devenv/docker-compose.apparmor-default.yml make lab-up`
-   (Docker's default AppArmor profile), `continue-on-error: true`, then
-   `make lab-destroy` for that same id and extra file, `if: always()`.
-3. **Verdict step** — reads `steps.apparmor_variant.outcome` and prints
-   `NOT-REQUIRED` or `REQUIRED` as plain step output. Always exits 0 (a
-   concluded finding is not a workflow failure); a VOID has already failed
-   the job at step 1, before this step is ever reached.
-4. The job's own standing `lab-up`/`lab-seed`/`lab-verify-refusal`/SnapRAID
-   sync then runs as before, under the base id itself — a third, distinct
-   lab id, so none of the three (`-apparmor-ctrl`, `-apparmor-var`, and the
-   bare base id) can ever collide with one another.
-
-Compose's list-merge behaviour for `security_opt` across `-f` files was
-**rendered and read, not assumed**: a first draft of
-`docker-compose.apparmor-default.yml` used a plain
-`security_opt: [apparmor=docker-default]`, and `docker compose ... config`
-showed both entries present (`[apparmor=unconfined, apparmor=docker-default]`)
-— Compose unions `security_opt` across files by default, it does not
-replace it. The committed file uses the `!override` YAML merge tag instead,
-which does replace the list wholesale — confirmed by re-rendering both arms:
-`results/compose-config-control.txt` (docker-compose.dev.yml alone,
-`security_opt: [apparmor=unconfined]`, unchanged from today) and
-`results/compose-config-variant.txt` (with the override file added,
-`security_opt: [apparmor=docker-default]` alone).
-
-After this commit is reviewed and pushed to `main`, the maintainer runs, in
-fish:
-
-```fish
-gh workflow run s9-hosted-probe.yml --repo mdg-labs/hoserva --ref main
-```
-
-then reads the `lab` job's five new "AppArmor necessity check: ..." steps.
-What each outcome looks like in the log:
-
-- **VOID** — the "control arm" step itself is red; its own `make lab-up`
-  output (in that step's log) is the actual failure to investigate. The
-  job fails there; none of "variant arm", "verdict", or the standing
-  `lab-up`/`lab-seed`/`lab-verify-refusal`/SnapRAID-sync steps run (except
-  the final `lab-destroy`, which always runs and no-ops safely against an
-  id that was never brought up).
-- **REQUIRED** — "control arm" is green, "variant arm" shows its own
-  failure (marked non-fatal by `continue-on-error`, so the job stays
-  green), and "verdict" prints
-  `AppArmor necessity check: REQUIRED — ...` naming the variant's own
-  error as the evidence.
-- **NOT-REQUIRED** — "control arm" and "variant arm" are both green, and
-  "verdict" prints
-  `AppArmor necessity check: NOT-REQUIRED — ...`.
-
-Whatever the result, update `docs/internal/08-spike-findings.md`'s S9
-section and Q42/Q79 (doc 13) with the actual verdict, and record the run's
-id and log excerpts under `spikes/s9/results/` the same way prior runs are
-recorded above.
+S9's three questions (L2 hosted, KVM hosted, AppArmor necessity) are all
+answered above. **S10 (nested KVM, VM-in-VM, issue #87, Phase 3.5) is a
+different question and remains open** — whether the L3 test VM itself can
+run a nested KVM guest, on the dev host and on hosted runners. Nothing in
+this spike implies an answer to S10 either way.
 
 ## Files
 
 - `scripts/hosted-snapraid-check.sh` — host-side orchestration (runs on the
-  CI runner or a dev host); unchanged, already confirmed on a hosted runner
-  (run `35049304081`)
+  CI runner or a dev host); confirmed on a hosted runner (run `35049304081`
+  and every run since)
 - `scripts/snapraid-sync-in-container.sh` — runs inside the lab container,
-  invoked by the above; unchanged
+  invoked by the above
 - `scripts/kvm-boot-check.sh` — the guest-boot check the `kvm` job runs;
-  unchanged, confirmed against a real `/dev/kvm` by run `35056076616`
-- `../../scripts/devenv/docker-compose.apparmor-default.yml` — new this
-  attempt: the variant arm's compose overlay. Lives under `scripts/devenv/`
-  (not `spikes/s9/`) because it is a `-f` argument to the real
-  `docker-compose.dev.yml`/`make lab-up` recipe, not a spike-only artifact
-- `../../Makefile` — new this attempt: the optional `LAB_COMPOSE_EXTRA`
-  variable, appended as a second `-f` to `COMPOSE_DEV` only when set; empty
-  by default, so the standing lab's behaviour is unchanged
+  confirmed against a real `/dev/kvm` by run `35056076616` and every run
+  since, most recently `35076920766`
+- `../../scripts/devenv/docker-compose.apparmor-default.yml` — the
+  variant arm's compose overlay, confirmed to produce the REQUIRED result
+  in run `35076920766`. Lives under `scripts/devenv/` (not `spikes/s9/`)
+  because it is a `-f` argument to the real `docker-compose.dev.yml`/
+  `make lab-up` recipe, not a spike-only artifact
+- `../../Makefile` — the `LAB_COMPOSE_EXTRA` variable, appended as a second
+  `-f` to `COMPOSE_DEV` only when set; empty by default, so the standing
+  lab's behaviour is unchanged
 - `results/compose-config-control.txt`, `results/compose-config-variant.txt`
-  — new this attempt: verbatim `docker compose ... config` renderings for
-  both arms, proving the control rendering is unchanged from today and the
-  variant carries exactly one different `security_opt` value
+  — verbatim `docker compose ... config` renderings for both arms, proving
+  the control rendering is unchanged from today and the variant carries
+  exactly one different `security_opt` value
 - `results/ci-run-34950031773-lab-job.log` — the earlier push-triggered
   `ci.yml` run this spike originally cited for the lab half (pre-dates this
   issue's own workflow)
@@ -218,3 +219,9 @@ recorded above.
   that fixed the (now-retired) AppArmor probe's undersized images, by
   matching the standing lab's own `LAB_CACHE_SIZE` convention
   (`scripts/devenv/create-array.sh`) instead of a smaller ad hoc size
+
+The final, conclusive AppArmor-necessity run (`35076920766`) is fetched
+read-only and cited by run id and job id throughout this document and in
+`docs/internal/08-spike-findings.md` §9; no new log excerpt file for it is
+committed here — reproduce with `gh run view 35076920766 --repo
+mdg-labs/hoserva --job 104731428284 --log`.
