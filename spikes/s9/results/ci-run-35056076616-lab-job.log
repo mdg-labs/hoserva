@@ -1,0 +1,49 @@
+# Excerpt of gh run view 35056076616 --repo mdg-labs/hoserva --job 104666440441 --log
+# (job 'Loop-device lab + SnapRAID sync (L2)', run https://github.com/mdg-labs/hoserva/actions/runs/35056076616,
+# workflow_dispatch on main at 1388f83, 2026-09-16, conclusion: failure)
+# Fetched read-only, never re-run by this spike (no agent triggers a workflow). Full log is
+# 270 lines; trimmed here to the runner-image banner, the AppArmor step in full (this is the
+# bug this commit fixes — see the workflow file), and the lab-destroy failure caused by the
+# second bug this commit fixes (empty HOSERVA_LAB_ID at teardown). debconf noise inside the
+# disposable AppArmor probe container is trimmed with "...".
+
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T04:33:44.9911985Z Image: ubuntu-24.04
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T04:33:44.9912317Z Version: 20260907.300.1
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T04:33:46.7200404Z nproc: 4
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T04:33:46.7222624Z Linux 6.17.0-1022-azure x86_64
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T04:33:46.7923702Z ## Control: apparmor=unconfined (matches the standing lab's own security_opt)
+...
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T04:33:56.3803787Z Filesystem must be larger than 300MB.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T04:33:56.3804164Z Usage: mkfs.xfs
+...
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T04:33:57.0570065Z FAIL: the control itself failed with apparmor=unconfined set — the probe recipe (mknod/loop/xfs mechanics) is broken, not an AppArmor result. This step's AppArmor verdict is VOID.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T04:33:57.0585053Z ##[error]Process completed with exit code 1.
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T04:33:57.0642403Z ##[group]Run make lab-destroy
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T04:33:57.0673538Z shell: /usr/bin/bash -e {0}
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T04:33:57.0673643Z env:
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T04:33:57.0673761Z   HOSERVA_LAB_ID:
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T04:33:57.0800140Z set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make lab-up)
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T04:33:57.0800982Z make: *** [Makefile:90: lab-require-id] Error 1
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T04:33:57.0806099Z ##[error]Process completed with exit code 2.
+#
+# ^ TWO BUGS, both fixed by this commit:
+#
+# Bug A — the control branch reached `mkfs.xfs` for the first time (the
+# mknod fix from run 35049304081 is confirmed working — losetup no longer
+# fails), and mkfs.xfs itself refused: the probe images were
+# `truncate -s 64M`, below xfsprogs' ~300MB minimum. The step's own control
+# guard worked exactly as designed — it caught the broken recipe and voided
+# the verdict instead of asserting one. lab-up/lab-seed/lab-verify-refusal/
+# the SnapRAID sync never ran (all "skipped" in the job's step list) because
+# the AppArmor step failed first.
+#
+# Bug B — with the AppArmor step failing, lab-destroy (if: always()) ran
+# with steps.lab.outputs.id unset, because "Derive this run's lab id" sat
+# after the AppArmor step in the job. lab-require-id correctly refused an
+# empty HOSERVA_LAB_ID, so teardown died with a second, unrelated failure —
+# there was nothing to tear down in this run (lab-up never ran), but the
+# workflow could not even establish that cleanly.
+#
+# Neither bug says anything about AppArmor necessity — that question is
+# still open, and still rests on run 35049304081's retracted-as-unsupported
+# verdict until the fixed step (512M images, id derived first) runs hosted.

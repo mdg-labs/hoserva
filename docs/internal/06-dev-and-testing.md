@@ -394,7 +394,7 @@ The residual risks above are exercised by volunteers on their own hardware, neve
 - **There are no self-hosted runners** (Q79, D20). What hosted runners can't run, agents run on the development host — in the lab and user-session VMs — as a required step before every release.
 - **No workflow uses `pull_request_target` to check out PR code.**
 - **First-time contributors' workflows require approval** (repository setting).
-- Spike S9 confirms hosted runners support loop devices, FUSE and a real SnapRAID sync, on the pinned `ubuntu-24.04` image — `ci.yml`'s own `lab` job ran L2 in production (run 34950031773), and the pinned-image probe (`.github/workflows/s9-hosted-probe.yml`, doc 08 §9) added a hosted SnapRAID sync that also succeeded (run 35049304081). That same probe's AppArmor-necessity comparison came back void (both branches failed from an unrelated probe bug, not from AppArmor) and its `/dev/kvm` job failed before ever invoking QEMU, on an unreadable-kernel bug that is now fixed and validated locally but not yet re-run hosted. Until a hosted run confirms both, AppArmor necessity stays unresolved and L3 stays on the dev host (Q79).
+- Spike S9 confirms hosted runners support loop devices, FUSE and a real SnapRAID sync, on the pinned `ubuntu-24.04` image — `ci.yml`'s own `lab` job ran L2 in production (run 34950031773), and the pinned-image probe (`.github/workflows/s9-hosted-probe.yml`, doc 08 §9) added a hosted SnapRAID sync that also succeeded (run 35049304081). **S9's `/dev/kvm` half is now CONFIRMED hosted too** (run 35056076616): a QEMU guest boots with KVM acceleration on the pinned `ubuntu-24.04` runner, confirmed host-side via QMP — this opens the hosted path for L3 (§4) and the suites that run inside it (below), for a single, non-nested guest. **S9's AppArmor-necessity comparison is still void, not answered** — two separate hosted runs each failed for a reason unrelated to AppArmor (a probe-recipe bug, then an image-size bug), and the fixed step has not yet run hosted; this affects `ci.yml`'s own merge-gate `lab` job, not L3. **S10 (nested KVM, needed only for Hoserva's own VM-management suite) is untouched and stays a separate, open spike.**
 
 ### Pipeline
 
@@ -407,10 +407,10 @@ The residual risks above are exercised by volunteers on their own hardware, neve
 | Loop-device integration (L2) | Hosted (`sudo`, ephemeral) | Every push and PR |
 | Schema-migration fixture upgrade (D16) | Hosted | Every push and PR |
 | `.deb` build (amd64 + arm64) | Hosted | Every push and PR |
-| VM end-to-end (L3) | Hosted if S9 allows; otherwise agents on the dev host | Nightly on `main` where hosted; before every release |
+| VM end-to-end (L3) | Hosted — S9's KVM half confirmed (run 35056076616, doc 08 §9) | Nightly on `main` where hosted; before every release |
 | Hoserva's own VM-management suite (Phase 3.5, nested KVM) | Hosted if S10 allows; otherwise agents on the dev host | Nightly on `main` where hosted; before every release |
-| Migration suite | Hosted if S9 allows; otherwise agents on the dev host | Nightly on `main` where hosted; before every release |
-| Playwright | Hosted if S9 allows; otherwise agents on the dev host | Nightly on `main` where hosted; before every release |
+| Migration suite | Hosted — S9's KVM half confirmed (run 35056076616, doc 08 §9) | Nightly on `main` where hosted; before every release |
+| Playwright | Hosted — S9's KVM half confirmed (run 35056076616, doc 08 §9) | Nightly on `main` where hosted; before every release |
 
 ### Merge gate
 
