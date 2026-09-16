@@ -1,0 +1,213 @@
+== snapraid pkg version (metadata, never --version) ==
+snapraid 12.4-1
+== wrote /lab/9-a1/s8/snapraid.conf ==
+parity /lab/9-a1/mnt/parity1/snapraid.parity
+content /lab/9-a1/mnt/parity1/snapraid.content
+content /lab/9-a1/mnt/cache/snapraid.content
+data d1 /lab/9-a1/mnt/disk1/
+data d2 /lab/9-a1/mnt/disk2/
+data d3 /lab/9-a1/mnt/disk3/
+== seed: 2 files per disk, one will be force-zero'd, one disk will be force-empty'd ==
+/lab/9-a1/mnt/disk1/a/keep.bin
+/lab/9-a1/mnt/disk1/a/zero-me.bin
+/lab/9-a1/mnt/disk2/b/also-keep.bin
+/lab/9-a1/mnt/disk2/b/keep.bin
+/lab/9-a1/mnt/disk3/c/empty-me.bin
+/lab/9-a1/mnt/disk3/c/keep.bin
+== initial sync (baseline, all files present) ==
++ snapraid -c /lab/9-a1/s8/snapraid.conf sync
+[exit 0]
+Self test...
+Loading state from /lab/9-a1/mnt/parity1/snapraid.content...
+WARNING! Content file '/lab/9-a1/mnt/parity1/snapraid.content' not found, attempting with another copy...
+Loading state from /lab/9-a1/mnt/cache/snapraid.content...
+No content file found. Assuming empty.
+Scanning...
+Scanned d3 in 0 seconds
+Scanned d1 in 0 seconds
+Scanned d2 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/9-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/9-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/9-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/9-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+50%, 0 MB          100% completed, 2 MB accessed in 0:00    
+
+     d1 10% | ******
+     d2 10% | ******
+     d3 20% | ************
+ parity  0% | 
+   raid 15% | *********
+   hash 21% | *************
+  sched 39% | ***********************
+   misc  1% | *
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/9-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/9-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/9-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/9-a1/mnt/cache/snapraid.content in 0 seconds
+/lab/9-a1/mnt/disk1/a/zero-me.bin 0 bytes
+-- plain sync, expect refusal (snapraid.txt -Z/--force-zero) --
++ snapraid -c /lab/9-a1/s8/snapraid.conf sync
+[exit 1]
+Self test...
+Loading state from /lab/9-a1/mnt/parity1/snapraid.content...
+Scanning...
+The file '/lab/9-a1/mnt/disk1/a/zero-me.bin' has unexpected zero size!
+It's possible that after a kernel crash this file was lost,
+and you can use 'snapraid fix -f /a/zero-me.bin' to recover it.
+If this an expected condition you can 'sync' anyway using 'snapraid --force-zero sync'
+confirmed: plain sync refused a zeroed previously-non-zero file
+confirmed: refusal message names the zero-size condition
+-- sync -Z/--force-zero, expect success --
++ snapraid -c /lab/9-a1/s8/snapraid.conf sync -Z
+[exit 0]
+Self test...
+Loading state from /lab/9-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d2 in 0 seconds
+Scanned d1 in 0 seconds
+Scanned d3 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/9-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/9-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/9-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/9-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+100%, 0 MB          100% completed, 1 MB accessed in 0:00    
+
+     d1  0% | 
+     d2 36% | **********************
+     d3 36% | **********************
+ parity  0% | 
+   raid  7% | ****
+   hash 19% | ***********
+  sched 35% | *********************
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/9-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/9-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/9-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/9-a1/mnt/cache/snapraid.content in 0 seconds
+confirmed: --force-zero overrides the guard
+(disk3 now has zero tracked files, mountpoint itself untouched — simulating the doc 02 §2 removing-disk case, doc 09 §4)
+-- plain sync, expect refusal (snapraid.txt -E/--force-empty) --
++ snapraid -c /lab/9-a1/s8/snapraid.conf sync
+[exit 1]
+Self test...
+Loading state from /lab/9-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d1 in 0 seconds
+Scanned d2 in 0 seconds
+Scanned d3 in 0 seconds
+WARNING! All the files previously present in disk 'd3' at dir '/lab/9-a1/mnt/disk3/'
+are now missing or have been rewritten!
+This could occur when some disks are not mounted
+in the expected directory.
+If you want to 'sync' anyway, use 'snapraid --force-empty sync'.
+confirmed: plain sync refused disk3 with all originally-present files missing
+confirmed: refusal message names the all-files-missing condition
+-- sync -E/--force-empty, expect success --
++ snapraid -c /lab/9-a1/s8/snapraid.conf sync -E
+[exit 0]
+Self test...
+Loading state from /lab/9-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d1 in 0 seconds
+Scanned d2 in 0 seconds
+Scanned d3 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/9-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/9-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/9-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/9-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+50%, 0 MB          100% completed, 1 MB accessed in 0:00    
+
+     d1 38% | ***********************
+     d2 54% | *********************************
+     d3  0% | 
+ parity  0% | 
+   raid  9% | *****
+   hash  7% | ****
+  sched 27% | ****************
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/9-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/9-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/9-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/9-a1/mnt/cache/snapraid.content in 0 seconds
+confirmed: --force-empty overrides the guard
+-- final status, everything settled --
++ snapraid -c /lab/9-a1/s8/snapraid.conf status
+[exit 0]
+Self test...
+Loading state from /lab/9-a1/mnt/parity1/snapraid.content...
+Using 0 MiB of memory for the file-system.
+SnapRAID status report:
+
+   Files Fragmented Excess  Wasted  Used    Free  Use Name
+            Files  Fragments  GB      GB      GB
+       2       0       0     0.0       0       0   0% d1
+       2       0       0     0.0       0       0   0% d2
+       0       0       0     0.0       0       0   0% d3
+ --------------------------------------------------------------------------
+       4       0       0     0.0       0       2   0%
+
+
+100%|o                                                                     
+    |o                                                                     
+    |o                                                                     
+    |o                                                                     
+    |o                                                                     
+    |o                                                                     
+    |o                                                                     
+ 50%|o                                                                     
+    |o                                                                     
+    |o                                                                     
+    |o                                                                     
+    |o                                                                     
+    |o                                                                     
+    |o                                                                     
+  0%|o_____________________________________________________________________
+     0                    days ago of the last scrub/sync                 0
+
+The oldest block was scrubbed 0 days ago, the median 0, the newest 0.
+
+No sync is in progress.
+100% of the array is not scrubbed.
+No file has a zero sub-second timestamp.
+No rehash is in progress or needed.
+No error detected.
+OK

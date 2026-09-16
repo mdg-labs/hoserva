@@ -1,0 +1,526 @@
+Remove --depth=1 to clone for tarball builder (#1583)
+
+Led to empty changelog
+Replace 'unknown' distro-codename when building deb from tarball src (#1584)
+Remove cirris builds, codeql; redo mkdocs builds (#1585)
+tools/preload: include correct extended attribute headers on FreeBSD (#1590)
+
+Add conditional includes for extended attribute support. FreeBSD uses
+<sys/extattr.h> instead of <sys/xattr.h>, which prevents the preload
+module from building. This update selects the proper header based on
+the target platform and fixes the build failure on FreeBSD.
+Add qbittorrent specific section of known issues (#1591)
+Ignore remote when forcing generation of docs (#1592)
+libfuse: fix narrowing conversion of nsec fields on i386 (#1593)
+
+On 32 bit platforms tv_nsec is a signed long while the FUSE setattr
+arguments provide nanoseconds as uint32_t. C++17 treats uint32_t -> long
+in a brace initializer as a narrowing conversion and rejects it on ILP32
+targets. This surfaced when building on FreeBSD i386 with clang 19 where
+the compiler refused the list initialization of struct timespec.
+
+Add explicit static_cast<long>() for the nsec fields to make the
+conversion intentional and portable. This avoids build failures on i386
+while leaving 64 bit builds unchanged.
+Rework credential handling to support chroot & idmap (#1595)
+
+Run in an elevated credential mode (root) and let the kernel manage
+entitlements. Will result in slightly different behavior but should
+not be noticed by most.
+Update submitting bug reports, improve collect-info (#1598)
+Add LUP policy (#1601)
+Rework new `lup` policy to work on 32bit systems (#1603)
+
+__int128 is not available on 32bit platforms. Moved to extended
+precision floats.
+Tag container image to ghcr for convenience (#1604)
+Misc documentation updates (#1605)
+Ensure ::exists() call can't throw (#1609)
+Add lshw to collect info tool (#1610)
+Misc documentation updates (#1612)
+Add new links to media docs (#1613)
+Add MOS to projects and update misc links (#1614)
+Add support for -n to not update mtab (#1616)
+Fixup debug output (#1617)
+Update docs for logging changes + new video (#1618)
+Remove fuse_ll_pipe dead code
+Simplify lowlevel fuse state management and req mem
+Remove "channels" and embed into session
+Fix branches unit test
+Rework node obj pool to use objpool
+Use debug mutex more
+Rework objpool
+Explicitly return EXIT_FAILURE
+Update copyright headers
+Misc cleanup
+Fix integer overflow in size suffix parsing
+
+Use __builtin_mul_overflow to detect overflow when applying size
+suffixes (K, M, G, T) in str::from for int64_t and uint64_t. Previously,
+large values with suffixes could silently wrap around.
+Remove unused PolicyCache implementation
+Fix str::trim to handle all whitespace characters
+
+Use std::isspace() instead of comparing only to space character.
+Now handles tabs, newlines, carriage returns, etc.
+Add more asserts
+Add extra checks in for file handle lookup
+Make global inode calculation function pointer atomic
+Remove unused files
+Move 3rd party libraries to "vendored" directory
+Cleanup ugid.hpp usage
+Update vendored/rapidhash to v3
+Update vendored/subprocess to v2.5
+Update vendored/CLI11 to v2.6.2
+Update vendored/acutest to latest master
+Update vendored/boost to 1.90.0
+Update vendored/nonstd to latest and fix API usage
+Move fmtlib to vendored and upgrade to 12.1.0
+Convert stdint to short ints
+Remove duplicate includes
+Remove unused "using"s
+Convert some push_back to emplace_back
+Misc cleanup
+Update limiting drive spinup doc
+No longer explicitly error out on broken mount point
+
+If ENOTCONN (broken FUSE mount) umount first and continue to mount.
+Add support for Arch, btw
+Fix eplus search bug
+
+Not that anyone would ever use this but it was noticed in a scan.
+Fix copydata_copy_file_range bug
+Add null pointer checks for FileInfo/DirInfo
+Fix futimens bugs: stat pointer, variable names, and negation
+Remove iterator methods from Branches class
+fix str.cpp: use string_view::npos, fix erase() calls, remove extra whitespace
+fix policy_eppfrd.cpp: return 0 when branchinfo found, -ENOENT only when empty
+fix objpool: add size tracking, improve allocation matching; fix msgbuf: clear pool on size change
+Use RND class for shrink_to_rand_elem and add assertions
+Fix buffer overflow in readlink by reserving space for null terminator
+Add NULL check for cmsg in receive_fd to prevent segfault
+Initialize stat buffer and add stat call in fuse_mount_sys
+Change session->exited to sig_atomic_t
+Remove dead branch in fuse_reply_data
+Fix incorrect type in fs_read and write
+Ensure zero initialized timeouts structs
+Fix error handling in fuse chmod, chown, setxattr, removexattr
+Check string is not empty before resize in Config::keys
+Better error handling in pagesize config type
+Rework string utils, more test cases
+Misc fixes and improvements to thread pool
+Improve error handling when querying pagesize
+Make cfgfile depth calculation thread friendly
+Fix possible error handling issue with errno
+Improve thread pool
+Cleanup fuse_readlink
+Small improvements to fs::statvfs_cache
+Fixup listxattr error handling
+fs_inode cleanup
+fs_wait_for_mount cleanup
+Cleanup config and add tests
+Cleanup branches and add more unit tests
+Cleanup procfs and abort on critical issues
+Move scope_guard to vendored/
+Use fatal::abort() rather than assert in places
+Auto-commit fuse_msgbuf.cpp
+More aggressive error handing with pagesize queries
+Fix readlink implementation, add more tests
+Fix error condition in fs_copyfile
+Fix null ptr handling issue in ioctl processing
+Move fuse_session to C++ and make exit flag atomic
+Convert vendored/libfuse C sources to C++17
+
+Convert all C source files in vendored/libfuse/ to C++17:
+- lib/crc32b.c    -> crc32b.cpp  (const void* cast)
+- lib/fuse_opt.c -> fuse_opt.cpp (designated init, void* arithmetic)
+- lib/fuse_signals.c -> fuse_signals.cpp
+- lib/helper.c   -> helper.cpp  (void* data cast)
+- lib/mount.c    -> mount.cpp  (thin wrapper)
+- lib/mount_generic.c -> mount_generic.h (static inline, #pragma once)
+- lib/mount_bsd.c -> mount_bsd.h    (static inline, #pragma once)
+- lib/mount_util.c -> mount_util.h   (static inline, #pragma once)
+- util/fusermount.c -> fusermount.cpp
+- util/mount.mergerfs.c -> mount.mergerfs.cpp
+
+Key changes:
+- Replace C99 designated initializer in fuse_opt_parse with field-by-field init
+- Fix void* pointer arithmetic via char* base + offset pattern
+- All C-style (T*)voidptr casts replaced with static_cast/reinterpret_cast
+- Remove redundant #define _GNU_SOURCE (already in FUSE_FLAGS)
+- Wrap __clone2 declaration in extern "C" for ia64 path
+- Update Makefile: empty SRC_C, build utils with $(CXX) instead of $(CC)
+- Remove stale .c files now replaced by .cpp/.h counterparts
+
+All binaries build cleanly: mergerfs, mergerfs-fusermount, mount.mergerfs
+replace raw C-strings with std::string in converted libfuse files
+
+util/mount.mergerfs.cpp:
+- Remove xstrdup/xrealloc wrappers entirely
+- Convert type, source, options, command, setuid to std::string
+- Replace add_arg() pointer-rewriting with shell_quote() returning std::string
+- Replace add_option() with simple std::string += concatenation
+- Fix const_cast UB on string literal assignment
+
+lib/helper.cpp:
+- Convert add_default_subtype local subtype_opt: malloc+snprintf+free -> std::string construction
+
+lib/mount_generic.h:
+- Convert fuse_mount_sys locals source/type: malloc+strcpy+strcat -> std::string
+- Remove 4 unnecessary free() calls (RAII cleanup)
+- .c_str() at mount() and fuse_mnt_add_mount() boundaries
+
+lib/mount_util.h:
+- Rewrite fuse_mnt_resolve_path internals using std::string: rfind/substr
+  instead of manual pointer arithmetic, strrchr, strlen chains
+Move maintainence thread func take u64 rather than int
+
+signed rollover is UB
+Additional check for ENOTCONN on mount
+Add more integration tests
+Fallback to fusermount3 where available
+
+Also general cleanup of mount_generic.
+Update docs; add nofs, policyfs and greyhole
+Improve proj comparisons + new SnapRAID details
+Rework open file resource management
+Misc formatting changes
+Enable statx with file handle
+Add support for FUSE_COPY_FILE_RANGE_64
+Add FUSE request_timeout
+
+Not yet hooked up to config parser to set as need to evaluate usage.
+Add more details to project comparisons
+Misc updates and fixes
+Update docs on limiting drive spinup
+Detect OS for release-sample make target
+Use nanosleep rather than yield and return EINTR
+Upgrade rapidhash
+Replace khash with custom hash set
+Refactor fs_inode
+
+* add Algo enum
+* ReaddirCalc class
+* string_view params
+* fs::path overloads
+Use ReaddirCalc in all readdir implementations
+
+* avoids per-entry path construction
+Add tests for HashSet, rapidhash withSeed consistency, and ReaddirCalc parity with calc
+Fix make race condition
+Handle/ignore SIGHUP
+Remove unused rwlock.hpp header and includes
+
+rwlock.hpp was left over after migrating to atomic shared pointers
+for branches configuration. No code references ReadGuard/WriteGuard
+any longer, so drop the header and its stale includes.
+state: atomic ref_count in OpenFile
+
+ref_count is read and written from multiple FUSE worker threads
+during open/release. Make it std::atomic<int> and provide a move
+constructor so OpenFile remains movable when the underlying atomic
+is non-movable.
+branches: re-link default_minfreespace pointer on copy/move; atomically publish branch mode changes
+
+Branches using the default minfreespace held a reference to their
+owning Impl's _default_minfreespace. After a copy or move the
+pointer still referenced the source Impl, which could become
+invalid or diverge after further configuration changes. Switch to
+a pointer and re-link it to the destination Impl on copy/move.
+
+While here, convert set_branch_mode to do an atomic_store of a
+newly constructed Impl rather than mutating the shared pointer
+target in place. Readers holding an atomic_load snapshot are no
+longer affected by a concurrent mode change.
+FUSE: require valid file/dir handle; drop open_files fallback
+
+Several FUSE ops fell back to looking up a FileInfo via
+state.open_files when the kernel-provided fh was zero, returning
+-ENOENT if the lookup failed. This path papered over handle-tracking
+bugs and added cost on every call. Use the handle directly and
+return -EBADF when it is invalid - the kernel should always hand us
+a valid fh for an open resource.
+
+Also simplify FileInfo::from_fh / DirInfo::from_fh and their to_fh
+helpers: callers now handle the null-pointer case explicitly so the
+ASSERT_NOT_NULL checks are redundant.
+
+Covers fallocate, fchmod, fchown, fgetattr, flock, ftruncate,
+futimens, read, release, releasedir, write, statx, ioctl (file +
+dir), readdir (sequential, concurrent-on-read,
+concurrent-on-search), and the passthrough fast paths in
+create/open.
+FUSE: pass Branches::Ptr by value with empty-branches guards
+
+Previously most FUSE ops took a reference to the live cfg.branches
+object. With atomic_load now producing a shared_ptr snapshot, pass
+it by value: the op works against a single stable view of the
+configuration for its whole lifetime, immune to concurrent
+reconfiguration.
+
+Also bail out with -ENOENT when the policy returns an empty branch
+set rather than dereferencing branches[0]. This was reachable if a
+policy rejected every branch (e.g. everything readonly while
+looking for a writable target).
+
+Covers access, chmod, chown, create, getattr, getxattr, ioctl,
+link, listxattr, mkdir, mknod, open, readdir (cor/cosr),
+readlink, removexattr, rename, rmdir, setxattr, statfs, statx,
+symlink, truncate, unlink, utimens.
+
+While here, in _getattr only dereference st_->st_mode when lstat
+succeeded (it is otherwise uninitialized).
+fuse_getattr/statx: populate timeouts in fake_root and controlfile replies
+
+The fake-root and control-file fast paths returned a synthetic stat
+without touching the timeout struct. Callers that took those paths
+ended up sending whatever the timeout struct happened to hold,
+which is uninitialized memory for the control-file path and
+whatever a prior call left there for the fake-root path. Kernel
+behavior is undefined when the timeout is garbage.
+
+Pass timeout_ into both helpers and set entry/attr from the
+configured cache values.
+fuse_readdir: atomic initialized flag; bound error string; check msgbuf allocation
+
+- ReadDir::_initialized is set by the first thread through the
+  lazy-init path and read by every subsequent caller; make it
+  std::atomic<bool> so the read/write pair has a happens-before
+  relationship.
+
+- The 'no valid mergerfs branch found' error directory entry used
+  strcpy into a fixed-size dirent buffer. The message happens to
+  fit today but the buffer is only NAME_MAX wide; switch to a
+  length-bounded strncpy driven by the constexpr string size.
+
+- The getdents implementations for seq/cor/cosr allocated a msgbuf
+  without checking for allocation failure and then dereferenced it.
+  Return -ENOMEM when the allocation fails.
+fuse_readlink: always null-terminate buffer
+
+Old code only null-terminated when the returned/copied length was
+strictly less than the caller-supplied bufsize_, leaving the buffer
+unterminated on an exact-fill. Since buf_ is consumed as a C string,
+reserve one byte for the terminator up front and unconditionally
+terminate.
+fuse_statfs: scale with long double to avoid integer overflow
+
+The branch-aggregation code computed
+  blocks * f_frsize / min_frsize
+as u64 arithmetic. With large filesystems the intermediate product
+blocks * f_frsize overflows 64 bits long before the division can
+bring the result back into range, producing garbage bavail/bfree
+values reported to userspace.
+
+Compute the scale factor once in long double and multiply each
+count by it, so the only narrowing happens in the final cast back
+to fsblkcnt_t.
+fs_movefile_and_open: -ENOSPC when no destination branch available
+
+The create policy can legitimately return success with an empty
+destination list (e.g. every candidate rejected). Previously we
+then dereferenced dst_branch[0] and faulted. Return -ENOSPC so the
+original write that triggered the move propagates a sensible errno
+to userspace.
+str: null-safe same() and startswith()
+
+Both helpers previously called strcmp/pointer-dereference directly
+on their arguments, so a stray NULL (e.g. an unset env string or an
+absent xattr) crashed the process. Guard both helpers: same()
+returns true only if both pointers are equal, startswith() returns
+false if either side is NULL.
+log: default debug log path to empty; skip set when empty
+
+libfuse previously initialized its debug log filepath to
+"/dev/stderr", forcing the config layer to reopen stderr on every
+load whether or not the user asked for it. Default the libfuse log
+path to "" and have the mergerfs config layer only forward the
+request to libfuse when the user supplied an explicit path.
+libfuse: remove userdata from init/destroy APIs; drop unused fuse_reply_ioctl_iov
+
+The low-level init/destroy callbacks were passed a userdata pointer
+that mergerfs never consumed - the caller threaded it through
+fuse_lowlevel_new only to hand it back unchanged. Remove the
+parameter from the ops struct, from fuse_lowlevel_new(_common),
+and from the internal fuse_ll struct; update fuse_lib_init and
+fuse_lib_destroy accordingly.
+
+Also drop fuse_reply_ioctl_iov: no caller in-tree invokes it and
+the public API is defined by this vendored libfuse fork.
+libfuse: harden fuse.cpp against NULL nodes; use lock guards; check allocations
+
+Collapse get_node/get_node_nocheck into a single function that
+returns NULL when the node is absent rather than abort()ing.
+Callers that previously assumed non-NULL now check the return value
+and either reply ESTALE/ENOMEM or fall through gracefully; a few
+places where the node is load-bearing (e.g. unhash during remove)
+use fatal::abort with a descriptive message.
+
+Switch mutex_lock / mutex_unlock pairs to mutex_lockguard so early
+returns on error paths no longer leak the lock, and add NULL-safety
+around fuse_dh in readdir/readdir_plus, fuse_dirents_init error
+returns, the getattr path when both name and fh are empty, and the
+msgbuf allocation in fuse_lib_read.
+
+Pull the new xstrdup/xmalloc wrappers from xalloc.hpp for the root
+node name so the common-case OOM path terminates with a diagnostic
+instead of a silent corrupted node.
+
+Also guard fuse_session_destroy against a NULL session - called
+from error-recovery paths.
+libfuse: use atomic fuse_session pointer in signal handler
+
+The signal handler reads the global session pointer from an async-
+signal context while another thread installs/removes the session
+via set/remove_signal_handlers. Use std::atomic<fuse_session*> with
+acquire/release ordering so the handler either sees NULL or a fully
+published session, never a torn pointer.
+libfuse: thread_pool/objpool/fuse_loop - safer memory and iteration
+
+- ThreadPool::destroy used to iterate _threads directly while another
+  thread could be adjusting the same vector. Snapshot the vector
+  under the mutex and iterate the local copy for pthread_cancel /
+  pthread_join.
+
+- ObjPool::construct now returns NULL when the pooled allocator
+  returns NULL instead of invoking placement-new on a null
+  pointer. In destroy, compute to_node(obj) before running the
+  destructor - the destructor may scrub bytes the to_node helper
+  reads.
+
+- In the async/sync workers in fuse_loop, msgbuf_alloc can return
+  NULL under memory pressure. Fail the worker cleanly with a
+  diagnostic rather than dereferencing. Also introduce a small
+  _nproc() helper that treats hardware_concurrency()==0 as 1, so
+  the downstream min/max arithmetic doesn't produce a zero thread
+  count.
+libfuse: small safety and portability fixes across opt/cpu/fusermount/maintenance_thread
+
+- fuse_opt: reformat process_opt_param to project style; return the
+  rv from sscanf through a named local so the error branch prints
+  the failing option cleanly.
+
+- cpu.cpp: when parsing /sys/devices/system/cpu/*/topology/core_id,
+  bail out cleanly on stream read failure rather than recording an
+  uninitialized core_id.
+
+- fusermount: free(copy) on the success path of parsing the mount
+  option (previously leaked on every mount), and replace the fixed-
+  buffer sprintf into procfile with snprintf bounded by the buffer
+  size.
+
+- maintenance_thread: widen the iteration count from int to u64
+  so a long-lived daemon doesn't wrap after ~68 years of ticks
+  (real effect: silence signed-overflow warnings under UBSan).
+Formatting: normalize brace style and parameter alignment
+
+No functional change: libfuse/helper.cpp (fuse_daemonize,
+fuse_helper_opt_proc, fuse_parse_cmdline) and mergerfs
+fuse_init.cpp (_want helpers) reformatted to match the project's
+GNU-style brace placement and aligned parameter lists.
+Remove mkdocs build github workflow
+Fix docs regarding "noforget"
+Tweak docs on NFS and identity management
+Better same file check for fsck
+Don't push docs for RC tags
+Rework readlink to not depend on cstr nul termination
+When file unlinked check open_files map
+
+Inadvertantly removed. Didn't realize that the kernel would not always
+send file handle when unlinked.
+Reject invalid policies
+Don't return success on ENOTEMPTY rmdir errors
+Better handle make sanitize option
+Add unit and integration tests for recently changed code
+
+Unit tests (29 new in tests/tests.cpp):
+- str::eq() and str::startswith() char* nullptr safety
+- str::from() u64/s64/int suffix parsing (K/M/G/T, overflow, invalid)
+- num::humanize() byte formatting (0, 512, 1K, 1M, 1G, 1T, non-exact)
+- RmdirErr priority error accumulation (ENOTEMPTY/EEXIST override rules)
+- HashSet inline-to-heap growth, empty string, and large insertion
+- fs::inode algorithm switching (valid/invalid names, passthrough raw ino,
+  distinct inodes across algorithms)
+- RND::rand64() bounds (range, max, shrink_to_rand_elem)
+- Branches::Impl copy and move assignment re-links default_minfreespace
+
+Integration tests (5 new in tests/):
+- TEST_policy_lup: LUP policy create and search
+- TEST_rmdir_enotempty_priority: rmdir returns ENOTEMPTY for non-empty dirs
+- TEST_open_after_unlink: read/write via fd after unlink
+- TEST_api_xattr: mergerfs xattr API (fullpath, relpath, basepath, allpaths)
+- TEST_movefile_enospc: moveonenospc configuration round-trip
+
+Also: remove xattr nosys checks from TEST_cfg_xattr_modes, reformat
+integration test scripts to use temp_dir/cleanup_dir helpers, and
+minor parameter alignment changes in fuse_getxattr, fuse_init,
+fuse_rename.
+Strengthen mergerfs integration tests
+
+- Make the test runner fail on failed tests and report explicit skips
+- Strengthen assertions for O_DIRECT, LUP policy, EXDEV fallback, and xattrs
+- Fix cleanup and file descriptor handling across test scripts
+vendor moodycamel queue and upgrade to 1.0.5
+libfuse: fix use-after-free in fuse_lib_ioctl
+Use stat fingerprint as cache validity sentinel
+
+- Reserve a zero stat CRC to represent an invalid cache fingerprint.
+
+- Include device, size, inode, mtime, and ctime data in the fingerprint.
+
+- Recompute the fingerprint during auto-cache open before keeping cache.
+libfuse: remove per-node lock bookkeeping
+Remove unused lock operation plumbing
+Remove timed node removal
+add missing <new> include for std::nothrow in fuse_session.cpp
+Add QEMU binfmt setup and fix static installer
+
+- Fix typo in static.installer: /pkg/ -> /pkgs/
+
+- Add missing mkdir -p /build before makeself
+
+- Mount pkgs directory via podman build -v so static.installer can access
+
+  previously built static tarballs without relying on bind mounts relative
+
+  to the build context
+
+- Register qemu-user-static binfmt handlers for cross-compilation
+
+- Make --git-repo optional when using --setup
+Document advisory locking limitation and update deprecated options
+
+- Add documentation explaining that advisory file locking is not supported
+
+- Add remember-nodes to deprecated options mapping
+
+- Add comment explaining stat_crc32b fingerprint invalidation behavior
+
+- Fix heading level for Host vs Container identity section
+update fuse_lib_tmpfile() node management to match fuse_lib_create()
+Use unmount() on FreeBSD for ENOTCONN umount
+make all integration tests self-contained with ephemeral mounts
+
+- Add mergerfs_mount() context manager in posix_parity.py that creates
+  temporary branch dirs in tests/.test_tmp/, mounts an ephemeral mergerfs
+  instance, and cleans up after use.
+- Add find_mergerfs(), find_fusermount(), mount_mergerfs(), unmount_mergerfs()
+  helpers.
+- Update run-tests to invoke each TEST_* script without a mountpoint arg.
+- Update README.md to document the new `python3 tests/run-tests` invocation.
+- Fix 44 tests to use mergerfs_mount() instead of expecting a pre-mounted path.
+- Add tempfile import to 10 tests that were missing it.
+- Fix TEST_mount_lifecycle to use mergerfs_mount() context manager.
+- Fix TEST_posix_tmpfile missing join import.
+- Fix TEST_cfg_xattr_modes error message framing (no "(known bug)").
+- Fix TEST_posix_copy_file_range: loop-copy full size, compare st_size and
+  SHA256 hash; add NativeTmp for space management; route native temp to
+  tests/.test_tmp/ to avoid ENOSPC on /tmp.
+- Fix TEST_posix_getattr_fgetattr: st_cmp skips st_size for dirs; add
+  compare_ino param for safe inode comparison when inodecalc=passthrough.
+- Fix TEST_unlink_rename, TEST_use_* tests: namespace cleanup, consistent
+  variable naming, None check for cmpfunc.
+- Fix TEST_readlink_semantics: remove type annotations to support older
+  Python; wrap in mergerfs_mount() try/except.
+- Add flush=True to run-tests print so test names show immediately.
+Add new OS build files
