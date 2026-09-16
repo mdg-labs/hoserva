@@ -1,0 +1,33 @@
+# Variant compose overlay for the S9 AppArmor-necessity check (issue #10,
+# doc 06 §3, Q45). Applied as a second `-f` on top of docker-compose.dev.yml
+# via `make lab-up LAB_COMPOSE_EXTRA=scripts/devenv/docker-compose.apparmor-default.yml`
+# (Makefile) — never with a bare `docker run` or `docker compose` call, so
+# the AppArmor experiment runs through the real lab recipe, not a
+# hand-rolled replica of it.
+#
+# docker-compose.dev.yml is the artifact under test and is never edited for
+# this: it is the control arm, unmodified. This file is the ONE variable —
+# it puts the `lab` service back on Docker's default AppArmor profile
+# instead of `apparmor=unconfined`.
+#
+# `apparmor=docker-default` explicitly requests the default profile, rather
+# than trying to empty docker-compose.dev.yml's `security_opt` entirely.
+# This was rendered and read (`docker compose ... config`), not assumed, and
+# the plain list form below is NOT what a first render used —
+# docker-compose.dev.yml already sets `security_opt: [apparmor=unconfined]`,
+# and Compose's default list-merge behaviour for `security_opt` across `-f`
+# files is a UNION, not a replace: a plain
+# `security_opt: [apparmor=docker-default]` here rendered as
+# `security_opt: [apparmor=unconfined, apparmor=docker-default]` — both
+# entries present, which is not the single-variable experiment this file
+# exists to run. The `!override` YAML merge tag (Compose's own mechanism for
+# this exact case, supported by this repo's pinned Compose version) replaces
+# the list wholesale instead of unioning it — confirmed by rendering both
+# arms: see spikes/s9/results/compose-config-control.txt (unmodified
+# docker-compose.dev.yml, `security_opt: [apparmor=unconfined]`, unchanged)
+# and spikes/s9/results/compose-config-variant.txt (this file applied,
+# `security_opt: [apparmor=docker-default]` alone).
+services:
+  lab:
+    security_opt: !override
+      - apparmor=docker-default
