@@ -1,0 +1,6 @@
+# extracted from the ABBA-interleaved run — see cost-throughput-interleaved.log for the real run order and cost-throughput-summary.log for the order-effect check
+label=[single-mount rep1 (seq-pos 1)] direct_io=yes seconds=0.0397442 gbps=5.2766 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0397442 s, 5.3 GB/s]
+label=[single-mount rep2 (seq-pos 4)] direct_io=yes seconds=0.039711 gbps=5.2810 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.039711 s, 5.3 GB/s]
+label=[single-mount rep3 (seq-pos 5)] direct_io=yes seconds=0.0397032 gbps=5.2821 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0397032 s, 5.3 GB/s]
+label=[single-mount rep4 (seq-pos 8)] direct_io=yes seconds=0.0391466 gbps=5.3572 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0391466 s, 5.4 GB/s]
+label=[single-mount rep5 (seq-pos 9)] direct_io=yes seconds=0.0392362 gbps=5.3449 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0392362 s, 5.3 GB/s]

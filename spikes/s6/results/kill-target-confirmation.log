@@ -1,0 +1,3 @@
+pid: 2779
+comm: mergerfs
+cmdline: mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao1 /lab/7-a1/mnt/disk1/ao1=RW:/lab/7-a1/mnt/disk2/ao1=RW:/lab/7-a1/mnt/disk3/ao1=RW /lab/7-a1/mnt/user/ao1 

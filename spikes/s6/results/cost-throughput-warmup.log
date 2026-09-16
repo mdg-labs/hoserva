@@ -1,0 +1,8 @@
+label=[shares-up-warmup1] direct_io=yes seconds=0.0639145 gbps=3.2812 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0639145 s, 3.3 GB/s]
+label=[shares-up-warmup2] direct_io=yes seconds=0.040814 gbps=5.1383 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.040814 s, 5.1 GB/s]
+label=[shares-up-warmup3] direct_io=yes seconds=0.038209 gbps=5.4886 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.038209 s, 5.5 GB/s]
+label=[shares-up-warmup4] direct_io=yes seconds=0.0380311 gbps=5.5143 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0380311 s, 5.5 GB/s]
+label=[single-mount-warmup1] direct_io=yes seconds=0.0389108 gbps=5.3896 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0389108 s, 5.4 GB/s]
+label=[single-mount-warmup2] direct_io=yes seconds=0.0388105 gbps=5.4036 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0388105 s, 5.4 GB/s]
+label=[single-mount-warmup3] direct_io=yes seconds=0.0385538 gbps=5.4395 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0385538 s, 5.4 GB/s]
+label=[single-mount-warmup4] direct_io=yes seconds=0.0378921 gbps=5.5345 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0378921 s, 5.5 GB/s]

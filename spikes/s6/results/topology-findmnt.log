@@ -1,0 +1,19 @@
+/lab/7-a1/mnt/user and everything mounted under it:
+TARGET                    SOURCE       FSTYPE        OPTIONS
+/lab/7-a1/mnt/user        hoserva-pool fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ctm1 hoserva-ctm1 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ctm2 hoserva-ctm2 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ctm3 hoserva-ctm3 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ctm4 hoserva-ctm4 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/co1  hoserva-co1  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/co2  hoserva-co2  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/co3  hoserva-co3  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/co4  hoserva-co4  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ao1  hoserva-ao1  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ao2  hoserva-ao2  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ao3  hoserva-ao3  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+`-/lab/7-a1/mnt/user/ao4  hoserva-ao4  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+
+mover target:
+TARGET                   SOURCE             FSTYPE        OPTIONS
+/lab/7-a1/mnt/mover/ctm1 hoserva-mover-ctm1 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other

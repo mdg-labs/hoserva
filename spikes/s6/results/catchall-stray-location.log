@@ -1,0 +1,4 @@
+/lab/7-a1/mnt/disk1: absent
+/lab/7-a1/mnt/disk2: absent
+/lab/7-a1/mnt/disk3: present
+/lab/7-a1/mnt/cache: absent

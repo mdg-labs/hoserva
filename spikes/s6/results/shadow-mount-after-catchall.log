@@ -1,0 +1,4 @@
+ls -la /lab/7-a1/mnt/user/shadow-test (through the catch-all, after it came up):
+total 0
+drwxr-xr-x 2 root root  6 Sep 16 00:38 .
+drwxr-xr-x 3 root root 25 Sep 16 00:38 ..

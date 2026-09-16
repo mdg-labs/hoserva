@@ -1,0 +1,9 @@
+scenario A (single-mount), in run order: 5.2766 5.2810 5.2821 5.3572 5.3449 GB/s
+  n=5 values=[5.2766 5.2810 5.2821 5.3572 5.3449] median=5.2821 min=5.2766 max=5.3572
+scenario B (twelve-shares), in run order: 5.2903 5.4487 5.2673 5.1781 5.2826 GB/s
+  n=5 values=[5.2903 5.4487 5.2673 5.1781 5.2826] median=5.2826 min=5.1781 max=5.4487
+relative loss (twelve-shares vs single-mount, by median): -0.01%
+
+order-effect check: Pearson r between each read's own sequence position (1..10) and its measured GB/s, all reps pooled regardless of scenario:
+  r = -0.090
+  (|r| close to 0: no visible linear drift left across the run after ABBA counterbalancing. A large |r| means a drift remains and is a measurement caveat, not something this script's counterbalance removed.)

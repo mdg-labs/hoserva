@@ -1,0 +1,18 @@
+share  pid  VmRSS_kB
+ctm1  324  7004
+ctm2  359  9136
+ctm3  394  7176
+ctm4  429  7380
+co1  464  7280
+co2  499  7156
+co3  534  7048
+co4  569  7356
+ao1  604  7244
+ao2  639  7368
+ao3  674  7376
+ao4  709  7288
+TOTAL_TWELVE_SHARES_KB 88812
+catchall  281  9836
+mover-ctm1  743  7180
+TOTAL_ALL_14_PROCESSES_KB 105828
+mergerfs process count (/proc scan, comm == mergerfs): 14
