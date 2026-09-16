@@ -1,0 +1,5 @@
+snapraid: 12.4-1
+e2fsprogs: 1.47.2-3+b12
+btrfs-progs: 6.14-1
+xfsprogs: 6.13.0-2+deb13u1
+kernel: Linux 7.2.5-1-cachyos #1 SMP PREEMPT_DYNAMIC Sun, 13 Sep 2026 08:30:47 +0000 x86_64
