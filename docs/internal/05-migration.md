@@ -78,6 +78,7 @@ Runs on the freshly installed Hoserva, after the Debian install and **before any
 | File ownership | UID/GID distribution recorded; UID 99 free for `hoserva-apps` (Q26) | Flag if UID 99 is taken on the new host |
 | Docker templates | Found and parsed | Report count, and how many convert cleanly vs. with warnings (clean per Q36) |
 | Share configuration | Parsed from the flash `config/shares/` | Report count, and each share's allocation method → create policy mapping (Q11) |
+| User Scripts (plugin) | Found and parsed | Report each script, its schedule and its enabled state — never executed or auto-translated (Q83) |
 | Disk serial mapping | All disks readable | Report the serial → Unraid disk-number table |
 | File counts, sizes and sample checksums per disk and share | Recorded | Baseline for the verify phase (§4 step 16) |
 | Estimated initial sync duration | Computed from array size | Informational, but it sets expectations for a multi-hour job |
@@ -126,7 +127,7 @@ A written go / no-go report, downloadable, that the user reads **before** commit
 21. Reconnect SMB clients with the new credentials.
 22. Once the initial sync completes, run a **full scrub** to confirm parity is consistent.
 23. Configure notification channels and send a test through each.
-24. Set the sync, scrub, mover, and appdata backup schedules.
+24. Set the sync, scrub, mover, and appdata backup schedules. Also work through the User Scripts inventory the scan reported (§3, Q83): recreate anything still wanted as a plain cron job or systemd timer on the new host. Hoserva neither executes nor auto-translates a migrated script — the inventory only tells the user what existed.
 25. Run a **restore drill**: pick one unimportant file, delete it, recover it with `snapraid fix`. A backup system that has never been restored from is a hypothesis, not a backup.
 26. **If the source array had VMs** (Phase 3.5, doc 14): `hoserva migrate vm-scan` reads the domain definitions from Unraid's `libvirt.img` on the adopted pool (read-only — they are not in the Flash Backup), vdisks under `/mnt/user/domains` are already in place and were covered by step 16's verification, and each VM's passthrough devices (if any) are re-validated against this machine's own IOMMU groups before the domain is offered for review (doc 14 §5) — never trusted from the source as-is, since the target hardware is not guaranteed to match. Reviewed and started one at a time, same as step 20.
 
