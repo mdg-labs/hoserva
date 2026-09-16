@@ -31,16 +31,16 @@ question, out of this spike's scope.
 
 ### Lab (L2): CONFIRMED on a hosted runner
 
-First confirmed in run `35057453620` and reconfirmed since, most recently
+First confirmed in run `35049304081` and reconfirmed since, most recently
 in run `35076920766`'s own `lab` job (`104731428284`): `lab-up`,
 `lab-seed`, `lab-verify-refusal` (both host-device-refusal checks,
 correctly `EPERM`), a SnapRAID sync against the standing array
 (`Everything OK`) and `lab-destroy` all ran green in the same run as the
 KVM confirmation above, on the pinned `ubuntu-24.04` image.
-`results/ci-run-35049304081-lab-job.log` is the earliest committed evidence
-of the same pattern; that run's own inline AppArmor verdict was separately
-retracted (see "The void history" below), but the lab steps after it were
-real passes, unaffected by that bug.
+`results/ci-run-35049304081-lab-job.log` is that first run's committed
+evidence; its own inline AppArmor verdict was separately retracted (see
+"The void history" below), but the lab steps around it were real passes,
+unaffected by that bug.
 
 ### AppArmor necessity: ANSWERED — `apparmor=unconfined` is REQUIRED
 
@@ -117,11 +117,13 @@ plain `deny` **suppresses the audit record** — only `audit deny` logs.
 Finding "288 records, zero denials" in that capture proved nothing about
 whether a denial happened.
 
-**Run `35049304081` printed "apparmor=unconfined is required" from a
-broken experiment, and that verdict was retracted at the time** — both
-branches had failed identically from the missing-`mknod` bug, unrelated to
-AppArmor. **The confirmed result above does not retroactively validate
-that retracted verdict.** These are two separate facts: an earlier claim
+**Two of those runs printed "apparmor=unconfined is required" from broken
+experiments, and both verdicts were retracted at the time** — run
+`35049304081`, where both branches failed identically from the
+missing-`mknod` bug, and run `35057453620`, where the probe misread an
+EBUSY as a denial. Neither failure had anything to do with AppArmor.
+**The confirmed result above does not retroactively validate either
+retracted verdict.** These are two separate facts: an earlier claim
 was unsupported and withdrawn; a later, independent, methodologically
 sound experiment has since established the same conclusion on its own
 evidence.
