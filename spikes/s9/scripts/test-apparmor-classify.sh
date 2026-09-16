@@ -47,9 +47,10 @@ check() {
   fi
 }
 
-# check_verdict NAME CONTROL_EXIT CONTROL_STDERR VARIANT_EXIT VARIANT_STDERR EXPECTED
+# check_verdict NAME CONTROL_EXIT CONTROL_STDERR VARIANT_EXIT VARIANT_STDERR EXPECTED [VARIANT_AUDIT]
 check_verdict() {
   local name="$1" c_exit="$2" c_stderr="$3" v_exit="$4" v_stderr="$5" expected="$6"
+  local variant_audit="${7:-}"
   local actual reason reason_file
   total=$((total + 1))
   reason_file=$(mktemp)
@@ -59,7 +60,7 @@ check_verdict() {
   # check.sh before probe 2 ever ran). The `|| true` here is therefore
   # redundant now, kept only so this line keeps working unchanged if that
   # contract ever regresses.
-  actual=$(classify_verdict "$c_exit" "$c_stderr" "$v_exit" "$v_stderr" 2>"$reason_file" || true)
+  actual=$(classify_verdict "$c_exit" "$c_stderr" "$v_exit" "$v_stderr" "$variant_audit" 2>"$reason_file" || true)
   reason=$(cat "$reason_file" 2>/dev/null || true)
   rm -f "$reason_file"
   if [[ "$actual" == "$expected" ]]; then
@@ -70,6 +71,7 @@ check_verdict() {
     printf 'FAIL  %-45s -> %-14s (expected %s)\n' "$name" "$actual" "$expected"
   fi
   printf '      %s\n' "$reason"
+  REASON="$reason"
 }
 
 echo "== classify_mount_failure: single-branch cases =="
@@ -141,6 +143,234 @@ check_verdict "both branches fail on lost loop node (run 35049304081's own case)
   1 "losetup: device node /dev/loop0 (7:0) is lost. You may use mknod(1) to recover it." \
   1 "losetup: device node /dev/loop0 (7:0) is lost. You may use mknod(1) to recover it." \
   "VOID"
+
+# check_reason_contains NAME NEEDLE
+# Asserts $REASON (set by the check_verdict call immediately before it)
+# contains NEEDLE — used to prove the OTHER-FAILURE+audit-denial path
+# below produces genuinely distinct reasoning text, not just the plain
+# OTHER-FAILURE text with the verdict word unchanged.
+check_reason_contains() {
+  local name="$1" needle="$2"
+  total=$((total + 1))
+  if [[ "$REASON" == *"$needle"* ]]; then
+    pass=$((pass + 1))
+    printf 'PASS  %-45s -> reason contains %q\n' "$name" "$needle"
+  else
+    FAIL=1
+    printf 'FAIL  %-45s -> reason does NOT contain %q\n' "$name" "$needle"
+    printf '      actual reason: %s\n' "$REASON"
+  fi
+}
+
+echo
+echo "== classify_verdict: OTHER-FAILURE + host audit corroboration (issue #10 host-audit fix round) =="
+echo
+
+# The exact scenario the dispatch's judgement call is about: run
+# 35057453620's own EBUSY string, but this time paired with a genuine
+# AppArmor DENIED audit record for the same branch's mount operation. The
+# verdict must stay VOID — classify_mount_failure's stderr-only denial
+# match is NOT widened just because a record happens to exist alongside a
+# non-denial errno (five review rounds already rejected that shortcut) —
+# but the reason text must say so explicitly and distinctly, not read like
+# a plain "some other failure" VOID.
+check_verdict "control OK, variant EBUSY WITH a corroborating audit DENIED record -> still VOID, not REQUIRED" \
+  0 "" 32 "mount: /mnt/probe: /dev/loop0 already mounted or mount point busy." \
+  "VOID" \
+  'type=AVC msg=audit(1700000000.000:99): apparmor="DENIED" operation="mount" profile="docker-default" name="/probe/mnt/"'
+check_reason_contains "  ^ reason names the audit-conflict case explicitly, not the plain OTHER-FAILURE text" \
+  "DOES contain an AppArmor mount-denial record"
+
+# Same EBUSY, but with no audit record at all (the case every real run has
+# hit so far, since AppArmor is disabled everywhere this has run) — must
+# produce the ORIGINAL plain-OTHER-FAILURE reason text, unchanged, proving
+# the new branch above didn't leak into the no-audit case.
+check_verdict "control OK, variant EBUSY, no audit record -> VOID, plain OTHER-FAILURE reason (unchanged)" \
+  0 "" 32 "mount: /mnt/probe: /dev/loop0 already mounted or mount point busy." \
+  "VOID" \
+  ""
+check_reason_contains "  ^ reason is the original EBUSY-is-not-a-denial text, no audit-conflict wording" \
+  "says nothing about AppArmor necessity"
+
+# A genuine permission-denied stderr, corroborated by an audit record:
+# REQUIRED, with the audit-corroborated reason wording (pre-existing
+# behaviour, re-asserted here alongside the new cases for contrast).
+check_verdict "control OK, variant denied WITH a corroborating audit DENIED record -> REQUIRED, corroborated wording" \
+  0 "" 32 "mount: /mnt/probe: permission denied." \
+  "REQUIRED" \
+  'apparmor="DENIED" operation="mount" profile="docker-default"'
+check_reason_contains "  ^ reason says corroborated" \
+  "corroborated by a kernel audit record"
+
+# A genuine permission-denied stderr, no audit record available: REQUIRED,
+# uncorroborated wording (pre-existing behaviour, re-asserted for
+# contrast) — proves audit_corroborates_denial's own property (this file's
+# header, lines ~92-101 above classify_verdict) still holds: its absence
+# never downgrades a real denial away from REQUIRED.
+check_verdict "control OK, variant denied, no audit record -> REQUIRED, uncorroborated wording" \
+  0 "" 32 "mount: /mnt/probe: permission denied." \
+  "REQUIRED" \
+  ""
+check_reason_contains "  ^ reason says no corroborating record was found" \
+  "No corroborating kernel audit record was found"
+
+echo
+echo "== other_failure_with_audit_denial / describe_audit_capture: pure unit cases (issue #10 host-audit fix round) =="
+echo
+
+# check_bool NAME ACTUAL_FN_RESULT(0/1) EXPECTED(0/1)
+check_bool() {
+  local name="$1" actual="$2" expected="$3"
+  total=$((total + 1))
+  if [[ "$actual" -eq "$expected" ]]; then
+    pass=$((pass + 1))
+    printf 'PASS  %-70s -> %s (expected %s)\n' "$name" "$actual" "$expected"
+  else
+    FAIL=1
+    printf 'FAIL  %-70s -> %s (expected %s)\n' "$name" "$actual" "$expected"
+  fi
+}
+
+other_failure_with_audit_denial 'apparmor="DENIED" operation="mount" profile="docker-default"' && r=0 || r=$?
+check_bool "other_failure_with_audit_denial: true on a real DENIED/mount record" "$r" 0
+
+other_failure_with_audit_denial '' && r=0 || r=$?
+check_bool "other_failure_with_audit_denial: false on an empty audit log" "$r" 1
+
+other_failure_with_audit_denial 'some unrelated kernel line, nothing to do with apparmor' && r=0 || r=$?
+check_bool "other_failure_with_audit_denial: false on an audit log with no denial" "$r" 1
+
+# describe_audit_capture DMESG_RC JOURNAL_RC LINE_COUNT
+describe_audit_capture 0 0 3 >/dev/null && r=0 || r=$?
+check_bool "describe_audit_capture: returns 0 when both sources readable" "$r" 0
+
+describe_audit_capture 0 1 0 >/dev/null && r=0 || r=$?
+check_bool "describe_audit_capture: returns 0 when only dmesg readable (journalctl -k failed)" "$r" 0
+
+describe_audit_capture 1 1 0 >/dev/null && r=0 || r=$?
+check_bool "describe_audit_capture: returns 1 when BOTH sources unreadable (the capture-failed case)" "$r" 1
+
+total=$((total + 1))
+d_out=$(describe_audit_capture 1 1 0) || true
+if [[ "$d_out" == failed:* ]]; then
+  pass=$((pass + 1))
+  printf 'PASS  %-70s -> %q\n' "describe_audit_capture: both-unreadable status text starts with failed:" "$d_out"
+else
+  FAIL=1
+  printf 'FAIL  %-70s -> %q\n' "describe_audit_capture: both-unreadable status text starts with failed:" "$d_out"
+fi
+
+total=$((total + 1))
+d_out2=$(describe_audit_capture 0 0 0) || true
+if [[ "$d_out2" == ok:\ 0\ apparmor* ]]; then
+  pass=$((pass + 1))
+  printf 'PASS  %-70s -> %q\n' "describe_audit_capture: readable-but-empty is \"ok: 0 ...\", distinct from failed:" "$d_out2"
+else
+  FAIL=1
+  printf 'FAIL  %-70s -> %q\n' "describe_audit_capture: readable-but-empty is \"ok: 0 ...\", distinct from failed:" "$d_out2"
+fi
+
+echo
+echo "== hosted_runner_guard: pure allow/refuse decision (issue #10 fix round) =="
+echo
+
+# check_guard NAME GITHUB_ACTIONS_VALUE EXPECTED_WORD EXPECTED_EXIT
+# hosted_runner_guard is the actual runtime guard run-apparmor-check.sh
+# calls before its first sudo/docker invocation (its own call site is
+# checked separately, below, by grep against that file — not by running
+# it: CLAUDE.md forbids running run-apparmor-check.sh at all outside a
+# hosted runner, even expecting it to refuse). This section proves the
+# pure decision function alone: it must allow only on the literal
+# hosted-runner signal, and refuse on every other value, including the
+# ones a dev host's shell might plausibly have lying around (empty,
+# unset, "false", wrong case, an unrelated truthy-looking string).
+check_guard() {
+  local name="$1" github_actions_value="$2" expect_word="$3" expect_rc="$4"
+  local actual rc
+  total=$((total + 1))
+  actual=$(hosted_runner_guard "$github_actions_value") && rc=0 || rc=$?
+  if [[ "$actual" == "$expect_word" && "$rc" -eq "$expect_rc" ]]; then
+    pass=$((pass + 1))
+    printf 'PASS  %-70s -> %-8s rc=%s (expected %s rc=%s)\n' "$name" "$actual" "$rc" "$expect_word" "$expect_rc"
+  else
+    FAIL=1
+    printf 'FAIL  %-70s -> %-8s rc=%s (expected %s rc=%s)\n' "$name" "$actual" "$rc" "$expect_word" "$expect_rc"
+  fi
+}
+
+check_guard "hosted-runner signal present (GITHUB_ACTIONS=true) -> allow" \
+  "true" "allow" 0
+check_guard "hosted-runner signal absent (empty string, e.g. unset GITHUB_ACTIONS) -> refuse" \
+  "" "refuse" 1
+check_guard "hosted-runner signal explicitly false (GITHUB_ACTIONS=false) -> refuse" \
+  "false" "refuse" 1
+check_guard "hosted-runner signal wrong case (GITHUB_ACTIONS=True) -> refuse" \
+  "True" "refuse" 1
+check_guard "hosted-runner signal wrong value (GITHUB_ACTIONS=1) -> refuse" \
+  "1" "refuse" 1
+check_guard "hosted-runner signal an unrelated truthy-looking string -> refuse" \
+  "yes-i-promise" "refuse" 1
+
+# Called with genuinely no argument at all (not even an empty string) —
+# proves hosted_runner_guard's own `${1:-}` default is refuse-shaped on
+# its own, independent of run-apparmor-check.sh's call site already
+# collapsing an unset GITHUB_ACTIONS to "" before calling it.
+total=$((total + 1))
+no_arg_out=$(hosted_runner_guard) && no_arg_rc=0 || no_arg_rc=$?
+if [[ "$no_arg_out" == "refuse" && "$no_arg_rc" -eq 1 ]]; then
+  pass=$((pass + 1))
+  printf 'PASS  %-70s -> %-8s rc=%s (expected refuse rc=1)\n' \
+    "hosted-runner signal missing (no argument at all) -> refuse" "$no_arg_out" "$no_arg_rc"
+else
+  FAIL=1
+  printf 'FAIL  %-70s -> %-8s rc=%s (expected refuse rc=1)\n' \
+    "hosted-runner signal missing (no argument at all) -> refuse" "$no_arg_out" "$no_arg_rc"
+fi
+
+echo
+echo "== static check: hosted_runner_guard call precedes every sudo/docker invocation in run-apparmor-check.sh (issue #10 fix round) =="
+echo
+
+# Proves the line-number ordering property (dispatch requirement 3) by
+# grep against run-apparmor-check.sh's actual text, never by running that
+# script — running it, even expecting it to refuse, is exactly the hazard
+# a faulty guard would be (CLAUDE.md; the dispatch for this fix round is
+# explicit that this must be proven without execution). Pure-comment
+# lines (trimmed line starts with '#') and message-printing `echo "..."`
+# lines are blanked out first (their line numbers are preserved so real
+# invocations below them still get their true line number), so prose
+# mentioning "sudo"/"docker" in the guard's own comment block, in the
+# refusal message text itself, and in unrelated
+# `echo "docker-default profile ..."` diagnostics lines can never produce
+# a false match — what survives is only real invocations: the `if sudo
+# ...` lines (capture_host_audit / capture_host_apparmor_state) and the
+# `docker run --rm` line (run_branch). "docker-default" (an AppArmor
+# profile name, not an invocation) is excluded on its own merits too: the
+# docker pattern requires whitespace, not a hyphen, after "docker".
+RUN_CHECK_SCRIPT="$HERE/run-apparmor-check.sh"
+# shellcheck disable=SC2016 # -F (fixed-string) grep: this is the literal
+# text to find in run-apparmor-check.sh, not something meant to expand here.
+guard_call_line=$(grep -n -m1 -F 'hosted_runner_guard "${GITHUB_ACTIONS:-}"' "$RUN_CHECK_SCRIPT" | cut -d: -f1) || true
+
+filtered_run_check=$(mktemp)
+sed -E 's/^[[:space:]]*#.*$//; s/^[[:space:]]*echo[[:space:]].*$//' "$RUN_CHECK_SCRIPT" > "$filtered_run_check"
+first_sudo_line=$(grep -n -m1 -E '(^|[^[:alnum:]_])sudo[[:space:]]' "$filtered_run_check" | cut -d: -f1) || true
+first_docker_line=$(grep -n -m1 -E '(^|[^[:alnum:]_])docker[[:space:]]+run\b' "$filtered_run_check" | cut -d: -f1) || true
+rm -f "$filtered_run_check"
+
+total=$((total + 1))
+if [[ -n "$guard_call_line" && -n "$first_sudo_line" && -n "$first_docker_line" \
+      && "$guard_call_line" -lt "$first_sudo_line" && "$guard_call_line" -lt "$first_docker_line" ]]; then
+  pass=$((pass + 1))
+  printf 'PASS  %-70s -> guard=%s first-sudo=%s first-docker=%s\n' \
+    "guard call site precedes the first real sudo call and the first real docker run" \
+    "${guard_call_line:-<none>}" "${first_sudo_line:-<none>}" "${first_docker_line:-<none>}"
+else
+  FAIL=1
+  printf 'FAIL  %-70s -> guard=%s first-sudo=%s first-docker=%s\n' \
+    "guard call site precedes the first real sudo call and the first real docker run" \
+    "${guard_call_line:-<none>}" "${first_sudo_line:-<none>}" "${first_docker_line:-<none>}"
+fi
 
 echo
 echo "== classify_branch_pair / read_result: stale-file-vs-docker_exit contract (issue #10 fix round) =="

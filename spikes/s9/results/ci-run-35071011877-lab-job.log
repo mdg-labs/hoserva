@@ -1,0 +1,339 @@
+Loop-device lab + SnapRAID sync (L2)	Set up job	﻿2026-09-16T07:55:26.7140014Z Current runner version: '2.337.0'
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7159205Z ##[group]Runner Image Provisioner
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7160026Z Hosted Compute Agent
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7160541Z Version: 20260828.587
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7161083Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7161683Z Build Date: 2026-08-28T16:44:25Z
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7162254Z Worker ID: {2e8e11ff-fcfa-498d-8d4e-12dfaf021232}
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7162868Z Azure Region: centralus
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7163343Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7164470Z ##[group]Operating System
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7165106Z Ubuntu
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7165671Z 24.04.5
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7166411Z LTS
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7167061Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7167714Z ##[group]Runner Image
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7168474Z Image: ubuntu-24.04
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7169203Z Version: 20260907.300.1
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7170578Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7172756Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7174040Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7175625Z ##[group]GITHUB_TOKEN Permissions
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7178235Z Contents: read
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7178744Z Metadata: read
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7179349Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7182010Z Secret source: Actions
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7182865Z Cache mode: write
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7183436Z Prepare workflow directory
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7449505Z Prepare all required actions
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.7490136Z Getting action download info
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:26.9934211Z Download action repository 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T07:55:27.3993626Z Complete job name: Loop-device lab + SnapRAID sync (L2)
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	﻿2026-09-16T07:55:27.4560019Z ##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4561066Z with:
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4561523Z   repository: mdg-labs/hoserva
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4564977Z   token: ***
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4565397Z   ssh-strict: true
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4565863Z   ssh-user: git
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4566496Z   persist-credentials: true
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4566962Z   clean: true
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4567434Z   sparse-checkout-cone-mode: true
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4567970Z   fetch-depth: 1
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4568444Z   fetch-tags: false
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4568877Z   show-progress: true
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4569298Z   lfs: false
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4569727Z   submodules: false
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4570161Z   set-safe-directory: true
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4570669Z   allow-unsafe-pr-checkout: false
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.4571320Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5404883Z Syncing repository: mdg-labs/hoserva
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5407425Z ##[group]Getting Git version info
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5408582Z Working directory is '/home/runner/work/hoserva/hoserva'
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5410073Z [command]/usr/bin/git version
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5614955Z git version 2.55.0
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5633755Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5643338Z Temporarily overriding HOME='/home/runner/work/_temp/0b71494b-4cc2-44f1-94fc-fe77bd19d215' before making global git config changes
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5644801Z Adding repository directory to the temporary git global config as a safe directory
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5648671Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/hoserva/hoserva
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5689737Z Deleting the contents of '/home/runner/work/hoserva/hoserva'
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5692477Z ##[group]Determining repository object format
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5693836Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5694559Z ##[group]Initializing the repository
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5698420Z [command]/usr/bin/git init /home/runner/work/hoserva/hoserva
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5796319Z hint: Using 'master' as the name for the initial branch. This default branch name
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5798070Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5799605Z hint: to use in all of your new repositories, which will suppress this warning,
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5800444Z hint: call:
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5801091Z hint:
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5801922Z hint: 	git config --global init.defaultBranch <name>
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5803251Z hint:
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5805373Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5806924Z hint: 'development'. The just-created branch can be renamed via this command:
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5807955Z hint:
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5808744Z hint: 	git branch -m <name>
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5809463Z hint:
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5810387Z hint: Disable this message with "git config set advice.defaultBranchName false"
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5812152Z Initialized empty Git repository in /home/runner/work/hoserva/hoserva/.git/
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5814597Z [command]/usr/bin/git remote add origin https://github.com/mdg-labs/hoserva
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5847698Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5848799Z ##[group]Disabling automatic garbage collection
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5850818Z [command]/usr/bin/git config --local gc.auto 0
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5875042Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5876247Z ##[group]Setting up auth
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5876956Z Removing SSH command configuration
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5881816Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.5911242Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.6787230Z Removing HTTP extra header
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.6791782Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.6873262Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.7023774Z Removing includeIf entries pointing to credentials config files
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.7027977Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.7051634Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.7215655Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-18eda247-3f8e-458f-b654-6ab66104bc66.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.7244519Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/hoserva/hoserva/.git.path /home/runner/work/_temp/git-credentials-18eda247-3f8e-458f-b654-6ab66104bc66.config
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.7267556Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/hoserva/hoserva/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-18eda247-3f8e-458f-b654-6ab66104bc66.config
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.7292209Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-18eda247-3f8e-458f-b654-6ab66104bc66.config
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.7314847Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-18eda247-3f8e-458f-b654-6ab66104bc66.config
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.7716222Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.7717819Z ##[group]Fetching the repository
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:27.7721424Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +e9ad714f2f935ab68986861ebfd44042320e4230:refs/remotes/origin/main
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3045763Z From https://github.com/mdg-labs/hoserva
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3048341Z  * [new ref]         e9ad714f2f935ab68986861ebfd44042320e4230 -> origin/main
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3055028Z [command]/usr/bin/git branch --list --remote origin/main
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3075673Z   origin/main
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3082086Z [command]/usr/bin/git rev-parse refs/remotes/origin/main
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3100272Z e9ad714f2f935ab68986861ebfd44042320e4230
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3104438Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3106510Z ##[group]Determining the checkout info
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3108568Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3109604Z [command]/usr/bin/git sparse-checkout disable
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3145657Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3170271Z ##[group]Checking out the ref
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3172882Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3360064Z Switched to a new branch 'main'
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3363761Z branch 'main' set up to track 'origin/main'.
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.3371065Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.4251133Z [command]/usr/bin/git log -1 --format=%H
+Loop-device lab + SnapRAID sync (L2)	Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:28.4270814Z e9ad714f2f935ab68986861ebfd44042320e4230
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	﻿2026-09-16T07:55:28.4490729Z ##[group]Run echo "nproc: $(nproc)"
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T07:55:28.4492169Z ^[[36;1mecho "nproc: $(nproc)"^[[0m
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T07:55:28.4493410Z ^[[36;1mfree -h^[[0m
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T07:55:28.4494437Z ^[[36;1muname -srm^[[0m
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T07:55:28.4522324Z shell: /usr/bin/bash -e {0}
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T07:55:28.4523553Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T07:55:28.4771159Z nproc: 4
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T07:55:28.4783665Z                total        used        free      shared  buff/cache   available
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T07:55:28.4785673Z Mem:            15Gi       941Mi        12Gi        41Mi       2.4Gi        14Gi
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T07:55:28.4787463Z Swap:          3.0Gi          0B       3.0Gi
+Loop-device lab + SnapRAID sync (L2)	Record runner resources	2026-09-16T07:55:28.4790962Z Linux 6.17.0-1022-azure x86_64
+Loop-device lab + SnapRAID sync (L2)	Derive this run's lab id	﻿2026-09-16T07:55:28.4879580Z ##[group]Run echo "id=s9-35071011877-1" >> "$GITHUB_OUTPUT"
+Loop-device lab + SnapRAID sync (L2)	Derive this run's lab id	2026-09-16T07:55:28.4881194Z ^[[36;1mecho "id=s9-35071011877-1" >> "$GITHUB_OUTPUT"^[[0m
+Loop-device lab + SnapRAID sync (L2)	Derive this run's lab id	2026-09-16T07:55:28.4900672Z shell: /usr/bin/bash -e {0}
+Loop-device lab + SnapRAID sync (L2)	Derive this run's lab id	2026-09-16T07:55:28.4901720Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	﻿2026-09-16T07:55:28.5024585Z ##[group]Run bash spikes/s9/scripts/run-apparmor-check.sh
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:28.5026330Z ^[[36;1mbash spikes/s9/scripts/run-apparmor-check.sh^[[0m
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:28.5044590Z shell: /usr/bin/bash -e {0}
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:28.5045692Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:28.5119380Z ############################################
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:28.5120756Z ## Probe 1/2: faithful loop/XFS recipe
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:28.5121896Z ############################################
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:28.5123207Z ## === loop probe: control (apparmor=unconfined) ===
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:28.5130704Z ## running apparmor-loop-probe.sh (--security-opt apparmor=unconfined) in /tmp/tmp.Mypglszpj2
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:28.5732028Z Unable to find image 'debian:trixie-slim' locally
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:29.1044988Z trixie-slim: Pulling from library/debian
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:29.2962201Z 6310eb16bf42: Pulling fs layer
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:29.6824586Z 6310eb16bf42: Verifying Checksum
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:29.6825444Z 6310eb16bf42: Download complete
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:30.4344981Z 6310eb16bf42: Pull complete
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:30.4428708Z Digest: sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:30.4447433Z Status: Downloaded newer image for debian:trixie-slim
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:34.1074621Z debconf: unable to initialize frontend: Dialog
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:34.1075636Z debconf: (TERM is not set, so the dialog frontend is not usable.)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:34.1076125Z debconf: falling back to frontend: Readline
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:34.1076609Z debconf: unable to initialize frontend: Readline
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:34.1082364Z debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC entries checked: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.40.1 /usr/local/share/perl/5.40.1 /usr/lib/x86_64-linux-gnu/perl5/5.40 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.40 /usr/share/perl/5.40 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 8, <STDIN> line 25.)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:34.1084026Z debconf: falling back to frontend: Teletype
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:34.1106488Z debconf: unable to initialize frontend: Teletype
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:34.1107020Z debconf: (This frontend requires a controlling tty.)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:34.1107524Z debconf: falling back to frontend: Noninteractive
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3792506Z ## apparmor-loop-probe.sh container exit: 0
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3793432Z ### loop probe control diagnostics (/tmp/tmp.Mypglszpj2)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3807534Z device: /dev/loop0
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3811093Z step that failed: none
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3814559Z exit: 0
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3825781Z attribution: OK
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3836516Z detach barrier: OK
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3836987Z stderr:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3844388Z losetup -a after attach:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3851797Z /dev/loop0: [66305]:9201881 (/probe/img/probe.img)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3852507Z losetup -a at end:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3861635Z apparmor profiles listing:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3868640Z not available in this container
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3870655Z kernel/audit apparmor lines (dmesg + journalctl -k, best-effort):
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3879847Z 
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3880460Z ## === loop probe: variant (default AppArmor profile) ===
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:39.3892527Z ## running apparmor-loop-probe.sh (default profile) in /tmp/tmp.zg0XEh2oUy
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:42.1491726Z debconf: unable to initialize frontend: Dialog
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:42.1492587Z debconf: (TERM is not set, so the dialog frontend is not usable.)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:42.1493197Z debconf: falling back to frontend: Readline
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:42.1493719Z debconf: unable to initialize frontend: Readline
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:42.1495902Z debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC entries checked: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.40.1 /usr/local/share/perl/5.40.1 /usr/lib/x86_64-linux-gnu/perl5/5.40 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.40 /usr/share/perl/5.40 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 8, <STDIN> line 25.)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:42.1498007Z debconf: falling back to frontend: Teletype
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:42.1524163Z debconf: unable to initialize frontend: Teletype
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:42.1524642Z debconf: (This frontend requires a controlling tty.)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:42.1524994Z debconf: falling back to frontend: Noninteractive
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3338385Z ## apparmor-loop-probe.sh container exit: 0
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3339449Z ### loop probe variant diagnostics (/tmp/tmp.zg0XEh2oUy)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3353447Z device: /dev/loop0
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3374403Z step that failed: mount
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3387030Z exit: 32
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3389316Z attribution: OK
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3401228Z detach barrier: OK
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3401753Z stderr:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3408957Z mount: /probe/mnt: /dev/loop0 already mounted or mount point busy.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3409518Z        dmesg(1) may have more information after failed mount system call.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3412522Z losetup -a after attach:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3418153Z /dev/loop0: [66305]:9201897 (/probe/img/probe.img)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3421170Z losetup -a at end:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3427731Z apparmor profiles listing:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3435182Z not available in this container
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3436791Z kernel/audit apparmor lines (dmesg + journalctl -k, best-effort):
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3447582Z 
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3531807Z reason: control succeeded, but the variant failed for a reason other than a confirmed AppArmor denial [exit=32]. An EBUSY, a missing device node, an undersized filesystem, or any other non-denial failure says nothing about AppArmor necessity — see run 35057453620, whose EBUSY ("already mounted or mount point busy") was wrongly read as a denial by the probe this file replaces.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3533803Z ## loop probe verdict: VOID
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3534049Z 
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3534279Z ############################################
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3534884Z ## Probe 2/2: loop-free tmpfs mediation probe (forward order: control, then variant)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3535699Z ############################################
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3536410Z ## === tmpfs probe: control (apparmor=unconfined) ===
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.3543258Z ## running apparmor-tmpfs-probe.sh (--security-opt apparmor=unconfined) in /tmp/tmp.Jud0tcZYK3
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5322073Z ## apparmor-tmpfs-probe.sh container exit: 0
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5322687Z ### tmpfs probe control diagnostics (/tmp/tmp.Jud0tcZYK3)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5328705Z device: (none — branch never attached one)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5341429Z step that failed: mount
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5353930Z exit: 0
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5358093Z attribution: n/a (tmpfs probe)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5362543Z detach barrier: n/a (tmpfs probe)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5363030Z stderr:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5370841Z losetup -a after attach:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5371251Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5371575Z losetup -a at end:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5371887Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5373955Z apparmor profiles listing:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5374362Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5374802Z kernel/audit apparmor lines (dmesg + journalctl -k, best-effort):
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5380108Z 
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5380508Z ## === tmpfs probe: variant (default AppArmor profile) ===
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.5391561Z ## running apparmor-tmpfs-probe.sh (default profile) in /tmp/tmp.8bzOOoculv
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7892943Z ## apparmor-tmpfs-probe.sh container exit: 0
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7893649Z ### tmpfs probe variant diagnostics (/tmp/tmp.8bzOOoculv)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7899113Z device: (none — branch never attached one)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7911766Z step that failed: mount
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7923520Z exit: 32
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7927957Z attribution: n/a (tmpfs probe)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7931602Z detach barrier: n/a (tmpfs probe)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7932084Z stderr:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7939000Z mount: /probe/mnt: none already mounted or mount point busy.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7940050Z        dmesg(1) may have more information after failed mount system call.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7940711Z losetup -a after attach:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7941071Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7943621Z losetup -a at end:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7944097Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7944380Z apparmor profiles listing:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7944673Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7944992Z kernel/audit apparmor lines (dmesg + journalctl -k, best-effort):
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.7949931Z 
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.8027497Z reason: control succeeded, but the variant failed for a reason other than a confirmed AppArmor denial [exit=32]. An EBUSY, a missing device node, an undersized filesystem, or any other non-denial failure says nothing about AppArmor necessity — see run 35057453620, whose EBUSY ("already mounted or mount point busy") was wrongly read as a denial by the probe this file replaces.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.8029720Z ## tmpfs probe verdict (forward order): VOID
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.8030223Z 
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.8030525Z ############################################
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.8031168Z ## Order check: tmpfs probe run reversed (variant, then control)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.8031569Z ############################################
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.8031945Z ## === tmpfs probe (reversed order): variant (default AppArmor profile) ===
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:46.8039109Z ## running apparmor-tmpfs-probe.sh (default profile) in /tmp/tmp.oKVIqqY1a7
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0408720Z ## apparmor-tmpfs-probe.sh container exit: 0
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0409520Z ### tmpfs probe reversed variant diagnostics (/tmp/tmp.oKVIqqY1a7)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0414037Z device: (none — branch never attached one)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0425020Z step that failed: mount
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0435215Z exit: 32
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0438710Z attribution: n/a (tmpfs probe)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0442260Z detach barrier: n/a (tmpfs probe)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0442646Z stderr:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0450255Z mount: /probe/mnt: none already mounted or mount point busy.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0450913Z        dmesg(1) may have more information after failed mount system call.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0453845Z losetup -a after attach:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0454432Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0455108Z losetup -a at end:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0455431Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0455848Z apparmor profiles listing:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0456556Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0456870Z kernel/audit apparmor lines (dmesg + journalctl -k, best-effort):
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0460414Z 
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0460952Z ## === tmpfs probe (reversed order): control (apparmor=unconfined) ===
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.0471543Z ## running apparmor-tmpfs-probe.sh (--security-opt apparmor=unconfined) in /tmp/tmp.2GnIqGYbM8
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2207263Z ## apparmor-tmpfs-probe.sh container exit: 0
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2207962Z ### tmpfs probe reversed control diagnostics (/tmp/tmp.2GnIqGYbM8)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2211921Z device: (none — branch never attached one)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2224263Z step that failed: mount
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2235390Z exit: 0
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2240560Z attribution: n/a (tmpfs probe)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2243693Z detach barrier: n/a (tmpfs probe)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2244124Z stderr:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2252541Z losetup -a after attach:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2253094Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2253511Z losetup -a at end:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2253903Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2254574Z apparmor profiles listing:
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2255381Z (n/a)
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2256636Z kernel/audit apparmor lines (dmesg + journalctl -k, best-effort):
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2261781Z 
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2339463Z reason: control succeeded, but the variant failed for a reason other than a confirmed AppArmor denial [exit=32]. An EBUSY, a missing device node, an undersized filesystem, or any other non-denial failure says nothing about AppArmor necessity — see run 35057453620, whose EBUSY ("already mounted or mount point busy") was wrongly read as a denial by the probe this file replaces.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2341415Z ## tmpfs probe verdict (reversed order): VOID
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2342032Z 
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2342236Z ############################################
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2342534Z ## Combined verdict
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2342823Z ############################################
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2343872Z reason: At least one probe was individually VOID — loop probe: VOID, tmpfs probe: VOID (see each probe's own reasoning above, on stderr). A VOID probe cannot be outvoted by the other probe's result.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2344869Z VOID
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T07:55:47.2355014Z ##[error]Process completed with exit code 1.
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	﻿2026-09-16T07:55:47.2427897Z ##[group]Run make lab-destroy
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T07:55:47.2428237Z ^[[36;1mmake lab-destroy^[[0m
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T07:55:47.2450045Z shell: /usr/bin/bash -e {0}
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T07:55:47.2450386Z env:
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T07:55:47.2450679Z   HOSERVA_LAB_ID: s9-35071011877-1
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T07:55:47.2450966Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T07:55:47.4675140Z lab s9-35071011877-1: container does not exist, nothing to tear down
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T07:55:47.4676185Z docker compose -f docker-compose.dev.yml -p "hoserva-lab-$HOSERVA_LAB_ID" down -v
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	﻿2026-09-16T07:55:47.5434354Z Post job cleanup.
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6110251Z [command]/usr/bin/git version
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6147195Z git version 2.55.0
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6188476Z Temporarily overriding HOME='/home/runner/work/_temp/6be82c28-654d-4ee4-8a6e-db2e07ab4606' before making global git config changes
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6189666Z Adding repository directory to the temporary git global config as a safe directory
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6193632Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/hoserva/hoserva
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6218269Z Removing SSH command configuration
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6223977Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6251816Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6469596Z Removing HTTP extra header
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6470355Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6478082Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6647177Z Removing includeIf entries pointing to credentials config files
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6667274Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6671238Z includeif.gitdir:/home/runner/work/hoserva/hoserva/.git.path
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6671965Z includeif.gitdir:/home/runner/work/hoserva/hoserva/.git/worktrees/*.path
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6672611Z includeif.gitdir:/github/workspace/.git.path
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6673187Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6678569Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/hoserva/hoserva/.git.path
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6696566Z /home/runner/work/_temp/git-credentials-18eda247-3f8e-458f-b654-6ab66104bc66.config
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6704032Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/hoserva/hoserva/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-18eda247\-3f8e\-458f\-b654\-6ab66104bc66\.config
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6730303Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/hoserva/hoserva/.git/worktrees/*.path
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6747170Z /home/runner/work/_temp/git-credentials-18eda247-3f8e-458f-b654-6ab66104bc66.config
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6753857Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/hoserva/hoserva/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-18eda247\-3f8e\-458f\-b654\-6ab66104bc66\.config
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6780743Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6797454Z /github/runner_temp/git-credentials-18eda247-3f8e-458f-b654-6ab66104bc66.config
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6803152Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-18eda247\-3f8e\-458f\-b654\-6ab66104bc66\.config
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6826120Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6843751Z /github/runner_temp/git-credentials-18eda247-3f8e-458f-b654-6ab66104bc66.config
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6848956Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-18eda247\-3f8e\-458f\-b654\-6ab66104bc66\.config
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.6881545Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Loop-device lab + SnapRAID sync (L2)	Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1	2026-09-16T07:55:47.7053287Z Removing credentials config '/home/runner/work/_temp/git-credentials-18eda247-3f8e-458f-b654-6ab66104bc66.config'
+Loop-device lab + SnapRAID sync (L2)	Complete job	﻿2026-09-16T07:55:47.7163282Z Cleaning up orphan processes
