@@ -232,7 +232,7 @@ sudo install -m 0644 scripts/devenv/99-hoserva-lab-loop.rules \
 sudo udevadm control --reload-rules
 ```
 
-It sets `UDISKS_IGNORE=1` on loop devices, so `udisks2` skips them entirely: no probing, no automount, no dialog. The cost is that a file manager no longer offers to mount an ISO for you. To check it is working, bring a lab up and confirm `ls -A /run/media/$USER` stays empty and `losetup -a` shows no `(deleted)` backing files after teardown.
+It sets `UDISKS_IGNORE=1` on loop devices, so `udisks2` skips them entirely: no probing, no automount, no dialog. The cost is that a file manager no longer offers to mount an ISO for you. To check it is working, bring a lab up and confirm `ls -A /run/media/$USER` stays empty; after teardown, run `find /sys/devices/virtual/block -maxdepth 3 -path '*/loop/backing_file' -exec cat {} +` and confirm no line ends in `(deleted)` — never `losetup -a` on the host for this. `/sys/block/loopN` is a symlink into `/sys/devices/virtual/block/loopN`, and plain `find` does not follow symlinks, so the check walks the real path rather than `/sys/block`. Those entries exist whether or not a device is bound (the kernel pre-creates them), so their mere presence proves nothing; it's the `loop/` subdirectory inside one, and so this command's output, that reflects attachment. On a clean teardown the command prints nothing and exits 0; walking `/sys/block` with `-L` instead of the real path exits non-zero even when clean, because `/sys/block/loopN/subsystem` symlinks back to `/sys/block` itself.
 
 A per-user automounter setting (for example `udiskie`'s `automount: false` for `/dev/loop*`) stops the mounting but not the probing, so prompts can still appear. It is a stopgap, not the fix.
 
