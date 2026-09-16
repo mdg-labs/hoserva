@@ -394,7 +394,7 @@ The residual risks above are exercised by volunteers on their own hardware, neve
 - **There are no self-hosted runners** (Q79, D20). What hosted runners can't run, agents run on the development host — in the lab and user-session VMs — as a required step before every release.
 - **No workflow uses `pull_request_target` to check out PR code.**
 - **First-time contributors' workflows require approval** (repository setting).
-- Spike S9 confirms hosted runners support loop devices and FUSE — `ci.yml`'s own `lab` job has run L2 successfully in production (run 34950031773). `/dev/kvm` support is not yet confirmed: a probe workflow exists (`.github/workflows/s9-hosted-probe.yml`, doc 08 §9) but has never executed, since triggering it needs a maintainer push. Until that result exists, L3 stays on the dev host (Q79).
+- Spike S9 confirms hosted runners support loop devices, FUSE and a real SnapRAID sync, on the pinned `ubuntu-24.04` image — `ci.yml`'s own `lab` job ran L2 in production (run 34950031773), and the pinned-image probe (`.github/workflows/s9-hosted-probe.yml`, doc 08 §9) added a hosted SnapRAID sync that also succeeded (run 35049304081). That same probe's AppArmor-necessity comparison came back void (both branches failed from an unrelated probe bug, not from AppArmor) and its `/dev/kvm` job failed before ever invoking QEMU, on an unreadable-kernel bug that is now fixed and validated locally but not yet re-run hosted. Until a hosted run confirms both, AppArmor necessity stays unresolved and L3 stays on the dev host (Q79).
 
 ### Pipeline
 

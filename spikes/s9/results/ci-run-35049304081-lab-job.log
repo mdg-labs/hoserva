@@ -1,0 +1,51 @@
+# Excerpt of gh run view 35049304081 --repo mdg-labs/hoserva --job 104645999596 --log
+# (job 'Loop-device lab + SnapRAID sync (L2)', run https://github.com/mdg-labs/hoserva/actions/runs/35049304081,
+# workflow_dispatch on main, 2026-09-16, conclusion: success)
+# Fetched read-only, never re-run by this spike (no agent triggers a workflow). Trimmed to
+# the runner-image banner, the AppArmor step in full (including its own wrong verdict — the
+# reason this step's design was fixed by this commit; see the workflow file itself), the
+# lab-up/verify-refusal/SnapRAID/lab-destroy highlights. debconf noise inside the disposable
+# AppArmor probe containers is trimmed with "...".
+
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T02:47:04.1024119Z ##[group]Operating System
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T02:47:04.1024846Z Ubuntu
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T02:47:04.1025393Z 24.04.5
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T02:47:04.1025905Z LTS
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T02:47:04.1026468Z ##[endgroup]
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T02:47:04.1027056Z ##[group]Runner Image
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T02:47:04.1027900Z Image: ubuntu-24.04
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T02:47:04.1028598Z Version: 20260907.300.1
+Loop-device lab + SnapRAID sync (L2)	Set up job	2026-09-16T02:47:04.1032519Z ##[endgroup]
+...
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T02:47:06.0784047Z ## With apparmor=unconfined
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T02:47:06.1764332Z Unable to find image 'debian:trixie-slim' locally
+...
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T02:47:18.2163324Z losetup: /probe.img: failed to set up loop device: No such file or directory
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T02:47:18.2165051Z losetup: device node /dev/loop0 (7:0) is lost. You may use mknod(1) to recover it.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T02:47:18.3918809Z with-unconfined: FAILED
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T02:47:18.3919656Z ## Without apparmor=unconfined (default Docker AppArmor profile)
+...
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T02:47:25.2390021Z losetup: /probe.img: failed to set up loop device: No such file or directory
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T02:47:25.2390945Z losetup: device node /dev/loop0 (7:0) is lost. You may use mknod(1) to recover it.
+Loop-device lab + SnapRAID sync (L2)	AppArmor necessity check (disposable, not the standing lab)	2026-09-16T02:47:25.4147014Z without-unconfined: FAILED — apparmor=unconfined is required on this runner image
+#
+# ^ THIS VERDICT IS VOID. Both branches failed identically — "device node
+# /dev/loop0 (7:0) is lost" — because the probe never mknod-ed the
+# container's own loop nodes (unlike the real lab's own
+# scripts/devenv/entrypoint.sh). A control that fails cannot support any
+# conclusion about the thing it was varying. The AppArmor question stays
+# genuinely open; the workflow's fixed step (mknod inline, a fresh image
+# per branch, the with-unconfined branch treated as a control whose own
+# failure voids the step rather than asserting a verdict) has not yet run
+# on a hosted runner — that is what the maintainer's next trigger settles.
+
+Loop-device lab + SnapRAID sync (L2)	lab-up	2026-09-16T02:47:37.1076123Z   parity: /lab/s9-35049304081-1/mnt/parity1
+Loop-device lab + SnapRAID sync (L2)	lab-up	2026-09-16T02:47:37.1077300Z   data:   /lab/s9-35049304081-1/mnt/disk1 /lab/s9-35049304081-1/mnt/disk2 /lab/s9-35049304081-1/mnt/disk3
+Loop-device lab + SnapRAID sync (L2)	lab-up	2026-09-16T02:47:37.1078332Z   cache:  /lab/s9-35049304081-1/mnt/cache
+Loop-device lab + SnapRAID sync (L2)	lab-up	2026-09-16T02:47:37.1079088Z   pool:   /lab/s9-35049304081-1/mnt/user
+Loop-device lab + SnapRAID sync (L2)	lab-verify-refusal	2026-09-16T02:47:41.9962233Z ok: host NVMe class (major 259) — open refused with EPERM (device cgroup)
+Loop-device lab + SnapRAID sync (L2)	lab-verify-refusal	2026-09-16T02:47:42.0000040Z ok: host SCSI/SATA class (major 8) — open refused with EPERM (device cgroup)
+Loop-device lab + SnapRAID sync (L2)	SnapRAID sync against the standing array (spike-only install)	2026-09-16T02:47:50.3169774Z WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Loop-device lab + SnapRAID sync (L2)	SnapRAID sync against the standing array (spike-only install)	2026-09-16T02:47:50.3180981Z Everything OK
+Loop-device lab + SnapRAID sync (L2)	SnapRAID sync against the standing array (spike-only install)	2026-09-16T02:47:50.3183820Z snapraid sync: confirmed (exit 0, 'Everything OK')
+Loop-device lab + SnapRAID sync (L2)	lab-destroy	2026-09-16T02:47:50.8004418Z lab s9-35049304081-1 destroyed
