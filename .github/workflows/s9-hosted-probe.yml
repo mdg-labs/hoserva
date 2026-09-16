@@ -59,73 +59,38 @@ jobs:
         # it must not touch docker-compose.dev.yml (out of scope) or the
         # namespaced lab directories a real `make lab-up` owns.
         #
-        # Fixed after run 35049304081: the original probe never `mknod`-ed
-        # the container's own /dev/loopN nodes the way the real lab's
-        # scripts/devenv/entrypoint.sh does, so `losetup` failed identically
-        # in both the with- and without-apparmor=unconfined branches
-        # ("device node /dev/loop0 (7:0) is lost") — and the step still
-        # printed a confident-sounding "apparmor=unconfined is required"
-        # verdict from a control that had itself failed. Fixed by mknod-ing
-        # the loop nodes inline (matching the real recipe), giving each
-        # branch its own fresh image (a second mkfs.xfs on a reused image
-        # refuses with "appears to contain an existing filesystem"), and
-        # treating the with-unconfined branch as this experiment's control:
-        # if the control itself fails, the recipe is broken and the step
-        # aborts loudly instead of asserting anything about AppArmor.
+        # Full fix history (runs 35049304081, 35056076616, and this
+        # rewrite's own reason — run 35057453620) lives in
+        # spikes/s9/scripts/apparmor-classify.sh's header, not repeated
+        # here: three void verdicts in a row, never from AppArmor. The
+        # short version of the third: the variant's `mount` failed with
+        # libmount's EBUSY message ("already mounted or mount point
+        # busy") and the step's old `else` branch called that "required"
+        # anyway — but an EBUSY means the kernel's AppArmor mount
+        # mediation (`security_sb_mount()`) already let the call through;
+        # it says nothing about AppArmor at all.
         #
-        # Fixed after run 35056076616: with the mknod bug fixed, the control
-        # branch reached `mkfs.xfs` for the first time and that exposed the
-        # next latent bug — the images were `truncate -s 64M`, but
-        # `mkfs.xfs` refuses anything under ~300MB ("Filesystem must be
-        # larger than 300MB."). Sized at 512M instead, matching the lab's
-        # own LAB_CACHE_SIZE convention (scripts/devenv/create-array.sh) and
-        # validated directly against xfsprogs in a disposable container
-        # (spikes/s9/results/mkfs-xfs-size-check.log): 256M still refuses,
-        # 300M is the first size that succeeds, 512M passes with margin.
-        run: |
-          set -euo pipefail
-
-          run_probe() {
-            local img="$1"; shift
-            docker run --rm \
-              --cap-add SYS_ADMIN --device /dev/loop-control \
-              --device-cgroup-rule 'b 7:* rmw' \
-              "$@" \
-              -v "$img:/probe.img" debian:trixie-slim bash -c '
-                set -euo pipefail
-                apt-get update -qq
-                apt-get install -y -qq --no-install-recommends util-linux xfsprogs >/dev/null
-                for i in $(seq 0 15); do
-                  [[ -e "/dev/loop$i" ]] || mknod -m 660 "/dev/loop$i" b 7 "$i"
-                done
-                dev=$(losetup --find --show /probe.img)
-                mkfs.xfs -q "$dev"
-                mkdir -p /mnt/probe
-                mount "$dev" /mnt/probe
-                echo ok > /mnt/probe/marker
-                umount /mnt/probe
-                losetup -d "$dev"
-              '
-          }
-
-          img_control="$(mktemp -d)/control.img"
-          truncate -s 512M "$img_control"
-          echo "## Control: apparmor=unconfined (matches the standing lab's own security_opt)"
-          if run_probe "$img_control" --security-opt apparmor=unconfined; then
-            echo "control (with-unconfined): succeeded"
-          else
-            echo "FAIL: the control itself failed with apparmor=unconfined set — the probe recipe (mknod/loop/xfs mechanics) is broken, not an AppArmor result. This step's AppArmor verdict is VOID." >&2
-            exit 1
-          fi
-
-          img_variant="$(mktemp -d)/variant.img"
-          truncate -s 512M "$img_variant"
-          echo "## Variant: default Docker AppArmor profile (no apparmor=unconfined)"
-          if run_probe "$img_variant"; then
-            echo "without-unconfined: succeeded — apparmor=unconfined is NOT required on this runner image for this recipe"
-          else
-            echo "without-unconfined: FAILED — apparmor=unconfined IS required on this runner image for this recipe"
-          fi
+        # This step no longer classifies anything inline. All of the logic
+        # — failure classification (never inferred from exit status
+        # alone), device attribution (`scripts/devenv/lib.sh`'s own
+        # `lab_assert_own_loop()`, reused rather than reinvented), a
+        # verified detach barrier between branches, a second loop-free
+        # `mount -t tmpfs` mediation probe run alongside the faithful one,
+        # and an order-reversal consistency check — lives in
+        # spikes/s9/scripts/run-apparmor-check.sh and the scripts it calls,
+        # specifically so the pure-text classification part
+        # (spikes/s9/scripts/apparmor-classify.sh) can be exercised
+        # directly and cheaply, without Docker or a loop device, by
+        # spikes/s9/scripts/test-apparmor-classify.sh — see
+        # spikes/s9/results/apparmor-classify-test.log for that run,
+        # committed alongside this change.
+        #
+        # Exit status is the verdict: 0 for a concluded NOT-REQUIRED or
+        # REQUIRED (either is a real answer — this step's job is to reach
+        # one, not to prefer one), 1 for VOID — loud by design, unchanged
+        # from the original step's own "abort loudly instead of asserting
+        # anything" discipline.
+        run: bash spikes/s9/scripts/run-apparmor-check.sh
 
       - name: lab-up
         env:

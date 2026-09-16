@@ -448,7 +448,7 @@ Re-run both changelog reviews whenever Debian repackages either tool (e.g. the n
 
 Hands-on, 2026-09-14, on the primary dev host (CachyOS, Docker 29.8, cgroup v2, no AppArmor), `debian:trixie-slim`.
 
-**Verdict S9 (dev host): confirmed.** The narrowed lab container from doc 06 §3 runs real loop devices, XFS and mergerfs without `--privileged` and without a `/dev` bind mount, and cannot open the host's disk. Hosted CI runners are still to check.
+**Verdict S9 (dev host): confirmed.** The narrowed lab container from doc 06 §3 runs real loop devices, XFS and mergerfs without `--privileged` and without a `/dev` bind mount, and cannot open the host's disk. Hosted CI runners are checked separately — see the "Hosted CI runners" subsection below.
 
 Recipe run:
 
