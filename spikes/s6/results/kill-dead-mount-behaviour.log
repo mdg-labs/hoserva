@@ -1,0 +1,12 @@
+findmnt $LAB/mnt/user/ao1 (kernel mount-table view, process gone):
+TARGET                 SOURCE      FSTYPE        OPTIONS
+/lab/7-a1/mnt/user/ao1 hoserva-ao1 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+
+ls -la $LAB/mnt/user/ao1:
+ls: cannot access '/lab/7-a1/mnt/user/ao1': Transport endpoint is not connected
+
+stat $LAB/mnt/user/ao1:
+stat: cannot statx '/lab/7-a1/mnt/user/ao1': Transport endpoint is not connected
+
+cat $LAB/mnt/user/ao1/marker.txt:
+cat: /lab/7-a1/mnt/user/ao1/marker.txt: Transport endpoint is not connected

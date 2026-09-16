@@ -1,0 +1,423 @@
+mergerfs: 2.40.2-5
+xfsprogs: 6.13.0-2+deb13u1
+kernel: Linux 7.2.5-1-cachyos #1 SMP PREEMPT_DYNAMIC Sun, 13 Sep 2026 08:30:47 +0000 x86_64
+
+########## 01-ordering-shadow-mount.sh ##########
+== shadow-mount experiment: mount a share before its catch-all ==
+catch-all unmounted; /lab/7-a1/mnt/user is now the plain (pre-catch-all) directory
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-shadow-test /lab/7-a1/mnt/cache/shadow-test=RW:/lab/7-a1/mnt/disk1/shadow-test=NC /lab/7-a1/mnt/user/shadow-test
+shadow-test: mounted, pid=194
+marker written through shadow-test, sha256=5d120faca1493831a83c14b6b86c94209934453efe8141ee9109d3ab6eadf73f
+-- where did marker.txt actually land? --
+/lab/7-a1/mnt/cache: present
+/lab/7-a1/mnt/disk1: absent
+confirmed: marker.txt is on cache only, not on the NC-tagged disk1 branch
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=50M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-pool /lab/7-a1/mnt/disk1:/lab/7-a1/mnt/disk2:/lab/7-a1/mnt/disk3 /lab/7-a1/mnt/user
+catchall: mounted, pid=231
+-- catch-all now mounted over the shadow-test mount's own parent directory --
+ls -la /lab/7-a1/mnt/user/shadow-test (through the catch-all, after it came up):
+total 0
+drwxr-xr-x 2 root root  6 Sep 16 00:38 .
+drwxr-xr-x 3 root root 25 Sep 16 00:38 ..
+confirmed: marker.txt is NOT visible at /lab/7-a1/mnt/user/shadow-test/marker.txt any more — the catch-all's own view of that path (disk1 only, empty) is what's exposed now, not shadow-test's own cache+NC view
+confirmed: pid 194 is still running and the mount is still present in /proc/self/mountinfo — it is orphaned, not torn down
+catchall: unmounted, pid 231 exited
+confirmed: once the catch-all is removed again, shadow-test's own mount is reachable and marker.txt is byte-identical (sha256 5d120faca1493831a83c14b6b86c94209934453efe8141ee9109d3ab6eadf73f) — the file was never at risk, only its path
+shadow-test: unmounted, pid 194 exited
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=50M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-pool /lab/7-a1/mnt/disk1:/lab/7-a1/mnt/disk2:/lab/7-a1/mnt/disk3 /lab/7-a1/mnt/user
+catchall: mounted, pid=281
+catch-all remounted (tracked, pid 281) — every later script in this spike builds on this instance
+
+########## 02-topology-up.sh ##########
+== mounting twelve per-share pools (4 cache-then-move, 4 cache-only, 4 array-only) plus the mover target ==
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm1 /lab/7-a1/mnt/cache/ctm1=RW:/lab/7-a1/mnt/disk1/ctm1=NC:/lab/7-a1/mnt/disk2/ctm1=NC:/lab/7-a1/mnt/disk3/ctm1=NC /lab/7-a1/mnt/user/ctm1
+ctm1: mounted, pid=324
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm2 /lab/7-a1/mnt/cache/ctm2=RW:/lab/7-a1/mnt/disk1/ctm2=NC:/lab/7-a1/mnt/disk2/ctm2=NC:/lab/7-a1/mnt/disk3/ctm2=NC /lab/7-a1/mnt/user/ctm2
+ctm2: mounted, pid=359
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm3 /lab/7-a1/mnt/cache/ctm3=RW:/lab/7-a1/mnt/disk1/ctm3=NC:/lab/7-a1/mnt/disk2/ctm3=NC:/lab/7-a1/mnt/disk3/ctm3=NC /lab/7-a1/mnt/user/ctm3
+ctm3: mounted, pid=394
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm4 /lab/7-a1/mnt/cache/ctm4=RW:/lab/7-a1/mnt/disk1/ctm4=NC:/lab/7-a1/mnt/disk2/ctm4=NC:/lab/7-a1/mnt/disk3/ctm4=NC /lab/7-a1/mnt/user/ctm4
+ctm4: mounted, pid=429
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co1 /lab/7-a1/mnt/cache/co1=RW /lab/7-a1/mnt/user/co1
+co1: mounted, pid=464
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co2 /lab/7-a1/mnt/cache/co2=RW /lab/7-a1/mnt/user/co2
+co2: mounted, pid=499
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co3 /lab/7-a1/mnt/cache/co3=RW /lab/7-a1/mnt/user/co3
+co3: mounted, pid=534
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co4 /lab/7-a1/mnt/cache/co4=RW /lab/7-a1/mnt/user/co4
+co4: mounted, pid=569
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao1 /lab/7-a1/mnt/disk1/ao1=RW:/lab/7-a1/mnt/disk2/ao1=RW:/lab/7-a1/mnt/disk3/ao1=RW /lab/7-a1/mnt/user/ao1
+ao1: mounted, pid=604
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao2 /lab/7-a1/mnt/disk1/ao2=RW:/lab/7-a1/mnt/disk2/ao2=RW:/lab/7-a1/mnt/disk3/ao2=RW /lab/7-a1/mnt/user/ao2
+ao2: mounted, pid=639
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao3 /lab/7-a1/mnt/disk1/ao3=RW:/lab/7-a1/mnt/disk2/ao3=RW:/lab/7-a1/mnt/disk3/ao3=RW /lab/7-a1/mnt/user/ao3
+ao3: mounted, pid=674
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao4 /lab/7-a1/mnt/disk1/ao4=RW:/lab/7-a1/mnt/disk2/ao4=RW:/lab/7-a1/mnt/disk3/ao4=RW /lab/7-a1/mnt/user/ao4
+ao4: mounted, pid=709
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-mover-ctm1 /lab/7-a1/mnt/disk1/ctm1=RW:/lab/7-a1/mnt/disk2/ctm1=RW:/lab/7-a1/mnt/disk3/ctm1=RW /lab/7-a1/mnt/mover/ctm1
+mover-ctm1: mounted, pid=743
+== all 13 mounts (catch-all + 12 shares) + the mover target are up — confirmed via findmnt ==
+/lab/7-a1/mnt/user and everything mounted under it:
+TARGET                    SOURCE       FSTYPE        OPTIONS
+/lab/7-a1/mnt/user        hoserva-pool fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ctm1 hoserva-ctm1 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ctm2 hoserva-ctm2 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ctm3 hoserva-ctm3 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ctm4 hoserva-ctm4 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/co1  hoserva-co1  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/co2  hoserva-co2  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/co3  hoserva-co3  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/co4  hoserva-co4  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ao1  hoserva-ao1  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ao2  hoserva-ao2  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+|-/lab/7-a1/mnt/user/ao3  hoserva-ao3  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+`-/lab/7-a1/mnt/user/ao4  hoserva-ao4  fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+
+mover target:
+TARGET                   SOURCE             FSTYPE        OPTIONS
+/lab/7-a1/mnt/mover/ctm1 hoserva-mover-ctm1 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+confirmed: exactly 13 mounts (1 catch-all + 12 per-share) under /lab/7-a1/mnt/user
+== ordering, the other direction: the catch-all must refuse to unmount while a share is still nested inside it ==
+unmount of /lab/7-a1/mnt/user failed as expected: fusermount: failed to unmount /lab/7-a1/mnt/user: Device or resource busy
+confirmed: the catch-all's own unmount attempt failed while shares were nested inside it, and nothing was torn down by the attempt
+
+########## 03-fallback-mspmfs-epmfs.sh ##########
+created mfp1: image=/lab/7-a1/img/mfp1.img dev=/dev/loop5 mount=/lab/7-a1/mnt/mfp1
+created mfp2: image=/lab/7-a1/img/mfp2.img dev=/dev/loop6 mount=/lab/7-a1/mnt/mfp2
+created mfp3: image=/lab/7-a1/img/mfp3.img dev=/dev/loop7 mount=/lab/7-a1/mnt/mfp3
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=50M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-fallback-mspmfs /lab/7-a1/mnt/mfp1:/lab/7-a1/mnt/mfp2:/lab/7-a1/mnt/mfp3 /lab/7-a1/mnt/pool-mspmfs
+fallback-mspmfs: mounted, pid=838
++ mergerfs -f -o category.create=epmfs,moveonenospc=true,minfreespace=50M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-fallback-epmfs /lab/7-a1/mnt/mfp1:/lab/7-a1/mnt/mfp2:/lab/7-a1/mnt/mfp3 /lab/7-a1/mnt/pool-epmfs
+fallback-epmfs: mounted, pid=870
+== baseline: with mfp1 not yet full, a write to media/ prefers the branch that already has the path (positive control) ==
+/lab/7-a1/mnt/mfp1: present
+/lab/7-a1/mnt/mfp2: absent
+/lab/7-a1/mnt/mfp3: absent
+confirmed: baseline write landed on mfp1, the only branch where 'media' already existed
+== filling mfp1 below minfreespace (50M), via fallocate directly on the branch, matching doc 06 §3's own filler-file technique ==
+confirmed: mfp1 now has 20 MiB free, under the 50M minfreespace filter (raw before/after df in results/)
+== epmfs first, while 'media' still exists only on the now-full mfp1 ==
+confirmed: epmfs returned ENOSPC (exit 1, "No space left on device") while 'media' still existed only on the filled mfp1 branch — man/mergerfs.1's epmfs entry ("Of all the branches on which the relative path exists choose the branch with the most free space") has no parent-directory retry, unlike mspmfs
+== mspmfs second, same fill state, same branches, only the create policy differs ==
+/lab/7-a1/mnt/mfp1: absent
+/lab/7-a1/mnt/mfp2: absent
+/lab/7-a1/mnt/mfp3: present
+confirmed: mspmfs wrote the file successfully, on a branch other than the full mfp1 (and only after epmfs, on the exact same fill state, had already failed above) — man/mergerfs.1's 'mspmfs (most shared path, most free space)': "Like epmfs but if it fails to find a branch it will try again with the parent directory. Continues this pattern till finding one." holds on this build
+fallback-mspmfs: unmounted, pid 838 exited
+fallback-epmfs: unmounted, pid 870 exited
+
+########## 04-nc-branches.sh ##########
+== a file already on an NC (array) branch stays readable through the share ==
+confirmed: existing.bin (written directly to disk2, an NC branch) reads back byte-identical through the ctm2 share (sha256 10302acf5b24a2742ec3dc98b4b983c45f61652e4c7db61ca7f840e4dfee757f)
+== new files written through the share never land on an NC branch ==
+/lab/7-a1/mnt/cache/ctm2: present
+/lab/7-a1/mnt/disk1/ctm2: absent
+/lab/7-a1/mnt/disk2/ctm2: absent
+/lab/7-a1/mnt/disk3/ctm2: absent
+/lab/7-a1/mnt/cache/ctm2: present
+/lab/7-a1/mnt/disk1/ctm2: absent
+/lab/7-a1/mnt/disk2/ctm2: absent
+/lab/7-a1/mnt/disk3/ctm2: absent
+/lab/7-a1/mnt/cache/ctm2: present
+/lab/7-a1/mnt/disk1/ctm2: absent
+/lab/7-a1/mnt/disk2/ctm2: absent
+/lab/7-a1/mnt/disk3/ctm2: absent
+/lab/7-a1/mnt/cache/ctm2: present
+/lab/7-a1/mnt/disk1/ctm2: absent
+/lab/7-a1/mnt/disk2/ctm2: absent
+/lab/7-a1/mnt/disk3/ctm2: absent
+/lab/7-a1/mnt/cache/ctm2: present
+/lab/7-a1/mnt/disk1/ctm2: absent
+/lab/7-a1/mnt/disk2/ctm2: absent
+/lab/7-a1/mnt/disk3/ctm2: absent
+confirmed: all 5 new files landed on cache only; none landed on disk1/disk2/disk3 (the NC branches)
+== NC still permits change and delete (man/mergerfs.1: 'you can change or delete') ==
+confirmed: appending to existing.bin through the share changed its content on disk2 directly (sha256 now 219e9d552c65e140c6422d2cf61d4880b6fc8851dda43dbabfac0b39d913b0a1) — NC permits change, as documented
+confirmed: deleting existing.bin through the share removed it from disk2 — NC permits delete, as documented
+
+########## 05-catchall-stray-write.sh ##########
+== where did the stray top-level write actually land? ==
+/lab/7-a1/mnt/disk1: absent
+/lab/7-a1/mnt/disk2: absent
+/lab/7-a1/mnt/disk3: present
+/lab/7-a1/mnt/cache: absent
+confirmed: stray/file.bin, written to a top-level path with no per-share mount, landed on a data disk (not cache) through the catch-all's own default policy, byte-identical (sha256 9bbaa83c6cf4ce7b6f0745fde9072f13a23e55c07fa73b3c39ca8b90de4bb018)
+
+########## 06-cost.sh ##########
+== RSS and process count, twelve share mounts up ==
+share  pid  VmRSS_kB
+ctm1  324  7004
+ctm2  359  9136
+ctm3  394  7176
+ctm4  429  7380
+co1  464  7280
+co2  499  7156
+co3  534  7048
+co4  569  7356
+ao1  604  7244
+ao2  639  7368
+ao3  674  7376
+ao4  709  7288
+TOTAL_TWELVE_SHARES_KB 88812
+catchall  281  9836
+mover-ctm1  743  7180
+TOTAL_ALL_14_PROCESSES_KB 105828
+mergerfs process count (/proc scan, comm == mergerfs): 14
+== confirming this container cannot drop the page cache (checked, not assumed) ==
+mount | grep 'proc/sys':
+proc on /proc/sys type proc (ro,nosuid,nodev,noexec,relatime)
+proc on /proc/sysrq-trigger type proc (ro,nosuid,nodev,noexec,relatime)
+
+ls -l /proc/sys/vm/drop_caches:
+--w------- 1 root root 0 Sep 16 00:38 /proc/sys/vm/drop_caches
+
+echo 1 > /proc/sys/vm/drop_caches:
+failed: bash: line 1: /proc/sys/vm/drop_caches: Read-only file system
+== preparing the throughput test file (200 MiB, written directly to disk1, identical for both scenarios) ==
+throughput-src.bin sha256=8fb0adf5f8acf65aee5a0e99bd6da761880374780d4d491c98b8053a81c9eba2
+== discarded warm-up reads, several per state, not counted in any scenario's figures ==
+label=[shares-up-warmup1] direct_io=yes seconds=0.0639145 gbps=3.2812 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0639145 s, 3.3 GB/s]
+label=[shares-up-warmup2] direct_io=yes seconds=0.040814 gbps=5.1383 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.040814 s, 5.1 GB/s]
+label=[shares-up-warmup3] direct_io=yes seconds=0.038209 gbps=5.4886 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.038209 s, 5.5 GB/s]
+label=[shares-up-warmup4] direct_io=yes seconds=0.0380311 gbps=5.5143 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0380311 s, 5.5 GB/s]
+-- tearing the twelve-share topology down (scenario A, single mount) --
+mover-ctm1: unmounted, pid 743 exited
+ctm1: unmounted, pid 324 exited
+ctm2: unmounted, pid 359 exited
+ctm3: unmounted, pid 394 exited
+ctm4: unmounted, pid 429 exited
+co1: unmounted, pid 464 exited
+co2: unmounted, pid 499 exited
+co3: unmounted, pid 534 exited
+co4: unmounted, pid 569 exited
+ao1: unmounted, pid 604 exited
+ao2: unmounted, pid 639 exited
+ao3: unmounted, pid 674 exited
+ao4: unmounted, pid 709 exited
+label=[single-mount-warmup1] direct_io=yes seconds=0.0389108 gbps=5.3896 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0389108 s, 5.4 GB/s]
+label=[single-mount-warmup2] direct_io=yes seconds=0.0388105 gbps=5.4036 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0388105 s, 5.4 GB/s]
+label=[single-mount-warmup3] direct_io=yes seconds=0.0385538 gbps=5.4395 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0385538 s, 5.4 GB/s]
+label=[single-mount-warmup4] direct_io=yes seconds=0.0378921 gbps=5.5345 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0378921 s, 5.5 GB/s]
+4 discarded warm-up reads taken in each state (see results/cost-throughput-warmup.log) — none counted in either scenario below. Left in the single-mount (torn-down) state afterwards, since the measured sequence below starts with scenario A (single-mount) and an extra bring-up/tear-down cycle right before the first counted rep would just relocate the transition noise this warm-up exists to absorb, not remove it
+== 10 measured reads, scenario order: A B B A A B B A A B (ABBA-counterbalanced, 5 reps per scenario) ==
+label=[single-mount rep1 (seq-pos 1)] direct_io=yes seconds=0.0397442 gbps=5.2766 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0397442 s, 5.3 GB/s]
+-- bringing the twelve-share topology back up (scenario B) --
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm1 /lab/7-a1/mnt/cache/ctm1=RW:/lab/7-a1/mnt/disk1/ctm1=NC:/lab/7-a1/mnt/disk2/ctm1=NC:/lab/7-a1/mnt/disk3/ctm1=NC /lab/7-a1/mnt/user/ctm1
+ctm1: mounted, pid=1329
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm2 /lab/7-a1/mnt/cache/ctm2=RW:/lab/7-a1/mnt/disk1/ctm2=NC:/lab/7-a1/mnt/disk2/ctm2=NC:/lab/7-a1/mnt/disk3/ctm2=NC /lab/7-a1/mnt/user/ctm2
+ctm2: mounted, pid=1364
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm3 /lab/7-a1/mnt/cache/ctm3=RW:/lab/7-a1/mnt/disk1/ctm3=NC:/lab/7-a1/mnt/disk2/ctm3=NC:/lab/7-a1/mnt/disk3/ctm3=NC /lab/7-a1/mnt/user/ctm3
+ctm3: mounted, pid=1399
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm4 /lab/7-a1/mnt/cache/ctm4=RW:/lab/7-a1/mnt/disk1/ctm4=NC:/lab/7-a1/mnt/disk2/ctm4=NC:/lab/7-a1/mnt/disk3/ctm4=NC /lab/7-a1/mnt/user/ctm4
+ctm4: mounted, pid=1434
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co1 /lab/7-a1/mnt/cache/co1=RW /lab/7-a1/mnt/user/co1
+co1: mounted, pid=1469
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co2 /lab/7-a1/mnt/cache/co2=RW /lab/7-a1/mnt/user/co2
+co2: mounted, pid=1504
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co3 /lab/7-a1/mnt/cache/co3=RW /lab/7-a1/mnt/user/co3
+co3: mounted, pid=1539
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co4 /lab/7-a1/mnt/cache/co4=RW /lab/7-a1/mnt/user/co4
+co4: mounted, pid=1574
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao1 /lab/7-a1/mnt/disk1/ao1=RW:/lab/7-a1/mnt/disk2/ao1=RW:/lab/7-a1/mnt/disk3/ao1=RW /lab/7-a1/mnt/user/ao1
+ao1: mounted, pid=1609
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao2 /lab/7-a1/mnt/disk1/ao2=RW:/lab/7-a1/mnt/disk2/ao2=RW:/lab/7-a1/mnt/disk3/ao2=RW /lab/7-a1/mnt/user/ao2
+ao2: mounted, pid=1644
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao3 /lab/7-a1/mnt/disk1/ao3=RW:/lab/7-a1/mnt/disk2/ao3=RW:/lab/7-a1/mnt/disk3/ao3=RW /lab/7-a1/mnt/user/ao3
+ao3: mounted, pid=1679
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao4 /lab/7-a1/mnt/disk1/ao4=RW:/lab/7-a1/mnt/disk2/ao4=RW:/lab/7-a1/mnt/disk3/ao4=RW /lab/7-a1/mnt/user/ao4
+ao4: mounted, pid=1714
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-mover-ctm1 /lab/7-a1/mnt/disk1/ctm1=RW:/lab/7-a1/mnt/disk2/ctm1=RW:/lab/7-a1/mnt/disk3/ctm1=RW /lab/7-a1/mnt/mover/ctm1
+mover-ctm1: mounted, pid=1748
+label=[twelve-shares rep1 (seq-pos 2)] direct_io=yes seconds=0.0396417 gbps=5.2903 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0396417 s, 5.3 GB/s]
+label=[twelve-shares rep2 (seq-pos 3)] direct_io=yes seconds=0.0384888 gbps=5.4487 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0384888 s, 5.4 GB/s]
+-- tearing the twelve-share topology down (scenario A, single mount) --
+mover-ctm1: unmounted, pid 1748 exited
+ctm1: unmounted, pid 1329 exited
+ctm2: unmounted, pid 1364 exited
+ctm3: unmounted, pid 1399 exited
+ctm4: unmounted, pid 1434 exited
+co1: unmounted, pid 1469 exited
+co2: unmounted, pid 1504 exited
+co3: unmounted, pid 1539 exited
+co4: unmounted, pid 1574 exited
+ao1: unmounted, pid 1609 exited
+ao2: unmounted, pid 1644 exited
+ao3: unmounted, pid 1679 exited
+ao4: unmounted, pid 1714 exited
+label=[single-mount rep2 (seq-pos 4)] direct_io=yes seconds=0.039711 gbps=5.2810 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.039711 s, 5.3 GB/s]
+label=[single-mount rep3 (seq-pos 5)] direct_io=yes seconds=0.0397032 gbps=5.2821 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0397032 s, 5.3 GB/s]
+-- bringing the twelve-share topology back up (scenario B) --
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm1 /lab/7-a1/mnt/cache/ctm1=RW:/lab/7-a1/mnt/disk1/ctm1=NC:/lab/7-a1/mnt/disk2/ctm1=NC:/lab/7-a1/mnt/disk3/ctm1=NC /lab/7-a1/mnt/user/ctm1
+ctm1: mounted, pid=1914
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm2 /lab/7-a1/mnt/cache/ctm2=RW:/lab/7-a1/mnt/disk1/ctm2=NC:/lab/7-a1/mnt/disk2/ctm2=NC:/lab/7-a1/mnt/disk3/ctm2=NC /lab/7-a1/mnt/user/ctm2
+ctm2: mounted, pid=1949
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm3 /lab/7-a1/mnt/cache/ctm3=RW:/lab/7-a1/mnt/disk1/ctm3=NC:/lab/7-a1/mnt/disk2/ctm3=NC:/lab/7-a1/mnt/disk3/ctm3=NC /lab/7-a1/mnt/user/ctm3
+ctm3: mounted, pid=1984
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm4 /lab/7-a1/mnt/cache/ctm4=RW:/lab/7-a1/mnt/disk1/ctm4=NC:/lab/7-a1/mnt/disk2/ctm4=NC:/lab/7-a1/mnt/disk3/ctm4=NC /lab/7-a1/mnt/user/ctm4
+ctm4: mounted, pid=2019
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co1 /lab/7-a1/mnt/cache/co1=RW /lab/7-a1/mnt/user/co1
+co1: mounted, pid=2054
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co2 /lab/7-a1/mnt/cache/co2=RW /lab/7-a1/mnt/user/co2
+co2: mounted, pid=2089
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co3 /lab/7-a1/mnt/cache/co3=RW /lab/7-a1/mnt/user/co3
+co3: mounted, pid=2124
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co4 /lab/7-a1/mnt/cache/co4=RW /lab/7-a1/mnt/user/co4
+co4: mounted, pid=2159
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao1 /lab/7-a1/mnt/disk1/ao1=RW:/lab/7-a1/mnt/disk2/ao1=RW:/lab/7-a1/mnt/disk3/ao1=RW /lab/7-a1/mnt/user/ao1
+ao1: mounted, pid=2194
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao2 /lab/7-a1/mnt/disk1/ao2=RW:/lab/7-a1/mnt/disk2/ao2=RW:/lab/7-a1/mnt/disk3/ao2=RW /lab/7-a1/mnt/user/ao2
+ao2: mounted, pid=2229
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao3 /lab/7-a1/mnt/disk1/ao3=RW:/lab/7-a1/mnt/disk2/ao3=RW:/lab/7-a1/mnt/disk3/ao3=RW /lab/7-a1/mnt/user/ao3
+ao3: mounted, pid=2264
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao4 /lab/7-a1/mnt/disk1/ao4=RW:/lab/7-a1/mnt/disk2/ao4=RW:/lab/7-a1/mnt/disk3/ao4=RW /lab/7-a1/mnt/user/ao4
+ao4: mounted, pid=2299
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-mover-ctm1 /lab/7-a1/mnt/disk1/ctm1=RW:/lab/7-a1/mnt/disk2/ctm1=RW:/lab/7-a1/mnt/disk3/ctm1=RW /lab/7-a1/mnt/mover/ctm1
+mover-ctm1: mounted, pid=2333
+label=[twelve-shares rep3 (seq-pos 6)] direct_io=yes seconds=0.0398148 gbps=5.2673 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0398148 s, 5.3 GB/s]
+label=[twelve-shares rep4 (seq-pos 7)] direct_io=yes seconds=0.0405004 gbps=5.1781 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0405004 s, 5.2 GB/s]
+-- tearing the twelve-share topology down (scenario A, single mount) --
+mover-ctm1: unmounted, pid 2333 exited
+ctm1: unmounted, pid 1914 exited
+ctm2: unmounted, pid 1949 exited
+ctm3: unmounted, pid 1984 exited
+ctm4: unmounted, pid 2019 exited
+co1: unmounted, pid 2054 exited
+co2: unmounted, pid 2089 exited
+co3: unmounted, pid 2124 exited
+co4: unmounted, pid 2159 exited
+ao1: unmounted, pid 2194 exited
+ao2: unmounted, pid 2229 exited
+ao3: unmounted, pid 2264 exited
+ao4: unmounted, pid 2299 exited
+label=[single-mount rep4 (seq-pos 8)] direct_io=yes seconds=0.0391466 gbps=5.3572 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0391466 s, 5.4 GB/s]
+label=[single-mount rep5 (seq-pos 9)] direct_io=yes seconds=0.0392362 gbps=5.3449 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0392362 s, 5.3 GB/s]
+-- bringing the twelve-share topology back up (scenario B) --
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm1 /lab/7-a1/mnt/cache/ctm1=RW:/lab/7-a1/mnt/disk1/ctm1=NC:/lab/7-a1/mnt/disk2/ctm1=NC:/lab/7-a1/mnt/disk3/ctm1=NC /lab/7-a1/mnt/user/ctm1
+ctm1: mounted, pid=2499
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm2 /lab/7-a1/mnt/cache/ctm2=RW:/lab/7-a1/mnt/disk1/ctm2=NC:/lab/7-a1/mnt/disk2/ctm2=NC:/lab/7-a1/mnt/disk3/ctm2=NC /lab/7-a1/mnt/user/ctm2
+ctm2: mounted, pid=2534
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm3 /lab/7-a1/mnt/cache/ctm3=RW:/lab/7-a1/mnt/disk1/ctm3=NC:/lab/7-a1/mnt/disk2/ctm3=NC:/lab/7-a1/mnt/disk3/ctm3=NC /lab/7-a1/mnt/user/ctm3
+ctm3: mounted, pid=2569
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ctm4 /lab/7-a1/mnt/cache/ctm4=RW:/lab/7-a1/mnt/disk1/ctm4=NC:/lab/7-a1/mnt/disk2/ctm4=NC:/lab/7-a1/mnt/disk3/ctm4=NC /lab/7-a1/mnt/user/ctm4
+ctm4: mounted, pid=2604
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co1 /lab/7-a1/mnt/cache/co1=RW /lab/7-a1/mnt/user/co1
+co1: mounted, pid=2639
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co2 /lab/7-a1/mnt/cache/co2=RW /lab/7-a1/mnt/user/co2
+co2: mounted, pid=2674
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co3 /lab/7-a1/mnt/cache/co3=RW /lab/7-a1/mnt/user/co3
+co3: mounted, pid=2709
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-co4 /lab/7-a1/mnt/cache/co4=RW /lab/7-a1/mnt/user/co4
+co4: mounted, pid=2744
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao1 /lab/7-a1/mnt/disk1/ao1=RW:/lab/7-a1/mnt/disk2/ao1=RW:/lab/7-a1/mnt/disk3/ao1=RW /lab/7-a1/mnt/user/ao1
+ao1: mounted, pid=2779
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao2 /lab/7-a1/mnt/disk1/ao2=RW:/lab/7-a1/mnt/disk2/ao2=RW:/lab/7-a1/mnt/disk3/ao2=RW /lab/7-a1/mnt/user/ao2
+ao2: mounted, pid=2814
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao3 /lab/7-a1/mnt/disk1/ao3=RW:/lab/7-a1/mnt/disk2/ao3=RW:/lab/7-a1/mnt/disk3/ao3=RW /lab/7-a1/mnt/user/ao3
+ao3: mounted, pid=2849
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao4 /lab/7-a1/mnt/disk1/ao4=RW:/lab/7-a1/mnt/disk2/ao4=RW:/lab/7-a1/mnt/disk3/ao4=RW /lab/7-a1/mnt/user/ao4
+ao4: mounted, pid=2884
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-mover-ctm1 /lab/7-a1/mnt/disk1/ctm1=RW:/lab/7-a1/mnt/disk2/ctm1=RW:/lab/7-a1/mnt/disk3/ctm1=RW /lab/7-a1/mnt/mover/ctm1
+mover-ctm1: mounted, pid=2918
+label=[twelve-shares rep5 (seq-pos 10)] direct_io=yes seconds=0.0396993 gbps=5.2826 raw=[200+0 records in;200+0 records out;209715200 bytes (210 MB, 200 MiB) copied, 0.0396993 s, 5.3 GB/s]
+confirmed: throughput-src.bin's sha256 (8fb0adf5f8acf65aee5a0e99bd6da761880374780d4d491c98b8053a81c9eba2) is unchanged across the warm-up and every measured rep — every read served the same bytes
+scenario A (single-mount), in run order: 5.2766 5.2810 5.2821 5.3572 5.3449 GB/s
+  n=5 values=[5.2766 5.2810 5.2821 5.3572 5.3449] median=5.2821 min=5.2766 max=5.3572
+scenario B (twelve-shares), in run order: 5.2903 5.4487 5.2673 5.1781 5.2826 GB/s
+  n=5 values=[5.2903 5.4487 5.2673 5.1781 5.2826] median=5.2826 min=5.1781 max=5.4487
+relative loss (twelve-shares vs single-mount, by median): -0.01%
+
+order-effect check: Pearson r between each read's own sequence position (1..10) and its measured GB/s, all reps pooled regardless of scenario:
+  r = -0.090
+  (|r| close to 0: no visible linear drift left across the run after ABBA counterbalancing. A large |r| means a drift remains and is a measurement caveat, not something this script's counterbalance removed.)
+== rebuilding the twelve-share topology for 07-failure-kill.sh (if not already up) ==
+confirmed: twelve-share topology is up (13 mounts under /lab/7-a1/mnt/user)
+
+########## 07-failure-kill.sh ##########
+/lab/7-a1/mnt/disk1/ao1: absent
+/lab/7-a1/mnt/disk2/ao1: present
+/lab/7-a1/mnt/disk3/ao1: absent
+== confirming the PID to be killed is genuinely ao1's own mergerfs process, before touching it ==
+pid: 2779
+comm: mergerfs
+cmdline: mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao1 /lab/7-a1/mnt/disk1/ao1=RW:/lab/7-a1/mnt/disk2/ao1=RW:/lab/7-a1/mnt/disk3/ao1=RW /lab/7-a1/mnt/user/ao1 
+confirmed: pid 2779 is mergerfs, mounted at /lab/7-a1/mnt/user/ao1 — killing exactly this PID
+confirmed: pid 2779 is dead
+== what does the catch-all's path show while ao1's own mergerfs is dead? ==
+findmnt $LAB/mnt/user/ao1 (kernel mount-table view, process gone):
+TARGET                 SOURCE      FSTYPE        OPTIONS
+/lab/7-a1/mnt/user/ao1 hoserva-ao1 fuse.mergerfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,default_permissions,allow_other
+
+ls -la $LAB/mnt/user/ao1:
+ls: cannot access '/lab/7-a1/mnt/user/ao1': Transport endpoint is not connected
+
+stat $LAB/mnt/user/ao1:
+stat: cannot statx '/lab/7-a1/mnt/user/ao1': Transport endpoint is not connected
+
+cat $LAB/mnt/user/ao1/marker.txt:
+cat: /lab/7-a1/mnt/user/ao1/marker.txt: Transport endpoint is not connected
+confirmed: the kernel still lists /lab/7-a1/mnt/user/ao1 as mounted even though the process serving it is dead — reads against it fail (see results/ for the exact error text), rather than falling through to the catch-all's own view of that path or to whatever real directory happens to sit underneath. A dead per-share mount is a stuck, inaccessible path until it is explicitly unmounted — it does not silently expose the array beneath it, which matters because a stray write into a stale path cannot land anywhere by accident; it simply fails.
+== recovery: unmount the dead mount, remount fresh, confirm the pre-kill data is intact ==
++ mergerfs -f -o category.create=mspmfs,moveonenospc=true,minfreespace=10M,dropcacheonclose=true,cache.files=partial,cache.statfs=0,fsname=hoserva-ao1 /lab/7-a1/mnt/disk1/ao1=RW:/lab/7-a1/mnt/disk2/ao1=RW:/lab/7-a1/mnt/disk3/ao1=RW /lab/7-a1/mnt/user/ao1
+ao1: mounted, pid=3079
+confirmed: after unmounting the dead mount and remounting ao1 fresh, marker.txt reads back byte-identical (sha256 8d2aa9a771bc25a625c5692fec190b1ee51f4fbc8dce71038f2572178753c83b) — the remount recovers cleanly and no data was at risk, only availability during the outage
+
+########## 08-topology-down.sh ##########
+== unmounting the twelve shares + mover target ==
+mover-ctm1: unmounted, pid 2918 exited
+ctm1: unmounted, pid 2499 exited
+ctm2: unmounted, pid 2534 exited
+ctm3: unmounted, pid 2569 exited
+ctm4: unmounted, pid 2604 exited
+co1: unmounted, pid 2639 exited
+co2: unmounted, pid 2674 exited
+co3: unmounted, pid 2709 exited
+co4: unmounted, pid 2744 exited
+ao1: unmounted, pid 3079 exited
+ao2: unmounted, pid 2814 exited
+ao3: unmounted, pid 2849 exited
+ao4: unmounted, pid 2884 exited
+== unmounting the catch-all ==
+catchall: unmounted, pid 281 exited
+confirmed: 0 live mergerfs processes running, /lab/7-a1/mnt/user unmounted — the full topology (catch-all + twelve shares + mover target) unmounted cleanly, in dependency order. 29 zombie mergerfs entries remain in the process table (lab-environment artifact: this container's PID 1 never reaps children once a mount's own launching script has exited — see README's 'no init system' finding; they hold no memory or file descriptors and are not a leak this spike's own teardown can fix)
+== removing this spike's own now-empty mountpoint directories (never a disk's own top-level directory) ==
+removed: /lab/7-a1/mnt/cache/ctm1
+left in place (not empty — a step wrote a real file into it): /lab/7-a1/mnt/cache/ctm2
+removed: /lab/7-a1/mnt/cache/ctm3
+removed: /lab/7-a1/mnt/cache/ctm4
+removed: /lab/7-a1/mnt/cache/co1
+removed: /lab/7-a1/mnt/cache/co2
+removed: /lab/7-a1/mnt/cache/co3
+removed: /lab/7-a1/mnt/cache/co4
+left in place (not empty — a step wrote a real file into it): /lab/7-a1/mnt/cache/shadow-test
+removed: /lab/7-a1/mnt/disk1/ctm1
+removed: /lab/7-a1/mnt/disk2/ctm1
+removed: /lab/7-a1/mnt/disk3/ctm1
+removed: /lab/7-a1/mnt/disk1/ctm2
+removed: /lab/7-a1/mnt/disk2/ctm2
+removed: /lab/7-a1/mnt/disk3/ctm2
+removed: /lab/7-a1/mnt/disk1/ctm3
+removed: /lab/7-a1/mnt/disk2/ctm3
+removed: /lab/7-a1/mnt/disk3/ctm3
+removed: /lab/7-a1/mnt/disk1/ctm4
+removed: /lab/7-a1/mnt/disk2/ctm4
+removed: /lab/7-a1/mnt/disk3/ctm4
+removed: /lab/7-a1/mnt/disk1/ao1
+left in place (not empty — a step wrote a real file into it): /lab/7-a1/mnt/disk2/ao1
+removed: /lab/7-a1/mnt/disk3/ao1
+removed: /lab/7-a1/mnt/disk1/ao2
+removed: /lab/7-a1/mnt/disk2/ao2
+removed: /lab/7-a1/mnt/disk3/ao2
+removed: /lab/7-a1/mnt/disk1/ao3
+removed: /lab/7-a1/mnt/disk2/ao3
+removed: /lab/7-a1/mnt/disk3/ao3
+removed: /lab/7-a1/mnt/disk1/ao4
+removed: /lab/7-a1/mnt/disk2/ao4
+removed: /lab/7-a1/mnt/disk3/ao4
+removed: /lab/7-a1/mnt/disk1/shadow-test
+removed: /lab/7-a1/mnt/mover/ctm1
+removed: /lab/7-a1/mnt/mover
+archived every mount command this spike ran to results/mount-commands.log
+
+== cleaning up this spike's own working directory (/lab/7-a1/s6) — not touched by destroy-array.sh ==
+S6_KEEP_RESULTS=1: leaving /lab/7-a1/s6-results in place — copy it out (docker cp), then remove it yourself before make lab-destroy
+spike S6 run-all.sh: all steps passed

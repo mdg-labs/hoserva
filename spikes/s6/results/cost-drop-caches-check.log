@@ -1,0 +1,9 @@
+mount | grep 'proc/sys':
+proc on /proc/sys type proc (ro,nosuid,nodev,noexec,relatime)
+proc on /proc/sysrq-trigger type proc (ro,nosuid,nodev,noexec,relatime)
+
+ls -l /proc/sys/vm/drop_caches:
+--w------- 1 root root 0 Sep 16 00:38 /proc/sys/vm/drop_caches
+
+echo 1 > /proc/sys/vm/drop_caches:
+failed: bash: line 1: /proc/sys/vm/drop_caches: Read-only file system
