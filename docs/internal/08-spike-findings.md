@@ -471,7 +471,7 @@ Observed:
 | Host NVMe visible in container | No — `/dev/nvme0n1` absent |
 | `mknod` of the NVMe's `b 259:0` and open it | `mknod` succeeds, `open` fails with *Operation not permitted* — the device cgroup rule is what blocks it |
 | Host loop devices before / after | 0 / 0 — the per-image detach left nothing behind |
-| AppArmor | Not present on this host; `apparmor=unconfined` is still needed on Debian/Ubuntu hosts (unverified here) |
+| AppArmor | Not present on this host, so this recipe cannot test it directly; confirmed required on hosted Ubuntu runners instead — see "Hosted CI runners" below |
 
 **Two things the design had missed:**
 
@@ -480,9 +480,39 @@ Observed:
 
 **Partial S8: both storage dependencies are in Debian 13.** `apt-cache policy` in `debian:trixie-slim`: `mergerfs 2.40.2-5`, `snapraid 12.4-1`. The assumption behind Q7 that SnapRAID might be unavailable is wrong; Q7's default is simplified accordingly. Still open at the time: whether 2.40.2 behaves as doc 02 needs (`mspmfs` fallback, branch modes — S6). **S8 is now fully answered — doc 08 §8, above** (option coverage, `-Z`/`-E` guard confirmation and the mergerfs/SnapRAID changelog review); this paragraph is kept as the historical record of what S9's own run established.
 
-### Hosted CI runners (issue #10, 2026-09-16, updated 2026-09-16 after run 35056076616)
+### Hosted CI runners (issue #10, 2026-09-16 — S9 closed)
 
-**Verdict, KVM half: CONFIRMED on a hosted runner** (run `35056076616`, below) — a QEMU guest boots with KVM acceleration on a standard `ubuntu-24.04` hosted runner, confirmed host-side via QMP `query-kvm`, not only inferred from the guest. This closes S9's KVM acceptance criterion; it says nothing about S10 (nested KVM, VM-in-VM), a different, still-open question. **Verdict, lab half: confirmed on a hosted runner for `lab-up`/`lab-seed`/`lab-verify-refusal`/the SnapRAID sync**, on the pinned image (run `35049304081`) — the two gaps the first pass of this spike could only close on the dev host are closed on a hosted runner too. **AppArmor necessity: still open.** Two separate runs' attempts to answer it both produced void results, each for its own reason (below) — not a real verdict either way. Full write-up, scripts and raw output: `spikes/s9/`.
+**Verdict: CONFIRMED, all three questions.** Hosted GitHub runners support L2 (loop devices, FUSE, a real SnapRAID sync) and KVM acceleration for a single non-nested guest, and the lab's own `mount(2)` inside the container requires `apparmor=unconfined` on such a runner. **This closes S9.** S10 (nested KVM, VM-in-VM, issue #87, Phase 3.5) is a separate, still-open question — nothing here answers it. Full write-up, scripts and raw output: `spikes/s9/`.
+
+**1. KVM: CONFIRMED.** Six consecutive hosted runs across this issue's fix attempts have booted a QEMU guest with KVM acceleration on a standard `ubuntu-24.04` hosted runner. Most recently, run `35076920766`, job `104731427908` (2026-09-16, head `e97c469`): `/dev/kvm` goes `crw-rw----` → `crw-rw-rw-` after GitHub's documented udev rule (reload, trigger, settle), the runner's own running kernel is acquired readably (`runner:runner 644`, via the runner's own job-scoped `sudo cp` + `chown`), and the guest boots with **QMP `query-kvm` replying `{"return": {"enabled": true, "present": true}}`**, followed by `## qemu-system-x86_64 exit 0, wall time 1s`. Acceleration is confirmed **host-side, by the QEMU process itself**, not only inferred from the guest's own `/proc/cpuinfo`. This closes S9's KVM acceptance criterion ("a QEMU guest boots with KVM acceleration on a standard hosted runner").
+
+**2. Lab (L2): CONFIRMED.** The same run's `lab` job (`104731428284`) ran `lab-up`, `lab-seed`, `lab-verify-refusal` (the host-device refusal checks for the NVMe and SCSI/SATA device-cgroup classes, and `lab_assert_own_loop`'s own path checks — all correctly `EPERM`), a SnapRAID sync against the standing array (`Everything OK`), and `lab-destroy` — all green, on the pinned `ubuntu-24.04` image, in the same run as the KVM confirmation above.
+
+**3. AppArmor necessity: ANSWERED — `apparmor=unconfined` is REQUIRED.** Run `35076920766`, job `104731428284` (same run as above) ran the real lab recipe three times, on one runner, one image, under three distinct `HOSERVA_LAB_ID`s, differing only in the container's AppArmor profile:
+
+| Time (UTC) | AppArmor profile | Lab id | Outcome |
+|---|---|---|---|
+| 09:00:43 | `unconfined` (control) | `…-apparmor-ctrl` | `lab … ready: parity1, disk1-3, cache, pool` |
+| 09:00:55 | `docker-default` (variant) | `…-apparmor-var` | `mount: /lab/…/mnt/parity1: /dev/loop0 already mounted or mount point busy.` / `make: *** [Makefile:110: lab-up] Error 32` |
+| 09:01:06 | `unconfined` (the job's own standing lab) | base id | `lab-up`, `lab-seed`, both EPERM refusal checks, SnapRAID `Everything OK`, `lab-destroy` |
+
+**The A-B-A ordering is what makes this conclusive.** `unconfined` succeeded both immediately before and immediately after the `docker-default` failure — the second success landing one second after the failing variant's own teardown, on the same runner, against the same loop devices — which rules out leftover state, loop contention and an ordering artifact from inside this run itself as the cause of the middle failure.
+
+The third arm (09:01:06) was **not designed as a control for this experiment** — it is the job's own standing lab run, which happens to supply the second `unconfined` success. It is reported here because it corroborates the two-arm result, not as a designed three-arm experiment.
+
+The verdict step reads the variant arm's own recorded step outcome (`if [ "failure" = "success" ]`) directly, never re-classifying stderr text into a verdict.
+
+**4. What remains open: the errno.** The variant's failure is **EBUSY** ("already mounted or mount point busy"), where a mount denied by AppArmor would conventionally surface as **EACCES**. It also arrives *after* `losetup --find --show`, `lab_assert_own_loop` and `mkfs.xfs -q -L parity1` all succeeded against the same `/dev/loop0` — only the `mount(2)` call itself failed. This is recorded as an open, unexplained observation, worth investigating if it ever matters — not as a resolved mechanism. The established claim is necessity (removing the flag breaks the real lab recipe at its first mount), not an explanation of the kernel's exact error code.
+
+**5. Corroboration, not primary evidence.** Moby's `docker-default` AppArmor template (`moby/profiles`, `apparmor/template.go`) contains `umount,` and a plain `deny mount,` with no `audit deny` anywhere in the file — consistent with a silently denied mount under Docker's default profile. This is cited only as upstream corroboration of the shape of the result; the primary evidence for this verdict is the run above, not this template.
+
+**6. The honest history: six voids, and one dead end.** The AppArmor question was voided six times before this result — runs `35049304081`, `35056076616`, `35057453620`, `35068617498`, `35071011877`, `35075054897`. Every void traced to a bug in a hand-rolled replica of the lab recipe, never to AppArmor itself: a missing `mknod` of the container's own loop nodes; an undersized probe image (below `mkfs.xfs`'s own ~300MB minimum); an EBUSY misread as a denial; a `set -e` abort that stopped a second probe from ever running; a stale result file that read as a success; and finally a correct-but-inconclusive EBUSY the earlier apparatus had no way to interpret past. The narrative below keeps the first two of these six in detail, since they also carry the (separately confirmed) KVM and lab-half history; the later four are summarized in `spikes/s9/README.md`.
+
+**Run `35049304081` printed "apparmor=unconfined is required" from a broken experiment, and that verdict was retracted at the time** — both branches had failed identically from the missing-`mknod` bug, unrelated to AppArmor. **The new result does not retroactively validate that retracted verdict.** These are two separate facts: an earlier claim was unsupported and withdrawn; a later, independent, methodologically sound experiment has since established the same conclusion on its own evidence. The old claim is not evidence for the new one, and the new one does not un-retract the old one.
+
+**A host-side kernel-audit capture (added in a later, now-retired attempt) was a dead end.** It captured the runner's kernel audit log looking for `apparmor="DENIED" … operation="mount"` records, and found 288 AppArmor records and zero denials. That result proved nothing: Docker's default profile denies `mount` with a plain `deny` rule, and in AppArmor a plain `deny` is **unaudited** — only `audit deny` produces a log record. That round rested on an unchecked premise (that a denial would show up in the audit log at all) and has since been retired along with the rest of the hand-rolled apparatus it belonged to.
+
+**The lesson worth carrying forward.** Every one of the six voids came from reimplementing the lab recipe in order to test it — raw `docker run`, manual `mknod`/`losetup`/`mkfs.xfs`/`mount`, a stderr classifier, a host-side audit capture — instead of exercising the real recipe through `make lab-up`/`make lab-destroy`. This is exactly the mistake `CLAUDE.md`'s "orchestrate, never reimplement" rule warns against, applied to a test probe rather than to product code. The fix that finally produced a conclusive result was to stop building a replica and instead run the real `make` targets twice with exactly one variable (`docker-compose.dev.yml`'s own `security_opt`, via a second compose file, `scripts/devenv/docker-compose.apparmor-default.yml`). Any future spike that needs to test a property of an existing recipe should default to varying the real recipe's own inputs, not building a parallel one that approximates it.
 
 **The maintainer triggered `s9-hosted-probe.yml` once**: run `35049304081` (`workflow_dispatch`, `main`, 2026-09-16, overall `conclusion: failure` — the `kvm` job failed, the `lab` job succeeded). Fetched read-only, never re-run by this spike (`gh run view 35049304081 --repo mdg-labs/hoserva --json jobs,conclusion,event,headBranch`, and both jobs' `--log`). Excerpts: `spikes/s9/results/ci-run-35049304081-lab-job.log`, `ci-run-35049304081-kvm-job.log`.
 
@@ -498,13 +528,7 @@ Observed:
 
 **The same run's `lab` job failed at the AppArmor step, on two new, narrower bugs — neither an AppArmor result.** With the `mknod` fix from run `35049304081` confirmed working (`losetup` no longer failed), the control branch reached `mkfs.xfs` for the first time and exposed: (a) the probe images were `truncate -s 64M`, but `mkfs.xfs` refuses anything under ~300MB (`Filesystem must be larger than 300MB.`) — the control guard worked exactly as designed, voiding the verdict rather than asserting one; (b) with the AppArmor step failing, `lab-destroy` (`if: always()`) ran with `steps.lab.outputs.id` unset, because "Derive this run's lab id" sat after the AppArmor step — `lab-require-id` correctly refused the empty value, a second, unrelated failure on top of the first. Both fixed by this change: the images are now 512M (validated against xfsprogs directly, no loop device, in `spikes/s9/results/mkfs-xfs-size-check.log` — 256M still refuses, 300M is the first size that succeeds, 512M passes with margin, and matches the lab's own `LAB_CACHE_SIZE` convention), and the lab id is now derived before the AppArmor step so teardown always has one to work with. `lab-up`/`lab-seed`/`lab-verify-refusal`/the SnapRAID sync never ran in this run (the AppArmor step failed first); those results still stand on run `35049304081`, not this one. AppArmor necessity remains exactly as open as before — this run's void result is a second void result, not evidence either way.
 
-**What the maintainer runs next**, in fish, once this commit is reviewed and pushed:
-
-```fish
-gh workflow run s9-hosted-probe.yml --repo mdg-labs/hoserva --ref main
-```
-
-The `kvm` job's question is closed and does not need re-triggering for S9's sake, though it runs again as part of the same dispatch. `spikes/s9/README.md`'s own "What remains open" section states exactly what a pass looks like for the `lab` job's AppArmor step, so a future update to this section (and to Q42/Q79, doc 13) can be written directly from that run's logs rather than re-deriving the checklist.
+**Nothing further to trigger for S9's own sake.** All three of its questions — L2 on a hosted runner, KVM acceleration on a hosted runner, and AppArmor necessity — are answered above from run `35076920766`. `s9-hosted-probe.yml` keeps running as part of `ci.yml`'s ordinary hosted coverage, but no further dispatch is needed to close this spike. `spikes/s9/README.md` carries the full run-by-run history (the six voids, the retracted verdict, the dead-end audit capture) and the S9/S10 boundary as the historical record, under its own "What was established, and from which runs", "The void history" and "S9 / S10 boundary" sections — this doc 08 entry is now the authoritative, closed verdict.
 
 ---
 
