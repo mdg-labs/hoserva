@@ -38,6 +38,21 @@ jobs:
           free -h
           uname -srm
 
+      - name: Derive this run's lab id
+        # Moved ahead of the AppArmor step after run 35056076616: this step
+        # used to sit after it, so when the AppArmor step failed (exit 1),
+        # `steps.lab.outputs.id` was never set and the `if: always()`
+        # lab-destroy step ran with an empty HOSERVA_LAB_ID, which
+        # `lab-require-id` correctly refuses ("set HOSERVA_LAB_ID ...",
+        # Makefile:90) — teardown died with a *second*, unrelated failure.
+        # Deriving the id first means lab-destroy always has a real id to
+        # tear down, whether or not lab-up ever ran; `make lab-destroy`
+        # already treats "container does not exist" as a no-op
+        # (Makefile lab-destroy target), so this is a safe no-op when
+        # lab-up was never reached.
+        id: lab
+        run: echo "id=s9-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
       - name: AppArmor necessity check (disposable, not the standing lab)
         # Mirrors the raw `docker run` recipe doc 08's dev-host S9 finding
         # used, not `make lab-up` — this checks one flag in isolation, so
@@ -57,6 +72,16 @@ jobs:
         # treating the with-unconfined branch as this experiment's control:
         # if the control itself fails, the recipe is broken and the step
         # aborts loudly instead of asserting anything about AppArmor.
+        #
+        # Fixed after run 35056076616: with the mknod bug fixed, the control
+        # branch reached `mkfs.xfs` for the first time and that exposed the
+        # next latent bug — the images were `truncate -s 64M`, but
+        # `mkfs.xfs` refuses anything under ~300MB ("Filesystem must be
+        # larger than 300MB."). Sized at 512M instead, matching the lab's
+        # own LAB_CACHE_SIZE convention (scripts/devenv/create-array.sh) and
+        # validated directly against xfsprogs in a disposable container
+        # (spikes/s9/results/mkfs-xfs-size-check.log): 256M still refuses,
+        # 300M is the first size that succeeds, 512M passes with margin.
         run: |
           set -euo pipefail
 
@@ -84,7 +109,7 @@ jobs:
           }
 
           img_control="$(mktemp -d)/control.img"
-          truncate -s 64M "$img_control"
+          truncate -s 512M "$img_control"
           echo "## Control: apparmor=unconfined (matches the standing lab's own security_opt)"
           if run_probe "$img_control" --security-opt apparmor=unconfined; then
             echo "control (with-unconfined): succeeded"
@@ -94,17 +119,13 @@ jobs:
           fi
 
           img_variant="$(mktemp -d)/variant.img"
-          truncate -s 64M "$img_variant"
+          truncate -s 512M "$img_variant"
           echo "## Variant: default Docker AppArmor profile (no apparmor=unconfined)"
           if run_probe "$img_variant"; then
             echo "without-unconfined: succeeded — apparmor=unconfined is NOT required on this runner image for this recipe"
           else
             echo "without-unconfined: FAILED — apparmor=unconfined IS required on this runner image for this recipe"
           fi
-
-      - name: Derive this run's lab id
-        id: lab
-        run: echo "id=s9-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
 
       - name: lab-up
         env:

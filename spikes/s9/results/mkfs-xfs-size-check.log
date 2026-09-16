@@ -1,0 +1,29 @@
+# Command run on the dev host inside a disposable debian:trixie-slim
+# container — no loop device, no losetup, no mount, no host-global device.
+# Validates the exact minimum-size bug run 35056076616's AppArmor step hit
+# ("Filesystem must be larger than 300MB.") against a plain file with the
+# same xfsprogs the probe uses, and confirms the chosen fix (512M) clears
+# it with margin.
+#
+# $ docker run --rm debian:trixie-slim bash -c '
+#     apt-get update -qq && apt-get install -y -qq --no-install-recommends xfsprogs >/dev/null
+#     for s in 64M 128M 256M 300M 301M 320M 512M; do
+#       f=$(mktemp); truncate -s "$s" "$f"
+#       if mkfs.xfs -q -f "$f" 2>/dev/null; then echo "$s: OK"; else echo "$s: REFUSED"; fi
+#       rm -f "$f"
+#     done'
+
+64M: REFUSED
+128M: REFUSED
+256M: REFUSED
+300M: OK
+301M: OK
+320M: OK
+512M: OK
+
+# The workflow's own images were `truncate -s 64M` — exactly the size that
+# REFUSED here, reproducing "Filesystem must be larger than 300MB." from
+# the real run. 300M is the first size that succeeds against this
+# xfsprogs; the fix uses 512M, matching the lab's own LAB_CACHE_SIZE
+# convention (scripts/devenv/create-array.sh) and giving margin above the
+# threshold rather than sitting right on it.

@@ -1,0 +1,41 @@
+# Excerpt of gh run view 35056076616 --repo mdg-labs/hoserva --job 104666440639 --log
+# (job '/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)', run
+# https://github.com/mdg-labs/hoserva/actions/runs/35056076616, workflow_dispatch on main at
+# 1388f83, 2026-09-16, conclusion: success)
+# Fetched read-only, never re-run by this spike. Full log is 295 lines; trimmed here to the
+# runner-image banner, the /dev/kvm mode transition, kernel acquisition, the QMP handshake and
+# the final PASS line. apt/dpkg package-install noise is trimmed with "...".
+#
+# This is the first hosted-runner evidence for S9's KVM half. It establishes the acceptance
+# criterion "A QEMU guest boots with KVM acceleration on a standard hosted runner" — CONFIRMED,
+# host-side via QMP, not merely inferred from the guest's own /proc/cpuinfo.
+
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Set up job	Image: ubuntu-24.04, Version: 20260907.300.1
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Record runner resources	2026-09-16T04:33:45.9922563Z Linux 6.17.0-1022-azure x86_64
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Record runner resources	2026-09-16T04:33:45.9940939Z svm
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	/dev/kvm before any udev rule	2026-09-16T04:33:46.0146585Z crw-rw---- 1 root kvm 10, 232 Sep 16 04:33 /dev/kvm
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	Apply the kvm udev rule and settle	2026-09-16T04:33:46.0850675Z crw-rw-rw- 1 root kvm 10, 232 Sep 16 04:33 /dev/kvm
+...
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:57.0540643Z ## Acquiring the running kernel readably (sudo cp + chown, as the unprivileged user)
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:57.0914577Z ## Kernel acquired: /boot/vmlinuz-6.17.0-1022-azure -> /tmp/tmp.cb2WZBJDtj/vmlinuz (runner:runner 644)
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:57.0916070Z ## Building a one-file initramfs (busybox init, prints a marker, powers off)
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:57.2448925Z ## Booting (kernel: /tmp/tmp.cb2WZBJDtj/vmlinuz, accel: kvm, timeout 90s), started paused pending the QMP query-kvm check
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:57.4778399Z ## QMP query-kvm reply: {"return": {"enabled": true, "present": true}}
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:58.4803712Z ## qemu-system-x86_64 exit 0, wall time 1s
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:58.4816994Z ## guest serial console:
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:58.4826896Z HOSERVA-S9-KVM-GUEST-BOOTED
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:58.4830164Z flags		: fpu vme de pse tsc ... hypervisor lahf_lm cmp_legacy svm ...
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:58.4834902Z HOSERVA-S9-HYPERVISOR-FLAG-PRESENT
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:58.4835318Z [    0.606108] reboot: Power down
+/dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)	UNKNOWN STEP	2026-09-16T04:33:58.4944235Z PASS: guest booted to its own init in 1s; QMP query-kvm reported {enabled: true, present: true}; /proc/cpuinfo also showed a hypervisor flag — KVM acceleration confirmed by the host (QMP), not only inferred from the guest
+#
+# ^ CONFIRMED: KVM acceleration on a hosted ubuntu-24.04 runner (image
+# 20260907.300.1, nproc 4, Azure eastus2). The kernel-acquisition fix
+# (sudo cp + chown of the running kernel, validated under a non-root
+# privilege boundary — see kernel-acquisition-nonroot.log) worked on a real
+# runner: no "no readable kernel" failure this time. Acceleration is
+# established by the host process itself (QMP query-kvm), not only the
+# guest's own /proc/cpuinfo report.
+#
+# This closes S9's KVM acceptance criterion. It says nothing about S10
+# (nested KVM, VM-in-VM) — that is a different, still-open question.
