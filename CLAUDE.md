@@ -73,6 +73,14 @@ Storage behaviour is exercised **only inside the lab**:
 
 No agent runs `sudo`, a package manager install, or edits anything under `/etc`, under any circumstance. Work that needs root is labelled `needs-sudo`: the agent prepares everything and prints the exact commands for the maintainer, prefixed `! ` so they run in-session. The maintainer's shell is **fish** — print commands that work there (`env VAR=value cmd`, no bash heredocs, no `export`).
 
+**Never trigger an authentication prompt on the host, and never retry one.** This is absolute, and it outranks finishing the task.
+
+- A command that raises a polkit, PAM or `sudo` password dialog reaches the maintainer's *desktop session*, not the agent. Three failed authentications trip `pam_faillock`'s `deny=3` and **lock the maintainer out of their own machine** — including out of `sudo`, so they cannot even undo it without a root TTY.
+- It is not only `sudo` that does this. Anything the desktop's own services react to raises the same dialog: attaching or detaching a loop device, `mount`/`umount`, and anything else `udisks`/`udev` notices. Assume any host-level device or mount operation can prompt.
+- **The moment a prompt appears, stop.** Do not retry it, do not reformulate it, do not run it again "once more to be sure", and do not work around it. Record exactly which command prompted, and report it. A denied or prompting command is a full stop, not an obstacle.
+- **Never hand such a command to the maintainer mid-task** ("please run `losetup -d …` for me"). Routing host work to the maintainer is the orchestrator's call, made in its report — not an agent's, and never as a way to keep going.
+- **The orchestrator never overrides an agent that stopped for this reason.** An agent reporting that its commands are prompting on the maintainer's session is reporting harm in progress; the only correct responses are to stop that line of work and to tell the maintainer. Treating the prompts as routine approval noise and instructing the agent to continue is itself the failure.
+
 # Issues are the plan
 
 GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between sessions.
