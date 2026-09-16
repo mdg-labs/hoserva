@@ -377,6 +377,27 @@ Observed:
 
 **Partial S8: both storage dependencies are in Debian 13.** `apt-cache policy` in `debian:trixie-slim`: `mergerfs 2.40.2-5`, `snapraid 12.4-1`. The assumption behind Q7 that SnapRAID might be unavailable is wrong; Q7's default is simplified accordingly. Still open: whether 2.40.2 behaves as doc 02 needs (`mspmfs` fallback, branch modes — S6).
 
+### Hosted CI runners (issue #10, 2026-09-16)
+
+**Verdict, lab half: confirmed on a hosted runner, with two named gaps closed only on the dev host, not yet on a hosted runner. Verdict, KVM half: not established — no agent ever runs `gh workflow run` or pushes (`CLAUDE.md`), so the workflow that can answer it has never executed.** Full write-up, scripts and raw output: `spikes/s9/`.
+
+**The lab half is answered by an already-successful, already-public hosted-runner run**, not a new one this spike triggered: `gh run view 34950031773 --repo mdg-labs/hoserva --job 104318547816 --log` — the `Loop-device lab (L2)` job of the push-triggered `ci.yml` run on `main`, 2026-09-15, `conclusion: success`, fetched read-only (excerpt: `spikes/s9/results/ci-run-34950031773-lab-job.log`). It ran on the hosted `ubuntu-latest` runner, which resolved to image `ubuntu-24.04` version `20260907.300.1` (`Ubuntu 24.04.5 LTS`) at that moment — **not** the pinned `ubuntu-24.04` this issue prefers for reproducibility, a real gap between what was run and what was asked for, stated rather than glossed over. Inside that job, `make lab-up`/`lab-seed`/`lab-verify-refusal`/`lab-destroy` all succeeded with `docker-compose.dev.yml`'s narrowed device access (no `--privileged`, no `/dev` bind mount, `security_opt: apparmor=unconfined` already set): the array came up (parity, three data disks, cache, and a mergerfs pool mount at `.../mnt/user` — confirmed by `create-array.sh`'s own success output naming it), both host-device-refusal checks passed (`ok: host NVMe class (major 259) — open refused with EPERM`, `ok: host SCSI/SATA class (major 8) — open refused with EPERM`), and teardown removed `.lab/$HOSERVA_LAB_ID` cleanly.
+
+**That run does not cover two things the issue asks for, both closed separately, only on the dev host:**
+
+1. **No SnapRAID sync ran** — `scripts/devenv/Dockerfile` (out of this spike's scope) never installs `snapraid`, confirmed directly in the job's own `apt-get install` log line (`util-linux xfsprogs mergerfs fuse3 ca-certificates` only). `spikes/s9/scripts/hosted-snapraid-check.sh` + `snapraid-sync-in-container.sh` install `snapraid` for this spike only (the same pattern S5 and S7 already used) and run one `sync` against the standing array. Run against the **local dev host's** lab (lab id `10-a1`, this issue's own dispatch id, 2026-09-16 — CachyOS, not a hosted runner): `snapraid 12.4-1` installed, `sync` exited 0 with `Everything OK`, and reproduced S5's own `WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'` finding exactly (`spikes/s9/results/local-snapraid-sync-check.log`). This confirms the script and commands are correct; it does not confirm they succeed on a hosted runner specifically — that is the `.github/workflows/s9-hosted-probe.yml` `lab` job's own SnapRAID step, not yet run.
+2. **Whether `apparmor=unconfined` is actually *necessary* on a hosted Ubuntu runner is still open.** The dev-host S9 finding above (CachyOS) has no AppArmor at all, so it could not test this either way. Run 34950031773 ran on real Ubuntu-with-AppArmor **with** the flag already set unconditionally in `docker-compose.dev.yml`, and succeeded — confirming the flag is compatible with such a host, but that run never varied it, so absence-of-failure-with-the-flag is not the same claim as necessity-of-the-flag. `s9-hosted-probe.yml`'s `lab` job adds an explicit with/without comparison (a disposable `docker run`, not touching `docker-compose.dev.yml`) to close this — result pending the maintainer's run.
+
+**The KVM half was never touched.** No workflow existed on GitHub to answer it, and this issue's own constraints forbid triggering one (`CLAUDE.md`: no agent pushes; no `gh workflow run`). `.github/workflows/s9-hosted-probe.yml`'s `kvm` job applies the udev rule GitHub's own 2024-04-02 changelog documents (`KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"`, reload, trigger, `udevadm settle` — trigger before settle, per the community late-trigger caveat this issue's own research cites) and boots a minimal guest (the runner's own kernel plus a one-file busybox initramfs, no external image fetch) to a printed marker and a clean poweroff, asserting `/proc/cpuinfo` shows a hypervisor flag and that QEMU's own stderr never reports falling back off KVM. `spikes/s9/scripts/kvm-boot-check.sh` is `shellcheck`-clean and `bash -n`-clean, but **has never executed** — this dispatch's own rule against starting local VMs means it was not tried against this dev host's own `/dev/kvm` either. Its correctness rests on design and the cited public sources, not an observed run.
+
+**What the maintainer runs next**, in fish, once this commit is reviewed and pushed:
+
+```fish
+gh workflow run s9-hosted-probe.yml --repo mdg-labs/hoserva --ref main
+```
+
+`spikes/s9/README.md`'s own "What's left open" section states exactly what a pass looks like for both jobs, so a future update to this section (and to Q42/Q79, doc 13) can be written directly from that run's logs rather than re-deriving the checklist.
+
 ---
 
 ## Net effect on the risk register

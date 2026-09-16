@@ -1,0 +1,143 @@
+name: S9 hosted-runner probe
+
+# One-off diagnostic workflow for spike S9 (issue #10, doc 08 §9, doc 13
+# Q42/Q79) — not part of the merge gate, not run on push or pull_request.
+# It exists to answer the one half of S9 the existing `ci.yml` `lab` job
+# cannot: whether a hosted runner's /dev/kvm supports a real guest boot.
+# The lab half is included too, extended with the one thing ci.yml's own
+# lab job doesn't exercise (a SnapRAID sync — snapraid isn't in the
+# standing lab image, scripts/devenv/ is out of this spike's scope, so it
+# is installed for this job only, the same "spike-only, not baked into the
+# image" pattern spikes/s5 and spikes/s7 already use) and an explicit
+# apparmor=unconfined necessity check.
+#
+# Findings land in docs/internal/08-spike-findings.md and spikes/s9/ by
+# hand after a run — this workflow's job summaries are the source, not a
+# replacement for that write-up (CLAUDE.md, "Spikes").
+#
+# workflow_dispatch only: never runs on a fork's pull request, never sees
+# a secret, and pins ubuntu-24.04 (not ubuntu-latest) so a result stays
+# reproducible against a named image (Q42, doc 06 §7).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    name: Loop-device lab + SnapRAID sync (L2)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Record runner resources
+        run: |
+          echo "nproc: $(nproc)"
+          free -h
+          uname -srm
+
+      - name: AppArmor necessity check (disposable, not the standing lab)
+        # Mirrors the raw `docker run` recipe doc 08's dev-host S9 finding
+        # used, not `make lab-up` — this checks one flag in isolation, so
+        # it must not touch docker-compose.dev.yml (out of scope) or the
+        # namespaced lab directories a real `make lab-up` owns.
+        run: |
+          set -euo pipefail
+          img="$(mktemp -d)/probe.img"
+          truncate -s 64M "$img"
+          run_probe() {
+            local -a extra_opts=("$@")
+            docker run --rm \
+              --cap-add SYS_ADMIN --device /dev/loop-control \
+              --device-cgroup-rule 'b 7:* rmw' \
+              "${extra_opts[@]}" \
+              -v "$img:/probe.img" debian:trixie-slim bash -c '
+                set -euo pipefail
+                apt-get update -qq
+                apt-get install -y -qq --no-install-recommends util-linux xfsprogs >/dev/null
+                dev=$(losetup --find --show /probe.img)
+                mkfs.xfs -q "$dev"
+                mkdir -p /mnt/probe
+                mount "$dev" /mnt/probe
+                echo ok > /mnt/probe/marker
+                umount /mnt/probe
+                losetup -d "$dev"
+              '
+          }
+          echo "## With apparmor=unconfined"
+          if run_probe --security-opt apparmor=unconfined; then
+            echo "with-unconfined: succeeded"
+          else
+            echo "with-unconfined: FAILED"
+          fi
+          echo "## Without apparmor=unconfined (default Docker AppArmor profile)"
+          if run_probe; then
+            echo "without-unconfined: succeeded — apparmor=unconfined is not required on this runner image"
+          else
+            echo "without-unconfined: FAILED — apparmor=unconfined is required on this runner image"
+          fi
+
+      - name: Derive this run's lab id
+        id: lab
+        run: echo "id=s9-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: lab-up
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make lab-up
+
+      - name: lab-seed
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make lab-seed
+
+      - name: lab-verify-refusal
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make lab-verify-refusal
+
+      - name: SnapRAID sync against the standing array (spike-only install)
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: bash spikes/s9/scripts/hosted-snapraid-check.sh
+
+      - name: lab-destroy
+        if: always()
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make lab-destroy
+
+  kvm:
+    name: /dev/kvm probe + minimal guest boot (L3 precursor, S9/S10)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Record runner resources
+        run: |
+          echo "nproc: $(nproc)"
+          free -h
+          uname -srm
+          grep -Eo 'vmx|svm' /proc/cpuinfo | sort -u || echo "no vmx/svm flag found"
+
+      - name: /dev/kvm before any udev rule
+        run: |
+          ls -l /dev/kvm 2>&1 || echo "/dev/kvm: absent before rule"
+
+      - name: Apply the kvm udev rule and settle
+        # The exact rule GitHub's 2024-04-02 changelog entry documents —
+        # the issue's own upstream research. Written before triggering, not
+        # after, per the community caveat the issue cites: a late trigger
+        # can leave /dev/kvm unwritable.
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-hoserva-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          ls -l /dev/kvm
+
+      - name: Boot a minimal guest with KVM acceleration
+        run: bash spikes/s9/scripts/kvm-boot-check.sh

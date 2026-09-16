@@ -1,0 +1,109 @@
+# Excerpt of gh run view 34950031773 --repo mdg-labs/hoserva --job 104318547816 --log
+# (job 'Loop-device lab (L2)', run https://github.com/mdg-labs/hoserva/actions/runs/34950031773, push to main, 2026-09-15)
+# Trimmed to the runner-image banner and the lab-specific steps; the checkout
+# step's own git plumbing (identical to every other job) is omitted.
+
+Loop-device lab (L2)	UNKNOWN STEP	﻿2026-09-15T08:59:51.7437965Z Current runner version: '2.337.0'
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7462526Z ##[group]Runner Image Provisioner
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7463406Z Hosted Compute Agent
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7463975Z Version: 20260828.587
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7464544Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7465399Z Build Date: 2026-08-28T16:44:25Z
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7466030Z Worker ID: {35005cc8-ff33-45af-8a17-d4dbca9ba068}
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7466699Z Azure Region: westus3
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7467263Z ##[endgroup]
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7468786Z ##[group]Operating System
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7469432Z Ubuntu
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7469905Z 24.04.5
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7470373Z LTS
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7470870Z ##[endgroup]
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7471383Z ##[group]Runner Image
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7472368Z Image: ubuntu-24.04
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7472894Z Version: 20260907.300.1
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7474110Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7475897Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T08:59:51.7476801Z ##[endgroup]
+...
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.0348865Z  lab  Built
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.0397003Z  Network hoserva-lab-ci-34950031773-1_default  Creating
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.0702824Z  Network hoserva-lab-ci-34950031773-1_default  Created
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.0710248Z  Container hoserva-lab-ci-34950031773-1  Creating
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.0904920Z  Container hoserva-lab-ci-34950031773-1  Created
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.0910927Z  Container hoserva-lab-ci-34950031773-1  Starting
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.2225830Z  Container hoserva-lab-ci-34950031773-1  Started
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.2251295Z docker compose -f docker-compose.dev.yml -p "hoserva-lab-$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/create-array.sh
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7405852Z lab ci-34950031773-1 ready:
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7407954Z   parity: /lab/ci-34950031773-1/mnt/parity1
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7409712Z   data:   /lab/ci-34950031773-1/mnt/disk1 /lab/ci-34950031773-1/mnt/disk2 /lab/ci-34950031773-1/mnt/disk3
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7410741Z   cache:  /lab/ci-34950031773-1/mnt/cache
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7411545Z   pool:   /lab/ci-34950031773-1/mnt/user
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7481432Z ##[group]Run make lab-seed
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7481723Z ^[[36;1mmake lab-seed^[[0m
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7506066Z shell: /usr/bin/bash -e {0}
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7506329Z env:
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7506521Z   GO_VERSION: 1.27.1
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7506759Z   HOSERVA_LAB_ID: ci-34950031773-1
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7507000Z ##[endgroup]
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:06.7586584Z docker compose -f docker-compose.dev.yml -p "hoserva-lab-$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/seed-data.sh --profile "mixed"
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.4597210Z seeded profile 'mixed' under /lab/ci-34950031773-1/mnt/user
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.4665693Z ##[group]Run make lab-verify-refusal
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.4666031Z ^[[36;1mmake lab-verify-refusal^[[0m
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.4689130Z shell: /usr/bin/bash -e {0}
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.4689399Z env:
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.4689602Z   GO_VERSION: 1.27.1
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.4689826Z   HOSERVA_LAB_ID: ci-34950031773-1
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.4690070Z ##[endgroup]
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.4771749Z docker compose -f docker-compose.dev.yml -p "hoserva-lab-$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/test-host-refusal.sh
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.5732057Z ok: host NVMe class (major 259) — open refused with EPERM (device cgroup)
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.5762827Z ok: host SCSI/SATA class (major 8) — open refused with EPERM (device cgroup)
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.5789049Z ok: lab_assert_own_loop refuses an image path outside $LAB/img/
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.5815386Z ok: lab_assert_own_loop refuses a non-loop device path
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.5898414Z ##[group]Run make lab-destroy
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.5898715Z ^[[36;1mmake lab-destroy^[[0m
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.5921468Z shell: /usr/bin/bash -e {0}
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.5921740Z env:
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.5921938Z   GO_VERSION: 1.27.1
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.5922189Z   HOSERVA_LAB_ID: ci-34950031773-1
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:10.5922440Z ##[endgroup]
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:11.1828168Z lab ci-34950031773-1 destroyed
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:11.1866423Z docker compose -f docker-compose.dev.yml -p "hoserva-lab-$HOSERVA_LAB_ID" down -v
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:11.2582868Z  Container hoserva-lab-ci-34950031773-1  Stopping
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.3312193Z  Container hoserva-lab-ci-34950031773-1  Stopped
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.3313161Z  Container hoserva-lab-ci-34950031773-1  Removing
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.3344915Z  Container hoserva-lab-ci-34950031773-1  Removed
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.3351485Z  Network hoserva-lab-ci-34950031773-1_default  Removing
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.4303417Z  Network hoserva-lab-ci-34950031773-1_default  Removed
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.4314884Z rm -rf -- ".lab/$HOSERVA_LAB_ID"
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.4442317Z Post job cleanup.
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5241898Z [command]/usr/bin/git version
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5290218Z git version 2.55.0
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5327865Z Temporarily overriding HOME='/home/runner/work/_temp/a4a7da4a-e46a-4e40-bef2-e33e63b958d2' before making global git config changes
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5329140Z Adding repository directory to the temporary git global config as a safe directory
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5332279Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/hoserva/hoserva
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5362391Z Removing SSH command configuration
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5369045Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5401274Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5607943Z Removing HTTP extra header
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5613474Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5644902Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5843682Z Removing includeIf entries pointing to credentials config files
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5849580Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5878451Z includeif.gitdir:/home/runner/work/hoserva/hoserva/.git.path
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5879415Z includeif.gitdir:/home/runner/work/hoserva/hoserva/.git/worktrees/*.path
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5880152Z includeif.gitdir:/github/workspace/.git.path
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5880785Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5888910Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/hoserva/hoserva/.git.path
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5912872Z /home/runner/work/_temp/git-credentials-d471fe9e-c34f-403e-8280-8297bf3c5f50.config
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5924097Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/hoserva/hoserva/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-d471fe9e\-c34f\-403e\-8280\-8297bf3c5f50\.config
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5959807Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/hoserva/hoserva/.git/worktrees/*.path
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5986809Z /home/runner/work/_temp/git-credentials-d471fe9e-c34f-403e-8280-8297bf3c5f50.config
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.5989357Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/hoserva/hoserva/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-d471fe9e\-c34f\-403e\-8280\-8297bf3c5f50\.config
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.6029567Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.6051233Z /github/runner_temp/git-credentials-d471fe9e-c34f-403e-8280-8297bf3c5f50.config
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.6058795Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-d471fe9e\-c34f\-403e\-8280\-8297bf3c5f50\.config
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.6087239Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.6117477Z /github/runner_temp/git-credentials-d471fe9e-c34f-403e-8280-8297bf3c5f50.config
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.6126610Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-d471fe9e\-c34f\-403e\-8280\-8297bf3c5f50\.config
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.6168945Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.6367920Z Removing credentials config '/home/runner/work/_temp/git-credentials-d471fe9e-c34f-403e-8280-8297bf3c5f50.config'
+Loop-device lab (L2)	UNKNOWN STEP	2026-09-15T09:00:21.6503958Z Cleaning up orphan processes

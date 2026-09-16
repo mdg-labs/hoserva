@@ -557,11 +557,11 @@ Appdata archives hold application databases and credentials in plain files, and 
 ## Security, CI and workflow
 
 ### Q42 — CI runners for a public repository *(security gap)*
-**Status:** Spike (S9) · **Gate:** Phase 1 · **Affects:** doc 06 §7, doc 07 R11
+**Status:** Spike (S9) — **loop devices and FUSE confirmed on a hosted runner** (issue #10, doc 08 §9 "Hosted CI runners"); **`/dev/kvm` not yet confirmed** — the probe workflow exists (`.github/workflows/s9-hosted-probe.yml`) but has never run, since no agent triggers a workflow or pushes · **Gate:** Phase 1 · **Affects:** doc 06 §7, doc 07 R11
 
 **The gap:** doc 06 §7 runs privileged, nested-virtualisation jobs on self-hosted runners "every PR". On a public repository, a pull request from a fork can run arbitrary code on those runners, which here means a privileged host with loop devices.
 
-**Default:** everything that executes pull-request code runs on GitHub-hosted runners: L1, L2 loop devices via the runner's `sudo`, `.deb` build, and L3 if hosted KVM proves sufficient. There are no self-hosted runners (Q79). Workflows from first-time contributors require approval (a repository setting). S9 confirms hosted runners support loop devices, FUSE and `/dev/kvm` for the pinned toolchain.
+**Default:** everything that executes pull-request code runs on GitHub-hosted runners: L1, L2 loop devices via the runner's `sudo`, `.deb` build, and L3 if hosted KVM proves sufficient. There are no self-hosted runners (Q79). Workflows from first-time contributors require approval (a repository setting). **What's actually confirmed so far, not assumed:** `ci.yml`'s own `lab` job has run loop devices, XFS and a mergerfs pool mount successfully on a hosted `ubuntu-24.04` runner in production (run 34950031773, 2026-09-15) — L2 works hosted. `/dev/kvm` support — and therefore whether L3 can move to hosted runners at all — is untested: the workflow that would answer it (`s9-hosted-probe.yml`) is written and lint-clean but has never executed, because running it requires the maintainer to push this commit and trigger it (`CLAUDE.md`: no agent ever does either). Until that run exists, L3 stays on the dev host per Q79's own fallback.
 
 ### Q43 — API tokens
 **Status:** Default · **Gate:** Phase 2 · **Affects:** doc 01 §5, doc 03 §7
@@ -593,10 +593,10 @@ Doc 12 §6 prescribed "feature branches, squash-merged", and doc 12 §5 a "prote
 Anyone with a root shell already controls the box, so root is the right authority for recovery, and it adds no secret to lose. Announcing the reset means a recovery nobody asked for doesn't go unnoticed.
 
 ### Q79 — Where the long-running test suites run
-**Status:** Default (S9 and S10 decide the hosted part) · **Gate:** Phase 1 · **Affects:** doc 06 §4, §7, doc 14 §8, Q42, D20
+**Status:** Default — **S9's lab half (loop devices, FUSE) is confirmed hosted** (issue #10, doc 08 §9); **S9's KVM half, and S10 entirely, are still open** — the KVM probe workflow exists but has never run (no agent pushes or triggers it) · **Gate:** Phase 1 · **Affects:** doc 06 §4, §7, doc 14 §8, Q42, D20
 
 **Default: no self-hosted runners. L3, the migration suite, Playwright and the VM-management suite run nightly on GitHub-hosted runners wherever S9 (and S10, for nested KVM) confirm support. Whatever hosted runners can't run, agents run on the development host — in the lab and user-session VMs (D20) — as a required step before every release, recorded in the release checklist with the commit it ran against.**
-A self-hosted runner is a machine the maintainer owns and exposes to CI, which D20 rules out. A mandatory pre-release agent run keeps every suite required without any new infrastructure.
+A self-hosted runner is a machine the maintainer owns and exposes to CI, which D20 rules out. A mandatory pre-release agent run keeps every suite required without any new infrastructure. **Until S9's KVM result exists, every suite this row names stays on the "agents run it on the dev host before every release" path — none of them has yet been shown to qualify for the hosted path.**
 
 ---
 
