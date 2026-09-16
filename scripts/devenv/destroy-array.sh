@@ -32,13 +32,17 @@ unmount_if_mounted() {
   fi
 }
 
-# Every mount under $LAB, deepest first, so a per-share mergerfs mount nested
-# inside the catch-all is unmounted before the thing it sits on. findmnt
-# reports the whole tree; the old code only knew about $LAB/mnt/user and
+# Every mount strictly *below* $LAB, deepest first, so a per-share mergerfs
+# mount nested inside the catch-all is unmounted before the thing it sits on.
+# findmnt --submounts reports $LAB itself too — it is the container's own
+# bind mount from the host, not one of this lab's array mounts — so it is
+# excluded here rather than unmounted: unmounting it left the rest of this
+# script operating on an empty overlay directory that could never fail its
+# own checks (issue #122). The old code only knew about $LAB/mnt/user and
 # $LAB/mnt/<disk>, which is why spikes that mounted anywhere else left mounts
 # (and therefore images, and therefore loop devices) behind.
 while IFS= read -r m; do
-  [[ -n "$m" ]] || continue
+  [[ -n "$m" && "$m" != "$LAB" ]] || continue
   unmount_if_mounted "$m"
 done < <(findmnt --raw --noheadings --output TARGET --submounts "$LAB" 2>/dev/null \
           | awk '{ print length($0), $0 }' | sort -rn | cut -d' ' -f2- || true)
@@ -72,6 +76,14 @@ for backing in /sys/block/loop*/loop/backing_file; do
       ;;
   esac
 done
+
+# The whole point of deleting from *inside* the container is that $LAB is the
+# container's bind mount to the host's .lab/<id> — a delete that ran against
+# an unmounted $LAB would land on the overlay's own empty directory instead,
+# pass every check below on nothing, and leave every root-owned file behind
+# on the host (exactly issue #122). Assert the mount survived the unmount
+# loop above before trusting anything it finds empty.
+mountpoint -q "$LAB" || die "\$LAB ($LAB) is not a mountpoint before delete — refusing to run rm -rf against whatever is there instead of the lab's bind mount. This is the exact state that silently stranded root-owned files before (issue #122); the mount must be restored (or the container recreated) before teardown can proceed."
 
 # Remove the lab's contents, not the directory itself: $LAB is the container's
 # bind mount, so unlinking it here would not remove it on the host anyway.
