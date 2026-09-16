@@ -122,7 +122,7 @@ A written go / no-go report, downloadable, that the user reads **before** commit
 ### Phase D — Services
 
 18. Move appdata back onto the cache: a **share relocation** job moves the `appdata` share to cache-only (doc 09 §2), with the same copy-verify-delete guarantees as the mover.
-19. Convert Docker templates (doc 04). Review the generated Compose files and all warnings.
+19. Convert Docker templates (doc 04). Review the generated Compose files and all warnings, including each container's writable-layer warning (doc 04 §5) — this is the last point in the sequence where the user can act on it before recreating a container. Whether the state it names is still recoverable depends on where the source container's `docker.img` sat, not on this step: on an **array** disk, it was adopted unformatted in step 14 and is still an ordinary file on the pool; on the **cache** device, it is lost once that device is reformatted for Hoserva's own cache — §2's table confirms the cache is re-created rather than adopted, but this sequence does not name the exact step at which that reformat happens. Step 5 only moves *appdata* off cache while Unraid is still running, and wipes nothing (its own wording is "about to be wiped"). If cache-resident writable-layer state needs recovering, it has to happen from the still-running Unraid system, before step 10.
 20. Start containers one at a time, not all at once. Verify each sees its data before starting the next.
 21. Reconnect SMB clients with the new credentials.
 22. Once the initial sync completes, run a **full scrub** to confirm parity is consistent.

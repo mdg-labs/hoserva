@@ -149,10 +149,11 @@ Arbitrary `docker run` flags as a raw string. Approach:
 - **Unraid-specific variables** like `$$` substitutions and `HOST_OS` are recognised and handled or flagged.
 - **Multi-container templates** (the "AIO" pattern, bundling app + database + worker) map naturally to multi-service Compose, which expresses them directly.
 - **`:latest` tags** — carried through as-is, but flagged in the UI as a reproducibility risk, since a portion of the ecosystem pins nothing.
+- **Writable-layer state** — anything written inside the running container after launch (`docker exec`-ed in, hand-patched, or written outside a mapped volume) lives only in the container's writable layer, which no XML field expresses: the template describes how the container is *launched*, never what happened inside it afterwards. The converter cannot see this state and says so plainly, every time, rather than staying silent: it warns that the source container may hold configuration the generated Compose file does not reproduce, and that the user should check for it — inside mapped volumes, `docker exec`-ed patches, or manual file edits — before recreating the container. **v1 ships the warning only; automated detection is deferred.** Detection, if ever built, would compare the writable layer against the image (the `docker diff` relationship) and report paths changed outside mapped volumes, excluding known noise (`/tmp`, `/var/log`, `/var/cache`, `/run`, package-manager state) — but that needs the source `docker.img` mounted and a noise-exclusion list that will need tuning, so it is out of scope here. A documented warning is cheap, honest, and creates no false confidence. This does not change what counts as a "clean" conversion (Q36): Q36 measures how completely the XML translates to Compose, not what state the source container held, and folding this warning into that metric would distort the release number it gates.
 
 ### Output is always reviewable
 
-Generated Compose is shown side by side with the source XML before anything runs, with all warnings listed. Never a silent conversion followed by a container that behaves subtly differently.
+Generated Compose is shown side by side with the source XML before anything runs, with all warnings listed. **Writable-layer state is its own warning class** in that review, separate from translation warnings (untranslated `ExtraParams`, unresolved networks, paths flagged for manual review) — never a silent pass. Never a silent conversion followed by a container that behaves subtly differently.
 
 ---
 
