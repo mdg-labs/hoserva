@@ -1,0 +1,606 @@
+
+########## 01-setup.sh ##########
+Selecting previously unselected package libcom-err2:amd64.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6719 files and directories currently installed.)
+Preparing to unpack .../libcom-err2_1.47.2-3+b12_amd64.deb ...
+Unpacking libcom-err2:amd64 (1.47.2-3+b12) ...
+Selecting previously unselected package libext2fs2t64:amd64.
+Preparing to unpack .../libext2fs2t64_1.47.2-3+b12_amd64.deb ...
+Adding 'diversion of /lib/x86_64-linux-gnu/libe2p.so.2 to /lib/x86_64-linux-gnu/libe2p.so.2.usr-is-merged by libext2fs2t64'
+Adding 'diversion of /lib/x86_64-linux-gnu/libe2p.so.2.3 to /lib/x86_64-linux-gnu/libe2p.so.2.3.usr-is-merged by libext2fs2t64'
+Adding 'diversion of /lib/x86_64-linux-gnu/libext2fs.so.2 to /lib/x86_64-linux-gnu/libext2fs.so.2.usr-is-merged by libext2fs2t64'
+Adding 'diversion of /lib/x86_64-linux-gnu/libext2fs.so.2.4 to /lib/x86_64-linux-gnu/libext2fs.so.2.4.usr-is-merged by libext2fs2t64'
+Unpacking libext2fs2t64:amd64 (1.47.2-3+b12) ...
+Selecting previously unselected package libss2:amd64.
+Preparing to unpack .../libss2_1.47.2-3+b12_amd64.deb ...
+Unpacking libss2:amd64 (1.47.2-3+b12) ...
+Selecting previously unselected package logsave.
+Preparing to unpack .../logsave_1.47.2-3+b12_amd64.deb ...
+Unpacking logsave (1.47.2-3+b12) ...
+Setting up libcom-err2:amd64 (1.47.2-3+b12) ...
+Setting up libext2fs2t64:amd64 (1.47.2-3+b12) ...
+Setting up libss2:amd64 (1.47.2-3+b12) ...
+Selecting previously unselected package e2fsprogs.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6754 files and directories currently installed.)
+Preparing to unpack .../e2fsprogs_1.47.2-3+b12_amd64.deb ...
+Unpacking e2fsprogs (1.47.2-3+b12) ...
+Selecting previously unselected package liblzo2-2:amd64.
+Preparing to unpack .../liblzo2-2_2.10-3+b1_amd64.deb ...
+Unpacking liblzo2-2:amd64 (2.10-3+b1) ...
+Selecting previously unselected package libreiserfscore0t64.
+Preparing to unpack .../libreiserfscore0t64_1%3a3.6.27-9_amd64.deb ...
+Unpacking libreiserfscore0t64 (1:3.6.27-9) ...
+Selecting previously unselected package btrfs-progs.
+Preparing to unpack .../btrfs-progs_6.14-1_amd64.deb ...
+Unpacking btrfs-progs (6.14-1) ...
+Selecting previously unselected package snapraid.
+Preparing to unpack .../snapraid_12.4-1_amd64.deb ...
+Unpacking snapraid (12.4-1) ...
+Setting up libreiserfscore0t64 (1:3.6.27-9) ...
+Setting up liblzo2-2:amd64 (2.10-3+b1) ...
+Setting up snapraid (12.4-1) ...
+Setting up logsave (1.47.2-3+b12) ...
+Setting up btrfs-progs (6.14-1) ...
+Setting up e2fsprogs (1.47.2-3+b12) ...
+Processing triggers for libc-bin (2.41-12+deb13u3) ...
+snapraid: 12.4-1
+e2fsprogs: 1.47.2-3+b12
+btrfs-progs: 6.14-1
+xfsprogs: 6.13.0-2+deb13u1
+kernel: Linux 7.2.5-1-cachyos #1 SMP PREEMPT_DYNAMIC Sun, 13 Sep 2026 08:30:47 +0000 x86_64
+wrote /lab/8-a1/s7/snapraid.conf:
+parity /lab/8-a1/mnt/parity1/snapraid.parity
+content /lab/8-a1/mnt/parity1/snapraid.content
+content /lab/8-a1/mnt/cache/snapraid.content
+data d1 /lab/8-a1/mnt/disk1/
+data d2 /lab/8-a1/mnt/disk2/
+data d3 /lab/8-a1/mnt/disk3/
+== seeding baseline files, direct and through the pool ==
+pool-baseline/seed.bin landed on:
+disk1: absent
+disk2: absent
+disk3: present
++ snapraid -c /lab/8-a1/s7/snapraid.conf sync
+Self test...
+Loading state from /lab/8-a1/mnt/parity1/snapraid.content...
+Loading state from /lab/8-a1/mnt/cache/snapraid.content...
+Scanning...
+WARNING! Content file '/lab/8-a1/mnt/parity1/snapraid.content' not found, attempting with another copy...
+No content file found. Assuming empty.
+Scanned d3 in 0 seconds
+Scanned d1 in 0 seconds
+Scanned d2 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+12%, 0 MB          100% completed, 1 MB accessed in 0:00    
+
+     d1  0% | 
+     d2  2% | *
+     d3  4% | **
+ parity  0% | 
+   raid 71% | *******************************************
+   hash  2% | *
+  sched 19% | ************
+   misc  1% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
+01-setup.sh: baseline seeded and synced
+
+########## 02-workload-compare.sh ##########
+== starting one journal per data disk ==
++ /src/spikes/s7/bin/journal -mark /lab/8-a1/mnt/disk1 -out /lab/8-a1/s7/run/wl-d1.log -ready-file /lab/8-a1/s7/run/wl-d1.ready 
+wl-d1: ready, pid=387
++ /src/spikes/s7/bin/journal -mark /lab/8-a1/mnt/disk2 -out /lab/8-a1/s7/run/wl-d2.log -ready-file /lab/8-a1/s7/run/wl-d2.ready 
+wl-d2: ready, pid=398
++ /src/spikes/s7/bin/journal -mark /lab/8-a1/mnt/disk3 -out /lab/8-a1/s7/run/wl-d3.log -ready-file /lab/8-a1/s7/run/wl-d3.ready 
+wl-d3: ready, pid=409
++ snapraid -c /lab/8-a1/s7/snapraid.conf sync
+Self test...
+Loading state from /lab/8-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d1 in 0 seconds
+Scanned d2 in 0 seconds
+Scanned d3 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+33%, 0 MB          100% completed, 1 MB accessed in 0:00    
+
+     d1  0% | 
+     d2  0% | 
+     d3 25% | ***************
+ parity  0% | 
+   raid 35% | *********************
+   hash  1% | 
+  sched 36% | **********************
+   misc  1% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
+
+== direct-disk workload ==
+
+== through-the-pool workload ==
+pool-baseline files before this workload:
+disk1: absent
+disk2: absent
+disk3: present
+disk1: absent
+disk2: absent
+disk3: present
+disk1: absent
+disk2: absent
+disk3: present
+
+== stopping journals ==
+wl-d1: stopped, pid 387 exited
+wl-d2: stopped, pid 398 exited
+wl-d3: stopped, pid 409 exited
+-- disk1 journal raw log (/lab/8-a1/s7/run/wl-d1.log) --
+1789521594040051019	CREATE	0207000000000000-810000008300000000000000a6a6ec3a	new-direct.bin
+1789521594040399556	MODIFY	0207000000000000-810000008300000000000000a6a6ec3a	new-direct.bin
+1789521594040399556	CLOSE_WRITE	0207000000000000-810000008300000000000000a6a6ec3a	new-direct.bin
+1789521594041946755	DELETE	0207000000000000-8100000080000800000000002b0fe739	report.txt
+1789521594044026639	CREATE	0207000000000000-81000000401e1400000000002e1251d9	a.bin
+1789521594044068808	MODIFY	0207000000000000-81000000401e1400000000002e1251d9	a.bin
+1789521594044072788	ATTRIB	0207000000000000-81000000401e1400000000002e1251d9	a.bin
+1789521594044076528	CLOSE_WRITE	0207000000000000-81000000401e1400000000002e1251d9	a.bin
+1789521594044999781	CREATE	0207000000000000-810000008300000000000000a6a6ec3a	touched-new.bin
+1789521594044999781	ATTRIB	0207000000000000-810000008300000000000000a6a6ec3a	touched-new.bin
+1789521594044999781	CLOSE_WRITE	0207000000000000-810000008300000000000000a6a6ec3a	touched-new.bin
+1789521596050397922	STOPPED	signal=terminated	-
+-- disk2 journal raw log (/lab/8-a1/s7/run/wl-d2.log) --
+1789521591881072486	CREATE	0307000000000000-810000008300000000000000e6dba437	touchme.bin
+1789521591881289974	MODIFY	0307000000000000-810000008300000000000000e6dba437	touchme.bin
+1789521591881289974	CLOSE_WRITE	0307000000000000-810000008300000000000000e6dba437	touchme.bin
+1789521594040648834	MODIFY	0307000000000000-810000008300000000000000e6dba437	b.bin
+1789521594040989502	MODIFY	0307000000000000-810000008300000000000000e6dba437	b.bin
+1789521594040989502	CLOSE_WRITE	0307000000000000-810000008300000000000000e6dba437	b.bin
+1789521594042659459	RENAME_OLD	0307000000000000-81000000800008000000000016515f59	notes.txt
+1789521594042659459	RENAME_NEW	0307000000000000-81000000800008000000000016515f59	notes-renamed.txt
+1789521594044585385	ATTRIB	0307000000000000-810000008300000000000000e6dba437	touchme.bin
+1789521594044585385	CLOSE_WRITE	0307000000000000-810000008300000000000000e6dba437	touchme.bin
+1789521596053494468	STOPPED	signal=terminated	-
+-- disk3 journal raw log (/lab/8-a1/s7/run/wl-d3.log) --
+1789521591880557670	CREATE	0407000000000000-810000008300000000000000e256f92d	rename-src.bin
+1789521591880821888	MODIFY	0407000000000000-810000008300000000000000e256f92d	rename-src.bin
+1789521591880821888	CLOSE_WRITE	0407000000000000-810000008300000000000000e256f92d	rename-src.bin
+1789521591881675571	CREATE	0407000000000000-810000008000080000000000304cd906	delete-me.bin
+1789521591882007889	MODIFY	0407000000000000-810000008000080000000000304cd906	delete-me.bin
+1789521591882036988	CLOSE_WRITE	0407000000000000-810000008000080000000000304cd906	delete-me.bin
+1789521591882288586	CREATE	0407000000000000-810000008000080000000000304cd906	rename-me.bin
+1789521591882596564	MODIFY	0407000000000000-810000008000080000000000304cd906	rename-me.bin
+1789521591882623744	CLOSE_WRITE	0407000000000000-810000008000080000000000304cd906	rename-me.bin
+1789521594041496418	MODIFY	0407000000000000-810000008300000000000000e256f92d	c.bin
+1789521594041496418	CLOSE_WRITE	0407000000000000-810000008300000000000000e256f92d	c.bin
+1789521594043307894	RENAME_OLD	0407000000000000-810000008300000000000000e256f92d	rename-src.bin
+1789521594043307894	RENAME_NEW	0407000000000000-810000008000180000000000d2708aa4	rename-dst.bin
+1789521594045389588	CREATE	0407000000000000-810000008000080000000000304cd906	new-via-pool.bin
+1789521594045707106	MODIFY	0407000000000000-810000008000080000000000304cd906	new-via-pool.bin
+1789521594045738176	CLOSE_WRITE	0407000000000000-810000008000080000000000304cd906	new-via-pool.bin
+1789521594045969954	MODIFY	0407000000000000-810000008000080000000000304cd906	seed.bin
+1789521594046315201	MODIFY	0407000000000000-810000008000080000000000304cd906	seed.bin
+1789521594046338561	CLOSE_WRITE	0407000000000000-810000008000080000000000304cd906	seed.bin
+1789521594046769438	DELETE	0407000000000000-810000008000080000000000304cd906	delete-me.bin
+1789521594047427083	RENAME_OLD	0407000000000000-810000008000080000000000304cd906	rename-me.bin
+1789521594047427083	RENAME_NEW	0407000000000000-810000008000080000000000304cd906	renamed-via-pool.bin
+1789521596056320177	STOPPED	signal=terminated	-
+
+== snapraid diff ==
++ snapraid -c /lab/8-a1/s7/snapraid.conf diff
+Loading state from /lab/8-a1/mnt/parity1/snapraid.content...
+Comparing...
+add media/new-direct.bin
+update media/b.bin
+update media/touchme.bin
+update media/c.bin
+add docs/notes-renamed.txt
+add media/touched-new.bin
+copy media/a.bin -> archive/a.bin
+update pool-baseline/seed.bin
+add pool-baseline/renamed-via-pool.bin
+add pool-baseline/new-via-pool.bin
+add tmp/rename-dst.bin
+remove docs/report.txt
+remove docs/notes.txt
+remove media/rename-src.bin
+remove pool-baseline/delete-me.bin
+remove pool-baseline/rename-me.bin
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+      19 equal
+       6 added
+       5 removed
+       4 updated
+       0 moved
+       1 copied
+       0 restored
+There are differences!
+[exit 2]
+
+== result ==
+journal distinct paths: disk1=4 disk2=4 disk3=8 total=16 (overflow: d1=0 d2=0 d3=0)
+snapraid diff changed (added+removed+updated+copied+restored): 16
+PASS: journal distinct-path total (16) matches snapraid diff's changed total (16)
++ snapraid -c /lab/8-a1/s7/snapraid.conf sync
+Self test...
+Loading state from /lab/8-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d2 in 0 seconds
+Scanned d1 in 0 seconds
+Scanned d3 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+20%, 0 MB          100% completed, 1 MB accessed in 0:00    
+
+     d1 38% | ***********************
+     d2 16% | **********
+     d3 22% | *************
+ parity  0% | 
+   raid 33% | ********************
+   hash  1% | 
+  sched 24% | ***************
+   misc  1% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
+
+########## 03-negative-control.sh ##########
+== negative control: one change made with the journal stopped must not be counted ==
++ /src/spikes/s7/bin/journal -mark /lab/8-a1/mnt/disk1 -out /lab/8-a1/s7/run/nc-d1.log -ready-file /lab/8-a1/s7/run/nc-d1.ready 
+nc-d1: ready, pid=513
+nc-d1: stopped, pid 513 exited
+-- disk1 journal raw log (expect exactly 2 distinct paths) --
+1789521598327044820	CREATE	0207000000000000-810000008300000000000000a6a6ec3a	nc-seen-1.bin
+1789521598327297998	MODIFY	0207000000000000-810000008300000000000000a6a6ec3a	nc-seen-1.bin
+1789521598327297998	CLOSE_WRITE	0207000000000000-810000008300000000000000a6a6ec3a	nc-seen-1.bin
+1789521598327461867	CREATE	0207000000000000-810000008300000000000000a6a6ec3a	nc-seen-2.bin
+1789521598327683685	MODIFY	0207000000000000-810000008300000000000000a6a6ec3a	nc-seen-2.bin
+1789521598327683685	CLOSE_WRITE	0207000000000000-810000008300000000000000a6a6ec3a	nc-seen-2.bin
+1789521599330310186	STOPPED	signal=terminated	-
++ snapraid -c /lab/8-a1/s7/snapraid.conf diff
+Loading state from /lab/8-a1/mnt/parity1/snapraid.content...
+Comparing...
+add media/nc-seen-1.bin
+add media/nc-seen-2.bin
+add media/nc-missed.bin
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+      30 equal
+       3 added
+       0 removed
+       0 updated
+       0 moved
+       0 copied
+       0 restored
+There are differences!
+[exit 2]
+
+journal distinct paths (disk1 only): 2
+snapraid diff changed (whole array, includes nc-missed.bin): 3
+PASS: the comparison correctly flags a mismatch (2 != 3) when a real change is missed while the journal is down — this is exactly why the journal is documented as approximate (Q13) and the UI must say 'unknown until the next sync' rather than a number, once a gap like this is known to exist
++ snapraid -c /lab/8-a1/s7/snapraid.conf sync
+Self test...
+Loading state from /lab/8-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d2 in 0 seconds
+Scanned d1 in 0 seconds
+Scanned d3 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+33%, 0 MB          100% completed, 1 MB accessed in 0:00    
+
+     d1  9% | ******
+     d2  2% | *
+     d3 48% | *****************************
+ parity  0% | 
+   raid 18% | ***********
+   hash  0% | 
+  sched 31% | ******************
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
+
+########## 04-restart-remount.sh ##########
+== part A: listener restart mid-workload (disk2) ==
++ /src/spikes/s7/bin/journal -mark /lab/8-a1/mnt/disk2 -out /lab/8-a1/s7/run/restart-a.log -ready-file /lab/8-a1/s7/run/restart-a.ready 
+restart-a: ready, pid=563
+restart-a: stopped, pid 563 exited
++ /src/spikes/s7/bin/journal -mark /lab/8-a1/mnt/disk2 -out /lab/8-a1/s7/run/restart-b.log -ready-file /lab/8-a1/s7/run/restart-b.ready 
+restart-b: ready, pid=586
+restart-b: stopped, pid 586 exited
+-- pre-restart listener log --
+1789521601597794613	CREATE	0307000000000000-810000008300000000000000e6dba437	restart-seen-1.bin
+1789521601598094261	MODIFY	0307000000000000-810000008300000000000000e6dba437	restart-seen-1.bin
+1789521601598094261	CLOSE_WRITE	0307000000000000-810000008300000000000000e6dba437	restart-seen-1.bin
+1789521602606650127	STOPPED	signal=terminated	-
+-- post-restart listener log --
+1789521602806679686	CREATE	0307000000000000-810000008300000000000000e6dba437	restart-seen-2.bin
+1789521602806908285	MODIFY	0307000000000000-810000008300000000000000e6dba437	restart-seen-2.bin
+1789521602806908285	CLOSE_WRITE	0307000000000000-810000008300000000000000e6dba437	restart-seen-2.bin
+1789521603810437618	STOPPED	signal=terminated	-
++ snapraid -c /lab/8-a1/s7/snapraid.conf diff
+Loading state from /lab/8-a1/mnt/parity1/snapraid.content...
+Comparing...
+add media/restart-seen-1.bin
+add media/restart-gap.bin
+add media/restart-seen-2.bin
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+      33 equal
+       3 added
+       0 removed
+       0 updated
+       0 moved
+       0 copied
+       0 restored
+There are differences!
+[exit 2]
+
+pre-restart distinct paths: 1, post-restart distinct paths: 1, combined: 2
+snapraid diff changed (whole array, includes the gap file): 3
+CONFIRMED: a listener restart loses exactly the changes made while it was down (here: 1 file, restart-gap.bin) — no error, no self-detected gap marker. A daemon restart must therefore treat the journal as unknown until the next real diff (Q13's UI default), not resume counting as if nothing happened.
++ snapraid -c /lab/8-a1/s7/snapraid.conf sync
+Self test...
+Loading state from /lab/8-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d1 in 0 seconds
+Scanned d2 in 0 seconds
+Scanned d3 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+33%, 0 MB          100% completed, 1 MB accessed in 0:00    
+
+     d1 53% | ********************************
+     d2  0% | 
+     d3 17% | **********
+ parity  0% | 
+   raid 16% | *********
+   hash  1% | 
+  sched 28% | *****************
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
+
+== part B: filesystem remount, same listener process kept running (disk3) ==
+disk3 currently mounted from /dev/loop4
++ /src/spikes/s7/bin/journal -mark /lab/8-a1/mnt/disk3 -out /lab/8-a1/s7/run/remount-c.log -ready-file /lab/8-a1/s7/run/remount-c.ready 
+remount-c: ready, pid=636
+distinct paths captured before the remount: 1
++ umount /lab/8-a1/mnt/disk3 && mount /dev/loop4 /lab/8-a1/mnt/disk3
+remount-c: stopped, pid 636 exited
+-- listener log across the remount (same process, same PID throughout) --
+1789521606078040665	CREATE	0407000000000000-810000008300000000000000e256f92d	remount-before.bin
+1789521606078278723	MODIFY	0407000000000000-810000008300000000000000e256f92d	remount-before.bin
+1789521606078278723	CLOSE_WRITE	0407000000000000-810000008300000000000000e256f92d	remount-before.bin
+1789521609090864007	STOPPED	signal=terminated	-
++ snapraid -c /lab/8-a1/s7/snapraid.conf diff
+Loading state from /lab/8-a1/mnt/parity1/snapraid.content...
+Comparing...
+add media/remount-before.bin
+add media/remount-after.bin
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+
+      36 equal
+       2 added
+       0 removed
+       0 updated
+       0 moved
+       0 copied
+       0 restored
+There are differences!
+[exit 2]
+
+distinct paths captured after the remount (same listener, same mark): 1 (before remount: 1)
+snapraid diff changed (whole array, includes both remount-before.bin and remount-after.bin): 2
+CONFIRMED: a filesystem remount silently ends event delivery to an already-running listener — no error, no exit, the process just stops receiving events for that disk. FAN_MARK_FILESYSTEM is scoped to the mounted filesystem instance (its superblock); unmounting destroys that instance and remounting creates a new one the old mark was never attached to. A production hoservad must re-arm each disk's mark after detecting its filesystem was remounted, not assume a long-lived mark survives it.
++ snapraid -c /lab/8-a1/s7/snapraid.conf sync
+Self test...
+Loading state from /lab/8-a1/mnt/parity1/snapraid.content...
+Scanning...
+Scanned d1 in 0 seconds
+Scanned d2 in 0 seconds
+Scanned d3 in 0 seconds
+WARNING! UUID is unsupported for disks: 'd1', 'd2', 'd3'. Not using inodes to detect move operations.
+Using 0 MiB of memory for the file-system.
+Initializing...
+Resizing...
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+Using 64 MiB of memory for 64 cached blocks.
+Selecting...
+Syncing...
+50%, 0 MB          100% completed, 1 MB accessed in 0:00    
+
+     d1 28% | *****************
+     d2 27% | ****************
+     d3 27% | ****************
+ parity  0% | 
+   raid 23% | **************
+   hash  0% | 
+  sched 46% | ****************************
+   misc  0% | 
+            |______________________________________________________________
+                           wait time (total, less is better)
+
+Everything OK
+Saving state to /lab/8-a1/mnt/parity1/snapraid.content...
+Saving state to /lab/8-a1/mnt/cache/snapraid.content...
+Verifying...
+Verified /lab/8-a1/mnt/parity1/snapraid.content in 0 seconds
+Verified /lab/8-a1/mnt/cache/snapraid.content in 0 seconds
+[exit 0]
+
+########## 05-overflow.sh ##########
+fs.fanotify.max_queued_events = 16384 (read-only in this lab — not lowered)
+burst size N = 21384 (max_queued_events + margin of 5000); each touch generates 2 raw fanotify events (CREATE, CLOSE_WRITE), so this run queues roughly 42768 raw events against a 16384-event queue
+
+== run A: default (bounded) queue — expect overflow ==
++ /src/spikes/s7/bin/journal -mark /lab/8-a1/mnt/disk1 -out /lab/8-a1/s7/run/ovf-a.log -ready-file /lab/8-a1/s7/run/ovf-a.ready -delay 15s -duration 30s
+ovf-a: ready, pid=695
++ creating 21384 files under /lab/8-a1/mnt/disk1/flood-a (xargs -n 1000 touch)
+flood done in 0.3s (delay budget was 15s)
+waiting for pid 695 (journal) to exit on its own -duration timeout...
+-- run A log tail (last 5 lines) --
+1789521626304367629	ATTRIB	0207000000000000-810000008a00000000000000095cd882	f16383
+1789521626304367629	CLOSE_WRITE	0207000000000000-810000008a00000000000000095cd882	f16383
+1789521626304367629	CREATE	0207000000000000-810000008a00000000000000095cd882	f16384
+1789521626304367629	OVERFLOW	-	-
+1789521656299717766	STOPPED	reason=duration	-
+run A: 49152 raw log lines, 16384 distinct paths captured (of 21384 created), overflow marker present: 1
+CONFIRMED: overflow detected and the run under-counted (16384 of 21384) — a production journal must mark itself incomplete rather than present 16384 as a real count, exactly as Q13's UI default (approximate; 'unknown until the next sync' on overflow) requires.
+
+== run B: FAN_UNLIMITED_QUEUE, same burst size — control, expect no overflow ==
++ /src/spikes/s7/bin/journal -mark /lab/8-a1/mnt/disk1 -out /lab/8-a1/s7/run/ovf-b.log -ready-file /lab/8-a1/s7/run/ovf-b.ready -unlimited -delay 15s -duration 30s
+ovf-b: ready, pid=755
++ creating 21384 files under /lab/8-a1/mnt/disk1/flood-b (xargs -n 1000 touch)
+flood done in 0.3s (delay budget was 15s)
+waiting for pid 755 (journal) to exit on its own -duration timeout...
+-- run B log tail (last 5 lines) --
+1789521671378127560	CLOSE_WRITE	0207000000000000-8100000081000800000000000519ec28	f21383
+1789521671378127560	CREATE	0207000000000000-8100000081000800000000000519ec28	f21384
+1789521671378127560	ATTRIB	0207000000000000-8100000081000800000000000519ec28	f21384
+1789521671378127560	CLOSE_WRITE	0207000000000000-8100000081000800000000000519ec28	f21384
+1789521701353714728	STOPPED	reason=duration	-
+run B: 64153 raw log lines, 21384 distinct paths captured (of 21384 created), overflow marker present: 0
+CONFIRMED (control): the same burst size with FAN_UNLIMITED_QUEUE drops nothing (21384 == N == 21384, no overflow) — proving run A's overflow and undercount are a real effect of the bounded queue, not an artifact of the burst, the listener, or the counting method.
+
+########## 06-ext4-btrfs.sh ##########
+== ext4 data disk ==
+created ext4disk: image=/lab/8-a1/img/ext4disk.img dev=/dev/loop7 fstype=ext4 mount=/lab/8-a1/mnt/ext4disk
++ /src/spikes/s7/bin/journal -mark /lab/8-a1/mnt/ext4disk -out /lab/8-a1/s7/run/ext4-fixed.log -ready-file /lab/8-a1/s7/run/ext4-fixed.ready 
+ext4-fixed: ready, pid=834
+ext4-fixed: stopped, pid 834 exited
+-- ext4-fixed raw log --
+1789521701918031927	CREATE	ad32b8f892054701-010000000200000000000000	created1.bin
+1789521701918441054	MODIFY	ad32b8f892054701-010000000200000000000000	created1.bin
+1789521701918441054	CLOSE_WRITE	ad32b8f892054701-010000000200000000000000	created1.bin
+1789521701918694432	MODIFY	ad32b8f892054701-010000000200000000000000	base1.bin
+1789521701918960960	MODIFY	ad32b8f892054701-010000000200000000000000	base1.bin
+1789521701918960960	CLOSE_WRITE	ad32b8f892054701-010000000200000000000000	base1.bin
+1789521701919522886	DELETE	ad32b8f892054701-010000000200000000000000	base2.bin
+1789521701920198041	RENAME_OLD	ad32b8f892054701-010000000200000000000000	base3.bin
+1789521701920198041	RENAME_NEW	ad32b8f892054701-010000000200000000000000	renamed3.bin
+1789521703923194071	STOPPED	signal=terminated	-
+ext4-fixed: 5 distinct paths (expected 5: created1.bin, base1.bin, base2.bin, base3.bin, renamed3.bin)
+PASS: ext4-fixed (mountpoint /lab/8-a1/mnt/ext4disk) — FAN_MARK_FILESYSTEM behaves the same as on XFS
+
+== single-device btrfs data disk (whole-disk root subvolume, Q23) ==
+WARNING: failed to open /dev/btrfs-control, skipping device registration: No such file or directory
+created btrfsdisk: image=/lab/8-a1/img/btrfsdisk.img dev=/dev/loop8 fstype=btrfs mount=/lab/8-a1/mnt/btrfsdisk
++ /src/spikes/s7/bin/journal -mark /lab/8-a1/mnt/btrfsdisk -out /lab/8-a1/s7/run/btrfs-fixed.log -ready-file /lab/8-a1/s7/run/btrfs-fixed.ready 
+btrfs-fixed: ready, pid=876
+btrfs-fixed: stopped, pid 876 exited
+-- btrfs-fixed raw log --
+1789521704044057892	CREATE	d8b40ddc0e94a30b-4d0000000001000000000000050000000000000003000000	created1.bin
+1789521704044363680	MODIFY	d8b40ddc0e94a30b-4d0000000001000000000000050000000000000003000000	created1.bin
+1789521704044363680	CLOSE_WRITE	d8b40ddc0e94a30b-4d0000000001000000000000050000000000000003000000	created1.bin
+1789521704044606788	MODIFY	d8b40ddc0e94a30b-4d0000000001000000000000050000000000000003000000	base1.bin
+1789521704044948205	MODIFY	d8b40ddc0e94a30b-4d0000000001000000000000050000000000000003000000	base1.bin
+1789521704044948205	CLOSE_WRITE	d8b40ddc0e94a30b-4d0000000001000000000000050000000000000003000000	base1.bin
+1789521704045411002	DELETE	d8b40ddc0e94a30b-4d0000000001000000000000050000000000000003000000	base2.bin
+1789521704046152146	RENAME_OLD	d8b40ddc0e94a30b-4d0000000001000000000000050000000000000003000000	base3.bin
+1789521704046152146	RENAME_NEW	d8b40ddc0e94a30b-4d0000000001000000000000050000000000000003000000	renamed3.bin
+1789521706049393344	STOPPED	signal=terminated	-
+btrfs-fixed: 5 distinct paths (expected 5: created1.bin, base1.bin, base2.bin, base3.bin, renamed3.bin)
+PASS: btrfs-fixed (mountpoint /lab/8-a1/mnt/btrfsdisk) — FAN_MARK_FILESYSTEM behaves the same as on XFS
+
+== btrfs subvolume mounted separately from its root (the EXDEV question) ==
+Create subvolume '/lab/8-a1/mnt/btrfsdisk/sub1'
+-- fanotify_mark(FAN_MARK_FILESYSTEM) against the separately-mounted subvolume --
+journal exit code: 1
+journal: fanotify_mark(FAN_MARK_FILESYSTEM, /lab/8-a1/mnt/btrfssub): invalid cross-device link
+RESULT: fanotify_mark FAILED on the separately-mounted subvolume (see stderr above) — if this is EXDEV, it confirms the issue's upstream research; whatever the exact errno, a data disk laid out as a btrfs subvolume distinct from its root needs its own FAN_MARK_FILESYSTEM call per subvolume mount, not one mark on the root covering all of them.
+
+== cleaning up this spike's own working directory (/lab/8-a1/s7) — not touched by destroy-array.sh ==
+spike S7 run-all.sh: all steps passed
