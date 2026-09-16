@@ -52,7 +52,7 @@ COMPOSE_DEV     := docker compose -f docker-compose.dev.yml
 LAB_ID_PATTERN  := ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$$
 LAB_SEED_PROFILE ?= mixed
 
-.PHONY: build test test-unit lint clean lab-up lab-seed lab-destroy lab-verify-refusal lab-require-id
+.PHONY: build test test-unit lint clean lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id
 
 build:
 	@mkdir -p $(BIN_DIR)
@@ -101,6 +101,9 @@ lab-seed: lab-require-id
 lab-verify-refusal: lab-require-id
 	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/test-host-refusal.sh
 
+lab-snapraid-check: lab-require-id
+	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/snapraid-check.sh
+
 # destroy-array.sh runs as root inside the container and fails loudly (exit
 # non-zero) if a mount cannot be freed, rather than silently continuing to a
 # half-finished `rm -rf` (see the script's own comments). Only when it either
@@ -131,4 +134,16 @@ lab-destroy: lab-require-id
 		echo "lab $$HOSERVA_LAB_ID: container does not exist, nothing to tear down"; \
 	fi
 	-$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" down -v
-	rm -rf -- ".lab/$$HOSERVA_LAB_ID"
+	@# destroy-array.sh has already emptied $$LAB from inside the container,
+	@# where root can. This step only removes the now-empty directory, with
+	@# rmdir rather than `rm -rf`: if anything root-owned is still in there,
+	@# rmdir fails harmlessly and says so, instead of a bare permission error
+	@# from a recursive delete that was never going to succeed (issue #120).
+	@if [ -d ".lab/$$HOSERVA_LAB_ID" ]; then \
+		if ! rmdir -- ".lab/$$HOSERVA_LAB_ID" 2>/dev/null; then \
+			echo "lab-destroy: .lab/$$HOSERVA_LAB_ID is not empty — the container tore down but left root-owned files behind:" >&2; \
+			ls -la -- ".lab/$$HOSERVA_LAB_ID" >&2; \
+			echo "lab-destroy: bring the lab back up and re-run destroy-array.sh inside it; do not try to delete these from the host." >&2; \
+			exit 1; \
+		fi; \
+	fi
