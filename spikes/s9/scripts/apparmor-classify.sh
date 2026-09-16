@@ -95,6 +95,25 @@ audit_corroborates_denial() {
 # control itself succeeded, since a failed control means the recipe is
 # broken and neither branch's result means anything (the guard run
 # 35049304081 and 35056076616 both correctly hit, unchanged here).
+#
+# Return status is ALWAYS 0, on every path, including VOID (issue #10 fix
+# round). It used to `return 1` on both VOID paths below, on the theory
+# that VOID was an "error" the caller should notice; in practice the only
+# caller (run-apparmor-check.sh) captures the echoed verdict with a bare
+# `verdict=$(classify_branch_pair ...)` under `set -euo pipefail`, and
+# classify_branch_pair's own return status is just this function's,
+# forwarded (see below) — so a VOID at probe 1 killed the whole script on
+# the spot, on its own return status, before probe 2 (the loop-free tmpfs
+# probe — the one designed to answer the AppArmor question without any of
+# the loop/XFS machinery that produced every void verdict so far) ever
+# ran. Run 35068617498 is the proof: it printed "Probe 1/2", ran both loop
+# branches, printed a correct VOID reason, and exited — "Probe 2/2" never
+# appeared in the log. The verdict was already fully communicated on
+# stdout as one of the three literal strings above; encoding it a second
+# time in the exit status was redundant, and that redundancy is what
+# created the trap. Callers that need to know a verdict was VOID compare
+# the echoed string, exactly as run-apparmor-check.sh's own combined-
+# decision step (decide_final_verdict, below) already does.
 classify_verdict() {
   local control_exit="$1" control_stderr="$2" variant_exit="$3" variant_stderr="$4"
   local variant_audit="${5:-}"
@@ -104,7 +123,7 @@ classify_verdict() {
   if [[ "$control_status" != "SUCCESS" ]]; then
     echo "VOID"
     echo "reason: control (apparmor=unconfined) itself failed [$control_status, exit=$control_exit] — the probe recipe (mknod/loop/xfs mechanics) is broken here, not an AppArmor result. Fix the recipe before trusting either branch." >&2
-    return 1
+    return 0
   fi
 
   local variant_status
@@ -127,7 +146,7 @@ classify_verdict() {
     OTHER-FAILURE)
       echo "VOID"
       echo "reason: control succeeded, but the variant failed for a reason other than a confirmed AppArmor denial [exit=$variant_exit]. An EBUSY, a missing device node, an undersized filesystem, or any other non-denial failure says nothing about AppArmor necessity — see run 35057453620, whose EBUSY (\"already mounted or mount point busy\") was wrongly read as a denial by the probe this file replaces." >&2
-      return 1
+      return 0
       ;;
   esac
 }
@@ -150,6 +169,12 @@ read_result() {
 # Echoes exactly one of NOT-REQUIRED / REQUIRED / VOID on stdout, and its
 # reasoning to stderr — the caller (run_branch/run-apparmor-check.sh) is
 # expected to redirect the reasoning and capture only the verdict line.
+# Return status is ALWAYS 0 (issue #10 fix round) — both its own explicit
+# `return 0`s below and classify_verdict's now-unconditional `return 0`
+# (see that function's own comment for why) — so a caller may safely
+# capture its output with a bare `verdict=$(classify_branch_pair ...)`
+# even under `set -euo pipefail`, and does not need `|| true` here to keep
+# running past a VOID.
 #
 # Fix-round hardening (issue #10 fix round; see also apparmor-loop-
 # probe.sh's own comment on why it no longer pre-writes a placeholder):
@@ -210,4 +235,59 @@ classify_branch_pair() {
   v_audit=$(read_result "$variant_lab" audit-apparmor-lines.log '')
 
   classify_verdict "$c_exit" "$c_stderr" "$v_exit" "$v_stderr" "$v_audit"
+}
+
+# decide_final_verdict LOOP_VERDICT TMPFS_VERDICT TMPFS_REVERSED_VERDICT
+# The orchestrator's combined-decision step (requirements F and G): both
+# probes must agree, and the tmpfs probe must agree with itself regardless
+# of which branch (control or variant) ran first. Moved here from
+# run-apparmor-check.sh (issue #10 fix round) so it can be exercised
+# directly by test-apparmor-classify.sh, without Docker, a loop device, or
+# AppArmor — the same reason classify_verdict/classify_branch_pair above
+# are unit-tested in isolation rather than trusted by inspection.
+#
+# Unlike classify_verdict/classify_branch_pair, this function's return
+# status is deliberately NOT always 0: it returns 1 on every VOID path,
+# and 0 only when both probes agree and the tmpfs probe is order-
+# consistent. That asymmetry is safe, not a repeat of the bug those two
+# functions used to have, because this is the very last decision
+# run-apparmor-check.sh ever makes — there is no probe 3 to reach, nothing
+# after it that must still run once the verdict is known — so a genuine
+# VOID killing the script right here, on its own exit status, via
+# `set -euo pipefail`, is exactly the outcome CI needs (VOID must fail the
+# job). The caller must still never capture this function's output with a
+# bare `x=$(decide_final_verdict ...)`: that would defeat the same trap
+# again, one level up, by absorbing this function's own nonzero exit into
+# an assignment. run-apparmor-check.sh instead calls it directly inside an
+# `if`, which both lets its stdout stream straight through uncaptured and
+# reads its exit status explicitly, then chooses `exit 0`/`exit 1` itself
+# — see that script's own call site. test-apparmor-classify.sh's
+# check_decide() below captures it only for inspection, using the
+# `x=$(...) && rc=0 || rc=$?` idiom, which — unlike a bare assignment — is
+# exempt from `set -e` because the assignment is checked by the `&&`/`||`
+# that follows it on the same command list.
+decide_final_verdict() {
+  local loop_verdict="$1" tmpfs_verdict="$2" tmpfs_reversed_verdict="$3"
+
+  if [[ "$tmpfs_verdict" != "$tmpfs_reversed_verdict" ]]; then
+    echo "reason: The tmpfs probe disagreed with itself depending on which branch ran first: forward order said $tmpfs_verdict, reversed order said $tmpfs_reversed_verdict. That is an order-sensitivity confound (requirement G) — exactly the kind of thing that produced run 35057453620's wrong verdict — and it is reported as a finding, not resolved by picking either order's answer." >&2
+    echo "VOID"
+    return 1
+  fi
+
+  if [[ "$loop_verdict" == "VOID" || "$tmpfs_verdict" == "VOID" ]]; then
+    echo "reason: At least one probe was individually VOID — loop probe: $loop_verdict, tmpfs probe: $tmpfs_verdict (see each probe's own reasoning above, on stderr). A VOID probe cannot be outvoted by the other probe's result." >&2
+    echo "VOID"
+    return 1
+  fi
+
+  if [[ "$loop_verdict" != "$tmpfs_verdict" ]]; then
+    echo "reason: The two independent probes DISAGREED: the faithful loop/XFS probe said $loop_verdict, the loop-free tmpfs mediation probe said $tmpfs_verdict. Per requirement F, neither probe may claim the other's result — this disagreement is itself the finding this run establishes, and needs investigating (which operation differs between the two recipes under the default profile) before either answer can be trusted." >&2
+    echo "VOID"
+    return 1
+  fi
+
+  echo "reason: Both probes agree (loop: $loop_verdict, tmpfs: $tmpfs_verdict), and the tmpfs probe is order-consistent — this is a strong result." >&2
+  echo "$loop_verdict"
+  return 0
 }

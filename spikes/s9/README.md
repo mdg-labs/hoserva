@@ -4,7 +4,7 @@ Findings are in `docs/internal/08-spike-findings.md` ("Hosted CI runners"
 subsection under Spike 9). This directory holds the probe workflow's
 scripts and the raw evidence this run's findings are checked against.
 
-**This is fix attempt 5.** Attempt 1 landed (`.github/workflows/s9-hosted-probe.yml`
+**This is fix attempt 6.** Attempt 1 landed (`.github/workflows/s9-hosted-probe.yml`
 + this directory) before the workflow had ever run. The maintainer then
 triggered it once (run `35049304081`, `workflow_dispatch`, `main`,
 2026-09-16) — its real evidence is recorded here for the first time; a
@@ -22,13 +22,8 @@ or mount point busy") and the step's own `else` branch called that
 "apparmor=unconfined IS required" — a verdict the evidence actually
 contradicts, since an EBUSY means AppArmor's mount mediation already let
 the call through (issue #10's own analysis, not repeated here — see the
-issue). **Attempt 5 (this round) does not answer the AppArmor question
-either** — that needs a real triggered run, and this round is explicitly
-scoped to making the probe capable of producing a trustworthy answer, not
-to declaring one. It replaces the AppArmor step's inline classification
-(which had now produced three void-but-confident verdicts, each from a
-different bug, never from AppArmor) with
-`spikes/s9/scripts/run-apparmor-check.sh` and the scripts it calls:
+issue). Attempt 5 landed the two-probe design
+(`spikes/s9/scripts/run-apparmor-check.sh` and the scripts it calls):
 extracted, testable failure classification
 (`apparmor-classify.sh`, exercised directly against the exact strings that
 fooled all three prior runs — `results/apparmor-classify-test.log`),
@@ -36,8 +31,19 @@ device attribution reusing `scripts/devenv/lib.sh`'s own
 `lab_assert_own_loop()`, a verified detach barrier between branches, a
 second loop-free `mount -t tmpfs` mediation probe run alongside the
 faithful loop/XFS one, and an order-reversal consistency check on the
-cheap probe. What follows is the current, cumulative state: what is
-settled, what this attempt fixed, and what is still open.
+cheap probe. The maintainer triggered it (run `35068617498`): the loop
+probe ran, correctly voided (an EBUSY, not a denial — see below), and the
+step then exited immediately, before the tmpfs probe — the one designed
+to answer the AppArmor question without any loop/XFS machinery — ever
+ran. **Attempt 6 (this round) does not answer the AppArmor question
+either** — it fixes the control-flow bug that stopped attempt 5's second
+probe from ever running (`classify_verdict`/`classify_branch_pair`
+signalled VOID through their own return status as well as their echoed
+string, and `run-apparmor-check.sh` captured that status with a bare
+assignment under `set -euo pipefail`, so a VOID at probe 1 killed the
+script before probe 2 started) so that a future triggered run can
+actually exercise both probes. What follows is the current, cumulative
+state: what is settled, what each attempt fixed, and what is still open.
 
 ## KVM: CONFIRMED on a hosted runner (run 35056076616)
 
@@ -222,15 +228,54 @@ needed for this specific question. It says nothing about S10 (nested KVM,
 VM-in-VM), which is a different, still-open question outside this spike.
 
 **AppArmor necessity on a hosted Ubuntu runner is still not established.**
-All three prior verdicts are void, each for its own reason: run
-`35049304081`'s (both branches failed identically on the `mknod` bug),
-`35056076616`'s (both branches would have failed identically on the size
-bug — the run recorded a `FAIL` on the control before the variant branch
-ever executed), and `35057453620`'s (the variant's `mount` failed with an
-EBUSY the step wrongly read as a denial). Attempt 5 (this commit) fixes
-the classification, attribution and detach-barrier bugs behind all three
-void verdicts and adds a second, independent probe (loop-free `mount -t
-tmpfs`) plus an order-reversal check — but has not yet run hosted.
+Four verdicts are now void, each for its own reason: run `35049304081`'s
+(both branches failed identically on the `mknod` bug), `35056076616`'s
+(both branches would have failed identically on the size bug — the run
+recorded a `FAIL` on the control before the variant branch ever
+executed), `35057453620`'s (the variant's `mount` failed with an EBUSY
+the step wrongly read as a denial), and `35068617498`'s (the loop probe
+correctly voided on the same class of EBUSY, but the script exited right
+there — the tmpfs probe, the one probe never affected by any of the
+loop/XFS bugs above, has still never executed). Attempt 5 landed the
+classification, attribution, detach-barrier fixes and the second,
+independent tmpfs probe; attempt 6 (this commit) fixes the control-flow
+bug that kept that second probe from ever running (see above, and
+`spikes/s9/scripts/apparmor-classify.sh`'s comments on `classify_verdict`
+and `decide_final_verdict`) — but, like every fix round before it, has
+not yet run hosted itself.
+
+### A new observation from run 35068617498 — rules out one cause, establishes no other
+
+`gh run view 35068617498 --repo mdg-labs/hoserva --job 104704596000 --log`
+(excerpted in `results/ci-run-35068617498-lab-job.log`). The loop probe's
+two branches got their own, distinct backing images (control inode
+`8939735`, variant inode `8939751` — `losetup -a after attach` in each
+branch's diagnostics), attribution passed for both, and the detach
+barrier passed for both. The control's `losetup -a at end` is empty (its
+device was cleanly released) before the variant branch's container even
+started. The variant then still hit the same EBUSY
+(`mount: /probe/mnt: /dev/loop0 already mounted or mount point busy.`)
+run `35057453620` also hit. **This rules out inter-branch loop-device
+contention** — the failure mode the detach barrier was added to
+address — as the EBUSY's cause: the variant had its own image, its own
+successful attribution, and started after the control's device was
+already gone. It does not establish what the actual cause is, and it says
+nothing about whether `apparmor=unconfined` is required — the tmpfs
+probe, which isolates `mount(2)` from every loop/XFS concern including
+this one, has still never run. The same inode-pair signature is
+reproducible across runs `35057453620` and `35068617498`.
+
+Also worth recording as a positive: the step-ordering fix from attempt 4
+held — "Derive this run's lab id" ran before the AppArmor step (its
+output, `id=s9-35068617498-1`, is set before the AppArmor step starts),
+and `lab-destroy` used that real id and reported `lab s9-35068617498-1:
+container does not exist, nothing to tear down` — a clean no-op, not the
+`lab-require-id` failure on an empty id that run `35056076616` hit.
+`lab-up`/`lab-seed`/`lab-verify-refusal`/the SnapRAID sync were **skipped**
+in run `35068617498` (the job never got past the AppArmor step), so this
+run does not re-confirm the lab half; that still rests on run
+`35057453620`, where every lab step ran and passed in the same run as the
+(subsequently-corrected) AppArmor verdict.
 
 After this commit is reviewed and pushed to `main`, the maintainer runs,
 in fish:
@@ -284,32 +329,66 @@ and log excerpts under `spikes/s9/results/` the same way runs
 - `scripts/kvm-boot-check.sh` — the guest-boot check the `kvm` job runs;
   unchanged since attempt 3, now **confirmed against a real `/dev/kvm`**
   by run `35056076616`
-- `scripts/apparmor-classify.sh` — new this round (attempt 5): pure-text
-  failure classification (`classify_mount_failure`) and control+variant
-  verdict combination (`classify_verdict`), extracted so it can be
-  exercised without Docker or a loop device; never infers a denial from
-  exit status alone (requirement B)
-- `scripts/test-apparmor-classify.sh` — new this round: exercises
-  `apparmor-classify.sh` against real strings, including run
-  `35057453620`'s own verbatim EBUSY message — output committed at
-  `results/apparmor-classify-test.log`
-- `scripts/apparmor-loop-probe.sh` — new this round: runs inside one
-  branch's container for the faithful loop/XFS probe; reuses
-  `scripts/devenv/lib.sh`'s `lab_assert_own_loop()` for device
-  attribution (requirement C) and adds a verified detach barrier before
-  the branch's container exits (requirement D)
-- `scripts/apparmor-tmpfs-probe.sh` — new this round: the loop-free
-  mediation probe (requirement F) — a bare `mount -t tmpfs`, isolating
-  the one syscall in question from every loop-device/XFS concern
-- `scripts/run-apparmor-check.sh` — new this round: host-side
-  orchestrator: runs both probes' control+variant pairs, an
-  order-reversal consistency check on the cheap tmpfs probe (requirement
-  G), classifies each with `apparmor-classify.sh`, and refuses to let
-  either probe claim the other's result if they disagree (requirement F)
-- `results/apparmor-classify-test.log` — new this round: verbatim output
-  of `test-apparmor-classify.sh`, proving the classification rule now
-  rejects run 35057453620's own EBUSY string instead of reading it as a
-  denial
+- `scripts/apparmor-classify.sh` — pure-text failure classification
+  (`classify_mount_failure`) and control+variant verdict combination
+  (`classify_verdict`), extracted so it can be exercised without Docker or
+  a loop device; never infers a denial from exit status alone
+  (requirement B). This round (attempt 6): `classify_verdict`/
+  `classify_branch_pair` now always `return 0`, even on VOID — the old
+  `return 1` was what let run `35068617498`'s VOID at probe 1 kill
+  `run-apparmor-check.sh` under `set -euo pipefail` before probe 2 ever
+  started. Also new this round: `decide_final_verdict`, the orchestrator's
+  combined-decision step (requirements F/G), moved here from
+  `run-apparmor-check.sh` so it is directly testable; unlike the two
+  functions above, its own nonzero-on-VOID return status is deliberate —
+  it is the terminal decision, never captured with a bare assignment.
+- `scripts/test-apparmor-classify.sh` — exercises `apparmor-classify.sh`
+  against real strings, including run `35057453620`'s own verbatim EBUSY
+  message — output committed at `results/apparmor-classify-test.log`.
+  This round (attempt 6): two new cases reproducing run `35068617498`'s
+  exact failure (a VOID captured under `set -euo pipefail` must not abort
+  the caller — proven to fail against the pre-fix idiom and pass against
+  the fixed one, see `results/apparmor-classify-test-issue10-preunfixed.log`
+  vs. `results/apparmor-classify-test.log`) and five new
+  `decide_final_verdict` cases, including one proving a combined VOID
+  still exits non-zero.
+- `scripts/apparmor-loop-probe.sh` — runs inside one branch's container
+  for the faithful loop/XFS probe; reuses `scripts/devenv/lib.sh`'s
+  `lab_assert_own_loop()` for device attribution (requirement C) and adds
+  a verified detach barrier before the branch's container exits
+  (requirement D); unchanged this round
+- `scripts/apparmor-tmpfs-probe.sh` — the loop-free mediation probe
+  (requirement F) — a bare `mount -t tmpfs`, isolating the one syscall in
+  question from every loop-device/XFS concern; unchanged this round, and
+  still has never actually run in CI (see above)
+- `scripts/run-apparmor-check.sh` — host-side orchestrator: runs both
+  probes' control+variant pairs, an order-reversal consistency check on
+  the cheap tmpfs probe (requirement G), classifies each with
+  `apparmor-classify.sh`, and refuses to let either probe claim the
+  other's result if they disagree (requirement F). This round (attempt
+  6): the combined-decision block is now a call to
+  `decide_final_verdict` instead of inline logic — behaviour unchanged,
+  moved for testability.
+- `results/apparmor-classify-test.log` — verbatim output of
+  `test-apparmor-classify.sh` against the current (fixed) code, 23/23
+  passing — proves the classification rule still rejects run
+  `35057453620`'s own EBUSY string instead of reading it as a denial, and
+  that the two new set-e-survival cases and five new
+  `decide_final_verdict` cases all pass
+- `results/apparmor-classify-test-issue10-preunfixed.log` — new this
+  round: the same current test suite run against the PRE-FIX
+  `apparmor-classify.sh` (`main@437cb25`) instead — 16/23, the two
+  set-e-survival cases failing with empty stdout (the caller died before
+  its own first `echo`) and the five `decide_final_verdict` cases failing
+  with "command not found" (that function is new this round) — the
+  required before/after demonstration that the new cases actually test
+  something
+- `results/ci-run-35068617498-lab-job.log` — new this round: the third
+  `workflow_dispatch` run of this issue's own workflow (on `437cb25`,
+  attempt 5): "Derive this run's lab id" now correctly precedes the
+  AppArmor step, the loop probe ran and correctly voided on an EBUSY, the
+  tmpfs probe never appeared (the bug this commit fixes), and
+  `lab-destroy` used the real derived id and no-op'd cleanly
 - `results/ci-run-34950031773-lab-job.log` — the earlier push-triggered
   `ci.yml` run this spike originally cited for the lab half (pre-dates
   this issue's own workflow)
