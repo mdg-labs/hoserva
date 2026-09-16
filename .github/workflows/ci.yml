@@ -13,11 +13,10 @@ name: CI
 # !   the mdg-labs organisation, or Actions -> General on the repo itself ->
 # !   "Require approval for first-time contributors"
 #
-# What this does NOT run yet, and why: no API contract check (no
-# api/openapi.yaml yet), no frontend build (no web/ yet), no .deb build (no
-# packaging/ yet, area:packaging, a later issue). Each arrives with the
-# issue that builds what it needs — this workflow runs what `make` actually
-# offers today (CLAUDE.md).
+# What this does NOT run yet, and why: no frontend build (no web/ yet, issue
+# #21), no .deb build (no packaging/ yet, area:packaging, a later issue).
+# Each arrives with the issue that builds what it needs — this workflow runs
+# what `make` actually offers today (CLAUDE.md).
 
 on:
   push:
@@ -33,6 +32,9 @@ concurrency:
 env:
   # Pinned to go.mod's `go` directive — update both together.
   GO_VERSION: "1.27.1"
+  # Node is only for api/'s tooling (openapi-typescript, Spectral — Q63);
+  # api/package.json pins the exact package versions this runs against.
+  NODE_VERSION: "24.21.0"
 
 jobs:
   lint-and-unit:
@@ -45,6 +47,28 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
       - run: make lint
       - run: make test
+
+  api:
+    name: API contract (D18, Q63)
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 — api-check's oasdiff step (make api-check) looks up
+      # the last release's `v*` tag with `git tag`/`git show`; the default
+      # shallow, tag-less checkout would hide any tag once one exists.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # Regenerates api/gen/ from api/openapi.yaml and fails if that changes
+      # anything committed — the "CI fails if committed output is stale"
+      # half of issue #17 — then lints the spec and runs the breaking-change
+      # diff (skipped cleanly until a release tag exists, Q63).
+      - run: make api-check
 
   build:
     name: Cross-compile (${{ matrix.goarch }})

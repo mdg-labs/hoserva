@@ -1,0 +1,17 @@
+{
+  "name": "hoserva-api-tooling",
+  "private": true,
+  "description": "Pinned Node tooling for api/openapi.yaml (Q63): TypeScript client generation and spec lint. Not consumed by web/ at runtime — issue #21 adds web/'s own package.json and imports api/gen/ts from there.",
+  "type": "module",
+  "scripts": {
+    "gen:ts": "openapi-typescript openapi.yaml -o gen/ts/schema.d.ts",
+    "lint": "spectral lint openapi.yaml --ruleset .spectral.yaml"
+  },
+  "devDependencies": {
+    "@stoplight/spectral-cli": "6.16.3",
+    "openapi-typescript": "7.13.0"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0"
+  }
+}

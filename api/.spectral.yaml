@@ -1,0 +1,24 @@
+# Hoserva's Spectral ruleset (Q63, doc 01 §5): extends Spectral's own OAS
+# rules (which already require a unique operationId on every operation) with
+# the one rule specific to this project — every operation must declare
+# x-hoserva-role, since that is what per-operation authorization (D18) reads.
+extends: "spectral:oas"
+
+rules:
+  hoserva-operation-id:
+    description: Every operation must have an operationId (D18 — no undocumented, unaddressable endpoints).
+    severity: error
+    given: "$.paths[*][get,put,post,delete,options,head,patch,trace]"
+    then:
+      field: operationId
+      function: truthy
+
+  hoserva-operation-role:
+    description: Every operation must declare x-hoserva-role (admin or viewer) so authorization is never left implicit (doc 01 §5, D18).
+    severity: error
+    given: "$.paths[*][get,put,post,delete,options,head,patch,trace]"
+    then:
+      field: x-hoserva-role
+      function: enumeration
+      functionOptions:
+        values: ["admin", "viewer"]

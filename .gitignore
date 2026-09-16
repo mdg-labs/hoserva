@@ -18,9 +18,10 @@ scripts/vm/images/
 # Go
 *.test
 
-# Node (web/)
+# Node (web/, api/'s tooling — Q63)
 web/node_modules/
 web/dist/
+api/node_modules/
 
 # Editors and OS
 .DS_Store

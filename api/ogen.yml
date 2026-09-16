@@ -1,0 +1,13 @@
+# ogen config (Q63). ogen generates only SSE *clients*, never a server-side
+# encoder for `text/event-stream` — confirmed against ogen v1.24.0: without
+# this, generation for the whole spec fails outright with "sse server
+# response encoding not implemented" rather than degrading gracefully for
+# just that one operation. `ignore_not_implemented` skips only the one
+# operation this affects (`streamEvents`) from the generated Handler and
+# client in this package — its Event schema is still generated, separately,
+# by jschemagen into api/gen/go/events (see openapi.yaml's operation
+# description and Makefile's `gen` target); `internal/api` will implement
+# the server side by hand, against that same schema, when the job system's
+# live progress lands.
+generator:
+  ignore_not_implemented: ["sse server response encoding"]
