@@ -53,6 +53,9 @@ jobs:
           node-version-file: web/.nvmrc
       - run: make lint
       - run: make test
+      # Migration checksums, schema drift and the data-safety scan (D16,
+      # Q60) — a plain Go check, no lab or Node needed.
+      - run: make db-check
 
   api:
     name: API contract (D18, Q63)
