@@ -200,16 +200,17 @@ paths:
         The `Event` schema and its variants are still generated code, though:
         `make gen` runs ogen's `jschemagen` against `api/event-schema-root.yaml`
         to produce typed Go structs in `api/gen/go/events`, plus a small
-        generated SSE-frame reader alongside them, so a Go client still reads
-        this stream only through generated types (D18, doc 01 §5) — this is
-        planned, future work; no code calls it yet. The server-side write
-        loop for this route — framing each `Event` over `text/event-stream`
-        — is future work too (planned for the issues that add the job system
-        and its live progress, doc 01 §4); `internal/api` does not implement
-        it yet. The operation stays fully documented and lint-checked here
-        regardless — lint, `x-hoserva-role`, and the event schemas themselves
-        are unaffected — only the generated server-side plumbing for this one
-        route is what's missing.
+        generated SSE-frame reader alongside them, so a Go client reads this
+        stream only through generated types (D18, doc 01 §5). The server-side
+        write loop for this route — framing each `Event` over
+        `text/event-stream` — is hand-written in `internal/api`
+        (`EventsHandler`, issue #19), mounted beside the generated router
+        rather than inside it, since ogen generates no security hook for a
+        route it doesn't generate a server for either; it is gated by an
+        `Authenticate` seam #22 wires to real session/token validation. The
+        job system publishes `job_progress` events on every state and
+        progress change; disk/container state and notifications arrive with
+        the issues that add those subsystems.
       tags: [events]
       x-hoserva-role: viewer
       responses:

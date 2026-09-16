@@ -4,6 +4,27 @@
 
 package storedb
 
+import (
+	"database/sql"
+)
+
+type Job struct {
+	ID           string         `json:"id"`
+	Type         string         `json:"type"`
+	Class        string         `json:"class"`
+	Status       string         `json:"status"`
+	Progress     sql.NullInt64  `json:"progress"`
+	Resumable    int64          `json:"resumable"`
+	Cancellable  int64          `json:"cancellable"`
+	ResourceIds  sql.NullString `json:"resource_ids"`
+	Checkpoint   []byte         `json:"checkpoint"`
+	ErrorCode    sql.NullString `json:"error_code"`
+	ErrorMessage sql.NullString `json:"error_message"`
+	CreatedAt    string         `json:"created_at"`
+	StartedAt    sql.NullString `json:"started_at"`
+	FinishedAt   sql.NullString `json:"finished_at"`
+}
+
 type SchemaInfo struct {
 	ID             int64  `json:"id"`
 	InstallationID string `json:"installation_id"`
