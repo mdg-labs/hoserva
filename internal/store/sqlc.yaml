@@ -1,0 +1,11 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema: "schema/schema.sql"
+    queries: "queries"
+    gen:
+      go:
+        package: "storedb"
+        out: "db"
+        emit_json_tags: true
+        emit_result_struct_pointers: true

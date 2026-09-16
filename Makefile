@@ -229,7 +229,7 @@ $(error invalid MOCK_ADDR: must not contain '$$' — no Make or shell expansion 
 endif
 export MOCK_ADDR
 
-.PHONY: build test test-unit lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test
+.PHONY: build test test-unit lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check
 
 # web/ (issue #21, Q8): the Vite build has to run before the Go binaries so
 # web/dist/ is real before cmd/hoservad's //go:embed (web/embed.go) reads
@@ -415,6 +415,10 @@ gen:
 		echo '  return createClient<paths>({ baseUrl });'; \
 		echo '}'; \
 	} > api/gen/ts/client.ts
+	@echo "sqlc: internal/store/schema/schema.sql -> internal/store/db/ (D16, Q60)"
+	@rm -rf internal/store/db
+	@mkdir -p internal/store/db
+	$(GO) run github.com/sqlc-dev/sqlc/cmd/sqlc generate --file internal/store/sqlc.yaml
 
 # spec lint (operationId, x-hoserva-role — Q63), generated code freshness,
 # and a breaking-change diff against the last release, once one exists
@@ -465,6 +469,21 @@ mock:
 		echo "mock: scenario $$SCENARIO on http://$$MOCK_ADDR/api/v1"; \
 		$(GO) run ./cmd/mockapi --addr "$$MOCK_ADDR" --scenario "$$SCENARIO"; \
 	fi
+
+# Diffs internal/store/schema/schema.sql against the schema
+# internal/store/migrations/ produces and writes the next numbered,
+# immutable file (D16, Q60). NAME is required so every migration's
+# filename says what it does, not "0002_migration".
+db-migration:
+	@test -n "$(NAME)" || { echo "set NAME (e.g. make db-migration NAME=add_job_table)" >&2; exit 1; }
+	$(GO) run ./internal/store/tools/dbmigration -name "$(NAME)"
+
+# Migration checksums (an edited "immutable" file), schema drift (replaying
+# every migration must produce exactly schema.sql), and the data-safety
+# scan (a DROP TABLE, DROP COLUMN or rebuild outside a registered contract
+# step) — the Hoserva-owned checks Q60 says sqldef's own flags don't cover.
+db-check:
+	$(GO) run ./internal/store/tools/dbcheck
 
 lab-require-id:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make lab-up)" >&2; exit 1; }
