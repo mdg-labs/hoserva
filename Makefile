@@ -49,6 +49,37 @@ NPM          ?= npm
 # is confirmed do we `export` it: expanding a `$`-free string is a
 # guaranteed no-op, so exporting it from here on is safe either way it was
 # set (environment or command line).
+#
+# Trust boundary, established while hardening LAB_COMPOSE_EXTRA (issue
+# #127) and confirmed empirically: this guard, and LAB_COMPOSE_EXTRA's
+# below, assume their variable arrives as a plain command-line variable
+# (`make target VAR=value`) or a plain environment variable — the two
+# vectors the unexport/$(value ...)/export dance defends against. Neither
+# defends against a value delivered through MAKEFLAGS. GNU Make treats
+# `VAR=value` pairs found in the MAKEFLAGS environment variable as
+# additional command-line arguments and force-expands them (running
+# `$(shell ...)` if present) as part of Make's own startup, before this
+# Makefile's first line runs — so by the time either guard executes, a
+# `$(shell ...)` payload smuggled in through MAKEFLAGS has already run,
+# and the variable already holds its (usually empty) result, which the
+# guard then sees as clean. Confirmed:
+#   env MAKEFLAGS='HOSERVA_LAB_ID=$(shell touch /tmp/x)' make -n lab-up
+# creates /tmp/x and exits 0 — with output identical to the unset case.
+# This is not new with LAB_COMPOSE_EXTRA: the same MAKEFLAGS payload against
+# HOSERVA_LAB_ID's guard, unchanged since before issue #127, behaves
+# identically. Nothing expressible in Makefile syntax can close this,
+# because whoever controls MAKEFLAGS already has unconditional code
+# execution independent of any variable this file inspects. Confirmed:
+#   env MAKEFLAGS='--eval=$(shell touch /tmp/x)' make -n lab-up
+# creates /tmp/x too, from Make's own command-line-flag parsing, before any
+# makefile — this one or any other — is even read; no HOSERVA_LAB_ID or
+# LAB_COMPOSE_EXTRA involved at all. So MAKEFLAGS, and the environment
+# `make` itself runs in, are trusted input here, on the same basis CLAUDE.md
+# already gives the shell that invokes `make`: setting MAKEFLAGS already
+# implies control of make's environment. These two guards defend against a
+# stray or mistyped ordinary value (`make lab-up LAB_COMPOSE_EXTRA=...`, or
+# a plain exported variable); they are not, and cannot be, a defense
+# against a MAKEFLAGS-level attacker.
 unexport HOSERVA_LAB_ID
 ifneq ($(findstring $$,$(value HOSERVA_LAB_ID)),)
 $(error invalid HOSERVA_LAB_ID: must not contain '$$' — no Make or shell expansion syntax is accepted in a lab id; set a plain id, e.g. HOSERVA_LAB_ID=dev)
@@ -62,11 +93,114 @@ COMPOSE_DEV     := docker compose -f docker-compose.dev.yml
 # LAB_COMPOSE_EXTRA=scripts/devenv/docker-compose.apparmor-default.yml.
 # docker-compose.dev.yml itself is never edited for this. Unset by default,
 # so the standing lab's behaviour is unchanged; set only from a trusted
-# workflow or developer shell to a plain repo-relative compose file path
-# (this text is spliced into COMPOSE_DEV below via Make's own `$(...)`
-# substitution, not a shell variable — never set it from template or user
-# input).
+# workflow or developer shell to a plain repo-relative compose file path.
+#
+# Hardened by issue #127: this text is spliced into COMPOSE_DEV below via
+# Make's own `$(...)` substitution, not read by a recipe as a shell
+# variable the way `$$HOSERVA_LAB_ID` is above — so an unvalidated value
+# would reach the shell as literal, unquoted command-line text next to
+# `-f`. It gets the same unexport/`$(value ...)`/export dance
+# HOSERVA_LAB_ID gets above, against Make's command-line/environment
+# auto-export hazard (exporting a variable requires Make to expand its
+# stored text as Make syntax first, `$(shell ...)` included, before any
+# check below runs), then a character whitelist mirroring LAB_ID_PATTERN,
+# so every check after the whitelist can safely splice the now-known-inert
+# value straight into a shell command of its own.
+#
+# This guard, like HOSERVA_LAB_ID's above, trusts MAKEFLAGS and the
+# environment `make` itself runs in — see the trust-boundary note above
+# HOSERVA_LAB_ID's `unexport` for why, and the commands that confirm it.
+unexport LAB_COMPOSE_EXTRA
+ifneq ($(findstring $$,$(value LAB_COMPOSE_EXTRA)),)
+$(error invalid LAB_COMPOSE_EXTRA: must not contain '$$' — no Make or shell expansion syntax is accepted in a compose file path; set a plain repo-relative path, e.g. LAB_COMPOSE_EXTRA=scripts/devenv/docker-compose.apparmor-default.yml)
+endif
+export LAB_COMPOSE_EXTRA
 ifneq ($(strip $(LAB_COMPOSE_EXTRA)),)
+LAB_COMPOSE_EXTRA_PATTERN := ^[a-zA-Z0-9][a-zA-Z0-9_./-]*$$
+# The whitelist check reads the value only via the shell's own
+# `$$LAB_COMPOSE_EXTRA` (exported above), never by splicing
+# `$(LAB_COMPOSE_EXTRA)`'s raw text into this command line — until this
+# check passes, the value is not yet known to be free of shell
+# metacharacters (quotes, `;`, backticks, spaces, newlines) that splicing
+# it directly would let the shell reinterpret. `grep -z` (not plain `-E`)
+# matters here: without it, `^`/`$` anchor per *line*, so a value with an
+# embedded newline whose first line alone matches the pattern — e.g.
+# "ok.yml\n;rm -rf ~" — would wrongly pass; `-z` anchors to the whole
+# NUL-delimited input instead, so the embedded newline has to match too.
+ifeq ($(shell printf '%s' "$$LAB_COMPOSE_EXTRA" | grep -zEq '$(LAB_COMPOSE_EXTRA_PATTERN)' && echo ok),)
+$(error invalid LAB_COMPOSE_EXTRA '$(LAB_COMPOSE_EXTRA)': must match $(LAB_COMPOSE_EXTRA_PATTERN) — a repo-relative path (letters, digits, '_', '.', '/', '-' only, starting with a letter or digit — no leading '/', spaces, quotes, ';', backticks, newlines or other shell metacharacters))
+endif
+ifneq ($(findstring ..,$(LAB_COMPOSE_EXTRA)),)
+$(error invalid LAB_COMPOSE_EXTRA '$(LAB_COMPOSE_EXTRA)': must not contain '..')
+endif
+# From here on the value is known to contain only the whitelisted
+# characters, so splicing it into these checks' own shell command lines is
+# safe the same way splicing it into COMPOSE_DEV below is.
+ifeq ($(shell test -f '$(LAB_COMPOSE_EXTRA)' && echo ok),)
+$(error invalid LAB_COMPOSE_EXTRA '$(LAB_COMPOSE_EXTRA)': not a repo-relative path to an existing file)
+endif
+# A shell `case`/`esac` test here would work logically but breaks Make's
+# own $(shell ...) argument scan: Make finds where a $(shell ...) call's
+# text ends by counting every '(' and ')' character in it, including ones
+# meant purely for the shell, not just the ones that open a nested Make
+# reference — a case pattern's bare, unmatched ')' reads to Make as the
+# outer call's own closing paren, silently truncating everything after it.
+# An earlier version of this check used $(filter $(CURDIR)/%,...) to avoid
+# that hazard, but $(filter PATTERN,TEXT) itself splits both PATTERN and
+# TEXT on whitespace before matching, so a CURDIR containing a space split
+# the containment pattern into independent words — the word after the last
+# space, with the appended '/%', became a standalone glob that an unrelated
+# outside path could satisfy just by also containing a space in the right
+# place. Confirmed exploitable: a repo checked out under
+# ".../My Projects/hoserva", with LAB_COMPOSE_EXTRA a symlink resolving to
+# ".../x Projects/hoserva/evil.yml" (no relation to the repo), passed the
+# old check — "Projects/hoserva/evil.yml" matched the split-off pattern
+# word "Projects/hoserva/%".
+#
+# A later version read $(CURDIR) into a shell double-quoted operand
+# ("$(CURDIR)"/) of bash's own `#` prefix-strip. Double quotes stop word
+# splitting and globbing, but not `$(...)` or backtick command
+# substitution — so a checkout directory literally named
+# "evil$(touch marker)dir" made that $(shell ...) call run an arbitrary
+# command taken from the directory name, before this check's own
+# pass/fail verdict was even reached (issue #127, third review round).
+#
+# This version never hands $(CURDIR) or LAB_COMPOSE_EXTRA to a shell at
+# all: $(realpath ...) and $(subst ...) are both pure Make functions that
+# work on literal text, with no re-parsing of that text as shell or Make
+# syntax — nothing in either value (parens, `$(...)`, backticks, quotes,
+# commas) is ever executed.
+#
+# The prefix compared against is the bare $(CURDIR), not
+# $(realpath $(CURDIR)): Make sets CURDIR from a getcwd(3)-style call at
+# startup, which on Linux already returns the kernel's canonical path —
+# no symlink component survives in it — so re-resolving it buys nothing.
+# Confirmed empirically: cd into a symlink pointing at this repo and run
+# `make -p -n lab-up` — CURDIR already reports the symlink's real target.
+# Re-resolving it would also be actively wrong: $(realpath ...), like
+# $(wildcard ...) and $(abspath ...), treats its argument as a
+# whitespace-separated *list* of names (so it can resolve several at
+# once) — so a repo checked out under a path containing a space would
+# have $(realpath $(CURDIR)) silently split it into two fragments,
+# usually neither on disk on its own, and return empty; every real
+# target would then fail the containment check below and get rejected as
+# "outside the repository", even though nothing in CLAUDE.md restricts a
+# space in a checkout path. Confirmed: a checkout under ".../evil dir"
+# reproduced exactly this false rejection before this fix. LAB_COMPOSE_EXTRA
+# itself carries no such hazard — its own whitelist above already forbids
+# whitespace, so $(realpath $(LAB_COMPOSE_EXTRA)) always resolves exactly
+# one name.
+#
+# Containment is then a literal string check: stripping one "$(CURDIR)/"
+# prefix from the resolved target must both change the string (so the
+# target really was under the repo, not just equal to reconstructing an
+# unrelated string) and, glued back on, reproduce the exact original — so
+# a target whose text happens to contain "$(CURDIR)/" twice (where subst
+# would remove both occurrences) fails closed instead of passing.
+LAB_COMPOSE_EXTRA_RESOLVED := $(realpath $(LAB_COMPOSE_EXTRA))
+ifneq ($(CURDIR)/$(subst $(CURDIR)/,,$(LAB_COMPOSE_EXTRA_RESOLVED)),$(LAB_COMPOSE_EXTRA_RESOLVED))
+$(error invalid LAB_COMPOSE_EXTRA '$(LAB_COMPOSE_EXTRA)': resolves outside the repository (a symlink pointing outside it?))
+endif
 COMPOSE_DEV := docker compose -f docker-compose.dev.yml -f $(LAB_COMPOSE_EXTRA)
 endif
 LAB_ID_PATTERN  := ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$$
