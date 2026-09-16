@@ -1,0 +1,20 @@
+{
+  "jobs": [
+    {
+      "id": "a1a1a1a1-0004-4000-8000-000000000001",
+      "type": "sync",
+      "class": "parity",
+      "status": "failed",
+      "progress": null,
+      "resumable": false,
+      "cancellable": false,
+      "createdAt": "2026-01-04T05:00:00Z",
+      "startedAt": "2026-01-04T05:00:01Z",
+      "finishedAt": "2026-01-04T05:00:07Z",
+      "error": {
+        "code": "threshold_guard_tripped",
+        "message": "Parity sync refused: the free-space threshold guard is tripped on disk3 (doc 02 §2) — clear space or lower the threshold, then sync again."
+      }
+    }
+  ]
+}

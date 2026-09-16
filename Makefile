@@ -1,8 +1,8 @@
 # Every workflow goes through this Makefile (doc 12 §3) — if it isn't a
 # target here, it doesn't exist. Only the targets this repository can
-# actually satisfy today are defined; the rest (dev, mock, db-migration,
-# vm-*, deb, iso, ...) arrive with the issues that build what they need, so
-# no target here pretends to work.
+# actually satisfy today are defined; the rest (dev, db-migration, vm-*,
+# deb, iso, ...) arrive with the issues that build what they need, so no
+# target here pretends to work.
 
 GO           ?= go
 BIN_DIR      := bin
@@ -206,7 +206,30 @@ endif
 LAB_ID_PATTERN  := ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$$
 LAB_SEED_PROFILE ?= mixed
 
-.PHONY: build test test-unit lint clean lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check
+# mock (issue #20, doc 06 §8) reads SCENARIO/MOCK_ADDR — `make mock
+# SCENARIO=degraded` — the same way HOSERVA_LAB_ID is read above, so they
+# get the same unexport/$(value ...)/export guard against GNU Make
+# auto-exporting (and thereby Make-expanding, `$(shell ...)` included) a
+# command-line-supplied variable before any recipe-level check runs. Once
+# past this guard, cmd/mockapi itself — not this Makefile — validates the
+# scenario name and refuses a non-loopback address, matching this file's
+# existing LAB_SEED_PROFILE precedent of leaving value validation to the
+# tool that actually uses the value.
+SCENARIO ?= healthy
+unexport SCENARIO
+ifneq ($(findstring $$,$(value SCENARIO)),)
+$(error invalid SCENARIO: must not contain '$$' — no Make or shell expansion syntax is accepted in a scenario name)
+endif
+export SCENARIO
+
+MOCK_ADDR ?= 127.0.0.1:8090
+unexport MOCK_ADDR
+ifneq ($(findstring $$,$(value MOCK_ADDR)),)
+$(error invalid MOCK_ADDR: must not contain '$$' — no Make or shell expansion syntax is accepted in a listen address)
+endif
+export MOCK_ADDR
+
+.PHONY: build test test-unit lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check
 
 build:
 	@mkdir -p $(BIN_DIR)
@@ -383,6 +406,24 @@ api-check: gen
 
 clean:
 	rm -rf $(BIN_DIR)
+
+# The mock API server (doc 06 §8, issue #20): serves api/openapi.yaml from
+# web/fixtures/ scenarios, so frontend work never needs hoservad or the lab.
+# web/ (the Vite dev server) doesn't exist yet (#21 adds it) — once
+# web/package.json does, this starts both together and stops both on
+# Ctrl-C, tracking the mock's own PID rather than a pattern kill.
+mock:
+	@if [ -f web/package.json ]; then \
+		echo "mock: starting the mock API (scenario: $$SCENARIO) on http://$$MOCK_ADDR and the web dev server"; \
+		$(GO) run ./cmd/mockapi --addr "$$MOCK_ADDR" --scenario "$$SCENARIO" & \
+		mock_pid=$$!; \
+		trap 'kill "$$mock_pid" 2>/dev/null' EXIT INT TERM; \
+		(cd web && $(NPM) run dev); \
+	else \
+		echo "mock: web/ does not exist yet (#21) — starting the mock API server only"; \
+		echo "mock: scenario $$SCENARIO on http://$$MOCK_ADDR/api/v1"; \
+		$(GO) run ./cmd/mockapi --addr "$$MOCK_ADDR" --scenario "$$SCENARIO"; \
+	fi
 
 lab-require-id:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make lab-up)" >&2; exit 1; }
