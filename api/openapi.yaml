@@ -1,0 +1,483 @@
+openapi: 3.1.0
+info:
+  title: Hoserva API
+  version: "1.0.0"
+  description: >-
+    The Hoserva API (doc 01 §5, D18). This file is the whole API — every
+    capability the web UI or the CLI has is a documented operation here, and
+    nothing else. Go server interfaces, the CLI's Go client and the web UI's
+    TypeScript client are generated from it (`make gen`); handlers in
+    `internal/api/` implement the generated interfaces, and both clients call
+    the API only through their generated code.
+
+    This first version covers the foundation every later feature area builds
+    on: `/api/v1/` versioning, the two auth schemes named in doc 01 §5, the
+    shared error model, the job resource and its lifecycle (doc 01 §4), and
+    every Server-Sent Events event type on `/api/v1/events`. Disk, pool,
+    share, container and VM operations arrive with the issues that design
+    those subsystems (doc 07 §1) — this spec is extended, never replaced, as
+    they land.
+  license:
+    name: AGPL-3.0-only
+    identifier: AGPL-3.0-only
+  contact:
+    name: Hoserva
+    url: https://github.com/mdg-labs/hoserva
+
+tags:
+  - name: jobs
+    description: The job system (doc 01 §4) — every long-running operation.
+  - name: events
+    description: Live data over Server-Sent Events (doc 01 §5).
+
+# Two transports (doc 01 §5): a Unix socket for the local root/`hoserva`-group
+# CLI, and TLS-only TCP for the web UI and remote/scripted use. Same handlers,
+# different auth middleware — the Unix socket is peer-credential trusted and
+# carries no bearer/cookie credential of its own, which is why its entry below
+# has no `x-hoserva-transport-auth` value: there is nothing for a client to
+# attach. The TCP server's operations still declare `security` below; that
+# security only applies on this transport.
+servers:
+  - url: https://{host}:8008/api/v1
+    description: TCP, TLS-only. Session cookie for the web UI, personal API tokens (Q43) for scripts and the remote CLI.
+    variables:
+      host:
+        default: localhost
+  - url: unix:///run/hoserva/hoserva.sock/api/v1
+    description: >-
+      Unix socket. Root and the `hoserva` group only (Q44); accepted with no
+      auth token because the kernel already vouches for the caller's identity
+      via `SO_PEERCRED` — there is no bearer or cookie credential on this
+      transport. Used by the local CLI.
+    x-hoserva-transport-auth: peer-credentials-trusted
+
+security:
+  - sessionCookie: []
+  - apiToken: []
+
+paths:
+  /jobs:
+    get:
+      operationId: listJobs
+      summary: List jobs
+      description: >-
+        Every long-running operation is a job (doc 01 §4). Filterable by
+        class and status so the UI's jobs page and `hoserva logs` can scope
+        what they render without walking the whole history.
+      tags: [jobs]
+      x-hoserva-role: viewer
+      parameters:
+        - name: class
+          in: query
+          schema:
+            $ref: '#/components/schemas/JobClass'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/JobStatus'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: The jobs matching the filter, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs]
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /jobs/{jobId}:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    get:
+      operationId: getJob
+      summary: Get a job
+      description: A single job's current state, by id.
+      tags: [jobs]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /jobs/{jobId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    post:
+      operationId: cancelJob
+      summary: Cancel a job
+      description: >-
+        Only meaningful where the underlying tool supports cancellation
+        (doc 01 §4); a job that cannot be cancelled reports that in its
+        `cancellable` field rather than accepting this call and doing
+        nothing.
+      tags: [jobs]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The job, now in a cancelling or cancelled state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /jobs/{jobId}/resume:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    post:
+      operationId: resumeJob
+      summary: Resume a checkpointed job
+      description: >-
+        Only resumable job types (mover, rebalance, evacuation, share
+        relocation) persist a checkpoint to resume from (Q29). Jobs are never
+        resumed automatically after a restart — this operation is always an
+        explicit user action.
+      tags: [jobs]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The job, resumed from its last checkpoint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /jobs/{jobId}/log:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    get:
+      operationId: getJobLog
+      summary: Download a job's captured stdout/stderr
+      description: Kept for 90 days (Q74).
+      tags: [jobs]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The job's captured output, compressed.
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        default:
+          $ref: '#/components/responses/Error'
+
+  /events:
+    get:
+      operationId: streamEvents
+      summary: Stream live events
+      description: >-
+        Server-Sent Events for job progress, disk state changes, container
+        state changes and new notifications (doc 01 §5). Every event type is
+        a schema below (`Event`'s member types).
+
+        ogen generates only SSE *clients*, not a server-side encoder for
+        `text/event-stream` (confirmed against ogen v1.24.0 — see Q63), so
+        `make gen` excludes this one operation from the generated `apiv1`
+        server interface and client (`ogen.yml`'s `ignore_not_implemented`).
+        The `Event` schema and its variants are still generated code, though:
+        `make gen` runs ogen's `jschemagen` against `api/event-schema-root.yaml`
+        to produce typed Go structs in `api/gen/go/events`, plus a small
+        generated SSE-frame reader alongside them, so a Go client still reads
+        this stream only through generated types (D18, doc 01 §5) — this is
+        planned, future work; no code calls it yet. The server-side write
+        loop for this route — framing each `Event` over `text/event-stream`
+        — is future work too (planned for the issues that add the job system
+        and its live progress, doc 01 §4); `internal/api` does not implement
+        it yet. The operation stays fully documented and lint-checked here
+        regardless — lint, `x-hoserva-role`, and the event schemas themselves
+        are unaffected — only the generated server-side plumbing for this one
+        route is what's missing.
+      tags: [events]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: An unbounded stream of `Event` frames.
+          content:
+            text/event-stream:
+              x-ogen-sse-event-shape: full
+              schema:
+                $ref: '#/components/schemas/Event'
+        default:
+          $ref: '#/components/responses/Error'
+
+components:
+  parameters:
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Error:
+      description: An error response (doc 01 §5).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: hoserva_session
+      description: Web UI session, issued at login over TCP.
+    apiToken:
+      type: http
+      scheme: bearer
+      bearerFormat: personal-api-token
+      description: >-
+        Personal API token (Q43), scoped to a role (admin/viewer). For
+        scripts and the remote CLI over TCP.
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: A stable, machine-readable identifier, e.g. `job_not_found`.
+        message:
+          type: string
+          description: A human-readable explanation, safe to show in the UI or CLI.
+        details:
+          type: object
+          additionalProperties: true
+          description: Optional structured context, e.g. which field failed validation.
+
+    JobType:
+      type: string
+      description: Every job type named in doc 01 §4's mutually-exclusive-class table.
+      enum:
+        # Parity
+        - sync
+        - scrub
+        - fix
+        - check
+        # Array-write
+        - rebalance
+        - evacuation
+        - share_relocation
+        - mover
+        - vm_disk_relocation
+        # Topology
+        - disk_format
+        - disk_add
+        - disk_remove
+        - disk_replace
+        - pool_remount
+        # Service
+        - appdata_backup
+        - container_update
+        # VM
+        - vm_start
+        - vm_stop
+        - vm_create
+        - vm_delete
+        - vm_snapshot
+        - vm_clone
+        - vm_migration_import
+
+    JobClass:
+      type: string
+      description: The mutually exclusive job class the scheduler enforces (doc 01 §4).
+      enum: [parity, array_write, topology, service, vm]
+
+    JobStatus:
+      type: string
+      description: >-
+        `interrupted` is set on an in-flight job by a daemon restart and is
+        never cleared automatically (doc 01 §4) — resuming or re-running it
+        is always an explicit user action.
+      enum: [queued, running, interrupted, succeeded, failed, cancelled]
+
+    Job:
+      type: object
+      required:
+        - id
+        - type
+        - class
+        - status
+        - resumable
+        - cancellable
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/JobType'
+        class:
+          $ref: '#/components/schemas/JobClass'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        progress:
+          type:
+            - integer
+            - "null"
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: Null when the job type or tool reports no meaningful percentage.
+        resumable:
+          type: boolean
+          description: Whether this job type persists a checkpoint to resume from (Q29).
+        cancellable:
+          type: boolean
+          description: Whether the underlying tool honestly supports cancelling this job.
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        finishedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/Error'
+            - type: "null"
+
+    DiskState:
+      type: string
+      enum: [active, standby, spinning_up, missing, failed]
+
+    ContainerState:
+      type: string
+      enum: [running, stopped, restarting, exited, paused]
+
+    NotificationLevel:
+      type: string
+      enum: [info, warning, error, critical]
+
+    # `full`-shape SSE envelopes (ogen's x-ogen-sse-event-shape): each member
+    # carries the discriminator in its own `event` field, so a client can
+    # switch on the wire value without decoding `data` first. `const`, not a
+    # single-value `enum`, on purpose: ogen names a named enum type after its
+    # schema plus property (e.g. `DiskStateEvent`'s `event` property would be
+    # `DiskStateEventEvent`), which collides with the identical naming ogen's
+    # own discriminator codegen uses for `Event`'s variant tags once `Event`
+    # itself is generated (api/event-schema-root.yaml, jschemagen) — `const`
+    # inlines the field as a plain validated string instead of a named type,
+    # so there is nothing left to collide.
+    JobProgressEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: job_progress
+        data:
+          $ref: '#/components/schemas/Job'
+
+    DiskStateEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: disk_state
+        data:
+          type: object
+          required: [diskId, device, state, at]
+          properties:
+            diskId:
+              type: string
+            device:
+              type: string
+              description: e.g. `/dev/sdb` — as reported, never accepted back as input (doc 01 §7).
+            state:
+              $ref: '#/components/schemas/DiskState'
+            at:
+              type: string
+              format: date-time
+
+    ContainerStateEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: container_state
+        data:
+          type: object
+          required: [containerId, name, state, at]
+          properties:
+            containerId:
+              type: string
+            name:
+              type: string
+            state:
+              $ref: '#/components/schemas/ContainerState'
+            at:
+              type: string
+              format: date-time
+
+    NotificationEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: notification
+        data:
+          type: object
+          required: [id, level, title, message, createdAt]
+          properties:
+            id:
+              type: string
+            level:
+              $ref: '#/components/schemas/NotificationLevel'
+            title:
+              type: string
+            message:
+              type: string
+            createdAt:
+              type: string
+              format: date-time
+
+    Event:
+      description: The full set of `/api/v1/events` SSE event types (doc 01 §5).
+      oneOf:
+        - $ref: '#/components/schemas/JobProgressEvent'
+        - $ref: '#/components/schemas/DiskStateEvent'
+        - $ref: '#/components/schemas/ContainerStateEvent'
+        - $ref: '#/components/schemas/NotificationEvent'
+      discriminator:
+        propertyName: event
+        mapping:
+          job_progress: '#/components/schemas/JobProgressEvent'
+          disk_state: '#/components/schemas/DiskStateEvent'
+          container_state: '#/components/schemas/ContainerStateEvent'
+          notification: '#/components/schemas/NotificationEvent'

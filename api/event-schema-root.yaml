@@ -1,0 +1,9 @@
+# Not generated. A one-line JSON Schema pointer, in its own file because
+# ogen's `jschemagen` (Q63) requires its input file's own root to *be* the
+# schema to generate — it has no flag to select a JSON pointer within a
+# larger document, and `openapi.yaml`'s own root can't be repurposed as one
+# without breaking every other tool that reads it (Spectral, ogen itself,
+# openapi-typescript). This file exists only so `make gen` has something to
+# hand jschemagen; `openapi.yaml`'s `components/schemas/Event` is still the
+# only place the schema is authored.
+$ref: "openapi.yaml#/components/schemas/Event"
