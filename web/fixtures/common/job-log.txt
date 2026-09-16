@@ -1,0 +1,1 @@
+mock job log (doc 06 §8) — synthetic output for frontend development, not captured from a real job run.

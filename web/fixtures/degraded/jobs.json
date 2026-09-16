@@ -1,0 +1,32 @@
+{
+  "jobs": [
+    {
+      "id": "a1a1a1a1-0002-4000-8000-000000000001",
+      "type": "check",
+      "class": "parity",
+      "status": "failed",
+      "progress": null,
+      "resumable": false,
+      "cancellable": false,
+      "createdAt": "2026-01-02T03:00:00Z",
+      "startedAt": "2026-01-02T03:00:04Z",
+      "finishedAt": "2026-01-02T03:58:30Z",
+      "error": {
+        "code": "parity_mismatch",
+        "message": "Parity check found 3 mismatched blocks on disk2 — the array is degraded until a sync clears them."
+      }
+    },
+    {
+      "id": "a1a1a1a1-0002-4000-8000-000000000002",
+      "type": "mover",
+      "class": "array_write",
+      "status": "interrupted",
+      "progress": 54,
+      "resumable": true,
+      "cancellable": false,
+      "createdAt": "2026-01-02T04:10:00Z",
+      "startedAt": "2026-01-02T04:10:03Z",
+      "error": null
+    }
+  ]
+}

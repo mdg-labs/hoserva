@@ -1,0 +1,1 @@
+{"event":"job_progress","data":{"id":"a1a1a1a1-0006-4000-8000-000000000001","type":"vm_migration_import","class":"vm","status":"queued","progress":null,"resumable":false,"cancellable":true,"createdAt":"2026-01-06T01:00:00Z","error":null}}
