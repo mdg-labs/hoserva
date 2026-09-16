@@ -13,10 +13,10 @@ name: CI
 # !   the mdg-labs organisation, or Actions -> General on the repo itself ->
 # !   "Require approval for first-time contributors"
 #
-# What this does NOT run yet, and why: no frontend build (no web/ yet, issue
-# #21), no .deb build (no packaging/ yet, area:packaging, a later issue).
-# Each arrives with the issue that builds what it needs — this workflow runs
-# what `make` actually offers today (CLAUDE.md).
+# What this does NOT run yet, and why: no .deb build (no packaging/ yet,
+# area:packaging, a later issue). Each arrives with the issue that builds
+# what it needs — this workflow runs what `make` actually offers today
+# (CLAUDE.md).
 
 on:
   push:
@@ -32,8 +32,9 @@ concurrency:
 env:
   # Pinned to go.mod's `go` directive — update both together.
   GO_VERSION: "1.27.1"
-  # Node is only for api/'s tooling (openapi-typescript, Spectral — Q63);
+  # For api/'s own tooling (openapi-typescript, Spectral — Q63);
   # api/package.json pins the exact package versions this runs against.
+  # web/'s Node version is pinned separately, in web/.nvmrc (Q8, issue #21).
   NODE_VERSION: "24.21.0"
 
 jobs:
@@ -45,6 +46,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
+      # `make lint`/`make test` now also run web/'s own lint, typecheck and
+      # test steps (issue #21) — same Node version the web job below pins.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
       - run: make lint
       - run: make test
 
@@ -81,6 +87,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
+      # `make build` builds web/'s SPA before the Go binaries (issue #21),
+      # so the //go:embed in web/embed.go embeds the real app, not the
+      # committed placeholder — needed here regardless of GOARCH, since the
+      # web build itself always runs on the host architecture.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
       # CGO_ENABLED=0 (set by `make build` itself) means this is a plain
       # cross-compile, no cross toolchain needed — a compile-only check,
       # since there is no arm64 hardware to run anything on anyway (D20).
@@ -88,6 +101,39 @@ jobs:
         env:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
+
+  web:
+    name: Web (Q8, D15, issue #21)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
+      - run: npm ci --no-audit --no-fund
+        working-directory: web
+      - run: npm run lint
+        working-directory: web
+      - run: npm run typecheck
+        working-directory: web
+      - run: npm run test
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      # No outbound request may be baked into the built app (Q49) — SVG/XML
+      # namespace URIs and error-message URLs in minified library code
+      # (react-router, Base UI, React itself) are not requests and are
+      # exempted by name; anything else here is a real regression.
+      - name: Check the build makes no outbound request
+        working-directory: web
+        run: |
+          allowed="(www\.w3\.org|react\.dev/errors|base-ui\.com/production-error|react\.i18next\.com|reactrouter\.com|localhost)"
+          found="$(grep -rEho "https?://[^\"'\) ]+" dist | grep -Ev "$allowed" || true)"
+          if [ -n "$found" ]; then
+            echo "$found"
+            echo "web: the build embeds an outbound request Hoserva did not intend (Q49)" >&2
+            exit 1
+          fi
 
   lab:
     name: Loop-device lab (L2)
