@@ -1,59 +1,164 @@
 // Package api implements the server interfaces ogen generates from
-// api/openapi.yaml (D18). Handler below is a placeholder — #19 and #22 wire
-// it to the job system, store and auth middleware — but it already
-// implements every method apiv1.Handler declares, deliberately not by
-// embedding apiv1.UnimplementedHandler: an explicit method set is what
-// makes the compile-time assertion below mean something. Deleting a method,
-// or changing its signature so it no longer matches the spec, is a build
-// failure, not a test failure — confirmed during development by removing
-// ListJobs and seeing `go build ./...` fail on the assertion, then
-// restoring it; that experiment isn't kept as a standing broken build.
+// api/openapi.yaml (D18). Handler below implements every method
+// apiv1.Handler declares, deliberately not by embedding
+// apiv1.UnimplementedHandler: an explicit method set is what makes the
+// compile-time assertion below mean something. Deleting a method, or
+// changing its signature so it no longer matches the spec, is a build
+// failure, not a test failure.
 package api
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
+
+	"github.com/google/uuid"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/job"
 )
 
-// Handler implements apiv1.Handler.
-type Handler struct{}
+// Handler implements apiv1.Handler against the job system (#19): no
+// business logic lives here (CLAUDE.md's "no business logic in API
+// handlers") — every method below only translates between apiv1's
+// generated types and job.Scheduler/job.Store/job.LogStore's own, and maps
+// the errors they return to the spec's shared Error schema.
+type Handler struct {
+	Scheduler *job.Scheduler
+	Store     *job.Store
+	Logs      *job.LogStore
+}
 
 var _ apiv1.Handler = (*Handler)(nil)
 
-var errNotImplemented = errors.New("not implemented")
+func (h *Handler) ListJobs(ctx context.Context, params apiv1.ListJobsParams) (*apiv1.ListJobsOK, error) {
+	filter := job.ListFilter{}
+	if class, ok := params.Class.Get(); ok {
+		c := job.Class(class)
+		filter.Class = &c
+	}
+	if status, ok := params.Status.Get(); ok {
+		s := job.Status(status)
+		filter.Status = &s
+	}
+	if limit, ok := params.Limit.Get(); ok {
+		filter.Limit = int(limit)
+	}
 
-func (Handler) ListJobs(ctx context.Context, params apiv1.ListJobsParams) (*apiv1.ListJobsOK, error) {
-	return nil, errNotImplemented
+	jobs, err := h.Store.List(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("listing jobs: %w", err)
+	}
+
+	out := make([]apiv1.Job, 0, len(jobs))
+	for _, j := range jobs {
+		apiJob, err := jobToAPI(j)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *apiJob)
+	}
+	return &apiv1.ListJobsOK{Jobs: out}, nil
 }
 
-func (Handler) GetJob(ctx context.Context, params apiv1.GetJobParams) (*apiv1.Job, error) {
-	return nil, errNotImplemented
+func (h *Handler) GetJob(ctx context.Context, params apiv1.GetJobParams) (*apiv1.Job, error) {
+	j, err := h.Store.Get(ctx, params.JobId.String())
+	if err != nil {
+		return nil, mapStoreError(params.JobId, err)
+	}
+	return jobToAPI(j)
 }
 
-func (Handler) CancelJob(ctx context.Context, params apiv1.CancelJobParams) (*apiv1.Job, error) {
-	return nil, errNotImplemented
+func (h *Handler) CancelJob(ctx context.Context, params apiv1.CancelJobParams) (*apiv1.Job, error) {
+	j, err := h.Scheduler.Cancel(ctx, params.JobId.String())
+	if err != nil {
+		return nil, mapSchedulerError(params.JobId, err)
+	}
+	return jobToAPI(j)
 }
 
-func (Handler) ResumeJob(ctx context.Context, params apiv1.ResumeJobParams) (*apiv1.Job, error) {
-	return nil, errNotImplemented
+func (h *Handler) ResumeJob(ctx context.Context, params apiv1.ResumeJobParams) (*apiv1.Job, error) {
+	j, err := h.Scheduler.Resume(ctx, params.JobId.String())
+	if err != nil {
+		return nil, mapSchedulerError(params.JobId, err)
+	}
+	return jobToAPI(j)
 }
 
-func (Handler) GetJobLog(ctx context.Context, params apiv1.GetJobLogParams) (apiv1.GetJobLogOK, error) {
-	return apiv1.GetJobLogOK{}, errNotImplemented
+func (h *Handler) GetJobLog(ctx context.Context, params apiv1.GetJobLogParams) (apiv1.GetJobLogOK, error) {
+	if _, err := h.Store.Get(ctx, params.JobId.String()); err != nil {
+		return apiv1.GetJobLogOK{}, mapStoreError(params.JobId, err)
+	}
+	r, err := h.Logs.Open(params.JobId.String())
+	if err != nil {
+		if errors.Is(err, job.ErrLogNotFound) {
+			return apiv1.GetJobLogOK{}, &apiError{code: "job_log_not_found", statusCode: 404, message: fmt.Sprintf("job %s has no captured log", params.JobId)}
+		}
+		return apiv1.GetJobLogOK{}, fmt.Errorf("opening log for job %s: %w", params.JobId, err)
+	}
+	return apiv1.GetJobLogOK{Data: r}, nil
 }
 
-// NewError maps an internal error to the spec's shared Error schema
-// (doc 01 §5). #19 replaces this with real error classification; every
-// error is reported as an opaque 500 for now, which is honest given there
-// is no real logic yet to classify.
+// apiError is a handler error already classified against the spec's
+// shared Error schema (doc 01 §5) — mapStoreError and mapSchedulerError
+// build these so NewError below has one place to render them, instead of
+// constructing *apiv1.ErrorStatusCode inline at every call site.
+type apiError struct {
+	code       string
+	statusCode int
+	message    string
+}
+
+func (e *apiError) Error() string { return e.message }
+
+func mapStoreError(id uuid.UUID, err error) error {
+	if errors.Is(err, job.ErrNotFound) {
+		return &apiError{code: "job_not_found", statusCode: 404, message: fmt.Sprintf("no job with id %s", id)}
+	}
+	return fmt.Errorf("job %s: %w", id, err)
+}
+
+func mapSchedulerError(id uuid.UUID, err error) error {
+	switch {
+	case errors.Is(err, job.ErrNotFound):
+		return &apiError{code: "job_not_found", statusCode: 404, message: fmt.Sprintf("no job with id %s", id)}
+	case errors.Is(err, job.ErrJobNotCancellable):
+		return &apiError{code: "job_not_cancellable", statusCode: 409, message: fmt.Sprintf("job %s does not support cancellation", id)}
+	case errors.Is(err, job.ErrJobNotResumable):
+		return &apiError{code: "job_not_resumable", statusCode: 409, message: fmt.Sprintf("job %s is not a resumable job type (Q29)", id)}
+	case errors.Is(err, job.ErrJobNotInterrupted):
+		return &apiError{code: "job_not_interrupted", statusCode: 409, message: fmt.Sprintf("job %s can only be resumed while interrupted", id)}
+	case errors.Is(err, job.ErrJobNotRunning):
+		return &apiError{code: "job_not_running", statusCode: 409, message: fmt.Sprintf("job %s is not queued or running", id)}
+	case errors.Is(err, job.ErrMaintenanceMode):
+		return &apiError{code: "maintenance_mode", statusCode: 409, message: "maintenance mode is active — no new jobs are accepted"}
+	case errors.Is(err, job.ErrJobTypeNotRegistered):
+		return &apiError{code: "job_type_not_registered", statusCode: 501, message: fmt.Sprintf("job %s's type has no registered implementation yet", id)}
+	default:
+		return fmt.Errorf("job %s: %w", id, err)
+	}
+}
+
+// NewError maps a handler error to the spec's shared Error schema
+// (doc 01 §5). Every deliberate error this Handler returns is an
+// *apiError built above; anything else is an unclassified internal error,
+// logged server-side with its detail and reported as an opaque 500 with
+// no internal detail in the response body.
 func (Handler) NewError(ctx context.Context, err error) *apiv1.ErrorStatusCode {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return &apiv1.ErrorStatusCode{
+			StatusCode: ae.statusCode,
+			Response:   apiv1.Error{Code: ae.code, Message: ae.message},
+		}
+	}
+	log.Printf("hoservad: internal error: %v", err)
 	return &apiv1.ErrorStatusCode{
 		StatusCode: 500,
 		Response: apiv1.Error{
 			Code:    "internal",
-			Message: err.Error(),
+			Message: "an internal error occurred",
 		},
 	}
 }
