@@ -118,6 +118,11 @@ func run(name, storeDir string) error {
 		return fmt.Errorf("diffing schema.sql against the existing migrations: %w", err)
 	}
 
+	ddls, err = restoreAddColumnReferences(ddls, string(desiredDDLs))
+	if err != nil {
+		return err
+	}
+
 	var kept []string
 	for _, ddl := range ddls {
 		if reasons := store.Destructive(ddl); len(reasons) > 0 {
@@ -192,6 +197,48 @@ func run(name, storeDir string) error {
 
 	fmt.Printf("wrote %s\n", path)
 	return nil
+}
+
+// restoreAddColumnReferences re-attaches, onto each generated
+// "ALTER TABLE ... ADD COLUMN ..." statement in ddls, the new column's own
+// REFERENCES clause read out of schema.sql — the one clause sqldef's
+// SQLite generator silently drops from ADD COLUMN (Q60). It never touches
+// any other statement sqldef emits (a CREATE TABLE already carries a new
+// table's own REFERENCES clauses verbatim, and every other clause a new
+// column can carry — DEFAULT, CHECK, COLLATE — already round-trips through
+// ADD COLUMN correctly), and never touches a column with no REFERENCES
+// clause of its own in schema.sql.
+//
+// A column whose REFERENCES clause pairs with a DEFAULT other than NULL is
+// refused outright here, before ever writing or checking anything: SQLite
+// itself refuses ALTER TABLE ... ADD COLUMN ... REFERENCES ... whenever
+// foreign key constraints are enabled at prepare time and the new column's
+// own default is not NULL, so restoring the clause onto that shape would
+// only trade sqldef's silent drop for a statement SQLite itself can
+// refuse to apply.
+func restoreAddColumnReferences(ddls []string, schemaSQL string) ([]string, error) {
+	refs := store.SchemaColumnReferences(schemaSQL)
+	if len(refs) == 0 {
+		return ddls, nil
+	}
+	out := make([]string, len(ddls))
+	for i, ddl := range ddls {
+		table, column, ok := store.AddColumnTarget(ddl)
+		if !ok {
+			out[i] = ddl
+			continue
+		}
+		ref, ok := refs[store.ColumnKey{Table: table, Column: column}]
+		if !ok {
+			out[i] = ddl
+			continue
+		}
+		if !ref.DefaultIsNull {
+			return nil, fmt.Errorf("schema.sql column %s.%s combines a REFERENCES clause with a default value other than NULL, which SQLite refuses on ALTER TABLE ... ADD COLUMN once foreign key constraints are enabled — write a contract-step migration by hand for this instead (D16)", table, column)
+		}
+		out[i] = ddl + " " + ref.Clause
+	}
+	return out, nil
 }
 
 // currentSchemaDDLs materializes the schema the existing migrations
