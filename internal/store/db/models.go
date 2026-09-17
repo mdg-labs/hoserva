@@ -25,8 +25,33 @@ type Job struct {
 	FinishedAt   sql.NullString `json:"finished_at"`
 }
 
+type MachineKeyCheck struct {
+	ID         int64  `json:"id"`
+	CheckValue []byte `json:"check_value"`
+	CreatedAt  string `json:"created_at"`
+}
+
 type SchemaInfo struct {
 	ID             int64  `json:"id"`
 	InstallationID string `json:"installation_id"`
 	CreatedAt      string `json:"created_at"`
+}
+
+type Session struct {
+	TokenHash string `json:"token_hash"`
+	UserID    string `json:"user_id"`
+	CreatedAt string `json:"created_at"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type User struct {
+	ID                string         `json:"id"`
+	Username          string         `json:"username"`
+	PasswordHash      string         `json:"password_hash"`
+	Role              string         `json:"role"`
+	TotpSecret        []byte         `json:"totp_secret"`
+	TotpConfirmedAt   sql.NullString `json:"totp_confirmed_at"`
+	TotpLastStep      int64          `json:"totp_last_step"`
+	CreatedAt         string         `json:"created_at"`
+	TotpPendingSecret []byte         `json:"totp_pending_secret"`
 }

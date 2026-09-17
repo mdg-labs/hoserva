@@ -11,7 +11,22 @@ import (
 )
 
 var (
-	rn6AllowedHeaders = map[string]string{
+	rn16AllowedHeaders = map[string]string{
+		"POST": "Content-Type",
+	}
+	rn18AllowedHeaders = map[string]string{
+		"POST": "Authorization",
+	}
+	rn10AllowedHeaders = map[string]string{
+		"GET": "Authorization",
+	}
+	rn5AllowedHeaders = map[string]string{
+		"POST": "Authorization,Content-Type",
+	}
+	rn8AllowedHeaders = map[string]string{
+		"POST": "Authorization,Content-Type",
+	}
+	rn15AllowedHeaders = map[string]string{
 		"GET": "Authorization",
 	}
 	rn2AllowedHeaders = map[string]string{
@@ -20,11 +35,14 @@ var (
 	rn3AllowedHeaders = map[string]string{
 		"POST": "Authorization",
 	}
-	rn5AllowedHeaders = map[string]string{
+	rn12AllowedHeaders = map[string]string{
 		"GET": "Authorization",
 	}
-	rn7AllowedHeaders = map[string]string{
+	rn19AllowedHeaders = map[string]string{
 		"POST": "Authorization",
+	}
+	rn6AllowedHeaders = map[string]string{
+		"POST": "Content-Type",
 	}
 )
 
@@ -67,57 +85,201 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		switch elem[0] {
-		case '/': // Prefix: "/jobs"
+		case '/': // Prefix: "/"
 
-			if l := len("/jobs"); len(elem) >= l && elem[0:l] == "/jobs" {
+			if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
 				elem = elem[l:]
 			} else {
 				break
 			}
 
 			if len(elem) == 0 {
-				switch r.Method {
-				case "GET":
-					s.handleListJobsRequest([0]string{}, elemIsEscaped, w, r)
-				default:
-					s.notAllowed(w, r, notAllowedParams{
-						allowedMethods: "GET",
-						allowedHeaders: rn6AllowedHeaders,
-						acceptPost:     "",
-						acceptPatch:    "",
-					})
-				}
-
-				return
+				break
 			}
 			switch elem[0] {
-			case '/': // Prefix: "/"
+			case 'a': // Prefix: "auth/"
 
-				if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
+				if l := len("auth/"); len(elem) >= l && elem[0:l] == "auth/" {
 					elem = elem[l:]
 				} else {
 					break
 				}
 
-				// Param: "jobId"
-				// Match until "/"
-				idx := strings.IndexByte(elem, '/')
-				if idx < 0 {
-					idx = len(elem)
+				if len(elem) == 0 {
+					break
 				}
-				args[0] = elem[:idx]
-				elem = elem[idx:]
+				switch elem[0] {
+				case 'l': // Prefix: "log"
+
+					if l := len("log"); len(elem) >= l && elem[0:l] == "log" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						break
+					}
+					switch elem[0] {
+					case 'i': // Prefix: "in"
+
+						if l := len("in"); len(elem) >= l && elem[0:l] == "in" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "POST":
+								s.handleLoginRequest([0]string{}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "POST",
+									allowedHeaders: rn16AllowedHeaders,
+									acceptPost:     "application/json",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
+					case 'o': // Prefix: "out"
+
+						if l := len("out"); len(elem) >= l && elem[0:l] == "out" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "POST":
+								s.handleLogoutRequest([0]string{}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "POST",
+									allowedHeaders: rn18AllowedHeaders,
+									acceptPost:     "",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
+					}
+
+				case 's': // Prefix: "session"
+
+					if l := len("session"); len(elem) >= l && elem[0:l] == "session" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "GET":
+							s.handleGetCurrentSessionRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET",
+								allowedHeaders: rn10AllowedHeaders,
+								acceptPost:     "",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
+				case 't': // Prefix: "totp/"
+
+					if l := len("totp/"); len(elem) >= l && elem[0:l] == "totp/" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						break
+					}
+					switch elem[0] {
+					case 'c': // Prefix: "confirm"
+
+						if l := len("confirm"); len(elem) >= l && elem[0:l] == "confirm" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "POST":
+								s.handleConfirmTotpRequest([0]string{}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "POST",
+									allowedHeaders: rn5AllowedHeaders,
+									acceptPost:     "application/json",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
+					case 'e': // Prefix: "enroll"
+
+						if l := len("enroll"); len(elem) >= l && elem[0:l] == "enroll" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch r.Method {
+							case "POST":
+								s.handleEnrollTotpRequest([0]string{}, elemIsEscaped, w, r)
+							default:
+								s.notAllowed(w, r, notAllowedParams{
+									allowedMethods: "POST",
+									allowedHeaders: rn8AllowedHeaders,
+									acceptPost:     "application/json",
+									acceptPatch:    "",
+								})
+							}
+
+							return
+						}
+
+					}
+
+				}
+
+			case 'j': // Prefix: "jobs"
+
+				if l := len("jobs"); len(elem) >= l && elem[0:l] == "jobs" {
+					elem = elem[l:]
+				} else {
+					break
+				}
 
 				if len(elem) == 0 {
 					switch r.Method {
 					case "GET":
-						s.handleGetJobRequest([1]string{
-							args[0],
-						}, elemIsEscaped, w, r)
+						s.handleListJobsRequest([0]string{}, elemIsEscaped, w, r)
 					default:
 						s.notAllowed(w, r, notAllowedParams{
 							allowedMethods: "GET",
-							allowedHeaders: rn2AllowedHeaders,
+							allowedHeaders: rn15AllowedHeaders,
 							acceptPost:     "",
 							acceptPatch:    "",
 						})
@@ -134,91 +296,192 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						break
 					}
 
+					// Param: "jobId"
+					// Match until "/"
+					idx := strings.IndexByte(elem, '/')
+					if idx < 0 {
+						idx = len(elem)
+					}
+					args[0] = elem[:idx]
+					elem = elem[idx:]
+
 					if len(elem) == 0 {
-						break
+						switch r.Method {
+						case "GET":
+							s.handleGetJobRequest([1]string{
+								args[0],
+							}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET",
+								allowedHeaders: rn2AllowedHeaders,
+								acceptPost:     "",
+								acceptPatch:    "",
+							})
+						}
+
+						return
 					}
 					switch elem[0] {
-					case 'c': // Prefix: "cancel"
+					case '/': // Prefix: "/"
 
-						if l := len("cancel"); len(elem) >= l && elem[0:l] == "cancel" {
+						if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
 							elem = elem[l:]
 						} else {
 							break
 						}
 
 						if len(elem) == 0 {
-							// Leaf node.
-							switch r.Method {
-							case "POST":
-								s.handleCancelJobRequest([1]string{
-									args[0],
-								}, elemIsEscaped, w, r)
-							default:
-								s.notAllowed(w, r, notAllowedParams{
-									allowedMethods: "POST",
-									allowedHeaders: rn3AllowedHeaders,
-									acceptPost:     "",
-									acceptPatch:    "",
-								})
-							}
-
-							return
-						}
-
-					case 'l': // Prefix: "log"
-
-						if l := len("log"); len(elem) >= l && elem[0:l] == "log" {
-							elem = elem[l:]
-						} else {
 							break
 						}
+						switch elem[0] {
+						case 'c': // Prefix: "cancel"
 
-						if len(elem) == 0 {
-							// Leaf node.
-							switch r.Method {
-							case "GET":
-								s.handleGetJobLogRequest([1]string{
-									args[0],
-								}, elemIsEscaped, w, r)
-							default:
-								s.notAllowed(w, r, notAllowedParams{
-									allowedMethods: "GET",
-									allowedHeaders: rn5AllowedHeaders,
-									acceptPost:     "",
-									acceptPatch:    "",
-								})
+							if l := len("cancel"); len(elem) >= l && elem[0:l] == "cancel" {
+								elem = elem[l:]
+							} else {
+								break
 							}
 
-							return
-						}
+							if len(elem) == 0 {
+								// Leaf node.
+								switch r.Method {
+								case "POST":
+									s.handleCancelJobRequest([1]string{
+										args[0],
+									}, elemIsEscaped, w, r)
+								default:
+									s.notAllowed(w, r, notAllowedParams{
+										allowedMethods: "POST",
+										allowedHeaders: rn3AllowedHeaders,
+										acceptPost:     "",
+										acceptPatch:    "",
+									})
+								}
 
-					case 'r': // Prefix: "resume"
-
-						if l := len("resume"); len(elem) >= l && elem[0:l] == "resume" {
-							elem = elem[l:]
-						} else {
-							break
-						}
-
-						if len(elem) == 0 {
-							// Leaf node.
-							switch r.Method {
-							case "POST":
-								s.handleResumeJobRequest([1]string{
-									args[0],
-								}, elemIsEscaped, w, r)
-							default:
-								s.notAllowed(w, r, notAllowedParams{
-									allowedMethods: "POST",
-									allowedHeaders: rn7AllowedHeaders,
-									acceptPost:     "",
-									acceptPatch:    "",
-								})
+								return
 							}
 
-							return
+						case 'l': // Prefix: "log"
+
+							if l := len("log"); len(elem) >= l && elem[0:l] == "log" {
+								elem = elem[l:]
+							} else {
+								break
+							}
+
+							if len(elem) == 0 {
+								// Leaf node.
+								switch r.Method {
+								case "GET":
+									s.handleGetJobLogRequest([1]string{
+										args[0],
+									}, elemIsEscaped, w, r)
+								default:
+									s.notAllowed(w, r, notAllowedParams{
+										allowedMethods: "GET",
+										allowedHeaders: rn12AllowedHeaders,
+										acceptPost:     "",
+										acceptPatch:    "",
+									})
+								}
+
+								return
+							}
+
+						case 'r': // Prefix: "resume"
+
+							if l := len("resume"); len(elem) >= l && elem[0:l] == "resume" {
+								elem = elem[l:]
+							} else {
+								break
+							}
+
+							if len(elem) == 0 {
+								// Leaf node.
+								switch r.Method {
+								case "POST":
+									s.handleResumeJobRequest([1]string{
+										args[0],
+									}, elemIsEscaped, w, r)
+								default:
+									s.notAllowed(w, r, notAllowedParams{
+										allowedMethods: "POST",
+										allowedHeaders: rn19AllowedHeaders,
+										acceptPost:     "",
+										acceptPatch:    "",
+									})
+								}
+
+								return
+							}
+
 						}
 
+					}
+
+				}
+
+			case 's': // Prefix: "setup/"
+
+				if l := len("setup/"); len(elem) >= l && elem[0:l] == "setup/" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					break
+				}
+				switch elem[0] {
+				case 'a': // Prefix: "admin"
+
+					if l := len("admin"); len(elem) >= l && elem[0:l] == "admin" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "POST":
+							s.handleCreateFirstAdminRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "POST",
+								allowedHeaders: rn6AllowedHeaders,
+								acceptPost:     "application/json",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
+				case 's': // Prefix: "status"
+
+					if l := len("status"); len(elem) >= l && elem[0:l] == "status" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "GET":
+							s.handleGetSetupStatusRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET",
+								allowedHeaders: nil,
+								acceptPost:     "",
+								acceptPatch:    "",
+							})
+						}
+
+						return
 					}
 
 				}
@@ -311,57 +574,203 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 			break
 		}
 		switch elem[0] {
-		case '/': // Prefix: "/jobs"
+		case '/': // Prefix: "/"
 
-			if l := len("/jobs"); len(elem) >= l && elem[0:l] == "/jobs" {
+			if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
 				elem = elem[l:]
 			} else {
 				break
 			}
 
 			if len(elem) == 0 {
-				switch method {
-				case "GET":
-					r.name = ListJobsOperation
-					r.summary = "List jobs"
-					r.operationID = "listJobs"
-					r.operationGroup = ""
-					r.pathPattern = "/jobs"
-					r.args = args
-					r.count = 0
-					return r, true
-				default:
-					return
-				}
+				break
 			}
 			switch elem[0] {
-			case '/': // Prefix: "/"
+			case 'a': // Prefix: "auth/"
 
-				if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
+				if l := len("auth/"); len(elem) >= l && elem[0:l] == "auth/" {
 					elem = elem[l:]
 				} else {
 					break
 				}
 
-				// Param: "jobId"
-				// Match until "/"
-				idx := strings.IndexByte(elem, '/')
-				if idx < 0 {
-					idx = len(elem)
+				if len(elem) == 0 {
+					break
 				}
-				args[0] = elem[:idx]
-				elem = elem[idx:]
+				switch elem[0] {
+				case 'l': // Prefix: "log"
+
+					if l := len("log"); len(elem) >= l && elem[0:l] == "log" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						break
+					}
+					switch elem[0] {
+					case 'i': // Prefix: "in"
+
+						if l := len("in"); len(elem) >= l && elem[0:l] == "in" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "POST":
+								r.name = LoginOperation
+								r.summary = "Log in"
+								r.operationID = "login"
+								r.operationGroup = ""
+								r.pathPattern = "/auth/login"
+								r.args = args
+								r.count = 0
+								return r, true
+							default:
+								return
+							}
+						}
+
+					case 'o': // Prefix: "out"
+
+						if l := len("out"); len(elem) >= l && elem[0:l] == "out" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "POST":
+								r.name = LogoutOperation
+								r.summary = "Log out"
+								r.operationID = "logout"
+								r.operationGroup = ""
+								r.pathPattern = "/auth/logout"
+								r.args = args
+								r.count = 0
+								return r, true
+							default:
+								return
+							}
+						}
+
+					}
+
+				case 's': // Prefix: "session"
+
+					if l := len("session"); len(elem) >= l && elem[0:l] == "session" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "GET":
+							r.name = GetCurrentSessionOperation
+							r.summary = "Get the current session's user"
+							r.operationID = "getCurrentSession"
+							r.operationGroup = ""
+							r.pathPattern = "/auth/session"
+							r.args = args
+							r.count = 0
+							return r, true
+						default:
+							return
+						}
+					}
+
+				case 't': // Prefix: "totp/"
+
+					if l := len("totp/"); len(elem) >= l && elem[0:l] == "totp/" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						break
+					}
+					switch elem[0] {
+					case 'c': // Prefix: "confirm"
+
+						if l := len("confirm"); len(elem) >= l && elem[0:l] == "confirm" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "POST":
+								r.name = ConfirmTotpOperation
+								r.summary = "Confirm TOTP enrolment"
+								r.operationID = "confirmTotp"
+								r.operationGroup = ""
+								r.pathPattern = "/auth/totp/confirm"
+								r.args = args
+								r.count = 0
+								return r, true
+							default:
+								return
+							}
+						}
+
+					case 'e': // Prefix: "enroll"
+
+						if l := len("enroll"); len(elem) >= l && elem[0:l] == "enroll" {
+							elem = elem[l:]
+						} else {
+							break
+						}
+
+						if len(elem) == 0 {
+							// Leaf node.
+							switch method {
+							case "POST":
+								r.name = EnrollTotpOperation
+								r.summary = "Start TOTP enrolment for the signed-in user"
+								r.operationID = "enrollTotp"
+								r.operationGroup = ""
+								r.pathPattern = "/auth/totp/enroll"
+								r.args = args
+								r.count = 0
+								return r, true
+							default:
+								return
+							}
+						}
+
+					}
+
+				}
+
+			case 'j': // Prefix: "jobs"
+
+				if l := len("jobs"); len(elem) >= l && elem[0:l] == "jobs" {
+					elem = elem[l:]
+				} else {
+					break
+				}
 
 				if len(elem) == 0 {
 					switch method {
 					case "GET":
-						r.name = GetJobOperation
-						r.summary = "Get a job"
-						r.operationID = "getJob"
+						r.name = ListJobsOperation
+						r.summary = "List jobs"
+						r.operationID = "listJobs"
 						r.operationGroup = ""
-						r.pathPattern = "/jobs/{jobId}"
+						r.pathPattern = "/jobs"
 						r.args = args
-						r.count = 1
+						r.count = 0
 						return r, true
 					default:
 						return
@@ -376,85 +785,184 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 						break
 					}
 
+					// Param: "jobId"
+					// Match until "/"
+					idx := strings.IndexByte(elem, '/')
+					if idx < 0 {
+						idx = len(elem)
+					}
+					args[0] = elem[:idx]
+					elem = elem[idx:]
+
 					if len(elem) == 0 {
-						break
+						switch method {
+						case "GET":
+							r.name = GetJobOperation
+							r.summary = "Get a job"
+							r.operationID = "getJob"
+							r.operationGroup = ""
+							r.pathPattern = "/jobs/{jobId}"
+							r.args = args
+							r.count = 1
+							return r, true
+						default:
+							return
+						}
 					}
 					switch elem[0] {
-					case 'c': // Prefix: "cancel"
+					case '/': // Prefix: "/"
 
-						if l := len("cancel"); len(elem) >= l && elem[0:l] == "cancel" {
+						if l := len("/"); len(elem) >= l && elem[0:l] == "/" {
 							elem = elem[l:]
 						} else {
 							break
 						}
 
 						if len(elem) == 0 {
-							// Leaf node.
-							switch method {
-							case "POST":
-								r.name = CancelJobOperation
-								r.summary = "Cancel a job"
-								r.operationID = "cancelJob"
-								r.operationGroup = ""
-								r.pathPattern = "/jobs/{jobId}/cancel"
-								r.args = args
-								r.count = 1
-								return r, true
-							default:
-								return
-							}
-						}
-
-					case 'l': // Prefix: "log"
-
-						if l := len("log"); len(elem) >= l && elem[0:l] == "log" {
-							elem = elem[l:]
-						} else {
 							break
 						}
+						switch elem[0] {
+						case 'c': // Prefix: "cancel"
 
-						if len(elem) == 0 {
-							// Leaf node.
-							switch method {
-							case "GET":
-								r.name = GetJobLogOperation
-								r.summary = "Download a job's captured stdout/stderr"
-								r.operationID = "getJobLog"
-								r.operationGroup = ""
-								r.pathPattern = "/jobs/{jobId}/log"
-								r.args = args
-								r.count = 1
-								return r, true
-							default:
-								return
+							if l := len("cancel"); len(elem) >= l && elem[0:l] == "cancel" {
+								elem = elem[l:]
+							} else {
+								break
 							}
-						}
 
-					case 'r': // Prefix: "resume"
-
-						if l := len("resume"); len(elem) >= l && elem[0:l] == "resume" {
-							elem = elem[l:]
-						} else {
-							break
-						}
-
-						if len(elem) == 0 {
-							// Leaf node.
-							switch method {
-							case "POST":
-								r.name = ResumeJobOperation
-								r.summary = "Resume a checkpointed job"
-								r.operationID = "resumeJob"
-								r.operationGroup = ""
-								r.pathPattern = "/jobs/{jobId}/resume"
-								r.args = args
-								r.count = 1
-								return r, true
-							default:
-								return
+							if len(elem) == 0 {
+								// Leaf node.
+								switch method {
+								case "POST":
+									r.name = CancelJobOperation
+									r.summary = "Cancel a job"
+									r.operationID = "cancelJob"
+									r.operationGroup = ""
+									r.pathPattern = "/jobs/{jobId}/cancel"
+									r.args = args
+									r.count = 1
+									return r, true
+								default:
+									return
+								}
 							}
+
+						case 'l': // Prefix: "log"
+
+							if l := len("log"); len(elem) >= l && elem[0:l] == "log" {
+								elem = elem[l:]
+							} else {
+								break
+							}
+
+							if len(elem) == 0 {
+								// Leaf node.
+								switch method {
+								case "GET":
+									r.name = GetJobLogOperation
+									r.summary = "Download a job's captured stdout/stderr"
+									r.operationID = "getJobLog"
+									r.operationGroup = ""
+									r.pathPattern = "/jobs/{jobId}/log"
+									r.args = args
+									r.count = 1
+									return r, true
+								default:
+									return
+								}
+							}
+
+						case 'r': // Prefix: "resume"
+
+							if l := len("resume"); len(elem) >= l && elem[0:l] == "resume" {
+								elem = elem[l:]
+							} else {
+								break
+							}
+
+							if len(elem) == 0 {
+								// Leaf node.
+								switch method {
+								case "POST":
+									r.name = ResumeJobOperation
+									r.summary = "Resume a checkpointed job"
+									r.operationID = "resumeJob"
+									r.operationGroup = ""
+									r.pathPattern = "/jobs/{jobId}/resume"
+									r.args = args
+									r.count = 1
+									return r, true
+								default:
+									return
+								}
+							}
+
 						}
 
+					}
+
+				}
+
+			case 's': // Prefix: "setup/"
+
+				if l := len("setup/"); len(elem) >= l && elem[0:l] == "setup/" {
+					elem = elem[l:]
+				} else {
+					break
+				}
+
+				if len(elem) == 0 {
+					break
+				}
+				switch elem[0] {
+				case 'a': // Prefix: "admin"
+
+					if l := len("admin"); len(elem) >= l && elem[0:l] == "admin" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "POST":
+							r.name = CreateFirstAdminOperation
+							r.summary = "Create the first admin account"
+							r.operationID = "createFirstAdmin"
+							r.operationGroup = ""
+							r.pathPattern = "/setup/admin"
+							r.args = args
+							r.count = 0
+							return r, true
+						default:
+							return
+						}
+					}
+
+				case 's': // Prefix: "status"
+
+					if l := len("status"); len(elem) >= l && elem[0:l] == "status" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "GET":
+							r.name = GetSetupStatusOperation
+							r.summary = "Check whether the first-run admin account exists"
+							r.operationID = "getSetupStatus"
+							r.operationGroup = ""
+							r.pathPattern = "/setup/status"
+							r.args = args
+							r.count = 0
+							return r, true
+						default:
+							return
+						}
 					}
 
 				}

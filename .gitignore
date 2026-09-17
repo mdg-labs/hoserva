@@ -31,5 +31,9 @@ web/*.tsbuildinfo
 web/dist/*
 !web/dist/.gitkeep
 
+# cmd/hoservad's --dev convenience (#22): database, machine key, TLS
+# certificate and job logs for a local dev run, never committed.
+.hoserva-dev/
+
 # Editors and OS
 .DS_Store

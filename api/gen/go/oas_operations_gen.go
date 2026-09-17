@@ -6,9 +6,16 @@ package apiv1
 type OperationName = string
 
 const (
-	CancelJobOperation OperationName = "CancelJob"
-	GetJobOperation    OperationName = "GetJob"
-	GetJobLogOperation OperationName = "GetJobLog"
-	ListJobsOperation  OperationName = "ListJobs"
-	ResumeJobOperation OperationName = "ResumeJob"
+	CancelJobOperation         OperationName = "CancelJob"
+	ConfirmTotpOperation       OperationName = "ConfirmTotp"
+	CreateFirstAdminOperation  OperationName = "CreateFirstAdmin"
+	EnrollTotpOperation        OperationName = "EnrollTotp"
+	GetCurrentSessionOperation OperationName = "GetCurrentSession"
+	GetJobOperation            OperationName = "GetJob"
+	GetJobLogOperation         OperationName = "GetJobLog"
+	GetSetupStatusOperation    OperationName = "GetSetupStatus"
+	ListJobsOperation          OperationName = "ListJobs"
+	LoginOperation             OperationName = "Login"
+	LogoutOperation            OperationName = "Logout"
+	ResumeJobOperation         OperationName = "ResumeJob"
 )

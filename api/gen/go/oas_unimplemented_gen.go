@@ -23,6 +23,52 @@ func (UnimplementedHandler) CancelJob(ctx context.Context, params CancelJobParam
 	return r, ht.ErrNotImplemented
 }
 
+// ConfirmTotp implements confirmTotp operation.
+//
+// Activates the pending secret enrollTotp created, once a code proves the signed-in user actually has
+// it.
+//
+// POST /auth/totp/confirm
+func (UnimplementedHandler) ConfirmTotp(ctx context.Context, req *TotpConfirmRequest) error {
+	return ht.ErrNotImplemented
+}
+
+// CreateFirstAdmin implements createFirstAdmin operation.
+//
+// Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
+// race between two concurrent requests can never create two admins (#22). Signs the new admin in on
+// success, exactly like login.
+//
+// POST /setup/admin
+func (UnimplementedHandler) CreateFirstAdmin(ctx context.Context, req *CreateFirstAdminRequest) (r *UserHeaders, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// EnrollTotp implements enrollTotp operation.
+//
+// Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
+// — the account's existing active credential, if any, is untouched until confirmTotp activates the
+// new one. Enrolling again before confirming replaces the still-pending secret. Once TOTP is already
+// active on this account, replacing it requires proving the caller still holds the account: exactly
+// one of the current password or a current TOTP code, in TotpEnrollRequest. Omitting both while TOTP
+// is active is refused (totp_reverify_required); supplying both is refused too
+// (totp_reverify_ambiguous), since each is one guess at the active credential and honouring both would
+// spend two for the price of one request. Neither is required for a first enrolment.
+//
+// POST /auth/totp/enroll
+func (UnimplementedHandler) EnrollTotp(ctx context.Context, req *TotpEnrollRequest) (r *TotpEnrollResponse, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetCurrentSession implements getCurrentSession operation.
+//
+// The signed-in user this session cookie belongs to.
+//
+// GET /auth/session
+func (UnimplementedHandler) GetCurrentSession(ctx context.Context) (r *User, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetJob implements getJob operation.
 //
 // A single job's current state, by id.
@@ -41,6 +87,17 @@ func (UnimplementedHandler) GetJobLog(ctx context.Context, params GetJobLogParam
 	return r, ht.ErrNotImplemented
 }
 
+// GetSetupStatus implements getSetupStatus operation.
+//
+// Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are
+// the only routes that don't refuse every request with a "setup required" error while `adminExists` is
+// false (#22).
+//
+// GET /setup/status
+func (UnimplementedHandler) GetSetupStatus(ctx context.Context) (r *SetupStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ListJobs implements listJobs operation.
 //
 // Every long-running operation is a job (doc 01 §4). Filterable by class and status so the UI's jobs
@@ -48,6 +105,34 @@ func (UnimplementedHandler) GetJobLog(ctx context.Context, params GetJobLogParam
 //
 // GET /jobs
 func (UnimplementedHandler) ListJobs(ctx context.Context, params ListJobsParams) (r *ListJobsOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// Login implements login operation.
+//
+// Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather
+// than full Unicode case folding. Password, plus a TOTP code once the account has TOTP enrolled (doc
+// 01 §7). Rate-limited and lockout-protected per account and per source address (doc 01 §7): an
+// unknown username and a wrong password against a real one get the same status and error code
+// (`invalid_credentials`), reach lockout (`rate_limited`) at the same failure threshold, and cost the
+// same bounded argon2id-shaped work either way, for similar timing, under ordinary load — under a
+// sustained flood large enough to fill and evict from the unknown-username table's own 10,000-entry
+// cap, an unknown username's lockout can lift early, where a real account's own (never capped or
+// evicted) would not. Once the password is correct, `totp_required` (no code supplied) versus
+// `totp_invalid` (a wrong one) does reveal that an account has TOTP enrolled — an unavoidable,
+// rate-limited signal, not one this API tries to hide.
+//
+// POST /auth/login
+func (UnimplementedHandler) Login(ctx context.Context, req *LoginRequest) (r *UserHeaders, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// Logout implements logout operation.
+//
+// Revokes the current session server-side and clears the cookie.
+//
+// POST /auth/logout
+func (UnimplementedHandler) Logout(ctx context.Context) (r *LogoutNoContent, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

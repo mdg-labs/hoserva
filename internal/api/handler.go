@@ -28,6 +28,9 @@ type Handler struct {
 	Scheduler *job.Scheduler
 	Store     *job.Store
 	Logs      *job.LogStore
+	// Auth is #22's setup/login/session/TOTP business logic — nil is only
+	// valid in tests that exercise none of those operations.
+	Auth *AuthService
 }
 
 var _ apiv1.Handler = (*Handler)(nil)
@@ -147,7 +150,11 @@ func mapSchedulerError(id uuid.UUID, err error) error {
 // no internal detail in the response body.
 func (Handler) NewError(ctx context.Context, err error) *apiv1.ErrorStatusCode {
 	var ae *apiError
-	if errors.As(err, &ae) {
+	if !errors.As(err, &ae) {
+		err = mapAuthError(err)
+		errors.As(err, &ae)
+	}
+	if ae != nil {
 		return &apiv1.ErrorStatusCode{
 			StatusCode: ae.statusCode,
 			Response:   apiv1.Error{Code: ae.code, Message: ae.message},

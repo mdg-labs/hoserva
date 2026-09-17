@@ -41,9 +41,58 @@ func (s *ApiToken) SetRoles(val []string) {
 	s.Roles = val
 }
 
+// ConfirmTotpNoContent is response for ConfirmTotp operation.
+type ConfirmTotpNoContent struct{}
+
+// Ref: #/components/schemas/CreateFirstAdminRequest
+type CreateFirstAdminRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// GetUsername returns the value of Username.
+func (s *CreateFirstAdminRequest) GetUsername() string {
+	return s.Username
+}
+
+// GetPassword returns the value of Password.
+func (s *CreateFirstAdminRequest) GetPassword() string {
+	return s.Password
+}
+
+// SetUsername sets the value of Username.
+func (s *CreateFirstAdminRequest) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetPassword sets the value of Password.
+func (s *CreateFirstAdminRequest) SetPassword(val string) {
+	s.Password = val
+}
+
 // Ref: #/components/schemas/Error
 type Error struct {
-	// A stable, machine-readable identifier, e.g. `job_not_found`.
+	// A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation (#22) can
+	// also return one of: `setup_required` (409 — no admin account exists yet; every operation but
+	// getSetupStatus/createFirstAdmin refuses with this while it's true), `setup_complete` (409,
+	// createFirstAdmin — an admin account already exists), `rate_limited` (429 — the account or source
+	// address is currently locked out after repeated failures; `message` gives a retry-after), `too_busy`
+	// (503 — the bounded password-hashing worker pool is saturated; safe to retry shortly),
+	// `invalid_credentials` (401, login — an unknown username or wrong password, deliberately
+	// indistinguishable), `totp_required` (401, login — the account has TOTP enrolled and no code was
+	// supplied), `totp_invalid` (401, login and confirmTotp — a code was supplied but is wrong, expired
+	// or already used; a missing login code is `totp_required` instead, never this),
+	// `totp_reverify_required` (403, enrollTotp — TOTP is already active and the caller didn't prove
+	// they still hold the account: no password or code was supplied, or the one supplied was wrong; 403
+	// rather than 401 since the session itself is valid, only the reverification is missing or failed),
+	// `totp_reverify_ambiguous` (400, enrollTotp — TOTP is already active and both the current password
+	// and a current TOTP code were supplied; supply exactly one), `totp_not_pending` (409, confirmTotp —
+	// no pending secret to confirm), `unauthorized` (401 — no credential, or one that no longer
+	// validates), `forbidden` (403 — a valid credential whose role doesn't satisfy the operation),
+	// `no_session` (404 — the Unix socket's peer-credential-trusted local access has no signed-in user
+	// for an operation that needs one), `request_too_large` (413 — the request body exceeded the
+	// server's size limit), `bad_request` (400 — the request body could not be decoded) and `not_found`
+	// (404 — no such API route).
 	Code string `json:"code"`
 	// A human-readable explanation, safe to show in the UI or CLI.
 	Message string `json:"message"`
@@ -601,6 +650,59 @@ func (s *ListJobsOK) SetJobs(val []Job) {
 	s.Jobs = val
 }
 
+// Ref: #/components/schemas/LoginRequest
+type LoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	// Required once the account has TOTP enrolled; omitted otherwise.
+	TotpCode OptString `json:"totpCode"`
+}
+
+// GetUsername returns the value of Username.
+func (s *LoginRequest) GetUsername() string {
+	return s.Username
+}
+
+// GetPassword returns the value of Password.
+func (s *LoginRequest) GetPassword() string {
+	return s.Password
+}
+
+// GetTotpCode returns the value of TotpCode.
+func (s *LoginRequest) GetTotpCode() OptString {
+	return s.TotpCode
+}
+
+// SetUsername sets the value of Username.
+func (s *LoginRequest) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetPassword sets the value of Password.
+func (s *LoginRequest) SetPassword(val string) {
+	s.Password = val
+}
+
+// SetTotpCode sets the value of TotpCode.
+func (s *LoginRequest) SetTotpCode(val OptString) {
+	s.TotpCode = val
+}
+
+// LogoutNoContent is response for Logout operation.
+type LogoutNoContent struct {
+	SetCookie OptString
+}
+
+// GetSetCookie returns the value of SetCookie.
+func (s *LogoutNoContent) GetSetCookie() OptString {
+	return s.SetCookie
+}
+
+// SetSetCookie sets the value of SetCookie.
+func (s *LogoutNoContent) SetSetCookie(val OptString) {
+	s.SetCookie = val
+}
+
 // NewOptErrorDetails returns new OptErrorDetails with value set to v.
 func NewOptErrorDetails(v ErrorDetails) OptErrorDetails {
 	return OptErrorDetails{
@@ -989,6 +1091,52 @@ func (o OptNilInt32) Or(d int32) int32 {
 	return d
 }
 
+// NewOptString returns new OptString with value set to v.
+func NewOptString(v string) OptString {
+	return OptString{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptString is optional string.
+type OptString struct {
+	Value string
+	Set   bool
+}
+
+// IsSet returns true if OptString was set.
+func (o OptString) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptString) Reset() {
+	var v string
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptString) SetTo(v string) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptString) Get() (v string, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptString) Or(d string) string {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 type SessionCookie struct {
 	APIKey string
 	Roles  []string
@@ -1012,4 +1160,209 @@ func (s *SessionCookie) SetAPIKey(val string) {
 // SetRoles sets the value of Roles.
 func (s *SessionCookie) SetRoles(val []string) {
 	s.Roles = val
+}
+
+// Ref: #/components/schemas/SetupStatus
+type SetupStatus struct {
+	AdminExists bool `json:"adminExists"`
+}
+
+// GetAdminExists returns the value of AdminExists.
+func (s *SetupStatus) GetAdminExists() bool {
+	return s.AdminExists
+}
+
+// SetAdminExists sets the value of AdminExists.
+func (s *SetupStatus) SetAdminExists(val bool) {
+	s.AdminExists = val
+}
+
+// Ref: #/components/schemas/TotpConfirmRequest
+type TotpConfirmRequest struct {
+	Code string `json:"code"`
+}
+
+// GetCode returns the value of Code.
+func (s *TotpConfirmRequest) GetCode() string {
+	return s.Code
+}
+
+// SetCode sets the value of Code.
+func (s *TotpConfirmRequest) SetCode(val string) {
+	s.Code = val
+}
+
+// Both fields are optional for a first enrolment. Once TOTP is already active on the account, exactly
+// one must prove the caller still holds it — the current password, or a current TOTP code — or
+// enrollTotp is refused; supplying both is refused too (doc 01 §7).
+// Ref: #/components/schemas/TotpEnrollRequest
+type TotpEnrollRequest struct {
+	Password OptString `json:"password"`
+	Code     OptString `json:"code"`
+}
+
+// GetPassword returns the value of Password.
+func (s *TotpEnrollRequest) GetPassword() OptString {
+	return s.Password
+}
+
+// GetCode returns the value of Code.
+func (s *TotpEnrollRequest) GetCode() OptString {
+	return s.Code
+}
+
+// SetPassword sets the value of Password.
+func (s *TotpEnrollRequest) SetPassword(val OptString) {
+	s.Password = val
+}
+
+// SetCode sets the value of Code.
+func (s *TotpEnrollRequest) SetCode(val OptString) {
+	s.Code = val
+}
+
+// Ref: #/components/schemas/TotpEnrollResponse
+type TotpEnrollResponse struct {
+	// Base32-encoded TOTP secret (RFC 6238), for manual entry.
+	Secret string `json:"secret"`
+	// An otpauth:// URI, for the enrolment QR code (doc 03 §1).
+	OtpauthUri string `json:"otpauthUri"`
+}
+
+// GetSecret returns the value of Secret.
+func (s *TotpEnrollResponse) GetSecret() string {
+	return s.Secret
+}
+
+// GetOtpauthUri returns the value of OtpauthUri.
+func (s *TotpEnrollResponse) GetOtpauthUri() string {
+	return s.OtpauthUri
+}
+
+// SetSecret sets the value of Secret.
+func (s *TotpEnrollResponse) SetSecret(val string) {
+	s.Secret = val
+}
+
+// SetOtpauthUri sets the value of OtpauthUri.
+func (s *TotpEnrollResponse) SetOtpauthUri(val string) {
+	s.OtpauthUri = val
+}
+
+// Ref: #/components/schemas/User
+type User struct {
+	ID       uuid.UUID `json:"id"`
+	Username string    `json:"username"`
+	Role     UserRole  `json:"role"`
+	// Whether TOTP is confirmed and active on this account.
+	TotpEnrolled bool `json:"totpEnrolled"`
+}
+
+// GetID returns the value of ID.
+func (s *User) GetID() uuid.UUID {
+	return s.ID
+}
+
+// GetUsername returns the value of Username.
+func (s *User) GetUsername() string {
+	return s.Username
+}
+
+// GetRole returns the value of Role.
+func (s *User) GetRole() UserRole {
+	return s.Role
+}
+
+// GetTotpEnrolled returns the value of TotpEnrolled.
+func (s *User) GetTotpEnrolled() bool {
+	return s.TotpEnrolled
+}
+
+// SetID sets the value of ID.
+func (s *User) SetID(val uuid.UUID) {
+	s.ID = val
+}
+
+// SetUsername sets the value of Username.
+func (s *User) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetRole sets the value of Role.
+func (s *User) SetRole(val UserRole) {
+	s.Role = val
+}
+
+// SetTotpEnrolled sets the value of TotpEnrolled.
+func (s *User) SetTotpEnrolled(val bool) {
+	s.TotpEnrolled = val
+}
+
+// UserHeaders wraps User with response headers.
+type UserHeaders struct {
+	SetCookie OptString
+	Response  User
+}
+
+// GetSetCookie returns the value of SetCookie.
+func (s *UserHeaders) GetSetCookie() OptString {
+	return s.SetCookie
+}
+
+// GetResponse returns the value of Response.
+func (s *UserHeaders) GetResponse() User {
+	return s.Response
+}
+
+// SetSetCookie sets the value of SetCookie.
+func (s *UserHeaders) SetSetCookie(val OptString) {
+	s.SetCookie = val
+}
+
+// SetResponse sets the value of Response.
+func (s *UserHeaders) SetResponse(val User) {
+	s.Response = val
+}
+
+// Q27 — share-only users have no API access and are not represented here.
+// Ref: #/components/schemas/UserRole
+type UserRole string
+
+const (
+	UserRoleAdmin  UserRole = "admin"
+	UserRoleViewer UserRole = "viewer"
+)
+
+// AllValues returns all UserRole values.
+func (UserRole) AllValues() []UserRole {
+	return []UserRole{
+		UserRoleAdmin,
+		UserRoleViewer,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s UserRole) MarshalText() ([]byte, error) {
+	switch s {
+	case UserRoleAdmin:
+		return []byte(s), nil
+	case UserRoleViewer:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *UserRole) UnmarshalText(data []byte) error {
+	switch UserRole(data) {
+	case UserRoleAdmin:
+		*s = UserRoleAdmin
+		return nil
+	case UserRoleViewer:
+		*s = UserRoleViewer
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }

@@ -38,11 +38,15 @@ func findAuthorization(h http.Header, prefix string) (string, bool) {
 
 // operationRolesApiToken is a private map storing roles per operation.
 var operationRolesApiToken = map[string][]string{
-	CancelJobOperation: []string{},
-	GetJobOperation:    []string{},
-	GetJobLogOperation: []string{},
-	ListJobsOperation:  []string{},
-	ResumeJobOperation: []string{},
+	CancelJobOperation:         []string{},
+	ConfirmTotpOperation:       []string{},
+	EnrollTotpOperation:        []string{},
+	GetCurrentSessionOperation: []string{},
+	GetJobOperation:            []string{},
+	GetJobLogOperation:         []string{},
+	ListJobsOperation:          []string{},
+	LogoutOperation:            []string{},
+	ResumeJobOperation:         []string{},
 }
 
 // GetRolesForApiToken returns the required roles for the given operation.
@@ -68,11 +72,15 @@ func GetRolesForApiToken(operation string) []string {
 
 // operationRolesSessionCookie is a private map storing roles per operation.
 var operationRolesSessionCookie = map[string][]string{
-	CancelJobOperation: []string{},
-	GetJobOperation:    []string{},
-	GetJobLogOperation: []string{},
-	ListJobsOperation:  []string{},
-	ResumeJobOperation: []string{},
+	CancelJobOperation:         []string{},
+	ConfirmTotpOperation:       []string{},
+	EnrollTotpOperation:        []string{},
+	GetCurrentSessionOperation: []string{},
+	GetJobOperation:            []string{},
+	GetJobLogOperation:         []string{},
+	ListJobsOperation:          []string{},
+	LogoutOperation:            []string{},
+	ResumeJobOperation:         []string{},
 }
 
 // GetRolesForSessionCookie returns the required roles for the given operation.
