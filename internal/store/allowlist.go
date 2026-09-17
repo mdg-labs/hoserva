@@ -149,10 +149,16 @@ func classifyCreateIndex(tokens []sqlToken, i int) statementClass {
 	return classOrdinary
 }
 
-// classifyCreateTrigger never looks inside the trigger's own BEGIN...END
-// body — those statements are part of the trigger's definition, not
-// top-level statements splitStatements ever hands to this classifier on
-// their own.
+// classifyCreateTrigger decides a trigger's class from its event clause's
+// own table (legitimately full of INSERT/UPDATE/DELETE keywords: BEFORE
+// INSERT, UPDATE OF col, ...) and everything after it — the FOR EACH ROW/
+// WHEN clause and the BEGIN...END body itself. A trigger that changes data
+// (INSERT/UPDATE/DELETE/REPLACE, Q60) fires again on every future write at
+// ordinary runtime, not just once like a migration's own transform, so it
+// is a data change and not merely a schema change — classContractOnly,
+// exactly like the rebuild shapes below, requires a reviewed, registered
+// contract step (D16). A trigger whose remainder contains only SELECT
+// (including SELECT RAISE(...)) stays classOrdinary.
 func classifyCreateTrigger(tokens []sqlToken, i int, isTemp bool) statementClass {
 	if isTemp {
 		return classDisallowed
@@ -161,10 +167,112 @@ func classifyCreateTrigger(tokens []sqlToken, i int, isTemp bool) statementClass
 	if nameIsTempQualified(tokens, i) {
 		return classDisallowed
 	}
-	if qualifiedNameEnd(tokens, i) == i {
+	nameEnd := qualifiedNameEnd(tokens, i)
+	if nameEnd == i {
 		return classDisallowed
 	}
+	afterTable, ok := triggerEventClauseEnd(tokens, nameEnd)
+	if !ok {
+		return classDisallowed
+	}
+	if triggerRemainderHasDML(tokens, afterTable) {
+		return classContractOnly
+	}
 	return classOrdinary
+}
+
+// triggerEventClauseEnd returns the index just past the (possibly
+// schema-qualified) table name in a CREATE TRIGGER statement's own fixed
+// event clause — [BEFORE|AFTER|INSTEAD OF] {DELETE|INSERT|UPDATE
+// [OF column, ...]} ON <table> — given i pointing right after the
+// trigger's own name. This is the one part of the statement legitimately
+// full of the words INSERT/UPDATE/DELETE (the event itself, an UPDATE OF
+// column list); everything from here to the statement's end is instead
+// scanned by triggerRemainderHasDML. ok is false when the header does not
+// match this grammar at all, which fails closed to classDisallowed in the
+// caller rather than guessing.
+func triggerEventClauseEnd(tokens []sqlToken, i int) (int, bool) {
+	switch {
+	case isWord(tokens, i, "before"), isWord(tokens, i, "after"):
+		i++
+	case isWord(tokens, i, "instead") && isWord(tokens, i+1, "of"):
+		i += 2
+	}
+	switch {
+	case isWord(tokens, i, "delete"), isWord(tokens, i, "insert"):
+		i++
+	case isWord(tokens, i, "update"):
+		i++
+		if isWord(tokens, i, "of") {
+			i++
+			for {
+				nameEnd := qualifiedNameEnd(tokens, i)
+				if nameEnd == i {
+					return 0, false
+				}
+				i = nameEnd
+				if !isPunct(tokens, i, ",") {
+					break
+				}
+				i++
+			}
+		}
+	default:
+		return 0, false
+	}
+	if !isWord(tokens, i, "on") {
+		return 0, false
+	}
+	i++
+	nameEnd := qualifiedNameEnd(tokens, i)
+	if nameEnd == i {
+		return 0, false
+	}
+	return nameEnd, true
+}
+
+// triggerRemainderHasDML reports whether any unquoted word token from index
+// i to the statement's end is insert, update, delete or replace. SQLite has
+// no way to nest a real INSERT/UPDATE/DELETE/REPLACE statement inside a FOR
+// EACH ROW clause, a WHEN expr, or a body statement's own sub-select or CASE
+// expression (confirmed directly: none of those positions accept a DML
+// statement at all), so an unquoted occurrence of one of these words past
+// the event clause's own table is always either a real top-level body
+// statement's leading keyword or — the one accepted false positive — an
+// unquoted replace used as an identifier — a column, table or alias name
+// (SELECT replace FROM a) — or as the REPLACE(...) scalar function, in an
+// otherwise SELECT-only trigger; either way it pushes the trigger to
+// classContractOnly, the safe direction for that ambiguity (Q60), so this
+// fails closed by construction rather than needing to locate BEGIN or
+// track CASE...END nesting at all. A quoted
+// token ("update", `delete`, [replace], 'insert') never counts — SQLite
+// resolves it as a column, not a keyword, wherever it legally appears —
+// which keeps a quoted column named "update"/"delete" from ever being
+// mistaken for the keyword.
+func triggerRemainderHasDML(tokens []sqlToken, i int) bool {
+	for ; i < len(tokens); i++ {
+		t := tokens[i]
+		if t.kind != tokWord || t.quoted {
+			continue
+		}
+		switch t.text {
+		case "insert", "update", "delete", "replace":
+			return true
+		}
+	}
+	return false
+}
+
+// isCreateTriggerStatement reports whether stmt's own leading tokens are
+// (non-TEMP) CREATE TRIGGER — the one classContractOnly shape
+// CheckSchemaVocabulary accepts (see its own doc comment): unlike every
+// other contract-only shape, a DML-bodied trigger is not a transitional
+// rebuild step that disappears once the change is complete — it is itself
+// the desired end state, so schema.sql has to be able to declare it for
+// CheckDrift's replay-vs-schema.sql comparison to ever match once a
+// migration registers one.
+func isCreateTriggerStatement(tokens []sqlToken) bool {
+	return isWord(tokens, 0, "create") && isWord(tokens, 1, "trigger")
 }
 
 func classifyCreateView(tokens []sqlToken, i int, isTemp bool) statementClass {
@@ -431,20 +539,32 @@ func CheckStatementVocabulary(migrations []Migration) error {
 // CheckSchemaVocabulary refuses any statement in schema.sql outside the
 // ordinary migration vocabulary (classOrdinary) — CREATE TABLE/INDEX/VIEW/
 // TRIGGER and ALTER TABLE ADD/RENAME COLUMN, never TEMP, never DROP, never
-// DML. schema.sql describes the desired full end state, never a step to
-// get there, so a contract-only shape (a DROP, a table rebuild, a contract
-// step's own INSERT ... SELECT) never belongs there either — this refuses
-// classContractOnly exactly like classDisallowed, unlike
-// CheckStatementVocabulary. CheckDrift executes schema.sql verbatim to
-// build its own comparison database (drift.go); this is what has to run
-// first, so that execution never reaches an ATTACH, a VACUUM INTO, a PRAGMA
-// or any other statement able to touch the filesystem or a connection's own
-// settings.
+// DML — with exactly one classContractOnly exception: a CREATE TRIGGER
+// whose body carries DML (isCreateTriggerStatement). Every other
+// contract-only shape (a DROP, a table rebuild, a contract step's own
+// INSERT ... SELECT) is a transitional step of an expand/contract change
+// that leaves no trace in the desired end state once it's done, so none of
+// them ever belongs in schema.sql — those still refuse exactly like
+// classDisallowed. A DML-bodied trigger is different: once a registered
+// contract step creates one, the trigger itself *is* part of the desired
+// end state (D16 only requires review of the change that adds it, not that
+// the object stop existing), so schema.sql has to be able to declare it —
+// otherwise CheckDrift's replay-vs-schema.sql comparison could never agree
+// once such a trigger exists at all. CheckDrift executes schema.sql
+// verbatim to build its own comparison database (drift.go); this is what
+// has to run first, so that execution never reaches an ATTACH, a VACUUM
+// INTO, a PRAGMA or any other statement able to touch the filesystem or a
+// connection's own settings.
 func CheckSchemaVocabulary(schemaSQL string) error {
 	for _, stmt := range splitStatements(schemaSQL) {
-		if classifyStatement(stmt) != classOrdinary {
-			return fmt.Errorf("schema.sql contains a statement outside the recognized schema vocabulary (%s) — refusing to use it: %w", describeStatement(stmt), ErrDisallowedStatement)
+		class := classifyStatement(stmt)
+		if class == classOrdinary {
+			continue
 		}
+		if class == classContractOnly && isCreateTriggerStatement(tokenize(stmt)) {
+			continue
+		}
+		return fmt.Errorf("schema.sql contains a statement outside the recognized schema vocabulary (%s) — refusing to use it: %w", describeStatement(stmt), ErrDisallowedStatement)
 	}
 	return nil
 }

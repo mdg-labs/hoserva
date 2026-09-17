@@ -22,14 +22,16 @@ const (
 	destructiveDropTable  destructiveKind = "drop_table"
 	destructiveDropColumn destructiveKind = "drop_column"
 	destructiveRebuild    destructiveKind = "rebuild"
+	destructiveTriggerDML destructiveKind = "trigger_dml"
 )
 
-var destructiveOrder = []destructiveKind{destructiveDropTable, destructiveDropColumn, destructiveRebuild}
+var destructiveOrder = []destructiveKind{destructiveDropTable, destructiveDropColumn, destructiveRebuild, destructiveTriggerDML}
 
 var destructiveReason = map[destructiveKind]string{
 	destructiveDropTable:  "DROP TABLE",
 	destructiveDropColumn: "DROP COLUMN",
 	destructiveRebuild:    "table rebuild (RENAME TO after CREATE TABLE — SQLite's documented way to change a column's type or constraints)",
+	destructiveTriggerDML: "CREATE TRIGGER with a DML body (fires on every future write, not just this migration's own — Q60)",
 }
 
 // Destructive returns every reason sql is flagged as data-unsafe (D16,
@@ -86,6 +88,8 @@ func classifyDestructive(stmt string) (destructiveKind, bool) {
 			return destructiveDropColumn, true
 		}
 		return destructiveRebuild, true // the only other contract-only ALTER TABLE shape is RENAME TO
+	case isWord(tokens, 0, "create") && isWord(tokens, 1, "trigger"):
+		return destructiveTriggerDML, true // the only way CREATE TRIGGER classifies classContractOnly at all is a DML body (Q60)
 	default:
 		return "", false // a contract step's own INSERT ... SELECT copy — not a drop
 	}

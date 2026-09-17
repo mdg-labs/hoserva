@@ -61,6 +61,18 @@ func TestClassifyStatement_ContractOnly(t *testing.T) {
 		// "on conflict" here is string data inside the SELECT, not an
 		// upsert-clause — it must not be mistaken for one.
 		"INSERT INTO a SELECT id, note FROM b WHERE note = 'on conflict, do nothing';",
+		"CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE a SET v = 1; END;",
+		"CREATE TRIGGER t AFTER INSERT ON a BEGIN DELETE FROM a; END;",
+		"CREATE TRIGGER t AFTER INSERT ON a BEGIN INSERT INTO a VALUES (1); END;",
+		"CREATE TRIGGER t AFTER INSERT ON a BEGIN REPLACE INTO a VALUES (1); END;",
+		// A DML statement need not be the trigger body's only statement, or
+		// its first one, to make the whole trigger contract-only.
+		"CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; UPDATE a SET v = 1; END;",
+		// The DML follows a body statement containing its own CASE...END,
+		// and the classifier still finds it because it checks every
+		// unquoted word after the trigger's ON <table>, not just the first
+		// body statement.
+		"CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT CASE WHEN v > 0 THEN 1 ELSE 0 END; DELETE FROM a WHERE v < 0; END;",
 	}
 	for _, sql := range cases {
 		t.Run(sql, func(t *testing.T) {
@@ -68,6 +80,155 @@ func TestClassifyStatement_ContractOnly(t *testing.T) {
 				t.Fatalf("classifyStatement(%q) = %v, want classContractOnly", sql, got)
 			}
 		})
+	}
+}
+
+// A trigger whose body contains only SELECT — including the
+// SELECT RAISE(...) idiom that aborts the triggering statement — never
+// changes data itself, so it stays classOrdinary; the two cases already in
+// TestClassifyStatement_Ordinary cover the plain form, this covers RAISE
+// and a WHEN clause that has its own sub-select (never DML).
+func TestClassifyStatement_Ordinary_TriggerSelectOnlyBody(t *testing.T) {
+	cases := []string{
+		"CREATE TRIGGER t BEFORE DELETE ON a BEGIN SELECT RAISE(ABORT, 'no'); END;",
+		"CREATE TRIGGER t AFTER INSERT ON a WHEN (SELECT count(*) FROM a) > 10 BEGIN SELECT 1; END;",
+		"CREATE TRIGGER t AFTER UPDATE ON a FOR EACH ROW WHEN (NEW.v > OLD.v) BEGIN SELECT 1; END;",
+	}
+	for _, sql := range cases {
+		t.Run(sql, func(t *testing.T) {
+			if got := classify(t, sql); got != classOrdinary {
+				t.Fatalf("classifyStatement(%q) = %v, want classOrdinary", sql, got)
+			}
+		})
+	}
+}
+
+// A quoted column named update/delete inside a SELECT-only trigger body
+// stays classOrdinary: a quoted token never counts as a DML keyword,
+// however the rest of the body is scanned.
+func TestClassifyStatement_Ordinary_TriggerBodyColumnNamedUpdateOrDelete(t *testing.T) {
+	cases := []string{
+		`CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT "update" FROM a; END;`,
+		`CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT "delete" FROM a; END;`,
+		`CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1 WHERE "update" = 'x'; END;`,
+	}
+	for _, sql := range cases {
+		t.Run(sql, func(t *testing.T) {
+			if got := classify(t, sql); got != classOrdinary {
+				t.Fatalf("classifyStatement(%q) = %v, want classOrdinary", sql, got)
+			}
+		})
+	}
+}
+
+// A quoted "end"/"case" column inside a DML-bodied trigger, in every quote
+// style SQLite accepts for an identifier, must never hide that body's own
+// DML from classification: this design tracks no begin/case/end keyword
+// depth for a quoted token to mislead in the first place, unlike a design
+// that would count a bare keyword occurrence regardless of the source
+// token's own quoting (Q60's own recorded false-open history for this
+// shape).
+func TestClassifyStatement_ContractOnly_QuotedEndOrCaseColumnDoesNotHideDML(t *testing.T) {
+	cases := []string{
+		`CREATE TRIGGER q1 AFTER INSERT ON a BEGIN UPDATE a SET "end" = 1; END;`,
+		"CREATE TRIGGER q1 AFTER INSERT ON a BEGIN UPDATE a SET `end` = 1; END;",
+		`CREATE TRIGGER q1 AFTER INSERT ON a BEGIN UPDATE a SET [case] = 1; END;`,
+		`CREATE TRIGGER q1 AFTER INSERT ON a BEGIN SELECT "end" FROM a; UPDATE a SET v = 1; END;`,
+	}
+	for _, sql := range cases {
+		t.Run(sql, func(t *testing.T) {
+			if got := classify(t, sql); got != classContractOnly {
+				t.Fatalf("classifyStatement(%q) = %v, want classContractOnly", sql, got)
+			}
+		})
+	}
+}
+
+// A WHEN clause that bare-references, or quotes, a column literally named
+// begin must never let a DML body's own classification fall to ordinary —
+// classifyCreateTrigger never locates a body's own BEGIN token or gives a
+// WHEN clause any special handling at all, so none of these can throw it
+// off; every one of these previously passed CheckAllowedStatements and
+// CheckSafety unregistered (Q60's own recorded false-open history for this
+// shape).
+func TestClassifyStatement_ContractOnly_WhenClauseNamedBeginDoesNotHideDML(t *testing.T) {
+	cases := []string{
+		"CREATE TRIGGER r1 AFTER INSERT ON a WHEN NEW.begin > 0 BEGIN UPDATE a SET v = 1; END;",
+		"CREATE TRIGGER r1 AFTER INSERT ON a WHEN begin BEGIN UPDATE a SET v = 1; END;",
+		`CREATE TRIGGER r1 AFTER INSERT ON a WHEN NEW."begin" = 1 BEGIN DELETE FROM a; END;`,
+	}
+	for _, sql := range cases {
+		t.Run(sql, func(t *testing.T) {
+			if got := classify(t, sql); got != classContractOnly {
+				t.Fatalf("classifyStatement(%q) = %v, want classContractOnly", sql, got)
+			}
+		})
+	}
+}
+
+// An unquoted REPLACE(...) scalar function call in a SELECT-only trigger's
+// body reads the same as the REPLACE INTO DML keyword to this design, and
+// is treated as if it were: this is a known, accepted false positive
+// (Q60) — it only ever pushes a trigger that changes nothing toward
+// classContractOnly, the safe direction, and costs nothing but a
+// contracts-file entry.
+func TestClassifyStatement_ContractOnly_UnquotedReplaceFunctionIsAKnownFalsePositive(t *testing.T) {
+	sql := "CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT replace(v, 'a', 'b') FROM a; END;"
+	if got := classify(t, sql); got != classContractOnly {
+		t.Fatalf("classifyStatement(%q) = %v, want classContractOnly (known false positive, Q60)", sql, got)
+	}
+}
+
+// A DML-bodied trigger is refused in an ordinary migration, and accepted
+// only once its migration is registered as a contract step (Q60) — the
+// safety-critical scenario this issue exists to close. Unlike a
+// classDisallowed statement, an unregistered classContractOnly statement's
+// error does not wrap ErrDisallowedStatement (TestCheckAllowedStatements_
+// RefusesUnregisteredContractOnlyStatement above uses the same non-nil
+// check for exactly this reason).
+func TestCheckAllowedStatements_RefusesDMLBodiedTriggerUnlessRegistered(t *testing.T) {
+	sql := "CREATE TABLE a (id INTEGER PRIMARY KEY, v INTEGER); CREATE TRIGGER a_touch AFTER INSERT ON a BEGIN UPDATE a SET v = 1 WHERE id = NEW.id; END;"
+	m := Migration{Version: 1, Filename: "0001_trigger.sql", SQL: sql}
+
+	if err := CheckAllowedStatements([]Migration{m}, map[string]bool{}); err == nil {
+		t.Fatal("CheckAllowedStatements(DML-bodied trigger) unregistered = nil, want an error")
+	}
+	if err := CheckAllowedStatements([]Migration{m}, map[string]bool{"0001_trigger.sql": true}); err != nil {
+		t.Fatalf("CheckAllowedStatements(DML-bodied trigger) registered as a contract step: %v, want nil", err)
+	}
+}
+
+// The same DML-bodied trigger, spelled with its DML target column quoted
+// ("end", an ordinary SQLite identifier that also spells a keyword this
+// classifier used to treat specially), is refused unregistered and
+// accepted once registered exactly like the plain-column case above (Q60).
+func TestCheckAllowedStatements_RefusesDMLBodiedTriggerWithQuotedEndColumnUnlessRegistered(t *testing.T) {
+	sql := `CREATE TABLE a (id INTEGER PRIMARY KEY, "end" INTEGER); CREATE TRIGGER a_touch AFTER INSERT ON a BEGIN UPDATE a SET "end" = 1 WHERE id = NEW.id; END;`
+	m := Migration{Version: 1, Filename: "0001_trigger.sql", SQL: sql}
+
+	if err := CheckAllowedStatements([]Migration{m}, map[string]bool{}); err == nil {
+		t.Fatal("CheckAllowedStatements(DML-bodied trigger, quoted end column) unregistered = nil, want an error")
+	}
+	if err := CheckAllowedStatements([]Migration{m}, map[string]bool{"0001_trigger.sql": true}); err != nil {
+		t.Fatalf("CheckAllowedStatements(DML-bodied trigger, quoted end column) registered as a contract step: %v, want nil", err)
+	}
+}
+
+// The runner's own defense in depth (CheckStatementVocabulary) allows a
+// DML-bodied trigger exactly like every other classContractOnly shape,
+// unconditionally — it never re-checks contract registration, because a
+// migration already embedded in the binary was already reviewed against
+// contracts by db-check when it was written (TestCheckStatementVocabulary_
+// AllowsContractOnlyShapesUnconditionally above covers the same point for
+// DROP/RENAME TO/INSERT...SELECT); refusing this shape unregistered is
+// entirely db-check's (CheckAllowedStatements') job, tested above.
+func TestCheckStatementVocabulary_AllowsDMLBodiedTriggerUnconditionally(t *testing.T) {
+	migrations := []Migration{
+		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY, v INTEGER);"},
+		{Version: 2, Filename: "0002_trigger.sql", SQL: "CREATE TRIGGER a_touch AFTER INSERT ON a BEGIN UPDATE a SET v = 1 WHERE id = NEW.id; END;"},
+	}
+	if err := CheckStatementVocabulary(migrations); err != nil {
+		t.Fatalf("CheckStatementVocabulary on a DML-bodied trigger: %v", err)
 	}
 }
 
@@ -199,6 +360,38 @@ func TestCheckSchemaVocabulary_RefusesContractOnlyStatement(t *testing.T) {
 	schemaSQL := "CREATE TABLE a (id INTEGER PRIMARY KEY); DROP TABLE a;"
 	if err := CheckSchemaVocabulary(schemaSQL); !errors.Is(err, ErrDisallowedStatement) {
 		t.Fatalf("CheckSchemaVocabulary on a schema containing DROP TABLE = %v, want ErrDisallowedStatement", err)
+	}
+}
+
+// A DML-bodied trigger is the one classContractOnly shape schema.sql may
+// declare — once a registered contract step creates it, the trigger itself
+// is part of the desired end state, not a transitional rebuild step, so
+// CheckDrift's replay-vs-schema.sql comparison needs schema.sql to be able
+// to describe it (Q60).
+func TestCheckSchemaVocabulary_AllowsDMLBodiedTrigger(t *testing.T) {
+	schemaSQL := "CREATE TABLE a (id INTEGER PRIMARY KEY, v INTEGER); CREATE TRIGGER a_touch AFTER INSERT ON a BEGIN UPDATE a SET v = 1 WHERE id = NEW.id; END;"
+	if err := CheckSchemaVocabulary(schemaSQL); err != nil {
+		t.Fatalf("CheckSchemaVocabulary on a DML-bodied trigger: %v", err)
+	}
+}
+
+// Every other classContractOnly shape is still refused in schema.sql
+// exactly like before — the DML-bodied trigger exception above is narrow,
+// not a general "any contract-only shape is fine here" loosening.
+func TestCheckSchemaVocabulary_StillRefusesOtherContractOnlyShapes(t *testing.T) {
+	cases := map[string]string{
+		"DROP TABLE":        "CREATE TABLE a (id INTEGER PRIMARY KEY); DROP TABLE a;",
+		"DROP TRIGGER":      "CREATE TABLE a (id INTEGER PRIMARY KEY); CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; END; DROP TRIGGER t;",
+		"ALTER RENAME TO":   "CREATE TABLE a (id INTEGER PRIMARY KEY); ALTER TABLE a RENAME TO b;",
+		"ALTER DROP COLUMN": "CREATE TABLE a (id INTEGER PRIMARY KEY, b TEXT); ALTER TABLE a DROP COLUMN b;",
+		"INSERT ... SELECT": "CREATE TABLE a (id INTEGER PRIMARY KEY); CREATE TABLE b (id INTEGER PRIMARY KEY); INSERT INTO b SELECT * FROM a;",
+	}
+	for name, sql := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := CheckSchemaVocabulary(sql); !errors.Is(err, ErrDisallowedStatement) {
+				t.Fatalf("CheckSchemaVocabulary(%q) = %v, want ErrDisallowedStatement", sql, err)
+			}
+		})
 	}
 }
 

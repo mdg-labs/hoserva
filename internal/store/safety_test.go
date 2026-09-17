@@ -138,6 +138,63 @@ func TestDestructive_UnrecognizedAlterTableShapeIsNotReported(t *testing.T) {
 	}
 }
 
+// A DML-bodied trigger is reported by Destructive under its own reason —
+// the audit trail's own name for the shape (Q60), distinct from every
+// other contract-only kind.
+func TestDestructive_TriggerWithDMLBody(t *testing.T) {
+	reasons := Destructive("CREATE TRIGGER a_touch AFTER INSERT ON a BEGIN UPDATE a SET v = 1 WHERE id = NEW.id; END;")
+	if !containsPrefix(reasons, "CREATE TRIGGER with a DML body") {
+		t.Fatalf("Destructive(DML-bodied trigger) = %v, want it to include the trigger_dml reason", reasons)
+	}
+}
+
+// A trigger whose body is SELECT-only changes nothing, so it must never be
+// reported as destructive.
+func TestDestructive_TriggerWithSelectOnlyBodyIsNotFlagged(t *testing.T) {
+	reasons := Destructive("CREATE TRIGGER a_touch AFTER INSERT ON a BEGIN SELECT 1; END;")
+	if len(reasons) != 0 {
+		t.Fatalf("Destructive(SELECT-only trigger) = %v, want none", reasons)
+	}
+}
+
+func TestCheckSafety_FailsUnregisteredDMLBodiedTrigger(t *testing.T) {
+	migrations := []Migration{
+		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY, v INTEGER);"},
+		{Version: 2, Filename: "0002_trigger.sql", SQL: "CREATE TRIGGER a_touch AFTER INSERT ON a BEGIN UPDATE a SET v = 1 WHERE id = NEW.id; END;"},
+	}
+	if err := CheckSafety(migrations, map[string]bool{}); err == nil {
+		t.Fatal("expected an error for an unregistered DML-bodied trigger")
+	}
+	if err := CheckSafety(migrations, map[string]bool{"0002_trigger.sql": true}); err != nil {
+		t.Fatalf("CheckSafety with the trigger's migration registered as a contract step: %v", err)
+	}
+}
+
+// The same DML-bodied trigger, with its DML target column quoted "end",
+// is reported by Destructive and refused by CheckSafety unregistered
+// exactly like the plain-column case above — a quoted end/case/begin
+// column must never hide a trigger's own DML from this reporting layer,
+// since it is driven by the same classifyStatement (Q60).
+func TestDestructive_TriggerWithDMLBodyAndQuotedEndColumn(t *testing.T) {
+	reasons := Destructive(`CREATE TRIGGER a_touch AFTER INSERT ON a BEGIN UPDATE a SET "end" = 1 WHERE id = NEW.id; END;`)
+	if !containsPrefix(reasons, "CREATE TRIGGER with a DML body") {
+		t.Fatalf("Destructive(DML-bodied trigger, quoted end column) = %v, want it to include the trigger_dml reason", reasons)
+	}
+}
+
+func TestCheckSafety_FailsUnregisteredDMLBodiedTriggerWithQuotedEndColumn(t *testing.T) {
+	migrations := []Migration{
+		{Version: 1, Filename: "0001_a.sql", SQL: `CREATE TABLE a (id INTEGER PRIMARY KEY, "end" INTEGER);`},
+		{Version: 2, Filename: "0002_trigger.sql", SQL: `CREATE TRIGGER a_touch AFTER INSERT ON a BEGIN UPDATE a SET "end" = 1 WHERE id = NEW.id; END;`},
+	}
+	if err := CheckSafety(migrations, map[string]bool{}); err == nil {
+		t.Fatal("expected an error for an unregistered DML-bodied trigger with a quoted end column")
+	}
+	if err := CheckSafety(migrations, map[string]bool{"0002_trigger.sql": true}); err != nil {
+		t.Fatalf("CheckSafety with the trigger's migration registered as a contract step: %v", err)
+	}
+}
+
 func TestCheckSafety_FailsUnregistered(t *testing.T) {
 	migrations := []Migration{
 		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER);"},
