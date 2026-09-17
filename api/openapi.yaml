@@ -29,6 +29,14 @@ tags:
     description: The job system (doc 01 §4) — every long-running operation.
   - name: events
     description: Live data over Server-Sent Events (doc 01 §5).
+  - name: auth
+    description: >-
+      First-run setup, sessions and TOTP over TCP (doc 01 §5, §7, Q9, Q10,
+      Q28, Q44, doc 03 §1). The Unix socket needs none of this — it is
+      peer-credential trusted (Q44) — but these operations still run on
+      it, unauthenticated, exactly as they do on TCP, since the same
+      handlers serve both transports (doc 01 §5). Personal API tokens
+      (Q43) are Phase 2 and have no operations here yet.
 
 # Two transports (doc 01 §5): a Unix socket for the local root/`hoserva`-group
 # CLI, and TLS-only TCP for the web UI and remote/scripted use. Same handlers,
@@ -224,6 +232,194 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /setup/status:
+    get:
+      operationId: getSetupStatus
+      summary: Check whether the first-run admin account exists
+      description: >-
+        Reachable before an admin exists: this operation, createFirstAdmin
+        and the SPA's static assets are the only routes that don't refuse
+        every request with a "setup required" error while `adminExists` is
+        false (#22).
+      tags: [auth]
+      x-hoserva-role: public
+      security: []
+      responses:
+        "200":
+          description: Whether the first-run admin account exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupStatus'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /setup/admin:
+    post:
+      operationId: createFirstAdmin
+      summary: Create the first admin account
+      description: >-
+        Reachable only before an admin exists; refused once one does.
+        Creating the admin is atomic — a race between two concurrent
+        requests can never create two admins (#22). Signs the new admin in
+        on success, exactly like login.
+      tags: [auth]
+      x-hoserva-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFirstAdminRequest'
+      responses:
+        "200":
+          description: The admin account, now signed in.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /auth/login:
+    post:
+      operationId: login
+      summary: Log in
+      description: >-
+        Username is matched case-insensitively, using simple lowercasing
+        (Go's `strings.ToLower`) rather than full Unicode case folding.
+        Password, plus a TOTP code once the account has TOTP enrolled
+        (doc 01 §7). Rate-limited and lockout-protected per account and
+        per source address (doc 01 §7): an unknown username and a wrong
+        password against a real one get the same status and error code
+        (`invalid_credentials`), reach lockout (`rate_limited`) at the
+        same failure threshold, and cost the same bounded argon2id-shaped
+        work either way, for similar timing, under ordinary load — under
+        a sustained flood large enough to fill and evict from the
+        unknown-username table's own 10,000-entry cap, an unknown
+        username's lockout can lift early, where a real account's own
+        (never capped or evicted) would not. Once the password is
+        correct, `totp_required` (no code supplied) versus `totp_invalid`
+        (a wrong one) does reveal that an account has TOTP enrolled — an
+        unavoidable, rate-limited signal, not one this API tries to hide.
+      tags: [auth]
+      x-hoserva-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        "200":
+          description: Signed in.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Log out
+      description: Revokes the current session server-side and clears the cookie.
+      tags: [auth]
+      x-hoserva-role: viewer
+      responses:
+        "204":
+          description: Signed out.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          $ref: '#/components/responses/Error'
+
+  /auth/session:
+    get:
+      operationId: getCurrentSession
+      summary: Get the current session's user
+      description: The signed-in user this session cookie belongs to.
+      tags: [auth]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The signed-in user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /auth/totp/enroll:
+    post:
+      operationId: enrollTotp
+      summary: Start TOTP enrolment for the signed-in user
+      description: >-
+        Generates a new secret (RFC 6238), stored encrypted with the
+        machine key (Q28) but not yet active — the account's existing
+        active credential, if any, is untouched until confirmTotp
+        activates the new one. Enrolling again before confirming replaces
+        the still-pending secret. Once TOTP is already active on this
+        account, replacing it requires proving the caller still holds the
+        account: exactly one of the current password or a current TOTP
+        code, in TotpEnrollRequest. Omitting both while TOTP is active is
+        refused (totp_reverify_required); supplying both is refused too
+        (totp_reverify_ambiguous), since each is one guess at the active
+        credential and honouring both would spend two for the price of
+        one request. Neither is required for a first enrolment.
+      tags: [auth]
+      x-hoserva-role: viewer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpEnrollRequest'
+      responses:
+        "200":
+          description: The new secret, pending confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpEnrollResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /auth/totp/confirm:
+    post:
+      operationId: confirmTotp
+      summary: Confirm TOTP enrolment
+      description: >-
+        Activates the pending secret enrollTotp created, once a code
+        proves the signed-in user actually has it.
+      tags: [auth]
+      x-hoserva-role: viewer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpConfirmRequest'
+      responses:
+        "204":
+          description: TOTP is now active on this account.
+        default:
+          $ref: '#/components/responses/Error'
+
 components:
   parameters:
     JobId:
@@ -263,7 +459,40 @@ components:
       properties:
         code:
           type: string
-          description: A stable, machine-readable identifier, e.g. `job_not_found`.
+          description: >-
+            A stable, machine-readable identifier, e.g. `job_not_found`.
+            Every auth-related operation (#22) can also return one of:
+            `setup_required` (409 — no admin account exists yet; every
+            operation but getSetupStatus/createFirstAdmin refuses with
+            this while it's true), `setup_complete` (409, createFirstAdmin
+            — an admin account already exists), `rate_limited` (429 — the
+            account or source address is currently locked out after
+            repeated failures; `message` gives a retry-after),
+            `too_busy` (503 — the bounded password-hashing worker pool is
+            saturated; safe to retry shortly), `invalid_credentials` (401,
+            login — an unknown username or wrong password, deliberately
+            indistinguishable), `totp_required` (401, login — the account
+            has TOTP enrolled and no code was supplied), `totp_invalid`
+            (401, login and confirmTotp — a code was supplied but is
+            wrong, expired or already used; a missing login code is
+            `totp_required` instead, never this), `totp_reverify_required`
+            (403, enrollTotp — TOTP is already active and the caller
+            didn't prove they still hold the account: no password or code
+            was supplied, or the one supplied was wrong; 403 rather than
+            401 since the session itself is valid, only the
+            reverification is missing or failed), `totp_reverify_ambiguous`
+            (400, enrollTotp — TOTP is already active and *both* the
+            current password and a current TOTP code were supplied;
+            supply exactly one), `totp_not_pending` (409, confirmTotp — no
+            pending secret to confirm), `unauthorized` (401 — no
+            credential, or one that no longer validates), `forbidden`
+            (403 — a valid credential whose role doesn't satisfy the
+            operation), `no_session` (404 — the Unix socket's
+            peer-credential-trusted local access has no signed-in user for
+            an operation that needs one), `request_too_large` (413 — the
+            request body exceeded the server's size limit), `bad_request`
+            (400 — the request body could not be decoded) and `not_found`
+            (404 — no such API route).
         message:
           type: string
           description: A human-readable explanation, safe to show in the UI or CLI.
@@ -271,6 +500,96 @@ components:
           type: object
           additionalProperties: true
           description: Optional structured context, e.g. which field failed validation.
+
+    UserRole:
+      type: string
+      description: Q27 — share-only users have no API access and are not represented here.
+      enum: [admin, viewer]
+
+    User:
+      type: object
+      required: [id, username, role, totpEnrolled]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        totpEnrolled:
+          type: boolean
+          description: Whether TOTP is confirmed and active on this account.
+
+    SetupStatus:
+      type: object
+      required: [adminExists]
+      properties:
+        adminExists:
+          type: boolean
+
+    CreateFirstAdminRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+        password:
+          type: string
+          minLength: 12
+          maxLength: 256
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          maxLength: 128
+        password:
+          type: string
+          maxLength: 1024
+        totpCode:
+          type: string
+          maxLength: 16
+          description: Required once the account has TOTP enrolled; omitted otherwise.
+
+    TotpEnrollRequest:
+      type: object
+      description: >-
+        Both fields are optional for a first enrolment. Once TOTP is
+        already active on the account, exactly one must prove the caller
+        still holds it — the current password, or a current TOTP code —
+        or enrollTotp is refused; supplying both is refused too (doc
+        01 §7).
+      properties:
+        password:
+          type: string
+          maxLength: 1024
+        code:
+          type: string
+          maxLength: 16
+
+    TotpEnrollResponse:
+      type: object
+      required: [secret, otpauthUri]
+      properties:
+        secret:
+          type: string
+          description: Base32-encoded TOTP secret (RFC 6238), for manual entry.
+        otpauthUri:
+          type: string
+          description: An otpauth:// URI, for the enrolment QR code (doc 03 §1).
+
+    TotpConfirmRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          maxLength: 16
 
     JobType:
       type: string

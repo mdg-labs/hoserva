@@ -36,6 +36,40 @@ type Invoker interface {
 	//
 	// POST /jobs/{jobId}/cancel
 	CancelJob(ctx context.Context, params CancelJobParams) (*Job, error)
+	// ConfirmTotp invokes confirmTotp operation.
+	//
+	// Activates the pending secret enrollTotp created, once a code proves the signed-in user actually has
+	// it.
+	//
+	// POST /auth/totp/confirm
+	ConfirmTotp(ctx context.Context, request *TotpConfirmRequest) error
+	// CreateFirstAdmin invokes createFirstAdmin operation.
+	//
+	// Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
+	// race between two concurrent requests can never create two admins (#22). Signs the new admin in on
+	// success, exactly like login.
+	//
+	// POST /setup/admin
+	CreateFirstAdmin(ctx context.Context, request *CreateFirstAdminRequest) (*UserHeaders, error)
+	// EnrollTotp invokes enrollTotp operation.
+	//
+	// Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
+	// — the account's existing active credential, if any, is untouched until confirmTotp activates the
+	// new one. Enrolling again before confirming replaces the still-pending secret. Once TOTP is already
+	// active on this account, replacing it requires proving the caller still holds the account: exactly
+	// one of the current password or a current TOTP code, in TotpEnrollRequest. Omitting both while TOTP
+	// is active is refused (totp_reverify_required); supplying both is refused too
+	// (totp_reverify_ambiguous), since each is one guess at the active credential and honouring both would
+	// spend two for the price of one request. Neither is required for a first enrolment.
+	//
+	// POST /auth/totp/enroll
+	EnrollTotp(ctx context.Context, request *TotpEnrollRequest) (*TotpEnrollResponse, error)
+	// GetCurrentSession invokes getCurrentSession operation.
+	//
+	// The signed-in user this session cookie belongs to.
+	//
+	// GET /auth/session
+	GetCurrentSession(ctx context.Context) (*User, error)
 	// GetJob invokes getJob operation.
 	//
 	// A single job's current state, by id.
@@ -48,6 +82,14 @@ type Invoker interface {
 	//
 	// GET /jobs/{jobId}/log
 	GetJobLog(ctx context.Context, params GetJobLogParams) (GetJobLogOK, error)
+	// GetSetupStatus invokes getSetupStatus operation.
+	//
+	// Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are
+	// the only routes that don't refuse every request with a "setup required" error while `adminExists` is
+	// false (#22).
+	//
+	// GET /setup/status
+	GetSetupStatus(ctx context.Context) (*SetupStatus, error)
 	// ListJobs invokes listJobs operation.
 	//
 	// Every long-running operation is a job (doc 01 §4). Filterable by class and status so the UI's jobs
@@ -55,6 +97,28 @@ type Invoker interface {
 	//
 	// GET /jobs
 	ListJobs(ctx context.Context, params ListJobsParams) (*ListJobsOK, error)
+	// Login invokes login operation.
+	//
+	// Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather
+	// than full Unicode case folding. Password, plus a TOTP code once the account has TOTP enrolled (doc
+	// 01 §7). Rate-limited and lockout-protected per account and per source address (doc 01 §7): an
+	// unknown username and a wrong password against a real one get the same status and error code
+	// (`invalid_credentials`), reach lockout (`rate_limited`) at the same failure threshold, and cost the
+	// same bounded argon2id-shaped work either way, for similar timing, under ordinary load — under a
+	// sustained flood large enough to fill and evict from the unknown-username table's own 10,000-entry
+	// cap, an unknown username's lockout can lift early, where a real account's own (never capped or
+	// evicted) would not. Once the password is correct, `totp_required` (no code supplied) versus
+	// `totp_invalid` (a wrong one) does reveal that an account has TOTP enrolled — an unavoidable,
+	// rate-limited signal, not one this API tries to hide.
+	//
+	// POST /auth/login
+	Login(ctx context.Context, request *LoginRequest) (*UserHeaders, error)
+	// Logout invokes logout operation.
+	//
+	// Revokes the current session server-side and clears the cookie.
+	//
+	// POST /auth/logout
+	Logout(ctx context.Context) (*LogoutNoContent, error)
 	// ResumeJob invokes resumeJob operation.
 	//
 	// Only resumable job types (mover, rebalance, evacuation, share relocation) persist a checkpoint to
@@ -244,6 +308,480 @@ func (c *Client) sendCancelJob(ctx context.Context, params CancelJobParams) (res
 
 	stage = "DecodeResponse"
 	result, err := decodeCancelJobResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ConfirmTotp invokes confirmTotp operation.
+//
+// Activates the pending secret enrollTotp created, once a code proves the signed-in user actually has
+// it.
+//
+// POST /auth/totp/confirm
+func (c *Client) ConfirmTotp(ctx context.Context, request *TotpConfirmRequest) error {
+	_, err := c.sendConfirmTotp(ctx, request)
+	return err
+}
+
+func (c *Client) sendConfirmTotp(ctx context.Context, request *TotpConfirmRequest) (res *ConfirmTotpNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("confirmTotp"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/auth/totp/confirm"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ConfirmTotpOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/auth/totp/confirm"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeConfirmTotpRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ConfirmTotpOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ConfirmTotpOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeConfirmTotpResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// CreateFirstAdmin invokes createFirstAdmin operation.
+//
+// Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
+// race between two concurrent requests can never create two admins (#22). Signs the new admin in on
+// success, exactly like login.
+//
+// POST /setup/admin
+func (c *Client) CreateFirstAdmin(ctx context.Context, request *CreateFirstAdminRequest) (*UserHeaders, error) {
+	res, err := c.sendCreateFirstAdmin(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendCreateFirstAdmin(ctx context.Context, request *CreateFirstAdminRequest) (res *UserHeaders, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("createFirstAdmin"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/setup/admin"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, CreateFirstAdminOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/setup/admin"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeCreateFirstAdminRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeCreateFirstAdminResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// EnrollTotp invokes enrollTotp operation.
+//
+// Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
+// — the account's existing active credential, if any, is untouched until confirmTotp activates the
+// new one. Enrolling again before confirming replaces the still-pending secret. Once TOTP is already
+// active on this account, replacing it requires proving the caller still holds the account: exactly
+// one of the current password or a current TOTP code, in TotpEnrollRequest. Omitting both while TOTP
+// is active is refused (totp_reverify_required); supplying both is refused too
+// (totp_reverify_ambiguous), since each is one guess at the active credential and honouring both would
+// spend two for the price of one request. Neither is required for a first enrolment.
+//
+// POST /auth/totp/enroll
+func (c *Client) EnrollTotp(ctx context.Context, request *TotpEnrollRequest) (*TotpEnrollResponse, error) {
+	res, err := c.sendEnrollTotp(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendEnrollTotp(ctx context.Context, request *TotpEnrollRequest) (res *TotpEnrollResponse, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("enrollTotp"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/auth/totp/enroll"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, EnrollTotpOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/auth/totp/enroll"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeEnrollTotpRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, EnrollTotpOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, EnrollTotpOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeEnrollTotpResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetCurrentSession invokes getCurrentSession operation.
+//
+// The signed-in user this session cookie belongs to.
+//
+// GET /auth/session
+func (c *Client) GetCurrentSession(ctx context.Context) (*User, error) {
+	res, err := c.sendGetCurrentSession(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetCurrentSession(ctx context.Context) (res *User, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getCurrentSession"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/auth/session"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetCurrentSessionOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/auth/session"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetCurrentSessionOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetCurrentSessionOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetCurrentSessionResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -538,6 +1076,88 @@ func (c *Client) sendGetJobLog(ctx context.Context, params GetJobLogParams) (res
 	return result, nil
 }
 
+// GetSetupStatus invokes getSetupStatus operation.
+//
+// Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are
+// the only routes that don't refuse every request with a "setup required" error while `adminExists` is
+// false (#22).
+//
+// GET /setup/status
+func (c *Client) GetSetupStatus(ctx context.Context) (*SetupStatus, error) {
+	res, err := c.sendGetSetupStatus(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetSetupStatus(ctx context.Context) (res *SetupStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getSetupStatus"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/setup/status"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetSetupStatusOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/setup/status"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetSetupStatusResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ListJobs invokes listJobs operation.
 //
 // Every long-running operation is a job (doc 01 §4). Filterable by class and status so the UI's jobs
@@ -712,6 +1332,224 @@ func (c *Client) sendListJobs(ctx context.Context, params ListJobsParams) (res *
 
 	stage = "DecodeResponse"
 	result, err := decodeListJobsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// Login invokes login operation.
+//
+// Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather
+// than full Unicode case folding. Password, plus a TOTP code once the account has TOTP enrolled (doc
+// 01 §7). Rate-limited and lockout-protected per account and per source address (doc 01 §7): an
+// unknown username and a wrong password against a real one get the same status and error code
+// (`invalid_credentials`), reach lockout (`rate_limited`) at the same failure threshold, and cost the
+// same bounded argon2id-shaped work either way, for similar timing, under ordinary load — under a
+// sustained flood large enough to fill and evict from the unknown-username table's own 10,000-entry
+// cap, an unknown username's lockout can lift early, where a real account's own (never capped or
+// evicted) would not. Once the password is correct, `totp_required` (no code supplied) versus
+// `totp_invalid` (a wrong one) does reveal that an account has TOTP enrolled — an unavoidable,
+// rate-limited signal, not one this API tries to hide.
+//
+// POST /auth/login
+func (c *Client) Login(ctx context.Context, request *LoginRequest) (*UserHeaders, error) {
+	res, err := c.sendLogin(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendLogin(ctx context.Context, request *LoginRequest) (res *UserHeaders, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("login"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/auth/login"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, LoginOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/auth/login"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeLoginRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeLoginResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// Logout invokes logout operation.
+//
+// Revokes the current session server-side and clears the cookie.
+//
+// POST /auth/logout
+func (c *Client) Logout(ctx context.Context) (*LogoutNoContent, error) {
+	res, err := c.sendLogout(ctx)
+	return res, err
+}
+
+func (c *Client) sendLogout(ctx context.Context) (res *LogoutNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("logout"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/auth/logout"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, LogoutOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/auth/logout"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, LogoutOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, LogoutOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeLogoutResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

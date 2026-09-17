@@ -14,11 +14,56 @@ rules:
       function: truthy
 
   hoserva-operation-role:
-    description: Every operation must declare x-hoserva-role (admin or viewer) so authorization is never left implicit (doc 01 §5, D18).
+    description: >-
+      Every operation must declare x-hoserva-role (admin, viewer, or
+      public for the pre-auth setup/login routes #22 needs reachable
+      before any credential exists) so authorization is never left
+      implicit (doc 01 §5, D18).
     severity: error
     given: "$.paths[*][get,put,post,delete,options,head,patch,trace]"
     then:
       field: x-hoserva-role
       function: enumeration
       functionOptions:
-        values: ["admin", "viewer"]
+        values: ["admin", "viewer", "public"]
+
+  hoserva-public-role-requires-empty-security:
+    description: >-
+      An operation marked x-hoserva-role: public must also declare
+      security: [] — enforceRole (internal/api/security.go) only ever
+      runs inside HandleSessionCookie/HandleApiToken, which ogen never
+      calls for an operation whose own security requirement is empty,
+      so a public operation that still inherited the global sessionCookie/
+      apiToken requirement would refuse every request with no
+      credential instead of actually being reachable pre-auth (#22).
+    severity: error
+    # $.paths[*][get,...][?(...)] — chaining a filter directly after a
+    # bracketed member list — silently selects nothing under this
+    # project's Spectral/nimma version (confirmed empirically: the same
+    # pattern without the trailing filter selects every operation, but
+    # adding [?(...)] after it selects zero, with no parse error).
+    # Recursive descent with the filter applied directly avoids that.
+    given: "$..[?(@['x-hoserva-role'] == 'public')]"
+    then:
+      field: security
+      function: schema
+      functionOptions:
+        schema:
+          type: array
+          maxItems: 0
+
+  hoserva-empty-security-requires-public-role:
+    description: >-
+      The converse of hoserva-public-role-requires-empty-security: an
+      operation declaring security: [] skips the security handlers
+      entirely, and those handlers are the only place enforceRole runs —
+      so an operation with security: [] must be marked x-hoserva-role:
+      public. Marking it admin or viewer while leaving security: []
+      would silently skip its own role check, granting it to anyone.
+    severity: error
+    given: "$..[?(@.security && @.security.length == 0)]"
+    then:
+      field: x-hoserva-role
+      function: pattern
+      functionOptions:
+        match: "^public$"

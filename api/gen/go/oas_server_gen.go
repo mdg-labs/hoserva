@@ -15,6 +15,40 @@ type Handler interface {
 	//
 	// POST /jobs/{jobId}/cancel
 	CancelJob(ctx context.Context, params CancelJobParams) (*Job, error)
+	// ConfirmTotp implements confirmTotp operation.
+	//
+	// Activates the pending secret enrollTotp created, once a code proves the signed-in user actually has
+	// it.
+	//
+	// POST /auth/totp/confirm
+	ConfirmTotp(ctx context.Context, req *TotpConfirmRequest) error
+	// CreateFirstAdmin implements createFirstAdmin operation.
+	//
+	// Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
+	// race between two concurrent requests can never create two admins (#22). Signs the new admin in on
+	// success, exactly like login.
+	//
+	// POST /setup/admin
+	CreateFirstAdmin(ctx context.Context, req *CreateFirstAdminRequest) (*UserHeaders, error)
+	// EnrollTotp implements enrollTotp operation.
+	//
+	// Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
+	// — the account's existing active credential, if any, is untouched until confirmTotp activates the
+	// new one. Enrolling again before confirming replaces the still-pending secret. Once TOTP is already
+	// active on this account, replacing it requires proving the caller still holds the account: exactly
+	// one of the current password or a current TOTP code, in TotpEnrollRequest. Omitting both while TOTP
+	// is active is refused (totp_reverify_required); supplying both is refused too
+	// (totp_reverify_ambiguous), since each is one guess at the active credential and honouring both would
+	// spend two for the price of one request. Neither is required for a first enrolment.
+	//
+	// POST /auth/totp/enroll
+	EnrollTotp(ctx context.Context, req *TotpEnrollRequest) (*TotpEnrollResponse, error)
+	// GetCurrentSession implements getCurrentSession operation.
+	//
+	// The signed-in user this session cookie belongs to.
+	//
+	// GET /auth/session
+	GetCurrentSession(ctx context.Context) (*User, error)
 	// GetJob implements getJob operation.
 	//
 	// A single job's current state, by id.
@@ -27,6 +61,14 @@ type Handler interface {
 	//
 	// GET /jobs/{jobId}/log
 	GetJobLog(ctx context.Context, params GetJobLogParams) (GetJobLogOK, error)
+	// GetSetupStatus implements getSetupStatus operation.
+	//
+	// Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are
+	// the only routes that don't refuse every request with a "setup required" error while `adminExists` is
+	// false (#22).
+	//
+	// GET /setup/status
+	GetSetupStatus(ctx context.Context) (*SetupStatus, error)
 	// ListJobs implements listJobs operation.
 	//
 	// Every long-running operation is a job (doc 01 §4). Filterable by class and status so the UI's jobs
@@ -34,6 +76,28 @@ type Handler interface {
 	//
 	// GET /jobs
 	ListJobs(ctx context.Context, params ListJobsParams) (*ListJobsOK, error)
+	// Login implements login operation.
+	//
+	// Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather
+	// than full Unicode case folding. Password, plus a TOTP code once the account has TOTP enrolled (doc
+	// 01 §7). Rate-limited and lockout-protected per account and per source address (doc 01 §7): an
+	// unknown username and a wrong password against a real one get the same status and error code
+	// (`invalid_credentials`), reach lockout (`rate_limited`) at the same failure threshold, and cost the
+	// same bounded argon2id-shaped work either way, for similar timing, under ordinary load — under a
+	// sustained flood large enough to fill and evict from the unknown-username table's own 10,000-entry
+	// cap, an unknown username's lockout can lift early, where a real account's own (never capped or
+	// evicted) would not. Once the password is correct, `totp_required` (no code supplied) versus
+	// `totp_invalid` (a wrong one) does reveal that an account has TOTP enrolled — an unavoidable,
+	// rate-limited signal, not one this API tries to hide.
+	//
+	// POST /auth/login
+	Login(ctx context.Context, req *LoginRequest) (*UserHeaders, error)
+	// Logout implements logout operation.
+	//
+	// Revokes the current session server-side and clears the cookie.
+	//
+	// POST /auth/logout
+	Logout(ctx context.Context) (*LogoutNoContent, error)
 	// ResumeJob implements resumeJob operation.
 	//
 	// Only resumable job types (mover, rebalance, evacuation, share relocation) persist a checkpoint to

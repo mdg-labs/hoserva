@@ -133,12 +133,152 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/setup/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Check whether the first-run admin account exists
+         * @description Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are the only routes that don't refuse every request with a "setup required" error while `adminExists` is false (#22).
+         */
+        get: operations["getSetupStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/setup/admin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create the first admin account
+         * @description Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a race between two concurrent requests can never create two admins (#22). Signs the new admin in on success, exactly like login.
+         */
+        post: operations["createFirstAdmin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Log in
+         * @description Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather than full Unicode case folding. Password, plus a TOTP code once the account has TOTP enrolled (doc 01 §7). Rate-limited and lockout-protected per account and per source address (doc 01 §7): an unknown username and a wrong password against a real one get the same status and error code (`invalid_credentials`), reach lockout (`rate_limited`) at the same failure threshold, and cost the same bounded argon2id-shaped work either way, for similar timing, under ordinary load — under a sustained flood large enough to fill and evict from the unknown-username table's own 10,000-entry cap, an unknown username's lockout can lift early, where a real account's own (never capped or evicted) would not. Once the password is correct, `totp_required` (no code supplied) versus `totp_invalid` (a wrong one) does reveal that an account has TOTP enrolled — an unavoidable, rate-limited signal, not one this API tries to hide.
+         */
+        post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Log out
+         * @description Revokes the current session server-side and clears the cookie.
+         */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the current session's user
+         * @description The signed-in user this session cookie belongs to.
+         */
+        get: operations["getCurrentSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/enroll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start TOTP enrolment for the signed-in user
+         * @description Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active — the account's existing active credential, if any, is untouched until confirmTotp activates the new one. Enrolling again before confirming replaces the still-pending secret. Once TOTP is already active on this account, replacing it requires proving the caller still holds the account: exactly one of the current password or a current TOTP code, in TotpEnrollRequest. Omitting both while TOTP is active is refused (totp_reverify_required); supplying both is refused too (totp_reverify_ambiguous), since each is one guess at the active credential and honouring both would spend two for the price of one request. Neither is required for a first enrolment.
+         */
+        post: operations["enrollTotp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/totp/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm TOTP enrolment
+         * @description Activates the pending secret enrollTotp created, once a code proves the signed-in user actually has it.
+         */
+        post: operations["confirmTotp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         Error: {
-            /** @description A stable, machine-readable identifier, e.g. `job_not_found`. */
+            /** @description A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation (#22) can also return one of: `setup_required` (409 — no admin account exists yet; every operation but getSetupStatus/createFirstAdmin refuses with this while it's true), `setup_complete` (409, createFirstAdmin — an admin account already exists), `rate_limited` (429 — the account or source address is currently locked out after repeated failures; `message` gives a retry-after), `too_busy` (503 — the bounded password-hashing worker pool is saturated; safe to retry shortly), `invalid_credentials` (401, login — an unknown username or wrong password, deliberately indistinguishable), `totp_required` (401, login — the account has TOTP enrolled and no code was supplied), `totp_invalid` (401, login and confirmTotp — a code was supplied but is wrong, expired or already used; a missing login code is `totp_required` instead, never this), `totp_reverify_required` (403, enrollTotp — TOTP is already active and the caller didn't prove they still hold the account: no password or code was supplied, or the one supplied was wrong; 403 rather than 401 since the session itself is valid, only the reverification is missing or failed), `totp_reverify_ambiguous` (400, enrollTotp — TOTP is already active and *both* the current password and a current TOTP code were supplied; supply exactly one), `totp_not_pending` (409, confirmTotp — no pending secret to confirm), `unauthorized` (401 — no credential, or one that no longer validates), `forbidden` (403 — a valid credential whose role doesn't satisfy the operation), `no_session` (404 — the Unix socket's peer-credential-trusted local access has no signed-in user for an operation that needs one), `request_too_large` (413 — the request body exceeded the server's size limit), `bad_request` (400 — the request body could not be decoded) and `not_found` (404 — no such API route). */
             code: string;
             /** @description A human-readable explanation, safe to show in the UI or CLI. */
             message: string;
@@ -146,6 +286,46 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * @description Q27 — share-only users have no API access and are not represented here.
+         * @enum {string}
+         */
+        UserRole: "admin" | "viewer";
+        User: {
+            /** Format: uuid */
+            id: string;
+            username: string;
+            role: components["schemas"]["UserRole"];
+            /** @description Whether TOTP is confirmed and active on this account. */
+            totpEnrolled: boolean;
+        };
+        SetupStatus: {
+            adminExists: boolean;
+        };
+        CreateFirstAdminRequest: {
+            username: string;
+            password: string;
+        };
+        LoginRequest: {
+            username: string;
+            password: string;
+            /** @description Required once the account has TOTP enrolled; omitted otherwise. */
+            totpCode?: string;
+        };
+        /** @description Both fields are optional for a first enrolment. Once TOTP is already active on the account, exactly one must prove the caller still holds it — the current password, or a current TOTP code — or enrollTotp is refused; supplying both is refused too (doc 01 §7). */
+        TotpEnrollRequest: {
+            password?: string;
+            code?: string;
+        };
+        TotpEnrollResponse: {
+            /** @description Base32-encoded TOTP secret (RFC 6238), for manual entry. */
+            secret: string;
+            /** @description An otpauth:// URI, for the enrolment QR code (doc 03 §1). */
+            otpauthUri: string;
+        };
+        TotpConfirmRequest: {
+            code: string;
         };
         /**
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
@@ -402,6 +582,168 @@ export interface operations {
                 content: {
                     "text/event-stream": components["schemas"]["Event"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSetupStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether the first-run admin account exists. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createFirstAdmin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateFirstAdminRequest"];
+            };
+        };
+        responses: {
+            /** @description The admin account, now signed in. */
+            200: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Signed in. */
+            200: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out. */
+            204: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCurrentSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The signed-in user. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    enrollTotp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpEnrollRequest"];
+            };
+        };
+        responses: {
+            /** @description The new secret, pending confirmation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpEnrollResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    confirmTotp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description TOTP is now active on this account. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };
