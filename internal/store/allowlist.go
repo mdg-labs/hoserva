@@ -292,7 +292,10 @@ func classifyDrop(tokens []sqlToken) statementClass {
 // OR-modifier (INSERT OR REPLACE, ...), and every other DML statement are
 // disallowed outright: a data change that is not literally copying a
 // rebuild's rows forward belongs in a Go data transform (doc 01 §4), never
-// in migration SQL.
+// in migration SQL. A trailing upsert-clause (ON CONFLICT ... DO UPDATE/DO
+// NOTHING) turns that same copy step into a conditional update of rows that
+// already exist, which is exactly the data change this shape exists to
+// rule out (Q60) — it is refused here rather than accepted as a copy.
 func classifyInsert(tokens []sqlToken) statementClass {
 	if !isWord(tokens, 1, "into") {
 		return classDisallowed
@@ -327,7 +330,33 @@ func classifyInsert(tokens []sqlToken) statementClass {
 	if !isWord(tokens, i, "select") {
 		return classDisallowed
 	}
+	if hasTopLevelOnConflict(tokens, i) {
+		return classDisallowed
+	}
 	return classContractOnly
+}
+
+// hasTopLevelOnConflict reports whether tokens[from:] — the SELECT that
+// follows a contract step's INSERT INTO ... SELECT — carries an upsert-
+// clause (ON CONFLICT) at paren depth 0. Depth tracking, rather than a raw
+// text scan, is what keeps this from matching an ON CONFLICT that could
+// only ever appear as string data inside the select's own expressions:
+// SQLite's grammar has nowhere inside a SELECT for an INSERT's own
+// upsert-clause to legally nest, so a real one always sits at depth 0,
+// right where the select statement itself ends.
+func hasTopLevelOnConflict(tokens []sqlToken, from int) bool {
+	depth := 0
+	for i := from; i < len(tokens); i++ {
+		switch {
+		case isPunct(tokens, i, "("):
+			depth++
+		case isPunct(tokens, i, ")"):
+			depth--
+		case depth == 0 && isWord(tokens, i, "on") && isWord(tokens, i+1, "conflict"):
+			return true
+		}
+	}
+	return false
 }
 
 // describeStatement names a refused statement for an error message,

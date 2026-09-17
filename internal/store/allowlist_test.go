@@ -58,6 +58,9 @@ func TestClassifyStatement_ContractOnly(t *testing.T) {
 		"ALTER TABLE a RENAME TO b;",
 		"INSERT INTO a SELECT * FROM b;",
 		"INSERT INTO a (id, v) SELECT id, v FROM b;",
+		// "on conflict" here is string data inside the SELECT, not an
+		// upsert-clause — it must not be mistaken for one.
+		"INSERT INTO a SELECT id, note FROM b WHERE note = 'on conflict, do nothing';",
 	}
 	for _, sql := range cases {
 		t.Run(sql, func(t *testing.T) {
@@ -85,12 +88,13 @@ func TestClassifyStatement_Disallowed(t *testing.T) {
 
 func TestCheckAllowedStatements_RefusesDisallowedRegardlessOfRegistration(t *testing.T) {
 	cases := map[string]string{
-		"EXPLAIN PRAGMA":         "EXPLAIN PRAGMA ignore_check_constraints = 1;",
-		"EXPLAIN QUERY PLAN":     "EXPLAIN QUERY PLAN PRAGMA foreign_keys = OFF;",
-		"CREATE TEMP TRIGGER":    "CREATE TABLE a (id INTEGER PRIMARY KEY); CREATE TEMP TRIGGER evil AFTER INSERT ON a BEGIN DELETE FROM main.a; END;",
-		"CREATE TABLE temp.x":    "CREATE TABLE temp.x (id INTEGER);",
-		"CREATE TABLE AS SELECT": "CREATE TABLE a (id INTEGER PRIMARY KEY); CREATE TABLE archive AS SELECT * FROM a;",
-		"WITH ... INSERT":        "CREATE TABLE a (id INTEGER PRIMARY KEY); WITH cte AS (SELECT 1 AS id) INSERT INTO a SELECT id FROM cte;",
+		"EXPLAIN PRAGMA":                              "EXPLAIN PRAGMA ignore_check_constraints = 1;",
+		"EXPLAIN QUERY PLAN":                          "EXPLAIN QUERY PLAN PRAGMA foreign_keys = OFF;",
+		"CREATE TEMP TRIGGER":                         "CREATE TABLE a (id INTEGER PRIMARY KEY); CREATE TEMP TRIGGER evil AFTER INSERT ON a BEGIN DELETE FROM main.a; END;",
+		"CREATE TABLE temp.x":                         "CREATE TABLE temp.x (id INTEGER);",
+		"CREATE TABLE AS SELECT":                      "CREATE TABLE a (id INTEGER PRIMARY KEY); CREATE TABLE archive AS SELECT * FROM a;",
+		"WITH ... INSERT":                             "CREATE TABLE a (id INTEGER PRIMARY KEY); WITH cte AS (SELECT 1 AS id) INSERT INTO a SELECT id FROM cte;",
+		"INSERT ... SELECT ... ON CONFLICT DO UPDATE": "CREATE TABLE a (id INTEGER PRIMARY KEY, v INTEGER); INSERT INTO a SELECT * FROM a WHERE true ON CONFLICT(id) DO UPDATE SET v = excluded.v;",
 	}
 	for name, sql := range cases {
 		t.Run(name, func(t *testing.T) {

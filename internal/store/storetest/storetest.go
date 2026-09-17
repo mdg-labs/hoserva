@@ -46,9 +46,14 @@ var DisallowedStatementExamples = map[string]string{
 	"INSERT ... VALUES":                             "INSERT INTO a VALUES (1);",
 	"INSERT OR REPLACE ... SELECT":                  "INSERT OR REPLACE INTO a SELECT * FROM b;",
 	"REPLACE INTO":                                  "REPLACE INTO a VALUES (1);",
-	"bare SELECT":                                   "SELECT 1;",
-	"unrecognized ALTER TABLE shape":                "ALTER TABLE a SOMETHING_UNRECOGNIZED;",
-	"unparseable garbage":                           "THIS IS NOT VALID SQL AT ALL;",
+	// A WHERE clause is required between the SELECT and ON CONFLICT for
+	// SQLite's own grammar to parse this unambiguously as an upsert rather
+	// than a syntax error — this proves the refusal below comes from the
+	// classifier, not from SQLite rejecting malformed SQL.
+	"INSERT ... SELECT ... ON CONFLICT DO UPDATE": "INSERT INTO a SELECT * FROM b WHERE true ON CONFLICT(id) DO UPDATE SET v = excluded.v;",
+	"bare SELECT":                    "SELECT 1;",
+	"unrecognized ALTER TABLE shape": "ALTER TABLE a SOMETHING_UNRECOGNIZED;",
+	"unparseable garbage":            "THIS IS NOT VALID SQL AT ALL;",
 	// TEMP-qualified with a case-insensitive, quoted schema name: SQLite
 	// resolves "TEMP".x exactly as if TEMP had been written on the CREATE
 	// statement itself, case-insensitively, regardless of quoting.
