@@ -50,8 +50,8 @@ hoserva/
 │   ├── api/
 │   ├── store/
 │   │   ├── schema/schema.sql   the central schema, the only hand-edited schema file (D16)
-│   │   ├── migrations/         generated schema migrations, immutable once created, with checksums
-│   │   ├── transforms/         hand-written, tested data transforms bound to a migration
+│   │   ├── migrations/         sqlite-migrate-generated schema migrations, immutable once created, with checksums
+│   │   ├── transforms/         hand-written, tested data transforms bound to a migration's checksum
 │   │   ├── queries/            SQL for sqlc
 │   │   └── db/                 sqlc-generated Go — committed
 │   ├── model/
@@ -145,8 +145,8 @@ make test-e2e         # L3, needs a VM
 make test-migration
 
 make gen              # openapi → go server interfaces + go client + ts client; sqlc queries
-make db-migration NAME=  # generate the next schema migration from schema.sql (D16)
-make db-check         # migration checksums, schema drift, data-safety scan
+make db-migration NAME=  # sqlite-migrate generate: the next schema migration from schema.sql (D16)
+make db-check         # sqlite-migrate check: migration checksums + schema drift (D16)
 make api-check        # spec lint, generated code up to date, breaking-change diff (D18)
 make lint
 make deb
@@ -200,7 +200,7 @@ Subdirectory-level files for areas with their own rules:
 - `internal/parity/CLAUDE.md` — SnapRAID invariants, what must never be run without confirmation, the threshold guard contract
 - `internal/cache/CLAUDE.md` — the copy-verify-delete contract, open-file checks, resumability requirements
 - `internal/migrate/CLAUDE.md` — never destructive, checksum verification, the point-of-no-return boundary
-- `internal/store/CLAUDE.md` — D16: edit `schema.sql`, never a migration file; drops only as a contract step; data transforms tested against every fixture database
+- `internal/store/CLAUDE.md` — D16: edit `schema.sql`, never a migration file; `sqlite-migrate generate` refuses a destructive change without `--allow-destructive`; data transforms tested against every fixture database, bound to a migration's checksum
 - `web/CLAUDE.md` — coss-first rule and doc 03's component map (D15), local edits to `src/components/ui/` kept minimal so `shadcn add --diff` stays readable, the plain-language labelling rule, fixtures
 - `internal/assistant/CLAUDE.md` — the safety boundaries from doc 11 §6
 
