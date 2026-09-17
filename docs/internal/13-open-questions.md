@@ -25,7 +25,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | Gate | Questions |
 |---|---|
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
-| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79 |
+| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
 | **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
@@ -674,6 +674,14 @@ Doc 12 §6 prescribed "feature branches, squash-merged", and doc 12 §5 a "prote
 
 **Default: `hoserva user reset-password <name>` and `hoserva user disable-totp <name>`, accepted only from root over the Unix socket — checked by the caller's peer credentials, so the `hoserva` group and TCP can't use them — each audit-logged and announced through every notification channel. There is no email or security-question reset.**
 Anyone with a root shell already controls the box, so root is the right authority for recovery, and it adds no secret to lose. Announcing the reset means a recovery nobody asked for doesn't go unnoticed.
+
+**Decided (maintainer, 2026-09-17), surfaced by #22's login rate limiting:** any LAN client can keep the admin account backed off indefinitely by feeding it wrong passwords (doc 01 §7) — accepted as a trade-off rather than tightened further, on condition that this same root-only path also clears that lockout, not only resets credentials: `hoserva user unlock <name>`, over the Unix socket, checked the same way and audit-logged the same way as the two commands above. **Not yet built** — #22 implements login rate limiting itself, not any of Q78's recovery commands. Whichever issue builds `reset-password`/`disable-totp`/`unlock` must gate all three on the caller's peer credential being **uid 0 specifically** — the Unix socket also accepts connections at `hoservad`'s own uid (Q44's implementation note), which is enough to use the daemon in development but not enough to authorize recovering another account.
+
+### Q84 — Revoking sessions on a credential change
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §7
+
+**Default: changing an account's TOTP enrollment — and, later, its password — revokes every other session already issued to that account, leaving only the session that made the change.**
+Surfaced by #22's review (doc 01 §7): sessions last 30 days without re-authentication, and today changing TOTP touches no other session, so a stolen cookie from before the change stays valid for the rest of its 30 days even after the credential it was issued under is gone. Revoking every other session closes that window at no cost to the user making the change — their own current session is unaffected. **Not yet built**: #22 adds `Logout`/`LogoutByTokenHash` (single-session revocation) but nothing that revokes every *other* session of an account; the follow-up issue that builds it is `safety-critical`-adjacent (touches session/auth state) but not itself one of the listed `safety-critical` categories.
 
 ### Q79 — Where the long-running test suites run
 **Status:** Default — **S9 is closed: its lab half (loop devices, FUSE, a SnapRAID sync), its KVM half (a QEMU guest boots with KVM acceleration on a standard `ubuntu-24.04` hosted runner, host-side confirmed via QMP), and its AppArmor-necessity half (`apparmor=unconfined` confirmed required for the lab container's own `mount(2)`, from an A-B-A hosted comparison, after six earlier voided attempts) are all CONFIRMED hosted** (run 35076920766, issue #10, doc 08 §9); **S10 (nested KVM, VM-in-VM) is a different question and remains entirely untouched, out of scope here** · **Gate:** Phase 1 · **Affects:** doc 06 §4, §7, doc 14 §8, Q42, D20
