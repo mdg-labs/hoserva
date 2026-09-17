@@ -15,10 +15,10 @@ import (
 )
 
 // Transform is one data transform bound to Version — the migration version
-// whose transaction it runs inside. Name exists only for error messages
-// and test names.
+// (sqlite-migrate's own sortable timestamp, Q60) whose transaction it runs
+// inside. Name exists only for error messages and test names.
 type Transform struct {
-	Version int
+	Version string
 	Name    string
 	Fn      func(ctx context.Context, tx *sql.Tx) error
 }

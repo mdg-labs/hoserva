@@ -1,4 +1,0 @@
-# One migration filename per line: a deliberately reviewed contract step
-# of an expand/contract change (D16) whose data already has a new home.
-# `make db-check` refuses a destructive migration (DROP TABLE, DROP
-# COLUMN, or a rebuild) that isn't listed here.

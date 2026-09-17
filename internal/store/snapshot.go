@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync/atomic"
 )
@@ -19,15 +18,18 @@ import (
 const snapshotPrefix = "hoserva-pre-migration-"
 
 // snapshotPattern captures the schema version a snapshot was taken from
-// (group 1). Retention is keyed on that version, never on a wall-clock
-// timestamp: a real upgrade's fromVersion only ever increases, which stays
-// true across a restart, a clock correction, or a home server with no
-// working RTC before its first NTP sync — none of which a filename
-// timestamp can promise. Group 2 only disambiguates
-// two snapshots of the same version a single process takes (a retried
-// migration re-snapshotting its unchanged starting database); it carries
-// no ordering meaning of its own.
-var snapshotPattern = regexp.MustCompile(`^hoserva-pre-migration-v(\d{10})-(\d{10})\.db$`)
+// (group 1) — sqlite-migrate's own sortable "<timestamp>_<slug>.sql"
+// filename convention (Q60) gives every migration a 14-digit version, so
+// this is fixed-width and lexicographically ordered the same as it is
+// numerically, same as the previous zero-padded integer scheme. Retention
+// is keyed on that version, never on a wall-clock timestamp: a real
+// upgrade's fromVersion only ever increases, which stays true across a
+// restart, a clock correction, or a home server with no working RTC before
+// its first NTP sync — none of which a filename timestamp can promise.
+// Group 2 only disambiguates two snapshots of the same version a single
+// process takes (a retried migration re-snapshotting its unchanged
+// starting database); it carries no ordering meaning of its own.
+var snapshotPattern = regexp.MustCompile(`^hoserva-pre-migration-v(\d{14})-(\d{10})\.db$`)
 
 var snapshotSeq atomic.Uint64
 
@@ -74,7 +76,7 @@ const KeepSnapshots = 3
 // Pruning is a separate step (PruneSnapshots) that callers run only once
 // they know the migration this snapshot precedes actually committed —
 // never from here, and never before that's known.
-func Snapshot(ctx context.Context, db sqlExecer, dir string, fromVersion int) (string, error) {
+func Snapshot(ctx context.Context, db sqlExecer, dir string, fromVersion string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("creating snapshot directory: %w", err)
 	}
@@ -85,7 +87,7 @@ func Snapshot(ctx context.Context, db sqlExecer, dir string, fromVersion int) (s
 		return "", err
 	}
 
-	name := fmt.Sprintf("%sv%010d-%010d.db", snapshotPrefix, fromVersion, snapshotSeq.Add(1))
+	name := fmt.Sprintf("%sv%s-%010d.db", snapshotPrefix, fromVersion, snapshotSeq.Add(1))
 	finalPath := filepath.Join(dir, name)
 	tmpPath := finalPath + ".tmp"
 
@@ -174,7 +176,7 @@ func quoteSQLiteLiteral(s string) string {
 // snapshotFile is one on-disk snapshot this package recognizes.
 type snapshotFile struct {
 	name        string
-	fromVersion int
+	fromVersion string
 }
 
 func listSnapshots(dir string) ([]snapshotFile, error) {
@@ -191,11 +193,7 @@ func listSnapshots(dir string) ([]snapshotFile, error) {
 		if m == nil {
 			continue
 		}
-		version, err := strconv.Atoi(m[1])
-		if err != nil {
-			continue
-		}
-		out = append(out, snapshotFile{name: e.Name(), fromVersion: version})
+		out = append(out, snapshotFile{name: e.Name(), fromVersion: m[1]})
 	}
 	return out, nil
 }
@@ -222,7 +220,7 @@ func PruneSnapshots(dir string, keep int, justWritten string) error {
 	}
 	justWrittenName := filepath.Base(justWritten)
 
-	byVersion := map[int][]snapshotFile{}
+	byVersion := map[string][]snapshotFile{}
 	for _, s := range all {
 		byVersion[s.fromVersion] = append(byVersion[s.fromVersion], s)
 	}
@@ -233,7 +231,7 @@ func PruneSnapshots(dir string, keep int, justWritten string) error {
 	// lexicographically last name — deterministic, and never a correctness
 	// question beyond hygiene, since every duplicate for one fromVersion is
 	// a snapshot of the same unmodified starting database.
-	representative := map[int]string{}
+	representative := map[string]string{}
 	for version, snaps := range byVersion {
 		rep := snaps[0].name
 		for _, s := range snaps {
@@ -247,11 +245,15 @@ func PruneSnapshots(dir string, keep int, justWritten string) error {
 		representative[version] = rep
 	}
 
-	versions := make([]int, 0, len(representative))
+	// fromVersion is sqlite-migrate's own fixed-width, 14-digit timestamp
+	// (Q60), so lexicographic and numeric order agree — a plain string sort
+	// is enough, the same guarantee the previous zero-padded integer scheme
+	// gave.
+	versions := make([]string, 0, len(representative))
 	for v := range representative {
 		versions = append(versions, v)
 	}
-	sort.Sort(sort.Reverse(sort.IntSlice(versions)))
+	sort.Sort(sort.Reverse(sort.StringSlice(versions)))
 
 	keepNames := map[string]bool{justWrittenName: true}
 	for i, v := range versions {
