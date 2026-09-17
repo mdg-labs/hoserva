@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Given a GitHub issue number (a single item, or an epic with sub-issues), autonomously implement and verify the work — sonnet execution agents in isolated scratch clones (one per item, or one per bundle of small, correlated items), one independent verifier per attempt, landing on local main only after a PASS. Parallelizes items with disjoint file scope, serializes overlapping ones. Never pushes. Use when asked to "work on issue #n", "implement epic #n", "run the orchestrator", or "orchestrate #n".
+description: Given a GitHub issue number (a single item, or an epic with sub-issues), autonomously implement and verify the work — sonnet execution agents in isolated scratch clones (one per item, or one per bundle of small, correlated items), one independent verifier per attempt, landing on local beta only after a PASS and pushing it there immediately unless it's safety-critical or blocked by a fresh follow-up. Parallelizes items with disjoint file scope, serializes overlapping ones. Never touches main — that's a separate, maintainer-run beta-to-main promotion. Use when asked to "work on issue #n", "implement epic #n", "run the orchestrator", or "orchestrate #n".
 argument-hint: <issue-number>
 allowed-tools:
   - Read
@@ -14,9 +14,16 @@ allowed-tools:
 # orchestrate
 
 Turns one GitHub issue on `mdg-labs/hoserva` — a single item, or an epic
-with sub-issues — into landed, verified commits on local `main`, with no
+with sub-issues — into landed, verified commits on local `beta`, with no
 human in the loop except at a genuine blocker (a `needs-sudo` step, a
-repeated verification failure, or an external unmet dependency). **Nothing is pushed**: the maintainer reads and pushes.
+repeated verification failure, or an external unmet dependency).
+**Non-`safety-critical` commits are pushed to `beta` as soon as they land**,
+one push per issue, unless the issue itself carries an open `blockedBy`
+added during this run — that one waits, like a `safety-critical` commit
+does, for the maintainer to read and push. `main` is out of scope for this
+skill entirely: it only moves via a `beta → main` pull request the
+maintainer opens by hand, gated by GitHub's required status checks (doc 12
+§6).
 
 **You (the current session) are the orchestrator.** You spawn
 `task-executor` and `task-verifier` subagents and drive the loop yourself —
@@ -122,13 +129,21 @@ Then the native relationships:
 gh issue view <n> --repo mdg-labs/hoserva --json blockedBy,blocking,parent,subIssues
 ```
 
-For each `d` in `blockedBy` (uppercase state here):
-- `CLOSED` → satisfied.
-- `OPEN`, but a commit on local `main` already carries its `Fixes #<d>`
-  trailer (`git log origin/main..HEAD --pretty=%B`) → satisfied: the work
-  has landed and only awaits the maintainer's push.
-- `OPEN` and in T → an intra-run ordering edge.
-- `OPEN` and not in T → **external blocker.** Remove the issue from T and report: `#<n> is blocked by open #<d>, which is outside this run — orchestrate #<d> first, or include it explicitly`.
+For each `d` in `blockedBy`, check its **labels**, not its open/closed
+state — `main` is release-only (Q46) and stays open on GitHub long after
+the fix has actually landed:
+- `d` carries `status:implemented` or `status:closed` → satisfied: the fix
+  has landed on local `beta` — pushed already unless it was
+  `safety-critical` or itself held back — which is enough for a scratch
+  clone made from the real repo's current state to build on.
+- Otherwise, and `d` is in T → an intra-run ordering edge.
+- Otherwise, and `d` is not in T → **external blocker.** Remove the issue
+  from T and report: `#<n> is blocked by open #<d>, which is outside this
+  run — orchestrate #<d> first, or include it explicitly`.
+
+`d`'s GitHub open/closed state is not a signal here — it only reflects
+whether the fix has reached `main`, a promotion the maintainer runs
+separately, never something a dependent issue needs to wait for.
 
 `parent` is the issue's epic, if any.
 
@@ -244,7 +259,7 @@ the executor runs after claiming a sub-issue and the verifier after each
 verdict. Pass the epic as `{{EPIC_NUMBER}}`; omit that block for an issue
 with no epic.
 
-- **You never set `status:closed`.** The trailer closes the issue when the maintainer pushes; the workflow labels it.
+- **You never set `status:closed`.** The trailer only closes the issue once its commit reaches `main` — for most work that's the later `beta → main` promotion, not this run's push to `beta`; the workflow labels it when it happens.
 - **You own the abandonment transitions:** an issue leaving your hands still open (executor `blocked`, or escalated after three FAILs) goes back to `status:ready`.
 
 ## 6. Dispatch `task-executor`
@@ -329,16 +344,18 @@ git cherry-pick -n FETCH_HEAD
 ```
 
 - **Cherry-pick succeeds.** Decide whether this is its epic's last open
-  sub-issue — by membership, not by count:
+  sub-issue — by membership, not by count. `main` stays open on GitHub long
+  after a sub-issue's fix has actually landed (Q46: `main` only moves via
+  promotion), so ask the label, not the open/closed state:
   ```
   gh api repos/mdg-labs/hoserva/issues/<epic>/sub_issues --paginate \
-    --jq '[.[] | select((.state | ascii_downcase) == "open") | .number]'
-  git log origin/main..HEAD --pretty=%B | grep -oiE '(fixes|closes) #[0-9]+' | grep -oE '[0-9]+' | sort -un
+    --jq '[.[] | select((.state | ascii_downcase) == "open") | select(all(.labels[]; .name != "status:implemented" and .name != "status:closed")) | .number]'
   ```
-  Subtract the second list (closed by unpushed trailers) from the first. It
-  is the last item **only if exactly `{<this issue>}` remains**. Keep
-  `ascii_downcase`: without it the filter matches nothing and every landing
-  would close the epic.
+  This lists open sub-issues that are genuinely still unfinished. The
+  verifier already set this issue's own `status:implemented` before you got
+  here, so it never appears in that list — the epic's last sub-issue is the
+  one where this list comes back **empty**. Keep `ascii_downcase`: without
+  it the filter matches nothing and every landing would close the epic.
 
   Commit with the executor's message, adding `Fixes #<epic>` only if it is
   really the last:
@@ -351,7 +368,21 @@ git cherry-pick -n FETCH_HEAD
   EOF
   )"
   ```
-  You may change only the message, never the diff. Never push.
+  You may change only the message, never the diff.
+
+  **Push, unless this issue is `safety-critical` or now carries an open
+  `blockedBy`** (a follow-up step 11 filed against it during this run,
+  limiting trust in the fix):
+  ```
+  git push origin beta
+  ```
+  A `safety-critical` commit, or one held back by a fresh `blockedBy`, stays
+  local — list it in the report (step 12) for the maintainer to read and
+  push by hand. Everything else pushes immediately, one push per landed
+  issue: that is what gives the maintainer a live CI status on `beta` as the
+  run progresses, instead of one batched push at the end. If the push is
+  rejected (someone else moved `beta` meanwhile), don't force it — report it
+  and stop touching that remote for the rest of this run.
 
   Once **every** issue in the unit is resolved: confirm its lab is gone
   (`docker ps --filter name=hoserva-lab-<lab-id>` empty and no `<clone>/.lab/`
@@ -363,7 +394,7 @@ git cherry-pick -n FETCH_HEAD
 - **Cherry-pick conflicts** (a wrong scope prediction): `git cherry-pick
   --abort`. A mechanical rebase problem, not a rejected implementation —
   doesn't spend a fix attempt. Destroy the unit's lab, delete the clone,
-  re-clone fresh from current `main`, redispatch the same issue with a
+  re-clone fresh from current `beta`, redispatch the same issue with a
   one-line "rebase re-run" note. Cap at 2 rebase retries, then escalate as
   in step 9.
 
@@ -374,8 +405,8 @@ git cherry-pick -n FETCH_HEAD
 - **After a single-issue attempt:** a fresh `task-executor` in the **same
   clone**, template branch `FIX_ROUND_SAME_WORKSPACE`, with the rejected SHA
   and the **blocking** findings verbatim (never the notes). It amends; the workspace stays one commit ahead
-  of `main`.
-- **After a bundled attempt:** re-clone fresh from current `main` (its
+  of `beta`.
+- **After a bundled attempt:** re-clone fresh from current `beta` (its
   passing siblings have landed), template branch `FIX_ROUND_FRESH_CLONE`,
   with `PRIOR_ATTEMPT_PATH`/`PRIOR_COMMIT_PATH` pointing at the old bundle
   workspace, read-only. A normal new commit.
@@ -446,15 +477,17 @@ gets its own issue and its own commit.
 
 ## 12. Compose the report
 
-- What landed (issue → commit SHA → one line)
+- What landed (issue → commit SHA → one line), and whether it reached
+  `origin/beta`
 - **Safety-critical commits — read line by line before pushing** (their own list, even if empty: "none this run")
+- **Commits held back by a fresh `blockedBy`** — landed locally, not pushed, because step 11 filed a follow-up against them during this run (their own list, even if empty: "none this run")
 - What's blocked and why (`needs-sudo` prepared, external dependency, lab not yet available, escalated after 3 FAILs)
 - Bundles and why
 - What step 11 routed: pulled into this run (issue → commit), deferred
   (issue → epic/milestone), added to an existing issue, and dropped (with
   why)
 - Any stale lab containers or loop devices step 0 found
-- **Nothing was pushed.** When satisfied: `git push origin main`
+- **What's still local, for the maintainer to read and push**: the two lists above, combined. `git push origin beta` once satisfied — everything else already reached `origin/beta` during the run.
 
 Don't send it to the user yet — step 13 first.
 
@@ -474,7 +507,7 @@ report as your final message.
 
 ## Non-negotiables
 
-- **Commits land on local `main` only — never pushed by you or any agent.** A scratch clone's branch is internal and disposable.
+- **Commits land on local `beta`.** Non-`safety-critical` ones are pushed to `origin/beta` immediately after landing; `safety-critical` commits and anything held back by a fresh `blockedBy` are never pushed by you — the maintainer reads and pushes those. `main` is never touched by this skill at all; it only moves via a maintainer-run `beta → main` promotion. A scratch clone's own branch is internal and disposable.
 - **No agent ever runs `gh issue close`.** Closing happens via a pushed commit's trailer.
 - **No agent ever touches a real block device, a real mount, or runs `sudo`** — storage runs only in its own namespaced lab; `needs-sudo` issues never reach an agent.
 - **Every lab is destroyed** before its clone is deleted, and no lane ever uses another lane's lab id.

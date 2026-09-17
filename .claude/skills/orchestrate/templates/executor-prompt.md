@@ -279,7 +279,7 @@ one. The blocking findings:
 its still-good parts here and make a **normal, fresh commit**.
 {{END IF}}
 {{IF FIX_ROUND_SAME_WORKSPACE:}}The rejected commit is in this workspace. **Amend** it — this workspace
-ends the attempt still exactly one commit ahead of `main`.
+ends the attempt still exactly one commit ahead of `beta`.
 {{END IF}}
 {{END IF}}
 

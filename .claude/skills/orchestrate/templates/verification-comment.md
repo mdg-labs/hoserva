@@ -1,7 +1,7 @@
 ## 🔍 Verification — {{PASS|FAIL}}
 
 **Attempt:** {{N}} of {{MAX}}
-**Reviewed commit:** `{{SHA}}` (scratch workspace, not yet landed on `main`)
+**Reviewed commit:** `{{SHA}}` (scratch workspace, not yet landed on `beta`)
 {{IF SAFETY_CRITICAL:}}**Safety-critical:** yes — full data-safety review; data-loss test confirmed to fail before and pass after the change{{END IF}}
 
 | Layer | Result (❌ = blocking finding, ⚠️ = notes only) |
