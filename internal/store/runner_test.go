@@ -916,8 +916,8 @@ func TestRunner_UnquotedBeginColumnDoesNotHideLaterCommit_NoPartialCommit(t *tes
 // splitStatements' beginDepth for a CASE that was never there. The
 // trigger's real closing END would then only bring beginDepth back to 1,
 // not 0, swallowing every semicolon after it — including a real COMMIT —
-// into one statement the classifier never looks past "CREATE TRIGGER"
-// on: the same shape of bug as
+// into a single statement whose real boundary splitStatements never found:
+// the same shape of bug as
 // TestRunner_UnquotedBeginColumnDoesNotHideLaterCommit_NoPartialCommit
 // above, with an unusual identifier instead of an unrelated column name.
 func TestRunner_UnusualIdentifierInTriggerBodyDoesNotHideLaterCommit_NoPartialCommit(t *testing.T) {

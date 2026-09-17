@@ -442,14 +442,73 @@ func TestRun_GeneratedNewTableWithInlineComments_NoDrift(t *testing.T) {
 // with a real CASE...END inside it must generate and pass db-migration's
 // own drift check cleanly end to end — this is the whole tool, not just
 // splitStatements/CheckDrift in isolation, exercising the same CASE...END
-// pairing every unit test above already covers.
+// pairing every unit test above already covers. The body is SELECT, not an
+// UPDATE, because db-migration never auto-generates a DML-bodied trigger at
+// all (Q60, TestRun_RefusesDMLBodiedTrigger below) — that shape requires a
+// reviewed, hand-written contract step.
 func TestRun_GeneratedNewTableWithTriggerCaseEnd_NoDrift(t *testing.T) {
 	runThenCheckDrift(t, `
 		CREATE TABLE a (id INTEGER PRIMARY KEY, v INTEGER);
 		CREATE TRIGGER a_classify AFTER INSERT ON a BEGIN
-			UPDATE a SET v = CASE WHEN v > 0 THEN 1 ELSE 0 END WHERE id = NEW.id;
+			SELECT CASE WHEN NEW.v > 0 THEN 1 ELSE 0 END;
 		END;
 	`, nil)
+}
+
+// A trigger with a DML body is contract-only (Q60) — db-migration never
+// writes a registered contract step (only a hand-written migration is ever
+// registered), so it must refuse to generate this trigger automatically,
+// the same way it already refuses a DROP COLUMN.
+func TestRun_RefusesDMLBodiedTrigger(t *testing.T) {
+	dir := setupStoreDir(t, `
+		CREATE TABLE a (id INTEGER PRIMARY KEY, v INTEGER);
+		CREATE TRIGGER a_classify AFTER INSERT ON a BEGIN
+			UPDATE a SET v = CASE WHEN v > 0 THEN 1 ELSE 0 END WHERE id = NEW.id;
+		END;
+	`, []store.Migration{{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY, v INTEGER);"}})
+
+	if err := run("add_trigger", dir); err == nil {
+		t.Fatal("expected run to refuse generating a migration whose only change is a DML-bodied trigger")
+	}
+
+	entries, err := os.ReadDir(filepath.Join(dir, "migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != "0001_a.sql" && e.Name() != store.ChecksumsFile {
+			t.Fatalf("run wrote a file despite refusing: %s", e.Name())
+		}
+	}
+}
+
+// A quoted "end" column inside the trigger's own DML body must not hide
+// that body's DML from db-migration's own Destructive-based skip — a
+// design that tracked a raw begin/case/end keyword depth without checking
+// whether the source token was quoted stopped its body scan before ever
+// reaching the UPDATE here and wrote this trigger into a plain migration
+// with no error at all (Q60). This design has no such depth to mislead.
+func TestRun_RefusesDMLBodiedTriggerWithQuotedEndColumn(t *testing.T) {
+	dir := setupStoreDir(t, `
+		CREATE TABLE a (id INTEGER PRIMARY KEY, "end" INTEGER);
+		CREATE TRIGGER a_classify AFTER INSERT ON a BEGIN
+			UPDATE a SET "end" = 1;
+		END;
+	`, []store.Migration{{Version: 1, Filename: "0001_a.sql", SQL: `CREATE TABLE a (id INTEGER PRIMARY KEY, "end" INTEGER);`}})
+
+	if err := run("add_trigger", dir); err == nil {
+		t.Fatal("expected run to refuse generating a migration whose only change is a DML-bodied trigger with a quoted \"end\" column")
+	}
+
+	entries, err := os.ReadDir(filepath.Join(dir, "migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != "0001_a.sql" && e.Name() != store.ChecksumsFile {
+			t.Fatalf("run wrote a file despite refusing: %s", e.Name())
+		}
+	}
 }
 
 // Q60's own recorded gap: sqldef's parser rejects an unquoted column named
@@ -481,7 +540,9 @@ func TestRun_GeneratedJobsShapedTable_NoDrift(t *testing.T) {
 }
 
 // A users/sessions pair shaped like #22's own needs: STRICT,
-// WITHOUT ROWID, ON DELETE CASCADE and a CASE trigger.
+// WITHOUT ROWID, ON DELETE CASCADE and a CASE trigger. The body is SELECT,
+// not an UPDATE, for the same reason as TestRun_GeneratedNewTableWithTriggerCaseEnd_NoDrift
+// above (Q60): db-migration never auto-generates a DML-bodied trigger.
 func TestRun_GeneratedUsersSessionsShapedTables_NoDrift(t *testing.T) {
 	runThenCheckDrift(t, `
 		CREATE TABLE users (
@@ -495,7 +556,7 @@ func TestRun_GeneratedUsersSessionsShapedTables_NoDrift(t *testing.T) {
 			role TEXT NOT NULL
 		) STRICT, WITHOUT ROWID;
 		CREATE TRIGGER sessions_role AFTER INSERT ON sessions BEGIN
-			UPDATE sessions SET role = CASE WHEN (SELECT is_admin FROM users WHERE id = NEW.user_id) = 1 THEN 'admin' ELSE 'user' END WHERE token = NEW.token;
+			SELECT CASE WHEN (SELECT is_admin FROM users WHERE id = NEW.user_id) = 1 THEN 'admin' ELSE 'user' END;
 		END;
 	`, nil)
 }
