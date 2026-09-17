@@ -249,15 +249,27 @@ GitHub issues on `mdg-labs/hoserva` are the plan and the memory between sessions
 
 ## 6. Branching and releases
 
-Minimal, since there is one developer (Q46):
+Two branches (Q46, revised — see below):
 
-- `main` is always releasable
-- **Agent work lands as verified local commits on `main`** via the `orchestrate` skill — one commit per issue, closed by its `Fixes #n` trailer. The maintainer reads (safety-critical commits line by line) and pushes; nothing agent-made is pushed automatically. CI runs on every push.
-- **External contributors** use pull requests from forks, squash-merged, with CI on hosted runners only (doc 06 §7)
-- Tags drive releases; CI builds the `.deb` for amd64 and arm64, attaches it with signed checksums to a GitHub Release, and updates the signed release index on the project site. GitHub keeps every version, so a rollback always has somewhere to go. From 1.0 the same workflow also publishes to the signed apt repository (Q66, Q67)
+- **`beta`** is the working branch. Every change, agent or human, lands here first. CI runs on every push; `beta` is not required to be releasable at every commit.
+- **`main`** is release-only, and stays the GitHub default branch — so `Fixes #n` still closes an issue only once its commit reaches `main`. That is for the maintainer's own visibility ("is this actually on main yet"); agents never wait on it. `main` only moves via a `beta → main` pull request, gated by a required-status-checks branch protection ruleset: every job in `ci.yml` must pass before that PR can merge. No required review — there is one developer.
+
+**Why not land straight on `main`, as Q46 originally decided:** `orchestrate`'s own local verification is not infallible, and shares its environment (and blind spots) with the executor it's checking. Issue #18 needed nine rejected attempts before a schema change passed; the #120 lab-teardown fix cascaded into three more bugs in the same area (#122, #128, #129), one of them a skill bug that told agents to run `losetup` on the host, and another commit in that chain bypassed `orchestrate` entirely. `main` needs a gate an independent, clean environment enforces — GitHub Actions on hosted runners — not only a local verifier's PASS.
+
+**Agent work:**
+- `orchestrate` lands verified commits on local `beta` — one commit per issue, `Fixes #n` trailer.
+- **Non-`safety-critical` commits push to `beta` immediately after landing**, unless the issue carries an open `blockedBy` added during the same run (a follow-up filed because it limits trust in the fix) — that one waits for the maintainer, same as a safety-critical commit.
+- **`safety-critical` commits are never pushed automatically.** They're listed in every orchestrate report; the maintainer reads them line by line and pushes.
+- Downstream agent work treats an issue as unblocking once it carries `status:implemented` or `status:closed` — never its GitHub open/closed state, which only reflects whether it has reached `main`. A scratch clone is made from the real repo's current local state, which already has the fix regardless of what's been pushed or promoted.
+
+**Promoting to a release:** when `beta` is ready, the maintainer opens a `beta → main` pull request by hand. CI must pass; the maintainer merges it — no separate review step, since there's nobody else to review it.
+
+**External contributors** fork the whole repository, branch from `beta`, and PR back into `beta` — not `main` — squash-merged, with CI on hosted runners only (doc 06 §7). Once contributors exist, `beta` gets its own protection too: required CI, plus the maintainer's review on external PRs, with an admin bypass so the maintainer's own merges stay unblocked by that review requirement.
+
+- Tags on `main` drive releases; CI builds the `.deb` for amd64 and arm64, attaches it with signed checksums to a GitHub Release, and updates the signed release index on the project site. GitHub keeps every version, so a rollback always has somewhere to go. From 1.0 the same workflow also publishes to the signed apt repository (Q66, Q67)
 - Conventional commits (`feat(parity): …`), since the changelog generates from them and the agent will write most of them
 
-**Release channels:** `stable` and `beta` — GitHub releases and pre-releases until 1.0, then channels in the apt repository. Beta exists for the opt-in public beta (doc 06 §6) and for anything touching the mover, parity, or migration — the three areas where a bad release costs someone their data.
+**Release channels:** `stable` and `beta` — GitHub releases and pre-releases until 1.0, then channels in the apt repository. A beta pre-release can be cut directly from the `beta` branch; a stable release only after promotion to `main`. Beta exists for the opt-in public beta (doc 06 §6) and for anything touching the mover, parity, or migration — the three areas where a bad release costs someone their data.
 
 ---
 

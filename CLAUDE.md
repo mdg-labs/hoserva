@@ -94,7 +94,7 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 - **Close via commit trailers.** A commit finishing tracked work carries `Fixes #<n>`; the commit finishing an epic's last sub-issue also carries `Fixes #<epic>`. **Never invent or guess a number** — no tracked issue in context, no trailer.
 - **Never close an issue by hand** (`gh issue close`) unless the maintainer explicitly asks.
 - Don't open an issue for something finished in the same session — that's bookkeeping theatre.
-- **Executing an issue or epic end to end is the `orchestrate` skill's job**: executors in isolated scratch clones, an independent verifier per attempt, landing on local `main` only after a PASS. **Nothing agent-made is pushed automatically** — the maintainer reads (safety-critical commits line by line) and pushes.
+- **`beta` is the working branch; `main` is release-only** (Q46). `orchestrate` lands verified commits on local `beta`: executors in isolated scratch clones, an independent verifier per attempt, landing only after a PASS. **Non-`safety-critical` commits are pushed to `beta` immediately after landing** — one push per issue — unless the issue itself carries an open `blockedBy` added during the same run, which waits like a safety-critical commit does. **`safety-critical` commits are never pushed automatically**: the maintainer reads them line by line and pushes. `main` only moves via a `beta → main` pull request, gated by GitHub's required status checks (doc 12 §6) — nothing reaches it without passing CI in a clean environment first.
 
 ## Label set
 
