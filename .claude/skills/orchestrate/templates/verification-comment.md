@@ -4,7 +4,7 @@
 **Reviewed commit:** `{{SHA}}` (scratch workspace, not yet landed on `main`)
 {{IF SAFETY_CRITICAL:}}**Safety-critical:** yes — full data-safety review; data-loss test confirmed to fail before and pass after the change{{END IF}}
 
-| Layer | Result |
+| Layer | Result (❌ = blocking finding, ⚠️ = notes only) |
 |---|---|
 | Correctness / compilation | {{✅ ⚠️ or ❌}} — {{one line}} |
 | Scope | {{✅ ⚠️ or ❌}} — {{one line}} |
@@ -18,17 +18,26 @@
 runs with their lab id — and any applicable check that could not run on this
 machine, with why}}
 
+{{ — only on a fix round, otherwise omit this whole section: }}
+### Previous blocking findings
+1. **{{short title}}** — {{closed ✅ | still open ❌}} — {{the evidence}}
+
 {{ — only if FAIL, otherwise omit this whole section: }}
-### Findings — must be addressed before the next attempt
-1. **{{short title}}** — `{{file:line}}` — {{concrete description of the
-   problem and what closing it requires}}
+### Blocking findings — must be closed before the next attempt
+1. **{{short title}}** — `{{file:line}}` — {{what's wrong, the concrete
+   scenario that shows it, and what closing it requires}}
 2. {{…}}
 
 {{ — only if there are any, otherwise omit this whole section: }}
+### Notes — non-blocking, no action required
+- {{one line each; never filed as issues, never required of a fix round}}
+
+{{ — only if there are any, otherwise omit this whole section: }}
 ### Findings outside this issue
-Not blockers for this issue — recorded so they can be filed separately.
+Real defects with a concrete scenario, outside this issue's scope — the
+orchestrator files or routes each one.
 1. **{{short title}}** — `{{file:line}}` or {{the command that shows it}} —
-   {{what's wrong, and why it isn't in this issue's scope}}
+   {{what's wrong, the scenario, and why it isn't in this issue's scope}}
 
 ---
 *Verified by `task-verifier` via the `orchestrate` skill. This comment does

@@ -90,6 +90,35 @@ surfaces the question to override later, but triage always lands on a
 concrete, sane default. `AskUserQuestion` is available; prefer the default
 rule over asking.
 
+## Fewer, complete issues
+
+Every issue triage creates is work someone must finish. Keep the count down
+and each issue whole:
+
+- **Extend before you add.** If step 5 finds an open issue that covers the
+  same work or paths and hasn't been started (`status:new` or
+  `status:ready`), add the new material to that issue (enrich mode: a new
+  acceptance criterion, a scope line) instead of creating another. Report
+  which issue absorbed it.
+- **A decision and its code are one issue.** When an open question's
+  default implies code, the issue that builds the code records the default
+  and updates the doc 13 entry as one of its acceptance criteria. Create a
+  standalone `docs` issue only when no code follows, or when the maintainer
+  must decide before the code can be specified. In that case, create the
+  code issue together with it, blocked by it; `orchestrate` pulls it into
+  the same run.
+- **Acceptance criteria are the whole definition of done.** A verifier
+  fails an issue only on an unmet criterion or a real defect. So write
+  criteria that state the bar ("refuses X; Y stays allowed"), and list
+  adjacent work the issue deliberately leaves alone under `## Out of scope`,
+  with the issue number where that work lives, if any. Hardening "while
+  we're there" is either a criterion or out of scope — never implied.
+- **Every non-epic issue has a home.** Attach it to the open epic whose
+  scope it falls under, with that epic's milestone. When `orchestrate`
+  files a finding, it tells you whether the issue joins its current run or
+  is deferred to a named epic. If no open epic fits, say so in your report
+  rather than guessing.
+
 This skill is **invoke-only** — no workflow triggers it. It runs here when
 the maintainer wants it.
 
@@ -117,8 +146,8 @@ stated (doc 06 §6); nothing is ever routed to the maintainer to test.
 - `## Original report` — the reporter's text, verbatim (enrich mode: the existing body and relevant comments; create mode: the user's text).
 - `## Summary` — one or two sentences on what this actually is, once investigated.
 - `## Design references` — the doc sections and `D`/`Q` numbers it implements or touches.
-- Then, as warranted: `## Reproduction`, `## Root cause / relevant code`, `## Upstream / reference context`, `## Proposed approach`, `## Constraints`, `## Acceptance criteria`, `## Open questions`. Don't force sections that don't apply.
-- **Acceptance criteria are checkable.** For storage work, name the loop-harness test that proves it (doc 06 §3, doc 09 §6); for `safety-critical` work, the data-loss scenario the test reproduces. For a `spike`, the deliverable is recorded findings (`CLAUDE.md`, "Spikes"): what is measured, the kill or pass criterion (doc 07 §1), and which doc 13 entries it confirms or overturns.
+- Then, as warranted: `## Reproduction`, `## Root cause / relevant code`, `## Upstream / reference context`, `## Proposed approach`, `## Constraints`, `## Acceptance criteria`, `## Out of scope`, `## Open questions`. Don't force sections that don't apply — except `## Out of scope`, which every `feat`, `bug` and `chore` issue carries.
+- **Acceptance criteria are checkable and complete** — nothing beyond them is required to close the issue. For storage work, name the loop-harness test that proves it (doc 06 §3, doc 09 §6); for `safety-critical` work, the data-loss scenario the test reproduces. For a `spike`, the deliverable is recorded findings (`CLAUDE.md`, "Spikes"): what is measured, the kill or pass criterion (doc 07 §1), and which doc 13 entries it confirms or overturns.
 - **Scope hint.** Name the top-level paths the work will touch in backticks (`internal/parity/`, `docs/internal/`), so `orchestrate` can bound it.
 
 ## Epic/sub-issue structure and dependencies — native relationships, never body prose
@@ -165,3 +194,5 @@ GitHub's native fields. **Never** as body prose ("Part of #N", "Depends on
 - **Epic/sub-issue and blocking relationships are native GitHub fields, never body prose.**
 - **Every open question lands on a recommended default**, citing doc 13 where an entry exists.
 - **An issue never silently contradicts a decision (`Dn`) or a doc 13 default** — it names the conflict and, for a default, includes updating doc 13 in its acceptance criteria.
+- **Extend an open, unstarted issue before creating a new one; never split a decision from the code it implies** unless the maintainer must decide first, and then file both together.
+- **Every non-epic issue gets an open epic and milestone**, and every `feat`/`bug`/`chore` issue gets an `## Out of scope` section.

@@ -150,9 +150,16 @@ your **only** GitHub writes. Never `gh issue edit`, `gh issue close`, or
   skipped or loosened**; copy-verify-delete, and array-to-array relocations
   are two-phase (copy, verify, sync, then delete); anything that can lose
   data gets its test *before* its implementation.
+- **The acceptance criteria define done.** Implement them fully, and stop
+  there: no hardening, extra features or side fixes the issue didn't ask
+  for. Something real you notice outside that goes under "Findings outside
+  these issues", not into the diff.
 - **Conventions:** no comments unless the *why* is non-obvious; no
   speculative abstraction; no half-finished work; no error handling for
   cases that can't happen. Conventional commit subjects (`feat(parity): …`).
+- **Docs, code comments and commit messages describe the current design** —
+  never the review history, the attempts, or what a previous round got
+  wrong. State only what the code and its tests actually do.
 - **Golden files change only deliberately.** If your change alters generated
   output, the commit message says what changed in the output and why — never
   regenerate goldens just to make a test pass.
@@ -260,10 +267,13 @@ git -C {{PRIOR_COMMIT_PATH}} show --stat {{PREVIOUS_SHA}}
 git -C {{PRIOR_COMMIT_PATH}} show {{PREVIOUS_SHA}}
 ```
 
-Make the **smallest edit that closes every finding below**. Layers the
-verifier didn't flag were clean — leave that code as it is. The findings:
+Make the **smallest edit that closes every blocking finding below**. Code
+the verifier didn't flag was accepted — leave it as it is, and don't take
+the chance to polish or harden anything else. Notes in the verification
+comment are not required; ignore them unless a blocking finding points at
+one. The blocking findings:
 
-{{VERIFIER_FINDINGS}}
+{{VERIFIER_BLOCKING_FINDINGS — verbatim, blocking findings only}}
 
 {{IF FIX_ROUND_FRESH_CLONE:}}The rejected commit is in a **different, read-only** workspace. Reproduce
 its still-good parts here and make a **normal, fresh commit**.

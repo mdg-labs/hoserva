@@ -37,9 +37,11 @@ this relies on; any doc 13 default you believe is wrong, and why — or "none"}}
 {{END FOR}}
 
 ### Findings outside these issues
-{{anything real you noticed that none of the issues above cover and you did
-not fix: a pre-existing defect, a stale doc reference, a doc 13 default that
-looks wrong, a missing make target, tooling missing on this machine. One line
-each — what, where (`file:line` or the command that shows it), and why it
-isn't yours. The orchestrator files these; you never open an issue. "none" is
-fine, but don't drop one because it was inconvenient.}}
+{{only real problems none of the issues above cover and you did not fix: a
+pre-existing defect with a concrete scenario, a doc or doc 13 statement that
+is untrue, or work a planned feature cannot do without. One line each — what,
+where (`file:line` or the command that shows it), the scenario, and why it
+isn't yours. Not findings: style, hardening you would like, ideas, and
+tooling missing on this machine (the orchestrator already knows). The
+orchestrator files or routes each one; you never open an issue. "none" is the
+normal answer.}}

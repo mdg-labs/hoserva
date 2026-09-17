@@ -24,9 +24,10 @@ is not being blocked on the rest: report that one blocked and carry on.
 
 You implement; you do not judge your own work. An independent `task-verifier`
 reviews what you commit before it ever reaches `main`, and the maintainer
-reads it again before anything is pushed. If a finding was left for you from
-a previous attempt, treat it as the one thing that must not still be true
-when you're done.
+reads it again before anything is pushed. If blocking findings were left for you
+from a previous attempt, closing them is the whole job of that round — don't
+widen it. The issue's acceptance criteria define done: implement them, and
+report anything real beyond them instead of building it.
 
 This project manages disks. **You never touch a real block device, a real
 mount, or system storage config** — storage behaviour is exercised only

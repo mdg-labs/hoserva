@@ -124,6 +124,9 @@ gh issue view <n> --repo mdg-labs/hoserva --json blockedBy,blocking,parent,subIs
 
 For each `d` in `blockedBy` (uppercase state here):
 - `CLOSED` → satisfied.
+- `OPEN`, but a commit on local `main` already carries its `Fixes #<d>`
+  trailer (`git log origin/main..HEAD --pretty=%B`) → satisfied: the work
+  has landed and only awaits the maintainer's push.
 - `OPEN` and in T → an intra-run ordering edge.
 - `OPEN` and not in T → **external blocker.** Remove the issue from T and report: `#<n> is blocked by open #<d>, which is outside this run — orchestrate #<d> first, or include it explicitly`.
 
@@ -286,14 +289,18 @@ cite it.
 Subagents re-invoke you when they finish. Once everything dispatchable is
 out the door, say in one line what you're waiting on and **end your turn.**
 Never `ScheduleWakeup`, `Monitor`, or `sleep`; never re-dispatch because you
-haven't heard back. When a notification arrives, verify that unit (step 7)
-and dispatch the next unit in its lane.
+haven't heard back. When a notification arrives, route its findings
+(step 11), verify that unit (step 7), and dispatch the next unit in its lane.
 
 ## 7. Dispatch `task-verifier`
 
 Read `.claude/skills/orchestrate/templates/verifier-prompt.md` and fill it:
 per issue, its details, the same comment thread, its scope, its flags, and
 **its own commit SHA**; once, the workspace, lab id, attempt number and epic.
+On a fix round, fill the `FIX_ROUND` block too: the rejected SHA, where it
+can be read, and the previous round's **blocking** findings verbatim — the
+verifier checks those are closed and reviews what changed, rather than
+restarting the review.
 
 ```
 Agent({
@@ -307,7 +314,8 @@ Agent({
 
 **One verifier per unit per attempt**, verdicts **per issue**: all six layers
 run against each commit separately, one comment and one label move per
-issue. A mixed PASS/FAIL result is normal. The verifier posts its own
+issue. **Only blocking findings fail an issue**; notes are recorded in the
+comment and go nowhere else. A mixed PASS/FAIL result is normal. The verifier posts its own
 comments and moves its own labels; read its returned verdicts rather than
 re-deriving them from GitHub.
 
@@ -365,7 +373,7 @@ git cherry-pick -n FETCH_HEAD
 
 - **After a single-issue attempt:** a fresh `task-executor` in the **same
   clone**, template branch `FIX_ROUND_SAME_WORKSPACE`, with the rejected SHA
-  and the findings verbatim. It amends; the workspace stays one commit ahead
+  and the **blocking** findings verbatim (never the notes). It amends; the workspace stays one commit ahead
   of `main`.
 - **After a bundled attempt:** re-clone fresh from current `main` (its
   passing siblings have landed), template branch `FIX_ROUND_FRESH_CLONE`,
@@ -373,7 +381,12 @@ git cherry-pick -n FETCH_HEAD
   workspace, read-only. A normal new commit.
 
 The attempt counter carries over. Dispatch a fresh verifier against the new
-SHA; it re-runs every layer regardless of how little changed.
+SHA with the `FIX_ROUND` block filled: it re-runs every check, confirms each
+previous blocking finding is closed, and reviews what changed — it does not
+hunt for new findings in code an earlier round already accepted. If a fix
+round nonetheless raises new blocking findings in unchanged code, read them
+yourself before dispatching another round: a real data-loss or security
+defect stays; anything else is a note, and you say so in the report.
 
 If attempt 3 also fails: stop. Put the issue back to `status:ready`, then
 `AskUserQuestion` with the latest findings — keep trying / hand it to the
@@ -382,20 +395,54 @@ maintainer / skip for now. Destroy its lab and delete its clone.
 ## 10. Repeat until T is empty
 
 Move to the next wave once every issue in the current one has landed, been
-skipped as blocked, or been escalated.
+skipped as blocked, or been escalated — including issues step 11 pulled into
+this run.
 
-## 11. File what the run surfaced but didn't own
+## 11. Route what the run surfaces — as it arrives, not at the end
 
-Collect every **Findings outside this issue** from executor reports and
-verification comments. For each:
+Every executor report and every verdict can carry **Findings outside these
+issues**. Route each one **as soon as that report arrives**, before you
+dispatch the next unit. Notes never qualify — they stay in the verification
+comment.
 
-- **Covered by an open issue?** Note the number, don't duplicate.
-- **In scope for something still open in T's chain?** Say so and leave it.
-- **Genuinely new work?** File it via `github-triage` (create mode), which labels it and sets `status:ready`.
-- **A finding that a doc 13 default is wrong?** Always an issue (type `docs`, touching doc 13) — never a silent doc edit.
-- **Trivially small** (a one-line doc correction) and reachable: fix it directly on `main` as its own commit, no issue.
+1. **Is it real?** Check it yourself against the file, line or command it
+   names: a defect with a concrete scenario, an untrue doc or doc 13
+   statement, or work a planned feature cannot do without. If it isn't, drop
+   it and list it under "dropped" in the report with a one-line reason.
+2. **Is it already tracked?** If an open issue's scope already covers it,
+   file nothing — note the number, and comment on that issue only if the
+   finding adds a concrete detail it lacks. If it is really a missing
+   acceptance criterion of an open issue nobody has started, add it there
+   (`github-triage`, enrich mode) instead of filing a new issue.
+3. **Otherwise file it now**, via `github-triage` (create mode), and decide
+   where it belongs:
+   - **This run** — it belongs to this run's scope (it touches the same area
+     or paths as an issue in T, or an issue in T is not really right without
+     it) **and** it can be done now (no `needs-sudo`, no open dependency
+     outside the run, no pending maintainer decision). Attach it to the same
+     epic as the T issue it came from, add any blocked-by edges ordering
+     needs, add it to T, place it in the waves — usually right after the
+     issue that surfaced it — and dispatch it in this run like any other
+     issue, with its own commit and `Fixes #` trailer. A decision issue
+     whose recorded decision needs code (a `docs` issue settling a default)
+     is the typical case: the code is pulled in and done in the same run.
+   - **Deferred** — it belongs to other work: attach it natively to the open
+     epic whose scope it falls under (sub-issue, plus that epic's
+     milestone), with blocked-by edges to the open issues it needs. It waits
+     until that epic is worked. If no open epic fits, file it without a
+     parent and ask the maintainer where it belongs.
+4. **A doc 13 default that looks wrong** is always an issue (type `docs`,
+   touching doc 13), routed the same way — never a silent doc edit.
+5. **A decision only the maintainer can make** — ask with `AskUserQuestion`
+   when it comes up, and put the answer in the issue.
 
-Record the work; don't do it. Never fold a finding into an unrelated landing commit.
+**Growth guard.** If pulled-in issues would grow T by more than three beyond
+its original size, or a pulled-in issue surfaces yet another pull-in, ask the
+maintainer before pulling in more; defer whatever they don't want in this
+run.
+
+Never fold a finding into an unrelated landing commit: a pulled-in finding
+gets its own issue and its own commit.
 
 ## 12. Compose the report
 
@@ -403,7 +450,9 @@ Record the work; don't do it. Never fold a finding into an unrelated landing com
 - **Safety-critical commits — read line by line before pushing** (their own list, even if empty: "none this run")
 - What's blocked and why (`needs-sudo` prepared, external dependency, lab not yet available, escalated after 3 FAILs)
 - Bundles and why
-- What step 11 filed or fixed
+- What step 11 routed: pulled into this run (issue → commit), deferred
+  (issue → epic/milestone), added to an existing issue, and dropped (with
+  why)
 - Any stale lab containers or loop devices step 0 found
 - **Nothing was pushed.** When satisfied: `git push origin main`
 
@@ -435,5 +484,7 @@ report as your final message.
 - **Parallel lanes never share a scratch clone**, and only you touch the real repo, only at landing, one commit at a time.
 - **One commit per issue, always.**
 - **A fix round is never bundled; a `safety-critical` issue is never bundled.**
+- **Only blocking findings fail an issue or reach a fix round**; a fix round's verifier checks closure and the change, not the whole issue afresh.
+- **Surfaced findings are filed and routed as they arrive** — pulled into this run when they belong to its scope, otherwise attached to the open epic they belong to.
 - **Every written artifact uses its template** — dispatch prompts, the executor's report, the verifier's comment.
 - **Every run ends with exactly one Discord notification**, sent after T is exhausted and before your final message.
