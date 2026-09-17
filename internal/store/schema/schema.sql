@@ -18,7 +18,7 @@ CREATE TABLE schema_info (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     installation_id TEXT NOT NULL,
     created_at TEXT NOT NULL
-);
+) STRICT;
 
 -- Jobs (#19, doc 01 §4): the persisted record behind every long-running
 -- operation. "type" and "status" are quoted (Q60: sqldef's SQLite parser
@@ -50,7 +50,7 @@ CREATE TABLE jobs (
     created_at TEXT NOT NULL,
     started_at TEXT,
     finished_at TEXT
-);
+) STRICT;
 
 CREATE INDEX jobs_status_idx ON jobs ("status");
 CREATE INDEX jobs_class_idx ON jobs (class);
@@ -89,7 +89,7 @@ CREATE TABLE users (
     totp_last_step INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     totp_pending_secret BLOB
-);
+) STRICT;
 
 -- Enforces "creating the admin is atomic — a race between two setup
 -- requests can't create two admins" (#22) at the database level, not just
@@ -110,7 +110,7 @@ CREATE TABLE sessions (
     user_id TEXT NOT NULL REFERENCES users (id),
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
-);
+) STRICT;
 
 CREATE INDEX sessions_user_id_idx ON sessions (user_id);
 CREATE INDEX sessions_expires_at_idx ON sessions (expires_at);
@@ -128,4 +128,4 @@ CREATE TABLE machine_key_check (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     check_value BLOB NOT NULL,
     created_at TEXT NOT NULL
-);
+) STRICT;

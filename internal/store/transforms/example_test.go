@@ -3,10 +3,13 @@ package transforms_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
+	sqlitemigrate "github.com/mdg-labs/sqlite-migrate"
 	_ "modernc.org/sqlite"
 
 	"github.com/mdg-labs/hoserva/internal/store"
@@ -51,7 +54,7 @@ func TestSizeMBToSizeBytes_Transform(t *testing.T) {
 	// The transform itself: bound to v2, run in the same transaction as
 	// the ALTER TABLE above would be in a real migration.
 	transform := transforms.Transform{
-		Version: 2,
+		Version: "20260101000002",
 		Name:    "backfill disk.size_bytes from disk.size_mb",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "UPDATE disk SET size_bytes = size_mb * 1024 * 1024")
@@ -119,33 +122,45 @@ func TestSizeMBToSizeBytes_TransformAgainstFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	head := 0
+	var head int64
 	for _, m := range migrations {
-		if m.Version > head {
-			head = m.Version
+		n, err := strconv.ParseInt(m.Version, 10, 64)
+		if err != nil {
+			t.Fatalf("migration %q has a non-numeric version %q: %v", m.Filename, m.Version, err)
+		}
+		if n > head {
+			head = n
 		}
 	}
+	seedVersion := fmt.Sprintf("%014d", head+1)
+	expandVersion := fmt.Sprintf("%014d", head+2)
 
+	seedSQL := "CREATE TABLE disk (id INTEGER PRIMARY KEY, size_mb INTEGER NOT NULL);"
 	seed := store.Migration{
-		Version:  head + 1,
-		Filename: "9998_test_only_disk_size_mb.sql",
-		SQL:      "CREATE TABLE disk (id INTEGER PRIMARY KEY, size_mb INTEGER NOT NULL);",
+		Version:  seedVersion,
+		Slug:     "test_only_disk_size_mb",
+		Filename: seedVersion + "_test_only_disk_size_mb.sql",
+		SQL:      seedSQL,
+		Checksum: sqlitemigrate.Checksum(seedSQL),
 	}
 	seedRows := transforms.Transform{
-		Version: head + 1,
+		Version: seedVersion,
 		Name:    "test-only: seed disk.size_mb rows",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "INSERT INTO disk (id, size_mb) VALUES (1, 4000), (2, 8000000)")
 			return err
 		},
 	}
+	expandSQL := "ALTER TABLE disk ADD COLUMN size_bytes INTEGER;"
 	expand := store.Migration{
-		Version:  head + 2,
-		Filename: "9999_test_only_disk_size_bytes.sql",
-		SQL:      "ALTER TABLE disk ADD COLUMN size_bytes INTEGER;",
+		Version:  expandVersion,
+		Slug:     "test_only_disk_size_bytes",
+		Filename: expandVersion + "_test_only_disk_size_bytes.sql",
+		SQL:      expandSQL,
+		Checksum: sqlitemigrate.Checksum(expandSQL),
 	}
 	transform := transforms.Transform{
-		Version: head + 2,
+		Version: expandVersion,
 		Name:    "backfill disk.size_bytes from disk.size_mb",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "UPDATE disk SET size_bytes = size_mb * 1024 * 1024")

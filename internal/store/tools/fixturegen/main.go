@@ -67,6 +67,6 @@ func run(out string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("wrote %s at schema version %d\n", out, version)
+	fmt.Printf("wrote %s at schema version %s\n", out, version)
 	return nil
 }

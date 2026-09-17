@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -10,8 +11,29 @@ import (
 	"strings"
 	"testing"
 
+	sqlitemigrate "github.com/mdg-labs/sqlite-migrate"
+
 	"github.com/mdg-labs/hoserva/internal/store/transforms"
 )
+
+// v is a fixed-width, 14-digit test version — sqlite-migrate's own
+// sortable timestamp format (Q60), so ordering and the snapshot filename
+// pattern behave exactly as they do against real, generated migrations.
+func v(n int) string { return fmt.Sprintf("%014d", n) }
+
+// testMigration builds a Migration the way sqlitemigrate.Load would from a
+// real file: its Checksum is computed from sqlText, so a "tampered"
+// migration built from different SQL always gets a different checksum,
+// rather than a hand-picked one a test could forget to change.
+func testMigration(version, slug, sqlText string) Migration {
+	return Migration{
+		Version:  version,
+		Slug:     slug,
+		Filename: version + "_" + slug + ".sql",
+		SQL:      sqlText,
+		Checksum: sqlitemigrate.Checksum(sqlText),
+	}
+}
 
 func newRunner(t *testing.T, migrations []Migration) (*Runner, *sql.DB) {
 	t.Helper()
@@ -22,8 +44,8 @@ func newRunner(t *testing.T, migrations []Migration) (*Runner, *sql.DB) {
 func TestRunner_AppliesAllPending(t *testing.T) {
 	ctx := context.Background()
 	migrations := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
-		{Version: 2, Filename: "0002_b.sql", SQL: "ALTER TABLE a ADD COLUMN note TEXT;"},
+		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);"),
+		testMigration(v(2), "b", "ALTER TABLE a ADD COLUMN note TEXT;"),
 	}
 	r, db := newRunner(t, migrations)
 
@@ -42,8 +64,8 @@ func TestRunner_AppliesAllPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 2 {
-		t.Fatalf("CurrentVersion = %d, want 2", version)
+	if version != v(2) {
+		t.Fatalf("CurrentVersion = %q, want %q", version, v(2))
 	}
 
 	if _, err := db.ExecContext(ctx, "INSERT INTO a (id, note) VALUES (1, 'x')"); err != nil {
@@ -54,7 +76,7 @@ func TestRunner_AppliesAllPending(t *testing.T) {
 func TestRunner_NoOpWhenNothingPending(t *testing.T) {
 	ctx := context.Background()
 	migrations := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
+		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);"),
 	}
 	r, _ := newRunner(t, migrations)
 
@@ -73,36 +95,40 @@ func TestRunner_NoOpWhenNothingPending(t *testing.T) {
 	}
 }
 
+// A database with a migration recorded as applied that this binary's own
+// Migrations slice doesn't include — whether because a newer binary
+// already upgraded it, or because the file was deleted — is refused via
+// sqlitemigrate.PendingMigrations' own MissingMigrationError (Q60): no
+// bespoke "newer database" detection lives in this package.
 func TestRunner_RefusesNewerDatabase(t *testing.T) {
 	ctx := context.Background()
 	migrations := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
+		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);"),
 	}
 	r, db := newRunner(t, migrations)
 
-	// Simulate a database a newer binary already upgraded, by recording a
-	// migration this binary's Migrations slice doesn't embed.
 	if err := ensureBookkeeping(ctx, db); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx,
-		"INSERT INTO _hoserva_schema_migrations (version, filename, checksum, applied_at) VALUES (99, '0099_future.sql', 'x', '2026-01-01T00:00:00Z')"); err != nil {
+		fmt.Sprintf("INSERT INTO %s (version, slug, checksum, applied_at) VALUES (?, ?, ?, ?)", bookkeepingTable),
+		v(99), "future", "x", "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 
 	_, _, err := r.Apply(ctx)
-	var newer *ErrNewerDatabase
-	if !errors.As(err, &newer) {
-		t.Fatalf("Apply err = %v, want *ErrNewerDatabase", err)
+	var missing *sqlitemigrate.MissingMigrationError
+	if !errors.As(err, &missing) {
+		t.Fatalf("Apply err = %v, want *sqlitemigrate.MissingMigrationError", err)
 	}
-	if newer.DatabaseVersion != 99 || newer.BinaryVersion != 1 {
-		t.Fatalf("ErrNewerDatabase = %+v, want DatabaseVersion=99 BinaryVersion=1", newer)
+	if missing.Version != v(99) {
+		t.Fatalf("MissingMigrationError.Version = %q, want %q", missing.Version, v(99))
 	}
 }
 
 func TestRunner_RefusesTamperedEmbeddedMigration(t *testing.T) {
 	ctx := context.Background()
-	original := Migration{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"}
+	original := testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);")
 	r, db := newRunner(t, []Migration{original})
 	if _, _, err := r.Apply(ctx); err != nil {
 		t.Fatalf("first Apply: %v", err)
@@ -111,11 +137,13 @@ func TestRunner_RefusesTamperedEmbeddedMigration(t *testing.T) {
 	// A later build embeds a migration with the same version but different
 	// content than what was actually applied — the exact scenario doc 01
 	// §4 says must refuse to start.
-	tampered := Migration{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY, extra TEXT);"}
+	tampered := testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY, extra TEXT);")
 	r2 := &Runner{DB: db, Migrations: []Migration{tampered}, SnapshotDir: r.SnapshotDir}
 
-	if _, _, err := r2.Apply(ctx); err == nil {
-		t.Fatal("expected Apply to refuse a tampered embedded migration")
+	_, _, err := r2.Apply(ctx)
+	var mismatch *sqlitemigrate.ChecksumMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("Apply err = %v, want *sqlitemigrate.ChecksumMismatchError", err)
 	}
 }
 
@@ -126,19 +154,30 @@ func TestRunner_RefusesTamperedEmbeddedMigration(t *testing.T) {
 // an earlier migration in the same failing batch modified, not only a
 // changed schema.
 //
-// The third migration's own failure has to be one that actually executes
-// inside the transaction — a duplicate CREATE TABLE, which the allow-list
-// permits (it is an ordinary, ever-allowed shape) and only SQLite itself
-// rejects once run — rather than a statement the allow-list refuses
-// before Apply ever opens a transaction: refused-before-BEGIN would leave
-// migration 2's transform never run at all, proving nothing about
-// rollback once real work is already inside the same transaction.
+// The third migration's own failure is a duplicate CREATE TABLE — an
+// ordinary statement only SQLite itself rejects once actually run inside
+// the transaction, proving rollback once real work is already in flight,
+// not merely that something was refused before Apply ever began.
+//
+// This is the data-loss regression test the issue calls for by name
+// (mirroring #18, ported from the retired allow-list/checksum stack to
+// this runner's own sqlite-migrate-backed apply loop): it compares the
+// on-disk database *file* byte-for-byte, not just its schema and row
+// content, against a real SQLite file — never a mock — so a mutation that
+// left some other, unobserved page written would still be caught.
 func TestRunner_InjectedFailureLeavesDatabaseUnchanged_LaterMigrationInBatch(t *testing.T) {
 	ctx := context.Background()
-	setup := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY, v TEXT NOT NULL);"},
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("opening test database: %v", err)
 	}
-	r, db := newRunner(t, setup)
+	t.Cleanup(func() { _ = db.Close() })
+
+	setup := []Migration{
+		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY, v TEXT NOT NULL);"),
+	}
+	r := &Runner{DB: db, Migrations: setup, SnapshotDir: t.TempDir()}
 	if _, _, err := r.Apply(ctx); err != nil {
 		t.Fatalf("setup Apply: %v", err)
 	}
@@ -158,13 +197,30 @@ func TestRunner_InjectedFailureLeavesDatabaseUnchanged_LaterMigrationInBatch(t *
 	if err := db.QueryRowContext(ctx, "SELECT v FROM a WHERE id = 1").Scan(&seedBefore); err != nil {
 		t.Fatal(err)
 	}
+	// Closing before the byte comparison below forces every page SQLite
+	// still holds only in its own in-process cache out to dbPath, so the
+	// comparison is of the real file's committed bytes, not a snapshot
+	// that happens to omit an unflushed page either side of Apply.
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	beforeBytes, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 
+	db, err = sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("reopening test database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	r.DB = db
 	r.Migrations = append(r.Migrations,
-		Migration{Version: 2, Filename: "0002_update.sql", SQL: "CREATE TABLE noop (id INTEGER PRIMARY KEY);"},
-		Migration{Version: 3, Filename: "0003_bad.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
+		testMigration(v(2), "update", "CREATE TABLE noop (id INTEGER PRIMARY KEY);"),
+		testMigration(v(3), "bad", "CREATE TABLE a (id INTEGER PRIMARY KEY);"),
 	)
 	r.Transforms = []transforms.Transform{{
-		Version: 2,
+		Version: v(2),
 		Name:    "test-only: change the seeded row",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "UPDATE a SET v = 'changed-by-the-batch' WHERE id = 1")
@@ -188,7 +244,7 @@ func TestRunner_InjectedFailureLeavesDatabaseUnchanged_LaterMigrationInBatch(t *
 		t.Fatal(err)
 	}
 	if afterVersion != beforeVersion {
-		t.Fatalf("CurrentVersion = %d, want unchanged %d", afterVersion, beforeVersion)
+		t.Fatalf("CurrentVersion = %q, want unchanged %q", afterVersion, beforeVersion)
 	}
 	var seedAfter string
 	if err := db.QueryRowContext(ctx, "SELECT v FROM a WHERE id = 1").Scan(&seedAfter); err != nil {
@@ -198,6 +254,17 @@ func TestRunner_InjectedFailureLeavesDatabaseUnchanged_LaterMigrationInBatch(t *
 		t.Fatalf("row content changed despite a failed migration batch: got %q, want unchanged %q", seedAfter, seedBefore)
 	}
 	assertIntegrityOK(t, ctx, db)
+
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	afterBytes, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeBytes, afterBytes) {
+		t.Fatalf("database file changed byte-for-byte despite a failed migration batch (before %d bytes, after %d bytes) — a failed Apply must leave the file exactly as it was, not just its logical content", len(beforeBytes), len(afterBytes))
+	}
 }
 
 // This test corrupts a real database deterministically to force a genuine
@@ -209,36 +276,13 @@ func TestRunner_InjectedFailureLeavesDatabaseUnchanged_LaterMigrationInBatch(t *
 // catalog.
 //
 // The corruption runs as a test-only data transform (transforms.Fn is Go
-// code Apply calls directly against the open *sql.Tx, never scanned by
-// CheckStatementVocabulary or Destructive — a migration's *generated* SQL
-// text is exactly what those scans exist to guard, not a transform's Go
-// body), not as the migration's own SQL text: a PRAGMA in the migration's
-// own SQL is refused outright before Apply ever opens a transaction,
-// which would make this test pass for the wrong reason (Apply failing on
-// "contains PRAGMA", never because integrity_check itself ran). The
-// assertion below checks the error names integrity_check specifically,
-// not merely "Apply failed for some reason", so a mutation that stops
-// checking integrityProblem's result turns this test red on its own.
-//
-// Both migrations run in one Apply call (a fresh database with nothing
-// recorded as applied yet), so the whole sequence — create the tables and
-// the index, corrupt it via the transform, insert the bookkeeping rows,
-// foreign_key_check, integrity_check — happens on the single connection
-// and single transaction Apply itself pins for the whole batch, exactly
-// once each. This must stay a single Apply call: modernc.org/sqlite's
-// first integrity_check on a connection that already parsed the schema
-// *before* a `PRAGMA schema_version` bump can still report a stale "ok"
-// once before truly reparsing, a driver quirk a second, separate Apply
-// call would reintroduce. Ordinary queries and DDL against the untouched
-// table `b` keep working throughout — only integrity_check itself
-// notices the mismatch ("wrong # of entries in index ai"), which is what
-// isolates the "ignore a non-ok result" failure mode: nothing else on
-// this test's path fails if integrityProblem's result is ever ignored,
-// so this assertion is what has to catch it.
+// code Apply calls directly against the open *sql.Tx), not as the
+// migration's own SQL text, so this test isolates integrity_check itself,
+// not any refusal of the migration's own statement shape.
 func TestRunner_RealIntegrityCheckFailureRollsBackBatch(t *testing.T) {
 	ctx := context.Background()
 	seedData := transforms.Transform{
-		Version: 1,
+		Version: v(1),
 		Name:    "test-only: seed rows for the corruption below",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			if _, err := tx.ExecContext(ctx, "INSERT INTO a (id, v) VALUES (1, 'x'), (2, 'y')"); err != nil {
@@ -249,7 +293,7 @@ func TestRunner_RealIntegrityCheckFailureRollsBackBatch(t *testing.T) {
 		},
 	}
 	corruptIndex := transforms.Transform{
-		Version: 2,
+		Version: v(2),
 		Name:    "test-only: corrupt index ai's rootpage via writable_schema",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			for _, stmt := range []string{
@@ -266,12 +310,12 @@ func TestRunner_RealIntegrityCheckFailureRollsBackBatch(t *testing.T) {
 		},
 	}
 	r, db := newRunner(t, []Migration{
-		{Version: 1, Filename: "0001_setup.sql", SQL: `
+		testMigration(v(1), "setup", `
 			CREATE TABLE a (id INTEGER PRIMARY KEY, v TEXT);
 			CREATE TABLE b (id INTEGER PRIMARY KEY);
 			CREATE INDEX ai ON a(v);
-		`},
-		{Version: 2, Filename: "0002_noop.sql", SQL: "CREATE TABLE noop (id INTEGER PRIMARY KEY);"},
+		`),
+		testMigration(v(2), "noop", "CREATE TABLE noop (id INTEGER PRIMARY KEY);"),
 	})
 	r.Transforms = []transforms.Transform{seedData, corruptIndex}
 
@@ -287,8 +331,8 @@ func TestRunner_RealIntegrityCheckFailureRollsBackBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 0 {
-		t.Fatalf("CurrentVersion = %d, want 0 (neither migration must be recorded as applied after a failing integrity_check)", version)
+	if version != zeroSchemaVersion {
+		t.Fatalf("CurrentVersion = %q, want %q (neither migration must be recorded as applied after a failing integrity_check)", version, zeroSchemaVersion)
 	}
 	var hasA int
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE name = 'a'").Scan(&hasA); err != nil {
@@ -308,14 +352,14 @@ func TestRunner_RealIntegrityCheckFailureRollsBackBatch(t *testing.T) {
 func TestRunner_InjectedFailureLeavesDatabaseUnchanged_ForeignKeyCheck(t *testing.T) {
 	ctx := context.Background()
 	setup := []Migration{
-		{Version: 1, Filename: "0001_setup.sql", SQL: `
+		testMigration(v(1), "setup", `
 			CREATE TABLE parent (id INTEGER PRIMARY KEY);
 			CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id));
-		`},
+		`),
 	}
 	r, db := newRunner(t, setup)
 	r.Transforms = []transforms.Transform{{
-		Version: 1,
+		Version: v(1),
 		Name:    "test-only: seed the parent row",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "INSERT INTO parent (id) VALUES (1)")
@@ -335,13 +379,9 @@ func TestRunner_InjectedFailureLeavesDatabaseUnchanged_ForeignKeyCheck(t *testin
 		t.Fatal(err)
 	}
 
-	r.Migrations = append(r.Migrations, Migration{
-		Version:  2,
-		Filename: "0002_orphan.sql",
-		SQL:      "CREATE TABLE noop (id INTEGER PRIMARY KEY);",
-	})
+	r.Migrations = append(r.Migrations, testMigration(v(2), "orphan", "CREATE TABLE noop (id INTEGER PRIMARY KEY);"))
 	r.Transforms = append(r.Transforms, transforms.Transform{
-		Version: 2,
+		Version: v(2),
 		Name:    "test-only: insert a row that violates the declared foreign key",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "INSERT INTO child (id, parent_id) VALUES (1, 999)")
@@ -375,8 +415,8 @@ func TestRunner_InjectedFailureLeavesDatabaseUnchanged_ForeignKeyCheck(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 1 {
-		t.Fatalf("CurrentVersion = %d, want 1 (the orphan migration must not be recorded as applied)", version)
+	if version != v(1) {
+		t.Fatalf("CurrentVersion = %q, want %q (the orphan migration must not be recorded as applied)", version, v(1))
 	}
 	assertIntegrityOK(t, ctx, db)
 }
@@ -388,7 +428,7 @@ func TestRunner_InjectedFailureLeavesDatabaseUnchanged_ForeignKeyCheck(t *testin
 func TestRunner_SnapshotHoldsPreMigrationState(t *testing.T) {
 	ctx := context.Background()
 	setup := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY, v TEXT NOT NULL);"},
+		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY, v TEXT NOT NULL);"),
 	}
 	r, db := newRunner(t, setup)
 	if _, _, err := r.Apply(ctx); err != nil {
@@ -398,13 +438,9 @@ func TestRunner_SnapshotHoldsPreMigrationState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r.Migrations = append(r.Migrations, Migration{
-		Version:  2,
-		Filename: "0002_b.sql",
-		SQL:      "ALTER TABLE a ADD COLUMN extra TEXT;",
-	})
+	r.Migrations = append(r.Migrations, testMigration(v(2), "b", "ALTER TABLE a ADD COLUMN extra TEXT;"))
 	r.Transforms = []transforms.Transform{{
-		Version: 2,
+		Version: v(2),
 		Name:    "test-only: change the seeded row",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "UPDATE a SET v = 'after'")
@@ -425,20 +461,20 @@ func TestRunner_SnapshotHoldsPreMigrationState(t *testing.T) {
 	}
 	defer closeQuietly(snap)
 
-	var version int
+	var version string
 	if err := snap.QueryRowContext(ctx, fmt.Sprintf("SELECT max(version) FROM %s", bookkeepingTable)).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 1 {
-		t.Fatalf("snapshot's recorded schema version = %d, want 1 (pre-migration)", version)
+	if version != v(1) {
+		t.Fatalf("snapshot's recorded schema version = %q, want %q (pre-migration)", version, v(1))
 	}
 
-	var v string
-	if err := snap.QueryRowContext(ctx, "SELECT v FROM a WHERE id = 1").Scan(&v); err != nil {
+	var val string
+	if err := snap.QueryRowContext(ctx, "SELECT v FROM a WHERE id = 1").Scan(&val); err != nil {
 		t.Fatal(err)
 	}
-	if v != "before" {
-		t.Fatalf("snapshot row v = %q, want %q (pre-migration)", v, "before")
+	if val != "before" {
+		t.Fatalf("snapshot row v = %q, want %q (pre-migration)", val, "before")
 	}
 
 	var extra sql.NullString
@@ -469,13 +505,13 @@ func TestRunner_SuspendsForeignKeyEnforcementDuringRebuild(t *testing.T) {
 	db.SetMaxOpenConns(1) // pin to the exact connection Apply uses and restores
 
 	setup := []Migration{
-		{Version: 1, Filename: "0001_setup.sql", SQL: `
+		testMigration(v(1), "setup", `
 			CREATE TABLE parent (id INTEGER PRIMARY KEY);
 			CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id) ON DELETE CASCADE);
-		`},
+		`),
 	}
 	r := &Runner{DB: db, Migrations: setup, SnapshotDir: t.TempDir(), Transforms: []transforms.Transform{{
-		Version: 1,
+		Version: v(1),
 		Name:    "test-only: seed a parent and its child",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			if _, err := tx.ExecContext(ctx, "INSERT INTO parent (id) VALUES (1)"); err != nil {
@@ -497,16 +533,12 @@ func TestRunner_SuspendsForeignKeyEnforcementDuringRebuild(t *testing.T) {
 		t.Fatalf("PRAGMA foreign_keys = %d before the rebuild, want 1 — this test proves nothing about suspension if enforcement wasn't on to begin with", enforced)
 	}
 
-	r.Migrations = append(r.Migrations, Migration{
-		Version:  2,
-		Filename: "0002_rebuild_parent.sql",
-		SQL: `
-			CREATE TABLE parent_new (id INTEGER PRIMARY KEY, note TEXT);
-			INSERT INTO parent_new (id) SELECT id FROM parent;
-			DROP TABLE parent;
-			ALTER TABLE parent_new RENAME TO parent;
-		`,
-	})
+	r.Migrations = append(r.Migrations, testMigration(v(2), "rebuild_parent", `
+		CREATE TABLE parent_new (id INTEGER PRIMARY KEY, note TEXT);
+		INSERT INTO parent_new (id) SELECT id FROM parent;
+		DROP TABLE parent;
+		ALTER TABLE parent_new RENAME TO parent;
+	`))
 	if _, _, err := r.Apply(ctx); err != nil {
 		t.Fatalf("rebuild Apply: %v", err)
 	}
@@ -523,10 +555,10 @@ func TestRunner_SuspendsForeignKeyEnforcementDuringRebuild(t *testing.T) {
 func TestRunner_RestoresForeignKeyEnforcementAfterApply(t *testing.T) {
 	ctx := context.Background()
 	migrations := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: `
+		testMigration(v(1), "a", `
 			CREATE TABLE parent (id INTEGER PRIMARY KEY);
 			CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id));
-		`},
+		`),
 	}
 	db := openTestDB(t)
 	db.SetMaxOpenConns(1) // pin to the exact connection Apply used
@@ -552,13 +584,13 @@ func TestRunner_RestoresForeignKeyEnforcementAfterApply(t *testing.T) {
 func TestRunner_TransformRunsInSameTransactionAsItsMigration(t *testing.T) {
 	ctx := context.Background()
 	migrations := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY, size_mb INTEGER NOT NULL);"},
-		{Version: 2, Filename: "0002_add_bytes.sql", SQL: "ALTER TABLE a ADD COLUMN size_bytes INTEGER;"},
+		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY, size_mb INTEGER NOT NULL);"),
+		testMigration(v(2), "add_bytes", "ALTER TABLE a ADD COLUMN size_bytes INTEGER;"),
 	}
 	db := openTestDB(t)
 	r := &Runner{DB: db, Migrations: migrations, SnapshotDir: t.TempDir()}
 
-	// Version 1's own transaction seeds a row; version 2's transform must
+	// Version 1's own transaction seeds a row; version 3's transform must
 	// see it, in the same transaction as the ALTER TABLE that added
 	// size_bytes.
 	if _, _, err := r.Apply(ctx); err != nil {
@@ -568,13 +600,9 @@ func TestRunner_TransformRunsInSameTransactionAsItsMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r.Migrations = append(r.Migrations, Migration{
-		Version:  3,
-		Filename: "0003_add_bytes_backfill.sql",
-		SQL:      "CREATE TABLE backfill_marker (id INTEGER PRIMARY KEY);",
-	})
+	r.Migrations = append(r.Migrations, testMigration(v(3), "add_bytes_backfill", "CREATE TABLE backfill_marker (id INTEGER PRIMARY KEY);"))
 	r.Transforms = []transforms.Transform{{
-		Version: 3,
+		Version: v(3),
 		Name:    "backfill size_bytes from size_mb",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "UPDATE a SET size_bytes = size_mb * 1024 * 1024")
@@ -598,14 +626,14 @@ func TestRunner_TransformRunsInSameTransactionAsItsMigration(t *testing.T) {
 func TestRunner_TransformFailureRollsBackItsMigrationToo(t *testing.T) {
 	ctx := context.Background()
 	migrations := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
+		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);"),
 	}
 	db := openTestDB(t)
 	r := &Runner{
 		DB:         db,
 		Migrations: migrations,
 		Transforms: []transforms.Transform{{
-			Version: 1,
+			Version: v(1),
 			Name:    "always fails",
 			Fn: func(ctx context.Context, tx *sql.Tx) error {
 				return errors.New("injected transform failure")
@@ -666,18 +694,15 @@ func TestRunner_ForeignKeyRestoreSurvivesCallerContextCancellation(t *testing.T)
 // most at risk of eviction from a premature or on-failure prune — is still
 // there.
 //
-// The fourth migration's own failure has to be one that actually executes
-// — a duplicate CREATE TABLE, an ordinary, ever-allowed shape the
-// allow-list never refuses on its own — and not a statement the
-// allow-list refuses before Apply ever calls Snapshot: refused-before-
-// Snapshot would never reach the pruning call this test exists to pin at
-// all, regardless of where in Apply that call sits.
+// The fourth migration's own failure is a duplicate CREATE TABLE, an
+// ordinary statement that only actually fails once SQLite itself runs it —
+// proof this isn't refused before Snapshot is ever reached.
 func TestRunner_FailedMigrationNeverPrunesExistingSnapshots(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	db := openTestDB(t)
 	r := &Runner{DB: db, SnapshotDir: dir, Migrations: []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
+		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);"),
 	}}
 	_, oldestSnapshot, err := r.Apply(ctx)
 	if err != nil {
@@ -687,12 +712,12 @@ func TestRunner_FailedMigrationNeverPrunesExistingSnapshots(t *testing.T) {
 		t.Fatal("expected a snapshot path from the first Apply")
 	}
 
-	r.Migrations = append(r.Migrations, Migration{Version: 2, Filename: "0002_b.sql", SQL: "ALTER TABLE a ADD COLUMN note TEXT;"})
+	r.Migrations = append(r.Migrations, testMigration(v(2), "b", "ALTER TABLE a ADD COLUMN note TEXT;"))
 	if _, _, err := r.Apply(ctx); err != nil {
 		t.Fatalf("apply v2: %v", err)
 	}
 
-	r.Migrations = append(r.Migrations, Migration{Version: 3, Filename: "0003_c.sql", SQL: "ALTER TABLE a ADD COLUMN note2 TEXT;"})
+	r.Migrations = append(r.Migrations, testMigration(v(3), "c", "ALTER TABLE a ADD COLUMN note2 TEXT;"))
 	if _, _, err := r.Apply(ctx); err != nil {
 		t.Fatalf("apply v3: %v", err)
 	}
@@ -701,7 +726,7 @@ func TestRunner_FailedMigrationNeverPrunesExistingSnapshots(t *testing.T) {
 		t.Fatalf("oldest snapshot missing before the failing attempt even runs: %v", err)
 	}
 
-	r.Migrations = append(r.Migrations, Migration{Version: 4, Filename: "0004_bad.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"})
+	r.Migrations = append(r.Migrations, testMigration(v(4), "bad", "CREATE TABLE a (id INTEGER PRIMARY KEY);"))
 	_, failedSnapshot, err := r.Apply(ctx)
 	if err == nil {
 		t.Fatal("expected the duplicate table to fail once executed")
@@ -722,14 +747,14 @@ func TestRunner_FailedMigrationNeverPrunesExistingSnapshots(t *testing.T) {
 // called directly) must leave exactly KeepSnapshots files on disk — the
 // newest three fromVersions' own snapshots, not the three most recently
 // written by wall clock, which happen to be the same order here but are a
-// different rule (snapshot.go's own PruneSnapshots tests cover that
+// different rule (snapshot_test.go's own PruneSnapshots tests cover that
 // distinction directly).
 func TestRunner_ApplyKeepsOnlyNewestThreeSnapshots(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	db := openTestDB(t)
 	r := &Runner{DB: db, SnapshotDir: dir, Migrations: []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
+		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);"),
 	}}
 
 	_, snap, err := r.Apply(ctx)
@@ -738,15 +763,11 @@ func TestRunner_ApplyKeepsOnlyNewestThreeSnapshots(t *testing.T) {
 	}
 	snapshots := []string{snap}
 
-	for v := 2; v <= 5; v++ {
-		r.Migrations = append(r.Migrations, Migration{
-			Version:  v,
-			Filename: fmt.Sprintf("%04d_b.sql", v),
-			SQL:      fmt.Sprintf("ALTER TABLE a ADD COLUMN note%d TEXT;", v),
-		})
+	for i := 2; i <= 5; i++ {
+		r.Migrations = append(r.Migrations, testMigration(v(i), "b", fmt.Sprintf("ALTER TABLE a ADD COLUMN note%d TEXT;", i)))
 		_, snap, err := r.Apply(ctx)
 		if err != nil {
-			t.Fatalf("apply v%d: %v", v, err)
+			t.Fatalf("apply v%d: %v", i, err)
 		}
 		snapshots = append(snapshots, snap)
 	}
@@ -785,7 +806,7 @@ func TestRunner_ApplyKeepsOnlyNewestThreeSnapshots(t *testing.T) {
 func TestRunner_ForeignKeyRestoreSurvivesCancellationDuringApply(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	migrations := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
+		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);"),
 	}
 	db := openTestDB(t)
 	db.SetMaxOpenConns(1) // pin to the exact connection Apply uses and restores
@@ -793,7 +814,7 @@ func TestRunner_ForeignKeyRestoreSurvivesCancellationDuringApply(t *testing.T) {
 		DB:         db,
 		Migrations: migrations,
 		Transforms: []transforms.Transform{{
-			Version: 1,
+			Version: v(1),
 			Name:    "cancels the caller's context, then fails",
 			Fn: func(ctx context.Context, tx *sql.Tx) error {
 				cancel()
@@ -813,139 +834,6 @@ func TestRunner_ForeignKeyRestoreSurvivesCancellationDuringApply(t *testing.T) {
 	}
 	if enforced != 1 {
 		t.Fatalf("PRAGMA foreign_keys = %d after a cancelled-context failure, want 1 (restored)", enforced)
-	}
-}
-
-// assertTableAbsent fails if name exists in db's sqlite_master — the
-// direct proof that a migration containing it was never actually
-// executed, which "Apply returned an error" alone does not distinguish
-// from "some of the batch ran and then something else failed".
-func assertTableAbsent(t *testing.T, ctx context.Context, db *sql.DB, name string) {
-	t.Helper()
-	var count int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE name = ?", name).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatalf("table %q exists — a stray COMMIT let part of the batch through", name)
-	}
-}
-
-// A stray COMMIT in a migration must never let a later migration in the
-// same batch leave part of the batch permanently applied — Apply must
-// refuse the whole batch before it ever opens a transaction, not
-// discover the COMMIT only after some of the batch already ran. The
-// migration carrying it is otherwise an ordinary, always-allowed CREATE
-// TABLE — not a statement (an UPDATE, say) the allow-list would refuse on
-// its own — so this can only pass because the COMMIT itself was caught;
-// the third migration's own duplicate CREATE TABLE only ever executes,
-// and only ever fails, if the batch was wrongly allowed to run at all.
-func TestRunner_RejectsTransactionControlInMigration_NoPartialCommit(t *testing.T) {
-	ctx := context.Background()
-	setup := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
-	}
-	r, db := newRunner(t, setup)
-	if _, _, err := r.Apply(ctx); err != nil {
-		t.Fatalf("setup Apply: %v", err)
-	}
-
-	r.Migrations = append(r.Migrations,
-		Migration{Version: 2, Filename: "0002_commits.sql", SQL: "CREATE TABLE b (id INTEGER PRIMARY KEY); COMMIT;"},
-		Migration{Version: 3, Filename: "0003_bad.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
-	)
-
-	if _, _, err := r.Apply(ctx); err == nil {
-		t.Fatal("expected Apply to refuse a migration containing COMMIT before ever running it")
-	}
-
-	assertTableAbsent(t, ctx, db, "b")
-	version, err := r.CurrentVersion(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if version != 1 {
-		t.Fatalf("CurrentVersion = %d, want 1 (neither migration 2 nor 3 must be recorded as applied)", version)
-	}
-}
-
-// An unquoted "begin" identifier earlier in the same migration must never
-// inflate splitStatements' beginDepth and hide a later, real COMMIT —
-// begin/end are ordinary, unquoted SQLite identifiers, and a column can
-// be named either. If it did, the unrelated "begin" column below would
-// never close (nothing in this migration says "end"), so every semicolon
-// after it — including the one ending the COMMIT statement itself — would
-// be swallowed into one giant "statement", and the classifier would see
-// only its own leading "CREATE TABLE ...".
-func TestRunner_UnquotedBeginColumnDoesNotHideLaterCommit_NoPartialCommit(t *testing.T) {
-	ctx := context.Background()
-	setup := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
-	}
-	r, db := newRunner(t, setup)
-	if _, _, err := r.Apply(ctx); err != nil {
-		t.Fatalf("setup Apply: %v", err)
-	}
-
-	r.Migrations = append(r.Migrations,
-		Migration{Version: 2, Filename: "0002_commits.sql", SQL: "CREATE TABLE b (begin TEXT); COMMIT;"},
-		Migration{Version: 3, Filename: "0003_bad.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
-	)
-
-	if _, _, err := r.Apply(ctx); err == nil {
-		t.Fatal("expected Apply to refuse a migration containing COMMIT before ever running it")
-	}
-
-	assertTableAbsent(t, ctx, db, "b")
-	version, err := r.CurrentVersion(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if version != 1 {
-		t.Fatalf("CurrentVersion = %d, want 1 (neither migration 2 nor 3 must be recorded as applied)", version)
-	}
-}
-
-// An identifier like écase — a bare word that merely happens to end in
-// the ASCII letters "case" — must not be mistaken for the CASE keyword
-// inside a trigger body. If isIdentStart/isIdentChar didn't recognize a
-// UTF-8 lead or continuation byte (>= 0x80) as part of an identifier,
-// scanning "écase" would walk past its lead and continuation bytes one at
-// a time, outside any identifier, and then match the bare ASCII letters
-// "case" that followed as the CASE keyword — incrementing
-// splitStatements' beginDepth for a CASE that was never there. The
-// trigger's real closing END would then only bring beginDepth back to 1,
-// not 0, swallowing every semicolon after it — including a real COMMIT —
-// into a single statement whose real boundary splitStatements never found:
-// the same shape of bug as
-// TestRunner_UnquotedBeginColumnDoesNotHideLaterCommit_NoPartialCommit
-// above, with an unusual identifier instead of an unrelated column name.
-func TestRunner_UnusualIdentifierInTriggerBodyDoesNotHideLaterCommit_NoPartialCommit(t *testing.T) {
-	ctx := context.Background()
-	setup := []Migration{
-		{Version: 1, Filename: "0001_a.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
-	}
-	r, db := newRunner(t, setup)
-	if _, _, err := r.Apply(ctx); err != nil {
-		t.Fatalf("setup Apply: %v", err)
-	}
-
-	r.Migrations = append(r.Migrations,
-		Migration{Version: 2, Filename: "0002_trigger.sql", SQL: "CREATE TRIGGER a_trg AFTER INSERT ON a BEGIN SELECT écase; END; CREATE TABLE b (id INTEGER PRIMARY KEY); COMMIT;"},
-		Migration{Version: 3, Filename: "0003_bad.sql", SQL: "CREATE TABLE a (id INTEGER PRIMARY KEY);"},
-	)
-
-	if _, _, err := r.Apply(ctx); err == nil {
-		t.Fatal("expected Apply to refuse a migration containing COMMIT before ever running it")
-	}
-
-	assertTableAbsent(t, ctx, db, "b")
-	version, err := r.CurrentVersion(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if version != 1 {
-		t.Fatalf("CurrentVersion = %d, want 1 (neither migration 2 nor 3 must be recorded as applied)", version)
 	}
 }
 
