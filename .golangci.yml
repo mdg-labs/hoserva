@@ -1,0 +1,8 @@
+# golangci-lint config (issue #130). spikes/ holds recorded experiment
+# evidence, not maintained product code (CLAUDE.md, "Spikes"), so it is
+# excluded here rather than fixed — see the issue for the tradeoff.
+version: "2"
+linters:
+  exclusions:
+    paths:
+      - spikes/

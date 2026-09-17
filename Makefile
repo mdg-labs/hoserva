@@ -295,6 +295,9 @@ lint:
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		echo "golangci-lint"; \
 		golangci-lint run; \
+	elif [ -n "$$CI" ]; then \
+		echo "golangci-lint: not installed, and CI is set — CI must install a pinned version (issue #130)" >&2; \
+		exit 1; \
 	else \
 		echo "golangci-lint not installed, skipping (gofmt and go vet above still ran)"; \
 	fi
