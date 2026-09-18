@@ -52,6 +52,20 @@ func ResolveIdentity(byIDNames []string) Identity {
 	return Identity{WeakIdentity: true}
 }
 
+// Matches reports whether i and other identify the same physical disk
+// (Q21): by WWN when both have one, else by serial. A weak-identity disk
+// (a USB enclosure hiding its real WWN/serial) is only ever matched by
+// serial, since that is the strongest signal it has.
+func (i Identity) Matches(other Identity) bool {
+	if i.WWN != "" && other.WWN != "" {
+		return i.WWN == other.WWN
+	}
+	if i.Serial != "" && other.Serial != "" {
+		return i.Serial == other.Serial
+	}
+	return false
+}
+
 // lastSegment returns the token after a by-id link name's final
 // underscore, which is where the kernel's own by-id udev rules place the
 // serial — for example "ata-WDC_WD80EFZX-68UW8N0_VGH0A1B2" or
