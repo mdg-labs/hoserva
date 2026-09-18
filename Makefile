@@ -474,19 +474,23 @@ mock:
 	fi
 
 # Diffs internal/store/schema/schema.sql against the schema
-# internal/store/migrations/ produces and writes the next numbered,
-# immutable file (D16, Q60). NAME is required so every migration's
-# filename says what it does, not "0002_migration".
+# internal/store/migrations/ produces and writes the next, immutable,
+# timestamped file (D16, Q60) via sqlite-migrate generate. NAME is required
+# so every migration's filename says what it does, not "<timestamp>_migration".
+# A schema.sql edit that drops a table/column needs
+# NAME=... ARGS=--allow-destructive, and one sqlite-migrate can't tell is a
+# rename from a genuine drop-and-add needs ARGS=--assume-renames or
+# ARGS=--assume-no-renames (never left to its own non-interactive default —
+# see the sqlite-migrate skill).
 db-migration:
 	@test -n "$(NAME)" || { echo "set NAME (e.g. make db-migration NAME=add_job_table)" >&2; exit 1; }
-	$(GO) run ./internal/store/tools/dbmigration -name "$(NAME)"
+	$(GO) run github.com/mdg-labs/sqlite-migrate/cmd/sqlite-migrate generate -schema internal/store/schema/schema.sql -dir internal/store/migrations -m "$(NAME)" $(ARGS)
 
-# Migration checksums (an edited "immutable" file), schema drift (replaying
-# every migration must produce exactly schema.sql), and the data-safety
-# scan (a DROP TABLE, DROP COLUMN or rebuild outside a registered contract
-# step) — the Hoserva-owned checks Q60 says sqldef's own flags don't cover.
+# Migration checksums (an edited "immutable" file) and schema drift
+# (replaying every migration must produce exactly schema.sql) — Q60's
+# sqlite-migrate check, connection-free and safe to run in CI.
 db-check:
-	$(GO) run ./internal/store/tools/dbcheck
+	$(GO) run github.com/mdg-labs/sqlite-migrate/cmd/sqlite-migrate check -schema internal/store/schema/schema.sql -dir internal/store/migrations
 
 lab-require-id:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make lab-up)" >&2; exit 1; }

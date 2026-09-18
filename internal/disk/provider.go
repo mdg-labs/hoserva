@@ -45,6 +45,16 @@ const (
 	Standby
 )
 
+// String renders state as store's spin_events table expects it (#110):
+// its from_state/to_state columns are CHECK-constrained to exactly these
+// two spellings.
+func (s SpinState) String() string {
+	if s == Standby {
+		return "standby"
+	}
+	return "active"
+}
+
 // Trend describes a SMART attribute's direction over time. A single SMART
 // snapshot can't say whether a value is a long-standing baseline or a fresh
 // regression; doc 02 §4 is explicit that the trend, not the absolute value,
@@ -70,13 +80,21 @@ const (
 )
 
 // Disk is a block device Hoserva knows about, by stable identity rather than
-// its transient /dev/sdX name (Q21).
+// its transient /dev/sdX name (Q21). WWN is preferred; Serial is the
+// fallback used when no wwn-* /dev/disk/by-id link exists. WeakIdentity is
+// true for a USB-enclosure disk, whose bridge chipset can hide the real
+// disk's WWN and serial — allowed as a data disk, refused as parity (Q21).
+// Boot marks the disk currently backing the root filesystem: it is always
+// identified and always excluded from anything destructive (doc 02 §4).
 type Disk struct {
-	Device string
-	Size   int64
-	Model  string
-	Serial string
-	Failed bool
+	Device       string
+	Size         int64
+	Model        string
+	Serial       string
+	WWN          string
+	WeakIdentity bool
+	Boot         bool
+	Failed       bool
 }
 
 // SMARTReport is one SMART poll's result. Skipped is true when a standby

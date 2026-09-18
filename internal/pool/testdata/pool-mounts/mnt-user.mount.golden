@@ -1,0 +1,9 @@
+[Unit]
+Description=Hoserva catch-all pool
+RequiresMountsFor=/mnt/disk1 /mnt/disk2 /mnt/disk3
+
+[Mount]
+What=/mnt/disk1=RW:/mnt/disk2=RW:/mnt/disk3=RW
+Where=/mnt/user
+Type=fuse.mergerfs
+Options=category.create=mspmfs,moveonenospc=true,dropcacheonclose=true,minfreespace=50G,cache.files=partial,cache.entry=1,cache.attr=1,cache.negative_entry=1,cache.statfs=0,fsname=hoserva-pool

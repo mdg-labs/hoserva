@@ -52,7 +52,7 @@ func TestFixtures_UpgradeToHead(t *testing.T) {
 				t.Fatal(err)
 			}
 			if version != head {
-				t.Fatalf("CurrentVersion after upgrade = %d, want head (%d)", version, head)
+				t.Fatalf("CurrentVersion after upgrade = %q, want head (%q)", version, head)
 			}
 			assertIntegrityOK(t, ctx, db)
 

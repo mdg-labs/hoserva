@@ -1,0 +1,4 @@
+{
+  "parity_mounts": ["/mnt/parity1", "/mnt/parity2"],
+  "data_mounts": ["/mnt/disk1", "/mnt/disk2", "/mnt/disk3", "/mnt/disk4"]
+}

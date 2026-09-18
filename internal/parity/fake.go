@@ -21,8 +21,13 @@ type FakeEngine struct {
 
 	syncSteps  []Progress
 	syncErr    error
+	guardBlock *GuardResult
 	scrubSteps []Progress
 	scrubErr   error
+	fixSteps   []Progress
+	fixErr     error
+	checkSteps []Progress
+	checkErr   error
 
 	// Sleep paces streamed progress; tests override it to run instantly.
 	Sleep func(time.Duration)
@@ -77,12 +82,48 @@ func (f *FakeEngine) ScriptSync(steps []Progress, immediateErr error) {
 	f.syncErr = immediateErr
 }
 
+// ScriptGuardBlock scripts the threshold guard (doc 02 §2) to block the
+// next Sync call that does not set SyncOpts.Confirm — exactly
+// SnapraidEngine's own Sync when its guard evaluation is Blocked: Sync
+// returns a *GuardBlockedError carrying result instead of streaming
+// anything, and no scripted sync step ever runs. A call with
+// opts.Confirm set bypasses this and streams the scripted steps
+// normally, the same "review the diff and sync anyway" path a real
+// caller takes — matching CLAUDE.md's fake-must-scriptably-reproduce
+// rule for the one behavior this package exists to guarantee. The block
+// stays scripted across calls, the way a real guard re-blocks an
+// unconfirmed retry against the same diff; call ScriptSync again with no
+// preceding ScriptGuardBlock (or construct a fresh FakeEngine) to test
+// an unblocked sync.
+func (f *FakeEngine) ScriptGuardBlock(result GuardResult) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := result
+	f.guardBlock = &r
+}
+
 // ScriptScrub is ScriptSync for Scrub.
 func (f *FakeEngine) ScriptScrub(steps []Progress, immediateErr error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.scrubSteps = steps
 	f.scrubErr = immediateErr
+}
+
+// ScriptFix is ScriptSync for Fix.
+func (f *FakeEngine) ScriptFix(steps []Progress, immediateErr error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fixSteps = steps
+	f.fixErr = immediateErr
+}
+
+// ScriptCheck is ScriptSync for Check.
+func (f *FakeEngine) ScriptCheck(steps []Progress, immediateErr error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checkSteps = steps
+	f.checkErr = immediateErr
 }
 
 func (f *FakeEngine) Diff(ctx context.Context) (DiffReport, error) {
@@ -112,13 +153,32 @@ func (f *FakeEngine) Status(ctx context.Context) (ParityStatus, error) {
 func (f *FakeEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progress, error) {
 	f.mu.Lock()
 	steps, immediateErr := f.syncSteps, f.syncErr
+	blocked := f.guardBlock
+	f.mu.Unlock()
+
+	if blocked != nil && !opts.Confirm {
+		return nil, &GuardBlockedError{Result: *blocked}
+	}
+	return f.stream(ctx, steps, immediateErr)
+}
+
+func (f *FakeEngine) Scrub(ctx context.Context, pct, olderThanDays int) (<-chan Progress, error) {
+	f.mu.Lock()
+	steps, immediateErr := f.scrubSteps, f.scrubErr
 	f.mu.Unlock()
 	return f.stream(ctx, steps, immediateErr)
 }
 
-func (f *FakeEngine) Scrub(ctx context.Context, pct int) (<-chan Progress, error) {
+func (f *FakeEngine) Fix(ctx context.Context, opts FixOpts) (<-chan Progress, error) {
 	f.mu.Lock()
-	steps, immediateErr := f.scrubSteps, f.scrubErr
+	steps, immediateErr := f.fixSteps, f.fixErr
+	f.mu.Unlock()
+	return f.stream(ctx, steps, immediateErr)
+}
+
+func (f *FakeEngine) Check(ctx context.Context, opts CheckOpts) (<-chan Progress, error) {
+	f.mu.Lock()
+	steps, immediateErr := f.checkSteps, f.checkErr
 	f.mu.Unlock()
 	return f.stream(ctx, steps, immediateErr)
 }

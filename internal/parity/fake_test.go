@@ -141,12 +141,64 @@ func TestFakeEngine_Sync_FailsMidStream(t *testing.T) {
 	}
 }
 
+// TestFakeEngine_Sync_GuardBlockRefusesWithoutConfirm confirms FakeEngine
+// can scriptably reproduce the one behavior this package exists to
+// guarantee (CLAUDE.md): a caller above Engine that's supposed to check
+// for *GuardBlockedError and refuse to proceed can now have that path
+// exercised against a fast, hardware-free fake, not only against a real
+// SnapraidEngine or the lab.
+func TestFakeEngine_Sync_GuardBlockRefusesWithoutConfirm(t *testing.T) {
+	f := NewFakeEngine()
+	f.Sleep = func(time.Duration) {}
+	result := GuardResult{Blocked: true, Triggers: []GuardTrigger{TriggerZeroFiles}}
+	f.ScriptGuardBlock(result)
+	f.ScriptSync([]Progress{{Phase: "syncing", Percent: 100}}, nil)
+
+	ch, err := f.Sync(context.Background(), SyncOpts{})
+	if ch != nil {
+		t.Fatal("Sync: got a non-nil channel for a blocked sync")
+	}
+	var blocked *GuardBlockedError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("Sync: got %v, want a *GuardBlockedError", err)
+	}
+	if !errors.Is(err, ErrGuardBlocked) {
+		t.Fatalf("Sync error %v does not match ErrGuardBlocked", err)
+	}
+	if !blocked.Result.hasTrigger(TriggerZeroFiles) {
+		t.Fatalf("GuardBlockedError.Result.Triggers = %v, want TriggerZeroFiles", blocked.Result.Triggers)
+	}
+}
+
+// TestFakeEngine_Sync_ConfirmBypassesGuardBlock is the human-decision
+// half: SyncOpts.Confirm proceeds past a scripted block, exactly as a
+// real caller reviewing the blocked result and retrying would.
+func TestFakeEngine_Sync_ConfirmBypassesGuardBlock(t *testing.T) {
+	f := NewFakeEngine()
+	f.Sleep = func(time.Duration) {}
+	f.ScriptGuardBlock(GuardResult{Blocked: true})
+	steps := []Progress{{Phase: "syncing", Percent: 100}}
+	f.ScriptSync(steps, nil)
+
+	ch, err := f.Sync(context.Background(), SyncOpts{Confirm: true})
+	if err != nil {
+		t.Fatalf("Sync with Confirm: %v", err)
+	}
+	var got []Progress
+	for p := range ch {
+		got = append(got, p)
+	}
+	if len(got) != len(steps) {
+		t.Fatalf("Sync with Confirm: got %d messages, want %d — the scripted steps must still stream", len(got), len(steps))
+	}
+}
+
 func TestFakeEngine_Scrub_Scripted(t *testing.T) {
 	f := NewFakeEngine()
 	f.Sleep = func(time.Duration) {}
 	f.ScriptScrub([]Progress{{Phase: "scrubbing", Percent: 100}}, nil)
 
-	ch, err := f.Scrub(context.Background(), 8)
+	ch, err := f.Scrub(context.Background(), 8, DefaultScrubOlderThanDays)
 	if err != nil {
 		t.Fatalf("Scrub: %v", err)
 	}

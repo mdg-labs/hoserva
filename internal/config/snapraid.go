@@ -1,5 +1,3 @@
-// Package config renders Hoserva's generated config files from state (D4):
-// state in, text out, nothing hand-edited.
 package config
 
 import (

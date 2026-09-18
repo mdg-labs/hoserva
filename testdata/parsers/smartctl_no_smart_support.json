@@ -1,0 +1,23 @@
+{
+  "json_format_version": [1, 0],
+  "smartctl": {
+    "version": [7, 4],
+    "svn_revision": "5665",
+    "platform_info": "x86_64-linux-6.1.0-amd64",
+    "build_info": "(local build)",
+    "argv": ["smartctl", "-j", "-n", "standby", "-a", "/dev/sdf"],
+    "exit_status": 4,
+    "messages": [
+      {"string": "Unknown USB bridge, using default settings", "severity": "error"}
+    ]
+  },
+  "device": {
+    "name": "/dev/sdf",
+    "info_name": "/dev/sdf [USB]",
+    "type": "sat",
+    "protocol": "ATA"
+  },
+  "smart_support": {
+    "available": false
+  }
+}

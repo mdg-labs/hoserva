@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a new capability or an enhancement to an existing one.
+title: "feat: "
+labels:
+  - feat
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem you're trying to solve before jumping to a
+        solution — it makes triage and design easier.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The problem or use case this would solve.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: How you imagine this working, if you have an idea.
+    validations:
+      required: false
+  - type: textarea
+    id: open-question-or-decision
+    attributes:
+      label: Related open question or decision
+      description: >-
+        Does this touch a known open question (`Qn` in
+        docs/internal/13-open-questions.md) or a settled decision (`Dn` in
+        docs/internal/00-overview.md §5)? Reference it if so.
+      placeholder: e.g. Q13, D9
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about and why you didn't pick them.
+    validations:
+      required: false

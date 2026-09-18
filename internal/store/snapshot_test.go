@@ -59,7 +59,7 @@ func TestSnapshot_WritesToTempNameBeforeRenaming(t *testing.T) {
 		}
 	}}
 
-	if _, err := Snapshot(ctx, execer, dir, 1); err != nil {
+	if _, err := Snapshot(ctx, execer, dir, v(1)); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 }
@@ -69,7 +69,7 @@ func TestSnapshot_WritesToTempNameBeforeRenaming(t *testing.T) {
 // interrupted VACUUM INTO.
 func TestListSnapshots_NeverListsATempFile(t *testing.T) {
 	dir := t.TempDir()
-	tmp := filepath.Join(dir, fmt.Sprintf("%sv%010d-%010d.db.tmp", snapshotPrefix, 1, 1))
+	tmp := filepath.Join(dir, fmt.Sprintf("%sv%s-%010d.db.tmp", snapshotPrefix, v(1), 1))
 	if err := os.WriteFile(tmp, []byte("partial VACUUM INTO output"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestSnapshot_WritesConsistentCopy(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	path, err := Snapshot(ctx, db, dir, 1)
+	path, err := Snapshot(ctx, db, dir, v(1))
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestSnapshot_RestrictsPermissions(t *testing.T) {
 	db := openTestDB(t)
 
 	dir := filepath.Join(t.TempDir(), "snapshots")
-	path, err := Snapshot(ctx, db, dir, 1)
+	path, err := Snapshot(ctx, db, dir, v(1))
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestSnapshot_TightensPreExistingLoosePermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Snapshot(ctx, db, dir, 1); err != nil {
+	if _, err := Snapshot(ctx, db, dir, v(1)); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 
@@ -178,7 +178,7 @@ func TestSnapshot_RemovesStaleTempFileButNothingElse(t *testing.T) {
 	db := openTestDB(t)
 	dir := t.TempDir()
 
-	stale := filepath.Join(dir, snapshotPrefix+"v0000000001-0000000001.db.tmp")
+	stale := filepath.Join(dir, snapshotPrefix+"v"+v(1)+"-0000000001.db.tmp")
 	if err := os.WriteFile(stale, []byte("leftover from a crashed VACUUM INTO"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestSnapshot_RemovesStaleTempFileButNothingElse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Snapshot(ctx, db, dir, 1); err != nil {
+	if _, err := Snapshot(ctx, db, dir, v(1)); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 
@@ -205,7 +205,7 @@ func TestSnapshot_RemovesStaleTempFileButNothingElse(t *testing.T) {
 // leftover one from an interrupted attempt is silently ignored rather
 // than counted as one of the kept snapshots.
 func TestSnapshotPattern_NeverMatchesTempFile(t *testing.T) {
-	name := fmt.Sprintf("%sv%010d-%010d.db.tmp", snapshotPrefix, 1, 1)
+	name := fmt.Sprintf("%sv%s-%010d.db.tmp", snapshotPrefix, v(1), 1)
 	if snapshotPattern.MatchString(name) {
 		t.Fatalf("snapshotPattern matched a .tmp file %q — a crash mid-snapshot could count it as a real snapshot", name)
 	}
@@ -228,7 +228,7 @@ func TestSnapshot_KeepsOnlyNewestByVersion(t *testing.T) {
 	var last string
 	for i := 0; i < KeepSnapshots+2; i++ {
 		db := openTestDB(t)
-		path, err := Snapshot(ctx, db, dir, i)
+		path, err := Snapshot(ctx, db, dir, v(i))
 		if err != nil {
 			t.Fatalf("Snapshot #%d: %v", i, err)
 		}
@@ -266,7 +266,7 @@ func TestPruneSnapshots_OrdersByVersionNotWallClock(t *testing.T) {
 	write := func(version int) string {
 		ctx := context.Background()
 		db := openTestDB(t)
-		path, err := Snapshot(ctx, db, dir, version)
+		path, err := Snapshot(ctx, db, dir, v(version))
 		if err != nil {
 			t.Fatalf("Snapshot v%d: %v", version, err)
 		}
@@ -284,7 +284,7 @@ func TestPruneSnapshots_OrdersByVersionNotWallClock(t *testing.T) {
 	// filename's timestamp-free format means there is nothing here for a
 	// clock to get wrong: only fromVersion (3)
 	// determines where this sorts.
-	v3Name := fmt.Sprintf("%sv%010d-%010d.db", snapshotPrefix, 3, 999)
+	v3Name := fmt.Sprintf("%sv%s-%010d.db", snapshotPrefix, v(3), 999)
 	v3Path := filepath.Join(dir, v3Name)
 	if err := os.WriteFile(v3Path, []byte("not a real sqlite file, just a stand-in"), 0o600); err != nil {
 		t.Fatal(err)
@@ -318,7 +318,7 @@ func TestPruneSnapshots_RetryOfSameVersionNeverEvictsOtherVersions(t *testing.T)
 	dir := t.TempDir()
 
 	db := openTestDB(t)
-	v1Path, err := Snapshot(ctx, db, dir, 1)
+	v1Path, err := Snapshot(ctx, db, dir, v(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestPruneSnapshots_RetryOfSameVersionNeverEvictsOtherVersions(t *testing.T)
 	// supersede the first attempt's snapshot, but keep=1 must still mean
 	// "the newest one distinct upgrade", not "zero, because there are now
 	// two files for the one version this test has".
-	retryPath, err := Snapshot(ctx, db, dir, 1)
+	retryPath, err := Snapshot(ctx, db, dir, v(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +365,7 @@ func TestSnapshot_PathContainingSingleQuote(t *testing.T) {
 	db := openTestDB(t)
 
 	dir := filepath.Join(t.TempDir(), "it's a dir")
-	path, err := Snapshot(ctx, db, dir, 1)
+	path, err := Snapshot(ctx, db, dir, v(1))
 	if err != nil {
 		t.Fatalf("Snapshot with a quote in its directory path: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestPruneSnapshots_NeverDeletesTheOneJustWritten(t *testing.T) {
 	dir := t.TempDir()
 	db := openTestDB(t)
 
-	path, err := Snapshot(ctx, db, dir, 1)
+	path, err := Snapshot(ctx, db, dir, v(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +420,7 @@ func TestPruneSnapshots_NeverDeletesUnrelatedFiles(t *testing.T) {
 
 	for i := 0; i < KeepSnapshots+2; i++ {
 		db := openTestDB(t)
-		path, err := Snapshot(ctx, db, dir, i)
+		path, err := Snapshot(ctx, db, dir, v(i))
 		if err != nil {
 			t.Fatalf("Snapshot #%d: %v", i, err)
 		}

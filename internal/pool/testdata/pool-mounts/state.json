@@ -1,0 +1,9 @@
+{
+  "data_disks": ["/mnt/disk1", "/mnt/disk2", "/mnt/disk3"],
+  "cache_path": "/mnt/cache",
+  "shares": [
+    {"name": "movies", "cache_mode": "cache-then-move", "create_policy": "mspmfs"},
+    {"name": "appdata", "cache_mode": "cache-only", "create_policy": "mfs"},
+    {"name": "backups", "cache_mode": "array-only", "create_policy": "ff"}
+  ]
+}

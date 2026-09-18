@@ -213,11 +213,24 @@ that cannot reach a verdict says exactly what is missing; it does not guess.
 
 ## Before you touch anything for this issue: claim it
 
+This is your **literal first action for this issue** — before you read the
+issue body below in detail, before you explore the codebase, before any
+other tool call. Not "early in your process," not "once you're about to
+start editing" — first:
+
 ```
 {{WORKSPACE_PATH}}/scripts/issue-status.sh {{ISSUE_NUMBER}} in-progress
 ```
 
-Run this first — and not before you actually start this issue.
+The orchestrator may already have run this for you (it claims a unit's
+first issue itself, right after dispatching you, as a backstop against
+exactly the failure mode of a model deferring this call). Running it again
+here is harmless and expected — the script replaces the whole status-label
+set each time, so a repeat call is a no-op in effect, never an error. If
+this dispatch covers more than one issue, this step applies **again, at the
+same literal-first-action urgency**, when you move on to each subsequent
+issue — don't batch all the claims at the start or defer any of them until
+a commit is ready.
 
 {{IF EPIC_NUMBER:}}Then roll it up to its epic:
 

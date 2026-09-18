@@ -71,7 +71,7 @@ Storage behaviour is exercised **only inside the lab**:
 
 # Root access is the maintainer's
 
-No agent runs `sudo`, a package manager install, or edits anything under `/etc`, under any circumstance. Work that needs root is labelled `needs-sudo`: the agent prepares everything and prints the exact commands for the maintainer, prefixed `! ` so they run in-session. The maintainer's shell is **fish** — print commands that work there (`env VAR=value cmd`, no bash heredocs, no `export`).
+No agent runs `sudo`, a package manager install, or edits anything under `/etc`, under any circumstance. Work that needs root is labelled `needs-sudo`: the agent prepares everything and prints the exact commands for the maintainer, prefixed `! ` so they run in-session. The maintainer's shell is **zsh** — print commands that work there (bash-compatible heredocs and `export` are fine).
 
 **Never trigger an authentication prompt on the host, and never retry one.** This is absolute, and it outranks finishing the task.
 

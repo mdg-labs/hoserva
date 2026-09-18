@@ -1,114 +1,81 @@
-// Package store is the runner from doc 01 §4 (D16, Q60): "a small runner in
-// internal/store with migrations embedded via go:embed". It loads the
-// schema migrations embedded from internal/store/migrations/, applies the
-// pending ones inside a single transaction with a pre-migration snapshot,
-// and holds the checks (checksums, drift, data-safety) that make `make
-// db-check` mean something. Typed queries against the resulting schema
-// live in the sibling, generated internal/store/db package.
+// Package store is the runner from doc 01 §4 (D16, Q60): a small runner in
+// internal/store with migrations embedded via go:embed. Migration
+// generation, checksumming and drift checking are sqlite-migrate's
+// (github.com/mdg-labs/sqlite-migrate) — this package only loads the
+// migrations it generated and applies the pending ones at daemon startup,
+// alongside the data transforms a schema diff alone can't express
+// (internal/store/transforms).
 package store
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"io/fs"
 	"os"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
+
+	sqlitemigrate "github.com/mdg-labs/sqlite-migrate"
 )
 
 //go:embed migrations
 var embedded embed.FS
 
-// migrationsDir is the directory embedded above, and the one the
-// db-migration and db-check tools (internal/store/tools) read from disk
-// directly — generating a new migration or its checksums needs a real
-// path, not just the embed.FS.
+// migrationsDir is the directory embedded above, and the one `sqlite-migrate
+// generate`/`check` (via `make db-migration`/`make db-check`) read from disk
+// directly — generating a new migration needs a real path, not just the
+// embed.FS.
 const migrationsDir = "migrations"
 
-// ChecksumsFile and ContractsFile live alongside the migration files
-// themselves, inside migrationsDir, so there is exactly one place that
-// tracks "which migration" for both concerns.
-const (
-	ChecksumsFile = "checksums"
-	ContractsFile = "contracts"
-)
+// Migration is one migration file sqlite-migrate generated: its sortable
+// timestamp version, its filename, and the exact SQL body it wrote — reused
+// directly from the library rather than wrapped, so the checksum this
+// package records in its bookkeeping table (runner.go) is always the same
+// value `sqlite-migrate status`/`check`/`verify` compute for the same file.
+type Migration = sqlitemigrate.Migration
 
-var migrationFilePattern = regexp.MustCompile(`^(\d{4})_[a-z0-9_]+\.sql$`)
+// migrationFilenamePattern mirrors sqlite-migrate's own
+// "<timestamp>_<slug>.sql" convention. sqlitemigrate.LoadDir silently skips
+// any directory entry that doesn't match it, so a mistyped or stray .sql
+// file would otherwise never be applied and never be reported — this
+// package rejects it instead of loading around it.
+var migrationFilenamePattern = regexp.MustCompile(`^[0-9]{14}_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*\.sql$`)
 
-// Migration is one immutable, numbered schema change (doc 01 §4). Version
-// is parsed from the filename's leading zero-padded number — the only
-// ordering source; nothing here trusts file modification times.
-type Migration struct {
-	Version  int
-	Filename string
-	SQL      string
+// rejectMalformedFilenames fails loudly on any ".sql" entry directly inside
+// dir that doesn't match migrationFilenamePattern, before handing dir to
+// sqlitemigrate.LoadDir.
+func rejectMalformedFilenames(fsys fs.FS, dir string) error {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return fmt.Errorf("reading migration directory %q: %w", dir, err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".sql") {
+			continue
+		}
+		if !migrationFilenamePattern.MatchString(name) {
+			return fmt.Errorf("migration file %q does not match the <timestamp>_<slug>.sql convention", name)
+		}
+	}
+	return nil
 }
 
 // Load reads every migration file embedded from internal/store/migrations,
-// in version order. It fails closed: a file that doesn't match the
-// generator's own naming convention, or a duplicate version, is an error
-// rather than a silently skipped file.
+// in version order.
 func Load() ([]Migration, error) {
-	return loadFS(embedded, migrationsDir)
+	if err := rejectMalformedFilenames(embedded, migrationsDir); err != nil {
+		return nil, err
+	}
+	return sqlitemigrate.LoadDir(context.Background(), embedded, migrationsDir)
 }
 
-// LoadDir reads migrations from a real directory on disk — used by the
-// db-migration and db-check tools, which need to write a new file or
-// inspect one before it is embedded by a rebuild.
+// LoadDir reads migrations from a real directory on disk.
 func LoadDir(dir string) ([]Migration, error) {
-	return loadFS(os.DirFS(dir), ".")
-}
-
-func loadFS(fsys fs.FS, dir string) ([]Migration, error) {
-	entries, err := fs.ReadDir(fsys, dir)
-	if err != nil {
-		return nil, fmt.Errorf("reading migrations directory: %w", err)
+	fsys := os.DirFS(dir)
+	if err := rejectMalformedFilenames(fsys, "."); err != nil {
+		return nil, err
 	}
-
-	var out []Migration
-	seen := map[int]string{}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if name == ChecksumsFile || name == ContractsFile {
-			continue
-		}
-		m := migrationFilePattern.FindStringSubmatch(name)
-		if m == nil {
-			return nil, fmt.Errorf("migration file %q does not match the generator's naming convention (NNNN_slug.sql)", name)
-		}
-		version, err := strconv.Atoi(m[1])
-		if err != nil {
-			return nil, fmt.Errorf("migration file %q: %w", name, err)
-		}
-		if prev, ok := seen[version]; ok {
-			return nil, fmt.Errorf("duplicate migration version %d: %q and %q", version, prev, name)
-		}
-		seen[version] = name
-
-		content, err := fs.ReadFile(fsys, joinPath(dir, name))
-		if err != nil {
-			return nil, fmt.Errorf("reading migration %q: %w", name, err)
-		}
-		out = append(out, Migration{Version: version, Filename: name, SQL: string(content)})
-	}
-
-	sort.Slice(out, func(i, j int) bool { return out[i].Version < out[j].Version })
-	for i := range out {
-		if i > 0 && out[i].Version != out[i-1].Version+1 {
-			return nil, fmt.Errorf("migration versions are not contiguous: %d follows %d", out[i].Version, out[i-1].Version)
-		}
-	}
-	return out, nil
-}
-
-func joinPath(dir, name string) string {
-	if dir == "." || dir == "" {
-		return name
-	}
-	return strings.TrimSuffix(dir, "/") + "/" + name
+	return sqlitemigrate.LoadDir(context.Background(), fsys, ".")
 }

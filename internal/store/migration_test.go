@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+// TestLoad_Embedded confirms this package's own go:embed wiring and its
+// malformed-filename pre-scan (rejectMalformedFilenames); sqlite-migrate's
+// own LoadDir behavior (duplicate versions, etc.) lives, and is tested, in
+// github.com/mdg-labs/sqlite-migrate itself.
 func TestLoad_Embedded(t *testing.T) {
 	migrations, err := Load()
 	if err != nil {
@@ -14,54 +18,37 @@ func TestLoad_Embedded(t *testing.T) {
 	if len(migrations) == 0 {
 		t.Fatal("expected at least one embedded migration")
 	}
-	for i, m := range migrations {
-		if m.Version != i+1 {
-			t.Fatalf("migration %d: version = %d, want %d (contiguous from 1)", i, m.Version, i+1)
+	for i := 1; i < len(migrations); i++ {
+		if migrations[i].Version <= migrations[i-1].Version {
+			t.Fatalf("migration %d (%s) is not strictly after migration %d (%s)", i, migrations[i].Version, i-1, migrations[i-1].Version)
 		}
 	}
 }
 
-func TestLoadDir_RejectsBadFilename(t *testing.T) {
+func TestLoadDir_ReadsMigrationsFromDisk(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "not_a_migration.sql"), "CREATE TABLE x (id INTEGER);")
-
-	if _, err := LoadDir(dir); err == nil {
-		t.Fatal("expected an error for a filename that doesn't match NNNN_slug.sql")
-	}
-}
-
-func TestLoadDir_RejectsDuplicateVersion(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "0001_a.sql"), "CREATE TABLE a (id INTEGER);")
-	writeFile(t, filepath.Join(dir, "0001_b.sql"), "CREATE TABLE b (id INTEGER);")
-
-	if _, err := LoadDir(dir); err == nil {
-		t.Fatal("expected an error for two migration files sharing a version")
-	}
-}
-
-func TestLoadDir_RejectsNonContiguousVersions(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "0001_a.sql"), "CREATE TABLE a (id INTEGER);")
-	writeFile(t, filepath.Join(dir, "0003_b.sql"), "CREATE TABLE b (id INTEGER);")
-
-	if _, err := LoadDir(dir); err == nil {
-		t.Fatal("expected an error for a gap in migration versions")
-	}
-}
-
-func TestLoadDir_SkipsChecksumsAndContracts(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "0001_a.sql"), "CREATE TABLE a (id INTEGER);")
-	writeFile(t, filepath.Join(dir, ChecksumsFile), "deadbeef  0001_a.sql\n")
-	writeFile(t, filepath.Join(dir, ContractsFile), "# nothing yet\n")
+	writeFile(t, filepath.Join(dir, "20260101000001_a.sql"), "CREATE TABLE a (id INTEGER) STRICT;")
+	writeFile(t, filepath.Join(dir, "20260101000002_b.sql"), "ALTER TABLE a ADD COLUMN note TEXT;")
 
 	migrations, err := LoadDir(dir)
 	if err != nil {
 		t.Fatalf("LoadDir: %v", err)
 	}
-	if len(migrations) != 1 {
-		t.Fatalf("len(migrations) = %d, want 1", len(migrations))
+	if len(migrations) != 2 {
+		t.Fatalf("len(migrations) = %d, want 2", len(migrations))
+	}
+	if migrations[0].Version != "20260101000001" || migrations[1].Version != "20260101000002" {
+		t.Fatalf("migrations not read in version order: %+v", migrations)
+	}
+}
+
+func TestLoadDir_RejectsMalformedFilename(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "20260101000001_a.sql"), "CREATE TABLE a (id INTEGER) STRICT;")
+	writeFile(t, filepath.Join(dir, "not-a-migration.sql"), "CREATE TABLE b (id INTEGER) STRICT;")
+
+	if _, err := LoadDir(dir); err == nil {
+		t.Fatal("LoadDir: expected an error for a malformed migration filename, got nil")
 	}
 }
 

@@ -1,0 +1,55 @@
+version:none
+unixtime:1789713340
+time:2026-09-18 06:35:40
+command:check
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/28-a1/p28/snapraid.conf
+argv:3:-d
+argv:4:d1
+argv:5:-a
+argv:6:-l
+argv:7:/lab/28-a1/p28/check-audit-l.log
+argv:8:check
+selftest:
+msg:progress: Self test...
+conf:file:/lab/28-a1/p28/snapraid.conf
+uuid:by-uuid:7:1: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:1: blkid support not compiled in
+uuid:notfound:7:1:
+uuid:by-uuid:7:2: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:2: blkid support not compiled in
+uuid:notfound:7:2:
+uuid:by-uuid:7:3: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:3: blkid support not compiled in
+uuid:notfound:7:3:
+blocksize:262144
+data:d1:/lab/28-a1/mnt/disk1/
+data:d2:/lab/28-a1/mnt/disk2/
+data:d3:/lab/28-a1/mnt/disk3/
+mode:par1
+parity:0:/lab/28-a1/mnt/parity1/snapraid.parity
+content:/lab/28-a1/mnt/parity1/snapraid.content
+msg:progress: Loading state from /lab/28-a1/mnt/parity1/snapraid.content...
+msg:verbose:        7 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        1 empty dirs
+uuid:by-uuid:7:0: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:0: blkid support not compiled in
+uuid:notfound:7:0:
+msg:progress: Selecting...
+msg:verbose: 	d1//
+memory:used:273141
+memory:block:17
+memory:extent:88
+memory:file:192
+memory:link:88
+memory:dir:80
+msg:progress: Using 0 MiB of memory for the file-system.
+msg:progress: Initializing...
+msg:progress: Selecting...
+msg:progress: Hashing...
+msg:status: Everything OK
+summary:error:0
+summary:exit:ok
