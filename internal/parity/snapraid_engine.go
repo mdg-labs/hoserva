@@ -141,7 +141,15 @@ func (e *SnapraidEngine) Diff(ctx context.Context) (DiffReport, error) {
 	if err != nil {
 		return DiffReport{}, err
 	}
+	return e.diffFromStatus(ctx, before)
+}
 
+// diffFromStatus is Diff's own body, taking an already-run "before"
+// status rather than running its own — Sync reuses the status it ran for
+// the guard's before-counts instead of spawning a second one (status
+// reads the whole content file, and neither it nor diff writes anything
+// that would make an earlier snapshot stale for this purpose).
+func (e *SnapraidEngine) diffFromStatus(ctx context.Context, before StatusReport) (DiffReport, error) {
 	logPath, cleanup, err := e.newLog("diff")
 	if err != nil {
 		return DiffReport{}, err
@@ -167,12 +175,8 @@ func (e *SnapraidEngine) Diff(ctx context.Context) (DiffReport, error) {
 }
 
 // touchIfNeeded is Q17's own rule: run `snapraid touch` before a sync
-// only when `status` reports files with a zero sub-second timestamp.
-func (e *SnapraidEngine) touchIfNeeded(ctx context.Context) error {
-	status, err := e.runStatus(ctx)
-	if err != nil {
-		return err
-	}
+// only when status reports files with a zero sub-second timestamp.
+func (e *SnapraidEngine) touchIfNeeded(ctx context.Context, status StatusReport) error {
 	if status.ZeroSubsecondFiles == 0 {
 		return nil
 	}
@@ -199,13 +203,22 @@ func (e *SnapraidEngine) touchIfNeeded(ctx context.Context) error {
 // Wait is safe to call (Process's own doc comment), so a cancelled run
 // still finishes draining in the background — cancellation only stops
 // forwarding further ticks to the caller.
+//
+// ch is buffered by one slot so the final Progress always has room: a
+// caller that ranges over ch and returns on its own ctx cancellation (the
+// natural symmetric pattern to the cancellation handling below) may never
+// read from it again, and a plain blocking send there would leak this
+// goroutine forever. Buffering guarantees the terminal status — whether a
+// cancelled sync actually wrote parity, partially wrote, or cleanly
+// errored — is always placed on the channel rather than silently dropped
+// when nobody happens to be receiving at that instant.
 func (e *SnapraidEngine) runStream(ctx context.Context, logPath string, tail []string, accept func(RunSummary, error) error) (<-chan Progress, error) {
 	proc, err := e.runner().Start(ctx, e.binary(), e.argv(logPath, tail)...)
 	if err != nil {
 		return nil, err
 	}
 
-	ch := make(chan Progress)
+	ch := make(chan Progress, 1)
 	go func() {
 		defer close(ch)
 
@@ -246,16 +259,28 @@ func (e *SnapraidEngine) runStream(ctx context.Context, logPath string, tail []s
 
 		final := Progress{Percent: 100, Err: finalErr}
 		if cancelled {
-			select {
-			case ch <- final:
-			default:
-			}
-			return
+			deliverFinalAfterCancel(ch, final)
+		} else {
+			ch <- final
 		}
-		ch <- final
 	}()
 
 	return ch, nil
+}
+
+// deliverFinalAfterCancel places final onto ch without ever blocking:
+// once cancelled, the loop above stopped forwarding ticks, but ch's one
+// buffered slot may still hold the last tick a caller never got around to
+// receiving. That stale tick is discarded first (a progress percentage is
+// worthless once the run has ended) so final always has room — a
+// receiver that this func's own doc comment says may never come again
+// must never turn into a silently dropped terminal status.
+func deliverFinalAfterCancel(ch chan Progress, final Progress) {
+	select {
+	case <-ch:
+	default:
+	}
+	ch <- final
 }
 
 // Sync runs the threshold guard (doc 02 §2) on a fresh Diff, then
@@ -288,7 +313,11 @@ func (e *SnapraidEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progre
 		})
 	}
 
-	diff, err := e.Diff(ctx)
+	before, err := e.runStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	diff, err := e.diffFromStatus(ctx, before)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +326,7 @@ func (e *SnapraidEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progre
 		return nil, &GuardBlockedError{Result: result}
 	}
 
-	if err := e.touchIfNeeded(ctx); err != nil {
+	if err := e.touchIfNeeded(ctx, before); err != nil {
 		return nil, err
 	}
 
