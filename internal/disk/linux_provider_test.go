@@ -160,10 +160,64 @@ func TestLinuxProvider_Format_RefusesBootDevice(t *testing.T) {
 	}
 }
 
-func TestLinuxProvider_Format_NotYetImplementedOnNonBootDevice(t *testing.T) {
-	p, _ := newTestProvider(t)
-	if err := p.Format(context.Background(), "/dev/sdb", XFS); !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("Format(non-boot device): got %v, want ErrNotImplemented", err)
+func TestLinuxProvider_Format_ExecsMkfsXFS(t *testing.T) {
+	p, runner := newTestProvider(t)
+	runner.Script("mkfs.xfs", []string{"-f", "/dev/sdb"}, nil, nil)
+
+	if err := p.Format(context.Background(), "/dev/sdb", XFS); err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+
+	calls := runner.Calls()
+	if len(calls) != 1 || calls[0].Name != "mkfs.xfs" {
+		t.Fatalf("Calls: got %+v, want one mkfs.xfs call", calls)
+	}
+	if !equalArgs(calls[0].Args, []string{"-f", "/dev/sdb"}) {
+		t.Fatalf("Calls[0].Args = %v, want [-f /dev/sdb]", calls[0].Args)
+	}
+}
+
+func TestLinuxProvider_Format_ExecsMkfsExt4(t *testing.T) {
+	p, runner := newTestProvider(t)
+	runner.Script("mkfs.ext4", []string{"-F", "/dev/sdb"}, nil, nil)
+
+	if err := p.Format(context.Background(), "/dev/sdb", EXT4); err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	if calls := runner.Calls(); len(calls) != 1 || calls[0].Name != "mkfs.ext4" {
+		t.Fatalf("Calls: got %+v, want one mkfs.ext4 call", calls)
+	}
+}
+
+func TestLinuxProvider_Format_ExecsMkfsBtrfs(t *testing.T) {
+	p, runner := newTestProvider(t)
+	runner.Script("mkfs.btrfs", []string{"-f", "/dev/sdb"}, nil, nil)
+
+	if err := p.Format(context.Background(), "/dev/sdb", BTRFS); err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	if calls := runner.Calls(); len(calls) != 1 || calls[0].Name != "mkfs.btrfs" {
+		t.Fatalf("Calls: got %+v, want one mkfs.btrfs call", calls)
+	}
+}
+
+func TestLinuxProvider_Format_RefusesUnsupportedFilesystem(t *testing.T) {
+	p, runner := newTestProvider(t)
+	if err := p.Format(context.Background(), "/dev/sdb", FilesystemType("zfs")); !errors.Is(err, ErrUnsupportedFilesystem) {
+		t.Fatalf("Format(zfs): got %v, want ErrUnsupportedFilesystem", err)
+	}
+	if calls := runner.Calls(); len(calls) != 0 {
+		t.Fatalf("Format(zfs) ran a command: %+v, want none", calls)
+	}
+}
+
+func TestLinuxProvider_Format_SurfacesMkfsFailure(t *testing.T) {
+	p, runner := newTestProvider(t)
+	mkfsErr := errors.New("device or resource busy")
+	runner.Script("mkfs.xfs", []string{"-f", "/dev/sdb"}, nil, mkfsErr)
+
+	if err := p.Format(context.Background(), "/dev/sdb", XFS); !errors.Is(err, mkfsErr) {
+		t.Fatalf("Format: got %v, want it to wrap %v", err, mkfsErr)
 	}
 }
 

@@ -12,12 +12,6 @@ import (
 // always excluded (doc 02 §4).
 var ErrBootDevice = errors.New("disk: refusing to operate on the boot device")
 
-// ErrNotImplemented marks a Provider method whose real behaviour belongs
-// to a later issue. Format's partitioning and mkfs logic is disk-
-// lifecycle work (doc 02 §4 "Adding a disk"), not enumeration, identity,
-// SMART or the spin-state log — this issue's scope.
-var ErrNotImplemented = errors.New("disk: not implemented")
-
 // LinuxProvider is the real Provider (doc 01 §4): it enumerates block
 // devices from sysfs, resolves identity from /dev/disk/by-id (Q21),
 // polls health with `smartctl -j -n standby`, tracks SMART trends, and
@@ -98,8 +92,11 @@ func (p *LinuxProvider) Spindown(ctx context.Context, dev string) error {
 	return nil
 }
 
-// Format refuses the boot device; the partitioning and mkfs logic
-// belongs to a later disk-lifecycle issue (see ErrNotImplemented).
+// Format refuses the boot device, then execs the filesystem tool's own
+// mkfs command for fs as an argv — never a shell (CLAUDE.md) — to build
+// a fresh filesystem on dev (doc 02 §4 "Adding a disk" step 3, doc 02
+// §5). Callers that must never touch a disk outside an explicit
+// array-setup plan go through FormatAssigned, not this method directly.
 func (p *LinuxProvider) Format(ctx context.Context, dev string, fs FilesystemType) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -107,7 +104,14 @@ func (p *LinuxProvider) Format(ctx context.Context, dev string, fs FilesystemTyp
 	if err := p.refuseBootDevice(ctx, dev); err != nil {
 		return err
 	}
-	return fmt.Errorf("format %s: %w", dev, ErrNotImplemented)
+	argv, err := formatCommand(dev, fs)
+	if err != nil {
+		return err
+	}
+	if _, err := p.Exec.Run(ctx, argv[0], argv[1:]...); err != nil {
+		return fmt.Errorf("format %s: %w", dev, err)
+	}
+	return nil
 }
 
 func (p *LinuxProvider) refuseBootDevice(ctx context.Context, dev string) error {
