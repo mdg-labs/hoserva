@@ -81,13 +81,38 @@ not_yet "virsh destroy mid-sync recovery" "no sync/parity operation is reachable
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 6/8 reboot persistence ==="
 if vm_domain_running "$VM_DOMAIN"; then
-  virsh -c "$VM_CONNECT" reboot "$VM_DOMAIN" >/dev/null 2>&1 || true
-  sleep 5
-  vm_wait_tcp "$VM_SSH_PORT" 180 || true
-  if vm_ssh_wait_ready 180 && vm_ssh 'sudo systemctl is-active hoservad' >/dev/null 2>&1; then
-    pass "reboot persistence"
+  # sshd answering (the existing service, still up from before any
+  # reboot happened) can satisfy a plain "wait for SSH" check without the
+  # guest ever having rebooted — 'virsh reboot' returns as soon as it has
+  # sent the request, not once the guest acts on it, and can itself fail
+  # silently. So this records the guest's boot id first, requires 'virsh
+  # reboot' to actually succeed, and only trusts a reboot happened once
+  # SSH comes back reporting a *different* boot id — never on SSH/port
+  # readiness alone.
+  before_boot_id="$(vm_ssh 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null || true)"
+  if [[ -z "$before_boot_id" ]]; then
+    fail "reboot persistence" "could not read the guest's boot id before rebooting"
+  elif ! virsh -c "$VM_CONNECT" reboot "$VM_DOMAIN" >/dev/null; then
+    fail "reboot persistence" "'virsh reboot $VM_DOMAIN' failed"
   else
-    fail "reboot persistence" "hoservad was not active again after a guest reboot"
+    reboot_seen=false
+    timeout_s=180
+    start_s=$SECONDS
+    while (( SECONDS - start_s < timeout_s )); do
+      after_boot_id="$(vm_ssh 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null || true)"
+      if [[ -n "$after_boot_id" && "$after_boot_id" != "$before_boot_id" ]]; then
+        reboot_seen=true
+        break
+      fi
+      sleep 1
+    done
+    if ! $reboot_seen; then
+      fail "reboot persistence" "guest boot id did not change within ${timeout_s}s of 'virsh reboot' — the guest may never have actually rebooted"
+    elif vm_ssh 'sudo systemctl is-active hoservad' >/dev/null 2>&1; then
+      pass "reboot persistence"
+    else
+      fail "reboot persistence" "hoservad was not active again after a confirmed guest reboot"
+    fi
   fi
 else
   not_yet "reboot persistence" "no running domain (install step above did not complete)"
