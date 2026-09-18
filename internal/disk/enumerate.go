@@ -99,6 +99,7 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 			Serial:       id.Serial,
 			WWN:          id.WWN,
 			WeakIdentity: id.WeakIdentity,
+			ByIDName:     id.ByIDName,
 			Boot:         bootSet[dev],
 		})
 	}

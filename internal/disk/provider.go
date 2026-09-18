@@ -86,6 +86,9 @@ const (
 // disk's WWN and serial — allowed as a data disk, refused as parity (Q21).
 // Boot marks the disk currently backing the root filesystem: it is always
 // identified and always excluded from anything destructive (doc 02 §4).
+// ByIDName is the by-id link basename WWN/Serial were resolved from
+// (Identity.ByIDName) — empty exactly when neither is, meaning this disk
+// has no by-id link at all to bind a format or adopt-check call to.
 type Disk struct {
 	Device       string
 	Size         int64
@@ -93,6 +96,7 @@ type Disk struct {
 	Serial       string
 	WWN          string
 	WeakIdentity bool
+	ByIDName     string
 	Boot         bool
 	Failed       bool
 }
