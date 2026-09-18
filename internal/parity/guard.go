@@ -1,0 +1,278 @@
+// The threshold guard (doc 02 §2) — the single most important safety
+// feature in the product. `snapraid diff` reports what a sync is about to
+// commit; a large removal or update count, or a data disk that dropped to
+// zero files, is either an intentional cleanup or a disaster in progress
+// (ransomware, a failing disk, a bad `rm -rf`, an unmounted share).
+// Syncing over that destroys the parity that could have recovered it, so
+// SnapraidEngine.Sync evaluates this package's Guard on a fresh diff
+// before every real sync, unconditionally — see Sync's own doc comment
+// for how that is structural, not a convention a caller could skip.
+package parity
+
+import (
+	"errors"
+	"fmt"
+)
+
+// DefaultRemovedFilesMax and DefaultRemovedUpdatedPercent are Q16's own
+// starting thresholds — guesses until the soak test's diff history exists
+// to replace them (doc 02 §2, doc 13 Q16).
+const (
+	DefaultRemovedFilesMax       = 500
+	DefaultRemovedUpdatedPercent = 10.0
+)
+
+// GuardConfig is the threshold guard's own configuration (doc 02 §2, Q16).
+// A caller can raise either threshold; there is deliberately no field here
+// that disables the guard's evaluation itself or skips the confirmation
+// SyncOpts.Confirm carries — "configurable but cannot be disabled
+// entirely; the minimum is a confirmation prompt" (doc 02 §2).
+type GuardConfig struct {
+	// RemovedFilesMax blocks when accounted-for removals (Removed minus
+	// Q15's own manifest matches) exceed this count. Zero (the type's own
+	// zero value) uses DefaultRemovedFilesMax.
+	RemovedFilesMax int
+	// RemovedUpdatedPercent blocks when (accounted-for removals + Updated)
+	// exceed this percent of the array's total file count before the
+	// diff. Zero uses DefaultRemovedUpdatedPercent.
+	RemovedUpdatedPercent float64
+}
+
+func (c GuardConfig) removedFilesMax() int {
+	if c.RemovedFilesMax > 0 {
+		return c.RemovedFilesMax
+	}
+	return DefaultRemovedFilesMax
+}
+
+func (c GuardConfig) removedUpdatedPercent() float64 {
+	if c.RemovedUpdatedPercent > 0 {
+		return c.RemovedUpdatedPercent
+	}
+	return DefaultRemovedUpdatedPercent
+}
+
+// GuardTrigger identifies which of the guard's three rules (doc 02 §2)
+// fired. More than one can fire on the same diff.
+type GuardTrigger int
+
+const (
+	// TriggerRemovedCount is "removed files exceed N".
+	TriggerRemovedCount GuardTrigger = iota
+	// TriggerRemovedUpdatedPercent is "removed + updated files exceed X%
+	// of the array".
+	TriggerRemovedUpdatedPercent
+	// TriggerZeroFiles is "a data disk reports zero files where it
+	// previously had files" (the unmounted-disk case).
+	TriggerZeroFiles
+)
+
+func (t GuardTrigger) String() string {
+	switch t {
+	case TriggerRemovedCount:
+		return "removed-count"
+	case TriggerRemovedUpdatedPercent:
+		return "removed-updated-percent"
+	case TriggerZeroFiles:
+		return "zero-files"
+	default:
+		return "unknown"
+	}
+}
+
+// ZeroFilesDisk is one disk TriggerZeroFiles fired for.
+type ZeroFilesDisk struct {
+	Disk        string
+	FilesBefore int
+}
+
+// GuardResult is the guard's decision on one diff (doc 02 §2): what the
+// dashboard's blocked-sync banner and a notification both render from.
+type GuardResult struct {
+	Blocked  bool
+	Triggers []GuardTrigger
+
+	// RemovedCount and RemovedUpdatedPercent are the values the two
+	// count/percent triggers actually compared against their thresholds —
+	// already net of AccountedRemovals (Q15).
+	RemovedCount          int
+	RemovedUpdatedPercent float64
+	ZeroFilesDisks        []ZeroFilesDisk
+
+	// AccountedRemovals is Q15's own "moved by Hoserva" group: manifest
+	// entries whose removal was matched to a reappearance on their
+	// recorded target disk in this diff. Shown as its own group, and
+	// excluded from RemovedCount/RemovedUpdatedPercent above; every other
+	// removal counts fully.
+	AccountedRemovals []ManifestEntry
+
+	// Diff is the diff this decision was made against, with
+	// DiffReport.MovedByHoserva filled in to len(AccountedRemovals) —
+	// BuildDiffReport itself always leaves it zero (diff_parse.go's own
+	// doc comment: matching a manifest is the guard's job).
+	Diff DiffReport
+}
+
+// hasTrigger reports whether t fired in this result.
+func (r GuardResult) hasTrigger(t GuardTrigger) bool {
+	for _, got := range r.Triggers {
+		if got == t {
+			return true
+		}
+	}
+	return false
+}
+
+func (r GuardResult) summary() string {
+	s := fmt.Sprintf("removed=%d (threshold-relevant), removed+updated=%.1f%%, triggers=%v", r.RemovedCount, r.RemovedUpdatedPercent, r.Triggers)
+	if len(r.ZeroFilesDisks) > 0 {
+		s += fmt.Sprintf(", zero-files disks=%v", r.ZeroFilesDisks)
+	}
+	return s
+}
+
+// ErrGuardBlocked is the sentinel a caller matches with errors.Is against
+// whatever Sync returns when the threshold guard blocks a sync and the
+// caller has not set SyncOpts.Confirm. The concrete error is always a
+// *GuardBlockedError, carrying the full GuardResult a caller needs to
+// dispatch a notification and render the dashboard's blocked-sync banner
+// (doc 02 §2) without re-evaluating anything itself.
+var ErrGuardBlocked = errors.New("parity: threshold guard blocked the sync")
+
+// GuardBlockedError is returned by Sync in place of running `snapraid
+// sync` at all: "the sync is held ... the sync does not proceed until a
+// human decides" (doc 02 §2).
+type GuardBlockedError struct {
+	Result GuardResult
+}
+
+func (e *GuardBlockedError) Error() string {
+	return fmt.Sprintf("parity: threshold guard blocked the sync: %s", e.Result.summary())
+}
+
+func (e *GuardBlockedError) Unwrap() error { return ErrGuardBlocked }
+
+// Guard evaluates one diff against its own thresholds (doc 02 §2, Q16).
+// Its zero value, Guard{}, is fully usable and applies the package's
+// default thresholds.
+type Guard struct {
+	Config GuardConfig
+}
+
+// Evaluate is the guard's whole job: decide whether diff, accounting for
+// manifest (Q15) and removingDisks (doc 09 §4's zero-files exemption),
+// should block a sync.
+func (g Guard) Evaluate(diff DiffReport, manifest []ManifestEntry, removingDisks map[string]bool) GuardResult {
+	accounted, matchedRemovals := matchManifest(diff, manifest)
+	diff.MovedByHoserva = len(matchedRemovals)
+
+	// matchedRemovals is built as a subset of the diff's own distinct
+	// removed-file keys (matchManifest never adds a key that isn't in
+	// diff.RemovedFiles), so its size can never exceed the removal set
+	// it's being subtracted from — no clamp needed, and none is added:
+	// a negative result here would mean the diff itself is inconsistent
+	// (Removed doesn't cover its own RemovedFiles), which must fail loud,
+	// not be silently absorbed.
+	removedCount := diff.Removed - len(matchedRemovals)
+
+	var totalBefore int
+	for _, dd := range diff.PerDisk {
+		totalBefore += dd.FilesBefore
+	}
+	var percent float64
+	if totalBefore > 0 {
+		percent = float64(removedCount+diff.Updated) / float64(totalBefore) * 100
+	}
+
+	var triggers []GuardTrigger
+	if removedCount > g.Config.removedFilesMax() {
+		triggers = append(triggers, TriggerRemovedCount)
+	}
+	if percent > g.Config.removedUpdatedPercent() {
+		triggers = append(triggers, TriggerRemovedUpdatedPercent)
+	}
+
+	var zeroDisks []ZeroFilesDisk
+	for disk, dd := range diff.PerDisk {
+		if removingDisks[disk] {
+			continue
+		}
+		if dd.FilesBefore > 0 && dd.FilesAfter == 0 {
+			zeroDisks = append(zeroDisks, ZeroFilesDisk{Disk: disk, FilesBefore: dd.FilesBefore})
+		}
+	}
+	if len(zeroDisks) > 0 {
+		triggers = append(triggers, TriggerZeroFiles)
+	}
+
+	return GuardResult{
+		Blocked:               len(triggers) > 0,
+		Triggers:              triggers,
+		RemovedCount:          removedCount,
+		RemovedUpdatedPercent: percent,
+		ZeroFilesDisks:        zeroDisks,
+		AccountedRemovals:     accounted,
+		Diff:                  diff,
+	}
+}
+
+// fileKey identifies one file on one disk, for matching a removal against
+// a reappearance elsewhere in the same diff.
+type fileKey struct{ disk, relPath string }
+
+// matchManifest is Q15's own rule: a manifest entry is accounted when its
+// RelPath was removed from SourceDisk *and* the same RelPath appears
+// (added or copied) on TargetDisk, both within the same diff.
+//
+// It returns both the matched manifest entries (for GuardResult's own
+// display group) and matchedRemovals — the *distinct* removal identities
+// (disk, path) those entries matched, deduplicated. matchedRemovals is
+// always a subset of the diff's own removed-file keys, by construction:
+// nothing is ever added to it unless it was already in removed below. This
+// is what makes Evaluate's subtraction safe against a manifest recording
+// the same real removal more than once (a retry/resume loop appending an
+// entry per attempt, say) — each real removal can only ever be subtracted
+// once no matter how many manifest entries name it.
+func matchManifest(diff DiffReport, manifest []ManifestEntry) (accounted []ManifestEntry, matchedRemovals map[fileKey]struct{}) {
+	if len(manifest) == 0 {
+		return nil, nil
+	}
+
+	removed := make(map[fileKey]bool, len(diff.RemovedFiles))
+	for _, f := range diff.RemovedFiles {
+		removed[fileKey{f.Disk, f.RelPath}] = true
+	}
+	added := make(map[fileKey]bool, len(diff.AddedFiles))
+	for _, f := range diff.AddedFiles {
+		added[fileKey{f.Disk, f.RelPath}] = true
+	}
+
+	matchedRemovals = make(map[fileKey]struct{})
+	for _, m := range manifest {
+		key := fileKey{m.SourceDisk, m.RelPath}
+		if _, already := matchedRemovals[key]; already {
+			continue
+		}
+		if !removed[key] || !added[fileKey{m.TargetDisk, m.RelPath}] {
+			continue
+		}
+		matchedRemovals[key] = struct{}{}
+		accounted = append(accounted, m)
+	}
+	return accounted, matchedRemovals
+}
+
+// anyDiskEmptied reports whether diff would leave any disk (including one
+// in RemovingDisks — that exemption only affects the guard's own
+// zero-files rule above, not SnapRAID's own separate, unconditional
+// refusal to sync an emptied disk) with zero files where it previously had
+// some. syncArgv's own doc comment covers why Sync needs this regardless
+// of what the guard itself decided.
+func anyDiskEmptied(diff DiffReport) bool {
+	for _, dd := range diff.PerDisk {
+		if dd.FilesBefore > 0 && dd.FilesAfter == 0 {
+			return true
+		}
+	}
+	return false
+}

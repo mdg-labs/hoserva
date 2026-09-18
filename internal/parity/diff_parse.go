@@ -27,6 +27,19 @@ type DiffLog struct {
 	diskAdd    map[string]int
 	diskRemove map[string]int
 	diskCopyIn map[string]int
+
+	// removed, added and copiedIn are the same scan lines diskAdd/
+	// diskRemove/diskCopyIn tally, kept with their own disk id and
+	// relative path — BuildDiffReport projects these into the public
+	// DiffReport.RemovedFiles/AddedFiles the threshold guard's manifest
+	// accounting (Q15) matches against.
+	removed, added, copiedIn []diskPath
+}
+
+// diskPath is a SnapRAID disk id ("d1") paired with a path relative to
+// that disk's own mount, exactly as one scan line reports it.
+type diskPath struct {
+	disk, path string
 }
 
 // ParseDiff parses a `snapraid diff -l <log>` run's structured log
@@ -117,24 +130,27 @@ func parseScanLine(d *DiffLog, rest string) {
 	}
 	switch action {
 	case "add":
-		disk, _, ok := strings.Cut(tail, ":")
+		disk, path, ok := strings.Cut(tail, ":")
 		if ok {
 			d.diskAdd[disk]++
+			d.added = append(d.added, diskPath{disk, path})
 		}
 	case "remove":
-		disk, _, ok := strings.Cut(tail, ":")
+		disk, path, ok := strings.Cut(tail, ":")
 		if ok {
 			d.diskRemove[disk]++
+			d.removed = append(d.removed, diskPath{disk, path})
 		}
 	case "copy":
 		// tail is "srcdisk:srcpath:dstdisk:dstpath"; srcpath can itself
-		// contain ':', so only the first field (srcdisk, unused here) and
-		// the third (dstdisk) are trusted — safe as long as the path
-		// doesn't, true of every real capture this parser is tested
-		// against.
+		// contain ':', so only the first field (srcdisk, unused here), the
+		// third (dstdisk) and the fourth (dstpath) are trusted — safe as
+		// long as the path doesn't, true of every real capture this parser
+		// is tested against.
 		parts := strings.SplitN(tail, ":", 4)
 		if len(parts) == 4 {
 			d.diskCopyIn[parts[2]]++
+			d.copiedIn = append(d.copiedIn, diskPath{parts[2], parts[3]})
 		}
 	}
 }
@@ -159,5 +175,27 @@ func BuildDiffReport(before StatusReport, d DiffLog) DiffReport {
 		after := b + d.diskAdd[id] + d.diskCopyIn[id] - d.diskRemove[id]
 		report.PerDisk[filepath.Clean(mount)] = DiskDiff{FilesBefore: b, FilesAfter: after}
 	}
+	report.RemovedFiles = projectDiffFiles(d.DataMounts, d.removed)
+	report.AddedFiles = append(projectDiffFiles(d.DataMounts, d.added), projectDiffFiles(d.DataMounts, d.copiedIn)...)
 	return report
+}
+
+// projectDiffFiles resolves each diskPath's SnapRAID disk id to its mount
+// point (skipping any id the diff log's own "data:" echo never defined,
+// which cannot happen for a diff produced against the same config this
+// package rendered, but is not a decoding error either), matching
+// DiffReport.PerDisk's own key shape.
+func projectDiffFiles(mounts map[string]string, files []diskPath) []DiffFile {
+	if len(files) == 0 {
+		return nil
+	}
+	out := make([]DiffFile, 0, len(files))
+	for _, f := range files {
+		mount, ok := mounts[f.disk]
+		if !ok {
+			continue
+		}
+		out = append(out, DiffFile{Disk: filepath.Clean(mount), RelPath: f.path})
+	}
+	return out
 }

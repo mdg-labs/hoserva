@@ -27,6 +27,11 @@ type SnapraidEngine struct {
 	LogDir string
 	// Runner execs the real snapraid process. Defaults to CommandRunner{}.
 	Runner Runner
+	// Guard is the threshold guard (doc 02 §2) Sync evaluates on a fresh
+	// diff before every real sync. Its zero value applies the package's
+	// default thresholds (Q16) — there is no way to construct a
+	// SnapraidEngine whose Sync skips this evaluation.
+	Guard Guard
 }
 
 func (e *SnapraidEngine) binary() string {
@@ -253,12 +258,21 @@ func (e *SnapraidEngine) runStream(ctx context.Context, logPath string, tail []s
 	return ch, nil
 }
 
-// Sync runs `snapraid touch` first when Q17 calls for it, then a real
-// sync (doc 02 §2). opts.Force maps to `-E` (syncArgv's own doc
-// comment); opts.DryRun runs `diff` instead of `sync` — diff never
-// writes parity by construction, so it satisfies "the diff SnapRAID
-// would sync against without writing parity" (SyncOpts's own doc
-// comment) exactly, rather than needing a separate no-op mode.
+// Sync runs the threshold guard (doc 02 §2) on a fresh Diff, then
+// `snapraid touch` when Q17 calls for it, then a real sync. opts.DryRun
+// runs `diff` instead of `sync` — diff never writes parity by
+// construction, so it satisfies "the diff SnapRAID would sync against
+// without writing parity" (SyncOpts's own doc comment) exactly, rather
+// than needing a separate no-op mode, and never touches the guard: it
+// cannot lose data either way.
+//
+// For every other call, the guard evaluation below is unconditional and
+// happens first, before touch or sync ever run: there is no argument
+// combination, and no other exported function in this package, that
+// reaches the "sync" invocation without it (CLAUDE.md: "no code path
+// syncs without passing the guard"). A blocked result without
+// opts.Confirm returns a *GuardBlockedError and stops here; snapraid sync
+// is never invoked.
 func (e *SnapraidEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progress, error) {
 	if opts.DryRun {
 		logPath, cleanup, err := e.newLog("sync-dryrun")
@@ -274,6 +288,15 @@ func (e *SnapraidEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progre
 		})
 	}
 
+	diff, err := e.Diff(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := e.Guard.Evaluate(diff, opts.Manifest, opts.RemovingDisks)
+	if result.Blocked && !opts.Confirm {
+		return nil, &GuardBlockedError{Result: result}
+	}
+
 	if err := e.touchIfNeeded(ctx); err != nil {
 		return nil, err
 	}
@@ -282,7 +305,7 @@ func (e *SnapraidEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progre
 	if err != nil {
 		return nil, err
 	}
-	return e.runStream(ctx, logPath, syncArgv(opts.Force), func(s RunSummary, waitErr error) error {
+	return e.runStream(ctx, logPath, syncArgv(anyDiskEmptied(diff)), func(s RunSummary, waitErr error) error {
 		defer cleanup()
 		if s.Exit == "ok" && waitErr == nil {
 			return nil
