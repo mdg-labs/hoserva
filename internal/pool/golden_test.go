@@ -10,11 +10,12 @@ import (
 	"github.com/mdg-labs/hoserva/internal/config/golden"
 )
 
-// poolTestdataDir mirrors internal/config's own testdataDir convention
-// (doc 06 §2): one directory per case, a state.json plus *.golden files
-// rendered from it — the golden files this issue's acceptance criteria
-// ask for, one per cache mode.
-const poolTestdataDir = "../../testdata/configs/pool-mounts"
+// poolTestdataDir is package-owned (internal/pool/testdata/pool-mounts),
+// matching internal/parity/testdata/layouts's precedent: the shared
+// testdata/configs/ root is walked unconditionally by internal/config's
+// own test, so a state.json in this package's shape collides with it
+// there (#141).
+const poolTestdataDir = "testdata/pool-mounts"
 
 // shareState is state.json's own per-share shape.
 type shareState struct {
