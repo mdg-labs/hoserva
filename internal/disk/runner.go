@@ -1,7 +1,10 @@
 package disk
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os/exec"
 )
 
@@ -23,10 +26,22 @@ type CommandRunner struct{}
 // non-zero exit is returned as an error, but the stdout already captured
 // is still returned alongside it — smartctl's own exit status encodes
 // SMART health bits, not "the command failed", so callers must not
-// discard output on a non-nil error.
+// discard output on a non-nil error. On a non-zero exit, the returned
+// error's message includes the command's captured stderr, since that is
+// usually the only diagnostic the failing tool gave.
 func (CommandRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	return cmd.Output()
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if stderr := bytes.TrimSpace(exitErr.Stderr); len(stderr) > 0 {
+				return out, fmt.Errorf("%w: %s", err, stderr)
+			}
+		}
+		return out, err
+	}
+	return out, nil
 }
 
 var _ Runner = CommandRunner{}
