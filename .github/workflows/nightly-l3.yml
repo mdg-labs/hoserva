@@ -73,12 +73,20 @@ jobs:
 
       - name: Start this user's own session libvirtd
         # qemu:///session (never qemu:///system, D20) needs a per-user
-        # virtqemud/libvirtd reachable over its user session bus — the
-        # runner's default non-interactive shell has neither a lingering
-        # session nor a running user manager instance by default.
+        # libvirtd reachable over its own unix socket. No systemd unit
+        # ships one: libvirt-daemon-system installs only the system-wide
+        # libvirtd.service/.socket, and this image's package set has no
+        # virtqemud at all — systemctl --user start virtqemud.socket /
+        # libvirtd.socket both fail with "Unit ... not found" every time.
+        # None of that is needed: libvirt's client library auto-spawns a
+        # per-user libvirtd on first qemu:///session connection when no
+        # socket exists yet, with no systemd or root involved — this
+        # call is that first connection. loginctl enable-linger keeps the
+        # runner's login session (and this auto-spawned daemon under it)
+        # alive for the rest of the job rather than tied to one step's
+        # process lifetime.
         run: |
           sudo loginctl enable-linger "$(id -un)"
-          systemctl --user start virtqemud.socket || systemctl --user start libvirtd.socket
           virsh -c qemu:///session list --all
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
