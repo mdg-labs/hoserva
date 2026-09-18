@@ -1,0 +1,9 @@
+[Unit]
+Description=Hoserva share backups — mover write target
+RequiresMountsFor=/mnt/disk1 /mnt/disk2 /mnt/disk3
+
+[Mount]
+What=/mnt/disk1/backups=RW:/mnt/disk2/backups=RW:/mnt/disk3/backups=RW
+Where=/run/hoserva/array/backups
+Type=fuse.mergerfs
+Options=category.create=ff,moveonenospc=true,dropcacheonclose=true,minfreespace=50G,cache.files=partial,cache.entry=1,cache.attr=1,cache.negative_entry=1,cache.statfs=0,fsname=hoserva-backups

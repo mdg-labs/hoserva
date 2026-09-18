@@ -1,0 +1,9 @@
+[Unit]
+Description=Hoserva share movies
+RequiresMountsFor=/mnt/user /mnt/cache /mnt/disk1 /mnt/disk2 /mnt/disk3
+
+[Mount]
+What=/mnt/cache/movies=RW:/mnt/disk1/movies=NC:/mnt/disk2/movies=NC:/mnt/disk3/movies=NC
+Where=/mnt/user/movies
+Type=fuse.mergerfs
+Options=category.create=mspmfs,moveonenospc=true,dropcacheonclose=true,minfreespace=50G,cache.files=partial,cache.entry=1,cache.attr=1,cache.negative_entry=1,cache.statfs=0,fsname=hoserva-movies
