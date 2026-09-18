@@ -1,0 +1,68 @@
+version:none
+unixtime:1789712952
+time:2026-09-18 06:29:12
+command:diff
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/28-a1/p28/snapraid.conf
+argv:3:-l
+argv:4:/lab/28-a1/p28/diff-exercise-l.log
+argv:5:diff
+conf:file:/lab/28-a1/p28/snapraid.conf
+uuid:by-uuid:7:1: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:1: blkid support not compiled in
+uuid:notfound:7:1:
+uuid:by-uuid:7:2: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:2: blkid support not compiled in
+uuid:notfound:7:2:
+uuid:by-uuid:7:3: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:3: blkid support not compiled in
+uuid:notfound:7:3:
+blocksize:262144
+data:d1:/lab/28-a1/mnt/disk1/
+data:d2:/lab/28-a1/mnt/disk2/
+data:d3:/lab/28-a1/mnt/disk3/
+mode:par1
+parity:0:/lab/28-a1/mnt/parity1/snapraid.parity
+content:/lab/28-a1/mnt/parity1/snapraid.content
+msg:progress: Loading state from /lab/28-a1/mnt/parity1/snapraid.content...
+msg:verbose:        3 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        0 empty dirs
+msg:progress: Comparing...
+statfs:xfs: /lab/28-a1/mnt/disk1/ 
+statfs:xfs: /lab/28-a1/mnt/disk2/ 
+statfs:xfs: /lab/28-a1/mnt/disk3/ 
+scan:update:d2:docs/b.bin: 200000 1789712919.554144597 -> 90000 1789712952.854587421
+scan:add:d1:movies/d-new.bin
+scan:add:d2:docs/b-copy.bin
+scan:copy:d1:movies/a.bin:d1:movies/archive/a.bin
+scan:remove:d1:movies/a.bin
+msg:fatal: WARNING! Files '/lab/28-a1/mnt/disk2/docs/b.bin' and '/lab/28-a1/mnt/disk2/docs/b-copy.bin' share the same physical offset 299011.
+scan:remove:d3:photos/c.bin
+msg:fatal: WARNING! All the files previously present in disk 'd1' at dir '/lab/28-a1/mnt/disk1/'msg:fatal: , disk 'd2' at dir '/lab/28-a1/mnt/disk2/'msg:fatal: , disk 'd3' at dir '/lab/28-a1/mnt/disk3/'msg:fatal: 
+are now missing or have been rewritten!
+msg:fatal: This could occur when restoring a disk from a backup
+msg:fatal: program that is not setting correctly the timestamps.
+msg:fatal: This could occur when some disks are not mounted
+msg:fatal: in the expected directory.
+msg:fatal: WARNING! Physical offsets not supported for disk 'd2'msg:fatal: . The order of files won't be optimal.
+msg:fatal: WARNING! UUID is unsupported for disks: 'd1'msg:fatal: , 'd2'msg:fatal: , 'd3'msg:fatal: . Not using inodes to detect move operations.
+msg:status: 
+msg:status:        0 equal
+msg:status:        2 added
+msg:status:        2 removed
+msg:status:        1 updated
+msg:status:        0 moved
+msg:status:        1 copied
+msg:status:        0 restored
+summary:equal:0
+summary:added:2
+summary:removed:2
+summary:updated:1
+summary:moved:0
+summary:copied:1
+summary:restored:0
+msg:status: There are differences!
+summary:exit:diff

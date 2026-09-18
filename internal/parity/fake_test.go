@@ -146,7 +146,7 @@ func TestFakeEngine_Scrub_Scripted(t *testing.T) {
 	f.Sleep = func(time.Duration) {}
 	f.ScriptScrub([]Progress{{Phase: "scrubbing", Percent: 100}}, nil)
 
-	ch, err := f.Scrub(context.Background(), 8)
+	ch, err := f.Scrub(context.Background(), 8, DefaultScrubOlderThanDays)
 	if err != nil {
 		t.Fatalf("Scrub: %v", err)
 	}

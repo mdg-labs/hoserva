@@ -50,16 +50,42 @@ type DiskDiff struct {
 	FilesAfter  int
 }
 
-// Progress is one update from a running sync or scrub. Err is non-nil only
-// on the final message, and marks the run as failed rather than completed —
-// the shape doc 02 §6 needs for "a disk disappearing mid-sync: job must fail
-// cleanly, not corrupt state".
+// Progress is one update from a running sync, scrub, fix or check. Err is
+// non-nil only on the final message, and marks the run as failed rather
+// than completed — the shape doc 02 §6 needs for "a disk disappearing
+// mid-sync: job must fail cleanly, not corrupt state". Output is the raw
+// text SnapRAID printed for this update (one progress line, or — on the
+// final message — nothing beyond what Percent/Err already say); a caller
+// wiring this into a job's own RunContext.Output() (doc 01 §4) writes
+// each Output through as it arrives to build that job's full captured
+// log, without Engine depending on the job package to do it.
 type Progress struct {
 	Phase      string
 	Percent    float64
 	BytesDone  int64
 	BytesTotal int64
+	Output     string
 	Err        error
+}
+
+// FixOpts selects what Fix reconstructs from parity (doc 02 §2, §4):
+// exactly one of Disk (a whole failed disk, "Replacing a failed disk"
+// step 4) or Path (undeleting one file by its array-relative path) is
+// normally set for a guided fix; ErrorsOnly (SnapRAID's `-e`) restricts
+// either to just the blocks a prior scrub already marked bad, the
+// scrub-then-fix repair cycle confirmed in spike S5.
+type FixOpts struct {
+	Disk       string
+	Path       string
+	ErrorsOnly bool
+}
+
+// CheckOpts selects what Check verifies (doc 02 §2): Disk narrows to one
+// disk (the "paranoid check" step of disk replacement, doc 02 §4), and
+// AuditOnly (`-a`) checks file data only, without recomputing parity.
+type CheckOpts struct {
+	Disk      string
+	AuditOnly bool
 }
 
 // FreshnessLevel is the dashboard's permanent parity indicator (doc 02 §2).
@@ -83,10 +109,26 @@ type ParityStatus struct {
 
 // Engine is the interface every subsystem touching SnapRAID sits behind
 // (doc 01 §4). context.Context is first on every method because every one
-// of them shells out to snapraid.
+// of them shells out to snapraid. Sync, Scrub, Fix and Check are doc 01
+// §4's four Parity-class job types — each streams Progress because each
+// can run for real time against real data; Diff and Status are not job
+// types at all (`internal/job`'s own Type table has no entry for either):
+// diff runs synchronously immediately before every sync and on request,
+// never on a timer, and status only reads the boot-device content file,
+// so both return a single value once they finish rather than a channel.
+// Touch is not part of this interface at all — Q17 makes it an automatic
+// step Sync takes on its own before syncing, never something called
+// independently.
 type Engine interface {
 	Sync(ctx context.Context, opts SyncOpts) (<-chan Progress, error)
 	Diff(ctx context.Context) (DiffReport, error)
-	Scrub(ctx context.Context, pct int) (<-chan Progress, error)
+	// Scrub verifies pct percent of the array, restricted to blocks last
+	// verified more than olderThanDays ago (doc 02 §2's own scrub
+	// options; SnapRAID's `-p`/`-o`) — 0 forces literally everything,
+	// ignoring recency, the override a guided "check now" action needs
+	// rather than the scheduled default (DefaultScrubOlderThanDays).
+	Scrub(ctx context.Context, pct, olderThanDays int) (<-chan Progress, error)
 	Status(ctx context.Context) (ParityStatus, error)
+	Fix(ctx context.Context, opts FixOpts) (<-chan Progress, error)
+	Check(ctx context.Context, opts CheckOpts) (<-chan Progress, error)
 }
