@@ -61,10 +61,11 @@ func (h *History) RecordSpinEvent(ctx context.Context, device string, from, to s
 	return nil
 }
 
-// CountSpinEvents reports how many spin events are currently persisted —
-// a test seam for PruneHistory. A real listing view (doc 03 §3.3a)
-// belongs to whichever issue builds it.
-func (h *History) CountSpinEvents(ctx context.Context) (int64, error) {
+// countSpinEvents reports how many spin events are currently persisted —
+// a test seam for PruneHistory, so it stays unexported rather than
+// adding to this package's public API surface. A real listing view
+// (doc 03 §3.3a) belongs to whichever issue builds it.
+func (h *History) countSpinEvents(ctx context.Context) (int64, error) {
 	return h.q.CountSpinEvents(ctx)
 }
 
@@ -86,9 +87,10 @@ func (h *History) RecordAuditEntry(ctx context.Context, actor, action, detail st
 	return nil
 }
 
-// CountAuditLog reports how many audit-log entries are currently
-// persisted — a test seam for PruneHistory.
-func (h *History) CountAuditLog(ctx context.Context) (int64, error) {
+// countAuditLog reports how many audit-log entries are currently
+// persisted — a test seam for PruneHistory, so it stays unexported
+// rather than adding to this package's public API surface.
+func (h *History) countAuditLog(ctx context.Context) (int64, error) {
 	return h.q.CountAuditLog(ctx)
 }
 
