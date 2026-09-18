@@ -62,6 +62,7 @@ func (FanotifyWatcher) Watch(ctx context.Context, mountpoint string) (Stream, er
 		file:       os.NewFile(uintptr(fd), "fanotify:"+mountpoint),
 		mountFD:    mountFD,
 		hasMountFD: mountErr == nil,
+		buf:        make([]byte, fanotifyReadBufferSize),
 	}
 
 	go func() {
@@ -71,10 +72,23 @@ func (FanotifyWatcher) Watch(ctx context.Context, mountpoint string) (Stream, er
 	return s, nil
 }
 
+// fanotifyReadBufferSize is the read(2) buffer Next reuses across every
+// call on a given stream — sized to hold a large burst of queued events
+// in one read without needing to grow.
+const fanotifyReadBufferSize = 256 * 1024
+
 type fanotifyStream struct {
 	file       *os.File
 	mountFD    int
 	hasMountFD bool
+	// buf is Next's own read(2) buffer, allocated once in Watch and
+	// reused for the life of the stream: only one Next call is ever in
+	// flight per stream, and decodeFanotifyBatch copies out everything it
+	// keeps (StreamEvent's Path/Name/ID are all independently allocated
+	// strings), so reusing it between calls is safe. Allocating a fresh
+	// 256KB buffer per call was pure churn on a hot path — every fanotify
+	// batch on a busy filesystem re-triggers Next.
+	buf []byte
 
 	closeMu sync.Mutex
 	closed  bool
@@ -103,16 +117,15 @@ func (s *fanotifyStream) closeOnce() {
 // Next blocks on a real read(2) of the fanotify fd and decodes whatever
 // batch of events that one syscall returned.
 func (s *fanotifyStream) Next() ([]StreamEvent, error) {
-	buf := make([]byte, 256*1024)
 	for {
-		n, err := s.file.Read(buf)
+		n, err := s.file.Read(s.buf)
 		if err != nil {
 			if errors.Is(err, syscall.EINTR) {
 				continue
 			}
 			return nil, err
 		}
-		return decodeFanotifyBatch(buf[:n], s.resolvePath), nil
+		return decodeFanotifyBatch(s.buf[:n], s.resolvePath), nil
 	}
 }
 

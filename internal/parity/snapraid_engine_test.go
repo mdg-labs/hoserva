@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
 
 // scriptedRunner is a fake Runner (CLAUDE.md's scriptable-fake rule) that
@@ -68,6 +69,65 @@ type fakeExitError struct{ code int }
 func (e *fakeExitError) Error() string { return "exit status" }
 func (e *fakeExitError) ExitCode() int { return e.code }
 
+// TestDeliverFinalAfterCancel_DiscardsAStaleTickToMakeRoom is this issue's
+// own reproduction of the dropped-terminal-status bug: runStream's
+// cancelled path once sent the final Progress with a non-blocking
+// `select { default: }`, so it was silently discarded whenever ch's one
+// buffered slot already held a tick nobody had received yet. This test
+// primes ch with exactly that stale, unconsumed tick before calling
+// deliverFinalAfterCancel — deterministic, no goroutine timing involved —
+// and would hang forever (caught by the timeout below) were the fix to
+// block on a full buffer instead of draining it first.
+func TestDeliverFinalAfterCancel_DiscardsAStaleTickToMakeRoom(t *testing.T) {
+	ch := make(chan Progress, 1)
+	ch <- Progress{Percent: 42, Output: "a tick nobody received"}
+
+	final := Progress{Percent: 100, Err: context.Canceled}
+	done := make(chan struct{})
+	go func() {
+		deliverFinalAfterCancel(ch, final)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("deliverFinalAfterCancel blocked forever with a stale tick occupying the buffer")
+	}
+
+	got, ok := <-ch
+	if !ok {
+		t.Fatal("deliverFinalAfterCancel: channel closed with no final Progress — the terminal status was dropped")
+	}
+	if !errors.Is(got.Err, context.Canceled) {
+		t.Fatalf("got %+v, want the final status (Err = context.Canceled), not the stale tick", got)
+	}
+	// deliverFinalAfterCancel never closes ch (runStream's own goroutine
+	// does that); a non-blocking check is the only correct way to confirm
+	// nothing else is buffered.
+	select {
+	case v := <-ch:
+		t.Fatalf("got a second value %+v, want only the final status", v)
+	default:
+	}
+}
+
+// TestDeliverFinalAfterCancel_SucceedsImmediatelyWhenBufferIsEmpty covers
+// the ordinary case: no stale tick to drain, the final status still goes
+// through.
+func TestDeliverFinalAfterCancel_SucceedsImmediatelyWhenBufferIsEmpty(t *testing.T) {
+	ch := make(chan Progress, 1)
+	deliverFinalAfterCancel(ch, Progress{Percent: 100, Err: context.Canceled})
+
+	got, ok := <-ch
+	if !ok {
+		t.Fatal("deliverFinalAfterCancel: channel closed with no final Progress")
+	}
+	if !errors.Is(got.Err, context.Canceled) {
+		t.Fatalf("got %+v, want Err = context.Canceled", got)
+	}
+}
+
 func drain(t *testing.T, ch <-chan Progress) Progress {
 	t.Helper()
 	var last Progress
@@ -100,9 +160,8 @@ summary:exit:ok
 func TestSnapraidEngine_Sync_SkipsTouchWhenNotNeeded(t *testing.T) {
 	dir := t.TempDir()
 	r := &scriptedRunner{t: t, script: []scriptedResult{
-		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))}, // status (diff's own "before")
+		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))}, // status (guard's "before", and touch check)
 		{logBody: noChangeDiffLog},                                    // diff (guard evaluation)
-		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))}, // status (touch check)
 		{logBody: string(readCorpus(t, "snapraid_sync_ok.log"))},      // sync
 	}}
 	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r}
@@ -115,22 +174,21 @@ func TestSnapraidEngine_Sync_SkipsTouchWhenNotNeeded(t *testing.T) {
 	if final.Err != nil {
 		t.Fatalf("Sync final Progress.Err = %v, want nil", final.Err)
 	}
-	if len(r.calls) != 4 {
-		t.Fatalf("got %d snapraid calls, want 4 (status, diff, status, sync): %v", len(r.calls), r.calls)
+	if len(r.calls) != 3 {
+		t.Fatalf("got %d snapraid calls, want 3 (status, diff, sync — one status shared between the guard's before-count and the touch check): %v", len(r.calls), r.calls)
 	}
-	if got := r.calls[3][len(r.calls[3])-1]; got != "sync" {
-		t.Fatalf("fourth call's own operation = %q, want %q (no touch call in between)", got, "sync")
+	if got := r.calls[2][len(r.calls[2])-1]; got != "sync" {
+		t.Fatalf("third call's own operation = %q, want %q (no touch call in between)", got, "sync")
 	}
 }
 
 func TestSnapraidEngine_Sync_RunsTouchWhenZeroSubsecondFilesExist(t *testing.T) {
 	dir := t.TempDir()
 	r := &scriptedRunner{t: t, script: []scriptedResult{
-		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))},         // status (diff's own "before")
-		{logBody: noChangeDiffLog},                                            // diff (guard evaluation)
-		{logBody: string(readCorpus(t, "snapraid_status_zerosubsecond.log"))}, // status: 1 zero-subsecond file
-		{logBody: string(readCorpus(t, "snapraid_touch.log"))},                // touch
-		{logBody: string(readCorpus(t, "snapraid_sync_ok.log"))},              // sync
+		{logBody: string(readCorpus(t, "snapraid_status_zerosubsecond.log"))}, // status (guard's "before", and touch check): 1 zero-subsecond file
+		{logBody: noChangeDiffLog},                               // diff (guard evaluation)
+		{logBody: string(readCorpus(t, "snapraid_touch.log"))},   // touch
+		{logBody: string(readCorpus(t, "snapraid_sync_ok.log"))}, // sync
 	}}
 	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r}
 
@@ -142,14 +200,14 @@ func TestSnapraidEngine_Sync_RunsTouchWhenZeroSubsecondFilesExist(t *testing.T) 
 	if final.Err != nil {
 		t.Fatalf("Sync final Progress.Err = %v, want nil", final.Err)
 	}
-	if len(r.calls) != 5 {
-		t.Fatalf("got %d snapraid calls, want 5 (status, diff, status, touch, sync): %v", len(r.calls), r.calls)
+	if len(r.calls) != 4 {
+		t.Fatalf("got %d snapraid calls, want 4 (status, diff, touch, sync): %v", len(r.calls), r.calls)
 	}
-	if got := r.calls[3][len(r.calls[3])-1]; got != "touch" {
-		t.Fatalf("fourth call = %v, want its own tail to be touch (Q17)", r.calls[3])
+	if got := r.calls[2][len(r.calls[2])-1]; got != "touch" {
+		t.Fatalf("third call = %v, want its own tail to be touch (Q17)", r.calls[2])
 	}
-	if got := r.calls[4][len(r.calls[4])-1]; got != "sync" {
-		t.Fatalf("fifth call = %v, want its own tail to be sync", r.calls[4])
+	if got := r.calls[3][len(r.calls[3])-1]; got != "sync" {
+		t.Fatalf("fourth call = %v, want its own tail to be sync", r.calls[3])
 	}
 }
 
@@ -159,7 +217,6 @@ func TestSnapraidEngine_Sync_FailsWhenProcessDidNotRun(t *testing.T) {
 	r := &scriptedRunner{t: t, script: []scriptedResult{
 		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))},
 		{logBody: noChangeDiffLog},
-		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))},
 		{logBody: string(readCorpus(t, "snapraid_sync_ok.log")), err: boom},
 	}}
 	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r}
@@ -268,9 +325,8 @@ func TestSnapraidEngine_Sync_BlocksOnZeroFilesTrigger(t *testing.T) {
 func TestSnapraidEngine_Sync_ConfirmedZeroFilesProceedsWithForceEmpty(t *testing.T) {
 	dir := t.TempDir()
 	r := &scriptedRunner{t: t, script: []scriptedResult{
-		{logBody: string(readCorpus(t, "snapraid_status_new_array.log"))},
+		{logBody: string(readCorpus(t, "snapraid_status_new_array.log"))}, // status (guard's "before", and touch check)
 		{logBody: string(readCorpus(t, "snapraid_diff_mixed.log")), err: &fakeExitError{code: 2}},
-		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))}, // touch check
 		{logBody: string(readCorpus(t, "snapraid_sync_ok.log"))},
 	}}
 	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r}
@@ -283,10 +339,10 @@ func TestSnapraidEngine_Sync_ConfirmedZeroFilesProceedsWithForceEmpty(t *testing
 	if final.Err != nil {
 		t.Fatalf("Sync final Progress.Err = %v, want nil", final.Err)
 	}
-	if len(r.calls) != 4 {
-		t.Fatalf("got %d snapraid calls, want 4: %v", len(r.calls), r.calls)
+	if len(r.calls) != 3 {
+		t.Fatalf("got %d snapraid calls, want 3: %v", len(r.calls), r.calls)
 	}
-	last := r.calls[3]
+	last := r.calls[2]
 	if last[len(last)-1] != "sync" {
 		t.Fatalf("last call = %v, want its own tail to be sync", last)
 	}
@@ -452,9 +508,8 @@ func TestSnapraidEngine_Sync_UnaccountedRemovalsStillBlock(t *testing.T) {
 func TestSnapraidEngine_Sync_AccountedRemovalsAllowSync(t *testing.T) {
 	dir := t.TempDir()
 	r := &scriptedRunner{t: t, script: []scriptedResult{
-		{logBody: manifestStatusLog},
+		{logBody: manifestStatusLog}, // status (guard's "before", and touch check)
 		{logBody: manifestDiffLog, err: &fakeExitError{code: 2}},
-		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))}, // touch check
 		{logBody: string(readCorpus(t, "snapraid_sync_ok.log"))},
 	}}
 	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r, Guard: Guard{Config: GuardConfig{RemovedFilesMax: 3}}}
@@ -469,7 +524,7 @@ func TestSnapraidEngine_Sync_AccountedRemovalsAllowSync(t *testing.T) {
 	if final.Err != nil {
 		t.Fatalf("Sync final Progress.Err = %v, want nil", final.Err)
 	}
-	if len(r.calls) != 4 {
-		t.Fatalf("got %d snapraid calls, want 4: %v", len(r.calls), r.calls)
+	if len(r.calls) != 3 {
+		t.Fatalf("got %d snapraid calls, want 3: %v", len(r.calls), r.calls)
 	}
 }

@@ -152,14 +152,27 @@ var ErrDiskNotTracked = errors.New("parity: journal: disk not tracked")
 // Clock lets tests control the timestamps a Journal records.
 type Clock func() time.Time
 
+// defaultJournalPersistInterval bounds how often readLoop writes a disk's
+// snapshot to disk during a burst of fanotify batches (e.g. extracting an
+// archive): every batch still updates the in-memory state immediately —
+// Summary and Files are never stale — but the fsync'd snapshot write is
+// skipped for a batch that lands within this interval of the last one
+// actually written, still driven by real events rather than a timer. A
+// clean stop (RemoveDisk, Rearm, Close, ctx cancelled) always flushes any
+// batch this skipped before the read loop exits, so only a genuine crash
+// mid-burst can lose more than the usual restart gap (Q13's own
+// documented gap) — never an ordinary stop.
+const defaultJournalPersistInterval = 500 * time.Millisecond
+
 // Journal tracks, per data disk, distinct filesystem changes observed
 // since the last successful sync (doc 02 §2, Q13). It is a passive
 // listener only: every disk's state changes exactly when a Watcher
 // delivers an event, never on a timer.
 type Journal struct {
-	watcher Watcher
-	root    string // snapshot directory; "" disables persistence
-	now     Clock
+	watcher         Watcher
+	root            string // snapshot directory; "" disables persistence
+	now             Clock
+	persistInterval time.Duration
 
 	mu    sync.Mutex
 	disks map[string]*diskJournal
@@ -173,25 +186,28 @@ type Journal struct {
 // internal/config's Generator, rather than a store table.
 func NewJournal(watcher Watcher, root string) *Journal {
 	return &Journal{
-		watcher: watcher,
-		root:    root,
-		now:     time.Now,
-		disks:   make(map[string]*diskJournal),
+		watcher:         watcher,
+		root:            root,
+		now:             time.Now,
+		persistInterval: defaultJournalPersistInterval,
+		disks:           make(map[string]*diskJournal),
 	}
 }
 
 type diskJournal struct {
 	mountpoint string
 
-	mu         sync.Mutex
-	cancel     context.CancelFunc
-	stream     Stream
-	done       chan struct{}
-	entries    map[string]ChangedFile
-	order      []string // insertion order of entries.
-	overflowed bool
-	listening  bool
-	persistErr error
+	mu            sync.Mutex
+	cancel        context.CancelFunc
+	stream        Stream
+	done          chan struct{}
+	entries       map[string]ChangedFile
+	order         []string // insertion order of entries.
+	overflowed    bool
+	listening     bool
+	persistErr    error
+	dirty         bool      // true when in-memory state has changed since the last write to disk.
+	lastPersistAt time.Time // zero until the first successful (or attempted) persist.
 }
 
 // AddDisk starts tracking diskID at mountpoint: it arms a mark and, if a
@@ -296,6 +312,7 @@ func (j *Journal) readLoop(diskID string, dj *diskJournal) {
 			dj.mu.Lock()
 			dj.listening = false
 			dj.mu.Unlock()
+			j.flushIfDirty(diskID, dj)
 			return
 		}
 		if len(batch) == 0 {
@@ -314,15 +331,46 @@ func (j *Journal) readLoop(diskID string, dj *diskJournal) {
 			}
 			dj.entries[c.ID] = ChangedFile{Name: c.Name, Path: c.Path, Kind: c.Kind, At: j.now()}
 		}
-		snap := dj.snapshotLocked(j.now())
+		dj.dirty = true
+		due := dj.lastPersistAt.IsZero() || j.now().Sub(dj.lastPersistAt) >= j.persistInterval
 		dj.mu.Unlock()
 
-		if j.root != "" {
-			err := writeSnapshotAtomic(j.root, diskID, snap)
-			dj.mu.Lock()
-			dj.persistErr = err
-			dj.mu.Unlock()
+		if due {
+			j.persist(diskID, dj)
 		}
+	}
+}
+
+// persist writes dj's current state to disk unconditionally, recording
+// when it did so (for the next batch's debounce check) and clearing
+// dirty. A no-op when this Journal has no root (persistence disabled).
+func (j *Journal) persist(diskID string, dj *diskJournal) {
+	if j.root == "" {
+		return
+	}
+	dj.mu.Lock()
+	snap := dj.snapshotLocked(j.now())
+	dj.mu.Unlock()
+
+	err := writeSnapshotAtomic(j.root, diskID, snap)
+
+	dj.mu.Lock()
+	dj.persistErr = err
+	dj.lastPersistAt = j.now()
+	dj.dirty = false
+	dj.mu.Unlock()
+}
+
+// flushIfDirty persists dj one last time if readLoop debounced away a
+// batch that never got its own write before the stream ended — a clean
+// stop (RemoveDisk, Rearm, Close, ctx cancelled) must never leave the
+// on-disk snapshot behind the in-memory state it already reflects.
+func (j *Journal) flushIfDirty(diskID string, dj *diskJournal) {
+	dj.mu.Lock()
+	dirty := dj.dirty
+	dj.mu.Unlock()
+	if dirty {
+		j.persist(diskID, dj)
 	}
 }
 
@@ -423,17 +471,16 @@ func (j *Journal) ResetSince(diskID string) error {
 	dj.entries = make(map[string]ChangedFile)
 	dj.order = nil
 	dj.overflowed = false
-	snap := dj.snapshotLocked(j.now())
 	dj.mu.Unlock()
 
-	if j.root != "" {
-		err := writeSnapshotAtomic(j.root, diskID, snap)
-		dj.mu.Lock()
-		dj.persistErr = err
-		dj.mu.Unlock()
-		return err
+	if j.root == "" {
+		return nil
 	}
-	return nil
+	j.persist(diskID, dj)
+	dj.mu.Lock()
+	err := dj.persistErr
+	dj.mu.Unlock()
+	return err
 }
 
 func (dj *diskJournal) snapshotLocked(now time.Time) journalSnapshot {

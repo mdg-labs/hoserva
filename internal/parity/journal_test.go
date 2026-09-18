@@ -287,6 +287,71 @@ func TestJournal_PersistsAndReloadsAcrossRestart(t *testing.T) {
 	}
 }
 
+// TestJournal_ReadLoop_DebouncesRapidBatchesButFlushesOnCleanStop is this
+// issue's own reproduction and fix confirmation: readLoop once persisted
+// a full snapshot after every single batch, so a burst of fanotify
+// activity (extracting an archive) wrote once per batch instead of once
+// per debounce window. The second batch here lands well within
+// defaultJournalPersistInterval of the first persist, so it must be
+// visible in Summary (in-memory state is never stale) but absent from
+// the on-disk snapshot until a clean stop (RemoveDisk) flushes it.
+func TestJournal_ReadLoop_DebouncesRapidBatchesButFlushesOnCleanStop(t *testing.T) {
+	root := t.TempDir()
+	w := NewFakeWatcher()
+	j := NewJournal(w, root)
+	ctx := context.Background()
+
+	if err := j.AddDisk(ctx, "disk1", "/mnt/disk1"); err != nil {
+		t.Fatalf("AddDisk: %v", err)
+	}
+
+	snapPath := filepath.Join(root, "disk1.json")
+	readSnapshot := func() journalSnapshot {
+		t.Helper()
+		data, err := os.ReadFile(snapPath)
+		if err != nil {
+			t.Fatalf("reading snapshot: %v", err)
+		}
+		var snap journalSnapshot
+		if err := json.Unmarshal(data, &snap); err != nil {
+			t.Fatalf("parsing snapshot: %v", err)
+		}
+		return snap
+	}
+
+	// First batch ever for this disk: always persisted immediately, since
+	// there is no earlier persist to debounce against.
+	pushOne(w, "/mnt/disk1", ChangeEvent{Kind: ChangeCreate, ID: "dir1/a.txt", Name: "a.txt"})
+	waitFor(t, time.Second, func() bool {
+		_, err := os.ReadFile(snapPath)
+		return err == nil
+	})
+	if got := len(readSnapshot().Entries); got != 1 {
+		t.Fatalf("snapshot after the first batch has %d entries, want 1", got)
+	}
+
+	// Second batch, pushed immediately after: well inside the debounce
+	// window, so it must not get its own write.
+	pushOne(w, "/mnt/disk1", ChangeEvent{Kind: ChangeCreate, ID: "dir1/b.txt", Name: "b.txt"})
+	waitFor(t, time.Second, func() bool {
+		s, err := j.Summary("disk1")
+		return err == nil && s.Count == 2
+	})
+	if got := len(readSnapshot().Entries); got != 1 {
+		t.Fatalf("snapshot right after the second batch has %d entries, want 1 (still debounced, not yet written)", got)
+	}
+
+	// RemoveDisk (a clean stop) must flush the debounced batch before
+	// returning — disarm already blocks on the read loop's own done
+	// channel, so no extra synchronization is needed here.
+	if err := j.RemoveDisk("disk1"); err != nil {
+		t.Fatalf("RemoveDisk: %v", err)
+	}
+	if got := len(readSnapshot().Entries); got != 2 {
+		t.Fatalf("snapshot after RemoveDisk has %d entries, want 2 (the debounced batch flushed on a clean stop)", got)
+	}
+}
+
 func TestJournal_ResetSincePersists(t *testing.T) {
 	root := t.TempDir()
 	w := NewFakeWatcher()
