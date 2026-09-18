@@ -229,7 +229,7 @@ $(error invalid MOCK_ADDR: must not contain '$$' — no Make or shell expansion 
 endif
 export MOCK_ADDR
 
-.PHONY: build test test-unit lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check
+.PHONY: build test test-unit packaging-test lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check
 
 # web/ (issue #21, Q8): the Vite build has to run before the Go binaries so
 # web/dist/ is real before cmd/hoservad's //go:embed (web/embed.go) reads
@@ -267,7 +267,7 @@ web-test:
 	@echo "web test"
 	cd web && $(NPM) run test
 
-test: test-unit
+test: test-unit packaging-test
 
 # Go's own "./..." wildcard skips "vendor", "testdata" and dot/underscore
 # directories, but not "node_modules" (`go help packages`) — once web/'s
@@ -281,6 +281,16 @@ GO_PACKAGES = $$($(GO) list ./... | grep -v /node_modules/)
 test-unit:
 	CGO_ENABLED=0 $(GO) test $(GO_PACKAGES)
 	$(MAKE) web-test
+
+# The .deb's own safety-critical regression tests (issue #42): each script
+# runs the real maintainer script (postinst/postrm) or lib.sh function
+# against a throwaway HOSERVA_TEST_ROOT, never a real root filesystem —
+# no debhelper or dpkg-buildpackage needed, so this runs anywhere `make
+# test` does.
+packaging-test:
+	scripts/release/test-lib.sh
+	scripts/release/test-postinst.sh
+	scripts/release/test-postrm-purge.sh
 
 lint:
 	@echo "gofmt"

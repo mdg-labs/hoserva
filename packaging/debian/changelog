@@ -1,0 +1,9 @@
+hoserva (0.0.0) unstable; urgency=medium
+
+  * Placeholder entry. scripts/release/build-deb.sh overwrites this file
+    with the real version and channel from the git tag being built,
+    immediately before dpkg-buildpackage runs — dpkg parses only the
+    topmost entry, and there is no other source of truth for the
+    package version than the tag itself (doc 12 §6, Q66).
+
+ -- Hoserva release automation <releases@hoserva.dev>  Mon, 01 Jan 2026 00:00:00 +0000
