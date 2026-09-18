@@ -67,6 +67,19 @@ const (
 	StatusCancelled   Status = "cancelled"
 )
 
+// Terminal reports whether s is one of a job's terminal states — nothing
+// leaves it without an explicit user action (Resume, doc 01 §4). Scheduler
+// .Await (scheduler.go) uses this to know a step has actually finished, not
+// just started.
+func (s Status) Terminal() bool {
+	switch s {
+	case StatusSucceeded, StatusFailed, StatusCancelled, StatusInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
 // classOf maps every job Type to its doc 01 §4 class. Deliberately a fixed
 // table, not a caller-supplied field on JobSpec: the exclusion guarantees
 // this package exists to enforce would mean nothing if a caller could name

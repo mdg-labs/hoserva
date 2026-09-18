@@ -153,5 +153,6 @@ func (r StatusReport) ToParityStatus() ParityStatus {
 		ChangedSinceSync: r.ChangedSinceSync,
 		DataDisks:        len(r.DataMounts),
 		ParityDisks:      r.ParityDisks,
+		DataMounts:       r.DataMounts,
 	}
 }

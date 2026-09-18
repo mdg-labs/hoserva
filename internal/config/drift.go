@@ -164,6 +164,44 @@ func (g *Generator) Diff(ctx context.Context, file File, revision int, now time.
 	return unifiedDiff(current, []byte(fresh)), nil
 }
 
+// RemoveManaged deletes path and its manifest record, but only when path
+// is still StatusManaged (on disk, unchanged since Generator last wrote
+// it) — an unmanaged or drifted file is left untouched, and its manifest
+// record stays, so a caller reconciling a stale set of generated files
+// (WritePoolMounts's own removed-share and CacheOnly-transition cases)
+// never deletes something a human took over or hand-edited. It reports
+// whether it actually removed anything.
+func (g *Generator) RemoveManaged(ctx context.Context, path string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
+	full, key, err := g.resolvePath(path)
+	if err != nil {
+		return false, err
+	}
+	manifest, err := g.loadManifest()
+	if err != nil {
+		return false, err
+	}
+	status, err := g.check(manifest, key)
+	if err != nil {
+		return false, err
+	}
+	if status != StatusManaged {
+		return false, nil
+	}
+
+	if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("config: removing %s: %w", key, err)
+	}
+	delete(manifest, key)
+	if err := g.saveManifest(manifest); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // KeepUnmanaged is the "keep the file and stop managing it" drift
 // resolution (doc 01 §2): path stays exactly as it is on disk, Generator
 // stops writing or drift-checking it, and that stays true across every
