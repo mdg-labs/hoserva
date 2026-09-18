@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mdg-labs/hoserva/internal/store"
 	_ "modernc.org/sqlite"
 )
 
@@ -60,16 +61,16 @@ type Store struct {
 }
 
 // Open opens (creating and schema-initializing if needed) the metrics
-// database at path. dsn mirrors cmd/hoservad's own production database:
-// WAL mode plus a busy timeout, so a concurrent SMART poll and a
-// Downsample run don't see SQLITE_BUSY the instant they overlap.
-func Open(path string) (*Store, error) {
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
-	db, err := sql.Open("sqlite", dsn)
+// database at path, sharing cmd/hoservad's own production database's DSN
+// (internal/store.DSN): WAL mode plus a busy timeout, so a concurrent
+// SMART poll and a Downsample run don't see SQLITE_BUSY the instant they
+// overlap.
+func Open(ctx context.Context, path string) (*Store, error) {
+	db, err := sql.Open("sqlite", store.DSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("metrics: opening %s: %w", path, err)
 	}
-	if _, err := db.Exec(schemaSQL); err != nil {
+	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("metrics: creating schema: %w", err)
 	}
