@@ -114,13 +114,20 @@ func (p *LinuxProvider) Format(ctx context.Context, dev string, fs FilesystemTyp
 	return nil
 }
 
+// refuseBootDevice compares whole-disk paths: List's disks are always
+// whole disks (enumerate.go skips partitions), but dev here can be a
+// partition — WholeDiskDevice(dev) is what actually identifies which disk
+// it belongs to, so a boot disk's own partition (e.g. "/dev/sda2" when
+// "/dev/sda" is recorded as boot) must be refused too, not just the exact
+// whole-disk path.
 func (p *LinuxProvider) refuseBootDevice(ctx context.Context, dev string) error {
 	disks, err := p.List(ctx)
 	if err != nil {
 		return err
 	}
+	whole := WholeDiskDevice(dev)
 	for _, d := range disks {
-		if d.Device == dev && d.Boot {
+		if d.Boot && d.Device == whole {
 			return fmt.Errorf("%s: %w", dev, ErrBootDevice)
 		}
 	}

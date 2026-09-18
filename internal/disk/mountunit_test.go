@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestUnitFileName(t *testing.T) {
@@ -23,11 +22,10 @@ func TestUnitFileName(t *testing.T) {
 
 func TestMountUnit_Render(t *testing.T) {
 	u := MountUnit{
-		Where:         "/mnt/disk1",
-		UUID:          "1234-5678",
-		Filesystem:    XFS,
-		Description:   "Hoserva data disk 1",
-		DeviceTimeout: 30 * time.Second,
+		Where:       "/mnt/disk1",
+		UUID:        "1234-5678",
+		Filesystem:  XFS,
+		Description: "Hoserva data disk 1",
 	}
 	got := u.Render()
 
@@ -36,11 +34,22 @@ func TestMountUnit_Render(t *testing.T) {
 		"What=/dev/disk/by-uuid/1234-5678",
 		"Where=/mnt/disk1",
 		"Type=xfs",
-		"Options=defaults,nofail,x-systemd.device-timeout=30s",
+		"Options=defaults,nofail",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Render() = %q, want it to contain %q", got, want)
 		}
+	}
+}
+
+// x-systemd.device-timeout= is documented to apply only to an /etc/fstab
+// entry and to be silently ignored in a native unit's own Options= — this
+// asserts Render never emits it, so a regression can't quietly bring back
+// an option that does nothing here.
+func TestMountUnit_Render_NeverEmitsTheInertFstabOnlyTimeoutOption(t *testing.T) {
+	u := MountUnit{Where: "/mnt/disk1", UUID: "1234-5678", Filesystem: XFS, Description: "Hoserva data disk 1"}
+	if got := u.Render(); strings.Contains(got, "device-timeout") {
+		t.Fatalf("Render() = %q, must not contain x-systemd.device-timeout (ignored outside /etc/fstab)", got)
 	}
 }
 
@@ -60,7 +69,7 @@ func TestMountPlan_AssignsStandardMountpoints(t *testing.T) {
 		"/dev/sdd": "uuid-cache",
 	}
 
-	units, err := MountPlan(plan, uuids, DefaultDeviceTimeout)
+	units, err := MountPlan(plan, uuids)
 	if err != nil {
 		t.Fatalf("MountPlan: %v", err)
 	}
@@ -93,7 +102,7 @@ func TestMountPlan_ErrorsOnMissingUUID(t *testing.T) {
 		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
 		Data:   []AssignedDisk{{Device: "/dev/sdb", Filesystem: XFS}},
 	}
-	if _, err := MountPlan(plan, map[string]string{"/dev/sda": "uuid-parity1"}, DefaultDeviceTimeout); err == nil {
+	if _, err := MountPlan(plan, map[string]string{"/dev/sda": "uuid-parity1"}); err == nil {
 		t.Fatal("MountPlan: got nil error for a disk missing its UUID")
 	}
 }

@@ -160,6 +160,21 @@ func TestLinuxProvider_Format_RefusesBootDevice(t *testing.T) {
 	}
 }
 
+// TestLinuxProvider_Format_RefusesBootPartition proves refuseBootDevice
+// compares whole disks, not exact paths: List only ever records the boot
+// disk itself ("/dev/sda", enumerate.go never lists a partition as its own
+// disk), so Format on the boot device's own root partition ("/dev/sda1")
+// must still be refused rather than falling through to mkfs.
+func TestLinuxProvider_Format_RefusesBootPartition(t *testing.T) {
+	p, runner := newTestProvider(t)
+	if err := p.Format(context.Background(), "/dev/sda1", XFS); !errors.Is(err, ErrBootDevice) {
+		t.Fatalf("Format(boot partition): got %v, want ErrBootDevice", err)
+	}
+	if calls := runner.Calls(); len(calls) != 0 {
+		t.Fatalf("Format(boot partition) ran a command: %+v", calls)
+	}
+}
+
 func TestLinuxProvider_Format_ExecsMkfsXFS(t *testing.T) {
 	p, runner := newTestProvider(t)
 	runner.Script("mkfs.xfs", []string{"-f", "/dev/sdb"}, nil, nil)

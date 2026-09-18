@@ -124,3 +124,31 @@ func TestLister_List_ContextCancelled(t *testing.T) {
 		t.Fatal("List with a cancelled context: got nil error")
 	}
 }
+
+// TestLister_List_FailsClosedWhenMountsUnreadable is this issue's own
+// safety property: List must never fall back to "no boot device known"
+// when it cannot even read the mounts listing — that would make every
+// disk it returns look like an ordinary, formattable one to a destructive
+// caller, including the disk that actually backs "/".
+func TestLister_List_FailsClosedWhenMountsUnreadable(t *testing.T) {
+	l := newTestLister(t)
+	l.ProcMounts = filepath.Join(t.TempDir(), "does-not-exist")
+
+	if _, err := l.List(context.Background()); err == nil {
+		t.Fatal("List with an unreadable mounts file: got nil error, want a failure")
+	}
+}
+
+// TestLister_List_FailsClosedWhenBootDeviceUnresolvable mirrors the same
+// property for a root device sysfs can't resolve to a physical disk
+// (boot.go's own fail-closed case, e.g. the kernel's "/dev/root" alias):
+// List must refuse to enumerate rather than silently mark every disk
+// Boot: false.
+func TestLister_List_FailsClosedWhenBootDeviceUnresolvable(t *testing.T) {
+	l := newTestLister(t)
+	mustWriteFile(t, l.ProcMounts, "proc /proc proc rw 0 0\n/dev/root / ext4 rw 0 0\n")
+
+	if _, err := l.List(context.Background()); err == nil {
+		t.Fatal("List with an unresolvable boot device: got nil error, want a failure")
+	}
+}

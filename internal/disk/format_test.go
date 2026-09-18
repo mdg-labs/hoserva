@@ -24,6 +24,71 @@ func TestFormatAssigned_FormatsAnAssignedDevice(t *testing.T) {
 	}
 }
 
+// TestFormatAssigned_RefusesWhenIdentityMovedToADifferentPath is this
+// issue's own safety property: a plan built against /dev/sdb's WWN, run
+// after that WWN has since moved to /dev/sdc (a controller reorder or a
+// swapped cable between discovery and execution), must never format
+// whatever now happens to sit at /dev/sdb — the typed confirmation named
+// a specific disk, not a path that might now belong to a different one.
+func TestFormatAssigned_RefusesWhenIdentityMovedToADifferentPath(t *testing.T) {
+	p := NewFakeProvider()
+	p.AddDisk("/dev/sdc", Disk{Size: 4 * TB, WWN: "0xabc123"}) // the confirmed disk, now at a different path
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sdb", Filesystem: XFS, WWN: "0xabc123"}},
+	}
+	p.AddDisk("/dev/sda", Disk{Size: 8 * TB})
+
+	err := FormatAssigned(context.Background(), p, plan, "/dev/sdb", XFS)
+	if !errors.Is(err, ErrDiskIdentityChanged) {
+		t.Fatalf("FormatAssigned: got %v, want ErrDiskIdentityChanged", err)
+	}
+	if _, ok := p.FormattedAs("/dev/sdb"); ok {
+		t.Fatal("FormatAssigned formatted /dev/sdb despite its identity having moved elsewhere")
+	}
+	if _, ok := p.FormattedAs("/dev/sdc"); ok {
+		t.Fatal("FormatAssigned formatted the disk now holding the identity, without a fresh confirmation")
+	}
+}
+
+// TestFormatAssigned_RefusesWhenIdentityDisappears mirrors the same
+// property when no disk at all currently matches the confirmed identity
+// — a disk pulled between discovery and execution.
+func TestFormatAssigned_RefusesWhenIdentityDisappears(t *testing.T) {
+	p := NewFakeProvider()
+	p.AddDisk("/dev/sda", Disk{Size: 8 * TB})
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sdb", Filesystem: XFS, WWN: "0xabc123"}},
+	}
+
+	err := FormatAssigned(context.Background(), p, plan, "/dev/sdb", XFS)
+	if !errors.Is(err, ErrDiskIdentityChanged) {
+		t.Fatalf("FormatAssigned: got %v, want ErrDiskIdentityChanged", err)
+	}
+}
+
+// TestFormatAssigned_ProceedsWhenIdentityStillMatches is the non-drift
+// case: the disk confirmed by WWN is still found at the same path, so
+// formatting proceeds exactly as it would have before identity tracking
+// existed.
+func TestFormatAssigned_ProceedsWhenIdentityStillMatches(t *testing.T) {
+	p := NewFakeProvider()
+	p.AddDisk("/dev/sdb", Disk{Size: 4 * TB, WWN: "0xabc123"})
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sdb", Filesystem: XFS, WWN: "0xabc123"}},
+	}
+	p.AddDisk("/dev/sda", Disk{Size: 8 * TB})
+
+	if err := FormatAssigned(context.Background(), p, plan, "/dev/sdb", XFS); err != nil {
+		t.Fatalf("FormatAssigned: %v", err)
+	}
+	if fs, ok := p.FormattedAs("/dev/sdb"); !ok || fs != XFS {
+		t.Fatalf("FormattedAs(/dev/sdb): got (%v, %v), want (xfs, true)", fs, ok)
+	}
+}
+
 // TestFormatAssigned_RefusesADeviceNotInThePlan is this issue's central
 // safety-critical property (doc 03 §3.1 step 6, CLAUDE.md safety rules):
 // a device that exists and is even known to the provider, but was never
@@ -88,6 +153,41 @@ func TestFormatPlan_FormatsEveryNonAdoptedDiskAndChecksAdoptedOnes(t *testing.T)
 	calls := r.Calls()
 	if len(calls) != 1 || calls[0].Name != "xfs_repair" {
 		t.Fatalf("Calls: got %+v, want one xfs_repair call", calls)
+	}
+}
+
+// TestFormatPlan_FailingAdoptCheckNeverFormatsAnEarlierDisk is the
+// two-phase property this issue calls for: AdoptCheck's own guarantee is
+// read-only, but formatCommand isn't — parity disks are never adopted
+// (Validate) and so are always processed first in assignedDisks() order.
+// A later data disk's failing AdoptCheck must be discovered before that
+// earlier parity disk is formatted, not after.
+func TestFormatPlan_FailingAdoptCheckNeverFormatsAnEarlierDisk(t *testing.T) {
+	p := NewFakeProvider()
+	p.AddDisk("/dev/sda", Disk{Size: 8 * TB})
+	p.AddDisk("/dev/sdb", Disk{Size: 4 * TB})
+	p.AddDisk("/dev/sdc", Disk{Size: 4 * TB})
+	r := NewFakeRunner()
+	r.Script("xfs_repair", []string{"-n", "/dev/sdc"}, nil, errors.New("filesystem corrupt"))
+
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data: []AssignedDisk{
+			{Device: "/dev/sdb", Filesystem: XFS},
+			{Device: "/dev/sdc", Filesystem: XFS, Adopt: true},
+		},
+	}
+	sizes := map[string]int64{"/dev/sda": 8 * TB, "/dev/sdb": 4 * TB, "/dev/sdc": 4 * TB}
+
+	if err := FormatPlan(context.Background(), p, r, plan, sizes, plan.Confirmation()); err == nil {
+		t.Fatal("FormatPlan: expected an error from the failing AdoptCheck")
+	}
+
+	if _, ok := p.FormattedAs("/dev/sda"); ok {
+		t.Fatal("FormatPlan formatted the parity disk before a later disk's AdoptCheck failed")
+	}
+	if _, ok := p.FormattedAs("/dev/sdb"); ok {
+		t.Fatal("FormatPlan formatted a data disk before a later disk's AdoptCheck failed")
 	}
 }
 
