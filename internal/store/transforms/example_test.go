@@ -51,11 +51,12 @@ func TestSizeMBToSizeBytes_Transform(t *testing.T) {
 		t.Fatalf("expand step: %v", err)
 	}
 
-	// The transform itself: bound to v2, run in the same transaction as
-	// the ALTER TABLE above would be in a real migration.
+	// The transform itself: bound to v2's checksum, run in the same
+	// transaction as the ALTER TABLE above would be in a real migration.
 	transform := transforms.Transform{
-		Version: "20260101000002",
-		Name:    "backfill disk.size_bytes from disk.size_mb",
+		Version:  "20260101000002",
+		Checksum: sqlitemigrate.Checksum("ALTER TABLE disk ADD COLUMN size_bytes INTEGER"),
+		Name:     "backfill disk.size_bytes from disk.size_mb",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "UPDATE disk SET size_bytes = size_mb * 1024 * 1024")
 			return err
@@ -144,8 +145,9 @@ func TestSizeMBToSizeBytes_TransformAgainstFixtures(t *testing.T) {
 		Checksum: sqlitemigrate.Checksum(seedSQL),
 	}
 	seedRows := transforms.Transform{
-		Version: seedVersion,
-		Name:    "test-only: seed disk.size_mb rows",
+		Version:  seed.Version,
+		Checksum: seed.Checksum,
+		Name:     "test-only: seed disk.size_mb rows",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "INSERT INTO disk (id, size_mb) VALUES (1, 4000), (2, 8000000)")
 			return err
@@ -160,8 +162,9 @@ func TestSizeMBToSizeBytes_TransformAgainstFixtures(t *testing.T) {
 		Checksum: sqlitemigrate.Checksum(expandSQL),
 	}
 	transform := transforms.Transform{
-		Version: expandVersion,
-		Name:    "backfill disk.size_bytes from disk.size_mb",
+		Version:  expand.Version,
+		Checksum: expand.Checksum,
+		Name:     "backfill disk.size_bytes from disk.size_mb",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "UPDATE disk SET size_bytes = size_mb * 1024 * 1024")
 			return err

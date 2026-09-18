@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	sqlitemigrate "github.com/mdg-labs/sqlite-migrate"
@@ -213,6 +214,17 @@ func (r *Runner) Apply(ctx context.Context) (applied []Migration, snapshotPath s
 		return nil, "", nil
 	}
 
+	// modernc.org/sqlite's driver silently stops executing at the first NUL
+	// byte in a statement rather than returning an error (the same guard
+	// sqlitemigrate.Runner.Apply itself applies, Q60), so without this a
+	// truncated migration would still commit and be recorded as fully
+	// applied.
+	for _, m := range pending {
+		if i := strings.IndexByte(m.SQL, 0); i >= 0 {
+			return nil, "", fmt.Errorf("migration %q contains a NUL byte at offset %d", m.Filename, i)
+		}
+	}
+
 	dbVersion := zeroSchemaVersion
 	for _, a := range appliedRows {
 		if a.Version > dbVersion {
@@ -225,9 +237,29 @@ func (r *Runner) Apply(ctx context.Context) (applied []Migration, snapshotPath s
 		return nil, "", fmt.Errorf("pre-migration snapshot: %w", err)
 	}
 
-	transformsByVersion := make(map[string]transforms.Transform, len(r.Transforms))
+	// Bound by checksum, not version (doc 01 §4): a migration file is
+	// immutable once applied, so its checksum is the only identity that
+	// can't be reused by a later, unrelated migration that happens to
+	// share a timestamp. Every transform must name a checksum that
+	// actually belongs to a known migration, and no two transforms may
+	// bind to the same one — either is a wiring bug, not something to run
+	// silently or run twice.
+	knownChecksums := make(map[string]bool, len(sorted))
+	for _, m := range sorted {
+		knownChecksums[m.Checksum] = true
+	}
+	transformsByChecksum := make(map[string]transforms.Transform, len(r.Transforms))
 	for _, t := range r.Transforms {
-		transformsByVersion[t.Version] = t
+		if t.Checksum == "" {
+			return nil, "", fmt.Errorf("transform %q has no bound checksum", t.Name)
+		}
+		if !knownChecksums[t.Checksum] {
+			return nil, "", fmt.Errorf("transform %q is bound to checksum %s, which matches no known migration", t.Name, t.Checksum)
+		}
+		if _, dup := transformsByChecksum[t.Checksum]; dup {
+			return nil, "", fmt.Errorf("transform %q duplicates a checksum binding already used by another transform", t.Name)
+		}
+		transformsByChecksum[t.Checksum] = t
 	}
 
 	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
@@ -259,7 +291,7 @@ func (r *Runner) Apply(ctx context.Context) (applied []Migration, snapshotPath s
 			_ = tx.Rollback()
 			return nil, snapshotPath, fmt.Errorf("applying migration %q: %w", m.Filename, err)
 		}
-		if t, ok := transformsByVersion[m.Version]; ok {
+		if t, ok := transformsByChecksum[m.Checksum]; ok {
 			if err := t.Fn(ctx, tx); err != nil {
 				_ = tx.Rollback()
 				return nil, snapshotPath, fmt.Errorf("data transform for migration %q: %w", m.Filename, err)
