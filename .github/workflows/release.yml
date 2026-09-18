@@ -22,8 +22,24 @@ jobs:
   publish:
     name: Build and publish
     runs-on: ubuntu-latest
+    # Signing and publishing needs approval, not just a matching tag
+    # (below): configure required reviewers on this "release" environment
+    # in the repo's Settings → Environments — that's a maintainer-only,
+    # needs-sudo-equivalent step outside any agent's reach.
+    environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # A `v*` tag is valid on any commit. Refuse before any build or
+      # signing step runs unless it's actually on the branch its channel
+      # (Q66) publishes from — a stable tag from main, a beta tag from
+      # beta.
+      - name: Verify tag ancestry
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/verify-tag-ancestry.sh "$TAG"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}

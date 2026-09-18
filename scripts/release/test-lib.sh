@@ -69,6 +69,54 @@ if openssl pkeyutl -verify -pubin -inkey "$key_dir/pub.pem" -rawin -in "$key_dir
   fail=1
 fi
 
+# hoserva_verify_tag_ancestry: a throwaway git repo with a bare "origin"
+# stands in for the real GitHub remote, never the project's own repo.
+git_dir="$(mktemp -d)"
+trap 'cleanup; rm -rf "$git_dir"' EXIT
+
+bare="$git_dir/origin.git"
+git init --quiet --bare "$bare"
+
+repo="$git_dir/repo"
+git init --quiet "$repo"
+git -C "$repo" config user.email test@example.com
+git -C "$repo" config user.name test
+git -C "$repo" remote add origin "$bare"
+
+git -C "$repo" checkout --quiet -b main
+echo one >"$repo/f"
+git -C "$repo" add f
+git -C "$repo" commit --quiet -m one
+git -C "$repo" tag v0.1.0
+git -C "$repo" push --quiet origin main --tags
+
+git -C "$repo" checkout --quiet -b beta
+echo two >>"$repo/f"
+git -C "$repo" add f
+git -C "$repo" commit --quiet -m two
+git -C "$repo" tag v0.1.0-beta.1
+git -C "$repo" push --quiet origin beta --tags
+
+# a stable tag cut from beta's extra commit must be refused: it is not
+# an ancestor of origin/main even though it matches the stable pattern.
+git -C "$repo" tag v9.9.9
+git -C "$repo" push --quiet origin --tags
+
+git -C "$repo" fetch --quiet origin main beta
+
+if ! (cd "$repo" && hoserva_verify_tag_ancestry v0.1.0) >/dev/null 2>&1; then
+  note "FAIL: v0.1.0 should be an ancestor of origin/main"
+  fail=1
+fi
+if ! (cd "$repo" && hoserva_verify_tag_ancestry v0.1.0-beta.1) >/dev/null 2>&1; then
+  note "FAIL: v0.1.0-beta.1 should be an ancestor of origin/beta"
+  fail=1
+fi
+if (cd "$repo" && hoserva_verify_tag_ancestry v9.9.9) >/dev/null 2>&1; then
+  note "FAIL: v9.9.9 (only on beta) should not be accepted as a stable tag from main"
+  fail=1
+fi
+
 if [ "$fail" -eq 0 ]; then
   note "PASS"
 fi
