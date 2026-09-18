@@ -29,6 +29,10 @@ func MoverTargetPath(share string) string {
 // branches with nothing to build them from.
 var ErrNoDataDisks = errors.New("pool: at least one data disk is required")
 
+// ErrDataDiskAlreadyPresent is AppendDataDisk's refusal: mount is already
+// one of dataDisks.
+var ErrDataDiskAlreadyPresent = errors.New("pool: data disk is already in the pool")
+
 // ErrCacheOnlyNotMoved is MoverTargetMount's refusal for a CacheOnly
 // share: that data lives on cache permanently and is never moved
 // (share.go), so no mover write-target mount may exist for it.
@@ -131,6 +135,21 @@ func MoverTargetMount(share Share, dataDisks []string, opts Options) (Mount, err
 		Description:       fmt.Sprintf("Hoserva share %s — mover write target", share.Name),
 		RequiresMountsFor: append([]string(nil), dataDisks...),
 	}, nil
+}
+
+// AppendDataDisk returns dataDisks with mount appended (doc 02 §4 "Adding
+// a disk" step 5: "add to the branch lists of the catch-all and every
+// share mount"), refusing (ErrDataDiskAlreadyPresent) a mount already in
+// the list — every branch list this package builds is a plain ordered
+// slice with no de-duplication of its own, so a caller appending the same
+// disk twice would otherwise mount it as two branches of the same pool.
+func AppendDataDisk(dataDisks []string, mount string) ([]string, error) {
+	for _, d := range dataDisks {
+		if d == mount {
+			return nil, fmt.Errorf("%w: %s", ErrDataDiskAlreadyPresent, mount)
+		}
+	}
+	return append(append([]string(nil), dataDisks...), mount), nil
 }
 
 func rwBranches(disks []string) string {
