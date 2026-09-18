@@ -1,0 +1,86 @@
+{
+  "json_format_version": [1, 0],
+  "smartctl": {
+    "version": [7, 4],
+    "svn_revision": "5665",
+    "platform_info": "x86_64-linux-6.1.0-amd64",
+    "build_info": "(local build)",
+    "argv": ["smartctl", "-j", "-n", "standby", "-a", "/dev/sdd"],
+    "exit_status": 0
+  },
+  "device": {
+    "name": "/dev/sdd",
+    "info_name": "/dev/sdd",
+    "type": "sat",
+    "protocol": "ATA"
+  },
+  "model_name": "ST4000DM004-2CV104",
+  "serial_number": "ZFN0A1B2",
+  "firmware_version": "0001",
+  "user_capacity": {"blocks": 7814037168, "bytes": 4000787030016},
+  "smart_status": {"passed": true},
+  "temperature": {"current": 47},
+  "power_on_time": {"hours": 21044},
+  "power_cycle_count": 412,
+  "ata_smart_attributes": {
+    "revision": 16,
+    "table": [
+      {
+        "id": 5,
+        "name": "Reallocated_Sector_Ct",
+        "value": 92,
+        "worst": 92,
+        "thresh": 10,
+        "when_failed": "",
+        "raw": {"value": 8, "string": "8"}
+      },
+      {
+        "id": 9,
+        "name": "Power_On_Hours",
+        "value": 71,
+        "worst": 71,
+        "thresh": 0,
+        "when_failed": "",
+        "raw": {"value": 21044, "string": "21044"}
+      },
+      {
+        "id": 197,
+        "name": "Current_Pending_Sector",
+        "value": 98,
+        "worst": 98,
+        "thresh": 0,
+        "when_failed": "",
+        "raw": {"value": 2, "string": "2"}
+      },
+      {
+        "id": 198,
+        "name": "Offline_Uncorrectable",
+        "value": 99,
+        "worst": 99,
+        "thresh": 0,
+        "when_failed": "",
+        "raw": {"value": 1, "string": "1"}
+      },
+      {
+        "id": 199,
+        "name": "UDMA_CRC_Error_Count",
+        "value": 197,
+        "worst": 197,
+        "thresh": 0,
+        "when_failed": "",
+        "raw": {"value": 3, "string": "3"}
+      }
+    ]
+  },
+  "ata_smart_self_test_log": {
+    "standard": {
+      "table": [
+        {
+          "type": {"value": 1, "string": "Short offline"},
+          "status": {"value": 0, "string": "Completed without error", "passed": true},
+          "lifetime_hours": 21000
+        }
+      ]
+    }
+  }
+}
