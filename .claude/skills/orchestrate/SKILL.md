@@ -283,6 +283,27 @@ Agent({
 **All lane-head dispatches for a wave go in one assistant message**, so they
 run concurrently.
 
+**Claim the unit's first issue yourself, right after dispatching it.** The
+executor template's own "claim it" step is instructional, not structurally
+guaranteed — a model can defer the actual `issue-status.sh` call until well
+after it has started real work, or skip straight to it only right before
+committing, so the label can lag true progress by a long margin. Don't wait
+for that: immediately after the `Agent()` call above, from the real repo,
+run
+```
+scripts/issue-status.sh <first issue's number> in-progress
+scripts/epic-status.sh <epic number>   # only if the unit has one
+```
+for the **first** issue in the unit (bundle order). This makes the label
+accurate the instant dispatch happens, independent of whatever the executor
+itself does. It's harmless if the executor's own claim call runs again
+later for the same issue — the script replaces the whole status-label set
+each time, so a repeat call is a no-op in effect. This backstop only covers
+a unit's first issue: for a bundle's second and later issues, you have no
+way to know when the executor moves on to them inside one async dispatch,
+so the executor template's own per-issue claim step is still what covers
+those.
+
 A bundle produces **one commit per issue**, each with only that issue's files
 and its own `Fixes #<n>` trailer. Blocked is per issue: a bundle that
 committed issue 1 and blocked on issue 2 hands you a real commit for issue 1.
