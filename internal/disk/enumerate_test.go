@@ -99,6 +99,9 @@ func TestLister_List(t *testing.T) {
 	if sda.WeakIdentity {
 		t.Error("sda.WeakIdentity = true, want false (it has a wwn- link)")
 	}
+	if sda.ByIDName != "wwn-0x5000cca0b1c2d3e4" {
+		t.Errorf("sda.ByIDName = %q, want wwn-0x5000cca0b1c2d3e4", sda.ByIDName)
+	}
 	if !sda.Boot {
 		t.Error("sda.Boot = false, want true (its partition sda1 backs /)")
 	}
@@ -109,6 +112,9 @@ func TestLister_List(t *testing.T) {
 	}
 	if !sdb.WeakIdentity {
 		t.Error("sdb.WeakIdentity = false, want true (usb- only)")
+	}
+	if sdb.ByIDName != "usb-WD_easystore_25FB_575836314141304A4A3236-0:0" {
+		t.Errorf("sdb.ByIDName = %q, want the usb- link's basename", sdb.ByIDName)
 	}
 	if sdb.Boot {
 		t.Error("sdb.Boot = true, want false")

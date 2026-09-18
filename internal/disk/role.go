@@ -16,17 +16,21 @@ import (
 // verification (Q23); Filesystem is what to format with when Adopt is
 // false, and the filesystem AdoptCheck verifies when it is true.
 //
-// WWN, Serial and WeakIdentity are copied from the same disk.Provider.List
-// call's Disk that populated the setup wizard's disk-discovery step
-// (doc 03 §3.1 step 1) — the stable identity Device's own /dev/sdX path
-// is not: it can change across a reboot or a controller reorder.
-// FormatAssigned re-resolves Device against this identity immediately
-// before formatting (doc 02 §4), and Validate refuses a weak-identity
-// disk assigned as parity (Q21, doc 03 §3.1 step 2, doc 05's migration
-// table). A disk with no by-id link at all — WWN and Serial both empty,
-// as every disk in the loop-device lab is (doc 06 §3) — has nothing to
-// re-verify against; FormatAssigned then trusts Device as-is, exactly as
-// it always has.
+// WWN, Serial, WeakIdentity and ByIDName are copied from the same
+// disk.Provider.List call's Disk that populated the setup wizard's
+// disk-discovery step (doc 03 §3.1 step 1) — the stable identity Device's
+// own /dev/sdX path is not: it can change across a reboot or a controller
+// reorder. FormatAssigned re-resolves Device against this identity
+// immediately before formatting, and — whenever ByIDName is known — formats
+// through the /dev/disk/by-id path it names instead of the plain, transient
+// Device path, so the disk that is actually formatted is the one this
+// identity names at the moment the format call runs, not whichever disk
+// Device happened to point at when the plan was built (doc 02 §4). Validate
+// refuses a weak-identity disk assigned as parity (Q21, doc 03 §3.1 step 2,
+// doc 05's migration table). A disk with no by-id link at all — WWN, Serial
+// and ByIDName all empty, as every disk in the loop-device lab is (doc 06
+// §3) — has nothing to bind to; FormatAssigned then trusts Device as-is,
+// exactly as it always has.
 type AssignedDisk struct {
 	Device       string
 	Filesystem   FilesystemType
@@ -34,6 +38,7 @@ type AssignedDisk struct {
 	WWN          string
 	Serial       string
 	WeakIdentity bool
+	ByIDName     string
 }
 
 // TopologyPlan is the array-setup Topology job's payload (doc 01 §4's
@@ -88,11 +93,13 @@ var (
 	// assigned as parity — allowed as a data disk, never as parity
 	// (Q21, doc 03 §3.1 step 2, doc 05's migration table).
 	ErrWeakIdentityParity = errors.New("disk: a weak-identity disk cannot be assigned as parity (Q21)")
-	// ErrDiskIdentityChanged is FormatAssigned's refusal when the disk
-	// currently found at an assigned device's stable identity (WWN or
-	// serial) no longer sits at the /dev path this plan was built
-	// against — a controller reorder or a swapped cable since discovery,
-	// not the disk the typed confirmation named.
+	// ErrDiskIdentityChanged is FormatAssigned's refusal when no disk at
+	// all currently matches an assigned device's stable identity (WWN or
+	// serial) — the disk was pulled between discovery and the format
+	// call, not merely renumbered to a different /dev path: that drift
+	// alone is not refused, since formatting binds to the identity's own
+	// /dev/disk/by-id path (when one is known) rather than to the plan's
+	// original Device string.
 	ErrDiskIdentityChanged = errors.New("disk: the confirmed disk no longer matches this device path")
 )
 

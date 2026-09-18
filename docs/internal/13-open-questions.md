@@ -321,6 +321,8 @@ The parity file is a single file roughly as large as the largest data disk. ext4
 **Default: a disk's identity is its `/dev/disk/by-id` WWN, falling back to serial. Mounts use filesystem UUID. When a USB enclosure hides the serial, the disk is marked "weak identity": allowed as a data disk (matched on FS UUID + size), refused as parity, and warned about in the setup wizard and migration scan.**
 Serial matching is validated by Unraid's own model (doc 08). Enclosures that mask serials are the known exception, and a wrong parity-disk match is the most expensive mistake that exception could cause.
 
+**Identity-bound formatting.** Confirming identity is not enough on its own if the destructive call that follows still runs against a `/dev/sdX` path: that path can be reassigned between the confirmation and the call. Formatting and adopt-checking (doc 02 §4) always run against the confirmed disk's own `/dev/disk/by-id` path when one is known — the exact by-id link basename WWN/Serial were resolved from, retained end to end from discovery rather than reconstructed only from WWN — so the kernel resolves it to whichever physical disk currently carries that identity at the moment the call actually opens it, regardless of `/dev/sdX` renumbering in between. A disk with no by-id link at all (every disk in the loop-device lab, doc 06 §3) has nothing to bind to and keeps using its plain device path, exactly as before.
+
 ### Q22 — Encrypted (LUKS) arrays
 **Status:** Default · **Gate:** Phase 3 · **Affects:** doc 00 §4, doc 05 §2, §7, doc 06 §5, doc 07 §1
 

@@ -7,9 +7,12 @@ func TestResolveIdentity_PrefersWWN(t *testing.T) {
 		"ata-WDC_WD80EFZX-68UW8N0_VGH0A1B2",
 		"wwn-0x5000cca0b1c2d3e4",
 	})
-	want := Identity{WWN: "0x5000cca0b1c2d3e4", Serial: "VGH0A1B2"}
+	want := Identity{WWN: "0x5000cca0b1c2d3e4", Serial: "VGH0A1B2", ByIDName: "wwn-0x5000cca0b1c2d3e4"}
 	if got != want {
 		t.Fatalf("ResolveIdentity: got %+v, want %+v", got, want)
+	}
+	if got.IdentityPath() != "/dev/disk/by-id/wwn-0x5000cca0b1c2d3e4" {
+		t.Fatalf("IdentityPath: got %q", got.IdentityPath())
 	}
 }
 
@@ -20,12 +23,18 @@ func TestResolveIdentity_FallsBackToSerial(t *testing.T) {
 	// WD's own serial format embeds a further "WD-" prefix after the
 	// by-id link's final underscore; that is the whole serial, not
 	// something to strip.
-	want := Identity{Serial: "WD-WCC7K1234567"}
+	want := Identity{Serial: "WD-WCC7K1234567", ByIDName: "ata-WDC_WD40EFRX-68WT0N0_WD-WCC7K1234567"}
 	if got != want {
 		t.Fatalf("ResolveIdentity: got %+v, want %+v", got, want)
 	}
 	if got.WeakIdentity {
 		t.Fatal("ResolveIdentity: a host-attached ata- disk was flagged weak identity")
+	}
+	// A serial-only identity's by-id path must be reconstructible too
+	// (this issue): the full link basename is retained, not just the
+	// extracted serial lastSegment would otherwise discard.
+	if got.IdentityPath() != "/dev/disk/by-id/ata-WDC_WD40EFRX-68WT0N0_WD-WCC7K1234567" {
+		t.Fatalf("IdentityPath: got %q", got.IdentityPath())
 	}
 }
 
@@ -42,6 +51,9 @@ func TestResolveIdentity_USBEnclosureIsWeak(t *testing.T) {
 	if got.Serial != "575836314141304A4A3236" {
 		t.Fatalf("ResolveIdentity: got serial %q, want the USB link's trailing segment", got.Serial)
 	}
+	if got.IdentityPath() != "/dev/disk/by-id/usb-WD_easystore_25FB_575836314141304A4A3236-0:0" {
+		t.Fatalf("IdentityPath: got %q", got.IdentityPath())
+	}
 }
 
 func TestResolveIdentity_NoByIDLinksIsWeak(t *testing.T) {
@@ -51,6 +63,9 @@ func TestResolveIdentity_NoByIDLinksIsWeak(t *testing.T) {
 	}
 	if got.WWN != "" || got.Serial != "" {
 		t.Fatalf("ResolveIdentity: got %+v, want both empty", got)
+	}
+	if got.IdentityPath() != "" {
+		t.Fatalf("IdentityPath: got %q, want empty — nothing to bind to", got.IdentityPath())
 	}
 }
 

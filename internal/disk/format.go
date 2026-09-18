@@ -19,37 +19,57 @@ var ErrDiskNotAssigned = errors.New("disk: not part of this array-setup plan")
 // below, and the future Topology job handler — so a bug that names the
 // wrong device is refused before it reaches a real mkfs invocation.
 //
-// Immediately before formatting, it also re-resolves dev against the
-// assigned disk's own stable identity (WWN or serial, doc 02 §4) via a
-// fresh p.List call and refuses (ErrDiskIdentityChanged) if a different
-// disk now sits at dev: a device name discovered when this plan was
-// built is not guaranteed to still name the same physical disk by the
-// time the plan actually runs — a controller reorder or a swapped cable
-// in between — and the typed confirmation this plan was checked against
-// (doc 03 §3.1 step 6) named a specific disk, not a path that might now
-// belong to a different one.
+// Immediately before formatting, it also re-resolves the assigned disk's
+// own stable identity (WWN or serial, doc 02 §4) via a fresh p.List call,
+// refusing (ErrDiskIdentityChanged) if no disk at all currently matches
+// it — a disk pulled between discovery and this call. When a disk does
+// still match, formatting runs against resolveFormatTarget's own result
+// rather than dev directly: the identity's /dev/disk/by-id path when one
+// is known (assigned.ByIDName), so the actual mkfs invocation binds to
+// whichever physical disk the kernel currently resolves that symlink to,
+// not to dev itself — a device name discovered when this plan was built
+// is not guaranteed to still name the same physical disk by the time the
+// plan actually runs, a controller reorder or a swapped cable in between,
+// and the typed confirmation this plan was checked against (doc 03 §3.1
+// step 6) named a specific disk, not a path that might now belong to a
+// different one.
 func FormatAssigned(ctx context.Context, p Provider, plan TopologyPlan, dev string, fs FilesystemType) error {
 	assigned, ok := plan.findDevice(dev)
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrDiskNotAssigned, dev)
 	}
-	current, err := resolveCurrentDevice(ctx, p, dev, assigned.WWN, assigned.Serial)
+	target, err := resolveFormatTarget(ctx, p, dev, assigned.WWN, assigned.Serial, assigned.ByIDName)
 	if err != nil {
 		return err
 	}
-	if current != dev {
-		return fmt.Errorf("%w: %s (now found at %s)", ErrDiskIdentityChanged, dev, current)
-	}
-	return p.Format(ctx, dev, fs)
+	return p.Format(ctx, target, fs)
 }
 
-// resolveCurrentDevice re-reads p's disk inventory and returns the
-// current /dev path for the disk identified by wwn/serial. When neither
-// is available — no by-id link at all, as every disk in the loop-device
-// lab is (doc 06 §3) — there is nothing to re-verify against, and dev is
-// returned unchanged, exactly as FormatAssigned always behaved before
-// identity tracking existed.
-func resolveCurrentDevice(ctx context.Context, p Provider, dev, wwn, serial string) (string, error) {
+// resolveFormatTarget re-reads p's disk inventory to confirm a disk
+// still matches the identity (wwn/serial) already confirmed for dev, and
+// returns the path the caller's destructive call (Format or AdoptCheck)
+// should actually run against. When wwn and serial are both empty —
+// no by-id link at all, as every disk in the loop-device lab is (doc 06
+// §3) — there is nothing to re-verify or bind to, and dev is returned
+// unchanged, exactly as callers behaved before identity tracking existed.
+//
+// Otherwise it refuses (ErrBootDevice) the moment the matched disk turns
+// out to be the boot device — before ever constructing a by-id path for
+// it — and refuses (ErrDiskIdentityChanged) when no disk at all currently
+// carries the confirmed identity, a disk pulled between discovery and
+// this call. Once a non-boot match is confirmed to still exist: when
+// byIDName is known, it returns that /dev/disk/by-id path rather than dev
+// or whatever /dev/sdX path List happened to report it at just now — that
+// path is a symlink the kernel keeps pointed at whichever device
+// currently carries this identity, so the caller's own destructive exec —
+// which runs after this function returns, not during it — still opens
+// the right physical disk even if the /dev/sdX numbering changes again in
+// the interval between this check and that exec. When byIDName is not
+// known, there is nothing to bind a path to, so this instead falls back
+// to the pre-#157 behavior of refusing (ErrDiskIdentityChanged) unless
+// the matched disk's current device is still exactly dev — returning the
+// stale dev unverified would defeat the whole check.
+func resolveFormatTarget(ctx context.Context, p Provider, dev, wwn, serial, byIDName string) (string, error) {
 	if wwn == "" && serial == "" {
 		return dev, nil
 	}
@@ -58,14 +78,31 @@ func resolveCurrentDevice(ctx context.Context, p Provider, dev, wwn, serial stri
 		return "", err
 	}
 	for _, d := range disks {
-		if wwn != "" && d.WWN == wwn {
-			return d.Device, nil
+		matched := (wwn != "" && d.WWN == wwn) || (wwn == "" && d.Serial == serial)
+		if !matched {
+			continue
 		}
-		if wwn == "" && d.Serial == serial {
-			return d.Device, nil
+		if d.Boot {
+			return "", fmt.Errorf("%s: %w", dev, ErrBootDevice)
 		}
+		if byIDName != "" {
+			return identityOrDevice(byIDName, dev), nil
+		}
+		if d.Device != dev {
+			return "", fmt.Errorf("%w: %s (now found at %s)", ErrDiskIdentityChanged, dev, d.Device)
+		}
+		return dev, nil
 	}
 	return "", fmt.Errorf("%w: no disk currently matches the identity confirmed for %s", ErrDiskIdentityChanged, dev)
+}
+
+// identityOrDevice returns byIDName's /dev/disk/by-id path, or dev
+// unchanged when byIDName is empty (nothing to bind to).
+func identityOrDevice(byIDName, dev string) string {
+	if p := (Identity{ByIDName: byIDName}).IdentityPath(); p != "" {
+		return p
+	}
+	return dev
 }
 
 // FormatPlan formats or adopts every disk in plan (doc 02 §4 "Adding a
