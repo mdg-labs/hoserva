@@ -16,18 +16,19 @@ func diffArgv() []string   { return []string{"diff"} }
 func statusArgv() []string { return []string{"status"} }
 func touchArgv() []string  { return []string{"touch"} }
 
-// syncArgv builds sync's own tail. force maps SyncOpts.Force to `-E`
+// syncArgv builds sync's own tail. emptiesADisk maps to `-E`
 // (`--force-empty`): SnapRAID refuses a sync that would empty a
 // previously non-empty disk on its own, independently of Hoserva's own
 // threshold guard (doc 02 §2) — confirmed against a real sync in the
 // loop-device lab ("WARNING! ... are now missing or have been rewritten!
-// ... use 'snapraid --force-empty sync'."). By the time Engine.Sync is
-// called with Force set, the guard above it has already made that
-// decision; this only carries it through to the one flag SnapRAID itself
-// needs to not refuse redundantly.
-func syncArgv(force bool) []string {
+// ... use 'snapraid --force-empty sync'."). SnapraidEngine.Sync passes
+// this whenever its own fresh diff shows any disk emptied — whether that
+// disk is being deliberately evacuated (opts.RemovingDisks) or its
+// zero-files trigger was reviewed and confirmed (opts.Confirm) — since
+// SnapRAID's own refusal is unconditional and does not know about either.
+func syncArgv(emptiesADisk bool) []string {
 	var argv []string
-	if force {
+	if emptiesADisk {
 		argv = append(argv, "-E")
 	}
 	return append(argv, "sync")

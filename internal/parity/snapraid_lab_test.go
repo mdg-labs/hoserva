@@ -77,6 +77,18 @@ func labEngine(t *testing.T, lab string) (*SnapraidEngine, dataMounts) {
 		ConfPath: confPath,
 		LogDir:   filepath.Join(workDir, "logs"),
 		Runner:   CommandRunner{},
+		// This lab's own array is a handful of tiny files by construction
+		// (Q45's loop devices), so a normal scripted workload for a
+		// scrub/fix/journal test — a few files created, renamed or
+		// modified — is routinely 10%+ of its own tiny total, tripping
+		// the guard's default percent/count thresholds for reasons that
+		// have nothing to do with what those tests exercise. Raising them
+		// here does not touch DefaultRemovedFilesMax or
+		// DefaultRemovedUpdatedPercent themselves (guard_test.go's own
+		// unit tests exercise those directly, never through this shared
+		// helper) or the zero-files rule guard_lab_test.go's own scenario
+		// depends on — that rule fires regardless of either number.
+		Guard: Guard{Config: GuardConfig{RemovedFilesMax: 100000, RemovedUpdatedPercent: 100}},
 	}, mounts
 }
 

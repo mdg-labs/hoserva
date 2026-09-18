@@ -16,10 +16,49 @@ type SyncOpts struct {
 	// DryRun runs the diff SnapRAID would sync against without writing
 	// parity.
 	DryRun bool
-	// Force syncs even though the threshold guard would otherwise hold it
-	// (doc 02 §2's "Review the diff and sync anyway"). The guard itself
-	// lives above Engine; Engine only carries the caller's decision through.
-	Force bool
+	// Confirm is the human decision behind the threshold guard's (doc 02
+	// §2) "Review the diff and sync anyway" action: it authorizes Sync to
+	// proceed past a diff its own guard evaluation just blocked. It has no
+	// effect when the guard does not block, and it can never skip that
+	// evaluation itself — Sync always runs it fresh, for every non-dry-run
+	// call, before this field is even consulted (CLAUDE.md: "no code path
+	// syncs without passing the guard"). This is the "minimum is a
+	// confirmation prompt" doc 02 §2 and Q16 require: there is no field
+	// anywhere in this package that disables the guard outright.
+	Confirm bool
+	// Manifest is this sync's relocation manifest (Q15): entries a
+	// mover, rebalance, evacuation or share-relocation job recorded for
+	// files it moved since the last sync. The guard excludes a removal
+	// from its thresholds when it matches an entry here and the same
+	// relative path reappears as added or copied on that entry's target
+	// disk in this sync's own fresh diff.
+	Manifest []ManifestEntry
+	// RemovingDisks is the set of mount points currently being evacuated
+	// (doc 09 §4, keyed the same way DiffReport.PerDisk is) — exempt from
+	// the guard's zero-files rule. Independently of the guard, SnapRAID's
+	// own native "would empty a disk" refusal (syncArgv's own doc
+	// comment) still needs `-E` whenever any disk — evacuating or not —
+	// is emptied by this diff, so Sync sets it for exactly those disks'
+	// syncs regardless of RemovingDisks' contents.
+	RemovingDisks map[string]bool
+}
+
+// ManifestEntry is one file a relocation job (the mover, rebalance,
+// evacuation or share relocation — doc 09 §2-§4) recorded moving since the
+// last sync (doc 02 §2, Q15). Whichever package drives that job owns
+// writing and persisting these; this package only ever reads a slice of
+// them, handed in through SyncOpts.Manifest for the one sync that must
+// account for them.
+type ManifestEntry struct {
+	// RelPath is the file's path relative to its disk (matching
+	// DiffFile.RelPath's own shape — what the guard's manifest matching
+	// actually compares it against), identical on both SourceDisk and
+	// TargetDisk — a relocation moves a file, it never renames it.
+	RelPath    string
+	Size       int64
+	MTime      time.Time
+	SourceDisk string // mount point, matching DiffReport.PerDisk's own keys.
+	TargetDisk string
 }
 
 // DiffReport is what `snapraid diff` reports before a sync: exactly what
@@ -41,6 +80,22 @@ type DiffReport struct {
 	// rule ("any data disk reports zero files where it previously had
 	// files") is evaluated.
 	PerDisk map[string]DiskDiff
+
+	// RemovedFiles and AddedFiles are Removed and Added+Copied broken out
+	// per file, RelPath relative to each entry's own Disk (a mount point,
+	// matching PerDisk's keys) — what the guard's manifest accounting
+	// (Q15) matches a ManifestEntry against. AddedFiles combines both
+	// freshly added files and copy destinations, since Q15's own rule is
+	// "appears as added or copied on the manifest's target disk".
+	RemovedFiles []DiffFile
+	AddedFiles   []DiffFile
+}
+
+// DiffFile is one file a diff reported as removed, or added/copied-in, on
+// one data disk.
+type DiffFile struct {
+	Disk    string // mount point, matching DiffReport.PerDisk's own keys.
+	RelPath string
 }
 
 // DiskDiff is one data disk's file count before and after the change this
