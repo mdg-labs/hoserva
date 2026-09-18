@@ -31,6 +31,26 @@ hoserva_debian_version_from_tag() {
   echo "${version/-beta./~beta.}"
 }
 
+# hoserva_verify_tag_ancestry fails unless $1 (a release tag) is an
+# ancestor of the branch its channel publishes from: origin/main for a
+# stable tag, origin/beta for a beta tag (Q66, doc 12 §6). Without this,
+# a `v*` tag pushed to any other commit would still build and sign a
+# release — the caller must have fetched origin/main and origin/beta
+# first.
+hoserva_verify_tag_ancestry() {
+  local tag="$1"
+  local channel branch
+  channel="$(hoserva_channel_from_tag "$tag")" || return 1
+  case "$channel" in
+    stable) branch="main" ;;
+    beta) branch="beta" ;;
+  esac
+  if ! git merge-base --is-ancestor "$tag" "origin/$branch" 2>/dev/null; then
+    echo "hoserva_verify_tag_ancestry: '$tag' (channel: $channel) is not an ancestor of origin/$branch — refusing to build or sign a release from it" >&2
+    return 1
+  fi
+}
+
 # hoserva_sign_sha256sums signs $1 (a SHA256SUMS file) with the Ed25519
 # private key at $2 (PEM), writing the detached signature to $3 (Q66:
 # "a SHA256SUMS file carrying a detached Ed25519 signature"). openssl's
