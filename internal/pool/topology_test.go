@@ -132,6 +132,13 @@ func TestMoverTargetMount_ErrorsOnNoDataDisks(t *testing.T) {
 	}
 }
 
+func TestMoverTargetMount_ErrorsOnCacheOnly(t *testing.T) {
+	share := Share{Name: "appdata", CacheMode: CacheOnly, CreatePolicy: BalanceAcrossDisks}
+	if _, err := MoverTargetMount(share, testDisks, DefaultOptions()); !errors.Is(err, ErrCacheOnlyNotMoved) {
+		t.Fatalf("MoverTargetMount(cache-only): got %v, want ErrCacheOnlyNotMoved", err)
+	}
+}
+
 func TestSharePathAndMoverTargetPath(t *testing.T) {
 	if got := SharePath("movies"); got != "/mnt/user/movies" {
 		t.Fatalf("SharePath(movies) = %q", got)

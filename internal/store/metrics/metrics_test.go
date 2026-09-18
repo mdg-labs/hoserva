@@ -10,7 +10,7 @@ import (
 
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "metrics.db"))
+	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "metrics.db"))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestStore_Insert_SameSecondOverwrites(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := s.Count(ctx, Raw)
+	n, err := s.count(ctx, Raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,10 +84,10 @@ func TestStore_Downsample_KeepsRecentRawUntouched(t *testing.T) {
 		t.Fatalf("Downsample: %v", err)
 	}
 
-	if n, err := s.Count(ctx, Raw); err != nil || n != 1 {
+	if n, err := s.count(ctx, Raw); err != nil || n != 1 {
 		t.Fatalf("Count(Raw) = %d, %v, want 1, nil", n, err)
 	}
-	if n, err := s.Count(ctx, Hourly); err != nil || n != 0 {
+	if n, err := s.count(ctx, Hourly); err != nil || n != 0 {
 		t.Fatalf("Count(Hourly) = %d, %v, want 0, nil", n, err)
 	}
 }
@@ -115,7 +115,7 @@ func TestStore_Downsample_RollsExpiredRawIntoHourlyAverage(t *testing.T) {
 		t.Fatalf("Downsample: %v", err)
 	}
 
-	if n, err := s.Count(ctx, Raw); err != nil || n != 0 {
+	if n, err := s.count(ctx, Raw); err != nil || n != 0 {
 		t.Fatalf("Count(Raw) after rollup = %d, %v, want 0, nil", n, err)
 	}
 	hourly, err := s.Values(ctx, Hourly, "smart_temperature", "/dev/sdb")
@@ -131,6 +131,59 @@ func TestStore_Downsample_RollsExpiredRawIntoHourlyAverage(t *testing.T) {
 	}
 	if !hourly[0].At.Equal(bucketStart.Truncate(time.Hour)) {
 		t.Fatalf("hourly bucket = %v, want %v", hourly[0].At, bucketStart.Truncate(time.Hour))
+	}
+}
+
+// TestStore_Downsample_RollsUpMultipleClosedBucketsInOnePass confirms
+// rollUp's set-based rewrite handles a backlog of several distinct
+// closed buckets, across different metrics and subjects, in one
+// Downsample call — each gets its own correct average, and none of them
+// bleeds into another's rows.
+func TestStore_Downsample_RollsUpMultipleClosedBucketsInOnePass(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	now := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
+
+	type point struct {
+		metric, subject string
+		hoursAgo        int
+		minuteOffset    int
+		value           float64
+	}
+	points := []point{
+		{"smart_temperature", "/dev/sda", 60, 5, 10},
+		{"smart_temperature", "/dev/sda", 60, 15, 20},
+		{"smart_temperature", "/dev/sdb", 60, 5, 100},
+		{"smart_temperature", "/dev/sdb", 55, 5, 200},
+		{"cpu_percent", "", 53, 5, 5},
+		{"cpu_percent", "", 53, 15, 15},
+	}
+	for _, p := range points {
+		at := now.Add(-time.Duration(p.hoursAgo) * time.Hour).Truncate(time.Hour).Add(time.Duration(p.minuteOffset) * time.Minute)
+		if err := s.Insert(ctx, Sample{Metric: p.metric, Subject: p.subject, At: at, Value: p.value}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := s.Downsample(ctx, now); err != nil {
+		t.Fatalf("Downsample: %v", err)
+	}
+
+	if n, err := s.count(ctx, Raw); err != nil || n != 0 {
+		t.Fatalf("Count(Raw) after rollup = %d, %v, want 0, nil", n, err)
+	}
+
+	sda, err := s.Values(ctx, Hourly, "smart_temperature", "/dev/sda")
+	if err != nil || len(sda) != 1 || !closeEnough(sda[0].Value, 15) {
+		t.Fatalf("hourly /dev/sda = %+v, %v, want one bucket averaging 15", sda, err)
+	}
+	sdb, err := s.Values(ctx, Hourly, "smart_temperature", "/dev/sdb")
+	if err != nil || len(sdb) != 2 {
+		t.Fatalf("hourly /dev/sdb = %+v, %v, want two separate buckets (100, 200)", sdb, err)
+	}
+	cpu, err := s.Values(ctx, Hourly, "cpu_percent", "")
+	if err != nil || len(cpu) != 1 || !closeEnough(cpu[0].Value, 10) {
+		t.Fatalf("hourly cpu_percent = %+v, %v, want one bucket averaging 10", cpu, err)
 	}
 }
 
@@ -156,7 +209,7 @@ func TestStore_Downsample_RollsExpiredHourlyIntoDailyAverage(t *testing.T) {
 		t.Fatalf("Downsample: %v", err)
 	}
 
-	if n, err := s.Count(ctx, Hourly); err != nil || n != 0 {
+	if n, err := s.count(ctx, Hourly); err != nil || n != 0 {
 		t.Fatalf("Count(Hourly) after rollup = %d, %v, want 0, nil", n, err)
 	}
 	daily, err := s.Values(ctx, Daily, "cpu_percent", "")

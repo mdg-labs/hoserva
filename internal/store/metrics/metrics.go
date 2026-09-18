@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mdg-labs/hoserva/internal/store"
 	_ "modernc.org/sqlite"
 )
 
@@ -60,16 +61,16 @@ type Store struct {
 }
 
 // Open opens (creating and schema-initializing if needed) the metrics
-// database at path. dsn mirrors cmd/hoservad's own production database:
-// WAL mode plus a busy timeout, so a concurrent SMART poll and a
-// Downsample run don't see SQLITE_BUSY the instant they overlap.
-func Open(path string) (*Store, error) {
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
-	db, err := sql.Open("sqlite", dsn)
+// database at path, sharing cmd/hoservad's own production database's DSN
+// (internal/store.DSN): WAL mode plus a busy timeout, so a concurrent
+// SMART poll and a Downsample run don't see SQLITE_BUSY the instant they
+// overlap.
+func Open(ctx context.Context, path string) (*Store, error) {
+	db, err := sql.Open("sqlite", store.DSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("metrics: opening %s: %w", path, err)
 	}
-	if _, err := db.Exec(schemaSQL); err != nil {
+	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("metrics: creating schema: %w", err)
 	}
@@ -138,63 +139,48 @@ func (s *Store) Downsample(ctx context.Context, now time.Time) error {
 
 // rollUp averages every from-resolution bucket of bucketSeconds width
 // that has fully ended by cutoff into one to-resolution sample, then
-// deletes the from-resolution rows it just summarized. Gating on the
-// bucket's own end (bucket+bucketSeconds <= cutoff), rather than each
-// row's own age, guarantees a bucket is aggregated exactly once: new
-// samples always land in the current, still-open bucket, never a closed
-// one, so nothing arrives after a bucket has been rolled up and deleted.
+// deletes the from-resolution rows it just summarized — two set-based
+// statements (an upserting INSERT...SELECT, then a DELETE), not a
+// per-bucket round trip, so a downsample catch-up after a backlog costs
+// the same two statements whether it rolls up one bucket or thousands.
+//
+// Gating on the bucket's own end (bucket+bucketSeconds <= cutoff),
+// rather than each row's own age, guarantees a bucket is aggregated
+// exactly once: new samples always land in the current, still-open
+// bucket, never a closed one, so nothing arrives after a bucket has been
+// rolled up and deleted. The DELETE re-derives the same per-row bucket
+// end as the INSERT's HAVING clause (bucket = (at/bucketSeconds)*bucketSeconds)
+// rather than joining back to what the INSERT selected — the two must
+// stay in lockstep, since a row the INSERT aggregated but the DELETE
+// left behind would double-count on the next Downsample.
 func rollUp(ctx context.Context, tx *sql.Tx, from, to Resolution, bucketSeconds, cutoff int64) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT metric, subject, (at / ?) * ? AS bucket, AVG(value)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO samples (resolution, metric, subject, at, value)
+		SELECT ?, metric, subject, (at / ?) * ? AS bucket, AVG(value)
 		FROM samples
 		WHERE resolution = ?
 		GROUP BY metric, subject, bucket
-		HAVING bucket + ? <= ?`,
-		bucketSeconds, bucketSeconds, from, bucketSeconds, cutoff)
-	if err != nil {
-		return fmt.Errorf("metrics: selecting %s buckets: %w", from, err)
+		HAVING bucket + ? <= ?
+		ON CONFLICT (resolution, metric, subject, at) DO UPDATE SET value = excluded.value`,
+		to, bucketSeconds, bucketSeconds, from, bucketSeconds, cutoff,
+	); err != nil {
+		return fmt.Errorf("metrics: rolling up %s buckets into %s: %w", from, to, err)
 	}
 
-	type bucket struct {
-		metric, subject string
-		at              int64
-		value           float64
-	}
-	var buckets []bucket
-	for rows.Next() {
-		var b bucket
-		if err := rows.Scan(&b.metric, &b.subject, &b.at, &b.value); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("metrics: scanning %s bucket: %w", from, err)
-		}
-		buckets = append(buckets, b)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("metrics: reading %s buckets: %w", from, err)
-	}
-	_ = rows.Close()
-
-	for _, b := range buckets {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO samples (resolution, metric, subject, at, value) VALUES (?, ?, ?, ?, ?)
-			 ON CONFLICT (resolution, metric, subject, at) DO UPDATE SET value = excluded.value`,
-			to, b.metric, b.subject, b.at, b.value,
-		); err != nil {
-			return fmt.Errorf("metrics: writing %s sample: %w", to, err)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM samples WHERE resolution = ? AND metric = ? AND subject = ? AND at >= ? AND at < ?`,
-			from, b.metric, b.subject, b.at, b.at+bucketSeconds,
-		); err != nil {
-			return fmt.Errorf("metrics: pruning rolled-up %s samples: %w", from, err)
-		}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM samples
+		WHERE resolution = ? AND (at / ?) * ? + ? <= ?`,
+		from, bucketSeconds, bucketSeconds, bucketSeconds, cutoff,
+	); err != nil {
+		return fmt.Errorf("metrics: pruning rolled-up %s samples: %w", from, err)
 	}
 	return nil
 }
 
-// Count reports how many samples exist at resolution — a test seam for
-// Downsample, not a query product code calls.
-func (s *Store) Count(ctx context.Context, resolution Resolution) (int, error) {
+// count reports how many samples exist at resolution — a test seam for
+// Downsample, not a query product code calls, so it stays unexported
+// rather than adding to this package's public API surface.
+func (s *Store) count(ctx context.Context, resolution Resolution) (int, error) {
 	var n int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM samples WHERE resolution = ?`, resolution).Scan(&n); err != nil {
 		return 0, fmt.Errorf("metrics: counting %s samples: %w", resolution, err)

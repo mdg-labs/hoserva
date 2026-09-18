@@ -29,6 +29,11 @@ func MoverTargetPath(share string) string {
 // branches with nothing to build them from.
 var ErrNoDataDisks = errors.New("pool: at least one data disk is required")
 
+// ErrCacheOnlyNotMoved is MoverTargetMount's refusal for a CacheOnly
+// share: that data lives on cache permanently and is never moved
+// (share.go), so no mover write-target mount may exist for it.
+var ErrCacheOnlyNotMoved = errors.New("pool: cache-only share has no mover write target")
+
 // CatchAllMount builds /mnt/user (doc 02 §1, Q12): a mergerfs pool over
 // every data disk, RW, the default create policy — ordered after each
 // disk's own block-device mount, so `ls /mnt/user` and a stray
@@ -110,6 +115,9 @@ func ShareMount(share Share, dataDisks []string, cachePath string, opts Options)
 func MoverTargetMount(share Share, dataDisks []string, opts Options) (Mount, error) {
 	if err := ValidateShareName(share.Name); err != nil {
 		return Mount{}, err
+	}
+	if share.CacheMode == CacheOnly {
+		return Mount{}, fmt.Errorf("%w: %q", ErrCacheOnlyNotMoved, share.Name)
 	}
 	if len(dataDisks) == 0 {
 		return Mount{}, ErrNoDataDisks
