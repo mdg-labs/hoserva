@@ -22,33 +22,36 @@ type DiskAddition struct {
 	WWN          string
 	Serial       string
 	WeakIdentity bool
+	ByIDName     string
 }
 
 // FormatForAddition formats or adopts a's own device (doc 02 §4 "Adding a
 // disk" step 3, "Replacing a failed disk" step 3): an adopted disk is only
 // ever verified read-only (AdoptCheck, Q23), never formatted; a disk being
 // added fresh is formatted directly. Immediately before either, it
-// re-resolves a.Device against a's own stable identity (WWN or serial)
-// through a fresh p.List call and refuses (ErrDiskIdentityChanged) if a
-// different disk now sits there — the same drift FormatAssigned guards
-// against for array setup (doc 02 §4): the device path a caller confirmed
-// this addition against is not guaranteed to still be the same physical
-// disk by the time formatting actually runs. A disk with no by-id link at
-// all (WWN and Serial both empty, as every disk in the loop-device lab is,
-// doc 06 §3) has nothing to re-verify against, and a.Device is trusted as
-// given.
+// re-resolves a's own stable identity (WWN or serial) through a fresh
+// p.List call, refusing (ErrDiskIdentityChanged) if no disk at all
+// currently matches it — the disk pulled between confirmation and this
+// call. When a disk does still match, the format or adopt-check runs
+// against resolveFormatTarget's own result rather than a.Device directly:
+// the identity's /dev/disk/by-id path when one is known (a.ByIDName), so
+// the actual mkfs or read-only-check invocation binds to whichever
+// physical disk the kernel currently resolves that symlink to — the same
+// drift FormatAssigned guards against for array setup (doc 02 §4): the
+// device path a caller confirmed this addition against is not guaranteed
+// to still be the same physical disk by the time formatting actually
+// runs. A disk with no by-id link at all (WWN and Serial both empty, as
+// every disk in the loop-device lab is, doc 06 §3) has nothing to bind
+// to, and a.Device is trusted as given.
 func FormatForAddition(ctx context.Context, p Provider, r Runner, a DiskAddition) error {
-	current, err := resolveCurrentDevice(ctx, p, a.Device, a.WWN, a.Serial)
+	target, err := resolveFormatTarget(ctx, p, a.Device, a.WWN, a.Serial, a.ByIDName)
 	if err != nil {
 		return err
 	}
-	if current != a.Device {
-		return fmt.Errorf("%w: %s (now found at %s)", ErrDiskIdentityChanged, a.Device, current)
-	}
 	if a.Adopt {
-		return AdoptCheck(ctx, r, a.Device, a.Filesystem)
+		return AdoptCheck(ctx, r, target, a.Filesystem)
 	}
-	return p.Format(ctx, a.Device, a.Filesystem)
+	return p.Format(ctx, target, a.Filesystem)
 }
 
 // DataDiskMountUnit builds the MountUnit for a data disk at where — the

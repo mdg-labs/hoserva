@@ -205,7 +205,7 @@ Because "cache only" data is outside parity, Hoserva ships a built-in scheduled 
 
 1. Detect and show the disk with model, serial, size, existing filesystem, SMART status
 2. Warn if it contains data
-3. Format (default XFS) or adopt an existing XFS filesystem as-is
+3. Format (default XFS) or adopt an existing XFS filesystem as-is — through the disk's own stable `/dev/disk/by-id` path when one is known (Q21), not its `/dev/sdX` path, so the disk that is actually formatted or checked is the one this step confirmed, even if a udev event renumbers `/dev/sdX` paths between confirmation and the call
 4. Mount at the next free `/mnt/diskN`
 5. Add to the branch lists of the catch-all and every share mount, and to the SnapRAID data list
 6. Remount, regenerate configs
@@ -230,7 +230,7 @@ A healthy disk is never rebuilt from parity to replace it — that would leave t
 
 1. Mark the disk failed; pool continues serving the remaining disks (degraded, with a persistent banner)
 2. User stops the array (maintenance mode) or powers off, and physically swaps the disk
-3. Identify the new disk, format, mount at the same `/mnt/diskN`
+3. Identify the new disk, format (again through its by-id path when known, as "Adding a disk" step 3 does), mount at the same `/mnt/diskN`
 4. `snapraid fix -d dN` reconstructs the contents from parity + remaining disks
 5. Verify, then resume the normal schedule
 

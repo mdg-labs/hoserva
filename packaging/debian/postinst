@@ -1,0 +1,26 @@
+#!/bin/sh
+# postinst (doc 01 §7 Security, doc 04 §2, Q44). Creates the `hoserva`
+# group — empty, root-equivalent by design, exactly like the `docker`
+# group (Q44) — and nothing else of its own: no data disk under /mnt is
+# ever touched here, and the machine key at /etc/hoserva/secret.key is
+# deliberately NOT created here. It is generated once, atomically, by
+# hoservad's own first start (internal/auth.LoadOrGenerateMachineKey),
+# which also records a check value against the database — a database
+# that does not exist yet at install time, and doc 01 §7 requires no
+# default credential-like material to exist before setup runs (Q28's
+# "Implementation note (#22)": generated at first start, not at
+# install). Pre-creating it here would duplicate that already-atomic,
+# already-tested logic in a second place, in shell, for no benefit.
+set -e
+
+case "$1" in
+  configure)
+    if ! getent group hoserva >/dev/null 2>&1; then
+      addgroup --quiet --system hoserva
+    fi
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

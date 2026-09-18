@@ -13,10 +13,10 @@ name: CI
 # !   the mdg-labs organisation, or Actions -> General on the repo itself ->
 # !   "Require approval for first-time contributors"
 #
-# What this does NOT run yet, and why: no .deb build (no packaging/ yet,
-# area:packaging, a later issue). Each arrives with the issue that builds
-# what it needs — this workflow runs what `make` actually offers today
-# (CLAUDE.md).
+# The `deb` job below builds the .deb for both architectures on every
+# push (issue #42, packaging/) with a fixed placeholder version — it
+# only proves the package still builds; publishing a real release only
+# happens from release.yml, on a `v*` tag push.
 
 on:
   push:
@@ -116,6 +116,35 @@ jobs:
         env:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
+
+  deb:
+    name: .deb build (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
+      # debhelper, dpkg-dev, fakeroot and build-essential are the tools
+      # packaging/debian/rules needs beyond Go and Node, both already set
+      # up above — everything else (dpkg-buildpackage, dh, dpkg-deb) ships
+      # with Ubuntu's base image. dpkg-checkbuilddeps always requires
+      # build-essential regardless of what debian/control declares (Debian
+      # policy assumes every build environment has it), so it must be
+      # installed here even though this package's own Build-Depends never
+      # names it.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot build-essential
+      # A fixed placeholder tag: this job only proves the package still
+      # builds on every push, exactly like the `build` job above does for
+      # the plain Go cross-compile. release.yml builds and publishes the
+      # real thing from an actual `v*` tag.
+      - run: scripts/release/build-deb.sh v0.0.0-beta.1 ${{ matrix.arch }} dist
 
   web:
     name: Web (Q8, D15, issue #21)

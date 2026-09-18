@@ -1,0 +1,118 @@
+name: Nightly L3
+
+# The L3 VM end-to-end suite (doc 06 §4, §7, Q79, issue #43): install,
+# onboarding, array setup, disk yank and reconstruction, `virsh destroy`
+# mid-sync recovery, reboot persistence, config backup/restore, and the
+# Playwright journeys (journey 5 above all — it must never be skipped).
+#
+# Runs on a GitHub-hosted runner, matching every other workflow in this
+# repository (Q42, D20): there are no self-hosted runners, and S9 (issue
+# #10, doc 08 §9) confirmed a single, non-nested QEMU/KVM guest boots
+# with real acceleration on a pinned ubuntu-24.04 hosted runner — exactly
+# what this suite needs (Q79: "L3 ... run nightly on GitHub-hosted
+# runners wherever S9 ... confirm support"). S9 did not exercise libvirt
+# itself (its probe drove qemu-system-x86_64 directly) or a full guest
+# OS boot, only /dev/kvm access and QMP-confirmed acceleration for a
+# minimal initramfs guest — this workflow is this project's first attempt
+# at the rest (libvirtd under qemu:///session, a full Debian boot, SSH),
+# and its own first run is this workflow's de facto validation of that
+# gap, the same way s9-hosted-probe.yml validated the rest of L3's
+# prerequisites before ci.yml depended on them.
+#
+# workflow_dispatch lets the maintainer run it on demand (e.g. before a
+# release, per Q79's "required step before every release" fallback);
+# schedule runs it nightly against main. Never runs on `pull_request` —
+# this is exactly the privileged, slow, resource-heavy job class Q42
+# keeps off of untrusted PR code.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  l3:
+    name: L3 VM suite
+    if: github.repository == 'mdg-labs/hoserva'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Derive this run's lab id
+        id: lab
+        run: echo "id=nightly-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      # The same rule s9-hosted-probe.yml's kvm job validated (issue #10,
+      # doc 08 §9) — written before triggering, per the community caveat
+      # that a late trigger can leave /dev/kvm unwritable.
+      - name: Apply the kvm udev rule and settle
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-hoserva-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          ls -l /dev/kvm
+
+      # libvirt is not on the default ubuntu-24.04 image; qemu-utils and
+      # xorriso are this harness's own dependencies (create-vm.sh).
+      # Installed here, on the ephemeral hosted runner's own passwordless
+      # sudo (Q42) — never on the dev host, which deliberately has none
+      # of this (CLAUDE.md: no package-manager install there, ever).
+      - name: Install libvirt and qemu
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libvirt-daemon-system libvirt-clients qemu-system-x86 qemu-utils xorriso
+          sudo adduser "$(id -un)" libvirt
+          sudo adduser "$(id -un)" kvm
+
+      - name: Start this user's own session libvirtd
+        # qemu:///session (never qemu:///system, D20) needs a per-user
+        # virtqemud/libvirtd reachable over its user session bus — the
+        # runner's default non-interactive shell has neither a lingering
+        # session nor a running user manager instance by default.
+        run: |
+          sudo loginctl enable-linger "$(id -un)"
+          systemctl --user start virtqemud.socket || systemctl --user start libvirtd.socket
+          virsh -c qemu:///session list --all
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
+
+      - name: Install the .deb build toolchain
+        # scripts/release/build-deb.sh's own header: CI installs these;
+        # the dev host and lab deliberately do not. build-essential is
+        # required by dpkg-checkbuilddeps regardless of debian/control's
+        # own Build-Depends (Debian policy assumes it's always present);
+        # dpkg-dev provides dpkg-buildpackage itself.
+        run: sudo apt-get install -y -qq --no-install-recommends debhelper dpkg-dev fakeroot build-essential
+
+      - name: vm-suite
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make vm-suite
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: vm-destroy
+        if: always()
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make vm-destroy

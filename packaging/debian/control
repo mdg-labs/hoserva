@@ -1,0 +1,42 @@
+Source: hoserva
+Section: admin
+Priority: optional
+Maintainer: Hoserva <releases@hoserva.dev>
+# Only debhelper is a real Build-Depends: the Go and Node toolchains this
+# build also needs come from the CI job's own setup steps (go.mod,
+# web/.nvmrc pin exact versions stricter than anything Debian 13 ships),
+# not from apt — the same posture ci.yml's own cross-compile job already
+# takes for Go. debian/rules forces --buildsystem=none so debhelper never
+# tries to drive that build itself from the presence of go.mod.
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://hoserva.dev
+Rules-Requires-Root: no
+
+Package: hoserva
+Architecture: any
+# S8 (doc 08 §8, Q7) confirmed Debian 13's mergerfs 2.40.2 and SnapRAID
+# 12.4 against every option and create policy Hoserva's own default
+# configuration uses; no upper bound, so a Debian security update to
+# either package is never blocked by this dependency (Q7).
+Depends: adduser, mergerfs (>= 2.40.2), snapraid (>= 12.4), ${misc:Depends}
+# Optional off-box backup destinations (Q41, doc 10 §1) — local
+# destinations work without it, and the UI offers the install command
+# the first time a remote one is configured. Docker is deliberately not
+# a dependency here (D8): it is a prerequisite the user installs from
+# Docker's own repository, checked and reported by `hoservad`/`hoserva
+# doctor`, not something this package pulls in.
+Recommends: rclone
+Description: Home server management for mixed-size disks
+ Hoserva is a management layer over mergerfs and SnapRAID: a daemon, CLI
+ and web UI that pool mismatched drives behind one mergerfs mount, keep
+ SnapRAID parity in sync on a schedule, and refuse to sync past a
+ tripped fill-threshold guard. It generates mergerfs/SnapRAID
+ configuration from its own database and drives both tools rather than
+ reimplementing either.
+ .
+ This package installs hoservad (the daemon — it runs as root because it
+ partitions disks and manages mounts) as the hoserva.service systemd
+ unit, and the hoserva CLI. Docker Engine is a separate prerequisite,
+ installed from Docker's own repository, needed only for the Apps
+ section.

@@ -42,6 +42,14 @@ type FakeProvider struct {
 	// script FailAfter/SlowDown without actually waiting.
 	Now   Clock
 	Sleep Sleeper
+
+	// AfterList, when set, runs once every List call returns, after its
+	// own lock is released. It exists so a test can inject a mutation
+	// timed exactly between an identity check (which calls List) and the
+	// destructive call that follows it — the window this issue's own
+	// race lives in — and assert that formatting still lands on the
+	// right physical disk regardless of what happens in it.
+	AfterList func()
 }
 
 // NewFakeProvider returns a FakeProvider with no disks and the real clock.
@@ -79,6 +87,25 @@ func (f *FakeProvider) SetSpinState(dev string, s SpinState) {
 	if fd, ok := f.disks[dev]; ok {
 		fd.spinState = s
 	}
+}
+
+// Reassign moves the disk currently at oldDev to newDev, as if udev had
+// renumbered it — its identity and every other scripted property move
+// with it. It is a no-op if oldDev names no disk this FakeProvider knows
+// about. A test combines it with a further AddDisk(oldDev, ...) to put a
+// different (or new) disk at the vacated path, modelling this issue's own
+// race: the /dev/sdX path a caller confirmed an identity against no
+// longer names the same physical disk by the time a later call runs.
+func (f *FakeProvider) Reassign(oldDev, newDev string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fd, ok := f.disks[oldDev]
+	if !ok {
+		return
+	}
+	delete(f.disks, oldDev)
+	fd.disk.Device = newDev
+	f.disks[newDev] = fd
 }
 
 // FailAfter scripts a disk dying mid-operation: every call naming dev made
@@ -149,7 +176,6 @@ func (f *FakeProvider) List(ctx context.Context) ([]Disk, error) {
 		return nil, err
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
 
 	devs := make([]string, 0, len(f.disks))
 	for dev := range f.disks {
@@ -165,7 +191,34 @@ func (f *FakeProvider) List(ctx context.Context) ([]Disk, error) {
 		}
 		out = append(out, fd.disk)
 	}
+	hook := f.AfterList
+	f.mu.Unlock()
+
+	if hook != nil {
+		hook()
+	}
 	return out, nil
+}
+
+// resolveLocked returns the fakeDisk dev currently names: directly, when
+// dev is a plain device path this FakeProvider knows about, or by
+// identity, when dev is an identity-bound /dev/disk/by-id path
+// (Identity.IdentityPath) — the disk whose own WWN/Serial/ByIDName
+// reconstructs exactly that path, wherever it currently lives. This is
+// what models the kernel's own by-id symlink resolution: it always runs
+// fresh, at the instant of the call, never trusting an earlier lookup's
+// result. Callers must hold f.mu.
+func (f *FakeProvider) resolveLocked(dev string) (string, *fakeDisk, bool) {
+	if fd, ok := f.disks[dev]; ok {
+		return dev, fd, true
+	}
+	for path, fd := range f.disks {
+		id := Identity{WWN: fd.disk.WWN, Serial: fd.disk.Serial, ByIDName: fd.disk.ByIDName}
+		if p := id.IdentityPath(); p != "" && p == dev {
+			return path, fd, true
+		}
+	}
+	return "", nil, false
 }
 
 func (f *FakeProvider) SMART(ctx context.Context, dev string, mode SMARTPollMode) (SMARTReport, error) {
@@ -247,12 +300,12 @@ func (f *FakeProvider) Format(ctx context.Context, dev string, fs FilesystemType
 		return err
 	}
 	f.mu.Lock()
-	fd, ok := f.disks[dev]
+	actual, fd, ok := f.resolveLocked(dev)
 	if !ok {
 		f.mu.Unlock()
 		return fmt.Errorf("disk %s: %w", dev, ErrDiskNotFound)
 	}
-	if err := f.checkFailed(fd, dev); err != nil {
+	if err := f.checkFailed(fd, actual); err != nil {
 		f.mu.Unlock()
 		return err
 	}

@@ -1,0 +1,68 @@
+#!/usr/bin/make -f
+# Built only by CI (scripts/release/build-deb.sh) or by the maintainer's
+# own dpkg-buildpackage — never on this repo's dev host or lab
+# (CLAUDE.md: no packaging tool here touches a real disk, and this one
+# doesn't need to; every path below stays inside the build tree).
+#
+# --buildsystem=none below skips dh's own build-system autodetection,
+# which would otherwise notice go.mod and drive the build itself as a
+# "golang" package (GOPATH layout, XS-Go-Import-Path, ...) — none of
+# which matches this repo's own Makefile-driven build. Every step dh
+# would normally infer is instead spelled out below.
+
+include /usr/share/dpkg/architecture.mk
+
+export CGO_ENABLED = 0
+export GOOS = linux
+export GOFLAGS = -trimpath
+
+%:
+	dh $@ --buildsystem=none
+
+override_dh_auto_build:
+	$(MAKE) -C $(CURDIR) web-build
+	GOARCH=$(DEB_HOST_ARCH) go build -o hoservad ./cmd/hoservad
+	GOARCH=$(DEB_HOST_ARCH) go build -o hoserva ./cmd/hoserva
+
+override_dh_auto_test:
+	# ci.yml's own lint-and-unit and web jobs already run every test this
+	# tree has; repeating them here while cross-building for a foreign
+	# architecture (this also runs under -aarm64) would need a way to
+	# execute an arm64 binary that this build environment doesn't have.
+
+override_dh_auto_install:
+	install -D -m0755 hoservad debian/hoserva/usr/bin/hoservad
+	install -D -m0755 hoserva debian/hoserva/usr/bin/hoserva
+
+# hoservad and hoserva are fully static (CGO_ENABLED=0, modernc.org/sqlite
+# is pure Go) — there is nothing for dpkg-shlibdeps to scan, and no
+# cross-arch objcopy/strip step is trusted against a foreign-arch ELF
+# binary this build environment cannot execute to confirm.
+override_dh_shlibdeps:
+
+override_dh_strip:
+
+# dh_makeshlibs is a separate dh sequence step from dh_shlibdeps (skipped
+# above) and needs its own override: it shells out to
+# $(DEB_HOST_GNU_TYPE)-objdump to inspect each binary's SONAME/dependency
+# info, and the aarch64 cross-objdump isn't installed on an amd64 runner
+# building the arm64 .deb ("Can't exec aarch64-linux-gnu-objdump"). Same
+# reasoning as dh_shlibdeps: these binaries are fully static, so there is
+# nothing here for it to generate.
+override_dh_makeshlibs:
+
+# dh_dwz tries to deduplicate/compress ELF debug info across the built
+# binaries, but Go's own DWARF output uses compressed .debug_abbrev
+# sections dwz doesn't understand ("Found compressed .debug_abbrev
+# section, not attempting dwz compression") and then aborts entirely
+# ("Too few files for multifile optimization") rather than skipping
+# cleanly — fatal for a two-binary Go package on every architecture.
+override_dh_dwz:
+
+# debian/copyright points at /usr/share/doc/hoserva/LICENSE as the
+# installed AGPL-3.0 text (Debian 13's common-licenses/ doesn't carry
+# it). dh_compress would otherwise gzip it — it's well over the 4KB
+# threshold — breaking that reference; LICENSE has to stay readable
+# exactly where copyright says it is.
+override_dh_compress:
+	dh_compress -X LICENSE

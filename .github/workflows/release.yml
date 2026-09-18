@@ -1,0 +1,86 @@
+name: Release
+
+# Publishes a tagged release (Q66, doc 12 §6): every `v*` tag — cut from
+# `main` for a stable release, or directly from `beta` for a beta
+# pre-release (doc 12 §6) — builds the amd64 and arm64 .deb and attaches
+# them to a GitHub Release, stable as a release and beta as a
+# pre-release, with a signed SHA256SUMS. Runs only on GitHub-hosted
+# runners (Q42), same as ci.yml.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.27.1"
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    # Signing and publishing needs approval, not just a matching tag
+    # (below): configure required reviewers on this "release" environment
+    # in the repo's Settings → Environments — that's a maintainer-only,
+    # needs-sudo-equivalent step outside any agent's reach.
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # A `v*` tag is valid on any commit. Refuse before any build or
+      # signing step runs unless it's actually on the branch its channel
+      # (Q66) publishes from — a stable tag from main, a beta tag from
+      # beta.
+      - name: Verify tag ancestry
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/verify-tag-ancestry.sh "$TAG"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
+      # dpkg-checkbuilddeps always requires build-essential regardless of
+      # what debian/control declares (Debian policy assumes every build
+      # environment has it), so it must be installed here even though this
+      # package's own Build-Depends never names it.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot build-essential
+      - name: Build amd64 .deb
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/build-deb.sh "$TAG" amd64 dist
+      - name: Build arm64 .deb
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release/build-deb.sh "$TAG" arm64 dist
+      # The release-signing private key never touches disk outside this
+      # step's own temp file, removed as soon as signing is done —
+      # publish-release.sh only ever reads it, never logs or echoes it.
+      # Set as a GitHub Actions secret by the maintainer (never generated
+      # or held by any agent); the workflow fails clearly, not silently,
+      # while it is unset.
+      #
+      # TAG comes through env:, not interpolated into the script text, so
+      # a tag name containing shell metacharacters (e.g. `v1.0.0$(id)`,
+      # still a valid git ref) can't run arbitrary code in a step that
+      # also holds the decrypted signing key.
+      - name: Sign and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOSERVA_RELEASE_SIGNING_KEY: ${{ secrets.HOSERVA_RELEASE_SIGNING_KEY }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ -z "${HOSERVA_RELEASE_SIGNING_KEY:-}" ]; then
+            echo "release.yml: HOSERVA_RELEASE_SIGNING_KEY secret is not set — see packaging's release documentation for how to generate and set it" >&2
+            exit 1
+          fi
+          key_file="$(mktemp)"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s' "$HOSERVA_RELEASE_SIGNING_KEY" >"$key_file"
+          scripts/release/publish-release.sh "$TAG" dist "$key_file"

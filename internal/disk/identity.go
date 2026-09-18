@@ -2,6 +2,15 @@ package disk
 
 import "strings"
 
+// byIDDir is the real system directory udev keeps the stable /dev/disk/by-id
+// symlinks in (Q21). It is a fixed convention, not a configurable path like
+// Lister.ByIDDir (which exists only so List's enumeration can be tested
+// against a synthetic tree): the by-id path built for an actual format or
+// adopt-check call must always name the same directory a running system's
+// kernel resolves, regardless of where a disk was originally enumerated
+// from.
+const byIDDir = "/dev/disk/by-id"
+
 // Identity is a disk's stable identity, resolved from the set of
 // /dev/disk/by-id symlinks the kernel creates for it (Q21) rather than its
 // transient /dev/sdX name. WWN is preferred; Serial is the fallback used
@@ -9,11 +18,29 @@ import "strings"
 // links found are usb-* ones — a USB enclosure's bridge chipset can hide
 // the real disk's WWN and serial behind its own, so a weak-identity disk
 // is allowed as a data disk (matched on filesystem UUID and size) but
-// refused as a parity disk (Q21).
+// refused as a parity disk (Q21). ByIDName is the exact basename of
+// whichever by-id link the identity above was taken from (preferring a
+// wwn-* link when one exists) — the kernel keeps that symlink pointed at
+// whichever device currently carries this identity, so IdentityPath
+// reconstructs it as the reference to format or adopt-check through
+// instead of a transient /dev/sdX path (doc 02 §4). It is empty exactly
+// when WWN and Serial both are: no by-id link at all exists for this
+// disk, as every disk in the loop-device lab is (doc 06 §3).
 type Identity struct {
 	WWN          string
 	Serial       string
 	WeakIdentity bool
+	ByIDName     string
+}
+
+// IdentityPath returns the /dev/disk/by-id path i's ByIDName names, or ""
+// when ByIDName is empty — nothing to bind to, and a caller should use the
+// plain device path as-is (doc 02 §4).
+func (i Identity) IdentityPath() string {
+	if i.ByIDName == "" {
+		return ""
+	}
+	return byIDDir + "/" + i.ByIDName
 }
 
 // ResolveIdentity derives a disk's Identity from the basenames of every
@@ -21,33 +48,38 @@ type Identity struct {
 // "-partN" suffix) name a partition's identity, not the disk's, and must
 // already be filtered out by the caller.
 func ResolveIdentity(byIDNames []string) Identity {
-	var wwn, hostSerial, usbSerial string
+	var wwn, wwnName string
+	var hostSerial, hostName string
+	var usbSerial, usbName string
 
 	for _, name := range byIDNames {
 		switch {
 		case strings.HasPrefix(name, "wwn-"):
 			if wwn == "" {
 				wwn = strings.TrimPrefix(name, "wwn-")
+				wwnName = name
 			}
 		case strings.HasPrefix(name, "ata-"), strings.HasPrefix(name, "scsi-"), strings.HasPrefix(name, "nvme-"):
 			if hostSerial == "" {
 				hostSerial = lastSegment(name)
+				hostName = name
 			}
 		case strings.HasPrefix(name, "usb-"):
 			if usbSerial == "" {
 				usbSerial = lastSegment(name)
+				usbName = name
 			}
 		}
 	}
 
 	if wwn != "" {
-		return Identity{WWN: wwn, Serial: hostSerial}
+		return Identity{WWN: wwn, Serial: hostSerial, ByIDName: wwnName}
 	}
 	if hostSerial != "" {
-		return Identity{Serial: hostSerial}
+		return Identity{Serial: hostSerial, ByIDName: hostName}
 	}
 	if usbSerial != "" {
-		return Identity{Serial: usbSerial, WeakIdentity: true}
+		return Identity{Serial: usbSerial, WeakIdentity: true, ByIDName: usbName}
 	}
 	return Identity{WeakIdentity: true}
 }
