@@ -1,0 +1,77 @@
+{
+  "json_format_version": [1, 0],
+  "smartctl": {
+    "version": [7, 4],
+    "svn_revision": "5665",
+    "platform_info": "x86_64-linux-6.1.0-amd64",
+    "build_info": "(local build)",
+    "argv": ["smartctl", "-j", "-n", "standby", "-a", "/dev/sde"],
+    "exit_status": 8
+  },
+  "device": {
+    "name": "/dev/sde",
+    "info_name": "/dev/sde",
+    "type": "sat",
+    "protocol": "ATA"
+  },
+  "model_name": "WDC WD40EFRX-68WT0N0",
+  "serial_number": "WD-WCC7K1234567",
+  "firmware_version": "82.00A82",
+  "user_capacity": {"blocks": 7814037168, "bytes": 4000787030016},
+  "smart_status": {"passed": false},
+  "temperature": {"current": 39},
+  "power_on_time": {"hours": 30211},
+  "power_cycle_count": 1090,
+  "ata_smart_attributes": {
+    "revision": 16,
+    "table": [
+      {
+        "id": 5,
+        "name": "Reallocated_Sector_Ct",
+        "value": 1,
+        "worst": 1,
+        "thresh": 10,
+        "when_failed": "FAILING_NOW",
+        "raw": {"value": 2048, "string": "2048"}
+      },
+      {
+        "id": 197,
+        "name": "Current_Pending_Sector",
+        "value": 1,
+        "worst": 1,
+        "thresh": 0,
+        "when_failed": "",
+        "raw": {"value": 64, "string": "64"}
+      },
+      {
+        "id": 198,
+        "name": "Offline_Uncorrectable",
+        "value": 1,
+        "worst": 1,
+        "thresh": 0,
+        "when_failed": "",
+        "raw": {"value": 12, "string": "12"}
+      },
+      {
+        "id": 199,
+        "name": "UDMA_CRC_Error_Count",
+        "value": 200,
+        "worst": 200,
+        "thresh": 0,
+        "when_failed": "",
+        "raw": {"value": 0, "string": "0"}
+      }
+    ]
+  },
+  "ata_smart_self_test_log": {
+    "standard": {
+      "table": [
+        {
+          "type": {"value": 2, "string": "Extended offline"},
+          "status": {"value": 64, "string": "Completed: read failure", "passed": false},
+          "lifetime_hours": 30200
+        }
+      ]
+    }
+  }
+}

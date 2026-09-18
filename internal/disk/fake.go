@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -273,3 +274,60 @@ func (f *FakeProvider) Format(ctx context.Context, dev string, fs FilesystemType
 }
 
 var _ Provider = (*FakeProvider)(nil)
+
+// RunCall records one call made through a FakeRunner.
+type RunCall struct {
+	Name string
+	Args []string
+}
+
+// FakeRunner is a scriptable Runner (CLAUDE.md): a test scripts exactly
+// what stdout and error a given argv returns, and can assert on every
+// call actually made — the property LinuxProvider's own tests need is
+// "smartctl was invoked with -n standby, as an argv, never a shell".
+type FakeRunner struct {
+	mu      sync.Mutex
+	outputs map[string][]byte
+	errs    map[string]error
+	calls   []RunCall
+}
+
+// NewFakeRunner returns a FakeRunner with nothing scripted.
+func NewFakeRunner() *FakeRunner {
+	return &FakeRunner{outputs: make(map[string][]byte), errs: make(map[string]error)}
+}
+
+func runnerKey(name string, args []string) string {
+	return strings.Join(append([]string{name}, args...), " ")
+}
+
+// Script sets the output and error a future call with this exact argv
+// returns.
+func (f *FakeRunner) Script(name string, args []string, output []byte, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := runnerKey(name, args)
+	f.outputs[key] = output
+	f.errs[key] = err
+}
+
+// Run implements Runner by returning whatever was scripted for this
+// exact argv, recording the call regardless.
+func (f *FakeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, RunCall{Name: name, Args: append([]string(nil), args...)})
+	key := runnerKey(name, args)
+	return f.outputs[key], f.errs[key]
+}
+
+// Calls returns every call made so far, in call order.
+func (f *FakeRunner) Calls() []RunCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]RunCall, len(f.calls))
+	copy(out, f.calls)
+	return out
+}
+
+var _ Runner = (*FakeRunner)(nil)

@@ -1,0 +1,20 @@
+{
+  "json_format_version": [1, 0],
+  "smartctl": {
+    "version": [7, 4],
+    "svn_revision": "5665",
+    "platform_info": "x86_64-linux-6.1.0-amd64",
+    "build_info": "(local build)",
+    "argv": ["smartctl", "-j", "-n", "standby", "-a", "/dev/sdc"],
+    "exit_status": 2,
+    "messages": [
+      {"string": "Device is in STANDBY mode, exit(2)", "severity": "error"}
+    ]
+  },
+  "device": {
+    "name": "/dev/sdc",
+    "info_name": "/dev/sdc",
+    "type": "sat",
+    "protocol": "ATA"
+  }
+}
