@@ -8,6 +8,14 @@ import (
 	"database/sql"
 )
 
+type AuditLog struct {
+	ID     int64          `json:"id"`
+	Actor  string         `json:"actor"`
+	Action string         `json:"action"`
+	Detail sql.NullString `json:"detail"`
+	At     string         `json:"at"`
+}
+
 type Job struct {
 	ID           string         `json:"id"`
 	Type         string         `json:"type"`
@@ -42,6 +50,14 @@ type Session struct {
 	UserID    string `json:"user_id"`
 	CreatedAt string `json:"created_at"`
 	ExpiresAt string `json:"expires_at"`
+}
+
+type SpinEvent struct {
+	ID        int64  `json:"id"`
+	Device    string `json:"device"`
+	FromState string `json:"from_state"`
+	ToState   string `json:"to_state"`
+	At        string `json:"at"`
 }
 
 type User struct {

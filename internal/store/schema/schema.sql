@@ -115,6 +115,41 @@ CREATE TABLE sessions (
 CREATE INDEX sessions_user_id_idx ON sessions (user_id);
 CREATE INDEX sessions_expires_at_idx ON sessions (expires_at);
 
+-- Spin-state events (#110, Q32, Q74): every observed standby/active
+-- transition, persisted so the wake-events view (doc 03 §3.3a) survives a
+-- daemon restart — internal/disk's SpinEventLog is the in-process record a
+-- single run builds while polling; this table is where that history
+-- actually lives across restarts. Retained for two years, like the audit
+-- log below, and unlike metrics.db's downsampled SMART/temperature time
+-- series (a separate database, Q74) or a job's captured stdout/stderr
+-- (compressed files, kept 90 days — internal/job's LogStore).
+CREATE TABLE spin_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device TEXT NOT NULL,
+    from_state TEXT NOT NULL CHECK (from_state IN ('active', 'standby')),
+    to_state TEXT NOT NULL CHECK (to_state IN ('active', 'standby')),
+    at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX spin_events_at_idx ON spin_events (at);
+CREATE INDEX spin_events_device_idx ON spin_events (device);
+
+-- Audit log (#110, doc 01 §7, Q74): configuration changes and destructive
+-- actions, with actor and timestamp. This table and its retention are
+-- this issue's scope; the write path — calling INSERT from an actual
+-- handler — belongs to whichever issue adds actor logging to internal/api
+-- (doc 01 §7's "audit-logged" requirements on account recovery and
+-- passthrough attach/detach, doc 14 §3).
+CREATE TABLE audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    detail TEXT,
+    at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX audit_log_at_idx ON audit_log (at);
+
 -- The machine key's check value (#22, Q28). Written once, the moment
 -- this installation's machine key is first generated, and read at every
 -- later start (auth.LoadOrGenerateMachineKey) to prove a candidate key
