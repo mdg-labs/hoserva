@@ -42,6 +42,15 @@ override_dh_shlibdeps:
 
 override_dh_strip:
 
+# dh_makeshlibs is a separate dh sequence step from dh_shlibdeps (skipped
+# above) and needs its own override: it shells out to
+# $(DEB_HOST_GNU_TYPE)-objdump to inspect each binary's SONAME/dependency
+# info, and the aarch64 cross-objdump isn't installed on an amd64 runner
+# building the arm64 .deb ("Can't exec aarch64-linux-gnu-objdump"). Same
+# reasoning as dh_shlibdeps: these binaries are fully static, so there is
+# nothing here for it to generate.
+override_dh_makeshlibs:
+
 # dh_dwz tries to deduplicate/compress ELF debug info across the built
 # binaries, but Go's own DWARF output uses compressed .debug_abbrev
 # sections dwz doesn't understand ("Found compressed .debug_abbrev
