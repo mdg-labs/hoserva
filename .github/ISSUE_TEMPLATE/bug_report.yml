@@ -1,0 +1,83 @@
+name: Bug report
+description: Something in Hoserva isn't working as expected.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The more of this you can
+        fill in, the faster it can be triaged and reproduced.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect instead?
+      description: A clear description of the behaviour you saw and what you expected.
+      placeholder: |
+        What happened:
+        What I expected:
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps, in order, that trigger this.
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Hoserva version or commit
+      description: Output of `hoserva version`, or the git commit if you built from source.
+      placeholder: e.g. v0.3.1 or commit 4bdc7e6
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Debian version, and a summary of your disk/pool layout (number of disks, parity disks, pool size).
+      placeholder: |
+        Debian version:
+        Disk/pool layout:
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >-
+        If you have it, paste the output of `hoserva doctor` or
+        `hoserva diagnostics -o bundle.tar.zst` (the bundle redacts secrets
+        before it's written). If those aren't available yet, relevant daemon
+        logs or config are still useful.
+      render: text
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Best guess is fine — triage will confirm or correct this.
+      options:
+        - area:storage (disks, pool mounts, parity, threshold guard, mover)
+        - area:api (daemon, API, store, jobs, config generation, notifications)
+        - area:web (web UI)
+        - area:cli (the hoserva CLI)
+        - area:shares (SMB/NFS shares, users, permissions)
+        - area:containers (container management, templates, catalog)
+        - area:vm (VM management, libvirt/KVM, passthrough)
+        - area:migration (Unraid migration)
+        - area:backup (config and appdata backup)
+        - area:packaging (.deb, apt repo, ISO)
+        - area:devenv (loop-device lab, VMs, test corpora, CI)
+        - area:site (public docs site)
+        - not sure
+    validations:
+      required: false
