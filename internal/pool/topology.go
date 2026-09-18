@@ -9,11 +9,13 @@ import (
 // CatchAllPath is where the catch-all pool mounts (doc 02 §1, Q12).
 const CatchAllPath = "/mnt/user"
 
-// arrayRoot is where the mover's own array-only write targets mount
+// ArrayRootPath is where the mover's own array-only write targets mount
 // (doc 02 §1, Q12; doc 09 §2) — a separate hierarchy from CatchAllPath,
 // never nested under it, so it needs no RequiresMountsFor= dependency
-// on the catch-all.
-const arrayRoot = "/run/hoserva/array"
+// on the catch-all. Exported so a caller building unit names from paths
+// (config.WritePoolMounts's own reconciliation) can recognize a mover
+// target unit without duplicating this path as a literal.
+const ArrayRootPath = "/run/hoserva/array"
 
 // SharePath returns share's own mount point under the catch-all.
 func SharePath(share string) string {
@@ -22,7 +24,7 @@ func SharePath(share string) string {
 
 // MoverTargetPath returns share's own mover write-target mount point.
 func MoverTargetPath(share string) string {
-	return arrayRoot + "/" + share
+	return ArrayRootPath + "/" + share
 }
 
 // ErrNoDataDisks is returned by any constructor below asked to build

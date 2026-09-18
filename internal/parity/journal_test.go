@@ -3,6 +3,7 @@ package parity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -66,6 +67,49 @@ func TestJournal_CountsDistinctEntries(t *testing.T) {
 	}
 	if _, ok := names["b.txt"]; !ok {
 		t.Fatalf("b.txt missing from Files: %+v", files)
+	}
+}
+
+// TestJournal_Snapshot_MatchesSummaryAndFiles is FixPendingFiles's own
+// atomicity requirement (doc 03 §3.5): a single Snapshot call must report
+// the same Count as len(Files), never an earlier or later moment than the
+// files it lists beside it — the property two separate Summary/Files
+// calls can't guarantee under a concurrent journal write.
+func TestJournal_Snapshot_MatchesSummaryAndFiles(t *testing.T) {
+	w := NewFakeWatcher()
+	j := NewJournal(w, "")
+	t.Cleanup(func() { _ = j.Close() })
+	ctx := context.Background()
+
+	if err := j.AddDisk(ctx, "disk1", "/mnt/disk1"); err != nil {
+		t.Fatalf("AddDisk: %v", err)
+	}
+	pushOne(w, "/mnt/disk1", ChangeEvent{Kind: ChangeCreate, ID: "dir1/a.txt", Name: "a.txt"})
+	pushOne(w, "/mnt/disk1", ChangeEvent{Kind: ChangeCreate, ID: "dir1/b.txt", Name: "b.txt"})
+	waitFor(t, time.Second, func() bool {
+		s, err := j.Summary("disk1")
+		return err == nil && s.Count == 2
+	})
+
+	summary, files, err := j.Snapshot("disk1")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if summary.Count != len(files) {
+		t.Fatalf("Snapshot: Count = %d but Files has %d entries — not the same moment", summary.Count, len(files))
+	}
+	if summary.Count != 2 {
+		t.Fatalf("Snapshot: Count = %d, want 2", summary.Count)
+	}
+}
+
+func TestJournal_Snapshot_UnknownDiskErrors(t *testing.T) {
+	w := NewFakeWatcher()
+	j := NewJournal(w, "")
+	t.Cleanup(func() { _ = j.Close() })
+
+	if _, _, err := j.Snapshot("nope"); !errors.Is(err, ErrDiskNotTracked) {
+		t.Fatalf("Snapshot: got %v, want ErrDiskNotTracked", err)
 	}
 }
 

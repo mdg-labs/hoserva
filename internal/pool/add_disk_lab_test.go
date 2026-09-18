@@ -76,7 +76,7 @@ func TestLabAppendDataDisk_RemountJoinsTheNewDiskWithNoRebuild(t *testing.T) {
 	}
 	grownMount.Where = catchAllWhere
 
-	if err := mounter.Remount(ctx, grownMount); err != nil {
+	if err := mounter.Remount(ctx, catchAll, grownMount); err != nil {
 		t.Fatalf("Remount: %v", err)
 	}
 
@@ -119,6 +119,9 @@ func createLoopDiskForPoolTest(t *testing.T, lab, name, mountpoint string) strin
 		t.Fatalf("losetup --find --show %s: %v", img, err)
 	}
 	dev := trimNewline(out)
+	t.Cleanup(func() {
+		_, _ = r.Run(context.Background(), "losetup", "-d", dev)
+	})
 
 	if _, err := r.Run(ctx, "mkfs.xfs", "-q", dev); err != nil {
 		t.Fatalf("mkfs.xfs %s: %v", dev, err)
@@ -131,7 +134,6 @@ func createLoopDiskForPoolTest(t *testing.T, lab, name, mountpoint string) strin
 	}
 	t.Cleanup(func() {
 		_, _ = r.Run(context.Background(), "umount", mountpoint)
-		_, _ = r.Run(context.Background(), "losetup", "-d", dev)
 	})
 	return dev
 }

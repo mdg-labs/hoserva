@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
@@ -58,13 +59,14 @@ func TestMounter_Unmount(t *testing.T) {
 // mount point.
 func TestMounter_Remount(t *testing.T) {
 	r := disk.NewFakeRunner()
+	previous := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
 	m := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW:/mnt/disk2=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
 	r.Script("fusermount", []string{"-u", "/mnt/user"}, nil, nil)
 	argv := m.Argv()
 	r.Script(argv[0], argv[1:], nil, nil)
 
 	mounter := Mounter{Runner: r}
-	if err := mounter.Remount(context.Background(), m); err != nil {
+	if err := mounter.Remount(context.Background(), previous, m); err != nil {
 		t.Fatalf("Remount: %v", err)
 	}
 
@@ -79,12 +81,74 @@ func TestMounter_Remount_PropagatesUnmountError(t *testing.T) {
 	wantErr := errors.New("busy")
 	r.Script("fusermount", []string{"-u", "/mnt/user"}, nil, wantErr)
 
-	m := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	previous := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	m := previous
 	mounter := Mounter{Runner: r}
-	if err := mounter.Remount(context.Background(), m); !errors.Is(err, wantErr) {
+	if err := mounter.Remount(context.Background(), previous, m); !errors.Is(err, wantErr) {
 		t.Fatalf("Remount: got %v, want it to wrap %v", err, wantErr)
 	}
 	if len(r.Calls()) != 1 {
 		t.Fatalf("Remount: got calls %+v, want mount never attempted after a failed unmount", r.Calls())
+	}
+}
+
+// TestMounter_Remount_RollsBackOnMountFailure is this issue's central
+// safety property: if the grown mount fails, Remount must not leave
+// mnt.Where unmounted — it re-mounts previous so a malformed branch list
+// degrades to "the expansion didn't take" rather than a storage outage.
+func TestMounter_Remount_RollsBackOnMountFailure(t *testing.T) {
+	r := disk.NewFakeRunner()
+	previous := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	grown := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW:/mnt/disk2=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+
+	r.Script("fusermount", []string{"-u", "/mnt/user"}, nil, nil)
+	wantErr := errors.New("mergerfs: invalid branch")
+	grownArgv := grown.Argv()
+	r.Script(grownArgv[0], grownArgv[1:], nil, wantErr)
+	previousArgv := previous.Argv()
+	r.Script(previousArgv[0], previousArgv[1:], nil, nil)
+
+	mounter := Mounter{Runner: r}
+	if err := mounter.Remount(context.Background(), previous, grown); !errors.Is(err, wantErr) {
+		t.Fatalf("Remount: got %v, want it to wrap %v", err, wantErr)
+	}
+
+	calls := r.Calls()
+	if len(calls) != 3 {
+		t.Fatalf("Remount: got calls %+v, want [fusermount, failed mergerfs, rollback mergerfs]", calls)
+	}
+	if calls[0].Name != "fusermount" || calls[1].Name != "mergerfs" || calls[2].Name != "mergerfs" {
+		t.Fatalf("Remount: got calls %+v, want [fusermount mergerfs mergerfs]", calls)
+	}
+	if calls[2].Args[len(calls[2].Args)-2] != "/mnt/disk1=RW" {
+		t.Fatalf("Remount: rollback call args %+v, want the previous (ungrown) branch list", calls[2].Args)
+	}
+}
+
+// TestMounter_Remount_ReportsRollbackFailureAlongsideTheOriginalError
+// covers the case where the pool can't even go back to how it was: both
+// errors must reach the caller, since losing the original failure would
+// hide why Remount stopped short, and losing the rollback failure would
+// hide that mnt.Where is now unmounted.
+func TestMounter_Remount_ReportsRollbackFailureAlongsideTheOriginalError(t *testing.T) {
+	r := disk.NewFakeRunner()
+	previous := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	grown := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW:/mnt/disk2=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+
+	r.Script("fusermount", []string{"-u", "/mnt/user"}, nil, nil)
+	mountErr := errors.New("mergerfs: invalid branch")
+	grownArgv := grown.Argv()
+	r.Script(grownArgv[0], grownArgv[1:], nil, mountErr)
+	rollbackErr := errors.New("mergerfs: still invalid")
+	previousArgv := previous.Argv()
+	r.Script(previousArgv[0], previousArgv[1:], nil, rollbackErr)
+
+	mounter := Mounter{Runner: r}
+	err := mounter.Remount(context.Background(), previous, grown)
+	if !errors.Is(err, mountErr) {
+		t.Fatalf("Remount: got %v, want it to wrap the original mount error %v", err, mountErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), rollbackErr.Error()) {
+		t.Fatalf("Remount: got %v, want it to also mention the rollback failure %v", err, rollbackErr)
 	}
 }

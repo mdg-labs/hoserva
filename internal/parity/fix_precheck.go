@@ -27,11 +27,7 @@ type PendingFilesForFix struct {
 // comment), so this is just naming that pair against the disk being
 // fixed and the sync time the caller is displaying alongside it.
 func FixPendingFiles(journal *Journal, diskID string, lastSyncAt time.Time) (PendingFilesForFix, error) {
-	summary, err := journal.Summary(diskID)
-	if err != nil {
-		return PendingFilesForFix{}, err
-	}
-	files, err := journal.Files(diskID)
+	summary, files, err := journal.Snapshot(diskID)
 	if err != nil {
 		return PendingFilesForFix{}, err
 	}
