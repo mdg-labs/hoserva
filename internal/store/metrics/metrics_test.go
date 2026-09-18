@@ -53,7 +53,7 @@ func TestStore_Insert_SameSecondOverwrites(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := s.Count(ctx, Raw)
+	n, err := s.count(ctx, Raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,10 +84,10 @@ func TestStore_Downsample_KeepsRecentRawUntouched(t *testing.T) {
 		t.Fatalf("Downsample: %v", err)
 	}
 
-	if n, err := s.Count(ctx, Raw); err != nil || n != 1 {
+	if n, err := s.count(ctx, Raw); err != nil || n != 1 {
 		t.Fatalf("Count(Raw) = %d, %v, want 1, nil", n, err)
 	}
-	if n, err := s.Count(ctx, Hourly); err != nil || n != 0 {
+	if n, err := s.count(ctx, Hourly); err != nil || n != 0 {
 		t.Fatalf("Count(Hourly) = %d, %v, want 0, nil", n, err)
 	}
 }
@@ -115,7 +115,7 @@ func TestStore_Downsample_RollsExpiredRawIntoHourlyAverage(t *testing.T) {
 		t.Fatalf("Downsample: %v", err)
 	}
 
-	if n, err := s.Count(ctx, Raw); err != nil || n != 0 {
+	if n, err := s.count(ctx, Raw); err != nil || n != 0 {
 		t.Fatalf("Count(Raw) after rollup = %d, %v, want 0, nil", n, err)
 	}
 	hourly, err := s.Values(ctx, Hourly, "smart_temperature", "/dev/sdb")
@@ -169,7 +169,7 @@ func TestStore_Downsample_RollsUpMultipleClosedBucketsInOnePass(t *testing.T) {
 		t.Fatalf("Downsample: %v", err)
 	}
 
-	if n, err := s.Count(ctx, Raw); err != nil || n != 0 {
+	if n, err := s.count(ctx, Raw); err != nil || n != 0 {
 		t.Fatalf("Count(Raw) after rollup = %d, %v, want 0, nil", n, err)
 	}
 
@@ -209,7 +209,7 @@ func TestStore_Downsample_RollsExpiredHourlyIntoDailyAverage(t *testing.T) {
 		t.Fatalf("Downsample: %v", err)
 	}
 
-	if n, err := s.Count(ctx, Hourly); err != nil || n != 0 {
+	if n, err := s.count(ctx, Hourly); err != nil || n != 0 {
 		t.Fatalf("Count(Hourly) after rollup = %d, %v, want 0, nil", n, err)
 	}
 	daily, err := s.Values(ctx, Daily, "cpu_percent", "")

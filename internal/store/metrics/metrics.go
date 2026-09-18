@@ -177,9 +177,10 @@ func rollUp(ctx context.Context, tx *sql.Tx, from, to Resolution, bucketSeconds,
 	return nil
 }
 
-// Count reports how many samples exist at resolution — a test seam for
-// Downsample, not a query product code calls.
-func (s *Store) Count(ctx context.Context, resolution Resolution) (int, error) {
+// count reports how many samples exist at resolution — a test seam for
+// Downsample, not a query product code calls, so it stays unexported
+// rather than adding to this package's public API surface.
+func (s *Store) count(ctx context.Context, resolution Resolution) (int, error) {
 	var n int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM samples WHERE resolution = ?`, resolution).Scan(&n); err != nil {
 		return 0, fmt.Errorf("metrics: counting %s samples: %w", resolution, err)

@@ -36,7 +36,7 @@ func TestHistory_RecordAndCountSpinEvents(t *testing.T) {
 		t.Fatalf("RecordSpinEvent: %v", err)
 	}
 
-	n, err := h.CountSpinEvents(ctx)
+	n, err := h.countSpinEvents(ctx)
 	if err != nil {
 		t.Fatalf("CountSpinEvents: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestHistory_RecordAndCountAuditLog(t *testing.T) {
 		t.Fatalf("RecordAuditEntry with no detail: %v", err)
 	}
 
-	n, err := h.CountAuditLog(ctx)
+	n, err := h.countAuditLog(ctx)
 	if err != nil {
 		t.Fatalf("CountAuditLog: %v", err)
 	}
@@ -99,10 +99,10 @@ func TestHistory_PruneHistory_DeletesOnlyOlderThanTwoYears(t *testing.T) {
 		t.Fatalf("PruneHistory: %v", err)
 	}
 
-	if n, err := h.CountSpinEvents(ctx); err != nil || n != 1 {
+	if n, err := h.countSpinEvents(ctx); err != nil || n != 1 {
 		t.Fatalf("CountSpinEvents after prune = %d, %v, want 1, nil", n, err)
 	}
-	if n, err := h.CountAuditLog(ctx); err != nil || n != 1 {
+	if n, err := h.countAuditLog(ctx); err != nil || n != 1 {
 		t.Fatalf("CountAuditLog after prune = %d, %v, want 1, nil", n, err)
 	}
 }
