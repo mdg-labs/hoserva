@@ -1,0 +1,32 @@
+#!/bin/sh
+# postrm (doc 04 §2, safety-critical): on purge, removes hoserva's own
+# state — /etc/hoserva (config, machine key) and everything under
+# /var/lib/hoserva except stacks/ — but /var/lib/hoserva/stacks/ itself,
+# a user's own Docker Compose stacks, is never removed by any path here,
+# matching the same guarantee `dpkg --purge` already gives for Compose
+# files nothing else in this list touches. Neither this nor the plain
+# `remove` case ever references a data-disk path (/mnt) — there is
+# nothing on a data disk that belongs to this package.
+#
+# HOSERVA_TEST_ROOT lets scripts/release/test-postrm-purge.sh exercise
+# this exact script against a throwaway tree instead of a real root —
+# it is never set outside that test.
+set -e
+
+root="${HOSERVA_TEST_ROOT:-}"
+
+case "$1" in
+  purge)
+    rm -rf "$root/etc/hoserva"
+    if [ -d "$root/var/lib/hoserva" ]; then
+      find "$root/var/lib/hoserva" -mindepth 1 -maxdepth 1 ! -name stacks -exec rm -rf {} +
+    fi
+    if [ -z "$root" ] && getent group hoserva >/dev/null 2>&1; then
+      delgroup --system hoserva >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

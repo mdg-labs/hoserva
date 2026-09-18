@@ -1,0 +1,15 @@
+[Unit]
+Description=Hoserva storage management daemon
+Documentation=https://hoserva.dev/docs
+After=network.target local-fs.target
+
+[Service]
+# Runs as root (doc 01 §7): the API partitions disks and manages
+# mergerfs/SnapRAID mounts, and there is no way to do that as an
+# unprivileged user.
+ExecStart=/usr/bin/hoservad
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

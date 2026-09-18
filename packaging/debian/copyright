@@ -1,0 +1,16 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: hoserva
+Source: https://github.com/mdg-labs/hoserva
+
+Files: *
+Copyright: 2026 the Hoserva contributors
+License: AGPL-3.0-or-later
+
+License: AGPL-3.0-or-later
+ Debian 13's /usr/share/common-licenses/ does not carry the AGPL (it is
+ not one of the "common" licenses there), so this package installs the
+ repository's own LICENSE file — the full text of the GNU Affero General
+ Public License version 3 or, at your option, any later version — to
+ /usr/share/doc/hoserva/LICENSE (debian/hoserva.docs) instead.
+ .
+ See /usr/share/doc/hoserva/LICENSE for the full license text.
