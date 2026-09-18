@@ -1,0 +1,33 @@
+name: Documentation issue
+description: Something in Hoserva's documentation is wrong, unclear, or missing.
+title: "docs: "
+labels:
+  - docs
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This covers both the design docs (`docs/internal/`) and, once it
+        exists, the public docs site.
+  - type: input
+    id: location
+    attributes:
+      label: Which doc or page?
+      description: A file path (e.g. `docs/internal/02-storage-engine.md`), a section heading, or a docs-site URL.
+      placeholder: docs/internal/02-storage-engine.md, section "Threshold guard"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's wrong or missing?
+      description: Incorrect, outdated, unclear, or absent — describe it.
+    validations:
+      required: true
+  - type: textarea
+    id: suggested-fix
+    attributes:
+      label: Suggested fix
+      description: If you already have wording or structure in mind, share it here.
+    validations:
+      required: false
