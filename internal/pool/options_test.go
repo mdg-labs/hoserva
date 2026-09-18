@@ -18,3 +18,11 @@ func TestOptions_Render(t *testing.T) {
 		t.Fatalf("DefaultOptions().render():\ngot:  %s\nwant: %s", got, want)
 	}
 }
+
+func TestOptions_Render_FallsBackOnEmptyMinFreeSpace(t *testing.T) {
+	got := Options{}.render()
+	want := "moveonenospc=true,dropcacheonclose=true,minfreespace=50G,cache.files=partial,cache.entry=1,cache.attr=1,cache.negative_entry=1,cache.statfs=0"
+	if got != want {
+		t.Fatalf("Options{}.render():\ngot:  %s\nwant: %s (DefaultOptions()'s own minfreespace, not empty)", got, want)
+	}
+}
