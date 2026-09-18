@@ -12,6 +12,12 @@
       "sourceType": "github",
       "skillPath": "apps/ui/skills/coss-particles/SKILL.md",
       "computedHash": "a3448e835713342e4625d1f97a38265fea03cf840723ad23eeef0b53dcc21609"
+    },
+    "sqlite-migrate": {
+      "source": "mdg-labs/sqlite-migrate",
+      "sourceType": "github",
+      "skillPath": "skills/sqlite-migrate/SKILL.md",
+      "computedHash": "bcb12102e90c40b15d4c3f6ba9c724b8f15b12262b74a7c0021306f77774c75c"
     }
   }
 }
