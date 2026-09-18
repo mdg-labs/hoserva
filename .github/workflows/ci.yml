@@ -131,11 +131,15 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: web/.nvmrc
-      # debhelper, dpkg-dev and fakeroot are the only tools
+      # debhelper, dpkg-dev, fakeroot and build-essential are the tools
       # packaging/debian/rules needs beyond Go and Node, both already set
       # up above — everything else (dpkg-buildpackage, dh, dpkg-deb) ships
-      # with Ubuntu's base image.
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot
+      # with Ubuntu's base image. dpkg-checkbuilddeps always requires
+      # build-essential regardless of what debian/control declares (Debian
+      # policy assumes every build environment has it), so it must be
+      # installed here even though this package's own Build-Depends never
+      # names it.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot build-essential
       # A fixed placeholder tag: this job only proves the package still
       # builds on every push, exactly like the `build` job above does for
       # the plain Go cross-compile. release.yml builds and publishes the
