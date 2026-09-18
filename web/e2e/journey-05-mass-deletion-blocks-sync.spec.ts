@@ -16,7 +16,23 @@ import { expect, test } from "@playwright/test";
 // non-negotiable in the areas that implement it, so this journey stays
 // wired to the real app and fails loudly and specifically, naming the
 // missing surface, until the mover/threshold-guard UI lands.
+//
+// test.fail() below is load-bearing, not decoration: the single
+// assertion this test currently has is "the placeholder is gone", which
+// would also pass the moment /shares renders *any* non-placeholder
+// content — even a page with no deletion, diff or sync-block UI at all —
+// reporting a false PASS for the guard's own journey. test.fail() makes
+// Playwright report THIS test as a failure the day that assertion starts
+// passing, forcing steps 1-5 below to actually be filled in (and this
+// marker removed) before the suite can call the journey done.
 test("mass deletion blocks the sync", async ({ page }) => {
+  test.fail(
+    true,
+    "expected to keep failing until the mover/threshold-guard UI (doc 02 §2, doc 09) " +
+      "lands and steps 1-5 below are implemented — an unexpected pass here means only " +
+      "that the placeholder is gone, not that the sync guard actually works",
+  );
+
   await page.goto("/shares");
 
   const placeholder = page.getByText("This section is a placeholder", { exact: false });
