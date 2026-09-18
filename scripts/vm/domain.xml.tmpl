@@ -1,0 +1,111 @@
+<!--
+  Libvirt domain XML template for one L3 test VM (doc 06 §4). Rendered by
+  create-vm.sh, never hand-edited per lab — a generated artifact, the same
+  posture doc 14 §2 holds Hoserva's own future domain XML to.
+
+  Networking is deliberately usermode (QEMU's own SLIRP stack): under
+  qemu:///session there is no privileged helper to attach a bridge or a
+  libvirt-managed NAT network, and usermode networking needs no host-side
+  network config, no polkit interaction and leaves nothing standing after
+  the domain is undefined — exactly the posture CLAUDE.md requires (never
+  touch host network/mount config). The two hostfwd rules are this lab's
+  own SSH and hoservad TLS ports, bound to loopback only (127.0.0.1) so
+  nothing here is ever reachable off the dev host.
+
+  hostfwd is expressed through <qemu:commandline> (-netdev user,hostfwd=…)
+  rather than libvirt's native <interface type='user'> device: libvirt's
+  own declarative <portForward> element requires the 'passt' backend,
+  which this host does not have installed (and installing it would be a
+  package-manager install this project's agents never run) — confirmed by
+  running this exact template against this host's real libvirt/QEMU
+  (`unsupported configuration: The <portForward> element can only be used
+  with the 'passt' backend`). qemu:commandline's own SLIRP hostfwd needs
+  no extra package, matching the plain SLIRP QEMU already ships.
+
+  machine='pc' (i440fx), not 'q35', and the explicit <video> device
+  below: both found empirically on this host, by bisecting a hand-built
+  qemu-system-x86_64 invocation one flag at a time (never guessed at)
+  after the guest kept resetting under `make vm-up` — the serial log
+  showed GRUB's "Booting `Debian GNU/Linux'" banner replayed hundreds of
+  times over several minutes, with Linux never once printing a line.
+
+  Root cause, isolated by bisection down to one variable at a time:
+  libvirt always passes QEMU `-nodefaults` (so a domain never depends on
+  QEMU's own default-device guesses); on this host, with `-nodefaults`
+  and NO video device at all — this harness has no graphics, only the
+  serial console, so there had never seemed to be a reason to add one —
+  SeaBIOS resets the machine right as it hands off to the Linux kernel,
+  every single time, with or without q35, regardless of which PCI slot
+  the boot disk sits on. Reproduced outside libvirt entirely with a bare
+  qemu-system-x86_64 invocation (ruling out libvirtd, its QMP heartbeat,
+  and its seccomp sandbox), and confirmed with a true single-variable
+  A/B on that same invocation: identical in every other respect,
+  `-nodefaults` alone reproduces the reset, and adding back one explicit
+  `-vga std` on top of `-nodefaults` boots the identical disk clean
+  every time — the fix is exactly this <video> element, never omitted
+  even though its framebuffer is never read. 'pc' over 'q35' is kept as
+  a second, independent finding from earlier in this same bisection
+  (q35's default PCIe root-port topology and its default ICH9 TCO
+  watchdog each independently reproduced a similarly-shaped reset loop
+  before <video> was identified as q35's own trigger too; 'pc' is the
+  simpler machine type and was not revisited against the <video> fix,
+  so it remains the one this template uses).
+
+  Placeholders (__UPPER_CASE__) are substituted by create-vm.sh with
+  values it built itself (paths under this lab's own .vm/<id>/, numeric
+  ports, its own generated MAC) — never with user- or template-supplied
+  text, so this substitution is plain text replacement, not a shell or
+  XML injection surface.
+-->
+<domain type='kvm' xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
+  <name>__DOMAIN_NAME__</name>
+  <memory unit='MiB'>__MEMORY_MIB__</memory>
+  <currentMemory unit='MiB'>__MEMORY_MIB__</currentMemory>
+  <vcpu>__VCPU_COUNT__</vcpu>
+  <os>
+    <type arch='x86_64' machine='pc'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-passthrough' check='none'/>
+  <clock offset='utc'/>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>destroy</on_crash>
+  <devices>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='__OS_DISK_PATH__'/>
+      <target dev='vda' bus='virtio'/>
+      <address type='pci' domain='0x0000' bus='0x00' slot='0x09' function='0x0'/>
+    </disk>
+__ARRAY_DISKS__
+    <disk type='file' device='cdrom'>
+      <driver name='qemu' type='raw'/>
+      <source file='__SEED_ISO_PATH__'/>
+      <target dev='hda' bus='ide'/>
+      <readonly/>
+    </disk>
+    <serial type='pty'>
+      <target type='isa-serial' port='0'/>
+      <log file='__SERIAL_LOG_PATH__' append='off'/>
+    </serial>
+    <!-- See this file's header comment: required for a clean boot on
+         this host under `-nodefaults`, even though nothing ever reads
+         its framebuffer — there is no <graphics> device, only the
+         serial console above. -->
+    <video>
+      <model type='vga' vram='16384' heads='1' primary='yes'/>
+    </video>
+  </devices>
+  <qemu:commandline>
+    <qemu:arg value='-netdev'/>
+    <qemu:arg value='user,id=hoservanet0,hostfwd=tcp:127.0.0.1:__SSH_PORT__-:22,hostfwd=tcp:127.0.0.1:__HTTPS_PORT__-:8008'/>
+    <qemu:arg value='-device'/>
+    <qemu:arg value='virtio-net-pci,netdev=hoservanet0,mac=__MAC_ADDRESS__,bus=pci.0,addr=0x14'/>
+  </qemu:commandline>
+</domain>
