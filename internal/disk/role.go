@@ -251,4 +251,3 @@ func (p TopologyPlan) findDevice(dev string) (AssignedDisk, bool) {
 	}
 	return AssignedDisk{}, false
 }
-
