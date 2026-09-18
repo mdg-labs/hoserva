@@ -22,8 +22,19 @@ SUMS_URL="${HOSERVA_VM_IMAGE_SUMS_URL:-https://cloud.debian.org/images/cloud/tri
 IMAGE_NAME="debian-13-generic-amd64.qcow2"
 CACHED="$VM_CACHE_DIR/$IMAGE_NAME"
 
+cache_valid=false
 if [[ -s "$CACHED" && -s "$CACHED.sha512" ]]; then
-  echo "fetch-base-image: using cached $CACHED" >&2
+  cached_sum="$(cat "$CACHED.sha512")"
+  actual_sum="$(sha512sum "$CACHED" | awk '{print $1}')"
+  if [[ "$actual_sum" == "$cached_sum" ]]; then
+    cache_valid=true
+  else
+    echo "fetch-base-image: cached $CACHED failed re-verification (expected $cached_sum, got $actual_sum) — refusing to boot it, re-downloading" >&2
+  fi
+fi
+
+if $cache_valid; then
+  echo "fetch-base-image: using cached $CACHED (re-verified against $CACHED.sha512)" >&2
 else
   sums_tmp="$(mktemp)"
   tmp_img="$(mktemp "$VM_CACHE_DIR/.download.XXXXXX")"
