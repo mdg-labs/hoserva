@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 )
 
 func TestMountUnitController_MountAndUnmount(t *testing.T) {
-	unit := MountUnit{Where: "/mnt/disk1", UUID: "1234", Filesystem: XFS, DeviceTimeout: 30 * time.Second}
+	unit := MountUnit{Where: "/mnt/disk1", UUID: "1234", Filesystem: XFS}
 	r := NewFakeRunner()
 	r.Script("systemctl", []string{"start", "mnt-disk1.mount"}, nil, nil)
 	r.Script("systemctl", []string{"stop", "mnt-disk1.mount"}, nil, nil)
