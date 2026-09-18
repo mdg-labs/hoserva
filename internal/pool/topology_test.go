@@ -38,6 +38,36 @@ func TestCatchAllMount_ErrorsOnNoDataDisks(t *testing.T) {
 	}
 }
 
+// TestAppendDataDisk_GrowsTheBranchList is doc 02 §4 "Adding a disk" step
+// 5: the new mount joins the existing list, in the order it was
+// discovered, without disturbing any of the disks already there.
+func TestAppendDataDisk_GrowsTheBranchList(t *testing.T) {
+	got, err := AppendDataDisk(testDisks, "/mnt/disk4")
+	if err != nil {
+		t.Fatalf("AppendDataDisk: %v", err)
+	}
+	want := []string{"/mnt/disk1", "/mnt/disk2", "/mnt/disk3", "/mnt/disk4"}
+	if len(got) != len(want) {
+		t.Fatalf("AppendDataDisk: got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("AppendDataDisk: got %v, want %v", got, want)
+		}
+	}
+	// The original slice must be untouched — a caller may still hold and
+	// use it (e.g. to build the old Mount it's about to remount over).
+	if len(testDisks) != 3 {
+		t.Fatalf("AppendDataDisk mutated its input: %v", testDisks)
+	}
+}
+
+func TestAppendDataDisk_RefusesADuplicateMount(t *testing.T) {
+	if _, err := AppendDataDisk(testDisks, "/mnt/disk2"); !errors.Is(err, ErrDataDiskAlreadyPresent) {
+		t.Fatalf("AppendDataDisk: got %v, want ErrDataDiskAlreadyPresent", err)
+	}
+}
+
 func TestShareMount_CacheThenMove(t *testing.T) {
 	share := Share{Name: "movies", CacheMode: CacheThenMove, CreatePolicy: KeepFoldersTogether}
 	m, err := ShareMount(share, testDisks, "/mnt/cache", DefaultOptions())

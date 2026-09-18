@@ -3,6 +3,7 @@ package parity
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -55,7 +56,7 @@ func TestFakeEngine_Status_Scripted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Status: got %+v, want %+v", got, want)
 	}
 }

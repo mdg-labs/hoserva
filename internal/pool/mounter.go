@@ -36,3 +36,16 @@ func (m Mounter) Unmount(ctx context.Context, where string) error {
 	}
 	return nil
 }
+
+// Remount brings mnt back up with a changed branch list (doc 02 §4
+// "Adding a disk" step 6, "Remount, regenerate configs"): unmount
+// whatever currently serves mnt.Where, then mount mnt itself. mergerfs
+// itself does no parity or placement computation on this — "no rebuild",
+// the property doc 02 §4 says the UI must state explicitly — so the
+// pool's added capacity is available the moment mnt.Where is back up.
+func (m Mounter) Remount(ctx context.Context, mnt Mount) error {
+	if err := m.Unmount(ctx, mnt.Where); err != nil {
+		return err
+	}
+	return m.Mount(ctx, mnt)
+}

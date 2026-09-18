@@ -7,6 +7,7 @@ package parity
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 )
 
@@ -160,6 +161,28 @@ type ParityStatus struct {
 	ChangedSinceSync int
 	DataDisks        int
 	ParityDisks      int
+	// DataMounts maps SnapRAID's own disk id ("d1") to the mount path the
+	// running config assigns it, straight from the config `status` itself
+	// just echoed back — the mapping FixOpts.Disk and CheckOpts.Disk need
+	// to target one disk by the label snapraid uses (doc 02 §4
+	// "Replacing a failed disk" step 4, `snapraid fix -d dN`).
+	DataMounts map[string]string
+}
+
+// DataDiskLabel returns the SnapRAID disk id ("d1", "d2", ...) whose
+// DataMounts entry is mount, for building a FixOpts or CheckOpts targeting
+// one disk by mount point rather than by SnapRAID's own internal label
+// (doc 02 §4 "Replacing a failed disk" step 4). Paths are compared after
+// filepath.Clean, so an equivalent spelling (a trailing slash, say) still
+// matches.
+func (s ParityStatus) DataDiskLabel(mount string) (string, bool) {
+	clean := filepath.Clean(mount)
+	for id, m := range s.DataMounts {
+		if filepath.Clean(m) == clean {
+			return id, true
+		}
+	}
+	return "", false
 }
 
 // Engine is the interface every subsystem touching SnapRAID sits behind

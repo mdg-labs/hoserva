@@ -60,6 +60,19 @@ func TestParseStatus_NewArray(t *testing.T) {
 	if want := time.Unix(1789712928, 0); !r.LastActivityAt.Equal(want) {
 		t.Errorf("LastActivityAt = %v, want %v", r.LastActivityAt, want)
 	}
+
+	status := r.ToParityStatus()
+	for id, path := range wantMounts {
+		if status.DataMounts[id] != path {
+			t.Errorf("ToParityStatus().DataMounts[%s] = %q, want %q", id, status.DataMounts[id], path)
+		}
+	}
+	if got, ok := status.DataDiskLabel("/lab/28-a1/mnt/disk2"); !ok || got != "d2" {
+		t.Errorf("DataDiskLabel(/lab/28-a1/mnt/disk2) = (%q, %v), want (d2, true)", got, ok)
+	}
+	if _, ok := status.DataDiskLabel("/lab/28-a1/mnt/disk9"); ok {
+		t.Error("DataDiskLabel(/lab/28-a1/mnt/disk9): got ok=true, want false — no such disk")
+	}
 }
 
 // TestParseStatus_ZeroSubsecond is Q17's own real signal: SnapRAID's
