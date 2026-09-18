@@ -54,7 +54,7 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 2/8 onboarding ==="
-if vm_ssh 'sudo systemctl is-active hoservad' >/dev/null 2>&1; then
+if vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   SETUP_STATUS="$(vm_ssh "curl -sk https://127.0.0.1:8008/api/v1/setup/status" 2>/dev/null || true)"
   if [[ "$SETUP_STATUS" == *'"adminExists":false'* ]]; then
     CREATE_RESULT="$(vm_ssh "curl -sk -X POST https://127.0.0.1:8008/api/v1/setup/admin -H 'Content-Type: application/json' -d '{\"username\":\"hoserva-l3\",\"password\":\"hoserva-l3-suite-password\"}'" 2>/dev/null || true)"
@@ -108,7 +108,7 @@ if vm_domain_running "$VM_DOMAIN"; then
     done
     if ! $reboot_seen; then
       fail "reboot persistence" "guest boot id did not change within ${timeout_s}s of 'virsh reboot' — the guest may never have actually rebooted"
-    elif vm_ssh 'sudo systemctl is-active hoservad' >/dev/null 2>&1; then
+    elif vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
       pass "reboot persistence"
     else
       fail "reboot persistence" "hoservad was not active again after a confirmed guest reboot"
