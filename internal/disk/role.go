@@ -15,10 +15,25 @@ import (
 // filesystem instead of formatting it, after AdoptCheck's read-only
 // verification (Q23); Filesystem is what to format with when Adopt is
 // false, and the filesystem AdoptCheck verifies when it is true.
+//
+// WWN, Serial and WeakIdentity are copied from the same disk.Provider.List
+// call's Disk that populated the setup wizard's disk-discovery step
+// (doc 03 §3.1 step 1) — the stable identity Device's own /dev/sdX path
+// is not: it can change across a reboot or a controller reorder.
+// FormatAssigned re-resolves Device against this identity immediately
+// before formatting (doc 02 §4), and Validate refuses a weak-identity
+// disk assigned as parity (Q21, doc 03 §3.1 step 2, doc 05's migration
+// table). A disk with no by-id link at all — WWN and Serial both empty,
+// as every disk in the loop-device lab is (doc 06 §3) — has nothing to
+// re-verify against; FormatAssigned then trusts Device as-is, exactly as
+// it always has.
 type AssignedDisk struct {
-	Device     string
-	Filesystem FilesystemType
-	Adopt      bool
+	Device       string
+	Filesystem   FilesystemType
+	Adopt        bool
+	WWN          string
+	Serial       string
+	WeakIdentity bool
 }
 
 // TopologyPlan is the array-setup Topology job's payload (doc 01 §4's
@@ -57,6 +72,28 @@ var (
 	// confirmation doc 03 §3.1 step 6 requires did not match this exact
 	// plan.
 	ErrConfirmationMismatch = errors.New("disk: typed confirmation does not match this plan")
+	// ErrDeviceAssignedTwice refuses a device that appears in more than
+	// one of Parity/Data/Cache — FormatPlan would otherwise format it
+	// twice, and mount generation would assign one filesystem to more
+	// than one role.
+	ErrDeviceAssignedTwice = errors.New("disk: device is assigned more than one role")
+	// ErrMissingSize refuses an assigned device sizes has no entry for,
+	// or reports a size of zero or less for. A missing map key reads as
+	// 0 in Go, which would otherwise let maxData stay 0 and the parity-
+	// size check pass for a data disk the caller's own inventory never
+	// actually reported.
+	ErrMissingSize = errors.New("disk: no size reported for an assigned device")
+	// ErrWeakIdentityParity refuses a weak-identity disk (a USB
+	// enclosure's bridge chipset can hide the real disk's WWN and serial)
+	// assigned as parity — allowed as a data disk, never as parity
+	// (Q21, doc 03 §3.1 step 2, doc 05's migration table).
+	ErrWeakIdentityParity = errors.New("disk: a weak-identity disk cannot be assigned as parity (Q21)")
+	// ErrDiskIdentityChanged is FormatAssigned's refusal when the disk
+	// currently found at an assigned device's stable identity (WWN or
+	// serial) no longer sits at the /dev path this plan was built
+	// against — a controller reorder or a swapped cable since discovery,
+	// not the disk the typed confirmation named.
+	ErrDiskIdentityChanged = errors.New("disk: the confirmed disk no longer matches this device path")
 )
 
 // adoptableFilesystems are the filesystems Q23 allows adopting or
@@ -79,12 +116,48 @@ func (p TopologyPlan) Validate(sizes map[string]int64) error {
 		return ErrNoDataDisks
 	}
 
+	seen := make(map[string]bool, len(p.Parity)+len(p.Data)+1)
+	assignOnce := func(dev string) error {
+		if seen[dev] {
+			return fmt.Errorf("%w: %s", ErrDeviceAssignedTwice, dev)
+		}
+		seen[dev] = true
+		return nil
+	}
+	for _, d := range p.Parity {
+		if err := assignOnce(d.Device); err != nil {
+			return err
+		}
+	}
+	for _, d := range p.Data {
+		if err := assignOnce(d.Device); err != nil {
+			return err
+		}
+	}
+	if p.Cache != nil {
+		if err := assignOnce(p.Cache.Device); err != nil {
+			return err
+		}
+	}
+
+	requireSize := func(dev string) (int64, error) {
+		s, ok := sizes[dev]
+		if !ok || s <= 0 {
+			return 0, fmt.Errorf("%w: %s", ErrMissingSize, dev)
+		}
+		return s, nil
+	}
+
 	var maxData int64
 	for _, d := range p.Data {
 		if !adoptableFilesystems[d.Filesystem] {
 			return fmt.Errorf("%w: %s on %s", ErrUnsupportedFilesystem, d.Filesystem, d.Device)
 		}
-		if s := sizes[d.Device]; s > maxData {
+		s, err := requireSize(d.Device)
+		if err != nil {
+			return err
+		}
+		if s > maxData {
 			maxData = s
 		}
 	}
@@ -96,13 +169,25 @@ func (p TopologyPlan) Validate(sizes map[string]int64) error {
 		if d.Filesystem != XFS {
 			return fmt.Errorf("%w: %s", ErrParityNotXFS, d.Device)
 		}
-		if sizes[d.Device] < maxData {
+		if d.WeakIdentity {
+			return fmt.Errorf("%w: %s", ErrWeakIdentityParity, d.Device)
+		}
+		s, err := requireSize(d.Device)
+		if err != nil {
+			return err
+		}
+		if s < maxData {
 			return fmt.Errorf("%w: %s", ErrParityTooSmall, d.Device)
 		}
 	}
 
-	if p.Cache != nil && !adoptableFilesystems[p.Cache.Filesystem] {
-		return fmt.Errorf("%w: %s on %s", ErrUnsupportedFilesystem, p.Cache.Filesystem, p.Cache.Device)
+	if p.Cache != nil {
+		if !adoptableFilesystems[p.Cache.Filesystem] {
+			return fmt.Errorf("%w: %s on %s", ErrUnsupportedFilesystem, p.Cache.Filesystem, p.Cache.Device)
+		}
+		if _, err := requireSize(p.Cache.Device); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -147,18 +232,23 @@ func (p TopologyPlan) CheckConfirmation(got string) error {
 	return nil
 }
 
-// hasDevice reports whether dev is exactly one of p's own assigned
-// devices — the explicit-assignment check FormatAssigned enforces.
-func (p TopologyPlan) hasDevice(dev string) bool {
+// findDevice returns the AssignedDisk exactly matching dev — the
+// explicit-assignment check FormatAssigned enforces, and the source of
+// the stable identity it re-resolves dev against before formatting.
+func (p TopologyPlan) findDevice(dev string) (AssignedDisk, bool) {
 	for _, d := range p.Parity {
 		if d.Device == dev {
-			return true
+			return d, true
 		}
 	}
 	for _, d := range p.Data {
 		if d.Device == dev {
-			return true
+			return d, true
 		}
 	}
-	return p.Cache != nil && p.Cache.Device == dev
+	if p.Cache != nil && p.Cache.Device == dev {
+		return *p.Cache, true
+	}
+	return AssignedDisk{}, false
 }
+
