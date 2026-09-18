@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,6 +230,59 @@ func TestKeepUnmanagedErrorsForAPathNeverGenerated(t *testing.T) {
 
 	if err := g.KeepUnmanaged(context.Background(), "never-written.conf"); err == nil {
 		t.Fatal("KeepUnmanaged on a never-generated path did not error")
+	}
+}
+
+func TestManageReversesKeepUnmanaged(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	file := testFile()
+
+	if err := g.Write(ctx, file, 1, time.Now()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := g.KeepUnmanaged(ctx, file.Path); err != nil {
+		t.Fatalf("KeepUnmanaged: %v", err)
+	}
+	if err := g.Write(ctx, file, 2, time.Now()); !errors.Is(err, ErrUnmanaged) {
+		t.Fatalf("Write on an unmanaged file err = %v, want ErrUnmanaged", err)
+	}
+
+	if err := g.Manage(ctx, file.Path); err != nil {
+		t.Fatalf("Manage: %v", err)
+	}
+
+	now := time.Now()
+	if err := g.Write(ctx, file, 2, now); err != nil {
+		t.Fatalf("Write after Manage: %v", err)
+	}
+	status, err := g.Check(ctx, file.Path)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if status != StatusManaged {
+		t.Fatalf("Check after Manage and Write = %v, want StatusManaged", status)
+	}
+}
+
+func TestManageErrorsForAPathNeverGenerated(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+
+	if err := g.Manage(context.Background(), "never-written.conf"); err == nil {
+		t.Fatal("Manage on a never-generated path did not error")
+	}
+}
+
+func TestManageErrorsForAlreadyManagedPath(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	file := testFile()
+
+	if err := g.Write(ctx, file, 1, time.Now()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := g.Manage(ctx, file.Path); err == nil {
+		t.Fatal("Manage on an already-managed path did not error")
 	}
 }
 

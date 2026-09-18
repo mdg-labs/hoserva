@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-// TestLoad_Embedded confirms this package's own go:embed wiring, not
-// sqlite-migrate's LoadDir behavior (bad filenames, duplicate versions,
-// etc.) — that lives, and is tested, in github.com/mdg-labs/sqlite-migrate
-// itself.
+// TestLoad_Embedded confirms this package's own go:embed wiring and its
+// malformed-filename pre-scan (rejectMalformedFilenames); sqlite-migrate's
+// own LoadDir behavior (duplicate versions, etc.) lives, and is tested, in
+// github.com/mdg-labs/sqlite-migrate itself.
 func TestLoad_Embedded(t *testing.T) {
 	migrations, err := Load()
 	if err != nil {
@@ -39,6 +39,16 @@ func TestLoadDir_ReadsMigrationsFromDisk(t *testing.T) {
 	}
 	if migrations[0].Version != "20260101000001" || migrations[1].Version != "20260101000002" {
 		t.Fatalf("migrations not read in version order: %+v", migrations)
+	}
+}
+
+func TestLoadDir_RejectsMalformedFilename(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "20260101000001_a.sql"), "CREATE TABLE a (id INTEGER) STRICT;")
+	writeFile(t, filepath.Join(dir, "not-a-migration.sql"), "CREATE TABLE b (id INTEGER) STRICT;")
+
+	if _, err := LoadDir(dir); err == nil {
+		t.Fatal("LoadDir: expected an error for a malformed migration filename, got nil")
 	}
 }
 

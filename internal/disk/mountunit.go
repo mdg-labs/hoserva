@@ -4,25 +4,23 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 )
-
-// DefaultDeviceTimeout bounds how long boot waits for a disk before
-// continuing without it — nofail plus a timeout is what keeps a missing
-// disk from hanging boot (doc 02 §1's "Startup order and a disk missing
-// at boot").
-const DefaultDeviceTimeout = 30 * time.Second
 
 // MountUnit is one systemd .mount unit for a physical disk (doc 01 §6,
 // doc 02 §1): mounted by filesystem UUID (Q21) rather than /dev/sdX,
-// which can renumber on reboot; nofail with a device timeout so a
-// missing disk never hangs boot.
+// which can renumber on reboot; nofail so a missing disk never hangs
+// boot. nofail alone is what does this — it drops the mount from
+// local-fs.target's required ordering, so boot proceeds without ever
+// waiting on the device — not any bounded wait: systemd's
+// x-systemd.device-timeout= option is documented to apply only to an
+// /etc/fstab entry and is silently ignored in a native unit's own
+// Options=, so this renderer never emits it (previously rendered but
+// inert, doc 02 §1).
 type MountUnit struct {
-	Where         string
-	UUID          string
-	Filesystem    FilesystemType
-	Description   string
-	DeviceTimeout time.Duration
+	Where       string
+	UUID        string
+	Filesystem  FilesystemType
+	Description string
 }
 
 // UnitFileName returns the systemd unit filename systemd-escape would
@@ -41,7 +39,7 @@ func (u MountUnit) Render() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Unit]\nDescription=%s\n\n", u.Description)
 	fmt.Fprintf(&b, "[Mount]\nWhat=/dev/disk/by-uuid/%s\nWhere=%s\nType=%s\n", u.UUID, u.Where, u.Filesystem)
-	fmt.Fprintf(&b, "Options=defaults,nofail,x-systemd.device-timeout=%s\n", u.DeviceTimeout)
+	fmt.Fprintf(&b, "Options=defaults,nofail\n")
 	return b.String()
 }
 
@@ -50,25 +48,25 @@ func (u MountUnit) Render() string {
 // uuids supplies each device's already-resolved filesystem UUID
 // (FilesystemUUID, read once after formatting or adopting) — MountPlan
 // itself does no IO.
-func MountPlan(plan TopologyPlan, uuids map[string]string, deviceTimeout time.Duration) ([]MountUnit, error) {
+func MountPlan(plan TopologyPlan, uuids map[string]string) ([]MountUnit, error) {
 	var units []MountUnit
 
 	for i, d := range plan.Data {
-		u, err := mountUnitFor(fmt.Sprintf("/mnt/disk%d", i+1), fmt.Sprintf("Hoserva data disk %d", i+1), d, uuids, deviceTimeout)
+		u, err := mountUnitFor(fmt.Sprintf("/mnt/disk%d", i+1), fmt.Sprintf("Hoserva data disk %d", i+1), d, uuids)
 		if err != nil {
 			return nil, err
 		}
 		units = append(units, u)
 	}
 	for i, d := range plan.Parity {
-		u, err := mountUnitFor(fmt.Sprintf("/mnt/parity%d", i+1), fmt.Sprintf("Hoserva parity disk %d", i+1), d, uuids, deviceTimeout)
+		u, err := mountUnitFor(fmt.Sprintf("/mnt/parity%d", i+1), fmt.Sprintf("Hoserva parity disk %d", i+1), d, uuids)
 		if err != nil {
 			return nil, err
 		}
 		units = append(units, u)
 	}
 	if plan.Cache != nil {
-		u, err := mountUnitFor("/mnt/cache", "Hoserva cache disk", *plan.Cache, uuids, deviceTimeout)
+		u, err := mountUnitFor("/mnt/cache", "Hoserva cache disk", *plan.Cache, uuids)
 		if err != nil {
 			return nil, err
 		}
@@ -78,17 +76,16 @@ func MountPlan(plan TopologyPlan, uuids map[string]string, deviceTimeout time.Du
 	return units, nil
 }
 
-func mountUnitFor(where, description string, d AssignedDisk, uuids map[string]string, deviceTimeout time.Duration) (MountUnit, error) {
+func mountUnitFor(where, description string, d AssignedDisk, uuids map[string]string) (MountUnit, error) {
 	uuid, ok := uuids[d.Device]
 	if !ok || uuid == "" {
 		return MountUnit{}, fmt.Errorf("disk: no filesystem UUID recorded for %s", d.Device)
 	}
 	return MountUnit{
-		Where:         where,
-		UUID:          uuid,
-		Filesystem:    d.Filesystem,
-		Description:   description,
-		DeviceTimeout: deviceTimeout,
+		Where:       where,
+		UUID:        uuid,
+		Filesystem:  d.Filesystem,
+		Description: description,
 	}, nil
 }
 

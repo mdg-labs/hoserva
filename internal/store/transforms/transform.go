@@ -3,7 +3,7 @@
 // existing data in a way a schema diff cannot express on its own — knowing
 // that size_mb becomes size_bytes needs a factor of 1024*1024, which no
 // diff between two CREATE TABLE statements can infer. Each Transform is
-// bound to the version of the migration it must run alongside, in the
+// bound to the checksum of the migration it must run alongside, in the
 // same transaction, so a rollback of that migration also rolls back its
 // transform. It is Go, not generated, and it is tested against every
 // fixture database in testdata/db (doc 06 §2).
@@ -14,11 +14,18 @@ import (
 	"database/sql"
 )
 
-// Transform is one data transform bound to Version — the migration version
-// (sqlite-migrate's own sortable timestamp, Q60) whose transaction it runs
-// inside. Name exists only for error messages and test names.
+// Transform is one data transform bound to Checksum — the SHA-256 checksum
+// (sqlite-migrate's own Checksum, Q60) of the migration whose transaction
+// it runs inside. Binding is by Checksum, not Version: a migration file is
+// immutable once applied (D16), but nothing stops a later commit from
+// reusing the same timestamp for a different, unrelated migration before
+// this one ever ships, and Version alone can't tell those apart. Version
+// is kept only to label which migration a transform is nominally paired
+// with in error messages and test names; the Runner ignores it when
+// deciding which transform to run.
 type Transform struct {
-	Version string
-	Name    string
-	Fn      func(ctx context.Context, tx *sql.Tx) error
+	Version  string
+	Checksum string
+	Name     string
+	Fn       func(ctx context.Context, tx *sql.Tx) error
 }

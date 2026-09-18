@@ -27,6 +27,45 @@ func TestLayout_Validate_NoData(t *testing.T) {
 	}
 }
 
+func TestLayout_Validate_RejectsDuplicateDataMount(t *testing.T) {
+	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []string{"/mnt/disk1", "/mnt/disk1"}}
+	if err := l.Validate(); !errors.Is(err, ErrDuplicateMount) {
+		t.Fatalf("Validate: got %v, want ErrDuplicateMount", err)
+	}
+}
+
+func TestLayout_Validate_RejectsDuplicateParityMount(t *testing.T) {
+	l := Layout{ParityMounts: []string{"/mnt/parity1", "/mnt/parity1"}, DataMounts: []string{"/mnt/disk1"}}
+	if err := l.Validate(); !errors.Is(err, ErrDuplicateMount) {
+		t.Fatalf("Validate: got %v, want ErrDuplicateMount", err)
+	}
+}
+
+// A mount path spelled differently (a trailing slash, a redundant "./")
+// still names the same physical device, so it must collide too — this
+// exercises Validate's filepath.Clean normalization, not a byte-for-byte
+// comparison a caller could dodge by accident.
+func TestLayout_Validate_RejectsEquivalentSpellingsOfTheSameMount(t *testing.T) {
+	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []string{"/mnt/disk1/", "/mnt/disk1"}}
+	if err := l.Validate(); !errors.Is(err, ErrDuplicateMount) {
+		t.Fatalf("Validate: got %v, want ErrDuplicateMount", err)
+	}
+}
+
+func TestLayout_Validate_RejectsRoleOverlapWithCacheMount(t *testing.T) {
+	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []string{"/mnt/disk1"}, CacheMount: "/mnt/disk1"}
+	if err := l.Validate(); !errors.Is(err, ErrDuplicateMount) {
+		t.Fatalf("Validate: got %v, want ErrDuplicateMount", err)
+	}
+}
+
+func TestLayout_Validate_RejectsEmptyMount(t *testing.T) {
+	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []string{""}}
+	if err := l.Validate(); !errors.Is(err, ErrEmptyMount) {
+		t.Fatalf("Validate: got %v, want ErrEmptyMount", err)
+	}
+}
+
 // TestLayout_ContentPaths_RefusesTooFewDistinctDevices is Q18's own
 // safety property: a single data disk and no cache means only the boot
 // device and that one disk can ever hold a content file copy — two

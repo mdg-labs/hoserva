@@ -54,9 +54,23 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 		return nil, fmt.Errorf("reading %s: %w", l.ByIDDir, err)
 	}
 
-	var bootDev string
-	if mounts, err := ReadProcMounts(l.ProcMounts); err == nil {
-		bootDev, _ = BootDevice(mounts)
+	// Boot-disk classification fails closed: a mounts listing List can't
+	// read, or a root device BootDevices can't resolve to real physical
+	// disks, must stop List outright rather than silently continue with
+	// no boot device known — otherwise every disk below would come back
+	// with Boot: false, and every destructive caller downstream would
+	// treat the real boot disk as an ordinary, formattable one.
+	mounts, err := ReadProcMounts(l.ProcMounts)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", l.ProcMounts, err)
+	}
+	bootDevs, err := BootDevices(mounts, l.SysBlockDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving the boot device: %w", err)
+	}
+	bootSet := make(map[string]bool, len(bootDevs))
+	for _, d := range bootDevs {
+		bootSet[d] = true
 	}
 
 	var disks []Disk
@@ -85,7 +99,7 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 			Serial:       id.Serial,
 			WWN:          id.WWN,
 			WeakIdentity: id.WeakIdentity,
-			Boot:         bootDev != "" && dev == bootDev,
+			Boot:         bootSet[dev],
 		})
 	}
 
