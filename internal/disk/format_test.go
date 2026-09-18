@@ -137,6 +137,53 @@ func TestFormatAssigned_RefusesTheBootDevice(t *testing.T) {
 	}
 }
 
+// TestFormatAssigned_RefusesTheBootDeviceWithNoIdentity covers the
+// identity-less fallback (no WWN, no serial, as every disk in the
+// loop-device lab is, doc 06 §3): trusting Device for a disk without a
+// by-id identity must not skip the boot-device guard every other path
+// through resolveFormatTarget still gets.
+func TestFormatAssigned_RefusesTheBootDeviceWithNoIdentity(t *testing.T) {
+	p := NewFakeProvider()
+	p.AddDisk("/dev/sda", Disk{Size: 8 * TB, Boot: true})
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sdc", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+	}
+	p.AddDisk("/dev/sdc", Disk{Size: 8 * TB})
+
+	if err := FormatAssigned(context.Background(), p, plan, "/dev/sda", XFS); !errors.Is(err, ErrBootDevice) {
+		t.Fatalf("FormatAssigned(boot device, no identity): got %v, want ErrBootDevice", err)
+	}
+	if _, ok := p.FormattedAs("/dev/sda"); ok {
+		t.Fatal("FormatAssigned formatted /dev/sda, the boot device")
+	}
+}
+
+// TestFormatAssigned_RefusesAChangedByIDName covers a disk matched by
+// WWN/serial whose current by-id name has since diverged from the one
+// confirmed for the plan: trusting the plan's stale byIDName instead of
+// refusing could bind the format to whatever disk now owns that name,
+// not the one just matched by WWN.
+func TestFormatAssigned_RefusesAChangedByIDName(t *testing.T) {
+	p := NewFakeProvider()
+	p.AddDisk("/dev/sda", Disk{Size: 8 * TB})
+	// Same WWN as the plan confirmed, but its by-id name has since
+	// changed (e.g. re-enumerated under a different by-id link).
+	p.AddDisk("/dev/sdb", Disk{Size: 4 * TB, WWN: "0xabc123", ByIDName: "wwn-0xabc123-new"})
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sdb", Filesystem: XFS, WWN: "0xabc123", ByIDName: "wwn-0xabc123-old"}},
+	}
+
+	err := FormatAssigned(context.Background(), p, plan, "/dev/sdb", XFS)
+	if !errors.Is(err, ErrDiskIdentityChanged) {
+		t.Fatalf("FormatAssigned: got %v, want ErrDiskIdentityChanged", err)
+	}
+	if _, ok := p.FormattedAs("/dev/sdb"); ok {
+		t.Fatal("FormatAssigned formatted /dev/sdb despite its by-id name having changed")
+	}
+}
+
 // TestFormatAssigned_RefusesWhenIdentityMovedWithoutAByIDLink covers the
 // identity-known-but-no-by-id-link case: there is nothing to bind a path
 // to, so a disk whose identity has moved off dev must still be refused

@@ -50,27 +50,42 @@ func FormatAssigned(ctx context.Context, p Provider, plan TopologyPlan, dev stri
 // returns the path the caller's destructive call (Format or AdoptCheck)
 // should actually run against. When wwn and serial are both empty —
 // no by-id link at all, as every disk in the loop-device lab is (doc 06
-// §3) — there is nothing to re-verify or bind to, and dev is returned
-// unchanged, exactly as callers behaved before identity tracking existed.
+// §3) — there is nothing to re-verify or bind to, but dev's own Boot flag
+// is still checked before returning it unchanged: trusting Device for a
+// disk without a by-id identity does not excuse skipping the boot-device
+// guard every other path through this function gets.
 //
 // Otherwise it refuses (ErrBootDevice) the moment the matched disk turns
 // out to be the boot device — before ever constructing a by-id path for
 // it — and refuses (ErrDiskIdentityChanged) when no disk at all currently
 // carries the confirmed identity, a disk pulled between discovery and
 // this call. Once a non-boot match is confirmed to still exist: when
-// byIDName is known, it returns that /dev/disk/by-id path rather than dev
-// or whatever /dev/sdX path List happened to report it at just now — that
-// path is a symlink the kernel keeps pointed at whichever device
-// currently carries this identity, so the caller's own destructive exec —
-// which runs after this function returns, not during it — still opens
-// the right physical disk even if the /dev/sdX numbering changes again in
-// the interval between this check and that exec. When byIDName is not
-// known, there is nothing to bind a path to, so this instead falls back
-// to the pre-#157 behavior of refusing (ErrDiskIdentityChanged) unless
-// the matched disk's current device is still exactly dev — returning the
-// stale dev unverified would defeat the whole check.
+// byIDName is known, it first refuses (ErrDiskIdentityChanged) if the
+// matched disk's own current by-id name has since changed — matching by
+// WWN/serial alone and then trusting the plan's stale byIDName could
+// bind the format to whatever disk now owns that name, not the one just
+// matched. Once confirmed unchanged, it returns that /dev/disk/by-id path
+// rather than dev or whatever /dev/sdX path List happened to report it at
+// just now — that path is a symlink the kernel keeps pointed at whichever
+// device currently carries this identity, so the caller's own destructive
+// exec — which runs after this function returns, not during it — still
+// opens the right physical disk even if the /dev/sdX numbering changes
+// again in the interval between this check and that exec. When byIDName
+// is not known, there is nothing to bind a path to, so this instead falls
+// back to the pre-#157 behavior of refusing (ErrDiskIdentityChanged)
+// unless the matched disk's current device is still exactly dev —
+// returning the stale dev unverified would defeat the whole check.
 func resolveFormatTarget(ctx context.Context, p Provider, dev, wwn, serial, byIDName string) (string, error) {
 	if wwn == "" && serial == "" {
+		disks, err := p.List(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, d := range disks {
+			if d.Device == dev && d.Boot {
+				return "", fmt.Errorf("%s: %w", dev, ErrBootDevice)
+			}
+		}
 		return dev, nil
 	}
 	disks, err := p.List(ctx)
@@ -86,6 +101,9 @@ func resolveFormatTarget(ctx context.Context, p Provider, dev, wwn, serial, byID
 			return "", fmt.Errorf("%s: %w", dev, ErrBootDevice)
 		}
 		if byIDName != "" {
+			if d.ByIDName != byIDName {
+				return "", fmt.Errorf("%w: by-id name changed for %s", ErrDiskIdentityChanged, dev)
+			}
 			return identityOrDevice(byIDName, dev), nil
 		}
 		if d.Device != dev {
