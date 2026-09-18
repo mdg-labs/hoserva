@@ -1,6 +1,9 @@
 package parity
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // splitLogLines splits one `snapraid -l <file>` run's structured,
 // machine-readable log (SnapRAID's own format, confirmed against a real
@@ -23,4 +26,23 @@ func splitLogLines(data []byte) []string {
 // fine here; callers just never match their tag in a switch.
 func cutTag(line string) (tag, rest string, ok bool) {
 	return strings.Cut(line, ":")
+}
+
+// atoiField parses fields[idx] as an int, the shared last step behind
+// every "key:n" (diff_parse.go, run_parse.go) and "key:sub:n"
+// (status_parse.go's disk_file_count) summary field this package's three
+// log parsers each read. ok is false, and the field left untouched by the
+// caller, when idx is out of range or the token isn't a valid integer —
+// a summary field snapraid itself never documents is simply skipped, not
+// a parse error (every ParseXSummary caller already tolerates unknown
+// tags the same way).
+func atoiField(fields []string, idx int) (n int, ok bool) {
+	if idx >= len(fields) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(fields[idx])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
