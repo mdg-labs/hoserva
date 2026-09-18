@@ -59,6 +59,23 @@ type smartctlOutput struct {
 			} `json:"table"`
 		} `json:"standard"`
 	} `json:"ata_smart_self_test_log"`
+	// NvmeSmartHealthInformationLog is smartctl's NVMe health section —
+	// an NVMe device has no ata_smart_attributes table at all, so without
+	// this, every active NVMe report was rejected by ErrSMARTParse below.
+	// MediaErrors is NVMe's own closest equivalent to
+	// OfflineUncorrectable: "the number of occurrences where the
+	// controller detected an unrecovered data integrity error" — an
+	// uncorrectable error already found, the same thing ATA's Offline_
+	// Uncorrectable attribute counts. NVMe has no per-sector reallocation
+	// or pending-sector concept (the FTL handles bad blocks internally)
+	// and no CRC-error attribute, so those SMARTReport fields stay zero
+	// for an NVMe disk — that's accurate, not a gap: doc 02 §4's other
+	// alert, a failed smart_status.passed, already reflects smartctl's
+	// own NVMe critical_warning-derived health verdict, checked below
+	// regardless of protocol.
+	NvmeSmartHealthInformationLog *struct {
+		MediaErrors int64 `json:"media_errors"`
+	} `json:"nvme_smart_health_information_log"`
 }
 
 // ParseSMARTJSON parses one `smartctl -j` (optionally `-n standby`)
@@ -80,8 +97,8 @@ func ParseSMARTJSON(data []byte) (SMARTReport, error) {
 		return SMARTReport{Skipped: true, SpinState: Standby}, nil
 	}
 
-	if out.AtaSmartAttributes == nil {
-		return SMARTReport{}, fmt.Errorf("%w: no ata_smart_attributes, and not a standby skip", ErrSMARTParse)
+	if out.AtaSmartAttributes == nil && out.NvmeSmartHealthInformationLog == nil {
+		return SMARTReport{}, fmt.Errorf("%w: no ata_smart_attributes or nvme_smart_health_information_log, and not a standby skip", ErrSMARTParse)
 	}
 
 	report := SMARTReport{SpinState: Active}
@@ -100,28 +117,32 @@ func ParseSMARTJSON(data []byte) (SMARTReport, error) {
 		}
 	}
 
-	for _, attr := range out.AtaSmartAttributes.Table {
-		switch attr.ID {
-		case attrReallocatedSectorCt:
-			report.ReallocatedSectors = int(attr.Raw.Value)
-		case attrCurrentPendingSector:
-			report.PendingSectors = int(attr.Raw.Value)
-		case attrOfflineUncorrectable:
-			report.OfflineUncorrectable = int(attr.Raw.Value)
-		case attrUDMACRCErrorCount:
-			report.CRCErrors = int(attr.Raw.Value)
+	if out.AtaSmartAttributes != nil {
+		for _, attr := range out.AtaSmartAttributes.Table {
+			switch attr.ID {
+			case attrReallocatedSectorCt:
+				report.ReallocatedSectors = int(attr.Raw.Value)
+			case attrCurrentPendingSector:
+				report.PendingSectors = int(attr.Raw.Value)
+			case attrOfflineUncorrectable:
+				report.OfflineUncorrectable = int(attr.Raw.Value)
+			case attrUDMACRCErrorCount:
+				report.CRCErrors = int(attr.Raw.Value)
+			}
 		}
+	} else if out.NvmeSmartHealthInformationLog != nil {
+		report.OfflineUncorrectable = int(out.NvmeSmartHealthInformationLog.MediaErrors)
 	}
 
 	return report, nil
 }
 
 // isStandbySkip reports whether out is smartctl's response to a device
-// `-n standby` left asleep: no attribute table was collected, and either
-// the (undocumented but observed) power_mode field or one of smartctl's
-// own diagnostic messages says so.
+// `-n standby` left asleep: neither an ATA attribute table nor an NVMe
+// health log was collected, and either the (undocumented but observed)
+// power_mode field or one of smartctl's own diagnostic messages says so.
 func isStandbySkip(out smartctlOutput) bool {
-	if out.AtaSmartAttributes != nil {
+	if out.AtaSmartAttributes != nil || out.NvmeSmartHealthInformationLog != nil {
 		return false
 	}
 	if strings.EqualFold(out.PowerMode, "STANDBY") || strings.EqualFold(out.PowerMode, "SLEEP") {

@@ -104,6 +104,96 @@ func TestTopologyPlan_Validate_UnsupportedDataFilesystem(t *testing.T) {
 	}
 }
 
+func TestTopologyPlan_Validate_RejectsDeviceAssignedTwice(t *testing.T) {
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data: []AssignedDisk{
+			{Device: "/dev/sdb", Filesystem: XFS},
+			{Device: "/dev/sdb", Filesystem: XFS},
+		},
+	}
+	sizes := map[string]int64{"/dev/sda": 8 * TB, "/dev/sdb": 4 * TB}
+	if err := plan.Validate(sizes); !errors.Is(err, ErrDeviceAssignedTwice) {
+		t.Fatalf("Validate: got %v, want ErrDeviceAssignedTwice", err)
+	}
+}
+
+func TestTopologyPlan_Validate_RejectsDeviceAssignedTwiceAcrossRoles(t *testing.T) {
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sdb", Filesystem: XFS}},
+		Cache:  &AssignedDisk{Device: "/dev/sdb", Filesystem: XFS},
+	}
+	sizes := map[string]int64{"/dev/sda": 8 * TB, "/dev/sdb": 4 * TB}
+	if err := plan.Validate(sizes); !errors.Is(err, ErrDeviceAssignedTwice) {
+		t.Fatalf("Validate: got %v, want ErrDeviceAssignedTwice", err)
+	}
+}
+
+// TestTopologyPlan_Validate_RejectsMissingDataSize is the map-membership
+// gap this issue calls out: a missing key reads as 0 in Go, so without an
+// explicit membership check a data disk sizes never actually reported
+// could otherwise leave maxData at 0 and let a too-small parity disk pass.
+func TestTopologyPlan_Validate_RejectsMissingDataSize(t *testing.T) {
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sdb", Filesystem: XFS}},
+	}
+	sizes := map[string]int64{"/dev/sda": TB} // no entry for /dev/sdb
+	if err := plan.Validate(sizes); !errors.Is(err, ErrMissingSize) {
+		t.Fatalf("Validate: got %v, want ErrMissingSize", err)
+	}
+}
+
+func TestTopologyPlan_Validate_RejectsMissingParitySize(t *testing.T) {
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sdb", Filesystem: XFS}},
+	}
+	sizes := map[string]int64{"/dev/sdb": TB} // no entry for /dev/sda
+	if err := plan.Validate(sizes); !errors.Is(err, ErrMissingSize) {
+		t.Fatalf("Validate: got %v, want ErrMissingSize", err)
+	}
+}
+
+func TestTopologyPlan_Validate_RejectsMissingCacheSize(t *testing.T) {
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sdb", Filesystem: XFS}},
+		Cache:  &AssignedDisk{Device: "/dev/sdc", Filesystem: XFS},
+	}
+	sizes := map[string]int64{"/dev/sda": 8 * TB, "/dev/sdb": 4 * TB} // no entry for /dev/sdc
+	if err := plan.Validate(sizes); !errors.Is(err, ErrMissingSize) {
+		t.Fatalf("Validate: got %v, want ErrMissingSize", err)
+	}
+}
+
+// TestTopologyPlan_Validate_RejectsWeakIdentityParity is Q21's own rule
+// (doc 03 §3.1 step 2, doc 05's migration table): a USB enclosure's
+// bridge chipset can hide the real disk's WWN and serial, so a
+// weak-identity disk is allowed as data but never as parity.
+func TestTopologyPlan_Validate_RejectsWeakIdentityParity(t *testing.T) {
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS, WeakIdentity: true}},
+		Data:   []AssignedDisk{{Device: "/dev/sdb", Filesystem: XFS}},
+	}
+	sizes := map[string]int64{"/dev/sda": 8 * TB, "/dev/sdb": 4 * TB}
+	if err := plan.Validate(sizes); !errors.Is(err, ErrWeakIdentityParity) {
+		t.Fatalf("Validate: got %v, want ErrWeakIdentityParity", err)
+	}
+}
+
+func TestTopologyPlan_Validate_AllowsWeakIdentityData(t *testing.T) {
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sdb", Filesystem: XFS, WeakIdentity: true}},
+	}
+	sizes := map[string]int64{"/dev/sda": 8 * TB, "/dev/sdb": 4 * TB}
+	if err := plan.Validate(sizes); err != nil {
+		t.Fatalf("Validate: got %v, want nil (weak identity is allowed as data)", err)
+	}
+}
+
 func TestTopologyPlan_Validate_UnsupportedCacheFilesystem(t *testing.T) {
 	plan := TopologyPlan{
 		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},

@@ -45,9 +45,6 @@ func TestWriteGoesUnderConfigurableRoot(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 
-	if _, err := os.Stat("/etc/snapraid.conf"); err == nil {
-		t.Fatal("Write reached /etc — it must only ever write under Root")
-	}
 	if _, err := os.Stat(filepath.Join(root, "snapraid.conf")); err != nil {
 		t.Fatalf("Write did not write under Root: %v", err)
 	}
@@ -81,6 +78,53 @@ func TestWriteCreatesMissingDirectories(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(g.Root, "samba", "smb.conf")); err != nil {
 		t.Fatalf("Write did not create the parent directory: %v", err)
+	}
+}
+
+func TestWriteRejectsPathsThatEscapeRoot(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+
+	for _, path := range []string{
+		"../outside.conf",
+		"samba/../../outside.conf",
+		"/etc/snapraid.conf",
+	} {
+		file := testFile()
+		file.Path = path
+		if err := g.Write(context.Background(), file, 1, time.Now()); err == nil {
+			t.Fatalf("Write(%q) did not error", path)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(filepath.Dir(g.Root), "outside.conf")); err == nil {
+		t.Fatal("Write escaped Root despite returning an error")
+	}
+}
+
+func TestWriteRejectsTheReservedManifestDirectory(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+
+	for _, path := range []string{".hoserva", ".hoserva/manifest.json"} {
+		file := testFile()
+		file.Path = path
+		if err := g.Write(context.Background(), file, 1, time.Now()); err == nil {
+			t.Fatalf("Write(%q) did not error", path)
+		}
+	}
+}
+
+func TestCheckAndDiffAndKeepUnmanagedRejectEscapingPaths(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+
+	if _, err := g.Check(ctx, "../outside.conf"); err == nil {
+		t.Fatal("Check on an escaping path did not error")
+	}
+	if _, err := g.Diff(ctx, File{Path: "../outside.conf"}, 1, time.Now()); err == nil {
+		t.Fatal("Diff on an escaping path did not error")
+	}
+	if err := g.KeepUnmanaged(ctx, "../outside.conf"); err == nil {
+		t.Fatal("KeepUnmanaged on an escaping path did not error")
 	}
 }
 
