@@ -70,6 +70,12 @@ func TestRenderPoolMounts(t *testing.T) {
 		}
 		golden.Compare(t, filepath.Join(poolTestdataDir, unitFileName(shareMount.Where)+".golden"), []byte(shareMount.Render()))
 
+		if share.CacheMode == CacheOnly {
+			// CacheOnly data lives on cache permanently and is never
+			// moved (share.go) — no mover write-target mount exists
+			// for it, so there is no golden fixture to compare here.
+			continue
+		}
 		moverMount, err := MoverTargetMount(share, state.DataDisks, opts)
 		if err != nil {
 			t.Fatalf("MoverTargetMount(%s): %v", s.Name, err)

@@ -50,10 +50,17 @@ func DefaultOptions() Options {
 
 // render returns o's own comma-separated mergerfs options, in doc 02
 // §1's table order, minus category.create and fsname (added by the
-// caller, which knows the per-mount policy and name).
+// caller, which knows the per-mount policy and name). A zero-value
+// Options (built without DefaultOptions) falls back to doc 02 §1's own
+// minfreespace default rather than emitting minfreespace= empty, which
+// mergerfs would reject.
 func (o Options) render() string {
+	minFreeSpace := o.MinFreeSpace
+	if minFreeSpace == "" {
+		minFreeSpace = DefaultOptions().MinFreeSpace
+	}
 	return fmt.Sprintf(
 		"moveonenospc=true,dropcacheonclose=true,minfreespace=%s,cache.files=partial,cache.entry=%d,cache.attr=%d,cache.negative_entry=%d,cache.statfs=0",
-		o.MinFreeSpace, o.Responsiveness.entrySeconds(), o.Responsiveness.entrySeconds(), o.Responsiveness.entrySeconds(),
+		minFreeSpace, o.Responsiveness.entrySeconds(), o.Responsiveness.entrySeconds(), o.Responsiveness.entrySeconds(),
 	)
 }

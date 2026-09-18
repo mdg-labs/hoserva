@@ -7,15 +7,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mdg-labs/hoserva/internal/store"
 	storedb "github.com/mdg-labs/hoserva/internal/store/db"
 )
-
-// timeFormat matches internal/store/schema/schema.sql's existing
-// convention for every other TEXT timestamp column (schema_info's
-// created_at): UTC, RFC3339, computed in Go rather than a SQL DEFAULT
-// (Q60 flags `DEFAULT (datetime('now'))` as a spelling the schema
-// migration generator's parser rejects outright).
-const timeFormat = time.RFC3339
 
 // Store persists jobs in the central SQLite database (D4, doc 01 §4)
 // through the sqlc-generated internal/store/db package. It has no
@@ -49,7 +43,7 @@ func (s *Store) Create(ctx context.Context, j *Job) error {
 		Checkpoint:   j.Checkpoint,
 		ErrorCode:    stringToSQL(j.ErrorCode),
 		ErrorMessage: stringToSQL(j.ErrorMessage),
-		CreatedAt:    j.CreatedAt.Format(timeFormat),
+		CreatedAt:    j.CreatedAt.Format(store.TimeFormat),
 		StartedAt:    timeToSQL(j.StartedAt),
 		FinishedAt:   timeToSQL(j.FinishedAt),
 	})
@@ -148,7 +142,7 @@ func fromRow(row *storedb.Job) (*Job, error) {
 	if err != nil {
 		return nil, fmt.Errorf("job store: decoding resource ids for %s: %w", row.ID, err)
 	}
-	createdAt, err := time.Parse(timeFormat, row.CreatedAt)
+	createdAt, err := time.Parse(store.TimeFormat, row.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("job store: parsing created_at for %s: %w", row.ID, err)
 	}
@@ -233,14 +227,14 @@ func timeToSQL(t *time.Time) sql.NullString {
 	if t == nil {
 		return sql.NullString{}
 	}
-	return sql.NullString{String: t.Format(timeFormat), Valid: true}
+	return sql.NullString{String: t.Format(store.TimeFormat), Valid: true}
 }
 
 func sqlToTime(v sql.NullString) (*time.Time, error) {
 	if !v.Valid || v.String == "" {
 		return nil, nil
 	}
-	t, err := time.Parse(timeFormat, v.String)
+	t, err := time.Parse(store.TimeFormat, v.String)
 	if err != nil {
 		return nil, err
 	}

@@ -9,10 +9,15 @@ import (
 	storedb "github.com/mdg-labs/hoserva/internal/store/db"
 )
 
-// historyTimeFormat matches schema.sql's existing convention for every
-// other TEXT timestamp column (mirrors internal/job's own timeFormat):
-// UTC, RFC3339, computed in Go rather than a SQL DEFAULT.
-const historyTimeFormat = time.RFC3339
+// TimeFormat matches schema.sql's existing convention for every TEXT
+// timestamp column: UTC, RFC3339, computed in Go rather than a SQL
+// DEFAULT (Q60 flags `DEFAULT (datetime('now'))` as a spelling the
+// schema migration generator's parser rejects outright). internal/job
+// shares this one definition rather than redeclaring it — internal/job
+// already imports this package (its own tests apply this package's real
+// embedded migrations rather than a hand-built CREATE TABLE), so this is
+// the cycle-free direction to share it in.
+const TimeFormat = time.RFC3339
 
 // HistoryRetention is Q74's default for spin-state events and the audit
 // log: unlike metrics.db's downsampled time series (package
@@ -49,17 +54,18 @@ func (h *History) RecordSpinEvent(ctx context.Context, device string, from, to s
 		Device:    device,
 		FromState: from,
 		ToState:   to,
-		At:        at.UTC().Format(historyTimeFormat),
+		At:        at.UTC().Format(TimeFormat),
 	}); err != nil {
 		return fmt.Errorf("store: recording spin event for %s: %w", device, err)
 	}
 	return nil
 }
 
-// CountSpinEvents reports how many spin events are currently persisted —
-// a test seam for PruneHistory. A real listing view (doc 03 §3.3a)
-// belongs to whichever issue builds it.
-func (h *History) CountSpinEvents(ctx context.Context) (int64, error) {
+// countSpinEvents reports how many spin events are currently persisted —
+// a test seam for PruneHistory, so it stays unexported rather than
+// adding to this package's public API surface. A real listing view
+// (doc 03 §3.3a) belongs to whichever issue builds it.
+func (h *History) countSpinEvents(ctx context.Context) (int64, error) {
 	return h.q.CountSpinEvents(ctx)
 }
 
@@ -74,16 +80,17 @@ func (h *History) RecordAuditEntry(ctx context.Context, actor, action, detail st
 		Actor:  actor,
 		Action: action,
 		Detail: detailArg,
-		At:     at.UTC().Format(historyTimeFormat),
+		At:     at.UTC().Format(TimeFormat),
 	}); err != nil {
 		return fmt.Errorf("store: recording audit entry %q by %q: %w", action, actor, err)
 	}
 	return nil
 }
 
-// CountAuditLog reports how many audit-log entries are currently
-// persisted — a test seam for PruneHistory.
-func (h *History) CountAuditLog(ctx context.Context) (int64, error) {
+// countAuditLog reports how many audit-log entries are currently
+// persisted — a test seam for PruneHistory, so it stays unexported
+// rather than adding to this package's public API surface.
+func (h *History) countAuditLog(ctx context.Context) (int64, error) {
 	return h.q.CountAuditLog(ctx)
 }
 
@@ -94,7 +101,7 @@ func (h *History) CountAuditLog(ctx context.Context) (int64, error) {
 // §4) — and it touches only the central database on the boot SSD, never
 // a data disk.
 func (h *History) PruneHistory(ctx context.Context, now time.Time) error {
-	cutoff := now.Add(-HistoryRetention).UTC().Format(historyTimeFormat)
+	cutoff := now.Add(-HistoryRetention).UTC().Format(TimeFormat)
 	if err := h.q.PruneSpinEvents(ctx, cutoff); err != nil {
 		return fmt.Errorf("store: pruning spin events: %w", err)
 	}

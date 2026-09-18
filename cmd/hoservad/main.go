@@ -220,11 +220,7 @@ func openDatabase(stateDir string) (*sql.DB, error) {
 	if err := ensureDatabaseFileMode(dbPath); err != nil {
 		return nil, err
 	}
-	// WAL mode (doc 01 §1) and a busy timeout so the job system's own
-	// concurrent writers (doc 01 §4) don't see SQLITE_BUSY the instant two
-	// of them overlap.
-	dsn := "file:" + dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", store.DSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("opening database at %s: %w", dbPath, err)
 	}
