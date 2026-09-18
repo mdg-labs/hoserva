@@ -1,0 +1,72 @@
+version:none
+unixtime:1789713148
+time:2026-09-18 06:32:28
+command:fix
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/28-a1/p28/snapraid.conf
+argv:3:-e
+argv:4:-l
+argv:5:/lab/28-a1/p28/fix-corrupt-l.log
+argv:6:fix
+selftest:
+msg:progress: Self test...
+conf:file:/lab/28-a1/p28/snapraid.conf
+uuid:by-uuid:7:1: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:1: blkid support not compiled in
+uuid:notfound:7:1:
+uuid:by-uuid:7:2: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:2: blkid support not compiled in
+uuid:notfound:7:2:
+uuid:by-uuid:7:3: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:3: blkid support not compiled in
+uuid:notfound:7:3:
+blocksize:262144
+data:d1:/lab/28-a1/mnt/disk1/
+data:d2:/lab/28-a1/mnt/disk2/
+data:d3:/lab/28-a1/mnt/disk3/
+mode:par1
+parity:0:/lab/28-a1/mnt/parity1/snapraid.parity
+content:/lab/28-a1/mnt/parity1/snapraid.content
+msg:progress: Loading state from /lab/28-a1/mnt/parity1/snapraid.content...
+msg:verbose:        6 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        1 empty dirs
+uuid:by-uuid:7:0: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:0: blkid support not compiled in
+uuid:notfound:7:0:
+msg:progress: Searching disk d1...
+msg:progress: Searching disk d2...
+msg:progress: Searching disk d3...
+msg:progress: Selecting...
+msg:verbose: 	<error>
+memory:used:267406
+memory:block:17
+memory:extent:88
+memory:file:192
+memory:link:88
+memory:dir:80
+msg:progress: Using 0 MiB of memory for the file-system.
+msg:progress: Initializing...
+msg:progress: Selecting...
+msg:progress: Fixing...
+error:1:d3:backup/weekly.bin: Data error at position 1, diff bits 75/128
+entry:0:block:known:bad:d3:backup/weekly.bin:1:
+fixed:1:d3:backup/weekly.bin: Fixed data error at position 1
+error:2:d3:backup/weekly.bin: Data error at position 2, diff bits 75/128
+entry:0:block:known:bad:d3:backup/weekly.bin:2:
+fixed:2:d3:backup/weekly.bin: Fixed data error at position 2
+error:3:d3:backup/weekly.bin: Data error at position 3, diff bits 70/128
+entry:0:block:known:bad:d3:backup/weekly.bin:3:
+fixed:3:d3:backup/weekly.bin: Fixed data error at position 3
+status:recovered:d3:backup/weekly.bin
+msg:status: 
+msg:status:        3 errors
+msg:status:        3 recovered errors
+msg:status:        0 unrecoverable errors
+msg:status: Everything OK
+summary:error:3
+summary:error_recovered:3
+summary:error_unrecoverable:0
+summary:exit:recovered

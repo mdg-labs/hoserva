@@ -1,0 +1,94 @@
+version:none
+unixtime:1789712935
+time:2026-09-18 06:28:55
+command:status
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/28-a1/p28/snapraid.conf
+argv:3:-l
+argv:4:/lab/28-a1/p28/status-initial-l.log
+argv:5:status
+selftest:
+msg:progress: Self test...
+conf:file:/lab/28-a1/p28/snapraid.conf
+blocksize:262144
+data:d1:/lab/28-a1/mnt/disk1/
+data:d2:/lab/28-a1/mnt/disk2/
+data:d3:/lab/28-a1/mnt/disk3/
+mode:par1
+parity:0:/lab/28-a1/mnt/parity1/snapraid.parity
+content:/lab/28-a1/mnt/parity1/snapraid.content
+msg:progress: Loading state from /lab/28-a1/mnt/parity1/snapraid.content...
+msg:verbose:        3 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        0 empty dirs
+memory:used:265569
+memory:block:17
+memory:extent:88
+memory:file:192
+memory:link:88
+memory:dir:80
+msg:progress: Using 0 MiB of memory for the file-system.
+summary:block_size:262144
+summary:parity_block_count:2
+summary:parity_block_total:parity:3569
+summary:parity_block_free:parity:3369
+summary:parity_block_free_min:3369
+summary:disk_file_count:d1:1
+summary:disk_block_count:d1:2
+summary:disk_fragmented_file_count:d1:0
+summary:disk_excess_fragment_count:d1:0
+summary:disk_zerosubsecond_file_count:d1:0
+summary:disk_file_size:d1:300000
+summary:disk_block_allocated:d1:2
+summary:disk_block_total:d1:3569
+summary:disk_block_free:d1:3370
+summary:disk_block_max_by_space:d1:3372
+summary:disk_block_max_by_parity:d1:3371
+summary:disk_block_max:d1:3371
+summary:disk_space_wasted:d1:262144
+summary:disk_file_count:d2:1
+summary:disk_block_count:d2:1
+summary:disk_fragmented_file_count:d2:0
+summary:disk_excess_fragment_count:d2:0
+summary:disk_zerosubsecond_file_count:d2:0
+summary:disk_file_size:d2:200000
+summary:disk_block_allocated:d2:1
+summary:disk_block_total:d2:3569
+summary:disk_block_free:d2:3370
+summary:disk_block_max_by_space:d2:3371
+summary:disk_block_max_by_parity:d2:3371
+summary:disk_block_max:d2:3371
+summary:disk_space_wasted:d2:0
+summary:disk_file_count:d3:1
+summary:disk_block_count:d3:1
+summary:disk_fragmented_file_count:d3:0
+summary:disk_excess_fragment_count:d3:0
+summary:disk_zerosubsecond_file_count:d3:0
+summary:disk_file_size:d3:150000
+summary:disk_block_allocated:d3:1
+summary:disk_block_total:d3:3569
+summary:disk_block_free:d3:3370
+summary:disk_block_max_by_space:d3:3371
+summary:disk_block_max_by_parity:d3:3371
+summary:disk_block_max:d3:3371
+summary:disk_space_wasted:d3:0
+summary:file_count:3
+summary:file_block_count:4
+summary:fragmented_file_count:0
+summary:excess_fragment_count:0
+summary:zerosubsecond_file_count:0
+summary:file_size:650000
+summary:parity_size:524288
+summary:parity_size_max:883687424
+summary:hash:spooky2
+summary:prev_hash:undefined
+summary:best_hash:spooky2
+block_count:2
+summary:has_unsynced:0
+summary:has_unscrubbed:2
+summary:has_rehash:0
+summary:has_bad:0:0:0
+info_count:2
+info_time:1789712928:2:new

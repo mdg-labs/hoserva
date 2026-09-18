@@ -1,0 +1,50 @@
+version:none
+unixtime:1789713101
+time:2026-09-18 06:31:41
+command:touch
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/28-a1/p28/snapraid.conf
+argv:3:-l
+argv:4:/lab/28-a1/p28/touch-l.log
+argv:5:touch
+conf:file:/lab/28-a1/p28/snapraid.conf
+uuid:by-uuid:7:1: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:1: blkid support not compiled in
+uuid:notfound:7:1:
+uuid:by-uuid:7:2: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:2: blkid support not compiled in
+uuid:notfound:7:2:
+uuid:by-uuid:7:3: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:3: blkid support not compiled in
+uuid:notfound:7:3:
+blocksize:262144
+data:d1:/lab/28-a1/mnt/disk1/
+data:d2:/lab/28-a1/mnt/disk2/
+data:d3:/lab/28-a1/mnt/disk3/
+mode:par1
+parity:0:/lab/28-a1/mnt/parity1/snapraid.parity
+content:/lab/28-a1/mnt/parity1/snapraid.content
+msg:progress: Loading state from /lab/28-a1/mnt/parity1/snapraid.content...
+msg:verbose:        5 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        1 empty dirs
+msg:progress: Setting sub-second timestamps...
+touch:d1:movies/zerots.bin: 1704067200.557223955
+msg:progress: Saving state to /lab/28-a1/mnt/parity1/snapraid.content...
+msg:progress: Saving state to /lab/28-a1/mnt/cache/snapraid.content...
+msg:verbose:        5 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        1 empty dirs
+msg:progress: Verifying...
+msg:progress: Verified /lab/28-a1/mnt/parity1/snapraid.content in 0 seconds
+msg:progress: Verified /lab/28-a1/mnt/cache/snapraid.content in 0 seconds
+memory:used:436432
+memory:block:17
+memory:extent:88
+memory:file:192
+memory:link:88
+memory:dir:80
+msg:progress: Using 0 MiB of memory for the file-system.

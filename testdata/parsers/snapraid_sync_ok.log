@@ -1,0 +1,110 @@
+version:none
+unixtime:1789712933
+time:2026-09-18 06:28:53
+command:sync
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/28-a1/p28/snapraid.conf
+argv:3:-l
+argv:4:/lab/28-a1/p28/sync-initial-l.log
+argv:5:sync
+selftest:
+msg:progress: Self test...
+conf:file:/lab/28-a1/p28/snapraid.conf
+uuid:by-uuid:7:1: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:1: blkid support not compiled in
+uuid:notfound:7:1:
+uuid:by-uuid:7:2: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:2: blkid support not compiled in
+uuid:notfound:7:2:
+uuid:by-uuid:7:3: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:3: blkid support not compiled in
+uuid:notfound:7:3:
+blocksize:262144
+data:d1:/lab/28-a1/mnt/disk1/
+data:d2:/lab/28-a1/mnt/disk2/
+data:d3:/lab/28-a1/mnt/disk3/
+mode:par1
+parity:0:/lab/28-a1/mnt/parity1/snapraid.parity
+content:/lab/28-a1/mnt/parity1/snapraid.content
+msg:progress: Loading state from /lab/28-a1/mnt/parity1/snapraid.content...
+msg:fatal: WARNING! Content file '/lab/28-a1/mnt/parity1/snapraid.content' not found, attempting with another copy...
+content:/lab/28-a1/mnt/cache/snapraid.content
+msg:progress: Loading state from /lab/28-a1/mnt/cache/snapraid.content...
+msg:fatal: No content file found. Assuming empty.
+uuid:by-uuid:7:0: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:0: blkid support not compiled in
+uuid:notfound:7:0:
+msg:progress: Scanning...
+statfs:xfs: /lab/28-a1/mnt/disk1/ 
+statfs:xfs: /lab/28-a1/mnt/disk2/ 
+statfs:xfs: /lab/28-a1/mnt/disk3/ 
+scan:add:d1:movies/a.bin
+msg:progress: Scanned d1 in 0 seconds
+scan:add:d3:photos/c.bin
+scan:add:d2:docs/b.bin
+msg:progress: Scanned d3 in 0 seconds
+msg:progress: Scanned d2 in 0 seconds
+msg:fatal: WARNING! UUID is unsupported for disks: 'd1'msg:fatal: , 'd2'msg:fatal: , 'd3'msg:fatal: . Not using inodes to detect move operations.
+msg:verbose:        0 equal
+msg:verbose:        3 added
+msg:verbose:        0 removed
+msg:verbose:        0 updated
+msg:verbose:        0 moved
+msg:verbose:        0 copied
+msg:verbose:        0 restored
+summary:equal:0
+summary:added:3
+summary:removed:0
+summary:updated:0
+summary:moved:0
+summary:copied:0
+summary:restored:0
+summary:exit:diff
+statfs:xfs: /lab/28-a1/mnt/disk1/ 
+statfs:xfs: /lab/28-a1/mnt/disk2/ 
+statfs:xfs: /lab/28-a1/mnt/disk3/ 
+statfs:xfs: /lab/28-a1/mnt/parity1/snapraid.parity 
+memory:used:188122
+memory:block:17
+memory:extent:88
+memory:file:192
+memory:link:88
+memory:dir:80
+msg:progress: Using 0 MiB of memory for the file-system.
+msg:progress: Initializing...
+msg:progress: Resizing...
+split:fill:/lab/28-a1/mnt/parity1/snapraid.parity:0:524288:
+split:delta:/lab/28-a1/mnt/parity1/snapraid.parity:0:524288:
+split:grow:/lab/28-a1/mnt/parity1/snapraid.parity:524288: ok
+split:shrink:/lab/28-a1/mnt/parity1/snapraid.parity:524288: ok
+statfs:xfs: /lab/28-a1/mnt/disk1/ 
+statfs:xfs: /lab/28-a1/mnt/disk2/ 
+statfs:xfs: /lab/28-a1/mnt/disk3/ 
+statfs:xfs: /lab/28-a1/mnt/parity1/snapraid.parity 
+msg:progress: Saving state to /lab/28-a1/mnt/parity1/snapraid.content...
+msg:progress: Saving state to /lab/28-a1/mnt/cache/snapraid.content...
+msg:verbose:        3 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        0 empty dirs
+msg:progress: Verifying...
+msg:progress: Verified /lab/28-a1/mnt/parity1/snapraid.content in 0 seconds
+msg:progress: Verified /lab/28-a1/mnt/cache/snapraid.content in 0 seconds
+msg:progress: Using 64 MiB of memory for 64 cached blocks.
+msg:progress: Selecting...
+msg:progress: Syncing...
+msg:status: Everything OK
+summary:error_file:0
+summary:error_io:0
+summary:error_data:0
+summary:exit:ok
+msg:progress: Saving state to /lab/28-a1/mnt/parity1/snapraid.content...
+msg:progress: Saving state to /lab/28-a1/mnt/cache/snapraid.content...
+msg:verbose:        3 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        0 empty dirs
+msg:progress: Verifying...
+msg:progress: Verified /lab/28-a1/mnt/parity1/snapraid.content in 0 seconds
+msg:progress: Verified /lab/28-a1/mnt/cache/snapraid.content in 0 seconds

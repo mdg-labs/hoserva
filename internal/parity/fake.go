@@ -23,6 +23,10 @@ type FakeEngine struct {
 	syncErr    error
 	scrubSteps []Progress
 	scrubErr   error
+	fixSteps   []Progress
+	fixErr     error
+	checkSteps []Progress
+	checkErr   error
 
 	// Sleep paces streamed progress; tests override it to run instantly.
 	Sleep func(time.Duration)
@@ -85,6 +89,22 @@ func (f *FakeEngine) ScriptScrub(steps []Progress, immediateErr error) {
 	f.scrubErr = immediateErr
 }
 
+// ScriptFix is ScriptSync for Fix.
+func (f *FakeEngine) ScriptFix(steps []Progress, immediateErr error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fixSteps = steps
+	f.fixErr = immediateErr
+}
+
+// ScriptCheck is ScriptSync for Check.
+func (f *FakeEngine) ScriptCheck(steps []Progress, immediateErr error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checkSteps = steps
+	f.checkErr = immediateErr
+}
+
 func (f *FakeEngine) Diff(ctx context.Context) (DiffReport, error) {
 	if err := ctx.Err(); err != nil {
 		return DiffReport{}, err
@@ -116,9 +136,23 @@ func (f *FakeEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progress, 
 	return f.stream(ctx, steps, immediateErr)
 }
 
-func (f *FakeEngine) Scrub(ctx context.Context, pct int) (<-chan Progress, error) {
+func (f *FakeEngine) Scrub(ctx context.Context, pct, olderThanDays int) (<-chan Progress, error) {
 	f.mu.Lock()
 	steps, immediateErr := f.scrubSteps, f.scrubErr
+	f.mu.Unlock()
+	return f.stream(ctx, steps, immediateErr)
+}
+
+func (f *FakeEngine) Fix(ctx context.Context, opts FixOpts) (<-chan Progress, error) {
+	f.mu.Lock()
+	steps, immediateErr := f.fixSteps, f.fixErr
+	f.mu.Unlock()
+	return f.stream(ctx, steps, immediateErr)
+}
+
+func (f *FakeEngine) Check(ctx context.Context, opts CheckOpts) (<-chan Progress, error) {
+	f.mu.Lock()
+	steps, immediateErr := f.checkSteps, f.checkErr
 	f.mu.Unlock()
 	return f.stream(ctx, steps, immediateErr)
 }
