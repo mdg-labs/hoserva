@@ -287,6 +287,114 @@ func TestFormatPlan_FailingAdoptCheckNeverFormatsAnEarlierDisk(t *testing.T) {
 	}
 }
 
+// TestFormatPlan_AdoptCheckFollowsTheIdentityWhereverItMoved is
+// FormatPlan's adopt-check counterpart to
+// TestFormatAssigned_FormatsTheIdentityWhereverItMoved: an adopted disk's
+// plan-time path is not where AdoptCheck actually runs once its identity
+// has moved — the check follows the confirmed physical disk to its
+// current by-id path, never the plan's stale device string.
+func TestFormatPlan_AdoptCheckFollowsTheIdentityWhereverItMoved(t *testing.T) {
+	p := NewFakeProvider()
+	p.AddDisk("/dev/sda", Disk{Size: 8 * TB})
+	// The confirmed disk, now at a different path.
+	p.AddDisk("/dev/sdd", Disk{Size: 4 * TB, WWN: "0xabc123", ByIDName: "wwn-0xabc123"})
+	// A different disk has since taken over the old path.
+	p.AddDisk("/dev/sdc", Disk{Size: 4 * TB})
+	r := NewFakeRunner()
+	r.Script("xfs_repair", []string{"-n", "/dev/disk/by-id/wwn-0xabc123"}, nil, nil)
+
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data: []AssignedDisk{
+			{Device: "/dev/sdc", Filesystem: XFS, Adopt: true, WWN: "0xabc123", ByIDName: "wwn-0xabc123"},
+		},
+	}
+	sizes := map[string]int64{"/dev/sda": 8 * TB, "/dev/sdc": 4 * TB}
+
+	if err := FormatPlan(context.Background(), p, r, plan, sizes, plan.Confirmation()); err != nil {
+		t.Fatalf("FormatPlan: %v", err)
+	}
+
+	calls := r.Calls()
+	wantArgs := []string{"-n", "/dev/disk/by-id/wwn-0xabc123"}
+	if len(calls) != 1 || calls[0].Name != "xfs_repair" || !equalArgs(calls[0].Args, wantArgs) {
+		t.Fatalf("Calls: got %+v, want one xfs_repair against the confirmed disk's by-id path %v", calls, wantArgs)
+	}
+}
+
+// TestFormatPlan_AdoptCheckClosesTheRaceBetweenIdentityCheckAndCheck is
+// this issue's own central safety-critical property: a udev reassignment
+// landing in the window between FormatPlan's identity check (which reads
+// p.List) and the AdoptCheck call that follows it must not change which
+// physical disk is actually checked. AfterList fires the reassignment
+// exactly in that window, proving the fix binds FormatPlan's adopt-check
+// loop to the disk's identity, not to whichever path a check happened to
+// observe moments earlier — the same race #157 closed for FormatAssigned,
+// here in the array-setup adopt path.
+func TestFormatPlan_AdoptCheckClosesTheRaceBetweenIdentityCheckAndCheck(t *testing.T) {
+	p := NewFakeProvider()
+	p.AddDisk("/dev/sda", Disk{Size: 8 * TB})
+	p.AddDisk("/dev/sdc", Disk{Size: 4 * TB, WWN: "0xabc123", ByIDName: "wwn-0xabc123"})
+	r := NewFakeRunner()
+	r.Script("xfs_repair", []string{"-n", "/dev/disk/by-id/wwn-0xabc123"}, nil, nil)
+
+	raced := false
+	p.AfterList = func() {
+		if raced {
+			return
+		}
+		raced = true
+		// The confirmed disk is renumbered to /dev/sdd, and a brand new,
+		// unrelated disk takes over /dev/sdc — all after the identity
+		// check already read the inventory, before AdoptCheck runs.
+		p.Reassign("/dev/sdc", "/dev/sdd")
+		p.AddDisk("/dev/sdc", Disk{Size: 4 * TB})
+	}
+
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data: []AssignedDisk{
+			{Device: "/dev/sdc", Filesystem: XFS, Adopt: true, WWN: "0xabc123", ByIDName: "wwn-0xabc123"},
+		},
+	}
+	sizes := map[string]int64{"/dev/sda": 8 * TB, "/dev/sdc": 4 * TB}
+
+	if err := FormatPlan(context.Background(), p, r, plan, sizes, plan.Confirmation()); err != nil {
+		t.Fatalf("FormatPlan: %v", err)
+	}
+
+	calls := r.Calls()
+	wantArgs := []string{"-n", "/dev/disk/by-id/wwn-0xabc123"}
+	if len(calls) != 1 || calls[0].Name != "xfs_repair" || !equalArgs(calls[0].Args, wantArgs) {
+		t.Fatalf("Calls: got %+v, want one xfs_repair against the originally confirmed disk's by-id path %v, wherever it raced to", calls, wantArgs)
+	}
+}
+
+// TestFormatPlan_RefusesAnAdoptedBootDevice is this issue's boot-disk
+// safety property applied to FormatPlan's adopt-check loop: an adopted
+// disk that turns out to be the boot device must refuse the whole plan
+// (ErrBootDevice) before any command runs, exactly as FormatAssigned's
+// own boot-disk refusal does for a formatted disk. FakeProvider models no
+// boot guard (fake.go), so this runs against the real LinuxProvider and
+// its synthetic sysfs tree, where /dev/sda is the boot disk.
+func TestFormatPlan_RefusesAnAdoptedBootDevice(t *testing.T) {
+	p, runner := newTestProvider(t)
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sdz", Filesystem: XFS}},
+		Data: []AssignedDisk{
+			{Device: "/dev/sda", Filesystem: XFS, Adopt: true, WWN: "0x5000cca0b1c2d3e4", ByIDName: "wwn-0x5000cca0b1c2d3e4"},
+		},
+	}
+	sizes := map[string]int64{"/dev/sdz": 8 * TB, "/dev/sda": 4 * TB}
+
+	if err := FormatPlan(context.Background(), p, runner, plan, sizes, plan.Confirmation()); !errors.Is(err, ErrBootDevice) {
+		t.Fatalf("FormatPlan(adopted boot device): got %v, want ErrBootDevice", err)
+	}
+	if calls := runner.Calls(); len(calls) != 0 {
+		t.Fatalf("FormatPlan(adopted boot device) ran a command: %+v, want none", calls)
+	}
+}
+
 func TestFormatPlan_RefusesWrongConfirmation(t *testing.T) {
 	p := NewFakeProvider()
 	p.AddDisk("/dev/sda", Disk{Size: 8 * TB})

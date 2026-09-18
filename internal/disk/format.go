@@ -116,6 +116,15 @@ func identityOrDevice(byIDName, dev string) string {
 // later adopted disk failing its check is discovered before an earlier
 // disk in the same plan has already been erased, never after. It never
 // touches a device outside plan's own Parity/Data/Cache lists.
+//
+// Each adopted disk's check runs through resolveFormatTarget exactly as
+// FormatAssigned's own format call does: when the disk's identity is
+// known, AdoptCheck runs against the by-id path the kernel currently
+// resolves that identity to, not the plan's plain, transient Device path,
+// so a udev reassignment between plan construction and this call cannot
+// make AdoptCheck (or the boot-disk refusal resolveFormatTarget also
+// performs) land on the wrong physical disk. A disk with no by-id link at
+// all keeps using its plain Device path, unchanged.
 func FormatPlan(ctx context.Context, p Provider, r Runner, plan TopologyPlan, sizes map[string]int64, confirmation string) error {
 	if err := plan.CheckConfirmation(confirmation); err != nil {
 		return err
@@ -128,7 +137,11 @@ func FormatPlan(ctx context.Context, p Provider, r Runner, plan TopologyPlan, si
 
 	for _, d := range disks {
 		if d.Adopt {
-			if err := AdoptCheck(ctx, r, d.Device, d.Filesystem); err != nil {
+			target, err := resolveFormatTarget(ctx, p, d.Device, d.WWN, d.Serial, d.ByIDName)
+			if err != nil {
+				return err
+			}
+			if err := AdoptCheck(ctx, r, target, d.Filesystem); err != nil {
 				return err
 			}
 		}
