@@ -38,7 +38,11 @@ jobs:
     name: L3 VM suite
     if: github.repository == 'mdg-labs/hoserva'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # 60 minutes covered install/onboarding/reboot/Playwright alone; the
+    # spindown steps (scripts/vm/spindown-check.sh, issue #33) add a
+    # 30-minute measurement window (Q31's own "30+ minutes" bar) plus a
+    # settle gate on top of that, so the budget grows with it.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

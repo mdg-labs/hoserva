@@ -2,7 +2,7 @@
 # `make vm-suite` — the nightly/pre-release L3 suite (doc 06 §4, §7,
 # Q79): install, onboarding, array setup, disk yank and reconstruction,
 # `virsh destroy` mid-sync recovery, reboot persistence, config
-# backup/restore.
+# backup/restore, spindown.
 #
 # Every step below runs against whatever hoservad actually exposes today
 # and reports PASS/FAIL for it. A step the product does not implement yet
@@ -42,7 +42,7 @@ fail() {
   record "$1" "FAIL: $2"
 }
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 1/8 install ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 1/10 install ==="
 if vm_domain_exists "$VM_DOMAIN"; then
   "$script_dir/destroy-vm.sh"
 fi
@@ -53,7 +53,7 @@ else
   fail "install" "deploy.sh failed — see its own output above (on the dev host this is expected: dpkg-buildpackage/debhelper/fakeroot are deliberately not installed here, per scripts/release/build-deb.sh's own header comment; a hosted CI runner has them)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 2/8 onboarding ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 2/10 onboarding ==="
 if vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   SETUP_STATUS="$(vm_ssh "curl -sk https://127.0.0.1:8008/api/v1/setup/status" 2>/dev/null || true)"
   if [[ "$SETUP_STATUS" == *'"adminExists":false'* ]]; then
@@ -70,16 +70,16 @@ else
   not_yet "onboarding" "hoservad is not active on the guest (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 3/8 array setup ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 3/10 array setup ==="
 not_yet "array setup" "no array/disk/pool operation is in api/openapi.yaml yet (internal/pool, internal/parity exist as Go packages with L1/L2 tests, but no API surface a VM-level end-to-end test could drive) — re-check once that API lands"
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 4/8 disk yank and reconstruction ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 4/10 disk yank and reconstruction ==="
 not_yet "disk yank and reconstruction" "depends on array setup (step 3) existing first — nothing to reconstruct without a configured array"
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 5/8 virsh destroy mid-sync recovery ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 5/10 virsh destroy mid-sync recovery ==="
 not_yet "virsh destroy mid-sync recovery" "no sync/parity operation is reachable via the API yet (Q79/doc 02 §2's threshold-guard-protected sync) — 'mid-sync' has nothing running to interrupt"
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 6/8 reboot persistence ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 6/10 reboot persistence ==="
 if vm_domain_running "$VM_DOMAIN"; then
   # sshd answering (the existing service, still up from before any
   # reboot happened) can satisfy a plain "wait for SSH" check without the
@@ -118,10 +118,10 @@ else
   not_yet "reboot persistence" "no running domain (install step above did not complete)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 7/8 config backup and restore ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 7/10 config backup and restore ==="
 not_yet "config backup and restore" "no backup/export or import operation is in api/openapi.yaml yet (internal/backup does not exist) — doc 10's config backup feature has not landed"
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 8/8 Playwright journeys ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 8/10 Playwright journeys ==="
 if [[ -x "$script_dir/run-playwright.sh" ]]; then
   if HOSERVA_E2E_BASE_URL="https://127.0.0.1:$VM_HTTPS_PORT" "$script_dir/run-playwright.sh"; then
     pass "Playwright journeys"
@@ -131,6 +131,20 @@ if [[ -x "$script_dir/run-playwright.sh" ]]; then
 else
   not_yet "Playwright journeys" "scripts/vm/run-playwright.sh is missing or not executable"
 fi
+
+echo "vm-suite[$HOSERVA_LAB_ID]: === 9/10 spindown: SMART-poll IO-neutrality ==="
+if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+  if "$script_dir/spindown-check.sh"; then
+    pass "spindown: SMART-poll IO-neutrality"
+  else
+    fail "spindown: SMART-poll IO-neutrality" "see spindown-check.sh output above"
+  fi
+else
+  not_yet "spindown: SMART-poll IO-neutrality" "no active hoservad on the guest (install step above did not complete — see step 1)"
+fi
+
+echo "vm-suite[$HOSERVA_LAB_ID]: === 10/10 spindown: 30-min flat counters with a running pool ==="
+not_yet "spindown: 30-min flat counters with a running pool" "needs a mergerfs/SnapRAID pool configured through hoservad (no array/pool operation is in api/openapi.yaml yet, the same gap step 3 names) plus a scheduled SMART-poll and change-journal job wired into hoservad (internal/disk's SMART poller and internal/parity's change journal exist as Go packages, issue #24, but cmd/hoservad/main.go calls neither on a timer yet) — the lab's own zero-organic-IO property under realistic idle/appdata/SMB-client load is already confirmed (doc 08 Spike 1, 2026-09-15), but without SMART polling or the change journal actually running; re-check once the pool API and the scheduler land"
 
 echo ""
 echo "vm-suite[$HOSERVA_LAB_ID]: ===== summary ====="
