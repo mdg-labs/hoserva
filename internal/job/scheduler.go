@@ -338,6 +338,43 @@ func (s *Scheduler) InMaintenance() bool {
 	return s.maintenance
 }
 
+// awaitPollInterval is Await's fallback tick: Hub.Publish drops an update
+// for a subscriber whose buffer is full rather than blocking (Hub's own doc
+// comment), so a slow receiver can miss the exact event that would have
+// woken it. Await treats every wakeup as only a hint to re-check the store,
+// never as truth on its own, so a dropped event costs at most one tick of
+// latency, not a hang.
+const awaitPollInterval = 25 * time.Millisecond
+
+// Await blocks until id reaches a terminal status (succeeded, failed,
+// cancelled or interrupted) or ctx is done, whichever comes first. It is
+// the primitive MaintenanceChain (chain.go) uses to know a job-backed step
+// has actually finished — not just that Submit returned — before starting
+// the next one (Q30: "each step starts when the previous one finishes").
+func (s *Scheduler) Await(ctx context.Context, id string) (*Job, error) {
+	ch, unsubscribe := s.hub.Subscribe()
+	defer unsubscribe()
+
+	for {
+		j, err := s.store.Get(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("job: awaiting job %s: %w", id, err)
+		}
+		if j.Status.Terminal() {
+			return j, nil
+		}
+		select {
+		case <-ch:
+			// Only a hint to loop and re-check the store above — Hub fans
+			// out every job's updates, not just id's, and may have dropped
+			// the one that actually matters here.
+		case <-time.After(awaitPollInterval):
+		case <-ctx.Done():
+			return nil, fmt.Errorf("job: awaiting job %s: %w", id, ctx.Err())
+		}
+	}
+}
+
 // hasConflictWithRunningLocked reports whether a job of class/resourceIDs
 // conflicts with any currently running job (doc 01 §4). Callers must hold
 // s.mu.
