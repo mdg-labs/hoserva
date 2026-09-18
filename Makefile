@@ -229,7 +229,36 @@ $(error invalid MOCK_ADDR: must not contain '$$' — no Make or shell expansion 
 endif
 export MOCK_ADDR
 
-.PHONY: build test test-unit packaging-test lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check
+# vm-snapshot/vm-restore (NAME=) and vm-deploy (TAG=, DEB=) — the same
+# unexport/$(value ...)/export guard as every other command-line-supplied
+# variable above, against GNU Make auto-exporting (and thereby
+# Make-expanding, `$(shell ...)` included) one before any recipe-level
+# check runs. Once past this guard, scripts/vm/*.sh's own validation (a
+# character whitelist for NAME, a real file check for DEB) is what these
+# values are actually checked against — this guard only proves them
+# inert to Make/shell expansion, matching every existing variable here.
+NAME ?=
+unexport NAME
+ifneq ($(findstring $$,$(value NAME)),)
+$(error invalid NAME: must not contain '$$' — no Make or shell expansion syntax is accepted in a snapshot name)
+endif
+export NAME
+
+TAG ?=
+unexport TAG
+ifneq ($(findstring $$,$(value TAG)),)
+$(error invalid TAG: must not contain '$$' — no Make or shell expansion syntax is accepted in a release tag)
+endif
+export TAG
+
+DEB ?=
+unexport DEB
+ifneq ($(findstring $$,$(value DEB)),)
+$(error invalid DEB: must not contain '$$' — no Make or shell expansion syntax is accepted in a file path)
+endif
+export DEB
+
+.PHONY: build test test-unit packaging-test lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite
 
 # web/ (issue #21, Q8): the Vite build has to run before the Go binaries so
 # web/dist/ is real before cmd/hoservad's //go:embed (web/embed.go) reads
@@ -563,3 +592,39 @@ lab-destroy: lab-require-id
 			exit 1; \
 		fi; \
 	fi
+
+# The L3 VM harness (doc 06 §4, Q42, Q79, D20). Every target below shells
+# out to scripts/vm/*.sh, which own the actual safety guards (own-domain
+# checks, HOSERVA_LAB_ID namespacing, qemu:///session only) — this
+# Makefile never duplicates that logic, matching lab-require-id's own
+# precedent above of leaving validation to the script that acts on the
+# value. HOSERVA_LAB_ID itself is already validated by the top-of-file
+# unexport/$(value ...)/export guard before any recipe below runs.
+vm-up:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-up)" >&2; exit 1; }
+	scripts/vm/create-vm.sh
+
+vm-snapshot:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-snapshot NAME=clean)" >&2; exit 1; }
+	scripts/vm/snapshot-vm.sh
+
+vm-restore:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-restore NAME=clean)" >&2; exit 1; }
+	scripts/vm/restore-vm.sh
+
+vm-deploy:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-deploy)" >&2; exit 1; }
+	scripts/vm/deploy.sh
+
+vm-destroy:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-destroy)" >&2; exit 1; }
+	scripts/vm/destroy-vm.sh
+
+# The nightly/pre-release L3 suite (doc 06 §4, §7, Q79): install,
+# onboarding, array setup, disk yank and reconstruction, `virsh destroy`
+# mid-sync recovery, reboot persistence, config backup/restore, and the
+# Playwright journeys — itemized honestly (not silently skipped) against
+# what the product actually exposes today, in scripts/vm/run-l3-suite.sh.
+vm-suite:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-suite)" >&2; exit 1; }
+	scripts/vm/run-l3-suite.sh
