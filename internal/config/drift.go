@@ -87,11 +87,15 @@ func (g *Generator) Check(ctx context.Context, path string) (Status, error) {
 	if err := ctx.Err(); err != nil {
 		return StatusUnknown, err
 	}
+	_, key, err := g.resolvePath(path)
+	if err != nil {
+		return StatusUnknown, err
+	}
 	manifest, err := g.loadManifest()
 	if err != nil {
 		return StatusUnknown, err
 	}
-	return g.check(manifest, path)
+	return g.check(manifest, key)
 }
 
 func (g *Generator) check(manifest map[string]record, path string) (Status, error) {
@@ -147,7 +151,11 @@ func (g *Generator) Diff(ctx context.Context, file File, revision int, now time.
 		return "", err
 	}
 
-	current, err := os.ReadFile(filepath.Join(g.Root, file.Path))
+	full, _, err := g.resolvePath(file.Path)
+	if err != nil {
+		return "", err
+	}
+	current, err := os.ReadFile(full)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("config: reading %s: %w", file.Path, err)
 	}
@@ -165,16 +173,50 @@ func (g *Generator) KeepUnmanaged(ctx context.Context, path string) error {
 		return err
 	}
 
+	_, key, err := g.resolvePath(path)
+	if err != nil {
+		return err
+	}
 	manifest, err := g.loadManifest()
 	if err != nil {
 		return err
 	}
-	rec, ok := manifest[path]
+	rec, ok := manifest[key]
 	if !ok {
-		return fmt.Errorf("config: %s was never generated", path)
+		return fmt.Errorf("config: %s was never generated", key)
 	}
 	rec.Unmanaged = true
-	manifest[path] = rec
+	manifest[key] = rec
+	return g.saveManifest(manifest)
+}
+
+// Manage reverses KeepUnmanaged: it clears path's Unmanaged record so a
+// later Write generates it again — the documented reversal of the "keep
+// the file and stop managing it" resolution (doc 01 §2). It is an error
+// to call it on a path Generator has no record for, or one that isn't
+// currently unmanaged.
+func (g *Generator) Manage(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	_, key, err := g.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	manifest, err := g.loadManifest()
+	if err != nil {
+		return err
+	}
+	rec, ok := manifest[key]
+	if !ok {
+		return fmt.Errorf("config: %s was never generated", key)
+	}
+	if !rec.Unmanaged {
+		return fmt.Errorf("config: %s is not unmanaged", key)
+	}
+	rec.Unmanaged = false
+	manifest[key] = rec
 	return g.saveManifest(manifest)
 }
 

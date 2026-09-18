@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -16,6 +17,31 @@ import (
 // third drift resolution (doc 01 §2) has to stick until a caller
 // explicitly reverses it, not just until the next apply.
 var ErrUnmanaged = errors.New("config: file is unmanaged")
+
+// manifestDir is the directory manifest.json lives under (drift.go), and
+// reserved: a caller-supplied path can never target anything inside it,
+// or KeepUnmanaged/Write could corrupt Generator's own bookkeeping.
+const manifestDir = ".hoserva"
+
+// resolvePath turns a caller-supplied, Root-relative path into the
+// absolute path Generator may read or write and the manifest key to
+// record it under — the one normalized, confined resolver every exported
+// method (Write, Check, Diff, KeepUnmanaged) routes through, so equivalent
+// spellings of the same path always collide on the same manifest entry
+// and no path can resolve outside Root.
+func (g *Generator) resolvePath(path string) (full string, key string, err error) {
+	if filepath.IsAbs(path) {
+		return "", "", fmt.Errorf("config: %s must be relative to Root", path)
+	}
+	clean := filepath.Clean(path)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("config: %s escapes Root", path)
+	}
+	if clean == manifestDir || strings.HasPrefix(clean, manifestDir+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("config: %s is reserved for Generator's own manifest", path)
+	}
+	return filepath.Join(g.Root, clean), clean, nil
+}
 
 // File is one file Generator can write: a path relative to Root, the
 // `hoserva <command>` line its header names, and the rendered body a
@@ -48,21 +74,25 @@ func (g *Generator) Write(ctx context.Context, file File, revision int, now time
 		return err
 	}
 
+	full, key, err := g.resolvePath(file.Path)
+	if err != nil {
+		return err
+	}
+
 	manifest, err := g.loadManifest()
 	if err != nil {
 		return err
 	}
-	if rec, ok := manifest[file.Path]; ok && rec.Unmanaged {
-		return fmt.Errorf("%w: %s", ErrUnmanaged, file.Path)
+	if rec, ok := manifest[key]; ok && rec.Unmanaged {
+		return fmt.Errorf("%w: %s", ErrUnmanaged, key)
 	}
 
 	content := Header(file.Command, revision, now) + string(file.Body)
-	full := filepath.Join(g.Root, file.Path)
 	if err := atomicWrite(full, []byte(content), 0o644); err != nil {
 		return err
 	}
 
-	manifest[file.Path] = record{
+	manifest[key] = record{
 		Hash:        hashContent([]byte(content)),
 		Revision:    revision,
 		GeneratedAt: now.UTC(),
@@ -78,11 +108,16 @@ func hashContent(b []byte) string {
 // atomicWrite writes data to path by creating a temp file in path's own
 // directory, syncing and closing it, then renaming it over path — so a
 // reader never observes a partially written file, and a crash mid-write
-// leaves the previous file (or none) rather than a truncated one.
+// leaves the previous file (or none) rather than a truncated one. It also
+// fsyncs the destination directory after the rename: tmp.Sync() below
+// only persists the temp file's own content, not the renamed directory
+// entry — without this, a crash right after a successful Rename can still
+// lose the new file (or leave the old one) despite Write having returned
+// nil.
 func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("config: creating directory %s: %w", dir, err)
+	if err := ensureDirSynced(dir); err != nil {
+		return err
 	}
 
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
@@ -108,6 +143,50 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("config: renaming %s to %s: %w", tmpPath, path, err)
+	}
+	return fsyncDir(dir)
+}
+
+// ensureDirSynced is os.MkdirAll, except every newly created directory's
+// entry is fsynced into its parent as soon as it's created. MkdirAll alone
+// leaves those entries unpersisted until something unrelated happens to
+// sync the parent — a crash before that could lose the directory Write
+// just reported creating.
+func ensureDirSynced(dir string) error {
+	info, err := os.Stat(dir)
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("config: %s exists and is not a directory", dir)
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("config: checking %s: %w", dir, err)
+	}
+
+	parent := filepath.Dir(dir)
+	if parent != dir {
+		if err := ensureDirSynced(parent); err != nil {
+			return err
+		}
+	}
+	if err := os.Mkdir(dir, 0o755); err != nil && !os.IsExist(err) {
+		return fmt.Errorf("config: creating directory %s: %w", dir, err)
+	}
+	return fsyncDir(parent)
+}
+
+// fsyncDir opens dir and fsyncs it directly — the documented way to
+// persist a directory entry (a create, rename or remove within it) rather
+// than just the file content involved.
+func fsyncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("config: opening %s to sync: %w", dir, err)
+	}
+	defer func() { _ = d.Close() }()
+	if err := d.Sync(); err != nil {
+		return fmt.Errorf("config: syncing %s: %w", dir, err)
 	}
 	return nil
 }
