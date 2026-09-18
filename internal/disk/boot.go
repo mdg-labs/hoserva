@@ -2,8 +2,11 @@ package disk
 
 import (
 	"bufio"
+	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -37,17 +40,109 @@ func ReadProcMounts(path string) ([]MountEntry, error) {
 	return out, scanner.Err()
 }
 
-// BootDevice resolves the whole-disk device backing the root filesystem
-// from a mounts listing, so it can always be identified and excluded from
-// anything destructive (doc 02 §4). It reports false if no entry mounts
-// "/" on a real block device.
-func BootDevice(mounts []MountEntry) (string, bool) {
+// BootDevices resolves every physical whole-disk device backing the root
+// filesystem from a mounts listing, so every one of them can always be
+// identified and excluded from anything destructive (doc 02 §4). A root
+// mount is frequently not a physical disk's own partition directly: it
+// can be a device-mapper name (LVM, LUKS), an MD software-RAID array, or
+// the kernel's own "/dev/root" alias — each of those is a virtual device
+// that can itself be built from more than one physical disk, so this
+// walks sysBlockDir's "slaves" links recursively until it bottoms out at
+// real, physical leaf devices rather than returning the one virtual path.
+// Classification must fail closed: any device it cannot resolve is
+// reported as an error, never silently dropped, since a boot disk this
+// misses would look like an ordinary, formattable disk to every
+// destructive caller downstream.
+//
+// It returns (nil, nil) if no entry mounts "/" on a device at all — a
+// mounts listing this narrow is a caller/environment issue for the code
+// that built it to decide on, not something this function can resolve.
+func BootDevices(mounts []MountEntry, sysBlockDir string) ([]string, error) {
 	for _, m := range mounts {
-		if m.MountPoint == "/" && strings.HasPrefix(m.Device, "/dev/") {
-			return WholeDiskDevice(m.Device), true
+		if m.MountPoint != "/" {
+			continue
+		}
+		if !strings.HasPrefix(m.Device, "/dev/") {
+			return nil, nil
+		}
+		return resolvePhysicalDevices(m.Device, sysBlockDir)
+	}
+	return nil, nil
+}
+
+// resolvePhysicalDevices resolves rawDevice (e.g. "/dev/sda2",
+// "/dev/mapper/vg-root", "/dev/md0", "/dev/root") to the sorted, deduped
+// set of physical whole-disk device paths that ultimately back it.
+func resolvePhysicalDevices(rawDevice, sysBlockDir string) ([]string, error) {
+	name, err := blockDeviceName(rawDevice, sysBlockDir)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	var physical []string
+	var walk func(name string) error
+	walk = func(name string) error {
+		slaves, err := os.ReadDir(filepath.Join(sysBlockDir, name, "slaves"))
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("disk: reading slaves of %s: %w", name, err)
+			}
+			// No "slaves" directory: name is itself a physical leaf
+			// device (or one of its partitions).
+			whole := WholeDiskDevice("/dev/" + name)
+			if !seen[whole] {
+				seen[whole] = true
+				physical = append(physical, whole)
+			}
+			return nil
+		}
+		for _, s := range slaves {
+			if err := walk(s.Name()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(name); err != nil {
+		return nil, err
+	}
+
+	sort.Strings(physical)
+	return physical, nil
+}
+
+// blockDeviceName resolves rawDevice to the kernel block device name
+// (e.g. "sda2", "dm-0", "md0") sysBlockDir's own entries are keyed by.
+func blockDeviceName(rawDevice, sysBlockDir string) (string, error) {
+	base := filepath.Base(rawDevice)
+
+	if _, err := os.Stat(filepath.Join(sysBlockDir, base)); err == nil {
+		return base, nil
+	}
+
+	// Not a kernel device name directly — try it as a device-mapper
+	// friendly name (/dev/mapper/<name>), resolved via each dm-N's own
+	// sysfs "dm/name" file, so this needs nothing outside sysBlockDir
+	// (never a /dev/mapper symlink read) and stays fixture-testable.
+	entries, err := os.ReadDir(sysBlockDir)
+	if err != nil {
+		return "", fmt.Errorf("disk: reading %s: %w", sysBlockDir, err)
+	}
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), "dm-") {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(sysBlockDir, e.Name(), "dm", "name"))
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(string(content)) == base {
+			return e.Name(), nil
 		}
 	}
-	return "", false
+
+	return "", fmt.Errorf("disk: cannot resolve %s to a kernel block device under %s", rawDevice, sysBlockDir)
 }
 
 var (

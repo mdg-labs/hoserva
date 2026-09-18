@@ -215,13 +215,13 @@ func TestRunner_InjectedFailureLeavesDatabaseUnchanged_LaterMigrationInBatch(t *
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	r.DB = db
-	r.Migrations = append(r.Migrations,
-		testMigration(v(2), "update", "CREATE TABLE noop (id INTEGER PRIMARY KEY);"),
-		testMigration(v(3), "bad", "CREATE TABLE a (id INTEGER PRIMARY KEY);"),
-	)
+	batchV2 := testMigration(v(2), "update", "CREATE TABLE noop (id INTEGER PRIMARY KEY);")
+	batchV3 := testMigration(v(3), "bad", "CREATE TABLE a (id INTEGER PRIMARY KEY);")
+	r.Migrations = append(r.Migrations, batchV2, batchV3)
 	r.Transforms = []transforms.Transform{{
-		Version: v(2),
-		Name:    "test-only: change the seeded row",
+		Version:  batchV2.Version,
+		Checksum: batchV2.Checksum,
+		Name:     "test-only: change the seeded row",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "UPDATE a SET v = 'changed-by-the-batch' WHERE id = 1")
 			return err
@@ -281,9 +281,16 @@ func TestRunner_InjectedFailureLeavesDatabaseUnchanged_LaterMigrationInBatch(t *
 // not any refusal of the migration's own statement shape.
 func TestRunner_RealIntegrityCheckFailureRollsBackBatch(t *testing.T) {
 	ctx := context.Background()
+	setupMigration := testMigration(v(1), "setup", `
+		CREATE TABLE a (id INTEGER PRIMARY KEY, v TEXT);
+		CREATE TABLE b (id INTEGER PRIMARY KEY);
+		CREATE INDEX ai ON a(v);
+	`)
+	noopMigration := testMigration(v(2), "noop", "CREATE TABLE noop (id INTEGER PRIMARY KEY);")
 	seedData := transforms.Transform{
-		Version: v(1),
-		Name:    "test-only: seed rows for the corruption below",
+		Version:  setupMigration.Version,
+		Checksum: setupMigration.Checksum,
+		Name:     "test-only: seed rows for the corruption below",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			if _, err := tx.ExecContext(ctx, "INSERT INTO a (id, v) VALUES (1, 'x'), (2, 'y')"); err != nil {
 				return err
@@ -293,8 +300,9 @@ func TestRunner_RealIntegrityCheckFailureRollsBackBatch(t *testing.T) {
 		},
 	}
 	corruptIndex := transforms.Transform{
-		Version: v(2),
-		Name:    "test-only: corrupt index ai's rootpage via writable_schema",
+		Version:  noopMigration.Version,
+		Checksum: noopMigration.Checksum,
+		Name:     "test-only: corrupt index ai's rootpage via writable_schema",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			for _, stmt := range []string{
 				"PRAGMA writable_schema = ON",
@@ -309,14 +317,7 @@ func TestRunner_RealIntegrityCheckFailureRollsBackBatch(t *testing.T) {
 			return nil
 		},
 	}
-	r, db := newRunner(t, []Migration{
-		testMigration(v(1), "setup", `
-			CREATE TABLE a (id INTEGER PRIMARY KEY, v TEXT);
-			CREATE TABLE b (id INTEGER PRIMARY KEY);
-			CREATE INDEX ai ON a(v);
-		`),
-		testMigration(v(2), "noop", "CREATE TABLE noop (id INTEGER PRIMARY KEY);"),
-	})
+	r, db := newRunner(t, []Migration{setupMigration, noopMigration})
 	r.Transforms = []transforms.Transform{seedData, corruptIndex}
 
 	_, _, err := r.Apply(ctx)
@@ -351,16 +352,15 @@ func TestRunner_RealIntegrityCheckFailureRollsBackBatch(t *testing.T) {
 // rolled back.
 func TestRunner_InjectedFailureLeavesDatabaseUnchanged_ForeignKeyCheck(t *testing.T) {
 	ctx := context.Background()
-	setup := []Migration{
-		testMigration(v(1), "setup", `
-			CREATE TABLE parent (id INTEGER PRIMARY KEY);
-			CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id));
-		`),
-	}
-	r, db := newRunner(t, setup)
+	setupMigration := testMigration(v(1), "setup", `
+		CREATE TABLE parent (id INTEGER PRIMARY KEY);
+		CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id));
+	`)
+	r, db := newRunner(t, []Migration{setupMigration})
 	r.Transforms = []transforms.Transform{{
-		Version: v(1),
-		Name:    "test-only: seed the parent row",
+		Version:  setupMigration.Version,
+		Checksum: setupMigration.Checksum,
+		Name:     "test-only: seed the parent row",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "INSERT INTO parent (id) VALUES (1)")
 			return err
@@ -379,10 +379,12 @@ func TestRunner_InjectedFailureLeavesDatabaseUnchanged_ForeignKeyCheck(t *testin
 		t.Fatal(err)
 	}
 
-	r.Migrations = append(r.Migrations, testMigration(v(2), "orphan", "CREATE TABLE noop (id INTEGER PRIMARY KEY);"))
+	orphanMigration := testMigration(v(2), "orphan", "CREATE TABLE noop (id INTEGER PRIMARY KEY);")
+	r.Migrations = append(r.Migrations, orphanMigration)
 	r.Transforms = append(r.Transforms, transforms.Transform{
-		Version: v(2),
-		Name:    "test-only: insert a row that violates the declared foreign key",
+		Version:  orphanMigration.Version,
+		Checksum: orphanMigration.Checksum,
+		Name:     "test-only: insert a row that violates the declared foreign key",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "INSERT INTO child (id, parent_id) VALUES (1, 999)")
 			return err
@@ -438,10 +440,12 @@ func TestRunner_SnapshotHoldsPreMigrationState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r.Migrations = append(r.Migrations, testMigration(v(2), "b", "ALTER TABLE a ADD COLUMN extra TEXT;"))
+	snapshotMigration := testMigration(v(2), "b", "ALTER TABLE a ADD COLUMN extra TEXT;")
+	r.Migrations = append(r.Migrations, snapshotMigration)
 	r.Transforms = []transforms.Transform{{
-		Version: v(2),
-		Name:    "test-only: change the seeded row",
+		Version:  snapshotMigration.Version,
+		Checksum: snapshotMigration.Checksum,
+		Name:     "test-only: change the seeded row",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "UPDATE a SET v = 'after'")
 			return err
@@ -504,15 +508,14 @@ func TestRunner_SuspendsForeignKeyEnforcementDuringRebuild(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	db.SetMaxOpenConns(1) // pin to the exact connection Apply uses and restores
 
-	setup := []Migration{
-		testMigration(v(1), "setup", `
-			CREATE TABLE parent (id INTEGER PRIMARY KEY);
-			CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id) ON DELETE CASCADE);
-		`),
-	}
-	r := &Runner{DB: db, Migrations: setup, SnapshotDir: t.TempDir(), Transforms: []transforms.Transform{{
-		Version: v(1),
-		Name:    "test-only: seed a parent and its child",
+	setupMigration := testMigration(v(1), "setup", `
+		CREATE TABLE parent (id INTEGER PRIMARY KEY);
+		CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES parent(id) ON DELETE CASCADE);
+	`)
+	r := &Runner{DB: db, Migrations: []Migration{setupMigration}, SnapshotDir: t.TempDir(), Transforms: []transforms.Transform{{
+		Version:  setupMigration.Version,
+		Checksum: setupMigration.Checksum,
+		Name:     "test-only: seed a parent and its child",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			if _, err := tx.ExecContext(ctx, "INSERT INTO parent (id) VALUES (1)"); err != nil {
 				return err
@@ -600,10 +603,12 @@ func TestRunner_TransformRunsInSameTransactionAsItsMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r.Migrations = append(r.Migrations, testMigration(v(3), "add_bytes_backfill", "CREATE TABLE backfill_marker (id INTEGER PRIMARY KEY);"))
+	backfillMigration := testMigration(v(3), "add_bytes_backfill", "CREATE TABLE backfill_marker (id INTEGER PRIMARY KEY);")
+	r.Migrations = append(r.Migrations, backfillMigration)
 	r.Transforms = []transforms.Transform{{
-		Version: v(3),
-		Name:    "backfill size_bytes from size_mb",
+		Version:  backfillMigration.Version,
+		Checksum: backfillMigration.Checksum,
+		Name:     "backfill size_bytes from size_mb",
 		Fn: func(ctx context.Context, tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, "UPDATE a SET size_bytes = size_mb * 1024 * 1024")
 			return err
@@ -625,16 +630,16 @@ func TestRunner_TransformRunsInSameTransactionAsItsMigration(t *testing.T) {
 
 func TestRunner_TransformFailureRollsBackItsMigrationToo(t *testing.T) {
 	ctx := context.Background()
-	migrations := []Migration{
-		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);"),
-	}
+	onlyMigration := testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);")
+	migrations := []Migration{onlyMigration}
 	db := openTestDB(t)
 	r := &Runner{
 		DB:         db,
 		Migrations: migrations,
 		Transforms: []transforms.Transform{{
-			Version: v(1),
-			Name:    "always fails",
+			Version:  onlyMigration.Version,
+			Checksum: onlyMigration.Checksum,
+			Name:     "always fails",
 			Fn: func(ctx context.Context, tx *sql.Tx) error {
 				return errors.New("injected transform failure")
 			},
@@ -805,17 +810,17 @@ func TestRunner_ApplyKeepsOnlyNewestThreeSnapshots(t *testing.T) {
 // Apply-level test can reach without racing Apply's own internal timing.
 func TestRunner_ForeignKeyRestoreSurvivesCancellationDuringApply(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	migrations := []Migration{
-		testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);"),
-	}
+	onlyMigration := testMigration(v(1), "a", "CREATE TABLE a (id INTEGER PRIMARY KEY);")
+	migrations := []Migration{onlyMigration}
 	db := openTestDB(t)
 	db.SetMaxOpenConns(1) // pin to the exact connection Apply uses and restores
 	r := &Runner{
 		DB:         db,
 		Migrations: migrations,
 		Transforms: []transforms.Transform{{
-			Version: v(1),
-			Name:    "cancels the caller's context, then fails",
+			Version:  onlyMigration.Version,
+			Checksum: onlyMigration.Checksum,
+			Name:     "cancels the caller's context, then fails",
 			Fn: func(ctx context.Context, tx *sql.Tx) error {
 				cancel()
 				return errors.New("injected: context cancelled mid-transform")

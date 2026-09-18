@@ -44,6 +44,13 @@ var (
 	// file makes parity unrecoverable, so a layout that cannot place
 	// enough copies on enough distinct devices is never generated.
 	ErrContentPlacement = errors.New("parity: cannot place enough content file copies on distinct physical devices (Q18)")
+	// ErrEmptyMount and ErrDuplicateMount guard Q18's and Q19's distinct-
+	// device guarantees at the source: an empty or repeated mount path
+	// would let two roles (or two parity slots) silently alias the same
+	// disk, defeating the "N distinct physical devices" safety property
+	// before it's ever checked.
+	ErrEmptyMount     = errors.New("parity: a mount path is empty")
+	ErrDuplicateMount = errors.New("parity: the same mount path is assigned more than one role")
 )
 
 // Layout is the set of mount points array setup assigns before
@@ -59,10 +66,13 @@ type Layout struct {
 	Excludes     []string `json:"excludes,omitempty"`
 }
 
-// Validate checks Q19's parity-count rule and that there is at least one
-// data disk. It does not check disk sizes or filesystems — those are
-// disk.TopologyPlan's own rules (Q20, Q23), checked against real disk
-// data Layout doesn't carry.
+// Validate checks Q19's parity-count rule, that there is at least one data
+// disk, and that every assigned mount path is non-empty and appears at
+// most once across ParityMounts, DataMounts and CacheMount combined —
+// paths are compared after filepath.Clean, so equivalent spellings of the
+// same path still collide. It does not check disk sizes or filesystems —
+// those are disk.TopologyPlan's own rules (Q20, Q23), checked against real
+// disk data Layout doesn't carry.
 func (l Layout) Validate() error {
 	switch {
 	case len(l.ParityMounts) == 0:
@@ -71,6 +81,35 @@ func (l Layout) Validate() error {
 		return ErrTooManyParityDisks
 	case len(l.DataMounts) == 0:
 		return ErrNoDataDisks
+	}
+
+	seen := make(map[string]string, len(l.ParityMounts)+len(l.DataMounts)+1)
+	assign := func(role, path string) error {
+		if path == "" {
+			return fmt.Errorf("%w: %s", ErrEmptyMount, role)
+		}
+		clean := filepath.Clean(path)
+		if other, ok := seen[clean]; ok {
+			return fmt.Errorf("%w: %s and %s both target %s", ErrDuplicateMount, other, role, clean)
+		}
+		seen[clean] = role
+		return nil
+	}
+
+	for i, m := range l.ParityMounts {
+		if err := assign(fmt.Sprintf("parity mount %d", i+1), m); err != nil {
+			return err
+		}
+	}
+	for i, m := range l.DataMounts {
+		if err := assign(fmt.Sprintf("data mount %d", i+1), m); err != nil {
+			return err
+		}
+	}
+	if l.CacheMount != "" {
+		if err := assign("cache mount", l.CacheMount); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -101,6 +140,14 @@ func (l Layout) ContentPaths() ([]string, error) {
 
 	if len(paths) < min {
 		return nil, fmt.Errorf("%w: only %d of %d required copies placeable across the assigned disks", ErrContentPlacement, len(paths), min)
+	}
+
+	seen := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		if seen[p] {
+			return nil, fmt.Errorf("%w: content path %s placed more than once", ErrDuplicateMount, p)
+		}
+		seen[p] = true
 	}
 	return paths, nil
 }
