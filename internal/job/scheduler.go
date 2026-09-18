@@ -298,6 +298,30 @@ func (s *Scheduler) EnterMaintenance(ctx context.Context) error {
 	return nil
 }
 
+// Drain blocks until every job running at the moment of the call has
+// actually finished — succeeded, failed, cancelled or interrupted — or
+// ctx is done, whichever comes first. EnterMaintenance only signals
+// running jobs to stop and returns without waiting for them; a caller
+// that must not proceed until the array is genuinely idle (ArraySequence
+// .Stop, doc 02 §4) calls Drain immediately after EnterMaintenance.
+func (s *Scheduler) Drain(ctx context.Context) error {
+	s.mu.Lock()
+	dones := make([]<-chan struct{}, 0, len(s.running))
+	for _, rj := range s.running {
+		dones = append(dones, rj.done)
+	}
+	s.mu.Unlock()
+
+	for _, done := range dones {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return fmt.Errorf("job: waiting for running jobs to stop: %w", ctx.Err())
+		}
+	}
+	return nil
+}
+
 // ExitMaintenance reverses EnterMaintenance (`hoserva array start`, Q70).
 // It does not resume anything on its own — every interrupted job stays
 // interrupted until an explicit Resume call.

@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -31,6 +32,22 @@ type ArrayMount interface {
 	Unmount(ctx context.Context) error
 }
 
+// ReadinessGate is the boot-time readiness check (doc 02 §1, Q69) Start
+// consults before mounting anything: disk.StorageGate satisfies this
+// shape without this package importing internal/disk.
+type ReadinessGate interface {
+	// Ready reports whether the array may activate: every expected disk
+	// present at the last evaluation, or a human has explicitly
+	// acknowledged the degraded state.
+	Ready() bool
+}
+
+// ErrStorageNotReady is Start's refusal when Gate is set and reports the
+// array is not ready to activate (doc 02 §1, Q69) — the array must
+// genuinely refuse to activate while degraded and unacknowledged, not
+// mount whatever disks happen to be present.
+var ErrStorageNotReady = errors.New("job: storage is degraded and unacknowledged — refusing to start the array")
+
 // ArraySequence is doc 02 §4's "Stopping the array" ordering, and Q70's
 // own restatement of it: maintenance mode first (new jobs refused,
 // resumable jobs stopped at their next checkpoint, the rest marked
@@ -43,6 +60,12 @@ type ArrayMount interface {
 // implementation, never duplicated per caller.
 type ArraySequence struct {
 	Scheduler *Scheduler
+
+	// Gate, when set, must report Ready before Start mounts anything
+	// (doc 02 §1, Q69). Nil skips the check — every existing caller in
+	// this package's own tests predates the gate and has no degraded
+	// state to consult.
+	Gate ReadinessGate
 
 	// Services is stop order: e.g. VMs, then containers, then Samba, then
 	// NFS. Start runs the same slice in reverse.
@@ -70,6 +93,16 @@ func (s ArraySequence) Stop(ctx context.Context) error {
 	if s.Scheduler != nil {
 		if err := s.Scheduler.EnterMaintenance(ctx); err != nil {
 			return fmt.Errorf("job: entering maintenance mode: %w", err)
+		}
+		// EnterMaintenance only signals running jobs to stop and returns;
+		// it does not wait for them to actually finish. Proceeding to stop
+		// services and unmount storage while one of Hoserva's own jobs
+		// (mover, rebalance, evacuation, a Parity-class Sync) is still
+		// mid-write is exactly the data-loss scenario this sequence exists
+		// to prevent (doc 02 §4) — so Stop waits here for every job that
+		// was running to actually exit before touching anything else.
+		if err := s.Scheduler.Drain(ctx); err != nil {
+			return err
 		}
 	}
 
@@ -101,6 +134,10 @@ func (s ArraySequence) Stop(ctx context.Context) error {
 // own Stop order (the last thing stopped is the first thing started).
 // Maintenance mode is exited only once every step succeeds.
 func (s ArraySequence) Start(ctx context.Context) error {
+	if s.Gate != nil && !s.Gate.Ready() {
+		return ErrStorageNotReady
+	}
+
 	for _, d := range s.Disks {
 		if err := d.Mount(ctx); err != nil {
 			return fmt.Errorf("job: mounting %s: %w", d.Where(), err)
