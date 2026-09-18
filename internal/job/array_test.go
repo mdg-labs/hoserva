@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // fakeArrayService is ArraySequence's Service fake (CLAUDE.md): it
@@ -102,6 +103,74 @@ func TestArraySequence_Stop_ServiceMustStopBeforeAnyUnmount(t *testing.T) {
 
 	if !s.InMaintenance() {
 		t.Fatal("Stop: scheduler must stay in maintenance mode after a failed stop, so nothing new can start against a half-stopped array")
+	}
+}
+
+// TestArraySequence_Stop_WaitsForARunningJobToFinishBeforeStoppingServices
+// reproduces the gap EnterMaintenance alone leaves open: it only signals a
+// running job to stop and returns immediately, so without Drain, Stop
+// would proceed straight into stopping services and unmounting storage
+// while the job's own goroutine might still be mid-write (doc 02 §4) —
+// exactly the data-loss scenario this sequence exists to prevent, except
+// the unprotected writer would be Hoserva's own in-process job rather
+// than an external service.
+func TestArraySequence_Stop_WaitsForARunningJobToFinishBeforeStoppingServices(t *testing.T) {
+	var log []string
+	s := newTestScheduler(t)
+	started, release := registerBlocking(s, TypeMover, false)
+	if _, err := s.Submit(context.Background(), TypeMover, nil); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	<-started
+
+	svc := &fakeArrayService{name: "container", log: &log}
+	seq := ArraySequence{Scheduler: s, Services: []ArrayService{svc}}
+
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- seq.Stop(context.Background()) }()
+
+	select {
+	case <-stopDone:
+		t.Fatal("Stop returned while the running job was still mid-write — it must wait for the job to finish first")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if len(log) != 0 {
+		t.Fatalf("Stop touched services (%v) before the running job finished", log)
+	}
+
+	close(release)
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not return after the running job finished")
+	}
+	sliceEqual(t, log, []string{"stop:container"})
+}
+
+// TestArraySequence_Stop_DrainRespectsContextDeadline confirms Stop does
+// not hang forever behind a job that never honors maintenance mode's
+// signal — the caller's ctx still bounds the wait, and maintenance mode
+// is left active exactly as it is for any other Stop failure.
+func TestArraySequence_Stop_DrainRespectsContextDeadline(t *testing.T) {
+	s := newTestScheduler(t)
+	_, release := registerBlocking(s, TypeMover, false)
+	t.Cleanup(func() { close(release) })
+	if _, err := s.Submit(context.Background(), TypeMover, nil); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	seq := ArraySequence{Scheduler: s}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	if err := seq.Stop(ctx); err == nil {
+		t.Fatal("Stop: got nil error, want the context deadline to propagate while the job is still running")
+	}
+	if !s.InMaintenance() {
+		t.Fatal("Stop: maintenance mode must stay active when the drain wait times out")
 	}
 }
 
@@ -212,6 +281,46 @@ func TestArraySequence_Start_ReversesStopOrderAndExitsMaintenance(t *testing.T) 
 
 	if s.InMaintenance() {
 		t.Fatal("Start: maintenance mode must be exited once every step succeeds")
+	}
+}
+
+// fakeReadinessGate is ArraySequence's Gate fake.
+type fakeReadinessGate struct{ ready bool }
+
+func (g fakeReadinessGate) Ready() bool { return g.ready }
+
+// TestArraySequence_Start_RefusesWhenGateIsNotReady is Q69's own
+// requirement restated at the mount sequence: the array must genuinely
+// refuse to activate while degraded and unacknowledged, rather than
+// mounting whatever disks happen to be present over an unacknowledged
+// missing disk.
+func TestArraySequence_Start_RefusesWhenGateIsNotReady(t *testing.T) {
+	var log []string
+	disk1 := &fakeArrayMount{where: "/mnt/disk1", log: &log}
+
+	seq := ArraySequence{Gate: fakeReadinessGate{ready: false}, Disks: []ArrayMount{disk1}}
+	err := seq.Start(context.Background())
+	if !errors.Is(err, ErrStorageNotReady) {
+		t.Fatalf("Start: got %v, want ErrStorageNotReady", err)
+	}
+	if len(log) != 0 {
+		t.Fatalf("Start mounted %v while the gate reported not ready", log)
+	}
+}
+
+// TestArraySequence_Start_ProceedsWhenGateIsReadyOrUnset confirms the gate
+// check does not regress the ordinary path: a ready gate, or none set at
+// all (every caller in this package's own tests predates the gate),
+// mounts normally.
+func TestArraySequence_Start_ProceedsWhenGateIsReadyOrUnset(t *testing.T) {
+	for _, gate := range []ReadinessGate{nil, fakeReadinessGate{ready: true}} {
+		var log []string
+		disk1 := &fakeArrayMount{where: "/mnt/disk1", log: &log}
+		seq := ArraySequence{Gate: gate, Disks: []ArrayMount{disk1}}
+		if err := seq.Start(context.Background()); err != nil {
+			t.Fatalf("Start with gate %v: %v", gate, err)
+		}
+		sliceEqual(t, log, []string{"mount:/mnt/disk1"})
 	}
 }
 
