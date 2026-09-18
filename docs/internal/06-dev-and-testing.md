@@ -171,6 +171,8 @@ losetup -d /dev/loop2 && losetup --read-only --find --show $LAB/img/disk2.img
 
 Each of these becomes a test case. The threshold guard (doc 02 §2) in particular **must** have a test that fills the array, unmounts a disk, runs a diff, and asserts the sync is blocked. That single test protects the most important safety property in the product.
 
+**The array is a run-once-per-`lab-up` resource for any test that mutates its on-disk state.** Corrupting a disk with `dd`, killing or replacing a disk, and filling a disk to test `moveonenospc` all leave the array's real on-disk state — SnapRAID's content-file history, the corrupted bytes themselves — genuinely different from a fresh array's, not merely different in a way the next test ignores. Once one of these has run, `make lab-destroy` and `make lab-up` before the next full test run; reusing the same standing array does not reproduce a clean baseline. The symptom is misleading: re-running the suite against an already-exercised array makes unrelated, previously-passing tests — a guard test like `TestLabGuard_BlocksSyncWhenDiskUnmounts`, or a sync test like `TestLabSync_WritesRealParity` — start failing, which looks like a regression but isn't one.
+
 ### Synthetic data generation
 
 Realistic test corpora matter, because `epmfs` behaviour and mover performance depend on file size distribution:
