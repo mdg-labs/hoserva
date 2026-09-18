@@ -68,7 +68,7 @@ for i in "${!ARRAY_DISK_SPECS[@]}"; do
   {
     echo "    <disk type='file' device='disk'>"
     echo "      <driver name='qemu' type='qcow2'/>"
-    echo "      <source file='$disk_path'/>"
+    echo "      <source file='$(vm_xml_attr_escape "$disk_path")'/>"
     echo "      <target dev='vd${DEV_LETTERS[$i]}' bus='virtio'/>"
     echo "      <serial>hoserva-$HOSERVA_LAB_ID-$disk_name</serial>"
     echo "      <address type='pci' domain='0x0000' bus='0x00' slot='${PCI_SLOTS[$i]}' function='0x0'/>"
@@ -113,17 +113,27 @@ MAC_ADDRESS="$(printf '52:54:00:%02x:%02x:%02x' \
 
 echo "vm-up[$HOSERVA_LAB_ID]: rendering domain XML (ssh->$VM_SSH_PORT, hoservad TLS->$VM_HTTPS_PORT)"
 DOMAIN_XML="$VM_STATE_DIR/domain.xml"
+# OS_DISK, SEED_ISO and the serial log path all derive from
+# HOSERVA_VM_REPO_ROOT (an arbitrary filesystem path) — XML-escaped for
+# the attribute they land in, then sed-escaped so a literal '&', '\' or
+# '|' in the path can't corrupt this substitution itself. The other
+# placeholders below are this harness's own lab id, numeric ports and
+# generated MAC (vm_require_id/vm_id_valid's character whitelist), never
+# template- or user-supplied text.
+OS_DISK_XML="$(vm_sed_replacement_escape "$(vm_xml_attr_escape "$OS_DISK")")"
+SEED_ISO_XML="$(vm_sed_replacement_escape "$(vm_xml_attr_escape "$SEED_ISO")")"
+SERIAL_LOG_XML="$(vm_sed_replacement_escape "$(vm_xml_attr_escape "$VM_STATE_DIR/serial.log")")"
 sed -e "/__ARRAY_DISKS__/r $ARRAY_DISKS_XML" -e "/__ARRAY_DISKS__/d" "$script_dir/domain.xml.tmpl" \
   | sed \
     -e "s|__DOMAIN_NAME__|$VM_DOMAIN|g" \
     -e "s|__MEMORY_MIB__|$MEMORY_MIB|g" \
     -e "s|__VCPU_COUNT__|$VCPU_COUNT|g" \
-    -e "s|__OS_DISK_PATH__|$OS_DISK|g" \
-    -e "s|__SEED_ISO_PATH__|$SEED_ISO|g" \
+    -e "s|__OS_DISK_PATH__|$OS_DISK_XML|g" \
+    -e "s|__SEED_ISO_PATH__|$SEED_ISO_XML|g" \
     -e "s|__MAC_ADDRESS__|$MAC_ADDRESS|g" \
     -e "s|__SSH_PORT__|$VM_SSH_PORT|g" \
     -e "s|__HTTPS_PORT__|$VM_HTTPS_PORT|g" \
-    -e "s|__SERIAL_LOG_PATH__|$VM_STATE_DIR/serial.log|g" \
+    -e "s|__SERIAL_LOG_PATH__|$SERIAL_LOG_XML|g" \
   > "$DOMAIN_XML"
 
 echo "vm-up[$HOSERVA_LAB_ID]: defining and starting domain '$VM_DOMAIN'"

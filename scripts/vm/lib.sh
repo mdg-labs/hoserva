@@ -16,6 +16,38 @@
 
 die() { printf 'vm: %s\n' "$*" >&2; exit 1; }
 
+# vm_xml_attr_escape prints $1 safe to place inside a single-quoted XML
+# attribute value in domain.xml.tmpl. HOSERVA_VM_REPO_ROOT (and so every
+# path derived from it — disk images, the seed ISO, the serial log) is an
+# arbitrary filesystem path, not a value this harness controls the
+# character set of, so it is escaped before ever reaching generated XML.
+vm_xml_attr_escape() {
+  local s=$1
+  # Every replacement below is written \&... rather than &... : bash's
+  # own ${s//pat/rep} treats a bare, unescaped '&' in rep the same way
+  # sed does — "insert the text pat matched" — so an unescaped "&lt;"
+  # would substitute right back to "<lt;" (confirmed empirically; this
+  # is not documented behavior most bash users expect).
+  s=${s//&/\&amp;}
+  s=${s//</\&lt;}
+  s=${s//>/\&gt;}
+  s=${s//\'/\&apos;}
+  printf '%s' "$s"
+}
+
+# vm_sed_replacement_escape prints $1 safe to use as the replacement text
+# in a `sed 's|PATTERN|VALUE|'` substitution: backslash and '&' are sed
+# replacement metacharacters regardless of which character is chosen as
+# delimiter, and a literal '|' in the value would otherwise be read as
+# the next delimiter instead of literal text.
+vm_sed_replacement_escape() {
+  local s=$1
+  s=${s//\\/\\\\}
+  s=${s//&/\\&}
+  s=${s//|/\\|}
+  printf '%s' "$s"
+}
+
 # Every virsh call in this file and every vm-*.sh script goes through the
 # process environment set here, in the C locale: virsh's own state names
 # (domstate's "running", "shut off", ...) are the fixed English tokens
