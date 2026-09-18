@@ -15,7 +15,10 @@ export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
   retries: 0,
-  reporter: [["list"]],
+  // nightly-l3.yml uploads web/playwright-report/ as a build artifact —
+  // the "list" reporter alone only writes to the terminal, so without
+  // "html" that upload always finds nothing.
+  reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL,
     // The L3 guest's hoservad TLS listener carries a locally-issued
