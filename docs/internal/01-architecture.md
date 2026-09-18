@@ -203,8 +203,10 @@ type Provider interface {
 type Engine interface {
     Sync(ctx context.Context, opts SyncOpts) (<-chan Progress, error)
     Diff(ctx context.Context) (DiffReport, error)
-    Scrub(ctx context.Context, pct int) (<-chan Progress, error)
+    Scrub(ctx context.Context, pct, olderThanDays int) (<-chan Progress, error)
     Status(ctx context.Context) (ParityStatus, error)
+    Fix(ctx context.Context, opts FixOpts) (<-chan Progress, error)
+    Check(ctx context.Context, opts CheckOpts) (<-chan Progress, error)
 }
 ```
 
