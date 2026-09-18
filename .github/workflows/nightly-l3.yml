@@ -2,8 +2,9 @@ name: Nightly L3
 
 # The L3 VM end-to-end suite (doc 06 §4, §7, Q79, issue #43): install,
 # onboarding, array setup, disk yank and reconstruction, `virsh destroy`
-# mid-sync recovery, reboot persistence, config backup/restore, and the
-# Playwright journeys (journey 5 above all — it must never be skipped).
+# mid-sync recovery, reboot persistence, config backup/restore, the
+# Playwright journeys (journey 5 above all — it must never be skipped),
+# spindown, and the array stop/start sequence (issue #146).
 #
 # Runs on a GitHub-hosted runner, matching every other workflow in this
 # repository (Q42, D20): there are no self-hosted runners, and S9 (issue
@@ -41,8 +42,11 @@ jobs:
     # 60 minutes covered install/onboarding/reboot/Playwright alone; the
     # spindown steps (scripts/vm/spindown-check.sh, issue #33) add a
     # 30-minute measurement window (Q31's own "30+ minutes" bar) plus a
-    # settle gate on top of that, so the budget grows with it.
-    timeout-minutes: 90
+    # settle gate on top of that; the array stop/start sequence step
+    # (scripts/vm/array-sequence-check.sh, issue #146) adds a further
+    # clean shutdown, a persistent disk detach, and a full reboot on top
+    # of its own two scenarios, so the budget grows again with it.
+    timeout-minutes: 105
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
