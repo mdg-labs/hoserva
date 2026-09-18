@@ -42,6 +42,14 @@ override_dh_shlibdeps:
 
 override_dh_strip:
 
+# dh_dwz tries to deduplicate/compress ELF debug info across the built
+# binaries, but Go's own DWARF output uses compressed .debug_abbrev
+# sections dwz doesn't understand ("Found compressed .debug_abbrev
+# section, not attempting dwz compression") and then aborts entirely
+# ("Too few files for multifile optimization") rather than skipping
+# cleanly — fatal for a two-binary Go package on every architecture.
+override_dh_dwz:
+
 # debian/copyright points at /usr/share/doc/hoserva/LICENSE as the
 # installed AGPL-3.0 text (Debian 13's common-licenses/ doesn't carry
 # it). dh_compress would otherwise gzip it — it's well over the 4KB
