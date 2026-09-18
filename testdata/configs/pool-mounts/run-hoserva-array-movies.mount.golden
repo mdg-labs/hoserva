@@ -1,0 +1,9 @@
+[Unit]
+Description=Hoserva share movies — mover write target
+RequiresMountsFor=/mnt/disk1 /mnt/disk2 /mnt/disk3
+
+[Mount]
+What=/mnt/disk1/movies=RW:/mnt/disk2/movies=RW:/mnt/disk3/movies=RW
+Where=/run/hoserva/array/movies
+Type=fuse.mergerfs
+Options=category.create=mspmfs,moveonenospc=true,dropcacheonclose=true,minfreespace=50G,cache.files=partial,cache.entry=1,cache.attr=1,cache.negative_entry=1,cache.statfs=0,fsname=hoserva-movies
