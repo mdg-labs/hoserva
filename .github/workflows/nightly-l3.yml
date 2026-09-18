@@ -108,7 +108,18 @@ jobs:
       - name: vm-suite
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
-        run: make vm-suite
+        # deploy.sh (rightly) refuses to build against a hand-maintained
+        # version string — it wants the latest released 'v*' tag, or an
+        # explicit TAG=. Pre-1.0, no tag exists yet, so every nightly run
+        # would refuse outright without this fallback. Same placeholder
+        # ci.yml's own .deb build job already uses to prove the package
+        # keeps building on every push. Once a real tag exists, this
+        # condition is false and deploy.sh picks that tag itself instead.
+        run: |
+          if ! git -C "$GITHUB_WORKSPACE" tag --list 'v*' | grep -q .; then
+            export TAG=v0.0.0-beta.1
+          fi
+          make vm-suite
 
       - name: Upload Playwright report
         if: always()
