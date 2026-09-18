@@ -233,7 +233,7 @@ That ordering feels slow for the first week and pays back continuously afterward
 
 - **Pre-commit hooks** running lint and unit tests, so broken code doesn't accumulate
 - **CI as the arbiter**, not local runs — doc 06 §7's pipeline
-- **Safety-critical paths** requiring a human line-by-line read before push: the threshold guard, the mover/relocation delete path, the migration import, schema migrations and data transforms (D16), anything in `packaging/`, or PCI/USB passthrough's VFIO/bootloader changes (doc 14 §3). Issues touching them carry the `safety-critical` label; the verifier applies an extra data-safety review to them, and every orchestrate report lists their commits separately (Q46)
+- **Safety-critical paths**: the threshold guard, the mover/relocation delete path, the migration import, schema migrations and data transforms (D16), anything in `packaging/`, or PCI/USB passthrough's VFIO/bootloader changes (doc 14 §3). Issues touching them carry the `safety-critical` label; the verifier applies an extra data-safety review to them, and every orchestrate report lists their commits separately so the maintainer knows which ones deserve a closer read even though they've already reached `beta` (Q46)
 - **Never point the agent at real hardware.** Doc 06 §5's hard rule applies with more force when an agent is driving: the lab container and agent-started VMs are the only environments, and no agent connects to the maintainer's own machines (D20). The lab container exposes loop devices and FUSE only, so a mistyped device path cannot reach a real disk (doc 06 §3, Q45)
 
 ### Issue-driven workflow
@@ -258,8 +258,8 @@ Two branches (Q46, revised — see below):
 
 **Agent work:**
 - `orchestrate` lands verified commits on local `beta` — one commit per issue, `Fixes #n` trailer.
-- **Non-`safety-critical` commits push to `beta` immediately after landing**, unless the issue carries an open `blockedBy` added during the same run (a follow-up filed because it limits trust in the fix) — that one waits for the maintainer, same as a safety-critical commit.
-- **`safety-critical` commits are never pushed automatically.** They're listed in every orchestrate report; the maintainer reads them line by line and pushes.
+- **Every landed commit pushes to `beta` immediately after landing, `safety-critical` ones included** — `beta` is a working branch, not `main`, so the gate that matters is the independent verifier's PASS before landing, not a manual pre-push read. A commit is held back from pushing only when the issue itself carries an open `blockedBy` added during the same run (a follow-up filed because it limits trust in the fix) — that one waits for the maintainer.
+- `safety-critical` commits are still listed on their own in every orchestrate report, even though they're already pushed, so the maintainer knows which ones deserve a closer read.
 - Downstream agent work treats an issue as unblocking once it carries `status:implemented` or `status:closed` — never its GitHub open/closed state, which only reflects whether it has reached `main`. A scratch clone is made from the real repo's current local state, which already has the fix regardless of what's been pushed or promoted.
 
 **Promoting to a release:** when `beta` is ready, the maintainer opens a `beta → main` pull request by hand. CI must pass; the maintainer merges it — no separate review step, since there's nobody else to review it.

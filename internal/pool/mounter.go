@@ -37,15 +37,31 @@ func (m Mounter) Unmount(ctx context.Context, where string) error {
 	return nil
 }
 
-// Remount brings mnt back up with a changed branch list (doc 02 §4
+// Remount brings mnt.Where back up with a changed branch list (doc 02 §4
 // "Adding a disk" step 6, "Remount, regenerate configs"): unmount
 // whatever currently serves mnt.Where, then mount mnt itself. mergerfs
 // itself does no parity or placement computation on this — "no rebuild",
 // the property doc 02 §4 says the UI must state explicitly — so the
 // pool's added capacity is available the moment mnt.Where is back up.
-func (m Mounter) Remount(ctx context.Context, mnt Mount) error {
+//
+// If mounting mnt fails, Remount tries to bring previous back up rather
+// than leave mnt.Where unmounted: a malformed branch list or a transient
+// mergerfs failure must not turn a capacity-expansion attempt into a
+// storage outage. previous is expected to be the Mount that was actually
+// serving mnt.Where before this call (typically mnt with the old, not the
+// grown, branch list) — passing anything else re-mounts whatever previous
+// itself describes, not what was really there. A rollback failure is
+// returned alongside the original mount error, never in its place, since
+// losing the original failure would hide why Remount stopped short.
+func (m Mounter) Remount(ctx context.Context, previous, mnt Mount) error {
 	if err := m.Unmount(ctx, mnt.Where); err != nil {
 		return err
 	}
-	return m.Mount(ctx, mnt)
+	if err := m.Mount(ctx, mnt); err != nil {
+		if rbErr := m.Mount(ctx, previous); rbErr != nil {
+			return fmt.Errorf("%w (rollback to the previous mount also failed: %v)", err, rbErr)
+		}
+		return err
+	}
+	return nil
 }

@@ -2,7 +2,9 @@ package job
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -672,4 +674,62 @@ func TestScheduler_MaintenanceModeCancelsNonResumableRunningJob(t *testing.T) {
 		got, err := s.store.Get(ctx, j.ID)
 		return err == nil && got.Status == StatusInterrupted
 	})
+}
+
+// failWritesDB wraps a real *sql.DB and, once armed, fails every
+// ExecContext call while leaving reads untouched — the shape a real
+// write-path failure takes (a lock timeout, a full disk), unlike a closed
+// connection, which would also break the reads this test needs to keep
+// working.
+type failWritesDB struct {
+	*sql.DB
+	fail atomic.Bool
+}
+
+func (f *failWritesDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if f.fail.Load() {
+		return nil, errors.New("simulated write failure")
+	}
+	return f.DB.ExecContext(ctx, query, args...)
+}
+
+// TestScheduler_Await_ReturnsPromptlyDespiteAFailedFinalStatusWrite is
+// this issue's own hang: runJob sets the job's terminal Status in memory
+// and publishes it through Hub even when the matching Store.UpdateStatus
+// call itself fails (runJob only logs that failure) — so a persistence
+// hiccup right at completion must not leave Await polling a store row
+// that will never turn terminal, all the way until its own context ends.
+func TestScheduler_Await_ReturnsPromptlyDespiteAFailedFinalStatusWrite(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	wrapped := &failWritesDB{DB: db}
+	st := NewStore(wrapped)
+	s := NewScheduler(st, NewLogStore(t.TempDir()), NewHub(), NewRegistry())
+
+	started, release := registerBlocking(s, TypeSync, false)
+	j, err := s.Submit(ctx, TypeSync, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	<-started
+
+	wrapped.fail.Store(true)
+	close(release)
+
+	awaitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	finished, err := s.Await(awaitCtx, j.ID)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Await: %v (took %v — did it fall back to polling until awaitCtx expired?)", err, elapsed)
+	}
+	if finished.Status != StatusSucceeded {
+		t.Fatalf("Await: Status = %s, want succeeded", finished.Status)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("Await took %v to return — it fell back to polling the (permanently non-terminal) store row instead of trusting the published terminal snapshot", elapsed)
+	}
 }

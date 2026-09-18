@@ -351,6 +351,16 @@ const awaitPollInterval = 25 * time.Millisecond
 // the primitive MaintenanceChain (chain.go) uses to know a job-backed step
 // has actually finished — not just that Submit returned — before starting
 // the next one (Q30: "each step starts when the previous one finishes").
+//
+// runJob sets the job's final Status in memory and publishes it through
+// Hub regardless of whether the matching Store.UpdateStatus itself
+// succeeded (it only logs that failure) — so a store row can be left
+// non-terminal even after the job has genuinely finished. Awaiting only
+// s.store.Get would then poll forever until ctx is done. When the
+// delivered Hub message is id's own and already terminal, Await trusts it
+// immediately instead of only using it as a hint to recheck the store —
+// that in-memory snapshot is the same one runJob just built from the
+// job's actual outcome, not a value that can itself be stale.
 func (s *Scheduler) Await(ctx context.Context, id string) (*Job, error) {
 	ch, unsubscribe := s.hub.Subscribe()
 	defer unsubscribe()
@@ -364,10 +374,14 @@ func (s *Scheduler) Await(ctx context.Context, id string) (*Job, error) {
 			return j, nil
 		}
 		select {
-		case <-ch:
-			// Only a hint to loop and re-check the store above — Hub fans
-			// out every job's updates, not just id's, and may have dropped
-			// the one that actually matters here.
+		case published := <-ch:
+			if published != nil && published.ID == id && published.Status.Terminal() {
+				return published, nil
+			}
+			// Some other job's update, or not yet terminal — only a hint
+			// to loop and re-check the store above; Hub fans out every
+			// job's updates, not just id's, and may have dropped the one
+			// that actually matters here.
 		case <-time.After(awaitPollInterval):
 		case <-ctx.Done():
 			return nil, fmt.Errorf("job: awaiting job %s: %w", id, ctx.Err())

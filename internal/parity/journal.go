@@ -434,11 +434,39 @@ func (j *Journal) Files(diskID string) ([]ChangedFile, error) {
 	}
 	dj.mu.Lock()
 	defer dj.mu.Unlock()
+	return dj.filesLocked(), nil
+}
+
+// Snapshot returns diskID's ChangeSummary and change list as they stood
+// at one instant — the pairing FixPendingFiles needs (doc 03 §3.5's
+// guided-fix pre-check): Summary and Files each take dj.mu independently,
+// so an entry recorded between two separate calls could make Count or
+// Overflowed describe an earlier moment than Files does. Snapshot takes
+// dj.mu once and builds both from it, so a caller never sees a count or
+// completeness state that doesn't match the list it's shown beside.
+func (j *Journal) Snapshot(diskID string) (ChangeSummary, []ChangedFile, error) {
+	dj := j.disk(diskID)
+	if dj == nil {
+		return ChangeSummary{}, nil, fmt.Errorf("%w: %s", ErrDiskNotTracked, diskID)
+	}
+	dj.mu.Lock()
+	defer dj.mu.Unlock()
+	summary := ChangeSummary{
+		Count:      len(dj.entries),
+		Overflowed: dj.overflowed,
+		Listening:  dj.listening,
+	}
+	return summary, dj.filesLocked(), nil
+}
+
+// filesLocked builds Files's own return value; the caller must hold
+// dj.mu.
+func (dj *diskJournal) filesLocked() []ChangedFile {
 	out := make([]ChangedFile, 0, len(dj.order))
 	for _, id := range dj.order {
 		out = append(out, dj.entries[id])
 	}
-	return out, nil
+	return out
 }
 
 // PersistError reports the error from diskID's most recent attempt to
