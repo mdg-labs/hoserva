@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
@@ -88,8 +87,8 @@ func parseDiffSummaryField(d *DiffLog, rest string) {
 	if len(fields) != 2 {
 		return
 	}
-	n, err := strconv.Atoi(fields[1])
-	if err != nil {
+	n, ok := atoiField(fields, 1)
+	if !ok {
 		return
 	}
 	switch fields[0] {

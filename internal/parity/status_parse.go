@@ -110,24 +110,24 @@ func parseStatusSummaryField(report *StatusReport, rest string) {
 	switch fields[0] {
 	case "disk_file_count":
 		if len(fields) == 3 {
-			if n, err := strconv.Atoi(fields[2]); err == nil {
+			if n, ok := atoiField(fields, 2); ok {
 				report.PerDiskFileCount[fields[1]] = n
 			}
 		}
 	case "zerosubsecond_file_count":
-		if n, err := strconv.Atoi(fields[1]); err == nil {
+		if n, ok := atoiField(fields, 1); ok {
 			report.ZeroSubsecondFiles = n
 		}
 	case "has_unsynced":
-		if n, err := strconv.Atoi(fields[1]); err == nil {
+		if n, ok := atoiField(fields, 1); ok {
 			report.ChangedSinceSync = n
 		}
 	case "has_unscrubbed":
-		if n, err := strconv.Atoi(fields[1]); err == nil {
+		if n, ok := atoiField(fields, 1); ok {
 			report.Unscrubbed = n
 		}
 	case "has_bad":
-		if n, err := strconv.Atoi(fields[1]); err == nil {
+		if n, ok := atoiField(fields, 1); ok {
 			report.BadBlocks = n
 		}
 	}

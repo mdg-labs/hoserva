@@ -3,7 +3,6 @@ package parity
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -76,8 +75,8 @@ func parseRunSummaryField(s *RunSummary, rest string) {
 		s.Exit = fields[1]
 		return
 	}
-	n, err := strconv.Atoi(fields[1])
-	if err != nil {
+	n, ok := atoiField(fields, 1)
+	if !ok {
 		return
 	}
 	switch fields[0] {
