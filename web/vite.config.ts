@@ -1,10 +1,10 @@
-/// <reference types="vitest/config" />
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
+import { configDefaults } from "vitest/config";
 
 // dist/.gitkeep (.gitignore's narrowed `web/dist/*` / `!web/dist/.gitkeep`)
 // keeps web/embed.go's `//go:embed all:dist` satisfied on a checkout that
@@ -77,5 +77,9 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     css: true,
+    // e2e/ holds Playwright specs (run via `npm run e2e`, never vitest) —
+    // without this, vitest's default glob also picks up *.spec.ts there and
+    // fails importing @playwright/test's own test().
+    exclude: [...configDefaults.exclude, "e2e/**"],
   },
 });

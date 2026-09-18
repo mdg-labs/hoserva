@@ -91,8 +91,11 @@ jobs:
 
       - name: Install the .deb build toolchain
         # scripts/release/build-deb.sh's own header: CI installs these;
-        # the dev host and lab deliberately do not.
-        run: sudo apt-get install -y -qq --no-install-recommends debhelper fakeroot
+        # the dev host and lab deliberately do not. build-essential is
+        # required by dpkg-checkbuilddeps regardless of debian/control's
+        # own Build-Depends (Debian policy assumes it's always present);
+        # dpkg-dev provides dpkg-buildpackage itself.
+        run: sudo apt-get install -y -qq --no-install-recommends debhelper dpkg-dev fakeroot build-essential
 
       - name: vm-suite
         env:
