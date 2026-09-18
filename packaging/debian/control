@@ -19,7 +19,7 @@ Architecture: any
 # 12.4 against every option and create policy Hoserva's own default
 # configuration uses; no upper bound, so a Debian security update to
 # either package is never blocked by this dependency (Q7).
-Depends: mergerfs (>= 2.40.2), snapraid (>= 12.4), ${misc:Depends}
+Depends: adduser, mergerfs (>= 2.40.2), snapraid (>= 12.4), ${misc:Depends}
 # Optional off-box backup destinations (Q41, doc 10 §1) — local
 # destinations work without it, and the UI offers the install command
 # the first time a remote one is configured. Docker is deliberately not
