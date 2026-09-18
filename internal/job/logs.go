@@ -28,7 +28,12 @@ var logFilePattern = regexp.MustCompile(`^([A-Za-z0-9_-]+)\.log\.gz$`)
 // test or dev daemon points it at a t.TempDir() and production points it
 // at /var/lib/hoserva/jobs/. Dir is on the boot SSD, not a data disk, so
 // Prune walking it does not violate "nothing on a timer walks a data
-// disk" (doc 01 §4).
+// disk" (doc 01 §4). Like metrics.db (package
+// github.com/mdg-labs/hoserva/internal/store/metrics), everything under
+// Dir is excluded from config backups (doc 10 §1: "Not included:
+// metrics.db and job logs — history, not configuration") — a job's
+// summary row in the jobs table is what a config backup restores; its
+// captured log output is not.
 type LogStore struct {
 	Dir string
 }

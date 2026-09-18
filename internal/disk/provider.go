@@ -45,6 +45,16 @@ const (
 	Standby
 )
 
+// String renders state as store's spin_events table expects it (#110):
+// its from_state/to_state columns are CHECK-constrained to exactly these
+// two spellings.
+func (s SpinState) String() string {
+	if s == Standby {
+		return "standby"
+	}
+	return "active"
+}
+
 // Trend describes a SMART attribute's direction over time. A single SMART
 // snapshot can't say whether a value is a long-standing baseline or a fresh
 // regression; doc 02 §4 is explicit that the trend, not the absolute value,
