@@ -24,8 +24,10 @@ var (
 	// write units or snapraid.conf.
 	ErrNoArray = errors.New("store: no array topology")
 	// ErrArrayExists is PutArray's refusal when topology is already
-	// persisted. create-array must not format or rewrite an array that
-	// already exists (#180; adding/removing disks is a later issue).
+	// persisted, and create-array's refusal of a retry whose plan does
+	// not match stored devices/roles. A matching retry re-applies from
+	// SQLite and never formats (#181; adding/removing disks is a later
+	// issue).
 	ErrArrayExists = errors.New("store: array topology already exists")
 )
 
