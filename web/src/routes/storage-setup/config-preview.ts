@@ -68,14 +68,17 @@ function contentPaths(state: ArraySetupState): string[] {
     paths.push("/mnt/cache/snapraid.content");
   }
 
-  const dataDisks = assignableDisks(state.disks)
-    .filter((disk) => state.roles[disk.device] === "data")
-    .sort((left, right) => right.sizeBytes - left.sizeBytes);
+  const dataDisks = assignableDisks(state.disks).filter((disk) => state.roles[disk.device] === "data");
+  const mountByDevice = new Map(dataDisks.map((disk, index) => [disk.device, dataMountPoint(index + 1)]));
+  const largestFirst = [...dataDisks].sort((left, right) => right.sizeBytes - left.sizeBytes);
 
   const parityCount = assignableDisks(state.disks).filter((disk) => state.roles[disk.device] === "parity").length;
   const targetCount = Math.max(0, parityCount + 2 - paths.length);
-  for (let index = 0; index < Math.min(targetCount, dataDisks.length); index += 1) {
-    paths.push(`${dataMountPoint(index + 1)}/snapraid.content`);
+  for (let index = 0; index < Math.min(targetCount, largestFirst.length); index += 1) {
+    const mount = mountByDevice.get(largestFirst[index].device);
+    if (mount) {
+      paths.push(`${mount}/snapraid.content`);
+    }
   }
 
   return paths;
@@ -137,7 +140,7 @@ WantedBy=multi-user.target`;
 }
 
 export function formatBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
   if (bytes === 0) {
     return "0 B";
   }

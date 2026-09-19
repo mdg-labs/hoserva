@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Navigate, useLocation } from "react-router-dom";
 
+import { Banner } from "@/components/patterns/banner";
 import { LoadingBlock } from "@/components/patterns/loading";
 import {
   AuthContext,
@@ -20,24 +22,42 @@ type User = components["schemas"]["User"];
 async function loadAuthState(): Promise<{
   adminExists: boolean;
   user: User | null;
+  failed: boolean;
 }> {
-  const [setupResult, sessionResult] = await Promise.all([
-    hoservaClient.GET("/setup/status"),
-    hoservaClient.GET("/auth/session"),
-  ]);
+  try {
+    const [setupResult, sessionResult] = await Promise.all([
+      hoservaClient.GET("/setup/status"),
+      hoservaClient.GET("/auth/session"),
+    ]);
 
-  const adminExists = setupResult.data?.adminExists ?? false;
-  const user = sessionResult.response.ok ? (sessionResult.data ?? null) : null;
-  inferOnboardingCompleteIfNeeded(adminExists, user !== null);
-  return { adminExists, user };
+    if (!setupResult.response) {
+      return { adminExists: false, user: null, failed: true };
+    }
+    if (setupResult.error && setupResult.data === undefined) {
+      return { adminExists: false, user: null, failed: true };
+    }
+    if (!sessionResult.response) {
+      return { adminExists: setupResult.data?.adminExists ?? false, user: null, failed: true };
+    }
+
+    const adminExists = setupResult.data?.adminExists ?? false;
+    const user = sessionResult.response.ok ? (sessionResult.data ?? null) : null;
+    inferOnboardingCompleteIfNeeded(adminExists, user !== null);
+    return { adminExists, user, failed: false };
+  } catch {
+    return { adminExists: false, user: null, failed: true };
+  }
 }
 
 function resolvePhase(adminExists: boolean, user: User | null): AuthPhase {
-  if (!adminExists || !isOnboardingComplete()) {
+  if (!adminExists) {
     return "welcome";
   }
   if (!user) {
     return "login";
+  }
+  if (!isOnboardingComplete()) {
+    return "welcome";
   }
   return "authenticated";
 }
@@ -46,18 +66,33 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   const [adminExists, setAdminExists] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [probeFailed, setProbeFailed] = useState(false);
 
-  async function refresh(): Promise<void> {
+  const refresh = useCallback(async (): Promise<void> => {
     const next = await loadAuthState();
+    if (next.failed) {
+      return;
+    }
+    setProbeFailed(false);
     setAdminExists(next.adminExists);
     setUser(next.user);
-  }
+  }, []);
+
+  const acceptSession = useCallback((next: User): void => {
+    setProbeFailed(false);
+    setAdminExists(true);
+    setUser(next);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
     loadAuthState()
       .then((next) => {
         if (controller.signal.aborted) {
+          return;
+        }
+        if (next.failed) {
+          setProbeFailed(true);
           return;
         }
         setAdminExists(next.adminExists);
@@ -71,10 +106,14 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     return () => controller.abort();
   }, []);
 
-  const phase = loading ? "loading" : resolvePhase(adminExists, user);
+  const phase: AuthPhase = loading
+    ? "loading"
+    : probeFailed
+      ? "error"
+      : resolvePhase(adminExists, user);
   const value = useMemo<AuthContextValue>(
-    () => ({ phase, user, adminExists, refresh }),
-    [phase, user, adminExists],
+    () => ({ phase, user, adminExists, refresh, acceptSession }),
+    [phase, user, adminExists, refresh, acceptSession],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -83,11 +122,20 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
 export function AuthGate({ children }: { children: ReactNode }): React.ReactElement {
   const { phase } = useAuth();
   const location = useLocation();
+  const { t } = useTranslation();
 
   if (phase === "loading") {
     return (
       <div className="flex min-h-svh items-center justify-center p-4">
         <LoadingBlock />
+      </div>
+    );
+  }
+
+  if (phase === "error") {
+    return (
+      <div className="flex min-h-svh items-center justify-center p-4">
+        <Banner tone="error" title={t("auth.loadFailed")} />
       </div>
     );
   }

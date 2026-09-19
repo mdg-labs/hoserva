@@ -39,14 +39,14 @@ export function DataTable<T>({
             const reason = disabled ? rowDisabledReason?.(row) : undefined;
             return (
               <TableRow key={getRowKey(row)} data-state={disabled ? "disabled" : undefined}>
-                {columns.map((column) => (
+                {columns.map((column, columnIndex) => (
                   <TableCell key={column.id} className={column.className}>
                     {column.cell(row)}
+                    {columnIndex === 0 && reason ? (
+                      <span className="sr-only">{reason}</span>
+                    ) : null}
                   </TableCell>
                 ))}
-                {reason ? (
-                  <span className="sr-only">{reason}</span>
-                ) : null}
               </TableRow>
             );
           })}

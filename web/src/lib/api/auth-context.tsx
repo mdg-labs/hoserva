@@ -4,13 +4,14 @@ import type { components } from "@/lib/api/client";
 
 type User = components["schemas"]["User"];
 
-export type AuthPhase = "loading" | "welcome" | "login" | "authenticated";
+export type AuthPhase = "loading" | "welcome" | "login" | "authenticated" | "error";
 
 export interface AuthContextValue {
   phase: AuthPhase;
   user: User | null;
   adminExists: boolean;
   refresh: () => Promise<void>;
+  acceptSession: (user: User) => void;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

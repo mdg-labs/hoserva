@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
@@ -23,6 +23,12 @@ export function NumberUnit({
   max?: number;
   disabled?: boolean;
 }): React.ReactElement {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
   return (
     <InputGroup>
       <InputGroupInput
@@ -31,14 +37,24 @@ export function NumberUnit({
             id={id}
             type="number"
             inputMode={NUMERIC_INPUT_MODE}
-            value={value}
+            value={draft}
             min={min}
             max={max}
             disabled={disabled}
             onChange={(event) => {
-              const next = Number.parseInt(event.target.value, 10);
+              const raw = event.target.value;
+              setDraft(raw);
+              if (raw === "") {
+                return;
+              }
+              const next = Number.parseInt(raw, 10);
               if (!Number.isNaN(next)) {
                 onChange(next);
+              }
+            }}
+            onBlur={() => {
+              if (draft === "") {
+                setDraft(String(value));
               }
             }}
           />
