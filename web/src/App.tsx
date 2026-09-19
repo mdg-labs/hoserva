@@ -5,10 +5,17 @@ import { Route, BrowserRouter, Routes } from "react-router-dom";
 import { AppShell } from "@/components/patterns/app-shell";
 import { AuthGate, AuthProvider, MinimalAuthLayout } from "@/lib/api/auth-guard";
 import { watchSystemTheme } from "@/lib/theme";
-import { JobsPage } from "@/routes/jobs";
+import { DashboardPage } from "@/routes/dashboard";
+import { JobDetailPage } from "@/routes/jobs/detail";
+import { JobsPage } from "@/routes/jobs/index";
 import { LoginPage } from "@/routes/login";
 import { PlaceholderPage } from "@/routes/placeholder-page";
 import { SectionLayout } from "@/routes/section-layout";
+import { DiskDetailPage } from "@/routes/storage/disk-detail";
+import { DisksPage } from "@/routes/storage/disks";
+import { ParityPage } from "@/routes/storage/parity";
+import { PoolOverviewPage } from "@/routes/storage/pool";
+import { WakeEventsPage } from "@/routes/storage/wake-events";
 import { StorageSetupPage } from "@/routes/storage-setup";
 import { WelcomePage } from "@/routes/welcome";
 
@@ -54,20 +61,17 @@ function AuthenticatedRoutes(): React.ReactElement {
   return (
     <AppShell>
       <Routes>
-        <Route index element={<PlaceholderPage titleKey="nav.dashboard" />} />
+        <Route index element={<DashboardPage />} />
 
         <Route element={<SectionLayout items={STORAGE_NAV(t)} />}>
-          <Route path="storage" element={<PlaceholderPage titleKey="storageNav.pool" />} />
-          <Route path="storage/disks" element={<PlaceholderPage titleKey="storageNav.disks" />} />
-          <Route
-            path="storage/disks/wake-events"
-            element={<PlaceholderPage titleKey="storageNav.wakeEvents" />}
-          />
-          <Route path="storage/parity" element={<PlaceholderPage titleKey="storageNav.parity" />} />
+          <Route path="storage" element={<PoolOverviewPage />} />
+          <Route path="storage/disks" element={<DisksPage />} />
+          <Route path="storage/disks/wake-events" element={<WakeEventsPage />} />
+          <Route path="storage/parity" element={<ParityPage />} />
           <Route path="storage/cache" element={<PlaceholderPage titleKey="storageNav.cache" />} />
           <Route path="storage/setup" element={<StorageSetupPage />} />
         </Route>
-        <Route path="storage/disks/:diskId" element={<PlaceholderPage titleKey="storageNav.disks" />} />
+        <Route path="storage/disks/:diskId" element={<DiskDetailPage />} />
 
         <Route path="shares" element={<PlaceholderPage titleKey="nav.shares" />} />
         <Route path="shares/:name" element={<PlaceholderPage titleKey="nav.shares" />} />
@@ -89,7 +93,7 @@ function AuthenticatedRoutes(): React.ReactElement {
         <Route path="vms/:name" element={<PlaceholderPage titleKey="vmsNav.list" />} />
 
         <Route path="jobs" element={<JobsPage />} />
-        <Route path="jobs/:jobId" element={<JobsPage />} />
+        <Route path="jobs/:jobId" element={<JobDetailPage />} />
 
         <Route path="users" element={<PlaceholderPage titleKey="nav.users" />} />
 

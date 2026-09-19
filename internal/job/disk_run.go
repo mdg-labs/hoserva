@@ -31,13 +31,18 @@ type DiskFormatDeps struct {
 }
 
 // RunDiskFormat is the RunFunc hoservad registers for TypeDiskFormat: it
-// reads persisted DiskFormatParams, refuses if array topology already
-// exists, calls disk.FormatPlan, and only after that succeeds writes
-// topology to SQLite and generates disk mount units, mergerfs pool units
-// and snapraid.conf from that state (D4, D1). Confirmation and Validate
-// run again here so a queued job cannot skip the guard the handler
-// already enforced (doc 03 §3.1 step 6). A failed FormatPlan writes no
-// mount units and leaves SQLite with no array topology.
+// reads persisted DiskFormatParams, calls disk.FormatPlan when no array
+// topology exists yet, and only after that succeeds writes topology to
+// SQLite and generates disk mount units, mergerfs pool units and
+// snapraid.conf from that state (D4, D1). If PutArray has already
+// succeeded and apply then failed, a retry of the same devices/roles
+// skips FormatPlan and re-applies from SQLite only (Q29: this job type
+// is not resumable from format). A retry whose plan does not match
+// stored topology still returns store.ErrArrayExists and formats
+// nothing. Confirmation and Validate run again on the format path so a
+// queued job cannot skip the guard the handler already enforced
+// (doc 03 §3.1 step 6). A failed FormatPlan writes no mount units and
+// leaves SQLite with no array topology.
 func RunDiskFormat(d DiskFormatDeps) RunFunc {
 	return func(ctx context.Context, rc *RunContext) error {
 		params, err := decodeDiskFormatParams(rc.Params())
@@ -48,15 +53,22 @@ func RunDiskFormat(d DiskFormatDeps) RunFunc {
 			return fmt.Errorf("job: disk_format is missing array apply dependencies")
 		}
 
+		plan := params.Plan()
+
 		exists, err := d.Store.Exists(ctx)
 		if err != nil {
 			return err
 		}
 		if exists {
-			return store.ErrArrayExists
+			settings, disks, err := d.Store.GetArray(ctx)
+			if err != nil {
+				return err
+			}
+			if !planMatchesStored(plan, disks) {
+				return store.ErrArrayExists
+			}
+			return applyArrayFromStore(ctx, d.Store, d.Generator, d.Mounter, settings.CreatedAt)
 		}
-
-		plan := params.Plan()
 		if err := plan.CheckConfirmation(params.Confirmation); err != nil {
 			return err
 		}
@@ -176,6 +188,38 @@ func arrayDisksFromPlan(plan disk.TopologyPlan, uuids map[string]string, units [
 		appendRole(store.ArrayRoleCache, []disk.AssignedDisk{*plan.Cache}, func(int) string { return "/mnt/cache" })
 	}
 	return out
+}
+
+// planMatchesStored reports whether plan names the same devices in the
+// same roles (and role indexes) as topology already persisted in SQLite.
+// A match is the gate for a silent re-apply; anything else is a
+// different array and must not format, write units, or remount.
+func planMatchesStored(plan disk.TopologyPlan, disks []store.ArrayDisk) bool {
+	type assignment struct {
+		device string
+		role   string
+		index  int
+	}
+	want := make(map[assignment]struct{}, len(plan.Parity)+len(plan.Data)+1)
+	add := func(role string, assigned []disk.AssignedDisk) {
+		for i, d := range assigned {
+			want[assignment{d.Device, role, i + 1}] = struct{}{}
+		}
+	}
+	add(store.ArrayRoleParity, plan.Parity)
+	add(store.ArrayRoleData, plan.Data)
+	if plan.Cache != nil {
+		add(store.ArrayRoleCache, []disk.AssignedDisk{*plan.Cache})
+	}
+	if len(want) != len(disks) {
+		return false
+	}
+	for _, d := range disks {
+		if _, ok := want[assignment{d.Device, d.Role, d.RoleIndex}]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func snapraidLayout(plan disk.TopologyPlan) parity.Layout {

@@ -61,6 +61,9 @@
   "loading": {
     "label": "Loading…"
   },
+  "systemData": {
+    "loadFailed": "Failed to load system data"
+  },
   "auth": {
     "loadFailed": "Could not reach the Hoserva API. Check that the daemon is running, then reload this page."
   },
@@ -71,6 +74,299 @@
     "noJobsDescription": "Long-running operations appear here with progress as they run.",
     "pageTitle": "Jobs",
     "pageDescription": "Every long-running operation in Hoserva runs as a job (doc 01 §4)."
+  },
+  "confirm": {
+    "cancel": "Cancel",
+    "confirm": "Confirm"
+  },
+  "unsavedGuard": {
+    "title": "Discard changes?",
+    "description": "You have unsaved changes in this flow. Leaving now will discard them.",
+    "stay": "Keep editing",
+    "discard": "Discard changes"
+  },
+  "chart": {
+    "emptyTitle": "No time-series data yet",
+    "emptyDescription": "Throughput and network charts appear here when the API exposes metrics history."
+  },
+  "logView": {
+    "empty": "No log output captured for this job."
+  },
+  "topBar": {
+    "arrayStatus": {
+      "healthy": "Healthy",
+      "degraded": "Degraded",
+      "maintenance": "Maintenance mode",
+      "actionRequired": "Action required",
+      "unknown": "Unknown"
+    },
+    "parity": {
+      "blocked": "Sync blocked",
+      "unknown": "Parity freshness unknown"
+    },
+    "jobs": {
+      "ariaLabel": "Active jobs",
+      "count": "{{count}} active",
+      "empty": "No jobs are running right now.",
+      "viewAll": "View all jobs"
+    },
+    "notifications": {
+      "ariaLabel": "Notifications"
+    },
+    "userMenu": {
+      "ariaLabel": "User menu",
+      "toggleTheme": "Toggle theme",
+      "logout": "Sign out",
+      "logoutFailed": "Could not sign out. Stay on this page and try again."
+    }
+  },
+  "banners": {
+    "degraded": {
+      "title": "Array degraded",
+      "description": "A disk has failed or parity is out of date. Review disks before writing more data.",
+      "action": "View disks"
+    },
+    "syncBlocked": {
+      "title": "Sync blocked by threshold guard",
+      "description": "The next parity sync would exceed a configured change threshold.",
+      "action": "Review parity"
+    },
+    "docker": {
+      "title": "Docker prerequisite missing"
+    },
+    "drift": {
+      "title": "Configuration drift detected"
+    }
+  },
+  "dashboard": {
+    "noArray": {
+      "title": "No array configured",
+      "description": "Set up storage to see array health on the dashboard."
+    },
+    "capacity": {
+      "title": "Pool capacity",
+      "usedPercent": "{{percent}}% used"
+    },
+    "parity": {
+      "title": "Parity freshness",
+      "hint": "From the last doctor check — not a live disk walk."
+    },
+    "disks": {
+      "title": "Disk summary",
+      "summary": "{{data}} data · {{parity}} parity · {{cache}} cache"
+    },
+    "diskStrip": {
+      "title": "Disks"
+    },
+    "throughput": {
+      "title": "Read/write throughput",
+      "description": "Last hour — unavailable until metrics history is exposed."
+    },
+    "network": {
+      "title": "Network throughput",
+      "description": "Last hour — unavailable until metrics history is exposed."
+    },
+    "activeJobs": {
+      "title": "Active jobs"
+    },
+    "attention": {
+      "title": "Needs attention",
+      "degraded": "The array is degraded.",
+      "syncBlocked": "Parity sync is blocked by the threshold guard.",
+      "failedJob": "Job failed: {{type}}"
+    }
+  },
+  "pool": {
+    "description": "Capacity, health and maintenance controls for the data pool.",
+    "capacity": "Capacity",
+    "mountPoint": "Mounted at {{path}}",
+    "mounted": "Mounted",
+    "unmounted": "Not mounted",
+    "diskCount": "Data disks",
+    "dataDisks": "Disks in the mergerfs pool",
+    "noRebuildNote": "Adding a disk does not require a rebuild — mergerfs includes new branches on the next mount.",
+    "stopArray": "Stop array",
+    "startArray": "Start array",
+    "stop": {
+      "title": "Stop the array?",
+      "description": "Maintenance mode stops services and unmounts pool disks in a safe order (Q70).",
+      "confirm": "Stop array",
+      "items": {
+        "jobs": "Refuse new jobs and interrupt non-resumable jobs",
+        "vms": "Shut down running VMs",
+        "containers": "Stop containers",
+        "shares": "Stop Samba and NFS",
+        "mounts": "Unmount share paths, the catch-all and data disks"
+      }
+    },
+    "start": {
+      "title": "Start the array?",
+      "description": "Bring mounts and services back in the reverse order.",
+      "confirm": "Start array"
+    }
+  },
+  "disks": {
+    "description": "Every disk Hoserva knows about, with role and health from cached state.",
+    "search": "Search disks",
+    "roleFilter": "Filter by role",
+    "roles": {
+      "all": "All roles"
+    },
+    "columns": {
+      "device": "Device",
+      "model": "Model",
+      "serial": "Serial",
+      "role": "Role",
+      "size": "Size",
+      "smart": "SMART",
+      "state": "State"
+    },
+    "empty": {
+      "title": "No disks found",
+      "description": "Disk discovery runs at setup and when hardware changes."
+    },
+    "viewWakeEvents": "View wake events"
+  },
+  "wakeEvents": {
+    "description": "When disks woke and how often — the first step toward answering spindown questions.",
+    "phase1Note": "Phase 1 shows timestamps and daily wake counts from the spin-state event log once that collection is exposed through the API.",
+    "columns": {
+      "device": "Disk",
+      "timestamp": "Last wake",
+      "count": "Wakes today"
+    },
+    "empty": {
+      "title": "No wake events recorded yet",
+      "description": "Wake events appear here after the spin-state log is available through the API."
+    }
+  },
+  "diskDetail": {
+    "notFound": "Disk {{device}} was not found.",
+    "unknownModel": "Unknown model",
+    "back": "Back to disks",
+    "tabs": {
+      "overview": "Overview",
+      "smart": "SMART",
+      "contents": "Contents"
+    },
+    "overview": {
+      "title": "Identity",
+      "size": "Size: {{size}}",
+      "role": "Role: {{role}}",
+      "mount": "Mount: {{mount}}",
+      "state": "State:"
+    },
+    "smart": {
+      "attribute": "Attribute",
+      "value": "Value",
+      "status": "SMART status",
+      "model": "Model",
+      "serial": "Serial"
+    },
+    "contents": {
+      "title": "Contents as of last sync",
+      "description": "Directory breakdown is recorded at parity sync time so viewing it never wakes the disk."
+    }
+  },
+  "parity": {
+    "description": "Parity status, diffs, guard state and recovery actions.",
+    "status": {
+      "title": "Parity status",
+      "disk": "Parity disk: {{device}}"
+    },
+    "guard": {
+      "blocked": "Guard tripped",
+      "clear": "Guard clear",
+      "bannerTitle": "Threshold guard is blocking sync",
+      "bannerDescription": "Review the diff and free space before syncing past the guard."
+    },
+    "diff": {
+      "title": "Changes since last sync",
+      "runDiff": "Run diff",
+      "runDiffWarning": "Run diff spins up every data disk to compare files against parity.",
+      "runDiffConfirm": "Run diff anyway",
+      "empty": "Run diff to compare the array against parity. Results stay on this page until the next sync.",
+      "categories": {
+        "removed": "Removed",
+        "updated": "Updated",
+        "added": "Added",
+        "moved": "Moved",
+        "copied": "Copied",
+        "moved_by_hoserva": "Moved by Hoserva"
+      }
+    },
+    "actions": {
+      "sync": "Sync now",
+      "scrub": "Scrub now",
+      "fix": "Guided fix",
+      "syncDescription": "Queue a parity sync job through the threshold guard."
+    },
+    "history": {
+      "title": "Recent parity jobs",
+      "empty": "No parity jobs yet."
+    },
+    "fix": {
+      "title": "Guided recovery",
+      "execute": "Start fix job",
+      "unrecoverableTitle": "Some files cannot be recovered",
+      "unrecoverableDescription": "Files written after the last successful sync are not on parity.",
+      "steps": {
+        "0": {
+          "title": "What are you recovering?",
+          "description": "Choose whole-disk or file-level recovery."
+        },
+        "1": {
+          "title": "Preconditions",
+          "description": "Hoserva checks parity presence and readable content paths."
+        },
+        "2": {
+          "title": "What cannot be recovered",
+          "description": "Review files changed since the last sync."
+        },
+        "3": {
+          "title": "Confirm fix",
+          "description": "Start a fix job that rewrites data from parity."
+        }
+      }
+    }
+  },
+  "jobs": {
+    "refresh": "Refresh list",
+    "filters": {
+      "status": "Status",
+      "type": "Type",
+      "all": "All"
+    },
+    "status": {
+      "running": "Running",
+      "queued": "Queued",
+      "interrupted": "Interrupted",
+      "failed": "Failed",
+      "succeeded": "Succeeded"
+    },
+    "types": {
+      "sync": "sync",
+      "scrub": "scrub",
+      "fix": "fix",
+      "mover": "mover"
+    },
+    "columns": {
+      "type": "Type",
+      "class": "Class",
+      "status": "Status",
+      "progress": "Progress",
+      "created": "Created"
+    },
+    "detail": {
+      "notFound": "Job not found.",
+      "back": "Back to jobs",
+      "metadata": "Metadata",
+      "class": "Class: {{value}}",
+      "status": "Status:",
+      "created": "Created: {{value}}",
+      "log": "Captured output",
+      "refreshFailed": "The job could not be refreshed after cancel."
+    }
   },
   "banner": {
     "dismiss": "Dismiss"
