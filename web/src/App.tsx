@@ -17,6 +17,10 @@ import { ParityPage } from "@/routes/storage/parity";
 import { PoolOverviewPage } from "@/routes/storage/pool";
 import { WakeEventsPage } from "@/routes/storage/wake-events";
 import { StorageSetupPage } from "@/routes/storage-setup";
+import { GeneralSettingsPage } from "@/routes/settings/general";
+import { NotificationsSettingsPage } from "@/routes/settings/notifications";
+import { SchedulesSettingsPage } from "@/routes/settings/schedules";
+import { UpdatesSettingsPage } from "@/routes/settings/updates";
 import { WelcomePage } from "@/routes/welcome";
 
 const STORAGE_NAV = (t: ReturnType<typeof useTranslation>["t"]) => [
@@ -98,15 +102,12 @@ function AuthenticatedRoutes(): React.ReactElement {
         <Route path="users" element={<PlaceholderPage titleKey="nav.users" />} />
 
         <Route element={<SectionLayout items={SETTINGS_NAV(t)} />}>
-          <Route path="settings" element={<PlaceholderPage titleKey="settingsNav.general" />} />
+          <Route path="settings" element={<GeneralSettingsPage />} />
           <Route path="settings/network" element={<PlaceholderPage titleKey="settingsNav.network" />} />
-          <Route
-            path="settings/notifications"
-            element={<PlaceholderPage titleKey="settingsNav.notifications" />}
-          />
-          <Route path="settings/schedules" element={<PlaceholderPage titleKey="settingsNav.schedules" />} />
+          <Route path="settings/notifications" element={<NotificationsSettingsPage />} />
+          <Route path="settings/schedules" element={<SchedulesSettingsPage />} />
           <Route path="settings/backup" element={<PlaceholderPage titleKey="settingsNav.backup" />} />
-          <Route path="settings/updates" element={<PlaceholderPage titleKey="settingsNav.updates" />} />
+          <Route path="settings/updates" element={<UpdatesSettingsPage />} />
           <Route path="settings/advanced" element={<PlaceholderPage titleKey="settingsNav.advanced" />} />
         </Route>
 
