@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/ogen-go/ogen/http"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 )
@@ -68,7 +70,7 @@ func syncCmd() *cobra.Command {
 }
 
 func scrubCmd() *cobra.Command {
-	var percent int
+	var percent int32
 	cmd := &cobra.Command{
 		Use:   "scrub",
 		Short: "Start a SnapRAID scrub",
@@ -79,7 +81,10 @@ func scrubCmd() *cobra.Command {
 			}
 			req := &apiv1.StartScrubRequest{}
 			if cmd.Flags().Changed("percent") {
-				req.SetPercent(apiv1.NewOptInt32(int32(percent)))
+				if percent < 1 || percent > 100 {
+					return fmt.Errorf("--percent must be between 1 and 100")
+				}
+				req.SetPercent(apiv1.NewOptInt32(percent))
 			}
 			out, err := c.StartScrub(apiCtx(), req)
 			if err != nil {
@@ -89,13 +94,13 @@ func scrubCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().IntVar(&percent, "percent", 0, "Scrub percentage cap")
+	cmd.Flags().Int32Var(&percent, "percent", 0, "Scrub percentage cap")
 	return cmd
 }
 
 func fixCmd() *cobra.Command {
 	var confirm bool
-	var disk int
+	var disk int32
 	cmd := &cobra.Command{
 		Use:   "fix",
 		Short: "Start a SnapRAID fix",
@@ -108,8 +113,11 @@ func fixCmd() *cobra.Command {
 				return err
 			}
 			req := &apiv1.StartFixRequest{Confirm: true}
-			if disk > 0 {
-				req.SetDisk(apiv1.NewOptInt32(int32(disk)))
+			if cmd.Flags().Changed("disk") {
+				if disk < 1 {
+					return fmt.Errorf("--disk must be a positive SnapRAID disk index")
+				}
+				req.SetDisk(apiv1.NewOptInt32(disk))
 			}
 			out, err := c.StartFix(apiCtx(), req)
 			if err != nil {
@@ -120,7 +128,7 @@ func fixCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm fix (required)")
-	cmd.Flags().IntVar(&disk, "disk", 0, "SnapRAID disk index")
+	cmd.Flags().Int32Var(&disk, "disk", 0, "SnapRAID disk index")
 	return cmd
 }
 
@@ -148,9 +156,20 @@ func logsCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				if follow {
+					return fmt.Errorf("--follow is not supported yet")
+				}
 				log, err := c.GetJobLog(apiCtx(), apiv1.GetJobLogParams{JobId: id})
 				if err != nil {
 					return mapAPIErr(err)
+				}
+				if jsonOutput {
+					body, err := io.ReadAll(log.Data)
+					if err != nil {
+						return err
+					}
+					emit(string(body))
+					return nil
 				}
 				if _, err := io.Copy(os.Stdout, log.Data); err != nil {
 					return err
@@ -193,15 +212,27 @@ func configCmd() *cobra.Command {
 			if outPath == "" {
 				outPath = "hoserva-config.tar.zst"
 			}
-			f, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+			tmp, err := os.CreateTemp(filepath.Dir(outPath), filepath.Base(outPath)+".*.tmp")
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(f, archive.Data); err != nil {
-				_ = f.Close()
+			tmpPath := tmp.Name()
+			if err := tmp.Chmod(0o600); err != nil {
+				_ = tmp.Close()
+				_ = os.Remove(tmpPath)
 				return err
 			}
-			if err := f.Close(); err != nil {
+			if _, err := io.Copy(tmp, archive.Data); err != nil {
+				_ = tmp.Close()
+				_ = os.Remove(tmpPath)
+				return err
+			}
+			if err := tmp.Close(); err != nil {
+				_ = os.Remove(tmpPath)
+				return err
+			}
+			if err := os.Rename(tmpPath, outPath); err != nil {
+				_ = os.Remove(tmpPath)
 				return err
 			}
 			if jsonOutput {
@@ -281,15 +312,15 @@ func doctorCmd() *cobra.Command {
 
 func userCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "user", Short: "Account recovery (root only)"}
-	var password string
 
 	reset := &cobra.Command{
 		Use:   "reset-password [name]",
 		Short: "Reset a user's password",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if password == "" {
-				return fmt.Errorf("--password is required")
+			password, err := readNewPassword()
+			if err != nil {
+				return err
 			}
 			c, err := newAPIClient(socketPath)
 			if err != nil {
@@ -299,7 +330,6 @@ func userCmd() *cobra.Command {
 				apiv1.ResetUserPasswordParams{Username: args[0]}))
 		},
 	}
-	reset.Flags().StringVar(&password, "password", "", "New password")
 
 	disable := &cobra.Command{
 		Use:   "disable-totp [name]",
@@ -354,4 +384,29 @@ func mapAPIErr(err error) error {
 		return fmt.Errorf("could not connect to hoservad at %s — is the daemon running?", socketPath)
 	}
 	return err
+}
+
+func readNewPassword() (string, error) {
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		fmt.Fprint(os.Stderr, "New password: ")
+		b, err := term.ReadPassword(fd)
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return "", err
+		}
+		if len(b) == 0 {
+			return "", fmt.Errorf("password is required")
+		}
+		return string(b), nil
+	}
+	b, err := io.ReadAll(io.LimitReader(os.Stdin, 4096))
+	if err != nil {
+		return "", err
+	}
+	password := strings.TrimRight(string(b), "\r\n")
+	if password == "" {
+		return "", fmt.Errorf("password is required")
+	}
+	return password, nil
 }

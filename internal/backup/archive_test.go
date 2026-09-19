@@ -90,3 +90,37 @@ func TestSecretsAge_RoundTrip(t *testing.T) {
 		t.Fatalf("unexpected stack envs: %+v", payload.Stacks)
 	}
 }
+
+func TestBuildArchive_NestedCustomConf(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "live.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY);"); err != nil {
+		t.Fatal(err)
+	}
+
+	configRoot := filepath.Join(dir, "config", "samba")
+	if err := os.MkdirAll(configRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	custom := filepath.Join(configRoot, "smb.custom.conf")
+	if err := os.WriteFile(custom, []byte("guest ok = yes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	staging := filepath.Join(dir, "staging")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildArchive(ctx, db, Paths{ConfigRoot: filepath.Join(dir, "config")}, nil, nil, "host", "test", time.Now(), staging); err != nil {
+		t.Fatalf("BuildArchive: %v", err)
+	}
+	got := filepath.Join(staging, "custom", "samba", "smb.custom.conf")
+	if _, err := os.Stat(got); err != nil {
+		t.Fatalf("nested custom file missing: %v", err)
+	}
+}

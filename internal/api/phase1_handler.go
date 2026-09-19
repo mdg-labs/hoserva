@@ -17,6 +17,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/pool"
 )
 
 func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
@@ -39,7 +40,11 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 			})
 		}
 	}
-	return &apiv1.PoolStatus{Mounted: len(entries) > 0, Disks: entries}, nil
+	mounted, err := pathIsMountpoint(pool.CatchAllPath)
+	if err != nil {
+		mounted = false
+	}
+	return &apiv1.PoolStatus{Mounted: mounted, Disks: entries}, nil
 }
 
 func (h *Handler) ListDisks(ctx context.Context) (*apiv1.ListDisksOK, error) {
@@ -132,8 +137,17 @@ func (h *Handler) ExportConfig(ctx context.Context) (apiv1.ExportConfigOK, error
 		return apiv1.ExportConfigOK{}, err
 	}
 
-	archivePath := filepath.Join(os.TempDir(), backupArchiveName(now))
+	tmpFile, err := os.CreateTemp("", "hoserva-config-*.tar.zst")
+	if err != nil {
+		return apiv1.ExportConfigOK{}, err
+	}
+	archivePath := tmpFile.Name()
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(archivePath)
+		return apiv1.ExportConfigOK{}, err
+	}
 	if err := packTarZst(staging, archivePath); err != nil {
+		_ = os.Remove(archivePath)
 		return apiv1.ExportConfigOK{}, err
 	}
 	f, err := os.Open(archivePath)
@@ -155,9 +169,7 @@ func (e *exportReadCloser) Close() error {
 	return err
 }
 
-func backupArchiveName(now time.Time) string {
-	return fmt.Sprintf("hoserva-config-%s.tar.zst", now.UTC().Format("2006-01-02T03-00"))
-}
+const maxConfigArchiveBytes = 512 << 20
 
 func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) error {
 	if !req.Confirm {
@@ -174,9 +186,18 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	defer func() {
 		_ = os.Remove(tmpPath)
 	}()
-	if _, err := io.Copy(tmp, req.Archive.File); err != nil {
+	if _, err := io.Copy(tmp, io.LimitReader(req.Archive.File, maxConfigArchiveBytes+1)); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("reading archive: %w", err)
+	}
+	st, err := tmp.Stat()
+	if err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if st.Size() > maxConfigArchiveBytes {
+		_ = tmp.Close()
+		return &apiError{code: "archive_too_large", statusCode: 413, message: "config archive exceeds 512 MiB"}
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -207,9 +228,14 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 }
 
 func packTarZst(dir, dest string) error {
-	tmp := dest + ".tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	out, err := os.CreateTemp(filepath.Dir(dest), filepath.Base(dest)+".*.tmp")
 	if err != nil {
+		return err
+	}
+	tmp := out.Name()
+	if err := out.Chmod(0o600); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
 		return err
 	}
 	zw, err := zstd.NewWriter(out)
@@ -291,6 +317,7 @@ func unpackTarZst(archivePath, dest string) error {
 	}
 	defer zr.Close()
 	tr := tar.NewReader(zr)
+	remaining := int64(maxConfigArchiveBytes)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -312,16 +339,21 @@ func unpackTarZst(archivePath, dest string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(hdr.Mode))
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
-				_ = out.Close()
-				return err
+			n, copyErr := io.CopyN(out, tr, remaining+1)
+			closeErr := out.Close()
+			if n > remaining {
+				return fmt.Errorf("archive exceeds extraction limit")
 			}
-			if err := out.Close(); err != nil {
-				return err
+			remaining -= n
+			if copyErr != nil && copyErr != io.EOF {
+				return copyErr
+			}
+			if closeErr != nil {
+				return closeErr
 			}
 		}
 	}

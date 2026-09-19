@@ -48,7 +48,6 @@ func writeArchive(dest Destination, archivePath string) error {
 
 	name := filepath.Base(archivePath)
 	final := filepath.Join(dest.Path, name)
-	tmp := final + ".tmp"
 
 	in, err := os.Open(archivePath)
 	if err != nil {
@@ -56,9 +55,15 @@ func writeArchive(dest Destination, archivePath string) error {
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	out, err := os.CreateTemp(dest.Path, name+".*.tmp")
 	if err != nil {
-		return fmt.Errorf("creating temp archive at %q: %w", tmp, err)
+		return fmt.Errorf("creating temp archive in %q: %w", dest.Path, err)
+	}
+	tmp := out.Name()
+	if err := out.Chmod(0o600); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("restricting temp archive %q: %w", tmp, err)
 	}
 	if _, err := copyFile(out, in); err != nil {
 		_ = out.Close()

@@ -11,16 +11,26 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// maxArchiveExtractBytes caps uncompressed extraction for a config archive
+// (upload and unpack share this bound so a compressed bomb cannot fill the
+// state filesystem).
+const maxArchiveExtractBytes = 512 << 20
+
 // packArchive writes dir's contents as a tar.zst stream to dest.
 func packArchive(dir, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return fmt.Errorf("creating archive parent directory: %w", err)
 	}
 
-	tmp := dest + ".tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	out, err := os.CreateTemp(filepath.Dir(dest), filepath.Base(dest)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("creating archive temp file: %w", err)
+	}
+	tmp := out.Name()
+	if err := out.Chmod(0o600); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("restricting archive temp file: %w", err)
 	}
 
 	zw, err := zstd.NewWriter(out)
@@ -121,6 +131,7 @@ func unpackArchive(archivePath, dest string) error {
 	defer zr.Close()
 
 	tr := tar.NewReader(zr)
+	remaining := int64(maxArchiveExtractBytes)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -142,15 +153,19 @@ func unpackArchive(archivePath, dest string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(hdr.Mode))
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
-				_ = out.Close()
-				return err
+			n, err := io.CopyN(out, tr, remaining+1)
+			if closeErr := out.Close(); closeErr != nil && err == nil {
+				err = closeErr
 			}
-			if err := out.Close(); err != nil {
+			if n > remaining {
+				return fmt.Errorf("archive exceeds extraction limit")
+			}
+			remaining -= n
+			if err != nil && err != io.EOF {
 				return err
 			}
 		default:

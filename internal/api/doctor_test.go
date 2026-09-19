@@ -145,3 +145,18 @@ func TestSmartCheck_StandbySkipped(t *testing.T) {
 		t.Fatalf("smart message = %q, want standby mentioned", check.Message)
 	}
 }
+
+func TestVersionBelow_NumericAndEpoch(t *testing.T) {
+	if versionBelow("12.10", "12.4") {
+		t.Fatal("12.10 should not be below 12.4")
+	}
+	if !versionBelow("2.9", "2.40.2") {
+		t.Fatal("2.9 should be below 2.40.2")
+	}
+	if versionBelow("1:2.40.2", "2.40.2") {
+		t.Fatal("epoch-prefixed 2.40.2 should meet the floor")
+	}
+	if !versionBelow("12.4", "12.4.1") {
+		t.Fatal("12.4 should be below 12.4.1")
+	}
+}
