@@ -26,7 +26,7 @@ export function TabsTab({
   return (
     <TabsPrimitive.Tab
       className={cn(
-        "rounded-t-lg px-3 py-2 text-sm font-medium text-muted-foreground outline-none data-selected:border-b-2 data-selected:border-primary data-selected:text-foreground",
+        "rounded-t-lg px-3 py-2 text-sm font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-selected:border-b-2 data-selected:border-primary data-selected:text-foreground",
         className,
       )}
       data-slot="tabs-tab"

@@ -1,5 +1,6 @@
 import type React from "react";
-import { Bell, ListChecks, LogOut, Moon, Sun } from "lucide-react";
+import { useState } from "react";
+import { ListChecks, LogOut, Moon, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
@@ -29,10 +30,19 @@ export function TopBar(): React.ReactElement {
   const arrayTone = arrayStatusTone(status);
   const parity = parityFreshnessLabel(status, doctor, t);
   const activeCount = status?.activeJobs ?? activeJobs.length;
+  const [logoutError, setLogoutError] = useState<string | null>(null);
 
   const handleLogout = async (): Promise<void> => {
-    await hoservaClient.POST("/auth/logout");
-    window.location.assign("/login");
+    try {
+      const { error: apiError } = await hoservaClient.POST("/auth/logout");
+      if (apiError) {
+        setLogoutError(apiError.message || t("topBar.userMenu.logoutFailed"));
+        return;
+      }
+      window.location.assign("/login");
+    } catch (err: unknown) {
+      setLogoutError(err instanceof Error ? err.message : t("topBar.userMenu.logoutFailed"));
+    }
   };
 
   const toggleTheme = (): void => {
@@ -43,6 +53,11 @@ export function TopBar(): React.ReactElement {
 
   return (
     <div className="flex flex-1 items-center justify-end gap-2">
+      {logoutError ? (
+        <span role="alert" className="text-destructive text-sm">
+          {logoutError}
+        </span>
+      ) : null}
       <Button size="sm" variant="outline" render={<Link to={PATHS.storage} />} className="hidden sm:inline-flex">
         <StatusBadge tone={arrayTone}>{arrayLabel}</StatusBadge>
       </Button>
@@ -73,9 +88,6 @@ export function TopBar(): React.ReactElement {
           )}
         </PopoverContent>
       </Popover>
-      <Button size="icon-sm" variant="ghost" aria-label={t("topBar.notifications.ariaLabel")}>
-        <Bell aria-hidden="true" />
-      </Button>
       <Menu>
         <MenuTrigger
           render={

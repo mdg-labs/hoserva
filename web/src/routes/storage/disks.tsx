@@ -21,7 +21,7 @@ type PoolDisk = components["schemas"]["PoolDiskEntry"];
 export function DisksPage(): React.ReactElement {
   const { t } = useTranslation();
   const [disks, setDisks] = useState<Disk[] | null>(null);
-  const [poolDisks, setPoolDisks] = useState<PoolDisk[]>([]);
+  const [poolDisks, setPoolDisks] = useState<PoolDisk[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState(DISK_FILTER_ALL);
@@ -35,6 +35,10 @@ export function DisksPage(): React.ReactElement {
           return;
         }
         setDisks(diskResult.data?.disks ?? []);
+        if (poolResult.error) {
+          setError(poolResult.error.message);
+          return;
+        }
         setPoolDisks(poolResult.data?.disks ?? []);
       })
       .catch((err: unknown) => {
@@ -46,7 +50,7 @@ export function DisksPage(): React.ReactElement {
   }, []);
 
   const poolByDevice = useMemo(
-    () => new Map(poolDisks.map((disk) => [disk.device, disk])),
+    () => new Map((poolDisks ?? []).map((disk) => [disk.device, disk])),
     [poolDisks],
   );
 
@@ -55,11 +59,11 @@ export function DisksPage(): React.ReactElement {
     return disks.filter((disk) => {
       const haystack = `${disk.device} ${disk.model ?? ""} ${disk.serial ?? ""}`.toLowerCase();
       if (search && !haystack.includes(search.toLowerCase())) return false;
-      const role = poolByDevice.get(disk.device)?.role ?? "unassigned";
+      const role = poolByDevice.get(disk.device)?.role ?? (poolDisks === null ? "unknown" : "unassigned");
       if (roleFilter !== DISK_FILTER_ALL && role !== roleFilter) return false;
       return true;
     });
-  }, [disks, poolByDevice, roleFilter, search]);
+  }, [disks, poolByDevice, poolDisks, roleFilter, search]);
 
   const columns: DataTableColumn<Disk>[] = [
     {
@@ -76,7 +80,9 @@ export function DisksPage(): React.ReactElement {
     {
       id: "role",
       header: t("disks.columns.role"),
-      cell: (disk) => poolByDevice.get(disk.device)?.role ?? t("storageSetup.roles.unassigned"),
+      cell: (disk) =>
+        poolByDevice.get(disk.device)?.role ??
+        (poolDisks === null ? t("status.unknown") : t("storageSetup.roles.unassigned")),
     },
     { id: "size", header: t("disks.columns.size"), cell: (disk) => formatBytes(disk.sizeBytes) },
     {
@@ -91,7 +97,8 @@ export function DisksPage(): React.ReactElement {
     {
       id: "state",
       header: t("disks.columns.state"),
-      cell: (disk) => poolByDevice.get(disk.device)?.state ?? "—",
+      cell: (disk) =>
+        poolByDevice.get(disk.device)?.state ?? (poolDisks === null ? t("status.unknown") : "—"),
     },
   ];
 

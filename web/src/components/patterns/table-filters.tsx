@@ -18,6 +18,7 @@ export function TableFilters({
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       {onSearchChange ? (
         <Input
+          aria-label={searchPlaceholder}
           value={search ?? ""}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder={searchPlaceholder}
@@ -42,7 +43,7 @@ export function SelectFilter({
 }): React.ReactElement {
   return (
     <Select value={value} onValueChange={(next) => next && onChange(next)}>
-      <SelectTrigger className="w-40">
+      <SelectTrigger aria-label={placeholder} className="w-40">
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>

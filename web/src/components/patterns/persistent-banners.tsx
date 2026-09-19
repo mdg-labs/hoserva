@@ -61,7 +61,7 @@ export function PersistentBanners(): React.ReactElement | null {
   }
 
   const driftCheck = doctor?.checks.find((check) => check.id.includes("drift"));
-  if (driftCheck) {
+  if (driftCheck?.status === "warn" || driftCheck?.status === "fail") {
     banners.push(
       <Banner
         key="drift"

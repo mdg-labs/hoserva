@@ -217,7 +217,7 @@ jobs:
       - name: Check the build makes no outbound request
         working-directory: web
         run: |
-          allowed="(www\.w3\.org|react\.dev/errors|base-ui\.com/production-error|react\.i18next\.com|reactrouter\.com|fb\.me/use-check-prop-types|localhost)"
+          allowed='(www\.w3\.org|react\.dev/errors|base-ui\.com/production-error|react\.i18next\.com|reactrouter\.com|^https://fb\.me/use-check-prop-types([?#].*)?$|localhost)'
           found="$(grep -rEho "https?://[^\"'\) ]+" dist | grep -Ev "$allowed" || true)"
           if [ -n "$found" ]; then
             echo "$found"
