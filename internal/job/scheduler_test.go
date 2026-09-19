@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -790,4 +791,71 @@ func TestScheduler_Await_ReturnsPromptlyDespiteAFailedFinalStatusWrite(t *testin
 			t.Fatalf("Await took %v to return — it missed the Hub publish and did not consult the in-memory terminal snapshot", elapsed)
 		}
 	})
+}
+
+func TestScheduler_terminalSnapshotOmitsCheckpointAndParams(t *testing.T) {
+	s := newTestScheduler(t)
+	checkpoint := []byte("checkpoint payload")
+	params := []byte("params payload")
+	now := time.Now().UTC()
+	s.rememberTerminalSnapshot(Job{
+		ID:         "j1",
+		Status:     StatusSucceeded,
+		Checkpoint: checkpoint,
+		Params:     params,
+		FinishedAt: &now,
+	})
+
+	snap, ok := s.terminalSnapshot("j1")
+	if !ok {
+		t.Fatal("terminalSnapshot: not found")
+	}
+	if snap.Checkpoint != nil {
+		t.Fatalf("terminal snapshot Checkpoint = %q, want nil", snap.Checkpoint)
+	}
+	if snap.Params != nil {
+		t.Fatalf("terminal snapshot Params = %q, want nil", snap.Params)
+	}
+	if snap.ID != "j1" || snap.Status != StatusSucceeded {
+		t.Fatalf("terminal snapshot = %+v, want id and terminal status only", snap)
+	}
+}
+
+func TestScheduler_Await_ReturnsErrorWhenTerminalSnapshotEvicted(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	wrapped := &failWritesDB{DB: db}
+	st := NewStore(wrapped)
+	s := NewScheduler(st, NewLogStore(t.TempDir()), NewHub(), NewRegistry())
+
+	for i := 0; i < maxTerminalSnapshots; i++ {
+		now := time.Now().UTC()
+		s.rememberTerminalSnapshot(Job{
+			ID:         fmt.Sprintf("filler-%d", i),
+			Status:     StatusSucceeded,
+			FinishedAt: &now,
+		})
+	}
+
+	evictedID := "filler-0"
+	overflowID := "overflow"
+	now := time.Now().UTC()
+	s.rememberTerminalSnapshot(Job{
+		ID:         overflowID,
+		Status:     StatusSucceeded,
+		FinishedAt: &now,
+	})
+
+	if _, ok := s.terminalSnapshot(evictedID); ok {
+		t.Fatalf("evicted id %s still has a terminal snapshot", evictedID)
+	}
+
+	if err := st.Create(ctx, &Job{ID: evictedID, Type: TypeSync, Class: ClassParity, Status: StatusRunning, CreatedAt: now}); err != nil {
+		t.Fatalf("Create(evicted job row): %v", err)
+	}
+
+	_, err := s.Await(ctx, evictedID)
+	if !errors.Is(err, ErrTerminalSnapshotEvicted) {
+		t.Fatalf("Await(evicted id) = %v, want ErrTerminalSnapshotEvicted", err)
+	}
 }

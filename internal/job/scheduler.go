@@ -26,6 +26,11 @@ var (
 	ErrJobNotResumable   = errors.New("job: this job type does not persist a checkpoint to resume from")
 	ErrJobNotInterrupted = errors.New("job: only an interrupted job can be resumed")
 	ErrJobNotRunning     = errors.New("job: this job is not queued or running")
+	// ErrTerminalSnapshotEvicted is returned by Await when a job's final
+	// Store.UpdateStatus never succeeded, the in-memory terminal snapshot
+	// was evicted to bound scheduler memory, and the store row is still
+	// non-terminal — there is no safe way to keep waiting.
+	ErrTerminalSnapshotEvicted = errors.New("job: terminal snapshot evicted before final status was persisted")
 )
 
 // stopReason is set on a runningJob before it is asked to stop, so its
@@ -70,11 +75,13 @@ type Scheduler struct {
 	hub      *Hub
 	registry *Registry
 
-	mu                sync.Mutex
-	running           map[string]*runningJob
-	queue             []*queuedJob
-	terminalSnapshots map[string]*Job
-	maintenance       bool
+	mu                       sync.Mutex
+	running                  map[string]*runningJob
+	queue                    []*queuedJob
+	terminalSnapshots        map[string]*Job
+	terminalSnapshotFIFO     []string
+	evictedTerminalSnapshots map[string]struct{}
+	maintenance              bool
 }
 
 // NewScheduler wires a Scheduler to its persistence, log capture, event
@@ -353,6 +360,17 @@ func (s *Scheduler) InMaintenance() bool {
 // latency, not a hang.
 const awaitPollInterval = 25 * time.Millisecond
 
+// maxTerminalSnapshots caps how many failed final-status writes the
+// scheduler remembers in memory. Await and chain sequencing only need id,
+// terminal status and error fields from these entries — not Checkpoint or
+// Params — so each snapshot is stored without those slices.
+const maxTerminalSnapshots = 64
+
+const (
+	finalStatusWriteRetries    = 3
+	finalStatusWriteRetryDelay = 10 * time.Millisecond
+)
+
 // Await blocks until id reaches a terminal status (succeeded, failed,
 // cancelled or interrupted) or ctx is done, whichever comes first. It is
 // the primitive MaintenanceChain (chain.go) uses to know a job-backed step
@@ -384,6 +402,9 @@ func (s *Scheduler) Await(ctx context.Context, id string) (*Job, error) {
 		if snap, ok := s.terminalSnapshot(id); ok {
 			return snap, nil
 		}
+		if s.terminalSnapshotEvicted(id) {
+			return nil, fmt.Errorf("job: awaiting job %s: %w", id, ErrTerminalSnapshotEvicted)
+		}
 		select {
 		case published := <-ch:
 			if published != nil && published.ID == id && published.Status.Terminal() {
@@ -411,20 +432,58 @@ func (s *Scheduler) terminalSnapshot(id string) (*Job, bool) {
 	return &copy, true
 }
 
+func terminalSnapshotFrom(j Job) Job {
+	return Job{
+		ID:           j.ID,
+		Status:       j.Status,
+		ErrorCode:    j.ErrorCode,
+		ErrorMessage: j.ErrorMessage,
+		StartedAt:    j.StartedAt,
+		FinishedAt:   j.FinishedAt,
+	}
+}
+
 func (s *Scheduler) rememberTerminalSnapshot(j Job) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.terminalSnapshots == nil {
 		s.terminalSnapshots = make(map[string]*Job)
+		s.evictedTerminalSnapshots = make(map[string]struct{})
 	}
-	copy := j
-	s.terminalSnapshots[j.ID] = &copy
+	if _, exists := s.terminalSnapshots[j.ID]; exists {
+		snap := terminalSnapshotFrom(j)
+		s.terminalSnapshots[j.ID] = &snap
+		return
+	}
+	for len(s.terminalSnapshotFIFO) >= maxTerminalSnapshots {
+		evictID := s.terminalSnapshotFIFO[0]
+		s.terminalSnapshotFIFO = s.terminalSnapshotFIFO[1:]
+		delete(s.terminalSnapshots, evictID)
+		s.evictedTerminalSnapshots[evictID] = struct{}{}
+	}
+	snap := terminalSnapshotFrom(j)
+	s.terminalSnapshots[j.ID] = &snap
+	s.terminalSnapshotFIFO = append(s.terminalSnapshotFIFO, j.ID)
+}
+
+func (s *Scheduler) terminalSnapshotEvicted(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.evictedTerminalSnapshots[id]
+	return ok
 }
 
 func (s *Scheduler) forgetTerminalSnapshot(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.terminalSnapshots, id)
+	delete(s.evictedTerminalSnapshots, id)
+	for i, fid := range s.terminalSnapshotFIFO {
+		if fid == id {
+			s.terminalSnapshotFIFO = append(s.terminalSnapshotFIFO[:i], s.terminalSnapshotFIFO[i+1:]...)
+			break
+		}
+	}
 }
 
 // hasConflictWithRunningLocked reports whether a job of class/resourceIDs
@@ -566,6 +625,10 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 	}
 
 	storeErr := s.store.UpdateStatus(context.Background(), rj.job.ID, status, rj.job.Progress, errCode, errMessage, rj.job.StartedAt, &now)
+	for attempt := 1; storeErr != nil && attempt < finalStatusWriteRetries; attempt++ {
+		time.Sleep(finalStatusWriteRetryDelay)
+		storeErr = s.store.UpdateStatus(context.Background(), rj.job.ID, status, rj.job.Progress, errCode, errMessage, rj.job.StartedAt, &now)
+	}
 	if storeErr != nil {
 		log.Printf("job: recording final status for job %s: %v", rj.job.ID, storeErr)
 	}
