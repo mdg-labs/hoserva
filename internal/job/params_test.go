@@ -288,9 +288,27 @@ func TestSubmit_RejectsParamsForTypesThatHaveNone(t *testing.T) {
 func TestSubmit_RejectsFixWithoutConfirm(t *testing.T) {
 	s := newTestScheduler(t)
 	s.registry.Register(TypeFix, false, RunFix(newRecordingEngine()))
-	_, err := s.Submit(context.Background(), TypeFix, nil, []byte(`{"confirm":false,"disk":1}`))
-	if err == nil {
-		t.Fatal("Submit(fix, confirm=false) = nil error, want rejection")
+	for _, params := range [][]byte{
+		[]byte(`{"confirm":false,"disk":1}`),
+		nil,
+		[]byte("null"),
+		[]byte(""),
+	} {
+		_, err := s.Submit(context.Background(), TypeFix, nil, params)
+		if err == nil {
+			t.Fatalf("Submit(fix, params=%q) = nil error, want rejection", params)
+		}
+	}
+}
+
+func TestValidateParams_RejectsTrailingJSON(t *testing.T) {
+	for _, params := range [][]byte{
+		[]byte(`{"dryRun":true}]`),
+		[]byte(`{"dryRun":true}{"confirm":true}`),
+	} {
+		if err := ValidateParams(TypeSync, params); err == nil {
+			t.Fatalf("ValidateParams(%q) = nil, want trailing-token rejection", params)
+		}
 	}
 }
 

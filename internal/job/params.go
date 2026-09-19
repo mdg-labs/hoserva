@@ -3,7 +3,9 @@ package job
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 
 	"github.com/mdg-labs/hoserva/internal/parity"
 )
@@ -33,11 +35,15 @@ type FixParams struct {
 }
 
 // ValidateParams checks params against t at Submit time (not in SQL).
-// Empty or null is valid for every type — types that have no payload
-// reject any other JSON.
+// Empty or null is valid for types whose payload is optional. TypeFix
+// requires confirm=true, so an absent payload is rejected. Types that
+// have no payload reject any other JSON.
 func ValidateParams(t Type, params []byte) error {
 	params = bytes.TrimSpace(params)
 	if len(params) == 0 || string(params) == "null" {
+		if t == TypeFix {
+			return fmt.Errorf("job: fix params require confirm=true")
+		}
 		return nil
 	}
 	switch t {
@@ -120,7 +126,7 @@ func decodeScrubParams(params []byte) (ScrubParams, error) {
 
 func decodeFixParams(params []byte) (FixParams, error) {
 	if len(params) == 0 || string(params) == "null" {
-		return FixParams{}, nil
+		return FixParams{}, fmt.Errorf("job: fix params require confirm=true")
 	}
 	var p FixParams
 	if err := decodeJSON(params, &p); err != nil {
@@ -141,7 +147,7 @@ func decodeJSON(params []byte, dest any) error {
 	if err := dec.Decode(dest); err != nil {
 		return fmt.Errorf("job: decoding params: %w", err)
 	}
-	if dec.More() {
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return fmt.Errorf("job: params must be a single JSON object")
 	}
 	return nil
