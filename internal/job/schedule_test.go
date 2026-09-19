@@ -78,3 +78,60 @@ func TestNextChainRun_UsesLocalTimezone(t *testing.T) {
 		t.Fatalf("NextChainRun = %v, want %v", next, want)
 	}
 }
+
+func TestNextOtherJobRun_WeeklyUsesSundayAcrossWeekdays(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	job := OtherJobSettings{ID: "smart_self_test", Frequency: FrequencyWeekly, Time: "03:00"}
+	want := time.Date(2026, 6, 21, 3, 0, 0, 0, loc).UTC() // Sunday
+	for _, now := range []time.Time{
+		time.Date(2026, 6, 16, 1, 0, 0, 0, loc), // Tuesday
+		time.Date(2026, 6, 17, 4, 0, 0, 0, loc), // Wednesday after 03:00
+		time.Date(2026, 6, 20, 2, 0, 0, 0, loc), // Saturday
+	} {
+		got := NextOtherJobRun(now, loc, job)
+		if !got.Equal(want) {
+			t.Errorf("NextOtherJobRun(%v) = %v, want %v", now, got, want)
+		}
+	}
+}
+
+func TestNextOtherJobRun_MonthlyUsesFirstOfMonth(t *testing.T) {
+	loc := time.UTC
+	job := OtherJobSettings{ID: "restore_drill", Frequency: FrequencyMonthly, Time: "05:00"}
+	got := NextOtherJobRun(time.Date(2026, 6, 15, 1, 0, 0, 0, loc), loc, job)
+	want := time.Date(2026, 7, 1, 5, 0, 0, 0, loc).UTC()
+	if !got.Equal(want) {
+		t.Fatalf("NextOtherJobRun mid-month = %v, want %v", got, want)
+	}
+	got = NextOtherJobRun(time.Date(2026, 7, 1, 4, 0, 0, 0, loc), loc, job)
+	if !got.Equal(want) {
+		t.Fatalf("NextOtherJobRun before time on the 1st = %v, want %v", got, want)
+	}
+	got = NextOtherJobRun(time.Date(2026, 7, 1, 6, 0, 0, 0, loc), loc, job)
+	want = time.Date(2026, 8, 1, 5, 0, 0, 0, loc).UTC()
+	if !got.Equal(want) {
+		t.Fatalf("NextOtherJobRun after time on the 1st = %v, want %v", got, want)
+	}
+}
+
+func TestChainWindows_ScrubWeekdayUsesInstallationTimezone(t *testing.T) {
+	loc, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	// Sunday 02:00 JST is Saturday 17:00 UTC. Scrub must still run.
+	start := time.Date(2026, 6, 14, 2, 0, 0, 0, loc).UTC()
+	windows := ChainWindows(start, loc, int(time.Sunday), nil)
+	var scrub bool
+	for _, w := range windows {
+		if w.Window.Class == ClassParity && w.Window.Duration == stepDurationEstimates[StepScrub] {
+			scrub = true
+		}
+	}
+	if !scrub {
+		t.Fatal("ChainWindows omitted scrub on Sunday in Asia/Tokyo because start was UTC")
+	}
+}

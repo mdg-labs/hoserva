@@ -156,9 +156,9 @@ func OtherJobSchedulePreview(freq Frequency, time string) string {
 	case FrequencyDaily:
 		return fmt.Sprintf("every day at %s", time)
 	case FrequencyWeekly:
-		return fmt.Sprintf("every week at %s", time)
+		return fmt.Sprintf("every Sunday at %s", time)
 	case FrequencyMonthly:
-		return fmt.Sprintf("every month at %s", time)
+		return fmt.Sprintf("on the 1st of each month at %s", time)
 	default:
 		return fmt.Sprintf("at %s", time)
 	}
@@ -179,6 +179,8 @@ func NextChainRun(now time.Time, loc *time.Location, startTime string) time.Time
 }
 
 // NextOtherJobRun returns the next local instant a separately scheduled job runs.
+// Weekly jobs use Sunday (DefaultWeeklyScrubDay) as the implicit weekday;
+// monthly jobs use the 1st. Doc 03 §8.4's UI is frequency + time only.
 func NextOtherJobRun(now time.Time, loc *time.Location, job OtherJobSettings) time.Time {
 	hour, minute, err := ParseClock(job.Time)
 	if err != nil {
@@ -188,27 +190,40 @@ func NextOtherJobRun(now time.Time, loc *time.Location, job OtherJobSettings) ti
 	year, month, day := localNow.Date()
 	candidate := time.Date(year, month, day, hour, minute, 0, 0, loc)
 
-	if candidate.After(localNow) {
-		return candidate.UTC()
-	}
 	switch job.Frequency {
 	case FrequencyWeekly:
-		return candidate.AddDate(0, 0, 7).UTC()
+		days := (int(time.Sunday) - int(candidate.Weekday()) + 7) % 7
+		candidate = candidate.AddDate(0, 0, days)
+		if !candidate.After(localNow) {
+			candidate = candidate.AddDate(0, 0, 7)
+		}
+		return candidate.UTC()
 	case FrequencyMonthly:
-		return candidate.AddDate(0, 1, 0).UTC()
+		candidate = time.Date(year, month, 1, hour, minute, 0, 0, loc)
+		if !candidate.After(localNow) {
+			candidate = candidate.AddDate(0, 1, 0)
+		}
+		return candidate.UTC()
 	default:
+		if candidate.After(localNow) {
+			return candidate.UTC()
+		}
 		return candidate.AddDate(0, 0, 1).UTC()
 	}
 }
 
 // ChainWindows builds ScheduledWindows for the maintenance chain's
 // job-backed steps, starting at start and honouring weeklyScrubDay for scrub.
-func ChainWindows(start time.Time, weeklyScrubDay int, enabled map[Step]bool) []NamedWindow {
+// loc is the installation timezone; start may be UTC from NextChainRun.
+func ChainWindows(start time.Time, loc *time.Location, weeklyScrubDay int, enabled map[Step]bool) []NamedWindow {
 	if enabled == nil {
 		enabled = defaultChainEnabled
 	}
+	if loc == nil {
+		loc = time.UTC
+	}
 	cursor := start
-	weekly := start.In(start.Location()).Weekday() == time.Weekday(weeklyScrubDay)
+	weekly := start.In(loc).Weekday() == time.Weekday(weeklyScrubDay)
 	var out []NamedWindow
 	for _, step := range chainOrder {
 		if step == StepScrub && !weekly {
@@ -297,7 +312,7 @@ func DetectScheduleConflicts(windows []NamedWindow) []ScheduleConflict {
 // BuildScheduleWindows collects every named window for conflict detection.
 func BuildScheduleWindows(now time.Time, loc *time.Location, chain ChainSettings, others []OtherJobSettings) []NamedWindow {
 	chainStart := NextChainRun(now, loc, chain.StartTime)
-	windows := ChainWindows(chainStart, chain.WeeklyScrubDay, chain.Enabled)
+	windows := ChainWindows(chainStart, loc, chain.WeeklyScrubDay, chain.Enabled)
 	for _, job := range others {
 		if !job.Enabled {
 			continue

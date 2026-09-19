@@ -93,6 +93,42 @@ func TestHandlerUpdateScheduledJobPersistsFrequency(t *testing.T) {
 	}
 }
 
+func TestEnsureDefaults_RepairsMissingDefaultJobs(t *testing.T) {
+	db := openTestDB(t)
+	s := api.NewScheduleStore(db)
+	ctx := context.Background()
+	now := "2026-01-01T00:00:00Z"
+
+	if err := s.UpsertJob(ctx, api.ScheduleJobRow{
+		JobID:     "smart_self_test",
+		Enabled:   true,
+		Frequency: "weekly",
+		StartTime: "03:00",
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("UpsertJob: %v", err)
+	}
+	if err := s.EnsureDefaults(ctx, now); err != nil {
+		t.Fatalf("EnsureDefaults: %v", err)
+	}
+	rows, err := s.ListJobs(ctx)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("len(jobs) = %d, want 4 default jobs after partial seed repair", len(rows))
+	}
+	ids := map[string]bool{}
+	for _, row := range rows {
+		ids[row.JobID] = true
+	}
+	for _, want := range []string{"smart_self_test", "appdata_backup", "restore_drill", "container_update_check"} {
+		if !ids[want] {
+			t.Errorf("missing default job %s after EnsureDefaults", want)
+		}
+	}
+}
+
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dir := t.TempDir()
