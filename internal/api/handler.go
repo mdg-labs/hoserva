@@ -179,7 +179,7 @@ func mapSchedulerError(id uuid.UUID, err error) error {
 // *apiError built above; anything else is an unclassified internal error,
 // logged server-side with its detail and reported as an opaque 500 with
 // no internal detail in the response body.
-func (Handler) NewError(ctx context.Context, err error) *apiv1.ErrorStatusCode {
+func (*Handler) NewError(ctx context.Context, err error) *apiv1.ErrorStatusCode {
 	var ae *apiError
 	if !errors.As(err, &ae) {
 		err = mapAuthError(err)
