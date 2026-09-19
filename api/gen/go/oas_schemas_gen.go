@@ -250,8 +250,61 @@ func (s *ArrayDiskRole) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/BlockingJob
+type BlockingJob struct {
+	ID    uuid.UUID `json:"id"`
+	Type  JobType   `json:"type"`
+	Class JobClass  `json:"class"`
+}
+
+// GetID returns the value of ID.
+func (s *BlockingJob) GetID() uuid.UUID {
+	return s.ID
+}
+
+// GetType returns the value of Type.
+func (s *BlockingJob) GetType() JobType {
+	return s.Type
+}
+
+// GetClass returns the value of Class.
+func (s *BlockingJob) GetClass() JobClass {
+	return s.Class
+}
+
+// SetID sets the value of ID.
+func (s *BlockingJob) SetID(val uuid.UUID) {
+	s.ID = val
+}
+
+// SetType sets the value of Type.
+func (s *BlockingJob) SetType(val JobType) {
+	s.Type = val
+}
+
+// SetClass sets the value of Class.
+func (s *BlockingJob) SetClass(val JobClass) {
+	s.Class = val
+}
+
 // ConfirmTotpNoContent is response for ConfirmTotp operation.
 type ConfirmTotpNoContent struct{}
+
+// Ref: #/components/schemas/ConfirmUpdateRequest
+type ConfirmUpdateRequest struct {
+	// Must be true; the UI/CLI confirm dialog is what sets this.
+	Confirm bool `json:"confirm"`
+}
+
+// GetConfirm returns the value of Confirm.
+func (s *ConfirmUpdateRequest) GetConfirm() bool {
+	return s.Confirm
+}
+
+// SetConfirm sets the value of Confirm.
+func (s *ConfirmUpdateRequest) SetConfirm(val bool) {
+	s.Confirm = val
+}
 
 // Ref: #/components/schemas/CreateArrayRequest
 type CreateArrayRequest struct {
@@ -562,6 +615,43 @@ func (s *DailyWakeCount) SetDate(val time.Time) {
 // SetCount sets the value of Count.
 func (s *DailyWakeCount) SetCount(val int32) {
 	s.Count = val
+}
+
+// Ref: #/components/schemas/DebianPackageUpdate
+type DebianPackageUpdate struct {
+	Name             string `json:"name"`
+	InstalledVersion string `json:"installedVersion"`
+	CandidateVersion string `json:"candidateVersion"`
+}
+
+// GetName returns the value of Name.
+func (s *DebianPackageUpdate) GetName() string {
+	return s.Name
+}
+
+// GetInstalledVersion returns the value of InstalledVersion.
+func (s *DebianPackageUpdate) GetInstalledVersion() string {
+	return s.InstalledVersion
+}
+
+// GetCandidateVersion returns the value of CandidateVersion.
+func (s *DebianPackageUpdate) GetCandidateVersion() string {
+	return s.CandidateVersion
+}
+
+// SetName sets the value of Name.
+func (s *DebianPackageUpdate) SetName(val string) {
+	s.Name = val
+}
+
+// SetInstalledVersion sets the value of InstalledVersion.
+func (s *DebianPackageUpdate) SetInstalledVersion(val string) {
+	s.InstalledVersion = val
+}
+
+// SetCandidateVersion sets the value of CandidateVersion.
+func (s *DebianPackageUpdate) SetCandidateVersion(val string) {
+	s.CandidateVersion = val
 }
 
 // DeleteNotificationChannelNoContent is response for DeleteNotificationChannel operation.
@@ -2976,6 +3066,52 @@ func (o OptArrayDiskFilesystem) Or(d ArrayDiskFilesystem) ArrayDiskFilesystem {
 	return d
 }
 
+// NewOptBlockingJob returns new OptBlockingJob with value set to v.
+func NewOptBlockingJob(v BlockingJob) OptBlockingJob {
+	return OptBlockingJob{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptBlockingJob is optional BlockingJob.
+type OptBlockingJob struct {
+	Value BlockingJob
+	Set   bool
+}
+
+// IsSet returns true if OptBlockingJob was set.
+func (o OptBlockingJob) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptBlockingJob) Reset() {
+	var v BlockingJob
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptBlockingJob) SetTo(v BlockingJob) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptBlockingJob) Get() (v BlockingJob, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptBlockingJob) Or(d BlockingJob) BlockingJob {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptBool returns new OptBool with value set to v.
 func NewOptBool(v bool) OptBool {
 	return OptBool{
@@ -3868,6 +4004,52 @@ func (o OptString) Or(d string) string {
 	return d
 }
 
+// NewOptUpdateChannel returns new OptUpdateChannel with value set to v.
+func NewOptUpdateChannel(v UpdateChannel) OptUpdateChannel {
+	return OptUpdateChannel{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptUpdateChannel is optional UpdateChannel.
+type OptUpdateChannel struct {
+	Value UpdateChannel
+	Set   bool
+}
+
+// IsSet returns true if OptUpdateChannel was set.
+func (o OptUpdateChannel) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptUpdateChannel) Reset() {
+	var v UpdateChannel
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptUpdateChannel) SetTo(v UpdateChannel) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptUpdateChannel) Get() (v UpdateChannel, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptUpdateChannel) Or(d UpdateChannel) UpdateChannel {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptWeekday returns new OptWeekday with value set to v.
 func NewOptWeekday(v Weekday) OptWeekday {
 	return OptWeekday{
@@ -3969,6 +4151,57 @@ func (s *OtherScheduleJobId) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/PackageDependencyStatus
+type PackageDependencyStatus struct {
+	// Debian package name (mergerfs, snapraid).
+	Name             string `json:"name"`
+	InstalledVersion string `json:"installedVersion"`
+	// Lowest version this Hoserva release was tested against (Q7).
+	TestedFloor string `json:"testedFloor"`
+	// True when installedVersion is at or above testedFloor.
+	InRange bool `json:"inRange"`
+}
+
+// GetName returns the value of Name.
+func (s *PackageDependencyStatus) GetName() string {
+	return s.Name
+}
+
+// GetInstalledVersion returns the value of InstalledVersion.
+func (s *PackageDependencyStatus) GetInstalledVersion() string {
+	return s.InstalledVersion
+}
+
+// GetTestedFloor returns the value of TestedFloor.
+func (s *PackageDependencyStatus) GetTestedFloor() string {
+	return s.TestedFloor
+}
+
+// GetInRange returns the value of InRange.
+func (s *PackageDependencyStatus) GetInRange() bool {
+	return s.InRange
+}
+
+// SetName sets the value of Name.
+func (s *PackageDependencyStatus) SetName(val string) {
+	s.Name = val
+}
+
+// SetInstalledVersion sets the value of InstalledVersion.
+func (s *PackageDependencyStatus) SetInstalledVersion(val string) {
+	s.InstalledVersion = val
+}
+
+// SetTestedFloor sets the value of TestedFloor.
+func (s *PackageDependencyStatus) SetTestedFloor(val string) {
+	s.TestedFloor = val
+}
+
+// SetInRange sets the value of InRange.
+func (s *PackageDependencyStatus) SetInRange(val bool) {
+	s.InRange = val
 }
 
 // One doc 02 §2 diff group; moved-by-Hoserva is Q15's relocation manifest match.
@@ -5176,6 +5409,49 @@ func (s *TotpEnrollResponse) SetOtpauthUri(val string) {
 // UnlockUserNoContent is response for UnlockUser operation.
 type UnlockUserNoContent struct{}
 
+// Release channel the update check reads from the signed index (Q67).
+// Ref: #/components/schemas/UpdateChannel
+type UpdateChannel string
+
+const (
+	UpdateChannelStable UpdateChannel = "stable"
+	UpdateChannelBeta   UpdateChannel = "beta"
+)
+
+// AllValues returns all UpdateChannel values.
+func (UpdateChannel) AllValues() []UpdateChannel {
+	return []UpdateChannel{
+		UpdateChannelStable,
+		UpdateChannelBeta,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s UpdateChannel) MarshalText() ([]byte, error) {
+	switch s {
+	case UpdateChannelStable:
+		return []byte(s), nil
+	case UpdateChannelBeta:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *UpdateChannel) UnmarshalText(data []byte) error {
+	switch UpdateChannel(data) {
+	case UpdateChannelStable:
+		*s = UpdateChannelStable
+		return nil
+	case UpdateChannelBeta:
+		*s = UpdateChannelBeta
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/UpdateGeneralSettingsRequest
 type UpdateGeneralSettingsRequest struct {
 	// Host name for this server. An empty string clears a previously set value. Omitted leaves hostname
@@ -5547,6 +5823,166 @@ func (s *UpdateScheduledJobRequest) SetFrequency(val OptScheduleFrequency) {
 // SetTime sets the value of Time.
 func (s *UpdateScheduledJobRequest) SetTime(val OptString) {
 	s.Time = val
+}
+
+// Ref: #/components/schemas/UpdateStatus
+type UpdateStatus struct {
+	// Installed Hoserva package version.
+	CurrentVersion string `json:"currentVersion"`
+	// Newer version on the configured channel, if any.
+	AvailableVersion OptString `json:"availableVersion"`
+	// Git tag of availableVersion, if any.
+	AvailableTag OptString `json:"availableTag"`
+	// Release notes for availableVersion, if the index carries them.
+	Changelog OptString     `json:"changelog"`
+	Channel   UpdateChannel `json:"channel"`
+	// Whether the periodic outbound update check is enabled (Q49).
+	CheckEnabled bool `json:"checkEnabled"`
+	// Version rollback would restore, if an upgrade has been applied.
+	PreviousVersion OptString `json:"previousVersion"`
+	// Whether `/run/reboot-required` is present (Q68).
+	RebootRequired       bool                      `json:"rebootRequired"`
+	PendingDebianUpdates []DebianPackageUpdate     `json:"pendingDebianUpdates"`
+	Dependencies         []PackageDependencyStatus `json:"dependencies"`
+	// A running Parity, Array-write or Topology job that would refuse an update, rollback or (until it
+	// finishes) a reboot.
+	BlockingJob OptBlockingJob `json:"blockingJob"`
+}
+
+// GetCurrentVersion returns the value of CurrentVersion.
+func (s *UpdateStatus) GetCurrentVersion() string {
+	return s.CurrentVersion
+}
+
+// GetAvailableVersion returns the value of AvailableVersion.
+func (s *UpdateStatus) GetAvailableVersion() OptString {
+	return s.AvailableVersion
+}
+
+// GetAvailableTag returns the value of AvailableTag.
+func (s *UpdateStatus) GetAvailableTag() OptString {
+	return s.AvailableTag
+}
+
+// GetChangelog returns the value of Changelog.
+func (s *UpdateStatus) GetChangelog() OptString {
+	return s.Changelog
+}
+
+// GetChannel returns the value of Channel.
+func (s *UpdateStatus) GetChannel() UpdateChannel {
+	return s.Channel
+}
+
+// GetCheckEnabled returns the value of CheckEnabled.
+func (s *UpdateStatus) GetCheckEnabled() bool {
+	return s.CheckEnabled
+}
+
+// GetPreviousVersion returns the value of PreviousVersion.
+func (s *UpdateStatus) GetPreviousVersion() OptString {
+	return s.PreviousVersion
+}
+
+// GetRebootRequired returns the value of RebootRequired.
+func (s *UpdateStatus) GetRebootRequired() bool {
+	return s.RebootRequired
+}
+
+// GetPendingDebianUpdates returns the value of PendingDebianUpdates.
+func (s *UpdateStatus) GetPendingDebianUpdates() []DebianPackageUpdate {
+	return s.PendingDebianUpdates
+}
+
+// GetDependencies returns the value of Dependencies.
+func (s *UpdateStatus) GetDependencies() []PackageDependencyStatus {
+	return s.Dependencies
+}
+
+// GetBlockingJob returns the value of BlockingJob.
+func (s *UpdateStatus) GetBlockingJob() OptBlockingJob {
+	return s.BlockingJob
+}
+
+// SetCurrentVersion sets the value of CurrentVersion.
+func (s *UpdateStatus) SetCurrentVersion(val string) {
+	s.CurrentVersion = val
+}
+
+// SetAvailableVersion sets the value of AvailableVersion.
+func (s *UpdateStatus) SetAvailableVersion(val OptString) {
+	s.AvailableVersion = val
+}
+
+// SetAvailableTag sets the value of AvailableTag.
+func (s *UpdateStatus) SetAvailableTag(val OptString) {
+	s.AvailableTag = val
+}
+
+// SetChangelog sets the value of Changelog.
+func (s *UpdateStatus) SetChangelog(val OptString) {
+	s.Changelog = val
+}
+
+// SetChannel sets the value of Channel.
+func (s *UpdateStatus) SetChannel(val UpdateChannel) {
+	s.Channel = val
+}
+
+// SetCheckEnabled sets the value of CheckEnabled.
+func (s *UpdateStatus) SetCheckEnabled(val bool) {
+	s.CheckEnabled = val
+}
+
+// SetPreviousVersion sets the value of PreviousVersion.
+func (s *UpdateStatus) SetPreviousVersion(val OptString) {
+	s.PreviousVersion = val
+}
+
+// SetRebootRequired sets the value of RebootRequired.
+func (s *UpdateStatus) SetRebootRequired(val bool) {
+	s.RebootRequired = val
+}
+
+// SetPendingDebianUpdates sets the value of PendingDebianUpdates.
+func (s *UpdateStatus) SetPendingDebianUpdates(val []DebianPackageUpdate) {
+	s.PendingDebianUpdates = val
+}
+
+// SetDependencies sets the value of Dependencies.
+func (s *UpdateStatus) SetDependencies(val []PackageDependencyStatus) {
+	s.Dependencies = val
+}
+
+// SetBlockingJob sets the value of BlockingJob.
+func (s *UpdateStatus) SetBlockingJob(val OptBlockingJob) {
+	s.BlockingJob = val
+}
+
+// Ref: #/components/schemas/UpdateUpdateSettingsRequest
+type UpdateUpdateSettingsRequest struct {
+	Channel      OptUpdateChannel `json:"channel"`
+	CheckEnabled OptBool          `json:"checkEnabled"`
+}
+
+// GetChannel returns the value of Channel.
+func (s *UpdateUpdateSettingsRequest) GetChannel() OptUpdateChannel {
+	return s.Channel
+}
+
+// GetCheckEnabled returns the value of CheckEnabled.
+func (s *UpdateUpdateSettingsRequest) GetCheckEnabled() OptBool {
+	return s.CheckEnabled
+}
+
+// SetChannel sets the value of Channel.
+func (s *UpdateUpdateSettingsRequest) SetChannel(val OptUpdateChannel) {
+	s.Channel = val
+}
+
+// SetCheckEnabled sets the value of CheckEnabled.
+func (s *UpdateUpdateSettingsRequest) SetCheckEnabled(val OptBool) {
+	s.CheckEnabled = val
 }
 
 // Ref: #/components/schemas/User

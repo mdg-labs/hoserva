@@ -11,9 +11,12 @@ import (
 // §1, §8.1, D4): hostname, timezone and the machine-key-encrypted backup
 // passphrase (Q28).
 type GeneralSettingsRow struct {
-	Hostname         sql.NullString
-	Timezone         sql.NullString
-	BackupPassphrase []byte
+	Hostname           sql.NullString
+	Timezone           sql.NullString
+	BackupPassphrase   []byte
+	UpdateChannel      string
+	UpdateCheckEnabled bool
+	PreviousVersion    sql.NullString
 }
 
 // SettingsStore reads and writes general settings through schema_info's
@@ -36,9 +39,12 @@ func (s *SettingsStore) Get(ctx context.Context) (*GeneralSettingsRow, error) {
 		return nil, err
 	}
 	return &GeneralSettingsRow{
-		Hostname:         row.Hostname,
-		Timezone:         row.Timezone,
-		BackupPassphrase: row.BackupPassphrase,
+		Hostname:           row.Hostname,
+		Timezone:           row.Timezone,
+		BackupPassphrase:   row.BackupPassphrase,
+		UpdateChannel:      row.UpdateChannel,
+		UpdateCheckEnabled: row.UpdateCheckEnabled != 0,
+		PreviousVersion:    row.PreviousVersion,
 	}, nil
 }
 
@@ -60,4 +66,28 @@ func (s *SettingsStore) Update(ctx context.Context, row GeneralSettingsRow) erro
 		Timezone:         row.Timezone,
 		BackupPassphrase: row.BackupPassphrase,
 	})
+}
+
+func boolToSQL(v bool) int64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+// UpdateUpdateSettings persists channel and check-enabled (Q67, Q49).
+func (s *SettingsStore) UpdateUpdateSettings(ctx context.Context, channel string, checkEnabled bool) error {
+	return s.q.UpdateUpdateSettings(ctx, storedb.UpdateUpdateSettingsParams{
+		UpdateChannel:      channel,
+		UpdateCheckEnabled: boolToSQL(checkEnabled),
+	})
+}
+
+// UpdatePreviousVersion records the version rollback would restore.
+func (s *SettingsStore) UpdatePreviousVersion(ctx context.Context, version string) error {
+	var v sql.NullString
+	if version != "" {
+		v = sql.NullString{String: version, Valid: true}
+	}
+	return s.q.UpdatePreviousVersion(ctx, v)
 }

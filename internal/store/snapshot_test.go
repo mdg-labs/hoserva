@@ -435,3 +435,197 @@ func TestPruneSnapshots_NeverDeletesUnrelatedFiles(t *testing.T) {
 		}
 	}
 }
+
+// TestRestoreSnapshot_EveryRowSurvivesUpgrade is the data-loss scenario
+// Q67/D16 exist to close: an upgrade that applied a schema migration
+// must roll back to the pre-migration snapshot so every row that existed
+// before the upgrade is still there, and rows written only after the
+// migration are not.
+func TestRestoreSnapshot_EveryRowSurvivesUpgrade(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	livePath := filepath.Join(dir, "hoserva.db")
+
+	live, err := sql.Open("sqlite", livePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := live.ExecContext(ctx, `CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := live.ExecContext(ctx, `INSERT INTO items (id, name) VALUES (1, 'keep-me'), (2, 'also-keep')`); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := Snapshot(ctx, live, dir, v(1))
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if _, err := live.ExecContext(ctx, `ALTER TABLE items ADD COLUMN extra TEXT`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := live.ExecContext(ctx, `INSERT INTO items (id, name, extra) VALUES (3, 'post-migration', 'gone-on-rollback')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RestoreSnapshot(ctx, livePath, snap); err != nil {
+		t.Fatalf("RestoreSnapshot: %v", err)
+	}
+
+	restored, err := sql.Open("sqlite", livePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = restored.Close() }()
+
+	rows, err := restored.QueryContext(ctx, `SELECT id, name FROM items ORDER BY id`)
+	if err != nil {
+		t.Fatalf("querying restored items: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var got []string
+	for rows.Next() {
+		var id int
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, fmt.Sprintf("%d:%s", id, name))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"1:keep-me", "2:also-keep"}
+	if len(got) != len(want) {
+		t.Fatalf("restored rows = %v, want %v — a missing row is data loss on rollback", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("restored rows = %v, want %v", got, want)
+		}
+	}
+
+	var extraCount int
+	if err := restored.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('items') WHERE name = 'extra'`).Scan(&extraCount); err != nil {
+		t.Fatal(err)
+	}
+	if extraCount != 0 {
+		t.Fatal("restored database still has the post-migration column — rollback did not restore the snapshot")
+	}
+	if _, err := os.Stat(snap); err != nil {
+		t.Fatalf("RestoreSnapshot deleted the snapshot: %v", err)
+	}
+}
+
+func TestSnapshotLive_ProducesRestorableCopyOfLiveRows(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	livePath := filepath.Join(dir, "hoserva.db")
+	live, err := sql.Open("sqlite", livePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := live.ExecContext(ctx, `CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := live.ExecContext(ctx, `INSERT INTO items (id, name) VALUES (1, 'keep-me')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := SnapshotLive(ctx, livePath, dir)
+	if err != nil {
+		t.Fatalf("SnapshotLive: %v", err)
+	}
+	if snapshotPattern.FindStringSubmatch(filepath.Base(snap)) == nil {
+		t.Fatalf("SnapshotLive wrote %q, which RestoreSnapshot would refuse", snap)
+	}
+	if err := WriteRollbackTarget(dir, snap); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadRollbackTarget(dir)
+	if err != nil {
+		t.Fatalf("ReadRollbackTarget: %v", err)
+	}
+	if got != snap {
+		t.Fatalf("ReadRollbackTarget = %q, want %q", got, snap)
+	}
+}
+
+func TestWriteRollbackTarget_RefusesUnrelatedFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteRollbackTarget(dir, filepath.Join(dir, "not-a-snapshot.db")); err == nil {
+		t.Fatal("WriteRollbackTarget accepted a file RestoreSnapshot would refuse")
+	}
+}
+
+func TestPruneSnapshots_KeepsRecordedRollbackTarget(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db := openTestDB(t)
+
+	target, err := Snapshot(ctx, db, dir, v(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteRollbackTarget(dir, target); err != nil {
+		t.Fatal(err)
+	}
+	newer, err := Snapshot(ctx, db, dir, v(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := PruneSnapshots(dir, 1, newer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("PruneSnapshots deleted the recorded rollback target: %v", err)
+	}
+}
+
+func TestRestoreSnapshot_RefusesUnrelatedFile(t *testing.T) {
+	dir := t.TempDir()
+	live := filepath.Join(dir, "hoserva.db")
+	if err := os.WriteFile(live, []byte("live"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bogus := filepath.Join(dir, "not-a-snapshot.db")
+	if err := os.WriteFile(bogus, []byte("attacker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreSnapshot(context.Background(), live, bogus); err == nil {
+		t.Fatal("RestoreSnapshot accepted a file that is not a hoserva snapshot")
+	}
+	got, err := os.ReadFile(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "live" {
+		t.Fatalf("live database was overwritten by a refused restore: %q", got)
+	}
+}
+
+func TestLatestSnapshot_PicksNewestFromVersion(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db := openTestDB(t)
+	older, err := Snapshot(ctx, db, dir, v(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := Snapshot(ctx, db, dir, v(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := LatestSnapshot(dir)
+	if err != nil {
+		t.Fatalf("LatestSnapshot: %v", err)
+	}
+	if got != newer {
+		t.Fatalf("LatestSnapshot = %q, want %q (not the older %q)", got, newer, older)
+	}
+}

@@ -386,6 +386,64 @@ func userCmd() *cobra.Command {
 	return cmd
 }
 
+func updateCmd() *cobra.Command {
+	var check bool
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update Hoserva from its signed release index (Q67)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newAPIClient(socketPath)
+			if err != nil {
+				return err
+			}
+			if check {
+				out, err := c.CheckForUpdate(apiCtx())
+				if err != nil {
+					return mapAPIErr(err)
+				}
+				emit(out)
+				return nil
+			}
+			out, err := c.ApplyUpdate(apiCtx(), &apiv1.ConfirmUpdateRequest{Confirm: true})
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			emit(out)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&check, "check", false, "Check the signed release index without installing")
+	return cmd
+}
+
+func rollbackCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "rollback",
+		Short: "Install the previous release and restore its database snapshot (Q67)",
+		RunE: runAPI(func(c *apiv1.Client) (any, error) {
+			return c.RollbackUpdate(apiCtx(), &apiv1.ConfirmUpdateRequest{Confirm: true})
+		}),
+	}
+}
+
+func rebootCmd() *cobra.Command {
+	var confirm bool
+	cmd := &cobra.Command{
+		Use:   "reboot",
+		Short: "Wait for storage jobs, shut down the array, and reboot (Q68, Q70)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !confirm {
+				return fmt.Errorf("reboot requires --confirm")
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				return c.RebootHost(apiCtx(), &apiv1.ConfirmUpdateRequest{Confirm: true})
+			})(cmd, args)
+		},
+	}
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm reboot (required)")
+	return cmd
+}
+
 func runAPI(fn func(*apiv1.Client) (any, error)) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		c, err := newAPIClient(socketPath)

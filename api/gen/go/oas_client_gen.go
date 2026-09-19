@@ -29,6 +29,15 @@ func trimTrailingSlashes(u *url.URL) {
 
 // Invoker invokes operations described by OpenAPI v3 specification.
 type Invoker interface {
+	// ApplyUpdate invokes applyUpdate operation.
+	//
+	// Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
+	// runs a config backup, and installs it in a transient systemd unit (Q67, doc 10 §1). Refused while a
+	// Parity, Array-write or Topology job is running; the error names that job. A `.deb` whose checksum
+	// does not match is never installed, and a notification is raised.
+	//
+	// POST /settings/updates/apply
+	ApplyUpdate(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error)
 	// CancelJob invokes cancelJob operation.
 	//
 	// Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be
@@ -36,6 +45,13 @@ type Invoker interface {
 	//
 	// POST /jobs/{jobId}/cancel
 	CancelJob(ctx context.Context, params CancelJobParams) (*Job, error)
+	// CheckForUpdate invokes checkForUpdate operation.
+	//
+	// Fetches the signed release index for the configured channel (Q67). A user-initiated check runs even
+	// when the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
+	//
+	// POST /settings/updates/check
+	CheckForUpdate(ctx context.Context) (*UpdateStatus, error)
 	// ConfirmTotp invokes confirmTotp operation.
 	//
 	// Activates the pending secret enrollTotp created, once a code proves the signed-in user actually has
@@ -191,6 +207,16 @@ type Invoker interface {
 	//
 	// GET /status
 	GetStatus(ctx context.Context) (*SystemStatus, error)
+	// GetUpdateStatus invokes getUpdateStatus operation.
+	//
+	// Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
+	// Debian updates and whether a reboot is required (doc 03 §8.6, Q67, Q68). The update check reads
+	// only the signed release index on the project site — never the GitHub API and never a system-wide
+	// `apt update` (Q67, Q49). When the check is disabled, `availableVersion` is omitted rather than
+	// fetched.
+	//
+	// GET /settings/updates
+	GetUpdateStatus(ctx context.Context) (*UpdateStatus, error)
 	// ImportConfig invokes importConfig operation.
 	//
 	// Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
@@ -262,6 +288,13 @@ type Invoker interface {
 	//
 	// POST /notifications/read
 	MarkNotificationsRead(ctx context.Context, request *MarkNotificationsReadRequest) (*MarkNotificationsReadOK, error)
+	// RebootHost invokes rebootHost operation.
+	//
+	// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
+	// then reboots. Hoserva never reboots on its own — this is always the user's action (Q68).
+	//
+	// POST /settings/updates/reboot
+	RebootHost(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error)
 	// ResetUserPassword invokes resetUserPassword operation.
 	//
 	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
@@ -277,6 +310,15 @@ type Invoker interface {
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
+	// RollbackUpdate invokes rollbackUpdate operation.
+	//
+	// Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database
+	// snapshot, and installs the previous package (Q67, D16). There are no down migrations — rollback is
+	// previous package plus its snapshot. Refused while a Parity, Array-write or Topology job is running;
+	// the error names that job.
+	//
+	// POST /settings/updates/rollback
+	RollbackUpdate(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error)
 	// RunDoctor invokes runDoctor operation.
 	//
 	// Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity
@@ -397,6 +439,13 @@ type Invoker interface {
 	//
 	// PUT /settings/schedules/jobs/{jobId}
 	UpdateScheduledJob(ctx context.Context, request *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (*Schedules, error)
+	// UpdateUpdateSettings invokes updateUpdateSettings operation.
+	//
+	// Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49,
+	// Q67). Omitted fields are left unchanged.
+	//
+	// PUT /settings/updates
+	UpdateUpdateSettings(ctx context.Context, request *UpdateUpdateSettingsRequest) (*UpdateStatus, error)
 }
 
 // Client implements OAS client.
@@ -438,6 +487,137 @@ func (c *Client) requestURL(ctx context.Context) *url.URL {
 		return c.serverURL
 	}
 	return u
+}
+
+// ApplyUpdate invokes applyUpdate operation.
+//
+// Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
+// runs a config backup, and installs it in a transient systemd unit (Q67, doc 10 §1). Refused while a
+// Parity, Array-write or Topology job is running; the error names that job. A `.deb` whose checksum
+// does not match is never installed, and a notification is raised.
+//
+// POST /settings/updates/apply
+func (c *Client) ApplyUpdate(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error) {
+	res, err := c.sendApplyUpdate(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendApplyUpdate(ctx context.Context, request *ConfirmUpdateRequest) (res *UpdateStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("applyUpdate"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/settings/updates/apply"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ApplyUpdateOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/updates/apply"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeApplyUpdateRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ApplyUpdateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ApplyUpdateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeApplyUpdateResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
 }
 
 // CancelJob invokes cancelJob operation.
@@ -578,6 +758,132 @@ func (c *Client) sendCancelJob(ctx context.Context, params CancelJobParams) (res
 
 	stage = "DecodeResponse"
 	result, err := decodeCancelJobResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// CheckForUpdate invokes checkForUpdate operation.
+//
+// Fetches the signed release index for the configured channel (Q67). A user-initiated check runs even
+// when the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
+//
+// POST /settings/updates/check
+func (c *Client) CheckForUpdate(ctx context.Context) (*UpdateStatus, error) {
+	res, err := c.sendCheckForUpdate(ctx)
+	return res, err
+}
+
+func (c *Client) sendCheckForUpdate(ctx context.Context) (res *UpdateStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("checkForUpdate"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/settings/updates/check"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, CheckForUpdateOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/updates/check"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, CheckForUpdateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, CheckForUpdateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeCheckForUpdateResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -3319,6 +3625,135 @@ func (c *Client) sendGetStatus(ctx context.Context) (res *SystemStatus, err erro
 	return result, nil
 }
 
+// GetUpdateStatus invokes getUpdateStatus operation.
+//
+// Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
+// Debian updates and whether a reboot is required (doc 03 §8.6, Q67, Q68). The update check reads
+// only the signed release index on the project site — never the GitHub API and never a system-wide
+// `apt update` (Q67, Q49). When the check is disabled, `availableVersion` is omitted rather than
+// fetched.
+//
+// GET /settings/updates
+func (c *Client) GetUpdateStatus(ctx context.Context) (*UpdateStatus, error) {
+	res, err := c.sendGetUpdateStatus(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetUpdateStatus(ctx context.Context) (res *UpdateStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getUpdateStatus"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/settings/updates"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetUpdateStatusOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/updates"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetUpdateStatusOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetUpdateStatusOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetUpdateStatusResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ImportConfig invokes importConfig operation.
 //
 // Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
@@ -4480,6 +4915,135 @@ func (c *Client) sendMarkNotificationsRead(ctx context.Context, request *MarkNot
 	return result, nil
 }
 
+// RebootHost invokes rebootHost operation.
+//
+// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
+// then reboots. Hoserva never reboots on its own — this is always the user's action (Q68).
+//
+// POST /settings/updates/reboot
+func (c *Client) RebootHost(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error) {
+	res, err := c.sendRebootHost(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendRebootHost(ctx context.Context, request *ConfirmUpdateRequest) (res *UpdateStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("rebootHost"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/settings/updates/reboot"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RebootHostOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/updates/reboot"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeRebootHostRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RebootHostOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RebootHostOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRebootHostResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ResetUserPassword invokes resetUserPassword operation.
 //
 // Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
@@ -4767,6 +5331,137 @@ func (c *Client) sendResumeJob(ctx context.Context, params ResumeJobParams) (res
 
 	stage = "DecodeResponse"
 	result, err := decodeResumeJobResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RollbackUpdate invokes rollbackUpdate operation.
+//
+// Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database
+// snapshot, and installs the previous package (Q67, D16). There are no down migrations — rollback is
+// previous package plus its snapshot. Refused while a Parity, Array-write or Topology job is running;
+// the error names that job.
+//
+// POST /settings/updates/rollback
+func (c *Client) RollbackUpdate(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error) {
+	res, err := c.sendRollbackUpdate(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendRollbackUpdate(ctx context.Context, request *ConfirmUpdateRequest) (res *UpdateStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("rollbackUpdate"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/settings/updates/rollback"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RollbackUpdateOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/updates/rollback"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeRollbackUpdateRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RollbackUpdateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RollbackUpdateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRollbackUpdateResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -6794,6 +7489,135 @@ func (c *Client) sendUpdateScheduledJob(ctx context.Context, request *UpdateSche
 
 	stage = "DecodeResponse"
 	result, err := decodeUpdateScheduledJobResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateUpdateSettings invokes updateUpdateSettings operation.
+//
+// Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49,
+// Q67). Omitted fields are left unchanged.
+//
+// PUT /settings/updates
+func (c *Client) UpdateUpdateSettings(ctx context.Context, request *UpdateUpdateSettingsRequest) (*UpdateStatus, error) {
+	res, err := c.sendUpdateUpdateSettings(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendUpdateUpdateSettings(ctx context.Context, request *UpdateUpdateSettingsRequest) (res *UpdateStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateUpdateSettings"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/settings/updates"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateUpdateSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/updates"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateUpdateSettingsRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateUpdateSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateUpdateSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateUpdateSettingsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

@@ -541,6 +541,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Hoserva and Debian update status
+         * @description Current Hoserva version, any newer release on the configured channel, update-check on/off, pending Debian updates and whether a reboot is required (doc 03 §8.6, Q67, Q68). The update check reads only the signed release index on the project site — never the GitHub API and never a system-wide `apt update` (Q67, Q49). When the check is disabled, `availableVersion` is omitted rather than fetched.
+         */
+        get: operations["getUpdateStatus"];
+        /**
+         * Set update channel and check-enabled
+         * @description Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49, Q67). Omitted fields are left unchanged.
+         */
+        put: operations["updateUpdateSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/updates/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the signed release index for a newer Hoserva
+         * @description Fetches the signed release index for the configured channel (Q67). A user-initiated check runs even when the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
+         */
+        post: operations["checkForUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/updates/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Download, verify and install the available Hoserva release
+         * @description Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS, runs a config backup, and installs it in a transient systemd unit (Q67, doc 10 §1). Refused while a Parity, Array-write or Topology job is running; the error names that job. A `.deb` whose checksum does not match is never installed, and a notification is raised.
+         */
+        post: operations["applyUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/updates/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Roll back to the previous Hoserva release and its snapshot
+         * @description Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database snapshot, and installs the previous package (Q67, D16). There are no down migrations — rollback is previous package plus its snapshot. Refused while a Parity, Array-write or Topology job is running; the error names that job.
+         */
+        post: operations["rollbackUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/updates/reboot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reboot after waiting for storage jobs and a clean shutdown
+         * @description Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence, then reboots. Hoserva never reboots on its own — this is always the user's action (Q68).
+         */
+        post: operations["rebootHost"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/status": {
         parameters: {
             query?: never;
@@ -1230,6 +1334,60 @@ export interface components {
             timezone?: string;
             /** @description Write-only. Sets or replaces the backup passphrase (Q28). Omitted leaves any existing passphrase unchanged. */
             backupPassphrase?: string;
+        };
+        /**
+         * @description Release channel the update check reads from the signed index (Q67).
+         * @enum {string}
+         */
+        UpdateChannel: "stable" | "beta";
+        UpdateStatus: {
+            /** @description Installed Hoserva package version. */
+            currentVersion: string;
+            /** @description Newer version on the configured channel, if any. */
+            availableVersion?: string;
+            /** @description Git tag of availableVersion, if any. */
+            availableTag?: string;
+            /** @description Release notes for availableVersion, if the index carries them. */
+            changelog?: string;
+            channel: components["schemas"]["UpdateChannel"];
+            /** @description Whether the periodic outbound update check is enabled (Q49). */
+            checkEnabled: boolean;
+            /** @description Version rollback would restore, if an upgrade has been applied. */
+            previousVersion?: string;
+            /** @description Whether `/run/reboot-required` is present (Q68). */
+            rebootRequired: boolean;
+            pendingDebianUpdates: components["schemas"]["DebianPackageUpdate"][];
+            dependencies: components["schemas"]["PackageDependencyStatus"][];
+            /** @description A running Parity, Array-write or Topology job that would refuse an update, rollback or (until it finishes) a reboot. */
+            blockingJob?: components["schemas"]["BlockingJob"];
+        };
+        DebianPackageUpdate: {
+            name: string;
+            installedVersion: string;
+            candidateVersion: string;
+        };
+        PackageDependencyStatus: {
+            /** @description Debian package name (mergerfs, snapraid). */
+            name: string;
+            installedVersion: string;
+            /** @description Lowest version this Hoserva release was tested against (Q7). */
+            testedFloor: string;
+            /** @description True when installedVersion is at or above testedFloor. */
+            inRange: boolean;
+        };
+        BlockingJob: {
+            /** Format: uuid */
+            id: string;
+            type: components["schemas"]["JobType"];
+            class: components["schemas"]["JobClass"];
+        };
+        UpdateUpdateSettingsRequest: {
+            channel?: components["schemas"]["UpdateChannel"];
+            checkEnabled?: boolean;
+        };
+        ConfirmUpdateRequest: {
+            /** @description Must be true; the UI/CLI confirm dialog is what sets this. */
+            confirm: boolean;
         };
         /**
          * @description One step in Q30's fixed nightly maintenance chain order.
@@ -2257,6 +2415,148 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Schedules"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getUpdateStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current update status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateUpdateSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUpdateSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated update status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    checkForUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Update status after the check. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    applyUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The update has been queued for install. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    rollbackUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The rollback has been queued for install. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    rebootHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Reboot has been started. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
                 };
             };
             default: components["responses"]["Error"];
