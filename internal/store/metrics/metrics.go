@@ -211,7 +211,11 @@ func ResolutionForWindow(window time.Duration) Resolution {
 // ValuesInRange returns metric/subject's samples at resolution within
 // [from, to], oldest first — the read path for GET /metrics (#186).
 func (s *Store) ValuesInRange(ctx context.Context, resolution Resolution, metric, subject string, from, to time.Time) ([]Sample, error) {
-	fromUnix := from.UTC().Unix()
+	fromUTC := from.UTC()
+	fromUnix := fromUTC.Unix()
+	if fromUTC.Nanosecond() != 0 {
+		fromUnix++
+	}
 	toUnix := to.UTC().Unix()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT at, value FROM samples WHERE resolution = ? AND metric = ? AND subject = ? AND at >= ? AND at <= ? ORDER BY at`,

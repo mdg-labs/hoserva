@@ -304,6 +304,33 @@ func TestStore_ValuesInRange(t *testing.T) {
 	}
 }
 
+func TestStore_ValuesInRange_FractionalFromExcludesPriorSecond(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	at := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	if err := s.Insert(ctx, Sample{Metric: "cpu_percent", At: at, Value: 7}); err != nil {
+		t.Fatal(err)
+	}
+
+	from := at.Add(500 * time.Millisecond)
+	to := at.Add(time.Hour)
+	values, err := s.ValuesInRange(ctx, Raw, "cpu_percent", "", from, to)
+	if err != nil {
+		t.Fatalf("ValuesInRange: %v", err)
+	}
+	if len(values) != 0 {
+		t.Fatalf("values = %+v, want none: sample at %v is before fractional from %v", values, at, from)
+	}
+
+	exact, err := s.ValuesInRange(ctx, Raw, "cpu_percent", "", at, to)
+	if err != nil {
+		t.Fatalf("ValuesInRange exact-second from: %v", err)
+	}
+	if len(exact) != 1 || !exact[0].At.Equal(at) {
+		t.Fatalf("exact-second from: values = %+v, want the sample at %v", exact, at)
+	}
+}
+
 func TestStore_Downsample_IsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
