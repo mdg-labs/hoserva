@@ -256,6 +256,55 @@ func (s *AuthStore) DeleteSession(ctx context.Context, tokenHash string) error {
 	return s.q.DeleteSession(ctx, tokenHash)
 }
 
+// DeleteOtherUserSessions revokes every session of userID except the one
+// identified by keepTokenHash.
+func (s *AuthStore) DeleteOtherUserSessions(ctx context.Context, userID, keepTokenHash string) error {
+	return s.q.DeleteOtherUserSessions(ctx, storedb.DeleteOtherUserSessionsParams{
+		UserID:    userID,
+		TokenHash: keepTokenHash,
+	})
+}
+
+// ActivateTOTPAndRevokeOtherSessions promotes userID's pending secret and
+// revokes every other session of that account in one transaction. ok is
+// false when ActivateTOTP's conditional write matched no row.
+func (s *AuthStore) ActivateTOTPAndRevokeOtherSessions(
+	ctx context.Context,
+	userID string,
+	secret []byte,
+	confirmedAt time.Time,
+	step int64,
+	pendingSecret []byte,
+	keepSessionTokenHash string,
+) (ok bool, err error) {
+	sqlDB, okDB := s.db.(*sql.DB)
+	if !okDB {
+		activated, err := s.ActivateTOTP(ctx, userID, secret, confirmedAt, step, pendingSecret)
+		if err != nil || !activated {
+			return activated, err
+		}
+		return true, s.DeleteOtherUserSessions(ctx, userID, keepSessionTokenHash)
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("beginning totp confirm transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	txStore := s.WithTx(tx)
+	activated, err := txStore.ActivateTOTP(ctx, userID, secret, confirmedAt, step, pendingSecret)
+	if err != nil || !activated {
+		return activated, err
+	}
+	if err := txStore.DeleteOtherUserSessions(ctx, userID, keepSessionTokenHash); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("committing totp confirm transaction: %w", err)
+	}
+	return true, nil
+}
+
 // DeleteExpiredSessions removes every session whose expiry is at or
 // before now.
 func (s *AuthStore) DeleteExpiredSessions(ctx context.Context, now time.Time) error {
