@@ -28,6 +28,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/store"
+	"github.com/mdg-labs/hoserva/internal/store/metrics"
 	"github.com/mdg-labs/hoserva/web"
 
 	_ "modernc.org/sqlite"
@@ -208,7 +209,17 @@ func run(cfg config) error {
 		return fmt.Errorf("building array stop/start sequence: %w", err)
 	}
 
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Disks: linuxDisks, Array: arraySeq}
+	// Losing metrics.db must not look like array failure (#186): log and
+	// leave Handler.Metrics nil so GET /metrics returns an empty series.
+	metricsStore, err := metrics.Open(ctx, filepath.Join(cfg.stateDir, "metrics.db"))
+	if err != nil {
+		log.Printf("hoservad: opening metrics database: %v — GET /metrics will return empty series", err)
+		metricsStore = nil
+	} else {
+		defer func() { _ = metricsStore.Close() }()
+	}
+
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Disks: linuxDisks, Array: arraySeq, Metrics: metricsStore}
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
