@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/job"
@@ -19,6 +20,7 @@ type ScheduleService struct {
 	Schedules *ScheduleStore
 	Settings  *SettingsStore
 	Now       func() time.Time
+	mu        sync.Mutex
 }
 
 // NewScheduleService wires a ScheduleService with the real clock.
@@ -46,6 +48,12 @@ type SchedulesView struct {
 
 // Get returns the current schedules with computed next runs and conflicts.
 func (s *ScheduleService) Get(ctx context.Context) (SchedulesView, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getLocked(ctx)
+}
+
+func (s *ScheduleService) getLocked(ctx context.Context) (SchedulesView, error) {
 	if err := s.Schedules.EnsureDefaults(ctx, s.now().UTC().Format(timeFormat)); err != nil {
 		return SchedulesView{}, err
 	}
@@ -81,6 +89,8 @@ type UpdateChainInput struct {
 
 // UpdateChain persists chain settings and returns the updated view.
 func (s *ScheduleService) UpdateChain(ctx context.Context, input UpdateChainInput) (SchedulesView, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := s.Schedules.EnsureDefaults(ctx, s.now().UTC().Format(timeFormat)); err != nil {
 		return SchedulesView{}, err
 	}
@@ -106,7 +116,7 @@ func (s *ScheduleService) UpdateChain(ctx context.Context, input UpdateChainInpu
 	if err := s.persistChain(ctx, chain); err != nil {
 		return SchedulesView{}, err
 	}
-	return s.Get(ctx)
+	return s.getLocked(ctx)
 }
 
 // UpdateOtherJobInput carries optional fields for one separately scheduled job.
@@ -121,6 +131,8 @@ func (s *ScheduleService) UpdateOtherJob(ctx context.Context, jobID string, inpu
 	if !ValidOtherJobID(jobID) {
 		return SchedulesView{}, ErrScheduleJobNotFound
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := s.Schedules.EnsureDefaults(ctx, s.now().UTC().Format(timeFormat)); err != nil {
 		return SchedulesView{}, err
 	}
@@ -162,7 +174,7 @@ func (s *ScheduleService) UpdateOtherJob(ctx context.Context, jobID string, inpu
 	}); err != nil {
 		return SchedulesView{}, fmt.Errorf("schedule: saving job %s: %w", jobID, err)
 	}
-	return s.Get(ctx)
+	return s.getLocked(ctx)
 }
 
 func (s *ScheduleService) loadChain(ctx context.Context) (job.ChainSettings, error) {

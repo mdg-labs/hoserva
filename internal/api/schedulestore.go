@@ -144,10 +144,14 @@ func (s *ScheduleStore) EnsureDefaults(ctx context.Context, now string) error {
 	if err != nil {
 		return fmt.Errorf("schedule: loading job defaults: %w", err)
 	}
-	if len(existing) > 0 {
-		return nil
+	existingIDs := make(map[string]struct{}, len(existing))
+	for _, row := range existing {
+		existingIDs[row.JobID] = struct{}{}
 	}
 	for _, job := range defaultOtherJobRows(now) {
+		if _, ok := existingIDs[job.JobID]; ok {
+			continue
+		}
 		if err := s.UpsertJob(ctx, job); err != nil {
 			return fmt.Errorf("schedule: seeding job %s defaults: %w", job.JobID, err)
 		}
