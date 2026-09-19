@@ -100,6 +100,32 @@ func TestHandler_RunParityDiff_ReturnsGroupedFiles(t *testing.T) {
 	}
 }
 
+func TestHandler_RunParityDiff_CachesGuardAnnotatedDiff(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+	rec := parity.NewFakeEngine()
+	rec.SetDiff(parity.DiffReport{
+		Removed:        2,
+		MovedByHoserva: 9,
+		RemovedFiles: []parity.DiffFile{
+			{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"},
+			{Disk: "/mnt/disk2", RelPath: "tv/b.mkv"},
+		},
+	})
+	h.Parity = rec
+
+	got, err := h.RunParityDiff(ctx)
+	if err != nil {
+		t.Fatalf("RunParityDiff: %v", err)
+	}
+	if got.Groups[5].Category != apiv1.ParityDiffCategoryMovedByHoserva || got.Groups[5].Count != 0 {
+		t.Fatalf("moved-by-hoserva = %+v, want count 0 from guard.Diff when no relocation manifest is loaded", got.Groups[5])
+	}
+	if got.Groups[0].Count != 2 {
+		t.Fatalf("removed count = %d, want 2 (unmodified by a nil manifest)", got.Groups[0].Count)
+	}
+}
+
 func TestHandler_RunParityDiff_TrippedGuardWithoutSync(t *testing.T) {
 	ctx := context.Background()
 	h, _, _ := newTestHandler(t)

@@ -23,9 +23,11 @@ type paritySnapshotStore struct {
 }
 
 func (h *Handler) parityStore() *paritySnapshotStore {
-	if h.paritySnap == nil {
-		h.paritySnap = &paritySnapshotStore{}
-	}
+	h.parityOnce.Do(func() {
+		if h.paritySnap == nil {
+			h.paritySnap = &paritySnapshotStore{}
+		}
+	})
 	return h.paritySnap
 }
 
@@ -56,12 +58,13 @@ func (h *Handler) RunParityDiff(ctx context.Context) (*apiv1.ParityDiffResult, e
 		return nil, fmt.Errorf("parity diff: %w", err)
 	}
 	guard := h.ParityGuard.Evaluate(diff, nil, nil)
+	annotated := guard.Diff
 	store := h.parityStore()
 	store.mu.Lock()
-	store.cache = parityCache{diff: diff, guard: guard, set: true}
+	store.cache = parityCache{diff: annotated, guard: guard, set: true}
 	store.mu.Unlock()
 	return &apiv1.ParityDiffResult{
-		Groups: diffToAPIGroups(diff, guard),
+		Groups: diffToAPIGroups(annotated, guard),
 		Guard:  guardToAPI(guard),
 	}, nil
 }
