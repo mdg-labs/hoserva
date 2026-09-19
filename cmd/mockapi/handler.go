@@ -52,6 +52,7 @@ type handler struct {
 	channels        map[uuid.UUID]apiv1.NotificationChannel
 	routing         map[apiv1.NotificationEventType]apiv1.NotificationRoutingEntry
 	quietHours      apiv1.NotificationQuietHours
+	inboxAlerts     []apiv1.NotificationAlert
 	generalSettings apiv1.GeneralSettings
 
 	// maintenance is Q70's maintenance mode for this mock instance:
@@ -87,11 +88,12 @@ func newHandler(scenario string) (*handler, error) {
 	}
 
 	return &handler{
-		scenario:   scenario,
-		jobs:       jobs,
-		channels:   make(map[uuid.UUID]apiv1.NotificationChannel),
-		routing:    defaultNotificationRouting(),
-		quietHours: apiv1.NotificationQuietHours{Enabled: false, Start: "22:00", End: "07:00", CriticalAlwaysDelivers: true},
+		scenario:    scenario,
+		jobs:        jobs,
+		channels:    make(map[uuid.UUID]apiv1.NotificationChannel),
+		routing:     defaultNotificationRouting(),
+		quietHours:  apiv1.NotificationQuietHours{Enabled: false, Start: "22:00", End: "07:00", CriticalAlwaysDelivers: true},
+		inboxAlerts: defaultInboxAlerts(scenario),
 	}, nil
 }
 

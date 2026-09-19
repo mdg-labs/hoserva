@@ -1629,6 +1629,32 @@ func (s *ListNotificationChannelsOK) SetChannels(val []NotificationChannel) {
 	s.Channels = val
 }
 
+// Ref: #/components/schemas/ListNotificationsOK
+type ListNotificationsOK struct {
+	Groups      []NotificationGroup `json:"groups"`
+	UnreadCount int                 `json:"unreadCount"`
+}
+
+// GetGroups returns the value of Groups.
+func (s *ListNotificationsOK) GetGroups() []NotificationGroup {
+	return s.Groups
+}
+
+// GetUnreadCount returns the value of UnreadCount.
+func (s *ListNotificationsOK) GetUnreadCount() int {
+	return s.UnreadCount
+}
+
+// SetGroups sets the value of Groups.
+func (s *ListNotificationsOK) SetGroups(val []NotificationGroup) {
+	s.Groups = val
+}
+
+// SetUnreadCount sets the value of UnreadCount.
+func (s *ListNotificationsOK) SetUnreadCount(val int) {
+	s.UnreadCount = val
+}
+
 // Ref: #/components/schemas/LoginRequest
 type LoginRequest struct {
 	Username string `json:"username"`
@@ -1680,6 +1706,47 @@ func (s *LogoutNoContent) GetSetCookie() OptString {
 // SetSetCookie sets the value of SetCookie.
 func (s *LogoutNoContent) SetSetCookie(val OptString) {
 	s.SetCookie = val
+}
+
+// Ref: #/components/schemas/MarkNotificationsReadOK
+type MarkNotificationsReadOK struct {
+	UnreadCount int `json:"unreadCount"`
+}
+
+// GetUnreadCount returns the value of UnreadCount.
+func (s *MarkNotificationsReadOK) GetUnreadCount() int {
+	return s.UnreadCount
+}
+
+// SetUnreadCount sets the value of UnreadCount.
+func (s *MarkNotificationsReadOK) SetUnreadCount(val int) {
+	s.UnreadCount = val
+}
+
+// Ref: #/components/schemas/MarkNotificationsReadRequest
+type MarkNotificationsReadRequest struct {
+	Ids []string `json:"ids"`
+	All OptBool  `json:"all"`
+}
+
+// GetIds returns the value of Ids.
+func (s *MarkNotificationsReadRequest) GetIds() []string {
+	return s.Ids
+}
+
+// GetAll returns the value of All.
+func (s *MarkNotificationsReadRequest) GetAll() OptBool {
+	return s.All
+}
+
+// SetIds sets the value of Ids.
+func (s *MarkNotificationsReadRequest) SetIds(val []string) {
+	s.Ids = val
+}
+
+// SetAll sets the value of All.
+func (s *MarkNotificationsReadRequest) SetAll(val OptBool) {
+	s.All = val
 }
 
 // Ref: #/components/schemas/MetricPoint
@@ -1826,6 +1893,87 @@ func (s *MetricSeries) SetTo(val time.Time) {
 // SetPoints sets the value of Points.
 func (s *MetricSeries) SetPoints(val []MetricPoint) {
 	s.Points = val
+}
+
+// Ref: #/components/schemas/NotificationAlert
+type NotificationAlert struct {
+	ID        string                `json:"id"`
+	EventType NotificationEventType `json:"eventType"`
+	Level     NotificationLevel     `json:"level"`
+	Title     string                `json:"title"`
+	Message   string                `json:"message"`
+	CreatedAt time.Time             `json:"createdAt"`
+	Read      bool                  `json:"read"`
+}
+
+// GetID returns the value of ID.
+func (s *NotificationAlert) GetID() string {
+	return s.ID
+}
+
+// GetEventType returns the value of EventType.
+func (s *NotificationAlert) GetEventType() NotificationEventType {
+	return s.EventType
+}
+
+// GetLevel returns the value of Level.
+func (s *NotificationAlert) GetLevel() NotificationLevel {
+	return s.Level
+}
+
+// GetTitle returns the value of Title.
+func (s *NotificationAlert) GetTitle() string {
+	return s.Title
+}
+
+// GetMessage returns the value of Message.
+func (s *NotificationAlert) GetMessage() string {
+	return s.Message
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *NotificationAlert) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// GetRead returns the value of Read.
+func (s *NotificationAlert) GetRead() bool {
+	return s.Read
+}
+
+// SetID sets the value of ID.
+func (s *NotificationAlert) SetID(val string) {
+	s.ID = val
+}
+
+// SetEventType sets the value of EventType.
+func (s *NotificationAlert) SetEventType(val NotificationEventType) {
+	s.EventType = val
+}
+
+// SetLevel sets the value of Level.
+func (s *NotificationAlert) SetLevel(val NotificationLevel) {
+	s.Level = val
+}
+
+// SetTitle sets the value of Title.
+func (s *NotificationAlert) SetTitle(val string) {
+	s.Title = val
+}
+
+// SetMessage sets the value of Message.
+func (s *NotificationAlert) SetMessage(val string) {
+	s.Message = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *NotificationAlert) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// SetRead sets the value of Read.
+func (s *NotificationAlert) SetRead(val bool) {
+	s.Read = val
 }
 
 // Never carries a credential (Q28) — `hasSecret` is the only signal that one is configured. Only the
@@ -2331,6 +2479,32 @@ func (s *NotificationEventType) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/NotificationGroup
+type NotificationGroup struct {
+	EventType NotificationEventType `json:"eventType"`
+	Alerts    []NotificationAlert   `json:"alerts"`
+}
+
+// GetEventType returns the value of EventType.
+func (s *NotificationGroup) GetEventType() NotificationEventType {
+	return s.EventType
+}
+
+// GetAlerts returns the value of Alerts.
+func (s *NotificationGroup) GetAlerts() []NotificationAlert {
+	return s.Alerts
+}
+
+// SetEventType sets the value of EventType.
+func (s *NotificationGroup) SetEventType(val NotificationEventType) {
+	s.EventType = val
+}
+
+// SetAlerts sets the value of Alerts.
+func (s *NotificationGroup) SetAlerts(val []NotificationAlert) {
+	s.Alerts = val
 }
 
 // Ref: #/components/schemas/NotificationLevel

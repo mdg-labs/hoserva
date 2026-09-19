@@ -1,2 +1,2 @@
-{"event":"notification","data":{"id":"n-degraded-1","level":"error","title":"Array degraded","message":"Parity check found mismatched blocks on disk2 — sync to clear.","createdAt":"2026-01-02T03:58:31Z"}}
+{"event":"notification","data":{"id":"n-degraded-1","eventType":"array_degraded","level":"error","title":"Array degraded","message":"Parity check found mismatched blocks on disk2 — sync to clear.","createdAt":"2026-01-02T03:58:31Z"}}
 {"event":"job_progress","data":{"id":"a1a1a1a1-0002-4000-8000-000000000002","type":"mover","class":"array_write","status":"interrupted","progress":54,"resumable":true,"cancellable":false,"createdAt":"2026-01-02T04:10:00Z","startedAt":"2026-01-02T04:10:03Z","error":null}}

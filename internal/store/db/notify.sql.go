@@ -8,7 +8,50 @@ package storedb
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
+
+const countUnreadAlerts = `-- name: CountUnreadAlerts :one
+SELECT COUNT(*) FROM notify_alerts WHERE read_at IS NULL
+`
+
+func (q *Queries) CountUnreadAlerts(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUnreadAlerts)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createAlert = `-- name: CreateAlert :exec
+INSERT INTO notify_alerts (
+    id, event_type, severity, title, message, created_at, read_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?
+)
+`
+
+type CreateAlertParams struct {
+	ID        string         `json:"id"`
+	EventType string         `json:"event_type"`
+	Severity  string         `json:"severity"`
+	Title     string         `json:"title"`
+	Message   string         `json:"message"`
+	CreatedAt string         `json:"created_at"`
+	ReadAt    sql.NullString `json:"read_at"`
+}
+
+func (q *Queries) CreateAlert(ctx context.Context, arg CreateAlertParams) error {
+	_, err := q.db.ExecContext(ctx, createAlert,
+		arg.ID,
+		arg.EventType,
+		arg.Severity,
+		arg.Title,
+		arg.Message,
+		arg.CreatedAt,
+		arg.ReadAt,
+	)
+	return err
+}
 
 const createChannel = `-- name: CreateChannel :exec
 
@@ -234,6 +277,45 @@ func (q *Queries) InsertRoute(ctx context.Context, arg InsertRouteParams) error 
 	return err
 }
 
+const listAlerts = `-- name: ListAlerts :many
+SELECT id, event_type, severity, title, message, created_at, read_at
+FROM notify_alerts
+ORDER BY
+    CASE WHEN read_at IS NULL THEN 0 ELSE 1 END ASC,
+    created_at DESC
+`
+
+func (q *Queries) ListAlerts(ctx context.Context) ([]*NotifyAlert, error) {
+	rows, err := q.db.QueryContext(ctx, listAlerts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*NotifyAlert
+	for rows.Next() {
+		var i NotifyAlert
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventType,
+			&i.Severity,
+			&i.Title,
+			&i.Message,
+			&i.CreatedAt,
+			&i.ReadAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllRoutes = `-- name: ListAllRoutes :many
 SELECT event_type, channel_id FROM notify_routes ORDER BY event_type ASC, channel_id ASC
 `
@@ -440,6 +522,50 @@ func (q *Queries) ListRoutesForEvent(ctx context.Context, eventType string) ([]s
 		return nil, err
 	}
 	return items, nil
+}
+
+const markAlertsReadByIDs = `-- name: MarkAlertsReadByIDs :execrows
+UPDATE notify_alerts
+SET read_at = ?
+WHERE read_at IS NULL AND id IN (/*SLICE:ids*/?)
+`
+
+type MarkAlertsReadByIDsParams struct {
+	ReadAt sql.NullString `json:"read_at"`
+	Ids    []string       `json:"ids"`
+}
+
+func (q *Queries) MarkAlertsReadByIDs(ctx context.Context, arg MarkAlertsReadByIDsParams) (int64, error) {
+	query := markAlertsReadByIDs
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.ReadAt)
+	if len(arg.Ids) > 0 {
+		for _, v := range arg.Ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(arg.Ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	result, err := q.db.ExecContext(ctx, query, queryParams...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const markAllAlertsRead = `-- name: MarkAllAlertsRead :execrows
+UPDATE notify_alerts
+SET read_at = ?
+WHERE read_at IS NULL
+`
+
+func (q *Queries) MarkAllAlertsRead(ctx context.Context, readAt sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markAllAlertsRead, readAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setQuietHours = `-- name: SetQuietHours :exec

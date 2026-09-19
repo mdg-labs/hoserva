@@ -188,6 +188,13 @@ type Handler interface {
 	//
 	// GET /notifications/channels
 	ListNotificationChannels(ctx context.Context) (*ListNotificationChannelsOK, error)
+	// ListNotifications implements listNotifications operation.
+	//
+	// Unread alerts first, grouped by event type (doc 03 §2). Reads only the central database — never
+	// probes block devices.
+	//
+	// GET /notifications
+	ListNotifications(ctx context.Context) (*ListNotificationsOK, error)
 	// ListWakeEvents implements listWakeEvents operation.
 	//
 	// Reads persisted spin-state transitions from the central database only — never probes block devices
@@ -219,6 +226,13 @@ type Handler interface {
 	//
 	// POST /auth/logout
 	Logout(ctx context.Context) (*LogoutNoContent, error)
+	// MarkNotificationsRead implements markNotificationsRead operation.
+	//
+	// Marks every alert whose id is listed, or every alert when `all` is true (doc 03 §2's
+	// mark-all-read). Omitted ids with `all` false is a no-op that returns the current unread count.
+	//
+	// POST /notifications/read
+	MarkNotificationsRead(ctx context.Context, req *MarkNotificationsReadRequest) (*MarkNotificationsReadOK, error)
 	// ResetUserPassword implements resetUserPassword operation.
 	//
 	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the

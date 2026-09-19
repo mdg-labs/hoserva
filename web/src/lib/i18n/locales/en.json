@@ -111,7 +111,39 @@
       "viewAll": "View all jobs"
     },
     "notifications": {
-      "ariaLabel": "Notifications"
+      "ariaLabel": "Notifications",
+      "panelTitle": "Notifications",
+      "empty": "No alerts right now.",
+      "markAllRead": "Mark all read",
+      "unreadCount": "{{count}} unread",
+      "eventTypes": {
+        "smart_warning": "SMART warning",
+        "smart_failure": "SMART failure",
+        "disk_offline": "Disk offline",
+        "array_degraded": "Array degraded",
+        "sync_succeeded": "Sync succeeded",
+        "sync_failed": "Sync failed",
+        "sync_blocked_threshold": "Sync blocked by threshold",
+        "scrub_errors_found": "Scrub errors found",
+        "pool_above_threshold": "Pool above threshold",
+        "disk_near_minfreespace": "Disk near minimum free space",
+        "cache_above_threshold": "Cache above threshold",
+        "mover_skipping_files": "Mover skipping files",
+        "config_drift_detected": "Configuration drift detected",
+        "container_unhealthy": "Container unhealthy",
+        "container_update_available": "Container update available",
+        "hoserva_update_available": "Hoserva update available",
+        "reboot_required": "Reboot required",
+        "ups_on_battery": "UPS on battery",
+        "ups_battery_low": "UPS battery low",
+        "login_failure_burst": "Login failure burst",
+        "credential_reset": "Credential reset",
+        "certificate_expiring": "Certificate expiring",
+        "config_backup_failed": "Config backup failed",
+        "appdata_backup_failed": "Appdata backup failed",
+        "backup_destination_stale": "Backup destination stale",
+        "restore_drill_failed": "Restore drill failed"
+      }
     },
     "userMenu": {
       "ariaLabel": "User menu",

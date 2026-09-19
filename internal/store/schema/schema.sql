@@ -240,6 +240,23 @@ CREATE TABLE notify_deliveries (
 CREATE INDEX notify_deliveries_status_idx ON notify_deliveries ("status", next_attempt_at);
 CREATE INDEX notify_deliveries_channel_id_idx ON notify_deliveries (channel_id);
 
+-- In-app notification inbox (#188, doc 03 §2): every alert Service.Publish
+-- records for the top-bar bell. read_at is NULL while unread; mark-all-read
+-- and per-alert read set it. event_type groups the inbox (doc 03 §2); id is
+-- the same key NotificationEvent carries over SSE (D18).
+CREATE TABLE notify_alerts (
+    id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'error', 'critical')),
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    read_at TEXT
+) STRICT;
+
+CREATE INDEX notify_alerts_read_at_idx ON notify_alerts (read_at);
+CREATE INDEX notify_alerts_created_at_idx ON notify_alerts (created_at);
+
 -- The machine key's check value (#22, Q28). Written once, the moment
 -- this installation's machine key is first generated, and read at every
 -- later start (auth.LoadOrGenerateMachineKey) to prove a candidate key

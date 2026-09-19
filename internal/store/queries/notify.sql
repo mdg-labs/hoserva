@@ -106,3 +106,30 @@ LIMIT sqlc.arg('row_limit');
 UPDATE notify_deliveries
 SET "status" = ?, attempts = ?, last_error = ?, next_attempt_at = ?, delivered_at = ?
 WHERE id = ?;
+
+-- name: CreateAlert :exec
+INSERT INTO notify_alerts (
+    id, event_type, severity, title, message, created_at, read_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?
+);
+
+-- name: ListAlerts :many
+SELECT id, event_type, severity, title, message, created_at, read_at
+FROM notify_alerts
+ORDER BY
+    CASE WHEN read_at IS NULL THEN 0 ELSE 1 END ASC,
+    created_at DESC;
+
+-- name: CountUnreadAlerts :one
+SELECT COUNT(*) FROM notify_alerts WHERE read_at IS NULL;
+
+-- name: MarkAllAlertsRead :execrows
+UPDATE notify_alerts
+SET read_at = ?
+WHERE read_at IS NULL;
+
+-- name: MarkAlertsReadByIDs :execrows
+UPDATE notify_alerts
+SET read_at = ?
+WHERE read_at IS NULL AND id IN (sqlc.slice('ids'));

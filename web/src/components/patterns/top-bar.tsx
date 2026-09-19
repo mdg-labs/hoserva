@@ -1,6 +1,6 @@
 import type React from "react";
-import { useState } from "react";
-import { ListChecks, LogOut, Moon, Sun } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Bell, ListChecks, LogOut, Moon, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
@@ -12,25 +12,182 @@ import {
   parityFreshnessLabel,
 } from "@/components/patterns/system-status";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Sheet,
+  SheetHeader,
+  SheetPanel,
+  SheetPopup,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { useActiveJobs } from "@/hooks/use-active-jobs";
+import { useIsMobile } from "@/hooks/use-media-query";
 import { jobDetailPath, PATHS } from "@/hooks/paths";
 import { useSystemData } from "@/hooks/use-system-status";
 import { useAuth } from "@/lib/api/auth-context";
 import { hoservaClient } from "@/lib/api/client";
+import {
+  subscribeToEvents,
+  type NotificationAlert,
+  type NotificationGroup,
+} from "@/lib/api/events";
+
+type NotificationLevel = NotificationAlert["level"];
+
+const notificationSheetSide = "bottom" as const;
+
+function notificationTone(level: NotificationLevel): "info" | "warning" | "error" {
+  switch (level) {
+    case "critical":
+    case "error":
+      return "error";
+    case "warning":
+      return "warning";
+    default:
+      return "info";
+  }
+}
+
+function prependAlert(groups: NotificationGroup[], alert: NotificationAlert): NotificationGroup[] {
+  const next = groups.map((group) => ({ ...group, alerts: [...group.alerts] }));
+  const index = next.findIndex((group) => group.eventType === alert.eventType);
+  if (index >= 0) {
+    const existing = next[index].alerts.filter((item) => item.id !== alert.id);
+    next[index].alerts = [alert, ...existing];
+    return next;
+  }
+  return [{ eventType: alert.eventType, alerts: [alert] }, ...next];
+}
+
+function NotificationInboxPanel({
+  groups,
+  unreadCount,
+  onMarkAllRead,
+}: {
+  groups: NotificationGroup[];
+  unreadCount: number;
+  onMarkAllRead: () => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+
+  return (
+    <div className="flex max-h-[min(24rem,70vh)] min-h-0 flex-col">
+      <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+        <h2 className="font-medium text-sm">{t("topBar.notifications.panelTitle")}</h2>
+        {unreadCount > 0 ? (
+          <Button size="xs" variant="ghost" onClick={onMarkAllRead}>
+            {t("topBar.notifications.markAllRead")}
+          </Button>
+        ) : null}
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {groups.length === 0 ? (
+          <p className="text-muted-foreground px-2 py-4 text-sm">{t("topBar.notifications.empty")}</p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {groups.map((group) => (
+              <section key={group.eventType}>
+                <h3 className="px-2 pb-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+                  {t(`topBar.notifications.eventTypes.${group.eventType}`)}
+                </h3>
+                <ul className="flex flex-col gap-2">
+                  {group.alerts.map((alert) => (
+                    <li
+                      key={alert.id}
+                      className={`rounded-lg border px-3 py-2 ${alert.read ? "opacity-70" : "bg-muted/30"}`}
+                    >
+                      <div className="mb-1 flex items-center gap-2">
+                        <StatusBadge tone={notificationTone(alert.level)}>{alert.title}</StatusBadge>
+                      </div>
+                      <p className="text-muted-foreground text-sm">{alert.message}</p>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function TopBar(): React.ReactElement {
   const { t } = useTranslation();
   const { user } = useAuth();
   const { status, doctor, jobs } = useSystemData();
   const activeJobs = useActiveJobs(jobs);
+  const isMobile = useIsMobile();
   const arrayLabel = arrayStatusLabel(status, t);
   const arrayTone = arrayStatusTone(status);
   const parity = parityFreshnessLabel(status, doctor, t);
   const activeCount = status?.activeJobs ?? activeJobs.length;
   const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationGroups, setNotificationGroups] = useState<NotificationGroup[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    hoservaClient
+      .GET("/notifications", { signal: controller.signal })
+      .then((result) => {
+        if (result.error || !result.data) {
+          return;
+        }
+        setNotificationGroups(result.data.groups);
+        setUnreadCount(result.data.unreadCount);
+      })
+      .catch(() => {
+        // Initial inbox load failure leaves the bell empty until SSE or a reload.
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    return subscribeToEvents((event) => {
+      if (event.event !== "notification") {
+        return;
+      }
+      const alert: NotificationAlert = {
+        id: event.data.id,
+        eventType: event.data.eventType,
+        level: event.data.level,
+        title: event.data.title,
+        message: event.data.message,
+        createdAt: event.data.createdAt,
+        read: false,
+      };
+      setNotificationGroups((current) => {
+        const alreadyPresent = current.some((group) =>
+          group.alerts.some((item) => item.id === alert.id),
+        );
+        if (!alreadyPresent) {
+          setUnreadCount((count) => count + 1);
+        }
+        return prependAlert(current, alert);
+      });
+    });
+  }, []);
+
+  const handleMarkAllRead = async (): Promise<void> => {
+    const { data, error } = await hoservaClient.POST("/notifications/read", {
+      body: { all: true },
+    });
+    if (error || !data) {
+      return;
+    }
+    setUnreadCount(data.unreadCount);
+    setNotificationGroups((current) =>
+      current.map((group) => ({
+        ...group,
+        alerts: group.alerts.map((alert) => ({ ...alert, read: true })),
+      })),
+    );
+  };
 
   const handleLogout = async (): Promise<void> => {
     try {
@@ -50,6 +207,25 @@ export function TopBar(): React.ReactElement {
   };
 
   const initials = user?.username?.slice(0, 2).toUpperCase() ?? "?";
+
+  const notificationTrigger = (
+    <Button size="icon-sm" variant="outline" aria-label={t("topBar.notifications.ariaLabel")}>
+      <Bell aria-hidden="true" />
+      {unreadCount > 0 ? (
+        <Badge variant="destructive" size="sm" className="absolute -top-1 -right-1 min-w-4 px-1">
+          {unreadCount > 99 ? "99+" : unreadCount}
+        </Badge>
+      ) : null}
+    </Button>
+  );
+
+  const notificationPanel = (
+    <NotificationInboxPanel
+      groups={notificationGroups}
+      unreadCount={unreadCount}
+      onMarkAllRead={() => void handleMarkAllRead()}
+    />
+  );
 
   return (
     <div className="flex flex-1 items-center justify-end gap-2">
@@ -88,6 +264,35 @@ export function TopBar(): React.ReactElement {
           )}
         </PopoverContent>
       </Popover>
+      {isMobile ? (
+        <Sheet onOpenChange={setNotificationOpen} open={notificationOpen}>
+          <Button
+            size="icon-sm"
+            variant="outline"
+            aria-label={t("topBar.notifications.ariaLabel")}
+            className="relative"
+            onClick={() => setNotificationOpen(true)}
+          >
+            <Bell aria-hidden="true" />
+            {unreadCount > 0 ? (
+              <Badge variant="destructive" size="sm" className="absolute -top-1 -right-1 min-w-4 px-1">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </Badge>
+            ) : null}
+          </Button>
+          <SheetPopup side={notificationSheetSide} className="h-[min(80vh,28rem)]">
+            <SheetHeader>
+              <SheetTitle>{t("topBar.notifications.panelTitle")}</SheetTitle>
+            </SheetHeader>
+            <SheetPanel>{notificationPanel}</SheetPanel>
+          </SheetPopup>
+        </Sheet>
+      ) : (
+        <Popover>
+          <PopoverTrigger render={<span className="relative inline-flex">{notificationTrigger}</span>} />
+          <PopoverContent className="w-96 p-0">{notificationPanel}</PopoverContent>
+        </Popover>
+      )}
       <Menu>
         <MenuTrigger
           render={
