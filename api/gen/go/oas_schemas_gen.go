@@ -70,6 +70,203 @@ func (s *CreateFirstAdminRequest) SetPassword(val string) {
 	s.Password = val
 }
 
+// Ref: #/components/schemas/CreateNotificationChannelRequest
+type CreateNotificationChannelRequest struct {
+	Name    string                  `json:"name"`
+	Type    NotificationChannelType `json:"type"`
+	Enabled bool                    `json:"enabled"`
+	// The channel's credential, e.g. an SMTP password, a Gotify app token, an ntfy auth token, a Discord
+	// webhook URL, or a generic webhook's auth header value. Encrypted with the machine key before it
+	// reaches the database (Q28) and never returned by any later read.
+	Secret                OptString                     `json:"secret"`
+	EmailHost             OptString                     `json:"emailHost"`
+	EmailPort             OptInt32                      `json:"emailPort"`
+	EmailUsername         OptString                     `json:"emailUsername"`
+	EmailFrom             OptString                     `json:"emailFrom"`
+	EmailTo               []string                      `json:"emailTo"`
+	EmailStartTls         OptBool                       `json:"emailStartTls"`
+	GotifyUrl             OptString                     `json:"gotifyUrl"`
+	NtfyUrl               OptString                     `json:"ntfyUrl"`
+	NtfyTopic             OptString                     `json:"ntfyTopic"`
+	WebhookUrl            OptString                     `json:"webhookUrl"`
+	WebhookMethod         OptNotificationWebhookMethod  `json:"webhookMethod"`
+	WebhookHeaders        OptNotificationWebhookHeaders `json:"webhookHeaders"`
+	WebhookAuthHeaderName OptString                     `json:"webhookAuthHeaderName"`
+}
+
+// GetName returns the value of Name.
+func (s *CreateNotificationChannelRequest) GetName() string {
+	return s.Name
+}
+
+// GetType returns the value of Type.
+func (s *CreateNotificationChannelRequest) GetType() NotificationChannelType {
+	return s.Type
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *CreateNotificationChannelRequest) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetSecret returns the value of Secret.
+func (s *CreateNotificationChannelRequest) GetSecret() OptString {
+	return s.Secret
+}
+
+// GetEmailHost returns the value of EmailHost.
+func (s *CreateNotificationChannelRequest) GetEmailHost() OptString {
+	return s.EmailHost
+}
+
+// GetEmailPort returns the value of EmailPort.
+func (s *CreateNotificationChannelRequest) GetEmailPort() OptInt32 {
+	return s.EmailPort
+}
+
+// GetEmailUsername returns the value of EmailUsername.
+func (s *CreateNotificationChannelRequest) GetEmailUsername() OptString {
+	return s.EmailUsername
+}
+
+// GetEmailFrom returns the value of EmailFrom.
+func (s *CreateNotificationChannelRequest) GetEmailFrom() OptString {
+	return s.EmailFrom
+}
+
+// GetEmailTo returns the value of EmailTo.
+func (s *CreateNotificationChannelRequest) GetEmailTo() []string {
+	return s.EmailTo
+}
+
+// GetEmailStartTls returns the value of EmailStartTls.
+func (s *CreateNotificationChannelRequest) GetEmailStartTls() OptBool {
+	return s.EmailStartTls
+}
+
+// GetGotifyUrl returns the value of GotifyUrl.
+func (s *CreateNotificationChannelRequest) GetGotifyUrl() OptString {
+	return s.GotifyUrl
+}
+
+// GetNtfyUrl returns the value of NtfyUrl.
+func (s *CreateNotificationChannelRequest) GetNtfyUrl() OptString {
+	return s.NtfyUrl
+}
+
+// GetNtfyTopic returns the value of NtfyTopic.
+func (s *CreateNotificationChannelRequest) GetNtfyTopic() OptString {
+	return s.NtfyTopic
+}
+
+// GetWebhookUrl returns the value of WebhookUrl.
+func (s *CreateNotificationChannelRequest) GetWebhookUrl() OptString {
+	return s.WebhookUrl
+}
+
+// GetWebhookMethod returns the value of WebhookMethod.
+func (s *CreateNotificationChannelRequest) GetWebhookMethod() OptNotificationWebhookMethod {
+	return s.WebhookMethod
+}
+
+// GetWebhookHeaders returns the value of WebhookHeaders.
+func (s *CreateNotificationChannelRequest) GetWebhookHeaders() OptNotificationWebhookHeaders {
+	return s.WebhookHeaders
+}
+
+// GetWebhookAuthHeaderName returns the value of WebhookAuthHeaderName.
+func (s *CreateNotificationChannelRequest) GetWebhookAuthHeaderName() OptString {
+	return s.WebhookAuthHeaderName
+}
+
+// SetName sets the value of Name.
+func (s *CreateNotificationChannelRequest) SetName(val string) {
+	s.Name = val
+}
+
+// SetType sets the value of Type.
+func (s *CreateNotificationChannelRequest) SetType(val NotificationChannelType) {
+	s.Type = val
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *CreateNotificationChannelRequest) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetSecret sets the value of Secret.
+func (s *CreateNotificationChannelRequest) SetSecret(val OptString) {
+	s.Secret = val
+}
+
+// SetEmailHost sets the value of EmailHost.
+func (s *CreateNotificationChannelRequest) SetEmailHost(val OptString) {
+	s.EmailHost = val
+}
+
+// SetEmailPort sets the value of EmailPort.
+func (s *CreateNotificationChannelRequest) SetEmailPort(val OptInt32) {
+	s.EmailPort = val
+}
+
+// SetEmailUsername sets the value of EmailUsername.
+func (s *CreateNotificationChannelRequest) SetEmailUsername(val OptString) {
+	s.EmailUsername = val
+}
+
+// SetEmailFrom sets the value of EmailFrom.
+func (s *CreateNotificationChannelRequest) SetEmailFrom(val OptString) {
+	s.EmailFrom = val
+}
+
+// SetEmailTo sets the value of EmailTo.
+func (s *CreateNotificationChannelRequest) SetEmailTo(val []string) {
+	s.EmailTo = val
+}
+
+// SetEmailStartTls sets the value of EmailStartTls.
+func (s *CreateNotificationChannelRequest) SetEmailStartTls(val OptBool) {
+	s.EmailStartTls = val
+}
+
+// SetGotifyUrl sets the value of GotifyUrl.
+func (s *CreateNotificationChannelRequest) SetGotifyUrl(val OptString) {
+	s.GotifyUrl = val
+}
+
+// SetNtfyUrl sets the value of NtfyUrl.
+func (s *CreateNotificationChannelRequest) SetNtfyUrl(val OptString) {
+	s.NtfyUrl = val
+}
+
+// SetNtfyTopic sets the value of NtfyTopic.
+func (s *CreateNotificationChannelRequest) SetNtfyTopic(val OptString) {
+	s.NtfyTopic = val
+}
+
+// SetWebhookUrl sets the value of WebhookUrl.
+func (s *CreateNotificationChannelRequest) SetWebhookUrl(val OptString) {
+	s.WebhookUrl = val
+}
+
+// SetWebhookMethod sets the value of WebhookMethod.
+func (s *CreateNotificationChannelRequest) SetWebhookMethod(val OptNotificationWebhookMethod) {
+	s.WebhookMethod = val
+}
+
+// SetWebhookHeaders sets the value of WebhookHeaders.
+func (s *CreateNotificationChannelRequest) SetWebhookHeaders(val OptNotificationWebhookHeaders) {
+	s.WebhookHeaders = val
+}
+
+// SetWebhookAuthHeaderName sets the value of WebhookAuthHeaderName.
+func (s *CreateNotificationChannelRequest) SetWebhookAuthHeaderName(val OptString) {
+	s.WebhookAuthHeaderName = val
+}
+
+// DeleteNotificationChannelNoContent is response for DeleteNotificationChannel operation.
+type DeleteNotificationChannelNoContent struct{}
+
 // Ref: #/components/schemas/Error
 type Error struct {
 	// A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation (#22) can
@@ -180,6 +377,20 @@ func (s GetJobLogOK) Read(p []byte) (n int, err error) {
 		return 0, io.EOF
 	}
 	return s.Data.Read(p)
+}
+
+type GetNotificationRoutingOK struct {
+	Routing []NotificationRoutingEntry `json:"routing"`
+}
+
+// GetRouting returns the value of Routing.
+func (s *GetNotificationRoutingOK) GetRouting() []NotificationRoutingEntry {
+	return s.Routing
+}
+
+// SetRouting sets the value of Routing.
+func (s *GetNotificationRoutingOK) SetRouting(val []NotificationRoutingEntry) {
+	s.Routing = val
 }
 
 // Ref: #/components/schemas/Job
@@ -650,6 +861,20 @@ func (s *ListJobsOK) SetJobs(val []Job) {
 	s.Jobs = val
 }
 
+type ListNotificationChannelsOK struct {
+	Channels []NotificationChannel `json:"channels"`
+}
+
+// GetChannels returns the value of Channels.
+func (s *ListNotificationChannelsOK) GetChannels() []NotificationChannel {
+	return s.Channels
+}
+
+// SetChannels sets the value of Channels.
+func (s *ListNotificationChannelsOK) SetChannels(val []NotificationChannel) {
+	s.Channels = val
+}
+
 // Ref: #/components/schemas/LoginRequest
 type LoginRequest struct {
 	Username string `json:"username"`
@@ -701,6 +926,782 @@ func (s *LogoutNoContent) GetSetCookie() OptString {
 // SetSetCookie sets the value of SetCookie.
 func (s *LogoutNoContent) SetSetCookie(val OptString) {
 	s.SetCookie = val
+}
+
+// Never carries a credential (Q28) — `hasSecret` is the only signal that one is configured. Only the
+// properties relevant to `type` are meaningful; the rest are absent.
+// Ref: #/components/schemas/NotificationChannel
+type NotificationChannel struct {
+	ID      uuid.UUID               `json:"id"`
+	Name    string                  `json:"name"`
+	Type    NotificationChannelType `json:"type"`
+	Enabled bool                    `json:"enabled"`
+	// Whether a credential is configured for this channel.
+	HasSecret      bool                          `json:"hasSecret"`
+	EmailHost      OptString                     `json:"emailHost"`
+	EmailPort      OptInt32                      `json:"emailPort"`
+	EmailUsername  OptString                     `json:"emailUsername"`
+	EmailFrom      OptString                     `json:"emailFrom"`
+	EmailTo        []string                      `json:"emailTo"`
+	EmailStartTls  OptBool                       `json:"emailStartTls"`
+	GotifyUrl      OptString                     `json:"gotifyUrl"`
+	NtfyUrl        OptString                     `json:"ntfyUrl"`
+	NtfyTopic      OptString                     `json:"ntfyTopic"`
+	WebhookUrl     OptString                     `json:"webhookUrl"`
+	WebhookMethod  OptNotificationWebhookMethod  `json:"webhookMethod"`
+	WebhookHeaders OptNotificationWebhookHeaders `json:"webhookHeaders"`
+	// The header carrying the generic webhook's credential, e.g. `Authorization` — the header's value is
+	// `secret`, never a plain property here.
+	WebhookAuthHeaderName OptString `json:"webhookAuthHeaderName"`
+	CreatedAt             time.Time `json:"createdAt"`
+	UpdatedAt             time.Time `json:"updatedAt"`
+}
+
+// GetID returns the value of ID.
+func (s *NotificationChannel) GetID() uuid.UUID {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *NotificationChannel) GetName() string {
+	return s.Name
+}
+
+// GetType returns the value of Type.
+func (s *NotificationChannel) GetType() NotificationChannelType {
+	return s.Type
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *NotificationChannel) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetHasSecret returns the value of HasSecret.
+func (s *NotificationChannel) GetHasSecret() bool {
+	return s.HasSecret
+}
+
+// GetEmailHost returns the value of EmailHost.
+func (s *NotificationChannel) GetEmailHost() OptString {
+	return s.EmailHost
+}
+
+// GetEmailPort returns the value of EmailPort.
+func (s *NotificationChannel) GetEmailPort() OptInt32 {
+	return s.EmailPort
+}
+
+// GetEmailUsername returns the value of EmailUsername.
+func (s *NotificationChannel) GetEmailUsername() OptString {
+	return s.EmailUsername
+}
+
+// GetEmailFrom returns the value of EmailFrom.
+func (s *NotificationChannel) GetEmailFrom() OptString {
+	return s.EmailFrom
+}
+
+// GetEmailTo returns the value of EmailTo.
+func (s *NotificationChannel) GetEmailTo() []string {
+	return s.EmailTo
+}
+
+// GetEmailStartTls returns the value of EmailStartTls.
+func (s *NotificationChannel) GetEmailStartTls() OptBool {
+	return s.EmailStartTls
+}
+
+// GetGotifyUrl returns the value of GotifyUrl.
+func (s *NotificationChannel) GetGotifyUrl() OptString {
+	return s.GotifyUrl
+}
+
+// GetNtfyUrl returns the value of NtfyUrl.
+func (s *NotificationChannel) GetNtfyUrl() OptString {
+	return s.NtfyUrl
+}
+
+// GetNtfyTopic returns the value of NtfyTopic.
+func (s *NotificationChannel) GetNtfyTopic() OptString {
+	return s.NtfyTopic
+}
+
+// GetWebhookUrl returns the value of WebhookUrl.
+func (s *NotificationChannel) GetWebhookUrl() OptString {
+	return s.WebhookUrl
+}
+
+// GetWebhookMethod returns the value of WebhookMethod.
+func (s *NotificationChannel) GetWebhookMethod() OptNotificationWebhookMethod {
+	return s.WebhookMethod
+}
+
+// GetWebhookHeaders returns the value of WebhookHeaders.
+func (s *NotificationChannel) GetWebhookHeaders() OptNotificationWebhookHeaders {
+	return s.WebhookHeaders
+}
+
+// GetWebhookAuthHeaderName returns the value of WebhookAuthHeaderName.
+func (s *NotificationChannel) GetWebhookAuthHeaderName() OptString {
+	return s.WebhookAuthHeaderName
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *NotificationChannel) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// GetUpdatedAt returns the value of UpdatedAt.
+func (s *NotificationChannel) GetUpdatedAt() time.Time {
+	return s.UpdatedAt
+}
+
+// SetID sets the value of ID.
+func (s *NotificationChannel) SetID(val uuid.UUID) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *NotificationChannel) SetName(val string) {
+	s.Name = val
+}
+
+// SetType sets the value of Type.
+func (s *NotificationChannel) SetType(val NotificationChannelType) {
+	s.Type = val
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *NotificationChannel) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetHasSecret sets the value of HasSecret.
+func (s *NotificationChannel) SetHasSecret(val bool) {
+	s.HasSecret = val
+}
+
+// SetEmailHost sets the value of EmailHost.
+func (s *NotificationChannel) SetEmailHost(val OptString) {
+	s.EmailHost = val
+}
+
+// SetEmailPort sets the value of EmailPort.
+func (s *NotificationChannel) SetEmailPort(val OptInt32) {
+	s.EmailPort = val
+}
+
+// SetEmailUsername sets the value of EmailUsername.
+func (s *NotificationChannel) SetEmailUsername(val OptString) {
+	s.EmailUsername = val
+}
+
+// SetEmailFrom sets the value of EmailFrom.
+func (s *NotificationChannel) SetEmailFrom(val OptString) {
+	s.EmailFrom = val
+}
+
+// SetEmailTo sets the value of EmailTo.
+func (s *NotificationChannel) SetEmailTo(val []string) {
+	s.EmailTo = val
+}
+
+// SetEmailStartTls sets the value of EmailStartTls.
+func (s *NotificationChannel) SetEmailStartTls(val OptBool) {
+	s.EmailStartTls = val
+}
+
+// SetGotifyUrl sets the value of GotifyUrl.
+func (s *NotificationChannel) SetGotifyUrl(val OptString) {
+	s.GotifyUrl = val
+}
+
+// SetNtfyUrl sets the value of NtfyUrl.
+func (s *NotificationChannel) SetNtfyUrl(val OptString) {
+	s.NtfyUrl = val
+}
+
+// SetNtfyTopic sets the value of NtfyTopic.
+func (s *NotificationChannel) SetNtfyTopic(val OptString) {
+	s.NtfyTopic = val
+}
+
+// SetWebhookUrl sets the value of WebhookUrl.
+func (s *NotificationChannel) SetWebhookUrl(val OptString) {
+	s.WebhookUrl = val
+}
+
+// SetWebhookMethod sets the value of WebhookMethod.
+func (s *NotificationChannel) SetWebhookMethod(val OptNotificationWebhookMethod) {
+	s.WebhookMethod = val
+}
+
+// SetWebhookHeaders sets the value of WebhookHeaders.
+func (s *NotificationChannel) SetWebhookHeaders(val OptNotificationWebhookHeaders) {
+	s.WebhookHeaders = val
+}
+
+// SetWebhookAuthHeaderName sets the value of WebhookAuthHeaderName.
+func (s *NotificationChannel) SetWebhookAuthHeaderName(val OptString) {
+	s.WebhookAuthHeaderName = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *NotificationChannel) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// SetUpdatedAt sets the value of UpdatedAt.
+func (s *NotificationChannel) SetUpdatedAt(val time.Time) {
+	s.UpdatedAt = val
+}
+
+// Ref: #/components/schemas/NotificationChannelType
+type NotificationChannelType string
+
+const (
+	NotificationChannelTypeEmail   NotificationChannelType = "email"
+	NotificationChannelTypeGotify  NotificationChannelType = "gotify"
+	NotificationChannelTypeNtfy    NotificationChannelType = "ntfy"
+	NotificationChannelTypeDiscord NotificationChannelType = "discord"
+	NotificationChannelTypeWebhook NotificationChannelType = "webhook"
+)
+
+// AllValues returns all NotificationChannelType values.
+func (NotificationChannelType) AllValues() []NotificationChannelType {
+	return []NotificationChannelType{
+		NotificationChannelTypeEmail,
+		NotificationChannelTypeGotify,
+		NotificationChannelTypeNtfy,
+		NotificationChannelTypeDiscord,
+		NotificationChannelTypeWebhook,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s NotificationChannelType) MarshalText() ([]byte, error) {
+	switch s {
+	case NotificationChannelTypeEmail:
+		return []byte(s), nil
+	case NotificationChannelTypeGotify:
+		return []byte(s), nil
+	case NotificationChannelTypeNtfy:
+		return []byte(s), nil
+	case NotificationChannelTypeDiscord:
+		return []byte(s), nil
+	case NotificationChannelTypeWebhook:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *NotificationChannelType) UnmarshalText(data []byte) error {
+	switch NotificationChannelType(data) {
+	case NotificationChannelTypeEmail:
+		*s = NotificationChannelTypeEmail
+		return nil
+	case NotificationChannelTypeGotify:
+		*s = NotificationChannelTypeGotify
+		return nil
+	case NotificationChannelTypeNtfy:
+		*s = NotificationChannelTypeNtfy
+		return nil
+	case NotificationChannelTypeDiscord:
+		*s = NotificationChannelTypeDiscord
+		return nil
+	case NotificationChannelTypeWebhook:
+		*s = NotificationChannelTypeWebhook
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// The fixed event catalog doc 03 §8.3 lists, in that doc's own order. internal/notify assigns every
+// one of these a compiled-in default severity (NotificationLevel); notify_event_severity overrides it
+// per event type.
+// Ref: #/components/schemas/NotificationEventType
+type NotificationEventType string
+
+const (
+	NotificationEventTypeSmartWarning             NotificationEventType = "smart_warning"
+	NotificationEventTypeSmartFailure             NotificationEventType = "smart_failure"
+	NotificationEventTypeDiskOffline              NotificationEventType = "disk_offline"
+	NotificationEventTypeArrayDegraded            NotificationEventType = "array_degraded"
+	NotificationEventTypeSyncSucceeded            NotificationEventType = "sync_succeeded"
+	NotificationEventTypeSyncFailed               NotificationEventType = "sync_failed"
+	NotificationEventTypeSyncBlockedThreshold     NotificationEventType = "sync_blocked_threshold"
+	NotificationEventTypeScrubErrorsFound         NotificationEventType = "scrub_errors_found"
+	NotificationEventTypePoolAboveThreshold       NotificationEventType = "pool_above_threshold"
+	NotificationEventTypeDiskNearMinfreespace     NotificationEventType = "disk_near_minfreespace"
+	NotificationEventTypeCacheAboveThreshold      NotificationEventType = "cache_above_threshold"
+	NotificationEventTypeMoverSkippingFiles       NotificationEventType = "mover_skipping_files"
+	NotificationEventTypeConfigDriftDetected      NotificationEventType = "config_drift_detected"
+	NotificationEventTypeContainerUnhealthy       NotificationEventType = "container_unhealthy"
+	NotificationEventTypeContainerUpdateAvailable NotificationEventType = "container_update_available"
+	NotificationEventTypeHoservaUpdateAvailable   NotificationEventType = "hoserva_update_available"
+	NotificationEventTypeRebootRequired           NotificationEventType = "reboot_required"
+	NotificationEventTypeUpsOnBattery             NotificationEventType = "ups_on_battery"
+	NotificationEventTypeUpsBatteryLow            NotificationEventType = "ups_battery_low"
+	NotificationEventTypeLoginFailureBurst        NotificationEventType = "login_failure_burst"
+	NotificationEventTypeCredentialReset          NotificationEventType = "credential_reset"
+	NotificationEventTypeCertificateExpiring      NotificationEventType = "certificate_expiring"
+	NotificationEventTypeConfigBackupFailed       NotificationEventType = "config_backup_failed"
+	NotificationEventTypeAppdataBackupFailed      NotificationEventType = "appdata_backup_failed"
+	NotificationEventTypeBackupDestinationStale   NotificationEventType = "backup_destination_stale"
+	NotificationEventTypeRestoreDrillFailed       NotificationEventType = "restore_drill_failed"
+)
+
+// AllValues returns all NotificationEventType values.
+func (NotificationEventType) AllValues() []NotificationEventType {
+	return []NotificationEventType{
+		NotificationEventTypeSmartWarning,
+		NotificationEventTypeSmartFailure,
+		NotificationEventTypeDiskOffline,
+		NotificationEventTypeArrayDegraded,
+		NotificationEventTypeSyncSucceeded,
+		NotificationEventTypeSyncFailed,
+		NotificationEventTypeSyncBlockedThreshold,
+		NotificationEventTypeScrubErrorsFound,
+		NotificationEventTypePoolAboveThreshold,
+		NotificationEventTypeDiskNearMinfreespace,
+		NotificationEventTypeCacheAboveThreshold,
+		NotificationEventTypeMoverSkippingFiles,
+		NotificationEventTypeConfigDriftDetected,
+		NotificationEventTypeContainerUnhealthy,
+		NotificationEventTypeContainerUpdateAvailable,
+		NotificationEventTypeHoservaUpdateAvailable,
+		NotificationEventTypeRebootRequired,
+		NotificationEventTypeUpsOnBattery,
+		NotificationEventTypeUpsBatteryLow,
+		NotificationEventTypeLoginFailureBurst,
+		NotificationEventTypeCredentialReset,
+		NotificationEventTypeCertificateExpiring,
+		NotificationEventTypeConfigBackupFailed,
+		NotificationEventTypeAppdataBackupFailed,
+		NotificationEventTypeBackupDestinationStale,
+		NotificationEventTypeRestoreDrillFailed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s NotificationEventType) MarshalText() ([]byte, error) {
+	switch s {
+	case NotificationEventTypeSmartWarning:
+		return []byte(s), nil
+	case NotificationEventTypeSmartFailure:
+		return []byte(s), nil
+	case NotificationEventTypeDiskOffline:
+		return []byte(s), nil
+	case NotificationEventTypeArrayDegraded:
+		return []byte(s), nil
+	case NotificationEventTypeSyncSucceeded:
+		return []byte(s), nil
+	case NotificationEventTypeSyncFailed:
+		return []byte(s), nil
+	case NotificationEventTypeSyncBlockedThreshold:
+		return []byte(s), nil
+	case NotificationEventTypeScrubErrorsFound:
+		return []byte(s), nil
+	case NotificationEventTypePoolAboveThreshold:
+		return []byte(s), nil
+	case NotificationEventTypeDiskNearMinfreespace:
+		return []byte(s), nil
+	case NotificationEventTypeCacheAboveThreshold:
+		return []byte(s), nil
+	case NotificationEventTypeMoverSkippingFiles:
+		return []byte(s), nil
+	case NotificationEventTypeConfigDriftDetected:
+		return []byte(s), nil
+	case NotificationEventTypeContainerUnhealthy:
+		return []byte(s), nil
+	case NotificationEventTypeContainerUpdateAvailable:
+		return []byte(s), nil
+	case NotificationEventTypeHoservaUpdateAvailable:
+		return []byte(s), nil
+	case NotificationEventTypeRebootRequired:
+		return []byte(s), nil
+	case NotificationEventTypeUpsOnBattery:
+		return []byte(s), nil
+	case NotificationEventTypeUpsBatteryLow:
+		return []byte(s), nil
+	case NotificationEventTypeLoginFailureBurst:
+		return []byte(s), nil
+	case NotificationEventTypeCredentialReset:
+		return []byte(s), nil
+	case NotificationEventTypeCertificateExpiring:
+		return []byte(s), nil
+	case NotificationEventTypeConfigBackupFailed:
+		return []byte(s), nil
+	case NotificationEventTypeAppdataBackupFailed:
+		return []byte(s), nil
+	case NotificationEventTypeBackupDestinationStale:
+		return []byte(s), nil
+	case NotificationEventTypeRestoreDrillFailed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *NotificationEventType) UnmarshalText(data []byte) error {
+	switch NotificationEventType(data) {
+	case NotificationEventTypeSmartWarning:
+		*s = NotificationEventTypeSmartWarning
+		return nil
+	case NotificationEventTypeSmartFailure:
+		*s = NotificationEventTypeSmartFailure
+		return nil
+	case NotificationEventTypeDiskOffline:
+		*s = NotificationEventTypeDiskOffline
+		return nil
+	case NotificationEventTypeArrayDegraded:
+		*s = NotificationEventTypeArrayDegraded
+		return nil
+	case NotificationEventTypeSyncSucceeded:
+		*s = NotificationEventTypeSyncSucceeded
+		return nil
+	case NotificationEventTypeSyncFailed:
+		*s = NotificationEventTypeSyncFailed
+		return nil
+	case NotificationEventTypeSyncBlockedThreshold:
+		*s = NotificationEventTypeSyncBlockedThreshold
+		return nil
+	case NotificationEventTypeScrubErrorsFound:
+		*s = NotificationEventTypeScrubErrorsFound
+		return nil
+	case NotificationEventTypePoolAboveThreshold:
+		*s = NotificationEventTypePoolAboveThreshold
+		return nil
+	case NotificationEventTypeDiskNearMinfreespace:
+		*s = NotificationEventTypeDiskNearMinfreespace
+		return nil
+	case NotificationEventTypeCacheAboveThreshold:
+		*s = NotificationEventTypeCacheAboveThreshold
+		return nil
+	case NotificationEventTypeMoverSkippingFiles:
+		*s = NotificationEventTypeMoverSkippingFiles
+		return nil
+	case NotificationEventTypeConfigDriftDetected:
+		*s = NotificationEventTypeConfigDriftDetected
+		return nil
+	case NotificationEventTypeContainerUnhealthy:
+		*s = NotificationEventTypeContainerUnhealthy
+		return nil
+	case NotificationEventTypeContainerUpdateAvailable:
+		*s = NotificationEventTypeContainerUpdateAvailable
+		return nil
+	case NotificationEventTypeHoservaUpdateAvailable:
+		*s = NotificationEventTypeHoservaUpdateAvailable
+		return nil
+	case NotificationEventTypeRebootRequired:
+		*s = NotificationEventTypeRebootRequired
+		return nil
+	case NotificationEventTypeUpsOnBattery:
+		*s = NotificationEventTypeUpsOnBattery
+		return nil
+	case NotificationEventTypeUpsBatteryLow:
+		*s = NotificationEventTypeUpsBatteryLow
+		return nil
+	case NotificationEventTypeLoginFailureBurst:
+		*s = NotificationEventTypeLoginFailureBurst
+		return nil
+	case NotificationEventTypeCredentialReset:
+		*s = NotificationEventTypeCredentialReset
+		return nil
+	case NotificationEventTypeCertificateExpiring:
+		*s = NotificationEventTypeCertificateExpiring
+		return nil
+	case NotificationEventTypeConfigBackupFailed:
+		*s = NotificationEventTypeConfigBackupFailed
+		return nil
+	case NotificationEventTypeAppdataBackupFailed:
+		*s = NotificationEventTypeAppdataBackupFailed
+		return nil
+	case NotificationEventTypeBackupDestinationStale:
+		*s = NotificationEventTypeBackupDestinationStale
+		return nil
+	case NotificationEventTypeRestoreDrillFailed:
+		*s = NotificationEventTypeRestoreDrillFailed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/NotificationLevel
+type NotificationLevel string
+
+const (
+	NotificationLevelInfo     NotificationLevel = "info"
+	NotificationLevelWarning  NotificationLevel = "warning"
+	NotificationLevelError    NotificationLevel = "error"
+	NotificationLevelCritical NotificationLevel = "critical"
+)
+
+// AllValues returns all NotificationLevel values.
+func (NotificationLevel) AllValues() []NotificationLevel {
+	return []NotificationLevel{
+		NotificationLevelInfo,
+		NotificationLevelWarning,
+		NotificationLevelError,
+		NotificationLevelCritical,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s NotificationLevel) MarshalText() ([]byte, error) {
+	switch s {
+	case NotificationLevelInfo:
+		return []byte(s), nil
+	case NotificationLevelWarning:
+		return []byte(s), nil
+	case NotificationLevelError:
+		return []byte(s), nil
+	case NotificationLevelCritical:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *NotificationLevel) UnmarshalText(data []byte) error {
+	switch NotificationLevel(data) {
+	case NotificationLevelInfo:
+		*s = NotificationLevelInfo
+		return nil
+	case NotificationLevelWarning:
+		*s = NotificationLevelWarning
+		return nil
+	case NotificationLevelError:
+		*s = NotificationLevelError
+		return nil
+	case NotificationLevelCritical:
+		*s = NotificationLevelCritical
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/NotificationQuietHours
+type NotificationQuietHours struct {
+	Enabled bool `json:"enabled"`
+	// 24-hour local time, e.g. "22:00".
+	Start string `json:"start"`
+	End   string `json:"end"`
+	// Always true (doc 03 §8.3) — critical alerts deliver regardless of quiet hours, and this cannot be
+	// disabled, so there is no request field that ever sets it otherwise.
+	CriticalAlwaysDelivers bool `json:"criticalAlwaysDelivers"`
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *NotificationQuietHours) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetStart returns the value of Start.
+func (s *NotificationQuietHours) GetStart() string {
+	return s.Start
+}
+
+// GetEnd returns the value of End.
+func (s *NotificationQuietHours) GetEnd() string {
+	return s.End
+}
+
+// GetCriticalAlwaysDelivers returns the value of CriticalAlwaysDelivers.
+func (s *NotificationQuietHours) GetCriticalAlwaysDelivers() bool {
+	return s.CriticalAlwaysDelivers
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *NotificationQuietHours) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetStart sets the value of Start.
+func (s *NotificationQuietHours) SetStart(val string) {
+	s.Start = val
+}
+
+// SetEnd sets the value of End.
+func (s *NotificationQuietHours) SetEnd(val string) {
+	s.End = val
+}
+
+// SetCriticalAlwaysDelivers sets the value of CriticalAlwaysDelivers.
+func (s *NotificationQuietHours) SetCriticalAlwaysDelivers(val bool) {
+	s.CriticalAlwaysDelivers = val
+}
+
+// Ref: #/components/schemas/NotificationRoutingEntry
+type NotificationRoutingEntry struct {
+	EventType  NotificationEventType `json:"eventType"`
+	Severity   NotificationLevel     `json:"severity"`
+	ChannelIds []uuid.UUID           `json:"channelIds"`
+}
+
+// GetEventType returns the value of EventType.
+func (s *NotificationRoutingEntry) GetEventType() NotificationEventType {
+	return s.EventType
+}
+
+// GetSeverity returns the value of Severity.
+func (s *NotificationRoutingEntry) GetSeverity() NotificationLevel {
+	return s.Severity
+}
+
+// GetChannelIds returns the value of ChannelIds.
+func (s *NotificationRoutingEntry) GetChannelIds() []uuid.UUID {
+	return s.ChannelIds
+}
+
+// SetEventType sets the value of EventType.
+func (s *NotificationRoutingEntry) SetEventType(val NotificationEventType) {
+	s.EventType = val
+}
+
+// SetSeverity sets the value of Severity.
+func (s *NotificationRoutingEntry) SetSeverity(val NotificationLevel) {
+	s.Severity = val
+}
+
+// SetChannelIds sets the value of ChannelIds.
+func (s *NotificationRoutingEntry) SetChannelIds(val []uuid.UUID) {
+	s.ChannelIds = val
+}
+
+// Ref: #/components/schemas/NotificationTestResult
+type NotificationTestResult struct {
+	Success bool `json:"success"`
+	// The delivery error, present only when success is false.
+	Error OptNilString `json:"error"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *NotificationTestResult) GetSuccess() bool {
+	return s.Success
+}
+
+// GetError returns the value of Error.
+func (s *NotificationTestResult) GetError() OptNilString {
+	return s.Error
+}
+
+// SetSuccess sets the value of Success.
+func (s *NotificationTestResult) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetError sets the value of Error.
+func (s *NotificationTestResult) SetError(val OptNilString) {
+	s.Error = val
+}
+
+// Ref: #/components/schemas/NotificationWebhookHeaders
+type NotificationWebhookHeaders map[string]string
+
+func (s *NotificationWebhookHeaders) init() NotificationWebhookHeaders {
+	m := *s
+	if m == nil {
+		m = map[string]string{}
+		*s = m
+	}
+	return m
+}
+
+// Ref: #/components/schemas/NotificationWebhookMethod
+type NotificationWebhookMethod string
+
+const (
+	NotificationWebhookMethodPOST NotificationWebhookMethod = "POST"
+	NotificationWebhookMethodPUT  NotificationWebhookMethod = "PUT"
+)
+
+// AllValues returns all NotificationWebhookMethod values.
+func (NotificationWebhookMethod) AllValues() []NotificationWebhookMethod {
+	return []NotificationWebhookMethod{
+		NotificationWebhookMethodPOST,
+		NotificationWebhookMethodPUT,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s NotificationWebhookMethod) MarshalText() ([]byte, error) {
+	switch s {
+	case NotificationWebhookMethodPOST:
+		return []byte(s), nil
+	case NotificationWebhookMethodPUT:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *NotificationWebhookMethod) UnmarshalText(data []byte) error {
+	switch NotificationWebhookMethod(data) {
+	case NotificationWebhookMethodPOST:
+		*s = NotificationWebhookMethodPOST
+		return nil
+	case NotificationWebhookMethodPUT:
+		*s = NotificationWebhookMethodPUT
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// NewOptBool returns new OptBool with value set to v.
+func NewOptBool(v bool) OptBool {
+	return OptBool{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptBool is optional bool.
+type OptBool struct {
+	Value bool
+	Set   bool
+}
+
+// IsSet returns true if OptBool was set.
+func (o OptBool) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptBool) Reset() {
+	var v bool
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptBool) SetTo(v bool) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptBool) Get() (v bool, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptBool) Or(d bool) bool {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
 }
 
 // NewOptErrorDetails returns new OptErrorDetails with value set to v.
@@ -1091,6 +2092,166 @@ func (o OptNilInt32) Or(d int32) int32 {
 	return d
 }
 
+// NewOptNilString returns new OptNilString with value set to v.
+func NewOptNilString(v string) OptNilString {
+	return OptNilString{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilString is optional nullable string.
+type OptNilString struct {
+	Value string
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilString was set.
+func (o OptNilString) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilString) Reset() {
+	var v string
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilString) SetTo(v string) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilString) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilString) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v string
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilString) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilString) Get() (v string, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilString) Or(d string) string {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNotificationWebhookHeaders returns new OptNotificationWebhookHeaders with value set to v.
+func NewOptNotificationWebhookHeaders(v NotificationWebhookHeaders) OptNotificationWebhookHeaders {
+	return OptNotificationWebhookHeaders{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNotificationWebhookHeaders is optional NotificationWebhookHeaders.
+type OptNotificationWebhookHeaders struct {
+	Value NotificationWebhookHeaders
+	Set   bool
+}
+
+// IsSet returns true if OptNotificationWebhookHeaders was set.
+func (o OptNotificationWebhookHeaders) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNotificationWebhookHeaders) Reset() {
+	var v NotificationWebhookHeaders
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptNotificationWebhookHeaders) SetTo(v NotificationWebhookHeaders) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNotificationWebhookHeaders) Get() (v NotificationWebhookHeaders, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNotificationWebhookHeaders) Or(d NotificationWebhookHeaders) NotificationWebhookHeaders {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNotificationWebhookMethod returns new OptNotificationWebhookMethod with value set to v.
+func NewOptNotificationWebhookMethod(v NotificationWebhookMethod) OptNotificationWebhookMethod {
+	return OptNotificationWebhookMethod{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNotificationWebhookMethod is optional NotificationWebhookMethod.
+type OptNotificationWebhookMethod struct {
+	Value NotificationWebhookMethod
+	Set   bool
+}
+
+// IsSet returns true if OptNotificationWebhookMethod was set.
+func (o OptNotificationWebhookMethod) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNotificationWebhookMethod) Reset() {
+	var v NotificationWebhookMethod
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptNotificationWebhookMethod) SetTo(v NotificationWebhookMethod) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNotificationWebhookMethod) Get() (v NotificationWebhookMethod, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNotificationWebhookMethod) Or(d NotificationWebhookMethod) NotificationWebhookMethod {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptString returns new OptString with value set to v.
 func NewOptString(v string) OptString {
 	return OptString{
@@ -1247,6 +2408,262 @@ func (s *TotpEnrollResponse) SetSecret(val string) {
 // SetOtpauthUri sets the value of OtpauthUri.
 func (s *TotpEnrollResponse) SetOtpauthUri(val string) {
 	s.OtpauthUri = val
+}
+
+// Same shape as CreateNotificationChannelRequest, a full replace, except `secret` is tri-state:
+// omitted keeps the existing credential, `null` clears it, a string replaces it.
+// Ref: #/components/schemas/UpdateNotificationChannelRequest
+type UpdateNotificationChannelRequest struct {
+	Name                  string                        `json:"name"`
+	Type                  NotificationChannelType       `json:"type"`
+	Enabled               bool                          `json:"enabled"`
+	Secret                OptNilString                  `json:"secret"`
+	EmailHost             OptString                     `json:"emailHost"`
+	EmailPort             OptInt32                      `json:"emailPort"`
+	EmailUsername         OptString                     `json:"emailUsername"`
+	EmailFrom             OptString                     `json:"emailFrom"`
+	EmailTo               []string                      `json:"emailTo"`
+	EmailStartTls         OptBool                       `json:"emailStartTls"`
+	GotifyUrl             OptString                     `json:"gotifyUrl"`
+	NtfyUrl               OptString                     `json:"ntfyUrl"`
+	NtfyTopic             OptString                     `json:"ntfyTopic"`
+	WebhookUrl            OptString                     `json:"webhookUrl"`
+	WebhookMethod         OptNotificationWebhookMethod  `json:"webhookMethod"`
+	WebhookHeaders        OptNotificationWebhookHeaders `json:"webhookHeaders"`
+	WebhookAuthHeaderName OptString                     `json:"webhookAuthHeaderName"`
+}
+
+// GetName returns the value of Name.
+func (s *UpdateNotificationChannelRequest) GetName() string {
+	return s.Name
+}
+
+// GetType returns the value of Type.
+func (s *UpdateNotificationChannelRequest) GetType() NotificationChannelType {
+	return s.Type
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *UpdateNotificationChannelRequest) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetSecret returns the value of Secret.
+func (s *UpdateNotificationChannelRequest) GetSecret() OptNilString {
+	return s.Secret
+}
+
+// GetEmailHost returns the value of EmailHost.
+func (s *UpdateNotificationChannelRequest) GetEmailHost() OptString {
+	return s.EmailHost
+}
+
+// GetEmailPort returns the value of EmailPort.
+func (s *UpdateNotificationChannelRequest) GetEmailPort() OptInt32 {
+	return s.EmailPort
+}
+
+// GetEmailUsername returns the value of EmailUsername.
+func (s *UpdateNotificationChannelRequest) GetEmailUsername() OptString {
+	return s.EmailUsername
+}
+
+// GetEmailFrom returns the value of EmailFrom.
+func (s *UpdateNotificationChannelRequest) GetEmailFrom() OptString {
+	return s.EmailFrom
+}
+
+// GetEmailTo returns the value of EmailTo.
+func (s *UpdateNotificationChannelRequest) GetEmailTo() []string {
+	return s.EmailTo
+}
+
+// GetEmailStartTls returns the value of EmailStartTls.
+func (s *UpdateNotificationChannelRequest) GetEmailStartTls() OptBool {
+	return s.EmailStartTls
+}
+
+// GetGotifyUrl returns the value of GotifyUrl.
+func (s *UpdateNotificationChannelRequest) GetGotifyUrl() OptString {
+	return s.GotifyUrl
+}
+
+// GetNtfyUrl returns the value of NtfyUrl.
+func (s *UpdateNotificationChannelRequest) GetNtfyUrl() OptString {
+	return s.NtfyUrl
+}
+
+// GetNtfyTopic returns the value of NtfyTopic.
+func (s *UpdateNotificationChannelRequest) GetNtfyTopic() OptString {
+	return s.NtfyTopic
+}
+
+// GetWebhookUrl returns the value of WebhookUrl.
+func (s *UpdateNotificationChannelRequest) GetWebhookUrl() OptString {
+	return s.WebhookUrl
+}
+
+// GetWebhookMethod returns the value of WebhookMethod.
+func (s *UpdateNotificationChannelRequest) GetWebhookMethod() OptNotificationWebhookMethod {
+	return s.WebhookMethod
+}
+
+// GetWebhookHeaders returns the value of WebhookHeaders.
+func (s *UpdateNotificationChannelRequest) GetWebhookHeaders() OptNotificationWebhookHeaders {
+	return s.WebhookHeaders
+}
+
+// GetWebhookAuthHeaderName returns the value of WebhookAuthHeaderName.
+func (s *UpdateNotificationChannelRequest) GetWebhookAuthHeaderName() OptString {
+	return s.WebhookAuthHeaderName
+}
+
+// SetName sets the value of Name.
+func (s *UpdateNotificationChannelRequest) SetName(val string) {
+	s.Name = val
+}
+
+// SetType sets the value of Type.
+func (s *UpdateNotificationChannelRequest) SetType(val NotificationChannelType) {
+	s.Type = val
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *UpdateNotificationChannelRequest) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetSecret sets the value of Secret.
+func (s *UpdateNotificationChannelRequest) SetSecret(val OptNilString) {
+	s.Secret = val
+}
+
+// SetEmailHost sets the value of EmailHost.
+func (s *UpdateNotificationChannelRequest) SetEmailHost(val OptString) {
+	s.EmailHost = val
+}
+
+// SetEmailPort sets the value of EmailPort.
+func (s *UpdateNotificationChannelRequest) SetEmailPort(val OptInt32) {
+	s.EmailPort = val
+}
+
+// SetEmailUsername sets the value of EmailUsername.
+func (s *UpdateNotificationChannelRequest) SetEmailUsername(val OptString) {
+	s.EmailUsername = val
+}
+
+// SetEmailFrom sets the value of EmailFrom.
+func (s *UpdateNotificationChannelRequest) SetEmailFrom(val OptString) {
+	s.EmailFrom = val
+}
+
+// SetEmailTo sets the value of EmailTo.
+func (s *UpdateNotificationChannelRequest) SetEmailTo(val []string) {
+	s.EmailTo = val
+}
+
+// SetEmailStartTls sets the value of EmailStartTls.
+func (s *UpdateNotificationChannelRequest) SetEmailStartTls(val OptBool) {
+	s.EmailStartTls = val
+}
+
+// SetGotifyUrl sets the value of GotifyUrl.
+func (s *UpdateNotificationChannelRequest) SetGotifyUrl(val OptString) {
+	s.GotifyUrl = val
+}
+
+// SetNtfyUrl sets the value of NtfyUrl.
+func (s *UpdateNotificationChannelRequest) SetNtfyUrl(val OptString) {
+	s.NtfyUrl = val
+}
+
+// SetNtfyTopic sets the value of NtfyTopic.
+func (s *UpdateNotificationChannelRequest) SetNtfyTopic(val OptString) {
+	s.NtfyTopic = val
+}
+
+// SetWebhookUrl sets the value of WebhookUrl.
+func (s *UpdateNotificationChannelRequest) SetWebhookUrl(val OptString) {
+	s.WebhookUrl = val
+}
+
+// SetWebhookMethod sets the value of WebhookMethod.
+func (s *UpdateNotificationChannelRequest) SetWebhookMethod(val OptNotificationWebhookMethod) {
+	s.WebhookMethod = val
+}
+
+// SetWebhookHeaders sets the value of WebhookHeaders.
+func (s *UpdateNotificationChannelRequest) SetWebhookHeaders(val OptNotificationWebhookHeaders) {
+	s.WebhookHeaders = val
+}
+
+// SetWebhookAuthHeaderName sets the value of WebhookAuthHeaderName.
+func (s *UpdateNotificationChannelRequest) SetWebhookAuthHeaderName(val OptString) {
+	s.WebhookAuthHeaderName = val
+}
+
+// Ref: #/components/schemas/UpdateNotificationRouteRequest
+type UpdateNotificationRouteRequest struct {
+	Severity   NotificationLevel `json:"severity"`
+	ChannelIds []uuid.UUID       `json:"channelIds"`
+}
+
+// GetSeverity returns the value of Severity.
+func (s *UpdateNotificationRouteRequest) GetSeverity() NotificationLevel {
+	return s.Severity
+}
+
+// GetChannelIds returns the value of ChannelIds.
+func (s *UpdateNotificationRouteRequest) GetChannelIds() []uuid.UUID {
+	return s.ChannelIds
+}
+
+// SetSeverity sets the value of Severity.
+func (s *UpdateNotificationRouteRequest) SetSeverity(val NotificationLevel) {
+	s.Severity = val
+}
+
+// SetChannelIds sets the value of ChannelIds.
+func (s *UpdateNotificationRouteRequest) SetChannelIds(val []uuid.UUID) {
+	s.ChannelIds = val
+}
+
+// Ref: #/components/schemas/UpdateQuietHoursRequest
+type UpdateQuietHoursRequest struct {
+	Enabled bool   `json:"enabled"`
+	Start   string `json:"start"`
+	End     string `json:"end"`
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *UpdateQuietHoursRequest) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetStart returns the value of Start.
+func (s *UpdateQuietHoursRequest) GetStart() string {
+	return s.Start
+}
+
+// GetEnd returns the value of End.
+func (s *UpdateQuietHoursRequest) GetEnd() string {
+	return s.End
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *UpdateQuietHoursRequest) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetStart sets the value of Start.
+func (s *UpdateQuietHoursRequest) SetStart(val string) {
+	s.Start = val
+}
+
+// SetEnd sets the value of End.
+func (s *UpdateQuietHoursRequest) SetEnd(val string) {
+	s.End = val
 }
 
 // Ref: #/components/schemas/User

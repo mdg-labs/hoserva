@@ -39,6 +39,50 @@ type MachineKeyCheck struct {
 	CreatedAt  string `json:"created_at"`
 }
 
+type NotifyChannel struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Enabled   int64  `json:"enabled"`
+	Config    string `json:"config"`
+	Secret    []byte `json:"secret"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type NotifyDelivery struct {
+	ID            string         `json:"id"`
+	ChannelID     string         `json:"channel_id"`
+	EventType     string         `json:"event_type"`
+	Severity      string         `json:"severity"`
+	Title         string         `json:"title"`
+	Message       string         `json:"message"`
+	Status        string         `json:"status"`
+	Attempts      int64          `json:"attempts"`
+	LastError     sql.NullString `json:"last_error"`
+	CreatedAt     string         `json:"created_at"`
+	NextAttemptAt string         `json:"next_attempt_at"`
+	DeliveredAt   sql.NullString `json:"delivered_at"`
+}
+
+type NotifyEventSeverity struct {
+	EventType string `json:"event_type"`
+	Severity  string `json:"severity"`
+}
+
+type NotifyQuietHour struct {
+	ID        int64  `json:"id"`
+	Enabled   int64  `json:"enabled"`
+	StartTime string `json:"start_time"`
+	EndTime   string `json:"end_time"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+type NotifyRoute struct {
+	EventType string `json:"event_type"`
+	ChannelID string `json:"channel_id"`
+}
+
 type SchemaInfo struct {
 	ID             int64  `json:"id"`
 	InstallationID string `json:"installation_id"`

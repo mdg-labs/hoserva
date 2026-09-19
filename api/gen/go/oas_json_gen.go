@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-faster/errors"
 	"github.com/go-faster/jx"
+	"github.com/google/uuid"
 	"github.com/ogen-go/ogen/json"
 	"github.com/ogen-go/ogen/validate"
 )
@@ -122,6 +123,387 @@ func (s *CreateFirstAdminRequest) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *CreateFirstAdminRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *CreateNotificationChannelRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CreateNotificationChannelRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("name")
+		e.Str(s.Name)
+	}
+	{
+		e.FieldStart("type")
+		s.Type.Encode(e)
+	}
+	{
+		e.FieldStart("enabled")
+		e.Bool(s.Enabled)
+	}
+	{
+		if s.Secret.Set {
+			e.FieldStart("secret")
+			s.Secret.Encode(e)
+		}
+	}
+	{
+		if s.EmailHost.Set {
+			e.FieldStart("emailHost")
+			s.EmailHost.Encode(e)
+		}
+	}
+	{
+		if s.EmailPort.Set {
+			e.FieldStart("emailPort")
+			s.EmailPort.Encode(e)
+		}
+	}
+	{
+		if s.EmailUsername.Set {
+			e.FieldStart("emailUsername")
+			s.EmailUsername.Encode(e)
+		}
+	}
+	{
+		if s.EmailFrom.Set {
+			e.FieldStart("emailFrom")
+			s.EmailFrom.Encode(e)
+		}
+	}
+	{
+		if s.EmailTo != nil {
+			e.FieldStart("emailTo")
+			e.ArrStart()
+			for _, elem := range s.EmailTo {
+				e.Str(elem)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
+		if s.EmailStartTls.Set {
+			e.FieldStart("emailStartTls")
+			s.EmailStartTls.Encode(e)
+		}
+	}
+	{
+		if s.GotifyUrl.Set {
+			e.FieldStart("gotifyUrl")
+			s.GotifyUrl.Encode(e)
+		}
+	}
+	{
+		if s.NtfyUrl.Set {
+			e.FieldStart("ntfyUrl")
+			s.NtfyUrl.Encode(e)
+		}
+	}
+	{
+		if s.NtfyTopic.Set {
+			e.FieldStart("ntfyTopic")
+			s.NtfyTopic.Encode(e)
+		}
+	}
+	{
+		if s.WebhookUrl.Set {
+			e.FieldStart("webhookUrl")
+			s.WebhookUrl.Encode(e)
+		}
+	}
+	{
+		if s.WebhookMethod.Set {
+			e.FieldStart("webhookMethod")
+			s.WebhookMethod.Encode(e)
+		}
+	}
+	{
+		if s.WebhookHeaders.Set {
+			e.FieldStart("webhookHeaders")
+			s.WebhookHeaders.Encode(e)
+		}
+	}
+	{
+		if s.WebhookAuthHeaderName.Set {
+			e.FieldStart("webhookAuthHeaderName")
+			s.WebhookAuthHeaderName.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfCreateNotificationChannelRequest = [17]string{
+	0:  "name",
+	1:  "type",
+	2:  "enabled",
+	3:  "secret",
+	4:  "emailHost",
+	5:  "emailPort",
+	6:  "emailUsername",
+	7:  "emailFrom",
+	8:  "emailTo",
+	9:  "emailStartTls",
+	10: "gotifyUrl",
+	11: "ntfyUrl",
+	12: "ntfyTopic",
+	13: "webhookUrl",
+	14: "webhookMethod",
+	15: "webhookHeaders",
+	16: "webhookAuthHeaderName",
+}
+
+// Decode decodes CreateNotificationChannelRequest from json.
+func (s *CreateNotificationChannelRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CreateNotificationChannelRequest to nil")
+	}
+	var requiredBitSet [3]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "name":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Name = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"name\"")
+			}
+		case "type":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Type.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"type\"")
+			}
+		case "enabled":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Bool()
+				s.Enabled = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"enabled\"")
+			}
+		case "secret":
+			if err := func() error {
+				s.Secret.Reset()
+				if err := s.Secret.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"secret\"")
+			}
+		case "emailHost":
+			if err := func() error {
+				s.EmailHost.Reset()
+				if err := s.EmailHost.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailHost\"")
+			}
+		case "emailPort":
+			if err := func() error {
+				s.EmailPort.Reset()
+				if err := s.EmailPort.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailPort\"")
+			}
+		case "emailUsername":
+			if err := func() error {
+				s.EmailUsername.Reset()
+				if err := s.EmailUsername.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailUsername\"")
+			}
+		case "emailFrom":
+			if err := func() error {
+				s.EmailFrom.Reset()
+				if err := s.EmailFrom.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailFrom\"")
+			}
+		case "emailTo":
+			if err := func() error {
+				s.EmailTo = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.EmailTo = append(s.EmailTo, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailTo\"")
+			}
+		case "emailStartTls":
+			if err := func() error {
+				s.EmailStartTls.Reset()
+				if err := s.EmailStartTls.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailStartTls\"")
+			}
+		case "gotifyUrl":
+			if err := func() error {
+				s.GotifyUrl.Reset()
+				if err := s.GotifyUrl.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"gotifyUrl\"")
+			}
+		case "ntfyUrl":
+			if err := func() error {
+				s.NtfyUrl.Reset()
+				if err := s.NtfyUrl.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"ntfyUrl\"")
+			}
+		case "ntfyTopic":
+			if err := func() error {
+				s.NtfyTopic.Reset()
+				if err := s.NtfyTopic.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"ntfyTopic\"")
+			}
+		case "webhookUrl":
+			if err := func() error {
+				s.WebhookUrl.Reset()
+				if err := s.WebhookUrl.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookUrl\"")
+			}
+		case "webhookMethod":
+			if err := func() error {
+				s.WebhookMethod.Reset()
+				if err := s.WebhookMethod.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookMethod\"")
+			}
+		case "webhookHeaders":
+			if err := func() error {
+				s.WebhookHeaders.Reset()
+				if err := s.WebhookHeaders.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookHeaders\"")
+			}
+		case "webhookAuthHeaderName":
+			if err := func() error {
+				s.WebhookAuthHeaderName.Reset()
+				if err := s.WebhookAuthHeaderName.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookAuthHeaderName\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CreateNotificationChannelRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [3]uint8{
+		0b00000111,
+		0b00000000,
+		0b00000000,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfCreateNotificationChannelRequest) {
+					name = jsonFieldsNameOfCreateNotificationChannelRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CreateNotificationChannelRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CreateNotificationChannelRequest) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -310,6 +692,112 @@ func (s ErrorDetails) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *ErrorDetails) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *GetNotificationRoutingOK) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *GetNotificationRoutingOK) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("routing")
+		e.ArrStart()
+		for _, elem := range s.Routing {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfGetNotificationRoutingOK = [1]string{
+	0: "routing",
+}
+
+// Decode decodes GetNotificationRoutingOK from json.
+func (s *GetNotificationRoutingOK) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode GetNotificationRoutingOK to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "routing":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				s.Routing = make([]NotificationRoutingEntry, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem NotificationRoutingEntry
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Routing = append(s.Routing, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"routing\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode GetNotificationRoutingOK")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000001,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfGetNotificationRoutingOK) {
+					name = jsonFieldsNameOfGetNotificationRoutingOK[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *GetNotificationRoutingOK) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *GetNotificationRoutingOK) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -858,6 +1346,112 @@ func (s *ListJobsOK) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *ListNotificationChannelsOK) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ListNotificationChannelsOK) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("channels")
+		e.ArrStart()
+		for _, elem := range s.Channels {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfListNotificationChannelsOK = [1]string{
+	0: "channels",
+}
+
+// Decode decodes ListNotificationChannelsOK from json.
+func (s *ListNotificationChannelsOK) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ListNotificationChannelsOK to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "channels":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				s.Channels = make([]NotificationChannel, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem NotificationChannel
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Channels = append(s.Channels, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"channels\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ListNotificationChannelsOK")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000001,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfListNotificationChannelsOK) {
+					name = jsonFieldsNameOfListNotificationChannelsOK[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ListNotificationChannelsOK) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ListNotificationChannelsOK) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *LoginRequest) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -987,6 +1581,1145 @@ func (s *LoginRequest) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode implements json.Marshaler.
+func (s *NotificationChannel) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *NotificationChannel) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("id")
+		json.EncodeUUID(e, s.ID)
+	}
+	{
+		e.FieldStart("name")
+		e.Str(s.Name)
+	}
+	{
+		e.FieldStart("type")
+		s.Type.Encode(e)
+	}
+	{
+		e.FieldStart("enabled")
+		e.Bool(s.Enabled)
+	}
+	{
+		e.FieldStart("hasSecret")
+		e.Bool(s.HasSecret)
+	}
+	{
+		if s.EmailHost.Set {
+			e.FieldStart("emailHost")
+			s.EmailHost.Encode(e)
+		}
+	}
+	{
+		if s.EmailPort.Set {
+			e.FieldStart("emailPort")
+			s.EmailPort.Encode(e)
+		}
+	}
+	{
+		if s.EmailUsername.Set {
+			e.FieldStart("emailUsername")
+			s.EmailUsername.Encode(e)
+		}
+	}
+	{
+		if s.EmailFrom.Set {
+			e.FieldStart("emailFrom")
+			s.EmailFrom.Encode(e)
+		}
+	}
+	{
+		if s.EmailTo != nil {
+			e.FieldStart("emailTo")
+			e.ArrStart()
+			for _, elem := range s.EmailTo {
+				e.Str(elem)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
+		if s.EmailStartTls.Set {
+			e.FieldStart("emailStartTls")
+			s.EmailStartTls.Encode(e)
+		}
+	}
+	{
+		if s.GotifyUrl.Set {
+			e.FieldStart("gotifyUrl")
+			s.GotifyUrl.Encode(e)
+		}
+	}
+	{
+		if s.NtfyUrl.Set {
+			e.FieldStart("ntfyUrl")
+			s.NtfyUrl.Encode(e)
+		}
+	}
+	{
+		if s.NtfyTopic.Set {
+			e.FieldStart("ntfyTopic")
+			s.NtfyTopic.Encode(e)
+		}
+	}
+	{
+		if s.WebhookUrl.Set {
+			e.FieldStart("webhookUrl")
+			s.WebhookUrl.Encode(e)
+		}
+	}
+	{
+		if s.WebhookMethod.Set {
+			e.FieldStart("webhookMethod")
+			s.WebhookMethod.Encode(e)
+		}
+	}
+	{
+		if s.WebhookHeaders.Set {
+			e.FieldStart("webhookHeaders")
+			s.WebhookHeaders.Encode(e)
+		}
+	}
+	{
+		if s.WebhookAuthHeaderName.Set {
+			e.FieldStart("webhookAuthHeaderName")
+			s.WebhookAuthHeaderName.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("createdAt")
+		json.EncodeDateTime(e, s.CreatedAt)
+	}
+	{
+		e.FieldStart("updatedAt")
+		json.EncodeDateTime(e, s.UpdatedAt)
+	}
+}
+
+var jsonFieldsNameOfNotificationChannel = [20]string{
+	0:  "id",
+	1:  "name",
+	2:  "type",
+	3:  "enabled",
+	4:  "hasSecret",
+	5:  "emailHost",
+	6:  "emailPort",
+	7:  "emailUsername",
+	8:  "emailFrom",
+	9:  "emailTo",
+	10: "emailStartTls",
+	11: "gotifyUrl",
+	12: "ntfyUrl",
+	13: "ntfyTopic",
+	14: "webhookUrl",
+	15: "webhookMethod",
+	16: "webhookHeaders",
+	17: "webhookAuthHeaderName",
+	18: "createdAt",
+	19: "updatedAt",
+}
+
+// Decode decodes NotificationChannel from json.
+func (s *NotificationChannel) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode NotificationChannel to nil")
+	}
+	var requiredBitSet [3]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "id":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := json.DecodeUUID(d)
+				s.ID = v
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"id\"")
+			}
+		case "name":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.Name = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"name\"")
+			}
+		case "type":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				if err := s.Type.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"type\"")
+			}
+		case "enabled":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Bool()
+				s.Enabled = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"enabled\"")
+			}
+		case "hasSecret":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				v, err := d.Bool()
+				s.HasSecret = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"hasSecret\"")
+			}
+		case "emailHost":
+			if err := func() error {
+				s.EmailHost.Reset()
+				if err := s.EmailHost.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailHost\"")
+			}
+		case "emailPort":
+			if err := func() error {
+				s.EmailPort.Reset()
+				if err := s.EmailPort.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailPort\"")
+			}
+		case "emailUsername":
+			if err := func() error {
+				s.EmailUsername.Reset()
+				if err := s.EmailUsername.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailUsername\"")
+			}
+		case "emailFrom":
+			if err := func() error {
+				s.EmailFrom.Reset()
+				if err := s.EmailFrom.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailFrom\"")
+			}
+		case "emailTo":
+			if err := func() error {
+				s.EmailTo = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.EmailTo = append(s.EmailTo, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailTo\"")
+			}
+		case "emailStartTls":
+			if err := func() error {
+				s.EmailStartTls.Reset()
+				if err := s.EmailStartTls.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailStartTls\"")
+			}
+		case "gotifyUrl":
+			if err := func() error {
+				s.GotifyUrl.Reset()
+				if err := s.GotifyUrl.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"gotifyUrl\"")
+			}
+		case "ntfyUrl":
+			if err := func() error {
+				s.NtfyUrl.Reset()
+				if err := s.NtfyUrl.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"ntfyUrl\"")
+			}
+		case "ntfyTopic":
+			if err := func() error {
+				s.NtfyTopic.Reset()
+				if err := s.NtfyTopic.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"ntfyTopic\"")
+			}
+		case "webhookUrl":
+			if err := func() error {
+				s.WebhookUrl.Reset()
+				if err := s.WebhookUrl.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookUrl\"")
+			}
+		case "webhookMethod":
+			if err := func() error {
+				s.WebhookMethod.Reset()
+				if err := s.WebhookMethod.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookMethod\"")
+			}
+		case "webhookHeaders":
+			if err := func() error {
+				s.WebhookHeaders.Reset()
+				if err := s.WebhookHeaders.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookHeaders\"")
+			}
+		case "webhookAuthHeaderName":
+			if err := func() error {
+				s.WebhookAuthHeaderName.Reset()
+				if err := s.WebhookAuthHeaderName.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookAuthHeaderName\"")
+			}
+		case "createdAt":
+			requiredBitSet[2] |= 1 << 2
+			if err := func() error {
+				v, err := json.DecodeDateTime(d)
+				s.CreatedAt = v
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"createdAt\"")
+			}
+		case "updatedAt":
+			requiredBitSet[2] |= 1 << 3
+			if err := func() error {
+				v, err := json.DecodeDateTime(d)
+				s.UpdatedAt = v
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"updatedAt\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode NotificationChannel")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [3]uint8{
+		0b00011111,
+		0b00000000,
+		0b00001100,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfNotificationChannel) {
+					name = jsonFieldsNameOfNotificationChannel[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *NotificationChannel) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NotificationChannel) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes NotificationChannelType as json.
+func (s NotificationChannelType) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes NotificationChannelType from json.
+func (s *NotificationChannelType) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode NotificationChannelType to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch NotificationChannelType(v) {
+	case NotificationChannelTypeEmail:
+		*s = NotificationChannelTypeEmail
+	case NotificationChannelTypeGotify:
+		*s = NotificationChannelTypeGotify
+	case NotificationChannelTypeNtfy:
+		*s = NotificationChannelTypeNtfy
+	case NotificationChannelTypeDiscord:
+		*s = NotificationChannelTypeDiscord
+	case NotificationChannelTypeWebhook:
+		*s = NotificationChannelTypeWebhook
+	default:
+		*s = NotificationChannelType(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NotificationChannelType) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NotificationChannelType) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes NotificationEventType as json.
+func (s NotificationEventType) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes NotificationEventType from json.
+func (s *NotificationEventType) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode NotificationEventType to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch NotificationEventType(v) {
+	case NotificationEventTypeSmartWarning:
+		*s = NotificationEventTypeSmartWarning
+	case NotificationEventTypeSmartFailure:
+		*s = NotificationEventTypeSmartFailure
+	case NotificationEventTypeDiskOffline:
+		*s = NotificationEventTypeDiskOffline
+	case NotificationEventTypeArrayDegraded:
+		*s = NotificationEventTypeArrayDegraded
+	case NotificationEventTypeSyncSucceeded:
+		*s = NotificationEventTypeSyncSucceeded
+	case NotificationEventTypeSyncFailed:
+		*s = NotificationEventTypeSyncFailed
+	case NotificationEventTypeSyncBlockedThreshold:
+		*s = NotificationEventTypeSyncBlockedThreshold
+	case NotificationEventTypeScrubErrorsFound:
+		*s = NotificationEventTypeScrubErrorsFound
+	case NotificationEventTypePoolAboveThreshold:
+		*s = NotificationEventTypePoolAboveThreshold
+	case NotificationEventTypeDiskNearMinfreespace:
+		*s = NotificationEventTypeDiskNearMinfreespace
+	case NotificationEventTypeCacheAboveThreshold:
+		*s = NotificationEventTypeCacheAboveThreshold
+	case NotificationEventTypeMoverSkippingFiles:
+		*s = NotificationEventTypeMoverSkippingFiles
+	case NotificationEventTypeConfigDriftDetected:
+		*s = NotificationEventTypeConfigDriftDetected
+	case NotificationEventTypeContainerUnhealthy:
+		*s = NotificationEventTypeContainerUnhealthy
+	case NotificationEventTypeContainerUpdateAvailable:
+		*s = NotificationEventTypeContainerUpdateAvailable
+	case NotificationEventTypeHoservaUpdateAvailable:
+		*s = NotificationEventTypeHoservaUpdateAvailable
+	case NotificationEventTypeRebootRequired:
+		*s = NotificationEventTypeRebootRequired
+	case NotificationEventTypeUpsOnBattery:
+		*s = NotificationEventTypeUpsOnBattery
+	case NotificationEventTypeUpsBatteryLow:
+		*s = NotificationEventTypeUpsBatteryLow
+	case NotificationEventTypeLoginFailureBurst:
+		*s = NotificationEventTypeLoginFailureBurst
+	case NotificationEventTypeCredentialReset:
+		*s = NotificationEventTypeCredentialReset
+	case NotificationEventTypeCertificateExpiring:
+		*s = NotificationEventTypeCertificateExpiring
+	case NotificationEventTypeConfigBackupFailed:
+		*s = NotificationEventTypeConfigBackupFailed
+	case NotificationEventTypeAppdataBackupFailed:
+		*s = NotificationEventTypeAppdataBackupFailed
+	case NotificationEventTypeBackupDestinationStale:
+		*s = NotificationEventTypeBackupDestinationStale
+	case NotificationEventTypeRestoreDrillFailed:
+		*s = NotificationEventTypeRestoreDrillFailed
+	default:
+		*s = NotificationEventType(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NotificationEventType) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NotificationEventType) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes NotificationLevel as json.
+func (s NotificationLevel) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes NotificationLevel from json.
+func (s *NotificationLevel) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode NotificationLevel to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch NotificationLevel(v) {
+	case NotificationLevelInfo:
+		*s = NotificationLevelInfo
+	case NotificationLevelWarning:
+		*s = NotificationLevelWarning
+	case NotificationLevelError:
+		*s = NotificationLevelError
+	case NotificationLevelCritical:
+		*s = NotificationLevelCritical
+	default:
+		*s = NotificationLevel(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NotificationLevel) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NotificationLevel) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *NotificationQuietHours) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *NotificationQuietHours) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("enabled")
+		e.Bool(s.Enabled)
+	}
+	{
+		e.FieldStart("start")
+		e.Str(s.Start)
+	}
+	{
+		e.FieldStart("end")
+		e.Str(s.End)
+	}
+	{
+		e.FieldStart("criticalAlwaysDelivers")
+		e.Bool(s.CriticalAlwaysDelivers)
+	}
+}
+
+var jsonFieldsNameOfNotificationQuietHours = [4]string{
+	0: "enabled",
+	1: "start",
+	2: "end",
+	3: "criticalAlwaysDelivers",
+}
+
+// Decode decodes NotificationQuietHours from json.
+func (s *NotificationQuietHours) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode NotificationQuietHours to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "enabled":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Bool()
+				s.Enabled = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"enabled\"")
+			}
+		case "start":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.Start = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"start\"")
+			}
+		case "end":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Str()
+				s.End = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"end\"")
+			}
+		case "criticalAlwaysDelivers":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Bool()
+				s.CriticalAlwaysDelivers = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"criticalAlwaysDelivers\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode NotificationQuietHours")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00001111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfNotificationQuietHours) {
+					name = jsonFieldsNameOfNotificationQuietHours[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *NotificationQuietHours) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NotificationQuietHours) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *NotificationRoutingEntry) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *NotificationRoutingEntry) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("eventType")
+		s.EventType.Encode(e)
+	}
+	{
+		e.FieldStart("severity")
+		s.Severity.Encode(e)
+	}
+	{
+		e.FieldStart("channelIds")
+		e.ArrStart()
+		for _, elem := range s.ChannelIds {
+			json.EncodeUUID(e, elem)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfNotificationRoutingEntry = [3]string{
+	0: "eventType",
+	1: "severity",
+	2: "channelIds",
+}
+
+// Decode decodes NotificationRoutingEntry from json.
+func (s *NotificationRoutingEntry) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode NotificationRoutingEntry to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "eventType":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.EventType.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"eventType\"")
+			}
+		case "severity":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Severity.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"severity\"")
+			}
+		case "channelIds":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				s.ChannelIds = make([]uuid.UUID, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem uuid.UUID
+					v, err := json.DecodeUUID(d)
+					elem = v
+					if err != nil {
+						return err
+					}
+					s.ChannelIds = append(s.ChannelIds, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"channelIds\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode NotificationRoutingEntry")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfNotificationRoutingEntry) {
+					name = jsonFieldsNameOfNotificationRoutingEntry[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *NotificationRoutingEntry) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NotificationRoutingEntry) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *NotificationTestResult) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *NotificationTestResult) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("success")
+		e.Bool(s.Success)
+	}
+	{
+		if s.Error.Set {
+			e.FieldStart("error")
+			s.Error.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfNotificationTestResult = [2]string{
+	0: "success",
+	1: "error",
+}
+
+// Decode decodes NotificationTestResult from json.
+func (s *NotificationTestResult) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode NotificationTestResult to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "success":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Bool()
+				s.Success = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"success\"")
+			}
+		case "error":
+			if err := func() error {
+				s.Error.Reset()
+				if err := s.Error.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"error\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode NotificationTestResult")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000001,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfNotificationTestResult) {
+					name = jsonFieldsNameOfNotificationTestResult[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *NotificationTestResult) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NotificationTestResult) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s NotificationWebhookHeaders) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields implements json.Marshaler.
+func (s NotificationWebhookHeaders) encodeFields(e *jx.Encoder) {
+	for k, elem := range s {
+		e.FieldStart(k)
+
+		e.Str(elem)
+	}
+}
+
+// Decode decodes NotificationWebhookHeaders from json.
+func (s *NotificationWebhookHeaders) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode NotificationWebhookHeaders to nil")
+	}
+	m := s.init()
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		var elem string
+		if err := func() error {
+			v, err := d.Str()
+			elem = string(v)
+			if err != nil {
+				return err
+			}
+			return nil
+		}(); err != nil {
+			return errors.Wrapf(err, "decode field %q", k)
+		}
+		m[string(k)] = elem
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode NotificationWebhookHeaders")
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NotificationWebhookHeaders) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NotificationWebhookHeaders) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes NotificationWebhookMethod as json.
+func (s NotificationWebhookMethod) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes NotificationWebhookMethod from json.
+func (s *NotificationWebhookMethod) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode NotificationWebhookMethod to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch NotificationWebhookMethod(v) {
+	case NotificationWebhookMethodPOST:
+		*s = NotificationWebhookMethodPOST
+	case NotificationWebhookMethodPUT:
+		*s = NotificationWebhookMethodPUT
+	default:
+		*s = NotificationWebhookMethod(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NotificationWebhookMethod) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NotificationWebhookMethod) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes bool as json.
+func (o OptBool) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Bool(bool(o.Value))
+}
+
+// Decode decodes bool from json.
+func (o *OptBool) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptBool to nil")
+	}
+	o.Set = true
+	v, err := d.Bool()
+	if err != nil {
+		return err
+	}
+	o.Value = bool(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptBool) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptBool) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes ErrorDetails as json.
 func (o OptErrorDetails) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -1017,6 +2750,41 @@ func (s OptErrorDetails) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptErrorDetails) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes int32 as json.
+func (o OptInt32) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Int32(int32(o.Value))
+}
+
+// Decode decodes int32 from json.
+func (o *OptInt32) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptInt32 to nil")
+	}
+	o.Set = true
+	v, err := d.Int32()
+	if err != nil {
+		return err
+	}
+	o.Value = int32(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptInt32) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptInt32) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -1168,6 +2936,124 @@ func (s OptNilInt32) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptNilInt32) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes string as json.
+func (o OptNilString) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	if o.Null {
+		e.Null()
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes string from json.
+func (o *OptNilString) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptNilString to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v string
+		o.Value = v
+		o.Set = true
+		o.Null = true
+		return nil
+	}
+	o.Set = true
+	o.Null = false
+	v, err := d.Str()
+	if err != nil {
+		return err
+	}
+	o.Value = string(v)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptNilString) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptNilString) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes NotificationWebhookHeaders as json.
+func (o OptNotificationWebhookHeaders) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes NotificationWebhookHeaders from json.
+func (o *OptNotificationWebhookHeaders) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptNotificationWebhookHeaders to nil")
+	}
+	o.Set = true
+	o.Value = make(NotificationWebhookHeaders)
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptNotificationWebhookHeaders) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptNotificationWebhookHeaders) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes NotificationWebhookMethod as json.
+func (o OptNotificationWebhookMethod) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes NotificationWebhookMethod from json.
+func (o *OptNotificationWebhookMethod) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptNotificationWebhookMethod to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptNotificationWebhookMethod) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptNotificationWebhookMethod) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -1588,6 +3474,640 @@ func (s *TotpEnrollResponse) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *TotpEnrollResponse) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *UpdateNotificationChannelRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *UpdateNotificationChannelRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("name")
+		e.Str(s.Name)
+	}
+	{
+		e.FieldStart("type")
+		s.Type.Encode(e)
+	}
+	{
+		e.FieldStart("enabled")
+		e.Bool(s.Enabled)
+	}
+	{
+		if s.Secret.Set {
+			e.FieldStart("secret")
+			s.Secret.Encode(e)
+		}
+	}
+	{
+		if s.EmailHost.Set {
+			e.FieldStart("emailHost")
+			s.EmailHost.Encode(e)
+		}
+	}
+	{
+		if s.EmailPort.Set {
+			e.FieldStart("emailPort")
+			s.EmailPort.Encode(e)
+		}
+	}
+	{
+		if s.EmailUsername.Set {
+			e.FieldStart("emailUsername")
+			s.EmailUsername.Encode(e)
+		}
+	}
+	{
+		if s.EmailFrom.Set {
+			e.FieldStart("emailFrom")
+			s.EmailFrom.Encode(e)
+		}
+	}
+	{
+		if s.EmailTo != nil {
+			e.FieldStart("emailTo")
+			e.ArrStart()
+			for _, elem := range s.EmailTo {
+				e.Str(elem)
+			}
+			e.ArrEnd()
+		}
+	}
+	{
+		if s.EmailStartTls.Set {
+			e.FieldStart("emailStartTls")
+			s.EmailStartTls.Encode(e)
+		}
+	}
+	{
+		if s.GotifyUrl.Set {
+			e.FieldStart("gotifyUrl")
+			s.GotifyUrl.Encode(e)
+		}
+	}
+	{
+		if s.NtfyUrl.Set {
+			e.FieldStart("ntfyUrl")
+			s.NtfyUrl.Encode(e)
+		}
+	}
+	{
+		if s.NtfyTopic.Set {
+			e.FieldStart("ntfyTopic")
+			s.NtfyTopic.Encode(e)
+		}
+	}
+	{
+		if s.WebhookUrl.Set {
+			e.FieldStart("webhookUrl")
+			s.WebhookUrl.Encode(e)
+		}
+	}
+	{
+		if s.WebhookMethod.Set {
+			e.FieldStart("webhookMethod")
+			s.WebhookMethod.Encode(e)
+		}
+	}
+	{
+		if s.WebhookHeaders.Set {
+			e.FieldStart("webhookHeaders")
+			s.WebhookHeaders.Encode(e)
+		}
+	}
+	{
+		if s.WebhookAuthHeaderName.Set {
+			e.FieldStart("webhookAuthHeaderName")
+			s.WebhookAuthHeaderName.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfUpdateNotificationChannelRequest = [17]string{
+	0:  "name",
+	1:  "type",
+	2:  "enabled",
+	3:  "secret",
+	4:  "emailHost",
+	5:  "emailPort",
+	6:  "emailUsername",
+	7:  "emailFrom",
+	8:  "emailTo",
+	9:  "emailStartTls",
+	10: "gotifyUrl",
+	11: "ntfyUrl",
+	12: "ntfyTopic",
+	13: "webhookUrl",
+	14: "webhookMethod",
+	15: "webhookHeaders",
+	16: "webhookAuthHeaderName",
+}
+
+// Decode decodes UpdateNotificationChannelRequest from json.
+func (s *UpdateNotificationChannelRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UpdateNotificationChannelRequest to nil")
+	}
+	var requiredBitSet [3]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "name":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Name = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"name\"")
+			}
+		case "type":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Type.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"type\"")
+			}
+		case "enabled":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Bool()
+				s.Enabled = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"enabled\"")
+			}
+		case "secret":
+			if err := func() error {
+				s.Secret.Reset()
+				if err := s.Secret.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"secret\"")
+			}
+		case "emailHost":
+			if err := func() error {
+				s.EmailHost.Reset()
+				if err := s.EmailHost.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailHost\"")
+			}
+		case "emailPort":
+			if err := func() error {
+				s.EmailPort.Reset()
+				if err := s.EmailPort.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailPort\"")
+			}
+		case "emailUsername":
+			if err := func() error {
+				s.EmailUsername.Reset()
+				if err := s.EmailUsername.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailUsername\"")
+			}
+		case "emailFrom":
+			if err := func() error {
+				s.EmailFrom.Reset()
+				if err := s.EmailFrom.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailFrom\"")
+			}
+		case "emailTo":
+			if err := func() error {
+				s.EmailTo = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.EmailTo = append(s.EmailTo, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailTo\"")
+			}
+		case "emailStartTls":
+			if err := func() error {
+				s.EmailStartTls.Reset()
+				if err := s.EmailStartTls.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"emailStartTls\"")
+			}
+		case "gotifyUrl":
+			if err := func() error {
+				s.GotifyUrl.Reset()
+				if err := s.GotifyUrl.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"gotifyUrl\"")
+			}
+		case "ntfyUrl":
+			if err := func() error {
+				s.NtfyUrl.Reset()
+				if err := s.NtfyUrl.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"ntfyUrl\"")
+			}
+		case "ntfyTopic":
+			if err := func() error {
+				s.NtfyTopic.Reset()
+				if err := s.NtfyTopic.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"ntfyTopic\"")
+			}
+		case "webhookUrl":
+			if err := func() error {
+				s.WebhookUrl.Reset()
+				if err := s.WebhookUrl.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookUrl\"")
+			}
+		case "webhookMethod":
+			if err := func() error {
+				s.WebhookMethod.Reset()
+				if err := s.WebhookMethod.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookMethod\"")
+			}
+		case "webhookHeaders":
+			if err := func() error {
+				s.WebhookHeaders.Reset()
+				if err := s.WebhookHeaders.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookHeaders\"")
+			}
+		case "webhookAuthHeaderName":
+			if err := func() error {
+				s.WebhookAuthHeaderName.Reset()
+				if err := s.WebhookAuthHeaderName.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"webhookAuthHeaderName\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode UpdateNotificationChannelRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [3]uint8{
+		0b00000111,
+		0b00000000,
+		0b00000000,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfUpdateNotificationChannelRequest) {
+					name = jsonFieldsNameOfUpdateNotificationChannelRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *UpdateNotificationChannelRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UpdateNotificationChannelRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *UpdateNotificationRouteRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *UpdateNotificationRouteRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("severity")
+		s.Severity.Encode(e)
+	}
+	{
+		e.FieldStart("channelIds")
+		e.ArrStart()
+		for _, elem := range s.ChannelIds {
+			json.EncodeUUID(e, elem)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfUpdateNotificationRouteRequest = [2]string{
+	0: "severity",
+	1: "channelIds",
+}
+
+// Decode decodes UpdateNotificationRouteRequest from json.
+func (s *UpdateNotificationRouteRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UpdateNotificationRouteRequest to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "severity":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.Severity.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"severity\"")
+			}
+		case "channelIds":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				s.ChannelIds = make([]uuid.UUID, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem uuid.UUID
+					v, err := json.DecodeUUID(d)
+					elem = v
+					if err != nil {
+						return err
+					}
+					s.ChannelIds = append(s.ChannelIds, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"channelIds\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode UpdateNotificationRouteRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfUpdateNotificationRouteRequest) {
+					name = jsonFieldsNameOfUpdateNotificationRouteRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *UpdateNotificationRouteRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UpdateNotificationRouteRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *UpdateQuietHoursRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *UpdateQuietHoursRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("enabled")
+		e.Bool(s.Enabled)
+	}
+	{
+		e.FieldStart("start")
+		e.Str(s.Start)
+	}
+	{
+		e.FieldStart("end")
+		e.Str(s.End)
+	}
+}
+
+var jsonFieldsNameOfUpdateQuietHoursRequest = [3]string{
+	0: "enabled",
+	1: "start",
+	2: "end",
+}
+
+// Decode decodes UpdateQuietHoursRequest from json.
+func (s *UpdateQuietHoursRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UpdateQuietHoursRequest to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "enabled":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Bool()
+				s.Enabled = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"enabled\"")
+			}
+		case "start":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.Start = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"start\"")
+			}
+		case "end":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Str()
+				s.End = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"end\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode UpdateQuietHoursRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfUpdateQuietHoursRequest) {
+					name = jsonFieldsNameOfUpdateQuietHoursRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *UpdateQuietHoursRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UpdateQuietHoursRequest) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

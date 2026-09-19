@@ -44,6 +44,26 @@ func (UnimplementedHandler) CreateFirstAdmin(ctx context.Context, req *CreateFir
 	return r, ht.ErrNotImplemented
 }
 
+// CreateNotificationChannel implements createNotificationChannel operation.
+//
+// A credential supplied in `secret` (Q28) is encrypted with the machine key before it reaches the
+// database and is never returned by any later read — `hasSecret` on the response is the only trace
+// of it.
+//
+// POST /notifications/channels
+func (UnimplementedHandler) CreateNotificationChannel(ctx context.Context, req *CreateNotificationChannelRequest) (r *NotificationChannel, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// DeleteNotificationChannel implements deleteNotificationChannel operation.
+//
+// Also removes every routing entry that named this channel.
+//
+// DELETE /notifications/channels/{channelId}
+func (UnimplementedHandler) DeleteNotificationChannel(ctx context.Context, params DeleteNotificationChannelParams) error {
+	return ht.ErrNotImplemented
+}
+
 // EnrollTotp implements enrollTotp operation.
 //
 // Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
@@ -87,6 +107,35 @@ func (UnimplementedHandler) GetJobLog(ctx context.Context, params GetJobLogParam
 	return r, ht.ErrNotImplemented
 }
 
+// GetNotificationChannel implements getNotificationChannel operation.
+//
+// A single channel's current configuration, by id, secret excluded.
+//
+// GET /notifications/channels/{channelId}
+func (UnimplementedHandler) GetNotificationChannel(ctx context.Context, params GetNotificationChannelParams) (r *NotificationChannel, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetNotificationRouting implements getNotificationRouting operation.
+//
+// One entry per event type in doc 03 §8.3's fixed catalog, in the order that doc lists them — every
+// event type appears even before it has ever been routed anywhere, with its compiled-in default
+// severity and an empty channel list.
+//
+// GET /notifications/routing
+func (UnimplementedHandler) GetNotificationRouting(ctx context.Context) (r *GetNotificationRoutingOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetQuietHours implements getQuietHours operation.
+//
+// The current quiet hours window and the always-on critical override (doc 03 §8.3).
+//
+// GET /notifications/quiet-hours
+func (UnimplementedHandler) GetQuietHours(ctx context.Context) (r *NotificationQuietHours, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetSetupStatus implements getSetupStatus operation.
 //
 // Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are
@@ -105,6 +154,15 @@ func (UnimplementedHandler) GetSetupStatus(ctx context.Context) (r *SetupStatus,
 //
 // GET /jobs
 func (UnimplementedHandler) ListJobs(ctx context.Context, params ListJobsParams) (r *ListJobsOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListNotificationChannels implements listNotificationChannels operation.
+//
+// Every configured alerting destination (doc 03 §8.3).
+//
+// GET /notifications/channels
+func (UnimplementedHandler) ListNotificationChannels(ctx context.Context) (r *ListNotificationChannelsOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -144,6 +202,53 @@ func (UnimplementedHandler) Logout(ctx context.Context) (r *LogoutNoContent, _ e
 //
 // POST /jobs/{jobId}/resume
 func (UnimplementedHandler) ResumeJob(ctx context.Context, params ResumeJobParams) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// SendTestNotification implements sendTestNotification operation.
+//
+// Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of
+// the channel's own configuration, not a routed event, so it reports success or the delivery error
+// directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested
+// notification config is the same as no notification config").
+//
+// POST /notifications/channels/{channelId}/test
+func (UnimplementedHandler) SendTestNotification(ctx context.Context, params SendTestNotificationParams) (r *NotificationTestResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateNotificationChannel implements updateNotificationChannel operation.
+//
+// A full replace, like the request body of createNotificationChannel: every type-specific field the
+// request omits is cleared, not left as it was. `secret` is tri-state — omitted keeps the existing
+// credential, `null` clears it, a string replaces it — since this is the one field a response never
+// echoes back for a client to resend unchanged (Q28).
+//
+// PUT /notifications/channels/{channelId}
+func (UnimplementedHandler) UpdateNotificationChannel(ctx context.Context, req *UpdateNotificationChannelRequest, params UpdateNotificationChannelParams) (r *NotificationChannel, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateNotificationRoute implements updateNotificationRoute operation.
+//
+// A full replace of eventType's own row in the matrix: the channel list becomes exactly channelIds,
+// and the severity becomes exactly severity — including reverting to the compiled-in default when
+// the request's severity matches it, and un-routing every channel by sending an empty list, e.g. for
+// `sync_succeeded`'s opt-in, off-by-default event (doc 03 §8.3).
+//
+// PUT /notifications/routing/{eventType}
+func (UnimplementedHandler) UpdateNotificationRoute(ctx context.Context, req *UpdateNotificationRouteRequest, params UpdateNotificationRouteParams) (r *NotificationRoutingEntry, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateQuietHours implements updateQuietHours operation.
+//
+// `criticalAlwaysDelivers` is not part of the request body: doc 03 §8.3's override that critical
+// alerts always deliver cannot be disabled, so there is nothing for a client to set — the response
+// always reports it `true`.
+//
+// PUT /notifications/quiet-hours
+func (UnimplementedHandler) UpdateQuietHours(ctx context.Context, req *UpdateQuietHoursRequest) (r *NotificationQuietHours, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
