@@ -112,6 +112,15 @@ function mockApiForStatus(status: Record<string, unknown>, jobs: unknown[] = [])
         response: { ok: true },
       });
     }
+    if (path === "/parity") {
+      return Promise.resolve({
+        data: {
+          freshness: "green",
+          guard: { wouldBlock: false },
+        },
+        response: { ok: true },
+      });
+    }
     return Promise.resolve({ data: null, response: { ok: false } });
   });
 }
@@ -204,9 +213,9 @@ describe("Tier 1 pages", () => {
 
   it("lists removals before other parity diff groups", () => {
     const groups = sortParityDiffGroups([
-      { category: "added", paths: ["/a"] },
-      { category: "removed", paths: ["/b"] },
-      { category: "updated", paths: ["/c"] },
+      { category: "added", paths: ["/a"], count: 1 },
+      { category: "removed", paths: ["/b"], count: 1 },
+      { category: "updated", paths: ["/c"], count: 1 },
     ]);
 
     render(

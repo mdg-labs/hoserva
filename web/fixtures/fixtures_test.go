@@ -43,6 +43,17 @@ func TestFixturesValidateAgainstSpec(t *testing.T) {
 				}
 			}
 
+			if rawParity, err := fixtures.ParityJSON(scenario); err == nil {
+				var snap apiv1.ParitySnapshot
+				if err := snap.UnmarshalJSON(rawParity); err != nil {
+					t.Fatalf("decode parity.json as ParitySnapshot: %v", err)
+				}
+				assertNoDroppedFields(t, rawParity, &snap)
+				if err := snap.Validate(); err != nil {
+					t.Errorf("parity.json fails ParitySnapshot.Validate(): %v", err)
+				}
+			}
+
 			rawEvents, err := fixtures.EventsJSONL(scenario)
 			if err != nil {
 				t.Fatalf("EventsJSONL: %v", err)

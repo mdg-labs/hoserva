@@ -169,6 +169,17 @@ func (UnimplementedHandler) GetNotificationRouting(ctx context.Context) (r *GetN
 	return r, ht.ErrNotImplemented
 }
 
+// GetParity implements getParity operation.
+//
+// Reads SnapRAID status from the boot-device content file only — does not run `snapraid diff` or
+// wake data disks (doc 02 §2, Q13). Threshold-guard state and grouped diff rows reflect the last
+// explicit `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
+//
+// GET /parity
+func (UnimplementedHandler) GetParity(ctx context.Context) (r *ParitySnapshot, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetPool implements getPool operation.
 //
 // Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
@@ -301,6 +312,17 @@ func (UnimplementedHandler) ResumeJob(ctx context.Context, params ResumeJobParam
 //
 // GET /doctor
 func (UnimplementedHandler) RunDoctor(ctx context.Context) (r *DoctorReport, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// RunParityDiff implements runParityDiff operation.
+//
+// Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk (doc
+// 02 §2, Q13). Returns grouped changes and threshold-guard evaluation for the parity page; never
+// polled on a timer.
+//
+// POST /parity/diff
+func (UnimplementedHandler) RunParityDiff(ctx context.Context) (r *ParityDiffResult, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

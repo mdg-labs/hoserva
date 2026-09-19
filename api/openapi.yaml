@@ -871,6 +871,49 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /parity:
+    get:
+      operationId: getParity
+      summary: Parity status and guard state
+      description: >-
+        Reads SnapRAID status from the boot-device content file only — does
+        not run `snapraid diff` or wake data disks (doc 02 §2, Q13).
+        Threshold-guard state and grouped diff rows reflect the last
+        explicit `POST /parity/diff` (or a sync job's own pre-sync diff)
+        until the next one runs.
+      tags: [parity]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Current parity freshness and guard snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParitySnapshot'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /parity/diff:
+    post:
+      operationId: runParityDiff
+      summary: Run a SnapRAID diff
+      description: >-
+        Runs `snapraid diff` on every data disk — an explicit user action
+        that wakes every data disk (doc 02 §2, Q13). Returns grouped
+        changes and threshold-guard evaluation for the parity page; never
+        polled on a timer.
+      tags: [parity]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: Grouped diff and guard evaluation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParityDiffResult'
+        default:
+          $ref: '#/components/responses/Error'
+
   /parity/sync:
     post:
       operationId: startSync
@@ -1987,6 +2030,114 @@ components:
             formatted, sorted, or `ADOPT ONLY — NOTHING ERASED` when every
             assigned disk is adopted. A wrong or missing string is refused
             and formats nothing.
+
+    ParityFreshness:
+      type: string
+      description: Parity age from `snapraid status` (doc 02 §2).
+      enum: [green, amber, red]
+
+    ParityGuardTrigger:
+      type: string
+      enum: [removed-count, removed-updated-percent, zero-files]
+
+    ParityZeroFilesDisk:
+      type: object
+      required: [disk, filesBefore]
+      properties:
+        disk:
+          type: string
+          description: Data-disk mount point.
+        filesBefore:
+          type: integer
+          format: int32
+
+    ParityGuardState:
+      type: object
+      required: [wouldBlock]
+      properties:
+        wouldBlock:
+          type: boolean
+          description: True when the threshold guard would block a sync (doc 02 §2).
+        triggers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParityGuardTrigger'
+        removedCount:
+          type: integer
+          format: int32
+          description: Accounted-for removals compared against the removed-count threshold.
+        removedUpdatedPercent:
+          type: number
+          format: float
+          description: Accounted removals plus updated, as a percent of files before the diff.
+        zeroFilesDisks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParityZeroFilesDisk'
+        summary:
+          type: string
+          description: Plain-language why the guard would block, when wouldBlock is true.
+
+    ParityDiffCategory:
+      type: string
+      description: One doc 02 §2 diff group; moved-by-Hoserva is Q15's relocation manifest match.
+      enum: [removed, updated, added, moved, copied, moved_by_hoserva]
+
+    ParityDiffGroup:
+      type: object
+      required: [category, count, paths]
+      properties:
+        category:
+          $ref: '#/components/schemas/ParityDiffCategory'
+        count:
+          type: integer
+          format: int32
+        paths:
+          type: array
+          items:
+            type: string
+          description: >-
+            `mount/relative` paths when SnapRAID named individual files.
+            Empty when only an aggregate count is known (updated, moved).
+
+    ParitySnapshot:
+      type: object
+      required: [freshness]
+      properties:
+        freshness:
+          $ref: '#/components/schemas/ParityFreshness'
+        lastSyncAt:
+          type: string
+          format: date-time
+          description: Last successful sync, when known.
+        changedSinceSync:
+          type: integer
+          format: int32
+          description: Files changed since last sync (`status` / change journal).
+        dataDisks:
+          type: integer
+          format: int32
+        parityDisks:
+          type: integer
+          format: int32
+        guard:
+          $ref: '#/components/schemas/ParityGuardState'
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParityDiffGroup'
+          description: Present after the last explicit run-diff; omitted until then.
+
+    ParityDiffResult:
+      type: object
+      required: [groups, guard]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParityDiffGroup'
+        guard:
+          $ref: '#/components/schemas/ParityGuardState'
 
     StartSyncRequest:
       type: object

@@ -119,6 +119,14 @@ type Handler interface {
 	//
 	// GET /notifications/routing
 	GetNotificationRouting(ctx context.Context) (*GetNotificationRoutingOK, error)
+	// GetParity implements getParity operation.
+	//
+	// Reads SnapRAID status from the boot-device content file only — does not run `snapraid diff` or
+	// wake data disks (doc 02 §2, Q13). Threshold-guard state and grouped diff rows reflect the last
+	// explicit `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
+	//
+	// GET /parity
+	GetParity(ctx context.Context) (*ParitySnapshot, error)
 	// GetPool implements getPool operation.
 	//
 	// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
@@ -215,6 +223,14 @@ type Handler interface {
 	//
 	// GET /doctor
 	RunDoctor(ctx context.Context) (*DoctorReport, error)
+	// RunParityDiff implements runParityDiff operation.
+	//
+	// Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk (doc
+	// 02 §2, Q13). Returns grouped changes and threshold-guard evaluation for the parity page; never
+	// polled on a timer.
+	//
+	// POST /parity/diff
+	RunParityDiff(ctx context.Context) (*ParityDiffResult, error)
 	// SendTestNotification implements sendTestNotification operation.
 	//
 	// Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of

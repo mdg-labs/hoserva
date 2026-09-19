@@ -559,6 +559,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/parity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Parity status and guard state
+         * @description Reads SnapRAID status from the boot-device content file only — does not run `snapraid diff` or wake data disks (doc 02 §2, Q13). Threshold-guard state and grouped diff rows reflect the last explicit `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
+         */
+        get: operations["getParity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/parity/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run a SnapRAID diff
+         * @description Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk (doc 02 §2, Q13). Returns grouped changes and threshold-guard evaluation for the parity page; never polled on a timer.
+         */
+        post: operations["runParityDiff"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/parity/sync": {
         parameters: {
             query?: never;
@@ -1115,6 +1155,73 @@ export interface components {
             minFreeSpace?: string;
             /** @description Exact typed confirmation for this plan (doc 03 §3.1 step 6): `ERASE /dev/sda, /dev/sdb` listing every device that will be formatted, sorted, or `ADOPT ONLY — NOTHING ERASED` when every assigned disk is adopted. A wrong or missing string is refused and formats nothing. */
             confirmation: string;
+        };
+        /**
+         * @description Parity age from `snapraid status` (doc 02 §2).
+         * @enum {string}
+         */
+        ParityFreshness: "green" | "amber" | "red";
+        /** @enum {string} */
+        ParityGuardTrigger: "removed-count" | "removed-updated-percent" | "zero-files";
+        ParityZeroFilesDisk: {
+            /** @description Data-disk mount point. */
+            disk: string;
+            /** Format: int32 */
+            filesBefore: number;
+        };
+        ParityGuardState: {
+            /** @description True when the threshold guard would block a sync (doc 02 §2). */
+            wouldBlock: boolean;
+            triggers?: components["schemas"]["ParityGuardTrigger"][];
+            /**
+             * Format: int32
+             * @description Accounted-for removals compared against the removed-count threshold.
+             */
+            removedCount?: number;
+            /**
+             * Format: float
+             * @description Accounted removals plus updated, as a percent of files before the diff.
+             */
+            removedUpdatedPercent?: number;
+            zeroFilesDisks?: components["schemas"]["ParityZeroFilesDisk"][];
+            /** @description Plain-language why the guard would block, when wouldBlock is true. */
+            summary?: string;
+        };
+        /**
+         * @description One doc 02 §2 diff group; moved-by-Hoserva is Q15's relocation manifest match.
+         * @enum {string}
+         */
+        ParityDiffCategory: "removed" | "updated" | "added" | "moved" | "copied" | "moved_by_hoserva";
+        ParityDiffGroup: {
+            category: components["schemas"]["ParityDiffCategory"];
+            /** Format: int32 */
+            count: number;
+            /** @description `mount/relative` paths when SnapRAID named individual files. Empty when only an aggregate count is known (updated, moved). */
+            paths: string[];
+        };
+        ParitySnapshot: {
+            freshness: components["schemas"]["ParityFreshness"];
+            /**
+             * Format: date-time
+             * @description Last successful sync, when known.
+             */
+            lastSyncAt?: string;
+            /**
+             * Format: int32
+             * @description Files changed since last sync (`status` / change journal).
+             */
+            changedSinceSync?: number;
+            /** Format: int32 */
+            dataDisks?: number;
+            /** Format: int32 */
+            parityDisks?: number;
+            guard?: components["schemas"]["ParityGuardState"];
+            /** @description Present after the last explicit run-diff; omitted until then. */
+            groups?: components["schemas"]["ParityDiffGroup"][];
+        };
+        ParityDiffResult: {
+            groups: components["schemas"]["ParityDiffGroup"][];
+            guard: components["schemas"]["ParityGuardState"];
         };
         StartSyncRequest: {
             /** @default false */
@@ -1889,6 +1996,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getParity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current parity freshness and guard snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParitySnapshot"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    runParityDiff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Grouped diff and guard evaluation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParityDiffResult"];
                 };
             };
             default: components["responses"]["Error"];
