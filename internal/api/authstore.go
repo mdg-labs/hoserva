@@ -61,6 +61,34 @@ func NewAuthStore(db storedb.DBTX) *AuthStore {
 	return &AuthStore{q: storedb.New(db), db: db}
 }
 
+// WithTx returns a store that reads and writes through tx.
+func (s *AuthStore) WithTx(tx *sql.Tx) *AuthStore {
+	return &AuthStore{q: s.q.WithTx(tx), db: tx}
+}
+
+// RunRecoveryTx runs fn inside one SQLite transaction. The transaction
+// commits only when fn returns nil — a Q78 recovery's credential change,
+// audit row and notify_deliveries inserts all succeed or none do.
+func (s *AuthStore) RunRecoveryTx(ctx context.Context, fn func(*AuthStore) error) error {
+	sqlDB, ok := s.db.(*sql.DB)
+	if !ok {
+		return fmt.Errorf("auth store: recovery transaction requires *sql.DB")
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning recovery transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := fn(s.WithTx(tx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing recovery transaction: %w", err)
+	}
+	return nil
+}
+
 // AuthStore also implements auth.MachineKeyStore (Q28): the machine key's
 // check value lives in this same database, so LoadOrGenerateMachineKey
 // reads and writes it through the same store setup.go already builds for

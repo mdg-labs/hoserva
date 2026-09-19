@@ -9,47 +9,55 @@ import (
 	"github.com/mdg-labs/hoserva/internal/auth"
 )
 
-// ResetUserPassword replaces username's password (Q78).
-func (s *AuthService) ResetUserPassword(ctx context.Context, username, password string) error {
-	u, err := s.Store.GetUserByUsername(ctx, normalizeUsername(username))
+// applyPasswordResetTx replaces username's password hash inside txStore.
+func (s *AuthService) applyPasswordResetTx(ctx context.Context, txStore *AuthStore, username, password string) (*recoveryOutcome, error) {
+	u, err := txStore.GetUserByUsername(ctx, normalizeUsername(username))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return errUserNotFound
+			return nil, errUserNotFound
 		}
-		return fmt.Errorf("looking up user: %w", err)
+		return nil, fmt.Errorf("looking up user: %w", err)
 	}
 	hash, err := auth.HashPasswordContext(ctx, password)
 	if err != nil {
-		return fmt.Errorf("hashing password: %w", err)
+		return nil, fmt.Errorf("hashing password: %w", err)
 	}
-	if err := s.Store.UpdatePasswordHash(ctx, u.ID, hash); err != nil {
-		return err
+	if err := txStore.UpdatePasswordHash(ctx, u.ID, hash); err != nil {
+		return nil, err
 	}
-	s.Limiter.Clear("user:"+normalizeUsername(u.Username), auth.SubjectAccount)
-	return nil
+	return &recoveryOutcome{
+		limiterSubject: "user:" + normalizeUsername(u.Username),
+		limiterKind:    auth.SubjectAccount,
+	}, nil
 }
 
-// DisableUserTotp clears username's TOTP enrollment (Q78).
-func (s *AuthService) DisableUserTotp(ctx context.Context, username string) error {
-	u, err := s.Store.GetUserByUsername(ctx, normalizeUsername(username))
+// applyDisableTotpTx clears username's TOTP enrollment inside txStore.
+func (s *AuthService) applyDisableTotpTx(ctx context.Context, txStore *AuthStore, username string) (*recoveryOutcome, error) {
+	u, err := txStore.GetUserByUsername(ctx, normalizeUsername(username))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return errUserNotFound
+			return nil, errUserNotFound
 		}
-		return fmt.Errorf("looking up user: %w", err)
+		return nil, fmt.Errorf("looking up user: %w", err)
 	}
-	return s.Store.ClearUserTOTP(ctx, u.ID)
+	if err := txStore.ClearUserTOTP(ctx, u.ID); err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
-// UnlockUser clears username's login rate-limiter lockout (Q78).
-func (s *AuthService) UnlockUser(ctx context.Context, username string) error {
-	u, err := s.Store.GetUserByUsername(ctx, normalizeUsername(username))
+// applyUnlockTx verifies username exists and returns the limiter subject to
+// clear after the recovery transaction commits.
+func (s *AuthService) applyUnlockTx(ctx context.Context, txStore *AuthStore, username string) (*recoveryOutcome, error) {
+	u, err := txStore.GetUserByUsername(ctx, normalizeUsername(username))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return errUserNotFound
+			return nil, errUserNotFound
 		}
-		return fmt.Errorf("looking up user: %w", err)
+		return nil, fmt.Errorf("looking up user: %w", err)
 	}
-	s.Limiter.Clear("user:"+normalizeUsername(u.Username), auth.SubjectAccount)
-	return nil
+	return &recoveryOutcome{
+		limiterSubject: "user:" + normalizeUsername(u.Username),
+		limiterKind:    auth.SubjectAccount,
+	}, nil
 }
