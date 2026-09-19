@@ -31,6 +31,10 @@ tags:
     description: Live data over Server-Sent Events (doc 01 §5).
   - name: status
     description: Overall system health (`hoserva status`, doc 01 §3).
+  - name: metrics
+    description: >-
+      Downsampled time series from metrics.db (Q74, doc 02 §4) — throughput,
+      CPU, RAM, SMART history. Read-only; never probes block devices.
   - name: pool
     description: Pool topology and per-disk breakdown (`hoserva pool status`).
   - name: disks
@@ -738,6 +742,58 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemStatus'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Metric time series
+      description: >-
+        Returns downsampled samples from metrics.db for one metric/subject
+        over a time window (Q74, doc 03 §2). Resolution is chosen from the
+        window — raw for up to 48 hours, hourly for up to 90 days, daily
+        beyond — so clients cannot force a full raw scan. A missing or
+        empty metrics.db yields an empty series, not an array-health error.
+      tags: [metrics]
+      x-hoserva-role: viewer
+      parameters:
+        - name: metric
+          in: query
+          required: true
+          schema:
+            type: string
+          description: >-
+            Metric identifier, e.g. `disk_throughput_bytes_per_sec` or
+            `network_throughput_bytes_per_sec` for dashboard charts.
+        - name: subject
+          in: query
+          schema:
+            type: string
+          description: >-
+            Device path for a per-disk metric (SMART, temperature) or omit
+            for a host-wide metric (CPU, RAM, pool throughput).
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: Window start (inclusive), UTC.
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+          description: Window end (inclusive), UTC.
+      responses:
+        "200":
+          description: The matching series, possibly empty.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricSeries'
         default:
           $ref: '#/components/responses/Error'
 
@@ -1900,6 +1956,43 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DoctorCheck'
+
+    MetricResolution:
+      type: string
+      enum: [raw, hourly, daily]
+      description: Q74 retention tier used for this response.
+
+    MetricPoint:
+      type: object
+      required: [at, value]
+      properties:
+        at:
+          type: string
+          format: date-time
+        value:
+          type: number
+          format: double
+
+    MetricSeries:
+      type: object
+      required: [metric, subject, resolution, from, to, points]
+      properties:
+        metric:
+          type: string
+        subject:
+          type: string
+        resolution:
+          $ref: '#/components/schemas/MetricResolution'
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        points:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetricPoint'
 
     SystemStatus:
       type: object

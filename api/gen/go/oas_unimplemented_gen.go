@@ -149,6 +149,18 @@ func (UnimplementedHandler) GetJobLog(ctx context.Context, params GetJobLogParam
 	return r, ht.ErrNotImplemented
 }
 
+// GetMetrics implements getMetrics operation.
+//
+// Returns downsampled samples from metrics.db for one metric/subject over a time window (Q74, doc 03
+// §2). Resolution is chosen from the window — raw for up to 48 hours, hourly for up to 90 days,
+// daily beyond — so clients cannot force a full raw scan. A missing or empty metrics.db yields an
+// empty series, not an array-health error.
+//
+// GET /metrics
+func (UnimplementedHandler) GetMetrics(ctx context.Context, params GetMetricsParams) (r *MetricSeries, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetNotificationChannel implements getNotificationChannel operation.
 //
 // A single channel's current configuration, by id, secret excluded.

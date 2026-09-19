@@ -19,6 +19,7 @@ const (
 	GetGeneralSettingsOperation        OperationName = "GetGeneralSettings"
 	GetJobOperation                    OperationName = "GetJob"
 	GetJobLogOperation                 OperationName = "GetJobLog"
+	GetMetricsOperation                OperationName = "GetMetrics"
 	GetNotificationChannelOperation    OperationName = "GetNotificationChannel"
 	GetNotificationRoutingOperation    OperationName = "GetNotificationRouting"
 	GetParityOperation                 OperationName = "GetParity"

@@ -139,6 +139,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.GetQuietHoursOperation,
 		apiv1.GetSetupStatusOperation,
 		apiv1.GetStatusOperation,
+		apiv1.GetMetricsOperation,
 		apiv1.ImportConfigOperation,
 		apiv1.ListDisksOperation,
 		apiv1.ListWakeEventsOperation,

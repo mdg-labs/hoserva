@@ -1,9 +1,10 @@
 import type React from "react";
+import { useEffect, useState } from "react";
 import { HardDrive } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
-import { TimeSeriesChart } from "@/components/patterns/chart";
+import { TimeSeriesChart, type ChartPoint } from "@/components/patterns/chart";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { JobProgress } from "@/components/patterns/job-progress";
 import { LoadingBlock } from "@/components/patterns/loading";
@@ -18,7 +19,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useActiveJobs } from "@/hooks/use-active-jobs";
 import { diskDetailPath, PATHS } from "@/hooks/paths";
 import { useSystemData } from "@/hooks/use-system-status";
+import { hoservaClient } from "@/lib/api/client";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
+
+const METRIC_DISK_THROUGHPUT = "disk_throughput_bytes_per_sec";
+const METRIC_NETWORK_THROUGHPUT = "network_throughput_bytes_per_sec";
+const CHART_WINDOW_MS = 60 * 60 * 1000;
 
 function poolSummary(pool: ReturnType<typeof useSystemData>["pool"]): {
   total: number;
@@ -45,6 +51,62 @@ function poolSummary(pool: ReturnType<typeof useSystemData>["pool"]): {
   return { total, used, dataCount, parityCount, cacheCount };
 }
 
+function formatChartTime(at: Date): string {
+  return at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function metricPointsToChart(points: { at: string; value: number }[]): ChartPoint[] {
+  return points.map((point) => ({
+    label: formatChartTime(new Date(point.at)),
+    value: point.value,
+  }));
+}
+
+function useMetricSeries(metric: string, enabled: boolean): ChartPoint[] | null {
+  const [data, setData] = useState<ChartPoint[] | null>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const to = new Date();
+    const from = new Date(to.getTime() - CHART_WINDOW_MS);
+
+    void hoservaClient
+      .GET("/metrics", {
+        params: {
+          query: {
+            metric,
+            from: from.toISOString(),
+            to: to.toISOString(),
+          },
+        },
+        signal: controller.signal,
+      })
+      .then(({ data: series, error }) => {
+        if (error || !series) {
+          setData([]);
+          return;
+        }
+        setData(metricPointsToChart(series.points));
+      })
+      .catch(() => {
+        setData([]);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [metric, enabled]);
+
+  if (!enabled) {
+    return null;
+  }
+  return data;
+}
+
 export function DashboardPage(): React.ReactElement {
   const { t } = useTranslation();
   const { status, pool, jobs, doctor, loading, error } = useSystemData();
@@ -52,6 +114,11 @@ export function DashboardPage(): React.ReactElement {
   const summary = poolSummary(pool);
   const parity = parityFreshnessLabel(status, doctor, t);
   const attention: React.ReactElement[] = [];
+  const chartsEnabled = Boolean(pool?.mounted);
+  const throughputData = useMetricSeries(METRIC_DISK_THROUGHPUT, chartsEnabled);
+  const networkData = useMetricSeries(METRIC_NETWORK_THROUGHPUT, chartsEnabled);
+  const formatBytesPerSecond = (value: number): string =>
+    t("dashboard.bytesPerSecond", { value: formatBytes(value) });
 
   if (status?.arrayDegraded) {
     attention.push(
@@ -153,12 +220,14 @@ export function DashboardPage(): React.ReactElement {
         <TimeSeriesChart
           title={t("dashboard.throughput.title")}
           description={t("dashboard.throughput.description")}
-          data={null}
+          data={throughputData}
+          valueFormatter={formatBytesPerSecond}
         />
         <TimeSeriesChart
           title={t("dashboard.network.title")}
           description={t("dashboard.network.description")}
-          data={null}
+          data={networkData}
+          valueFormatter={formatBytesPerSecond}
         />
       </div>
       {activeJobs.length > 0 ? (
