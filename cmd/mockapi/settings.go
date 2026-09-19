@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"strings"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 )
@@ -32,6 +33,9 @@ func (h *handler) UpdateGeneralSettings(ctx context.Context, req *apiv1.UpdateGe
 		trimmed := strings.TrimSpace(timezone)
 		if trimmed == "" {
 			return nil, &mockError{code: "settings_invalid_input", statusCode: 400, message: "timezone must not be empty"}
+		}
+		if _, err := time.LoadLocation(trimmed); err != nil {
+			return nil, &mockError{code: "settings_invalid_input", statusCode: 400, message: "unknown timezone " + trimmed}
 		}
 		h.generalSettings.Timezone = apiv1.NewOptString(trimmed)
 	}
