@@ -105,9 +105,11 @@ vm_ssh 'command -v smartctl >/dev/null 2>&1 || (sudo apt-get update -qq && sudo 
 # smartd's own default periodic scan (enabled by the smartmontools
 # package itself) is one of doc 08's own named culprits ("the SMART
 # polling loop itself") — disabled here so it cannot contaminate this
-# measurement of hoservad's own poller command. Hoserva's packaging not
-# depending on or disabling this on install is a separate, real gap
-# (packaging/ is outside this issue's scope) — recorded, not fixed, here.
+# measurement of hoservad's own poller command. Hoserva's packaging
+# (packaging/debian/postinst) now masks and stops this service on install
+# (#161); it is disabled here too because this script measures
+# hoservad's own poller command in isolation, independent of what
+# packaging does on a real install.
 vm_ssh 'sudo systemctl disable --now smartmontools >/dev/null 2>&1 || true'
 
 snapshot_stats() {
