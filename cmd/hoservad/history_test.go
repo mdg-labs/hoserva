@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +18,22 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+type failThenRecord struct {
+	inner     *store.History
+	remaining int
+	mu        sync.Mutex
+}
+
+func (f *failThenRecord) RecordSpinEvent(ctx context.Context, device, from, to string, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.remaining > 0 {
+		f.remaining--
+		return errors.New("injected persist failure")
+	}
+	return f.inner.RecordSpinEvent(ctx, device, from, to, at)
+}
 
 const historyFixtureDir = "../../testdata/parsers"
 
@@ -153,5 +171,52 @@ func TestPruneOnce_PrunesOldSpinEvents(t *testing.T) {
 	}
 	if len(events) != 1 {
 		t.Fatalf("len(events) after prune = %d, want 1 recent row kept", len(events))
+	}
+}
+
+// TestPersistingDiskProvider_RetriesFailedInsert confirms a failed
+// RecordSpinEvent is retried on the next successful SMART poll instead of
+// being skipped because the in-memory log already counted it.
+func TestPersistingDiskProvider_RetriesFailedInsert(t *testing.T) {
+	ctx := context.Background()
+	db := newHistoryTestDB(t)
+	h := &api.Handler{}
+	history := wireDaemonHistory(db, h)
+
+	linux, runner := newHistoryTestLinuxProvider(t)
+	recorder := &failThenRecord{inner: history, remaining: 1}
+	provider := newPersistingDiskProvider(linux, recorder)
+	h.Disks = provider
+
+	standby := readHistoryFixture(t, "smartctl_ata_standby.json")
+	healthy := readHistoryFixture(t, "smartctl_ata_healthy.json")
+	runner.Script("smartctl", []string{"-j", "-n", "standby", "-a", "/dev/sdb"}, standby, nil)
+	if _, err := provider.SMART(ctx, "/dev/sdb", disk.SMARTPollRespectStandby); err != nil {
+		t.Fatalf("SMART (standby): %v", err)
+	}
+	runner.Script("smartctl", []string{"-j", "-n", "standby", "-a", "/dev/sdb"}, healthy, nil)
+	if _, err := provider.SMART(ctx, "/dev/sdb", disk.SMARTPollRespectStandby); err != nil {
+		t.Fatalf("SMART (healthy, fail persist): %v", err)
+	}
+
+	resp, err := h.ListWakeEvents(ctx)
+	if err != nil {
+		t.Fatalf("ListWakeEvents after failed persist: %v", err)
+	}
+	if len(resp.Events) != 0 {
+		t.Fatalf("len(events) after failed persist = %d, want 0", len(resp.Events))
+	}
+
+	runner.Script("smartctl", []string{"-j", "-n", "standby", "-a", "/dev/sdb"}, healthy, nil)
+	if _, err := provider.SMART(ctx, "/dev/sdb", disk.SMARTPollRespectStandby); err != nil {
+		t.Fatalf("SMART (healthy, retry persist): %v", err)
+	}
+
+	resp, err = h.ListWakeEvents(ctx)
+	if err != nil {
+		t.Fatalf("ListWakeEvents after retry: %v", err)
+	}
+	if len(resp.Events) != 1 {
+		t.Fatalf("len(events) after retry = %d, want 1 persisted transition", len(resp.Events))
 	}
 }
