@@ -340,7 +340,7 @@ func TestLoginTOTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentCode: %v", err)
 	}
-	if err := svc.ConfirmTOTP(ctx, u.ID, code); err != nil {
+	if err := svc.ConfirmTOTP(ctx, u.ID, code, ""); err != nil {
 		t.Fatalf("ConfirmTOTP: %v", err)
 	}
 
@@ -388,7 +388,7 @@ func TestEnrollTOTPReplacingActiveRequiresReverification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentCode: %v", err)
 	}
-	if err := svc.ConfirmTOTP(ctx, u.ID, code); err != nil {
+	if err := svc.ConfirmTOTP(ctx, u.ID, code, ""); err != nil {
 		t.Fatalf("ConfirmTOTP: %v", err)
 	}
 
@@ -443,7 +443,7 @@ func TestEnrollTOTPReplacingActiveRefusesBothPasswordAndCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentCode: %v", err)
 	}
-	if err := svc.ConfirmTOTP(ctx, u.ID, code); err != nil {
+	if err := svc.ConfirmTOTP(ctx, u.ID, code, ""); err != nil {
 		t.Fatalf("ConfirmTOTP: %v", err)
 	}
 
@@ -501,7 +501,7 @@ func TestEnrollTOTPReplacingActiveSucceedsWithPasswordOrCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentCode: %v", err)
 	}
-	if err := svc.ConfirmTOTP(ctx, u.ID, oldCode); err != nil {
+	if err := svc.ConfirmTOTP(ctx, u.ID, oldCode, ""); err != nil {
 		t.Fatalf("ConfirmTOTP: %v", err)
 	}
 
@@ -531,7 +531,7 @@ func TestEnrollTOTPReplacingActiveSucceedsWithPasswordOrCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentCode: %v", err)
 	}
-	if err := svc.ConfirmTOTP(ctx, u.ID, confirmCode); err != nil {
+	if err := svc.ConfirmTOTP(ctx, u.ID, confirmCode, ""); err != nil {
 		t.Fatalf("ConfirmTOTP with the new secret: %v", err)
 	}
 
@@ -576,7 +576,7 @@ func TestEnrollTOTPReplacingActiveSucceedsWithCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentCode: %v", err)
 	}
-	if err := svc.ConfirmTOTP(ctx, u.ID, code); err != nil {
+	if err := svc.ConfirmTOTP(ctx, u.ID, code, ""); err != nil {
 		t.Fatalf("ConfirmTOTP: %v", err)
 	}
 
@@ -617,7 +617,7 @@ func TestEnrollTOTPReenrolmentIsRateLimitedAndLocksOutLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentCode: %v", err)
 	}
-	if err := svc.ConfirmTOTP(ctx, u.ID, code); err != nil {
+	if err := svc.ConfirmTOTP(ctx, u.ID, code, ""); err != nil {
 		t.Fatalf("ConfirmTOTP: %v", err)
 	}
 
@@ -666,7 +666,7 @@ func TestEnrollTOTPReenrolmentConcurrentSameCodeAcceptedOnlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentCode: %v", err)
 	}
-	if err := svc.ConfirmTOTP(ctx, u.ID, code); err != nil {
+	if err := svc.ConfirmTOTP(ctx, u.ID, code, ""); err != nil {
 		t.Fatalf("ConfirmTOTP: %v", err)
 	}
 
@@ -937,6 +937,94 @@ func TestActivateTOTPTwiceForSameSecretActivatesOnlyOnce(t *testing.T) {
 	}
 }
 
+// TestConfirmTOTPRevokesOtherSessionsKeepsCaller is #137's acceptance
+// test: confirming TOTP from one session leaves that session valid and
+// revokes every other session of the same account immediately; other
+// accounts' sessions are untouched.
+func TestConfirmTOTPRevokesOtherSessionsKeepsCaller(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+
+	u, tokenA, err := svc.CreateFirstAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("CreateFirstAdmin: %v", err)
+	}
+	_, tokenB, err := svc.Login(ctx, "admin", "correct horse battery staple", "", "")
+	if err != nil {
+		t.Fatalf("Login for second session: %v", err)
+	}
+
+	viewerHash, err := auth.HashPassword("viewer password")
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	viewer := &api.User{ID: "viewer-id", Username: "viewer", Role: "viewer", PasswordHash: viewerHash, CreatedAt: svc.Now()}
+	if err := svc.Store.CreateUser(ctx, viewer); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	_, viewerToken, err := svc.Login(ctx, "viewer", "viewer password", "", "")
+	if err != nil {
+		t.Fatalf("Login viewer: %v", err)
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	svc.Now = func() time.Time { return now }
+	secret, _, err := svc.EnrollTOTP(ctx, u.ID, "", "")
+	if err != nil {
+		t.Fatalf("EnrollTOTP: %v", err)
+	}
+	code, err := auth.CurrentCode(secret, now)
+	if err != nil {
+		t.Fatalf("CurrentCode: %v", err)
+	}
+	if err := svc.ConfirmTOTP(ctx, u.ID, code, auth.HashSessionToken(tokenA)); err != nil {
+		t.Fatalf("ConfirmTOTP: %v", err)
+	}
+
+	if _, err := svc.ValidateSession(ctx, tokenA); err != nil {
+		t.Errorf("session A should remain valid: %v", err)
+	}
+	if _, err := svc.ValidateSession(ctx, tokenB); !errors.Is(err, api.ErrSessionInvalid) {
+		t.Errorf("session B = %v, want ErrSessionInvalid", err)
+	}
+	if _, err := svc.ValidateSession(ctx, viewerToken); err != nil {
+		t.Errorf("viewer session should be untouched: %v", err)
+	}
+}
+
+// TestConfirmTOTPInvalidCodeLeavesOtherSessions verifies revocation is
+// tied to a successful activation: a failed confirmTotp leaves every
+// session of the account unchanged.
+func TestConfirmTOTPInvalidCodeLeavesOtherSessions(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+
+	u, tokenA, err := svc.CreateFirstAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("CreateFirstAdmin: %v", err)
+	}
+	_, tokenB, err := svc.Login(ctx, "admin", "correct horse battery staple", "", "")
+	if err != nil {
+		t.Fatalf("Login for second session: %v", err)
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	svc.Now = func() time.Time { return now }
+	if _, _, err := svc.EnrollTOTP(ctx, u.ID, "", ""); err != nil {
+		t.Fatalf("EnrollTOTP: %v", err)
+	}
+	if err := svc.ConfirmTOTP(ctx, u.ID, "000000", auth.HashSessionToken(tokenA)); !errors.Is(err, api.ErrTOTPInvalid) {
+		t.Fatalf("ConfirmTOTP with a wrong code = %v, want ErrTOTPInvalid", err)
+	}
+
+	if _, err := svc.ValidateSession(ctx, tokenA); err != nil {
+		t.Errorf("session A should remain valid after a failed confirm: %v", err)
+	}
+	if _, err := svc.ValidateSession(ctx, tokenB); err != nil {
+		t.Errorf("session B should remain valid after a failed confirm: %v", err)
+	}
+}
+
 // TestConfirmTOTPConcurrentRaceActivatesOnlyOnce is the review finding
 // this issue closes: confirmTotp's activation is a conditional write, not
 // a read-validate-write pair, so two concurrent calls presenting the same
@@ -966,7 +1054,7 @@ func TestConfirmTOTPConcurrentRaceActivatesOnlyOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := svc.ConfirmTOTP(ctx, u.ID, code)
+			err := svc.ConfirmTOTP(ctx, u.ID, code, "")
 			switch {
 			case err == nil:
 				successes.Add(1)
@@ -1014,7 +1102,7 @@ func TestLoginConcurrentSameTOTPCodeAcceptedOnlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CurrentCode: %v", err)
 	}
-	if err := svc.ConfirmTOTP(ctx, u.ID, code); err != nil {
+	if err := svc.ConfirmTOTP(ctx, u.ID, code, ""); err != nil {
 		t.Fatalf("ConfirmTOTP: %v", err)
 	}
 
