@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -215,12 +214,14 @@ func allowFormatDevice(assigned AssignedDisk) error {
 	return nil
 }
 
-// partitionName matches a partition of a whole disk: sda1, nvme0n1p1,
-// mmcblk0p1, loop0p1. Whole disks (sda, nvme0n1, loop0) do not match.
-var partitionName = regexp.MustCompile(`^((nvme|mmcblk)[0-9]+n[0-9]+p[0-9]+|[hsv]d[a-z]+[0-9]+|loop[0-9]+p[0-9]+)$`)
-
+// looksLikePartition reports whether dev names a partition of a whole
+// disk (sda1, nvme0n1p1, mmcblk0p1, loop0p1). Whole disks (sda,
+// nvme0n1, mmcblk0, loop0) do not match. The check uses WholeDiskDevice
+// so eMMC partitions are refused the same way NVMe partitions already
+// were — a dedicated regex that required n<digits> treated mmcblk0p1 as
+// a whole disk.
 func looksLikePartition(dev string) bool {
-	return partitionName.MatchString(filepath.Base(dev))
+	return WholeDiskDevice(dev) != dev
 }
 
 // IsLoopDevice reports whether dev is a whole loop device (/dev/loopN).
