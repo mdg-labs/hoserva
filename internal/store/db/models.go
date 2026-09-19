@@ -8,6 +8,27 @@ import (
 	"database/sql"
 )
 
+type ArrayDisk struct {
+	ID           int64          `json:"id"`
+	Role         string         `json:"role"`
+	RoleIndex    int64          `json:"role_index"`
+	Device       string         `json:"device"`
+	Filesystem   string         `json:"filesystem"`
+	FsUuid       string         `json:"fs_uuid"`
+	Wwn          sql.NullString `json:"wwn"`
+	Serial       sql.NullString `json:"serial"`
+	ByIDName     sql.NullString `json:"by_id_name"`
+	WeakIdentity int64          `json:"weak_identity"`
+	Mountpoint   string         `json:"mountpoint"`
+}
+
+type ArraySetting struct {
+	ID           int64  `json:"id"`
+	CreatePolicy string `json:"create_policy"`
+	MinFreeSpace string `json:"min_free_space"`
+	CreatedAt    string `json:"created_at"`
+}
+
 type AuditLog struct {
 	ID     int64          `json:"id"`
 	Actor  string         `json:"actor"`

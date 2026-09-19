@@ -2,13 +2,20 @@ package api_test
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
+	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/store"
+
+	_ "modernc.org/sqlite"
 )
 
 func xfsAssignment(dev string, role apiv1.ArrayDiskRole) apiv1.ArrayDiskAssignment {
@@ -32,14 +39,48 @@ func validErasePhrase(devs ...string) string {
 	return plan.Confirmation()
 }
 
+func registerDiskFormat(t *testing.T, r *job.Registry, p disk.Provider) {
+	t.Helper()
+	migrations, err := store.Load()
+	if err != nil {
+		t.Fatalf("loading migrations: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "array.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("opening array test db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	runner := &store.Runner{DB: db, Migrations: migrations, SnapshotDir: t.TempDir()}
+	if _, _, err := runner.Apply(context.Background()); err != nil {
+		t.Fatalf("applying migrations: %v", err)
+	}
+	fakeRun := disk.NewFakeRunner()
+	for _, item := range []struct{ dev, uuid string }{
+		{"/dev/sda", "uuid-sda"},
+		{"/dev/sdb", "uuid-sdb"},
+		{"/dev/sdc", "uuid-sdc"},
+	} {
+		fakeRun.Script("blkid", []string{"-s", "UUID", "-o", "value", item.dev}, []byte(item.uuid+"\n"), nil)
+	}
+	r.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
+		Provider:  p,
+		Runner:    fakeRun,
+		Store:     store.NewArrayStore(db),
+		Generator: config.NewGenerator(t.TempDir()),
+		Mounter:   disk.NewFakeMounter(),
+		Now:       func() time.Time { return time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC) },
+	}))
+}
+
 func newArrayHandler(t *testing.T) (*api.Handler, *job.Scheduler, *disk.FakeProvider) {
 	t.Helper()
 	h, s, r := newTestHandler(t)
 	p := disk.NewFakeProvider()
 	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
 	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB})
 	h.Disks = p
-	r.Register(job.TypeDiskFormat, false, job.RunDiskFormat(p, disk.NewFakeRunner()))
+	registerDiskFormat(t, r, p)
 	return h, s, p
 }
 
@@ -164,7 +205,7 @@ func TestHandler_CreateArray_WeakIdentityParityFormatsNothing(t *testing.T) {
 	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB, WeakIdentity: true})
 	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB})
 	h.Disks = p
-	r.Register(job.TypeDiskFormat, false, job.RunDiskFormat(p, disk.NewFakeRunner()))
+	registerDiskFormat(t, r, p)
 
 	req := createArrayReq("ERASE /dev/sda, /dev/sdb",
 		xfsAssignment("/dev/sda", apiv1.ArrayDiskRoleParity),
@@ -187,9 +228,10 @@ func TestHandler_CreateArray_WeakIdentityParityFormatsNothing(t *testing.T) {
 func TestHandler_CreateArray_SuccessReturnsTopologyJob(t *testing.T) {
 	ctx := context.Background()
 	h, s, p := newArrayHandler(t)
-	req := createArrayReq(validErasePhrase("/dev/sda", "/dev/sdb"),
+	req := createArrayReq(validErasePhrase("/dev/sda", "/dev/sdb", "/dev/sdc"),
 		xfsAssignment("/dev/sda", apiv1.ArrayDiskRoleParity),
 		xfsAssignment("/dev/sdb", apiv1.ArrayDiskRoleData),
+		xfsAssignment("/dev/sdc", apiv1.ArrayDiskRoleCache),
 	)
 	got, err := h.CreateArray(ctx, req)
 	if err != nil {
@@ -207,6 +249,9 @@ func TestHandler_CreateArray_SuccessReturnsTopologyJob(t *testing.T) {
 	}
 	if fs, ok := p.FormattedAs("/dev/sdb"); !ok || fs != disk.XFS {
 		t.Fatalf("FormattedAs(/dev/sdb) = (%v, %v), want xfs", fs, ok)
+	}
+	if fs, ok := p.FormattedAs("/dev/sdc"); !ok || fs != disk.XFS {
+		t.Fatalf("FormattedAs(/dev/sdc) = (%v, %v), want xfs", fs, ok)
 	}
 }
 

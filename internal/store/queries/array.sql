@@ -1,0 +1,40 @@
+-- sqlc input (#180, Q60): typed Go query code for the array_settings and
+-- array_disks tables, generated into internal/store/db/ by `make gen`.
+-- Deliberately no comment other than each "-- name:" line between queries
+-- below (see jobs.sql for the same note about sqlc's SQLite engine
+-- mis-slicing raw source around extra comment lines). Doc comments live
+-- on the hand-written Go wrapper in internal/store/array.go instead.
+
+-- name: InsertArraySettings :exec
+INSERT INTO array_settings (id, create_policy, min_free_space, created_at)
+VALUES (1, ?, ?, ?);
+
+-- name: GetArraySettings :one
+SELECT id, create_policy, min_free_space, created_at
+FROM array_settings WHERE id = 1;
+
+-- name: CountArraySettings :one
+SELECT COUNT(*) FROM array_settings;
+
+-- name: InsertArrayDisk :exec
+INSERT INTO array_disks (
+    role, role_index, device, filesystem, fs_uuid,
+    wwn, serial, by_id_name, weak_identity, mountpoint
+) VALUES (
+    ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?
+);
+
+-- name: ListArrayDisks :many
+SELECT
+    id, role, role_index, device, filesystem, fs_uuid,
+    wwn, serial, by_id_name, weak_identity, mountpoint
+FROM array_disks
+ORDER BY
+    CASE role
+        WHEN 'parity' THEN 1
+        WHEN 'data' THEN 2
+        WHEN 'cache' THEN 3
+        ELSE 4
+    END,
+    role_index ASC;
