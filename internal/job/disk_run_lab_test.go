@@ -6,13 +6,15 @@
 // with `docker compose exec -T lab <binary>` inside the lab container.
 // It proves createArray's RunFunc formats only assigned loop devices,
 // persists topology in SQLite, mounts those devices by filesystem UUID
-// at the documented paths, and that a failed FormatPlan writes no
-// topology and no mount units.
+// at the documented paths, that a failed FormatPlan writes no topology
+// and no mount units, and that a matching retry after persist-then-apply
+// failure re-applies from SQLite without a second format.
 
 package job
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +89,12 @@ func labRegisterDiskFormat(t *testing.T, s *Scheduler, p disk.Provider, r disk.R
 	t.Helper()
 	st := store.NewArrayStore(newTestDB(t))
 	genRoot := t.TempDir()
+	labRegisterDiskFormatDeps(t, s, p, r, st, genRoot, mounter)
+	return st, genRoot
+}
+
+func labRegisterDiskFormatDeps(t *testing.T, s *Scheduler, p disk.Provider, r disk.Runner, st *store.ArrayStore, genRoot string, mounter disk.UnitMounter) {
+	t.Helper()
 	s.registry.Register(TypeDiskFormat, false, RunDiskFormat(DiskFormatDeps{
 		Provider:  p,
 		Runner:    r,
@@ -94,7 +102,36 @@ func labRegisterDiskFormat(t *testing.T, s *Scheduler, p disk.Provider, r disk.R
 		Generator: config.NewGenerator(genRoot),
 		Mounter:   mounter,
 	}))
-	return st, genRoot
+}
+
+// countingRunner counts mkfs.* invocations so a matching retry after
+// persist-then-apply failure can prove FormatPlan did not run again.
+type countingRunner struct {
+	inner disk.Runner
+	mkfs  int
+}
+
+func (r *countingRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if strings.HasPrefix(name, "mkfs.") {
+		r.mkfs++
+	}
+	return r.inner.Run(ctx, name, args...)
+}
+
+// failOnceMounter fails the first Mount, then delegates. Used to inject
+// applyArrayFromStore failure after PutArray has already persisted.
+type failOnceMounter struct {
+	inner   disk.UnitMounter
+	failed  bool
+	failErr error
+}
+
+func (m *failOnceMounter) Mount(ctx context.Context, unit disk.MountUnit) error {
+	if !m.failed {
+		m.failed = true
+		return m.failErr
+	}
+	return m.inner.Mount(ctx, unit)
 }
 
 func unmountIfMounted(r disk.Runner, where string) {
@@ -351,5 +388,140 @@ func TestLabCreateArray_PersistsTopologyAndMountsByUUID(t *testing.T) {
 	}
 	if strings.Contains(string(unit), data) {
 		t.Fatalf("data disk unit names the loop device path:\n%s", unit)
+	}
+}
+
+// TestLabCreateArray_RetryAfterApplyFailureDoesNotReformat injects an
+// apply failure after PutArray, then retries the same create-array plan
+// against real loop devices: FormatPlan / mkfs must not run again, and
+// the assigned loops must come up by the stored filesystem UUID with
+// generated units and snapraid.conf matching the stored plan.
+func TestLabCreateArray_RetryAfterApplyFailureDoesNotReformat(t *testing.T) {
+	lab := labDir(t)
+	ctx := context.Background()
+	exec := &countingRunner{inner: disk.CommandRunner{}}
+	provider := &disk.LinuxProvider{Lister: disk.NewLister(), Exec: exec}
+
+	parity := createLoopImage(ctx, t, exec, lab, "retry-apply-parity", "320M")
+	data := createLoopImage(ctx, t, exec, lab, "retry-apply-data", "320M")
+	cache := createLoopImage(ctx, t, exec, lab, "retry-apply-cache", "320M")
+	spare := createLoopImage(ctx, t, exec, lab, "retry-apply-spare", "320M")
+	loopSize := int64(320 << 20)
+
+	t.Cleanup(func() {
+		unmountIfMounted(exec, "/mnt/disk1")
+		unmountIfMounted(exec, "/mnt/parity1")
+		unmountIfMounted(exec, "/mnt/cache")
+	})
+
+	mounter := &failOnceMounter{
+		inner:   disk.DirectMounter{Runner: exec},
+		failErr: errors.New("injected apply failure after persist"),
+	}
+	s := newTestScheduler(t)
+	c := disk.AssignedDisk{Device: cache, Filesystem: disk.XFS}
+	st, genRoot := labRegisterDiskFormat(t, s, provider, exec, mounter)
+
+	params := DiskFormatParams{
+		Parity: []disk.AssignedDisk{{Device: parity, Filesystem: disk.XFS}},
+		Data:   []disk.AssignedDisk{{Device: data, Filesystem: disk.XFS}},
+		Cache:  &c,
+		Sizes:  map[string]int64{parity: loopSize, data: loopSize, cache: loopSize},
+	}
+	params.Confirmation = params.Plan().Confirmation()
+
+	j, err := s.Submit(ctx, TypeDiskFormat, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("first job status = %s (%s), want failed", finished.Status, finished.ErrorMessage)
+	}
+	if !strings.Contains(finished.ErrorMessage, "injected apply failure after persist") {
+		t.Fatalf("first job ErrorMessage = %q, want injected apply failure", finished.ErrorMessage)
+	}
+	exists, err := st.Exists(ctx)
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if !exists {
+		t.Fatal("first job did not persist topology before apply failed")
+	}
+	firstMkfs := exec.mkfs
+	if firstMkfs != 3 {
+		t.Fatalf("first job mkfs count = %d, want 3 assigned loops", firstMkfs)
+	}
+	parityUUID := blkidUUID(ctx, exec, parity)
+	dataUUID := blkidUUID(ctx, exec, data)
+	cacheUUID := blkidUUID(ctx, exec, cache)
+	if parityUUID == "" || dataUUID == "" || cacheUUID == "" {
+		t.Fatalf("missing filesystem UUID after first format: parity=%q data=%q cache=%q", parityUUID, dataUUID, cacheUUID)
+	}
+
+	j2, err := s.Submit(ctx, TypeDiskFormat, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit retry: %v", err)
+	}
+	retry := await(t, s, j2.ID)
+	if retry.Status != StatusSucceeded {
+		t.Fatalf("retry status = %s (%s), want succeeded", retry.Status, retry.ErrorMessage)
+	}
+	if exec.mkfs != firstMkfs {
+		t.Fatalf("retry formatted assigned loops again: mkfs count = %d, want %d", exec.mkfs, firstMkfs)
+	}
+	if got := blkidUUID(ctx, exec, parity); got != parityUUID {
+		t.Fatalf("parity UUID changed on retry: %q -> %q (second format)", parityUUID, got)
+	}
+	if got := blkidUUID(ctx, exec, data); got != dataUUID {
+		t.Fatalf("data UUID changed on retry: %q -> %q (second format)", dataUUID, got)
+	}
+	if got := blkidUUID(ctx, exec, cache); got != cacheUUID {
+		t.Fatalf("cache UUID changed on retry: %q -> %q (second format)", cacheUUID, got)
+	}
+	if got := blkidType(ctx, exec, spare); got != "" {
+		t.Fatalf("unassigned %s gained a filesystem (%q)", spare, got)
+	}
+
+	_, disks, err := st.GetArray(ctx)
+	if err != nil {
+		t.Fatalf("GetArray: %v", err)
+	}
+	byRole := map[string]store.ArrayDisk{}
+	for _, d := range disks {
+		byRole[d.Role] = d
+	}
+	if byRole[store.ArrayRoleParity].FSUUID != parityUUID || byRole[store.ArrayRoleData].FSUUID != dataUUID || byRole[store.ArrayRoleCache].FSUUID != cacheUUID {
+		t.Fatalf("stored UUIDs = %+v, want parity=%s data=%s cache=%s", byRole, parityUUID, dataUUID, cacheUUID)
+	}
+	if got := findmntUUID(ctx, exec, "/mnt/parity1"); got != parityUUID {
+		t.Fatalf("/mnt/parity1 UUID = %q, want stored %q", got, parityUUID)
+	}
+	if got := findmntUUID(ctx, exec, "/mnt/disk1"); got != dataUUID {
+		t.Fatalf("/mnt/disk1 UUID = %q, want stored %q", got, dataUUID)
+	}
+	if got := findmntUUID(ctx, exec, "/mnt/cache"); got != cacheUUID {
+		t.Fatalf("/mnt/cache UUID = %q, want stored %q", got, cacheUUID)
+	}
+
+	conf, err := os.ReadFile(filepath.Join(genRoot, "snapraid.conf"))
+	if err != nil {
+		t.Fatalf("reading snapraid.conf: %v", err)
+	}
+	got := string(conf)
+	for _, want := range []string{"/mnt/parity1", "/mnt/disk1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("snapraid.conf missing stored mount %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, spare) || strings.Contains(got, "/mnt/disk2") {
+		t.Fatalf("snapraid.conf names a disk the stored plan did not assign:\n%s", got)
+	}
+	unit, err := os.ReadFile(filepath.Join(genRoot, "systemd", "system", "mnt-disk1.mount"))
+	if err != nil {
+		t.Fatalf("reading data disk unit: %v", err)
+	}
+	if !strings.Contains(string(unit), "What=/dev/disk/by-uuid/"+dataUUID) {
+		t.Fatalf("data disk unit not bound to stored filesystem UUID %s:\n%s", dataUUID, unit)
 	}
 }

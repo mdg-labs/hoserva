@@ -2,6 +2,7 @@ package disk
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -57,5 +58,31 @@ func TestDirectMounter_MountsByUUIDArgv(t *testing.T) {
 	}
 	if strings.Contains(joined, "/dev/") {
 		t.Fatalf("mount argv named a device path: %q", joined)
+	}
+}
+
+func TestDirectMounter_AlreadyMountedByUUIDIsSuccess(t *testing.T) {
+	r := NewFakeRunner()
+	where := t.TempDir()
+	mountArgs := []string{"-t", "xfs", "-o", "defaults,nofail", "-U", "uuid-disk1", where}
+	r.Script("mount", mountArgs, nil, errors.New("already mounted"))
+	r.Script("findmnt", []string{"-n", "-o", "UUID", where}, []byte("uuid-disk1\n"), nil)
+	m := DirectMounter{Runner: r}
+	u := MountUnit{Where: where, UUID: "uuid-disk1", Filesystem: XFS}
+	if err := m.Mount(context.Background(), u); err != nil {
+		t.Fatalf("Mount: %v", err)
+	}
+}
+
+func TestDirectMounter_AlreadyMountedWrongUUIDIsError(t *testing.T) {
+	r := NewFakeRunner()
+	where := t.TempDir()
+	mountErr := errors.New("already mounted")
+	r.Script("mount", []string{"-t", "xfs", "-o", "defaults,nofail", "-U", "uuid-disk1", where}, nil, mountErr)
+	r.Script("findmnt", []string{"-n", "-o", "UUID", where}, []byte("other-uuid\n"), nil)
+	m := DirectMounter{Runner: r}
+	u := MountUnit{Where: where, UUID: "uuid-disk1", Filesystem: XFS}
+	if err := m.Mount(context.Background(), u); err == nil {
+		t.Fatal("Mount: expected an error when the mountpoint is occupied by a different UUID")
 	}
 }
