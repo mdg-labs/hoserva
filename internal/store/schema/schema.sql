@@ -319,7 +319,10 @@ CREATE INDEX array_disks_role_idx ON array_disks (role, role_index);
 -- Recurring schedules (#197, doc 03 §8.4, Q30): the nightly maintenance
 -- chain and separately scheduled jobs. Next-run times and conflict
 -- detection are computed by the daemon from these rows plus the
--- installation timezone in schema_info — never by the UI.
+-- installation timezone in schema_info — never by the UI. last_run_at is
+-- the RFC3339 UTC instant the daemon claimed the current window (#200);
+-- NULL means the chain has never started. Settings upserts leave it
+-- untouched so an overlapping restart cannot re-fire the same night.
 CREATE TABLE schedule_chain (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     start_time TEXT NOT NULL,
@@ -329,6 +332,7 @@ CREATE TABLE schedule_chain (
     sync_enabled INTEGER NOT NULL CHECK (sync_enabled IN (0, 1)),
     scrub_enabled INTEGER NOT NULL CHECK (scrub_enabled IN (0, 1)),
     config_backup_enabled INTEGER NOT NULL CHECK (config_backup_enabled IN (0, 1)),
+    last_run_at TEXT,
     updated_at TEXT NOT NULL
 ) STRICT;
 

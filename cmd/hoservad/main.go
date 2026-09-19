@@ -227,6 +227,12 @@ func run(cfg config) error {
 	if err != nil {
 		return fmt.Errorf("opening snapraid.conf: %w", err)
 	}
+	var chainGuard job.DiffGuard
+	if parityEngine != nil {
+		registry.Register(job.TypeSync, false, job.RunSync(parityEngine))
+		registry.Register(job.TypeScrub, false, job.RunScrub(parityEngine))
+		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}
+	}
 	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history}
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
@@ -259,6 +265,12 @@ func run(cfg config) error {
 	pruneOnce(ctx, jobStore, logs, authStore, history)
 	go runDailyPrune(ctx, jobStore, logs, authStore, history)
 	go runNotifyDeliveryLoop(ctx, notifyService, notifyDeliveryInterval, notifyDeliveryBatchLimit)
+	go runScheduleLoop(ctx, &scheduleRunner{
+		Schedules: scheduleService,
+		Scheduler: scheduler,
+		Guard:     chainGuard,
+		Notifier:  &scheduleNotifier{svc: notifyService},
+	}, scheduleTickInterval)
 
 	errCh := make(chan error, 2)
 	go func() {

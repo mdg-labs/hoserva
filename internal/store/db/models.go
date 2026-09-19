@@ -116,15 +116,16 @@ type NotifyRoute struct {
 }
 
 type ScheduleChain struct {
-	ID                  int64  `json:"id"`
-	StartTime           string `json:"start_time"`
-	WeeklyScrubDay      int64  `json:"weekly_scrub_day"`
-	MoverEnabled        int64  `json:"mover_enabled"`
-	DiffGuardEnabled    int64  `json:"diff_guard_enabled"`
-	SyncEnabled         int64  `json:"sync_enabled"`
-	ScrubEnabled        int64  `json:"scrub_enabled"`
-	ConfigBackupEnabled int64  `json:"config_backup_enabled"`
-	UpdatedAt           string `json:"updated_at"`
+	ID                  int64          `json:"id"`
+	StartTime           string         `json:"start_time"`
+	WeeklyScrubDay      int64          `json:"weekly_scrub_day"`
+	MoverEnabled        int64          `json:"mover_enabled"`
+	DiffGuardEnabled    int64          `json:"diff_guard_enabled"`
+	SyncEnabled         int64          `json:"sync_enabled"`
+	ScrubEnabled        int64          `json:"scrub_enabled"`
+	ConfigBackupEnabled int64          `json:"config_backup_enabled"`
+	LastRunAt           sql.NullString `json:"last_run_at"`
+	UpdatedAt           string         `json:"updated_at"`
 }
 
 type ScheduleJob struct {

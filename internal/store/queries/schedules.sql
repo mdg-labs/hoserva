@@ -11,6 +11,7 @@ SELECT
     sync_enabled,
     scrub_enabled,
     config_backup_enabled,
+    last_run_at,
     updated_at
 FROM schedule_chain
 WHERE id = 1;
@@ -36,6 +37,9 @@ ON CONFLICT (id) DO UPDATE SET
     scrub_enabled = excluded.scrub_enabled,
     config_backup_enabled = excluded.config_backup_enabled,
     updated_at = excluded.updated_at;
+
+-- name: SetScheduleChainLastRun :exec
+UPDATE schedule_chain SET last_run_at = ? WHERE id = 1;
 
 -- name: ListScheduleJobs :many
 SELECT job_id, enabled, frequency, start_time, updated_at

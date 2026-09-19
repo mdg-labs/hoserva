@@ -401,6 +401,7 @@ A key file owned by the wrong account is not a lost-key situation at all — res
 
 **Default: one chained nightly maintenance run, starting 02:00: mover → diff + guard → (touch, Q17) → sync → config backup. On the weekly day, scrub runs after the sync.** Each step starts when the previous one finishes, not at a clock time.
 With fixed clock times (mover "before" a 03:00 sync), a mover run longer than an hour silently breaks the ordering. Chaining makes the order structural. The schedule page's conflict detection then only matters for jobs the user schedules separately.
+The daemon wakes the schedule loop once a minute (or coarser) and compares the persisted start time against now in the installation timezone. A missed night is not backfilled. Last-run is recorded when a window is claimed, so a restart inside the window cannot start a second overlapping chain. Separately scheduled jobs share this loop once their RunFuncs are registered; unregistered job IDs are skipped.
 
 ### Q31 — Spindown acceptance criterion
 **Status:** Default (confirmed in the lab, S1, 2026-09-15 — L3 confirmation still open) · **Gate:** Phase 1 · **Affects:** doc 02 §1, doc 06 §6

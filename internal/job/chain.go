@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -70,7 +71,8 @@ type StepResult struct {
 	Step Step
 	// Skipped is true when the step was disabled, or — for scrub — this
 	// run isn't the weekly day, or — for config backup — no ConfigBackup
-	// is configured yet.
+	// is configured yet, or — for a job-backed step — its Type has no
+	// registered RunFunc yet (the mover until #53).
 	Skipped bool
 	// JobID and Status are set for a step that ran as a Scheduler job
 	// (mover, sync, scrub); both are zero for diff_guard and config_backup.
@@ -179,6 +181,9 @@ func (c *MaintenanceChain) runStep(ctx context.Context, step Step) (StepResult, 
 func (c *MaintenanceChain) runJobStep(ctx context.Context, step Step, t Type) (StepResult, bool, error) {
 	j, err := c.Scheduler.Submit(ctx, t, nil, nil)
 	if err != nil {
+		if errors.Is(err, ErrJobTypeNotRegistered) {
+			return StepResult{Step: step, Skipped: true}, false, nil
+		}
 		wrapped := fmt.Errorf("job: maintenance chain: starting %s: %w", t, err)
 		return StepResult{Step: step, Err: wrapped}, false, wrapped
 	}
