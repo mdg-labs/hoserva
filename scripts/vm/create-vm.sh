@@ -70,7 +70,23 @@ for i in "${!ARRAY_DISK_SPECS[@]}"; do
     echo "      <driver name='qemu' type='qcow2'/>"
     echo "      <source file='$(vm_xml_attr_escape "$disk_path")'/>"
     echo "      <target dev='vd${DEV_LETTERS[$i]}' bus='virtio'/>"
-    echo "      <serial>hoserva-$HOSERVA_LAB_ID-$disk_name</serial>"
+    # disk_name leads the serial, HOSERVA_LAB_ID trails it (issue #162):
+    # the guest kernel truncates a virtio-blk device's exported serial to
+    # VIRTIO_BLK_ID_BYTES (20 bytes) from the front before udev ever
+    # builds /dev/disk/by-id/virtio-<serial>, so whatever comes after
+    # byte 20 is silently dropped. ARRAY_DISK_SPECS' own names
+    # (parity1/disk1-5/cache) are already distinct within their first 5
+    # bytes, and 20 bytes is never less than that, so leading with
+    # disk_name keeps every array disk's by-id link distinct regardless
+    # of $HOSERVA_LAB_ID's length — unlike a leading lab id, which a
+    # long id (this project's own nightly shape) can push the
+    # disk-identifying suffix past the truncation point entirely,
+    # colliding every array disk's by-id link on the same guest-side
+    # name. libvirt itself does not support a virtio-blk disk's <wwn>
+    # ("Only ide and scsi disk support wwn", confirmed against this
+    # host's libvirt), so this ordering — not a <wwn> — is what makes
+    # this array disk resolve to a distinct identity in the guest.
+    echo "      <serial>$disk_name-hoserva-$HOSERVA_LAB_ID</serial>"
     echo "      <address type='pci' domain='0x0000' bus='0x00' slot='${PCI_SLOTS[$i]}' function='0x0'/>"
     echo "    </disk>"
   } >> "$ARRAY_DISKS_XML"
