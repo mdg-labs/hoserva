@@ -499,6 +499,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/disks/wake-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List spin-state wake events
+         * @description Reads persisted spin-state transitions from the central database only — never probes block devices (Q32, doc 03 §3.3a Phase 1). Returns every recorded transition plus per-device wake counts grouped by UTC day so the wake-events page can show when each disk woke, how long it stayed awake, and how often it woke.
+         */
+        get: operations["listWakeEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/disks/array": {
         parameters: {
             query?: never;
@@ -513,6 +533,86 @@ export interface paths {
          * @description Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4). The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing. The handler calls `disk.FormatPlan` — never a second formatter (D1).
          */
         post: operations["createArray"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/array/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop the array
+         * @description Enters maintenance mode (Q70, doc 02 §4, `hoserva array stop`): refuse new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true` is required.
+         */
+        post: operations["stopArray"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/array/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the array
+         * @description Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share paths, then start services in the reverse of stop order, and exit maintenance mode only once every step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted.
+         */
+        post: operations["startArray"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/parity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Parity status and guard state
+         * @description Reads SnapRAID status from the boot-device content file only — does not run `snapraid diff` or wake data disks (doc 02 §2, Q13). Threshold-guard state and grouped diff rows reflect the last explicit `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
+         */
+        get: operations["getParity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/parity/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run a SnapRAID diff
+         * @description Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk (doc 02 §2, Q13). Returns grouped changes and threshold-guard evaluation for the parity page; never polled on a timer.
+         */
+        post: operations["runParityDiff"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1022,6 +1122,35 @@ export interface components {
             mounted: boolean;
             disks: components["schemas"]["PoolDiskEntry"][];
         };
+        SpinTransition: {
+            /** @description e.g. `/dev/sdb` — as recorded, never accepted back as input (doc 01 §7). */
+            device: string;
+            /** @enum {string} */
+            fromState: "active" | "standby";
+            /** @enum {string} */
+            toState: "active" | "standby";
+            /** Format: date-time */
+            at: string;
+            /**
+             * Format: int64
+             * @description Present when this row is a wake (standby → active) and a later active → standby transition exists for the same device; seconds until that transition.
+             */
+            awakeDurationSeconds?: number | null;
+        };
+        DailyWakeCount: {
+            device: string;
+            /**
+             * Format: date
+             * @description UTC calendar day the wakes occurred on.
+             */
+            date: string;
+            /** Format: int32 */
+            count: number;
+        };
+        WakeEventsResponse: {
+            events: components["schemas"]["SpinTransition"][];
+            dailyWakeCounts: components["schemas"]["DailyWakeCount"][];
+        };
         DiskInventoryEntry: {
             device: string;
             /** Format: int64 */
@@ -1076,6 +1205,73 @@ export interface components {
             /** @description Exact typed confirmation for this plan (doc 03 §3.1 step 6): `ERASE /dev/sda, /dev/sdb` listing every device that will be formatted, sorted, or `ADOPT ONLY — NOTHING ERASED` when every assigned disk is adopted. A wrong or missing string is refused and formats nothing. */
             confirmation: string;
         };
+        /**
+         * @description Parity age from `snapraid status` (doc 02 §2).
+         * @enum {string}
+         */
+        ParityFreshness: "green" | "amber" | "red";
+        /** @enum {string} */
+        ParityGuardTrigger: "removed-count" | "removed-updated-percent" | "zero-files";
+        ParityZeroFilesDisk: {
+            /** @description Data-disk mount point. */
+            disk: string;
+            /** Format: int32 */
+            filesBefore: number;
+        };
+        ParityGuardState: {
+            /** @description True when the threshold guard would block a sync (doc 02 §2). */
+            wouldBlock: boolean;
+            triggers?: components["schemas"]["ParityGuardTrigger"][];
+            /**
+             * Format: int32
+             * @description Accounted-for removals compared against the removed-count threshold.
+             */
+            removedCount?: number;
+            /**
+             * Format: float
+             * @description Accounted removals plus updated, as a percent of files before the diff.
+             */
+            removedUpdatedPercent?: number;
+            zeroFilesDisks?: components["schemas"]["ParityZeroFilesDisk"][];
+            /** @description Plain-language why the guard would block, when wouldBlock is true. */
+            summary?: string;
+        };
+        /**
+         * @description One doc 02 §2 diff group; moved-by-Hoserva is Q15's relocation manifest match.
+         * @enum {string}
+         */
+        ParityDiffCategory: "removed" | "updated" | "added" | "moved" | "copied" | "moved_by_hoserva";
+        ParityDiffGroup: {
+            category: components["schemas"]["ParityDiffCategory"];
+            /** Format: int32 */
+            count: number;
+            /** @description `mount/relative` paths when SnapRAID named individual files. Empty when only an aggregate count is known (updated, moved). */
+            paths: string[];
+        };
+        ParitySnapshot: {
+            freshness: components["schemas"]["ParityFreshness"];
+            /**
+             * Format: date-time
+             * @description Last successful sync, when known.
+             */
+            lastSyncAt?: string;
+            /**
+             * Format: int32
+             * @description Files changed since last sync (`status` / change journal).
+             */
+            changedSinceSync?: number;
+            /** Format: int32 */
+            dataDisks?: number;
+            /** Format: int32 */
+            parityDisks?: number;
+            guard?: components["schemas"]["ParityGuardState"];
+            /** @description Present after the last explicit run-diff; omitted until then. */
+            groups?: components["schemas"]["ParityDiffGroup"][];
+        };
+        ParityDiffResult: {
+            groups: components["schemas"]["ParityDiffGroup"][];
+            guard: components["schemas"]["ParityGuardState"];
+        };
         StartSyncRequest: {
             /** @default false */
             dryRun: boolean;
@@ -1100,6 +1296,10 @@ export interface components {
              * @description SnapRAID disk index (`hoserva fix --disk N`).
              */
             disk?: number;
+        };
+        StopArrayRequest: {
+            /** @description Must be true after reviewing the Q70 stop list the `/storage` confirm dialog already shows: refuse new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all and data disks. */
+            confirm: boolean;
         };
         ResetUserPasswordRequest: {
             password: string;
@@ -1779,6 +1979,27 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listWakeEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Spin-state transition log and daily wake counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WakeEventsResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     createArray: {
         parameters: {
             query?: never;
@@ -1799,6 +2020,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    stopArray: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StopArrayRequest"];
+            };
+        };
+        responses: {
+            /** @description System status after the sequence. `maintenanceMode` is true. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startArray: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description System status after the sequence. `maintenanceMode` is false on success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getParity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current parity freshness and guard snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParitySnapshot"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    runParityDiff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Grouped diff and guard evaluation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParityDiffResult"];
                 };
             };
             default: components["responses"]["Error"];

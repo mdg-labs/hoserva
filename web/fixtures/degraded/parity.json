@@ -1,0 +1,42 @@
+{
+  "freshness": "red",
+  "lastSyncAt": "2026-01-01T06:00:00Z",
+  "changedSinceSync": 48,
+  "dataDisks": 3,
+  "parityDisks": 1,
+  "guard": {
+    "wouldBlock": false
+  },
+  "groups": [
+    {
+      "category": "removed",
+      "count": 1,
+      "paths": ["/mnt/disk2/tv/missing.mkv"]
+    },
+    {
+      "category": "updated",
+      "count": 2,
+      "paths": []
+    },
+    {
+      "category": "added",
+      "count": 0,
+      "paths": []
+    },
+    {
+      "category": "moved",
+      "count": 0,
+      "paths": []
+    },
+    {
+      "category": "copied",
+      "count": 0,
+      "paths": []
+    },
+    {
+      "category": "moved_by_hoserva",
+      "count": 0,
+      "paths": []
+    }
+  ]
+}

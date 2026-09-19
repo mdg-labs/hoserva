@@ -12,7 +12,7 @@ import (
 	"fmt"
 )
 
-//go:embed */jobs.json */events.jsonl common/job-log.txt
+//go:embed */jobs.json */events.jsonl */parity.json common/job-log.txt
 var files embed.FS
 
 // Scenarios are the mock server's scenarios (doc 06 §8).
@@ -53,6 +53,15 @@ func EventsJSONL(scenario string) ([]byte, error) {
 		return nil, fmt.Errorf("fixtures: unknown scenario %q", scenario)
 	}
 	return files.ReadFile(scenario + "/events.jsonl")
+}
+
+// ParityJSON returns scenario's parity.json fixture: a ParitySnapshot-
+// shaped document validated against api/openapi.yaml by fixtures_test.go.
+func ParityJSON(scenario string) ([]byte, error) {
+	if !Valid(scenario) {
+		return nil, fmt.Errorf("fixtures: unknown scenario %q", scenario)
+	}
+	return files.ReadFile(scenario + "/parity.json")
 }
 
 // JobLog is the canned job-log fixture served for every job's

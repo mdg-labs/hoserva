@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/google/uuid"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // Handler implements apiv1.Handler against the job system (#19): no
@@ -44,12 +46,22 @@ type Handler struct {
 	// Parity is the SnapRAID engine for doctor freshness — nil skips that
 	// check with a warning.
 	Parity parity.Engine
+	// ParityGuard evaluates threshold-guard state for run-diff (doc 02 §2).
+	ParityGuard parity.Guard
+	paritySnap  *paritySnapshotStore
+	parityOnce  sync.Once
 	// Backup is the config archive builder for export/import — nil returns
 	// 501 from those operations.
 	Backup *backup.Service
 	// Settings is #178's hostname/timezone/backup-passphrase business
 	// logic — nil returns an internal error from those operations.
 	Settings *SettingsService
+	// Array is Q70's stop/start sequence. Nil returns 501 from those
+	// operations — the handler never duplicates the sequence itself.
+	Array *job.ArraySequence
+	// History is spin-state and audit-log persistence (Q32, Q74). Nil
+	// returns an empty wake-events list rather than an error.
+	History *store.History
 }
 
 var _ apiv1.Handler = (*Handler)(nil)
@@ -167,7 +179,7 @@ func mapSchedulerError(id uuid.UUID, err error) error {
 // *apiError built above; anything else is an unclassified internal error,
 // logged server-side with its detail and reported as an opaque 500 with
 // no internal detail in the response body.
-func (Handler) NewError(ctx context.Context, err error) *apiv1.ErrorStatusCode {
+func (*Handler) NewError(ctx context.Context, err error) *apiv1.ErrorStatusCode {
 	var ae *apiError
 	if !errors.As(err, &ae) {
 		err = mapAuthError(err)

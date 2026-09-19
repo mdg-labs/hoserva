@@ -169,6 +169,17 @@ func (UnimplementedHandler) GetNotificationRouting(ctx context.Context) (r *GetN
 	return r, ht.ErrNotImplemented
 }
 
+// GetParity implements getParity operation.
+//
+// Reads SnapRAID status from the boot-device content file only — does not run `snapraid diff` or
+// wake data disks (doc 02 §2, Q13). Threshold-guard state and grouped diff rows reflect the last
+// explicit `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
+//
+// GET /parity
+func (UnimplementedHandler) GetParity(ctx context.Context) (r *ParitySnapshot, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetPool implements getPool operation.
 //
 // Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
@@ -245,6 +256,18 @@ func (UnimplementedHandler) ListNotificationChannels(ctx context.Context) (r *Li
 	return r, ht.ErrNotImplemented
 }
 
+// ListWakeEvents implements listWakeEvents operation.
+//
+// Reads persisted spin-state transitions from the central database only — never probes block devices
+// (Q32, doc 03 §3.3a Phase 1). Returns every recorded transition plus per-device wake counts grouped
+// by UTC day so the wake-events page can show when each disk woke, how long it stayed awake, and how
+// often it woke.
+//
+// GET /disks/wake-events
+func (UnimplementedHandler) ListWakeEvents(ctx context.Context) (r *WakeEventsResponse, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // Login implements login operation.
 //
 // Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather
@@ -304,6 +327,17 @@ func (UnimplementedHandler) RunDoctor(ctx context.Context) (r *DoctorReport, _ e
 	return r, ht.ErrNotImplemented
 }
 
+// RunParityDiff implements runParityDiff operation.
+//
+// Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk (doc
+// 02 §2, Q13). Returns grouped changes and threshold-guard evaluation for the parity page; never
+// polled on a timer.
+//
+// POST /parity/diff
+func (UnimplementedHandler) RunParityDiff(ctx context.Context) (r *ParityDiffResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // SendTestNotification implements sendTestNotification operation.
 //
 // Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of
@@ -313,6 +347,18 @@ func (UnimplementedHandler) RunDoctor(ctx context.Context) (r *DoctorReport, _ e
 //
 // POST /notifications/channels/{channelId}/test
 func (UnimplementedHandler) SendTestNotification(ctx context.Context, params SendTestNotificationParams) (r *NotificationTestResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// StartArray implements startArray operation.
+//
+// Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
+// paths, then start services in the reverse of stop order, and exit maintenance mode only once every
+// step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when
+// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted.
+//
+// POST /array/start
+func (UnimplementedHandler) StartArray(ctx context.Context) (r *SystemStatus, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -342,6 +388,20 @@ func (UnimplementedHandler) StartScrub(ctx context.Context, req *StartScrubReque
 //
 // POST /parity/sync
 func (UnimplementedHandler) StartSync(ctx context.Context, req *StartSyncRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// StopArray implements stopArray operation.
+//
+// Enters maintenance mode (Q70, doc 02 §4, `hoserva array stop`): refuse new jobs and interrupt
+// non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share
+// paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog
+// already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure
+// leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true`
+// is required.
+//
+// POST /array/stop
+func (UnimplementedHandler) StopArray(ctx context.Context, req *StopArrayRequest) (r *SystemStatus, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
