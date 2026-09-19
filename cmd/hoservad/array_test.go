@@ -255,3 +255,47 @@ func TestNewArraySequence_StartRefusesWhenGateNotReady(t *testing.T) {
 		t.Fatalf("StartArray mounted while the gate was not ready: %+v", calls)
 	}
 }
+
+type failListProvider struct {
+	disk.Provider
+	err error
+}
+
+func (p failListProvider) List(context.Context) ([]disk.Disk, error) {
+	return nil, p.err
+}
+
+// TestNewArraySequence_ListErrorLeavesGateUnready is the availability half
+// of daemon construction: a transient Provider.List failure must still
+// return a sequence (so the API and Stop stay up) with the gate unready
+// (so Start refuses). Returning that error used to abort hoservad entirely.
+func TestNewArraySequence_ListErrorLeavesGateUnready(t *testing.T) {
+	ctx, h, arrays, disks, runner := newArrayTestEnv(t)
+	persistSampleArray(t, arrays)
+	failing := failListProvider{Provider: disks, err: context.DeadlineExceeded}
+
+	seq, err := newArraySequence(ctx, h.Scheduler, arrays, failing, runner)
+	if err != nil {
+		t.Fatalf("newArraySequence: %v — a List failure must not abort daemon startup", err)
+	}
+	if seq == nil {
+		t.Fatal("Handler.Array would be nil — stop/start would 501 instead of refusing through the gate")
+	}
+	h.Array = seq
+	gate, ok := seq.Gate.(*disk.StorageGate)
+	if !ok {
+		t.Fatalf("Gate is %T, want *disk.StorageGate", seq.Gate)
+	}
+	if gate.Ready() {
+		t.Fatal("gate.Ready() = true when inventory could not be evaluated — Start would mount a degraded array")
+	}
+
+	_, err = h.StartArray(ctx)
+	status := handlerAPIError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "storage_not_ready" {
+		t.Fatalf("StartArray = %+v, want 409 storage_not_ready", status)
+	}
+	if calls := runner.Calls(); len(calls) != 0 {
+		t.Fatalf("StartArray mounted while inventory was unavailable: %+v", calls)
+	}
+}
