@@ -2,8 +2,9 @@ name: Nightly L3
 
 # The L3 VM end-to-end suite (doc 06 §4, §7, Q79, issue #43): install,
 # onboarding, array setup, disk yank and reconstruction, `virsh destroy`
-# mid-sync recovery, reboot persistence, config backup/restore, and the
-# Playwright journeys (journey 5 above all — it must never be skipped).
+# mid-sync recovery, reboot persistence, config backup/restore, the
+# Playwright journeys (journey 5 above all — it must never be skipped),
+# spindown, and the array stop/start sequence (issue #146).
 #
 # Runs on a GitHub-hosted runner, matching every other workflow in this
 # repository (Q42, D20): there are no self-hosted runners, and S9 (issue
@@ -38,9 +39,23 @@ jobs:
     name: L3 VM suite
     if: github.repository == 'mdg-labs/hoserva'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # 60 minutes covered install/onboarding/reboot/Playwright alone; the
+    # spindown steps (scripts/vm/spindown-check.sh, issue #33) add a
+    # 30-minute measurement window (Q31's own "30+ minutes" bar) plus a
+    # settle gate on top of that; the array stop/start sequence step
+    # (scripts/vm/array-sequence-check.sh, issue #146) adds a further
+    # clean shutdown, a persistent disk detach, and a full reboot on top
+    # of its own two scenarios, so the budget grows again with it.
+    timeout-minutes: 105
     steps:
+      # fetch-depth: 0 — the default (1) skips tags entirely (fetch-tags
+      # defaults to false), which would make the vm-suite step's own
+      # `git tag --list 'v*'` fallback check below always find nothing
+      # and always build the placeholder v0.0.0-beta.1, even once a real
+      # release tag exists.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Derive this run's lab id
         id: lab
@@ -73,12 +88,20 @@ jobs:
 
       - name: Start this user's own session libvirtd
         # qemu:///session (never qemu:///system, D20) needs a per-user
-        # virtqemud/libvirtd reachable over its user session bus — the
-        # runner's default non-interactive shell has neither a lingering
-        # session nor a running user manager instance by default.
+        # libvirtd reachable over its own unix socket. No systemd unit
+        # ships one: libvirt-daemon-system installs only the system-wide
+        # libvirtd.service/.socket, and this image's package set has no
+        # virtqemud at all — systemctl --user start virtqemud.socket /
+        # libvirtd.socket both fail with "Unit ... not found" every time.
+        # None of that is needed: libvirt's client library auto-spawns a
+        # per-user libvirtd on first qemu:///session connection when no
+        # socket exists yet, with no systemd or root involved — this
+        # call is that first connection. loginctl enable-linger keeps the
+        # runner's login session (and this auto-spawned daemon under it)
+        # alive for the rest of the job rather than tied to one step's
+        # process lifetime.
         run: |
           sudo loginctl enable-linger "$(id -un)"
-          systemctl --user start virtqemud.socket || systemctl --user start libvirtd.socket
           virsh -c qemu:///session list --all
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -100,7 +123,18 @@ jobs:
       - name: vm-suite
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
-        run: make vm-suite
+        # deploy.sh (rightly) refuses to build against a hand-maintained
+        # version string — it wants the latest released 'v*' tag, or an
+        # explicit TAG=. Pre-1.0, no tag exists yet, so every nightly run
+        # would refuse outright without this fallback. Same placeholder
+        # ci.yml's own .deb build job already uses to prove the package
+        # keeps building on every push. Once a real tag exists, this
+        # condition is false and deploy.sh picks that tag itself instead.
+        run: |
+          if ! git -C "$GITHUB_WORKSPACE" tag --list 'v*' | grep -q .; then
+            export TAG=v0.0.0-beta.1
+          fi
+          make vm-suite
 
       - name: Upload Playwright report
         if: always()

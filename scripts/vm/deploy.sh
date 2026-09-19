@@ -55,6 +55,6 @@ echo "vm-deploy[$HOSERVA_LAB_ID]: installing (apt resolves mergerfs/snapraid fro
 vm_ssh 'sudo apt-get update -qq && sudo apt-get install -y -qq /tmp/hoserva-deploy/hoserva.deb'
 
 echo "vm-deploy[$HOSERVA_LAB_ID]: verifying the hoservad service is active"
-vm_ssh 'sudo systemctl is-active hoservad'
+vm_ssh 'sudo systemctl is-active hoserva'
 
 echo "vm-deploy[$HOSERVA_LAB_ID]: done — hoservad TLS: https://127.0.0.1:$VM_HTTPS_PORT"
