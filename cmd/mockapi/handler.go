@@ -94,8 +94,8 @@ func newHandler(scenario string) (*handler, error) {
 		channels:    make(map[uuid.UUID]apiv1.NotificationChannel),
 		routing:     defaultNotificationRouting(),
 		quietHours:  apiv1.NotificationQuietHours{Enabled: false, Start: "22:00", End: "07:00", CriticalAlwaysDelivers: true},
-		inboxAlerts:     defaultInboxAlerts(scenario),
-		schedules:       defaultMockSchedules(),
+		inboxAlerts: defaultInboxAlerts(scenario),
+		schedules:   defaultMockSchedules(),
 	}, nil
 }
 
