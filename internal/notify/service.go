@@ -23,6 +23,9 @@ type Service struct {
 	Store   *Store
 	Cipher  SecretCipher
 	Senders Senders
+	// Hub fans every persisted in-app alert out to SSE subscribers. Nil
+	// skips broadcasting — fine in unit tests that only exercise Store.
+	Hub *Hub
 
 	// Now defaults to time.Now. Tests inject a fixed clock so quiet-hours
 	// suppression is deterministic.
@@ -308,6 +311,57 @@ func (s *Service) SetQuietHours(ctx context.Context, enabled bool, start, end st
 	return qh, nil
 }
 
+// ListInbox returns doc 03 §2's grouped in-app alerts and the unread
+// count. Groups follow EventCatalog order; within each group unread alerts
+// precede read ones, newest first.
+func (s *Service) ListInbox(ctx context.Context) ([]AlertGroup, int, error) {
+	alerts, err := s.Store.ListAlerts(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("notify: listing alerts: %w", err)
+	}
+	unread, err := s.Store.CountUnreadAlerts(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("notify: counting unread alerts: %w", err)
+	}
+	return groupAlerts(alerts), unread, nil
+}
+
+func groupAlerts(alerts []Alert) []AlertGroup {
+	byType := make(map[EventType][]Alert)
+	for _, a := range alerts {
+		byType[a.EventType] = append(byType[a.EventType], a)
+	}
+	out := make([]AlertGroup, 0)
+	for _, event := range EventCatalog {
+		items := byType[event]
+		if len(items) == 0 {
+			continue
+		}
+		out = append(out, AlertGroup{EventType: event, Alerts: items})
+	}
+	return out
+}
+
+// MarkRead marks every alert when all is true, otherwise only the listed
+// ids. An empty id list with all false is a no-op.
+func (s *Service) MarkRead(ctx context.Context, ids []string, all bool) (int, error) {
+	now := s.now()
+	if all {
+		if err := s.Store.MarkAllAlertsRead(ctx, now); err != nil {
+			return 0, fmt.Errorf("notify: marking all alerts read: %w", err)
+		}
+	} else if len(ids) > 0 {
+		if err := s.Store.MarkAlertsReadByIDs(ctx, ids, now); err != nil {
+			return 0, fmt.Errorf("notify: marking alerts read: %w", err)
+		}
+	}
+	unread, err := s.Store.CountUnreadAlerts(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("notify: counting unread alerts: %w", err)
+	}
+	return unread, nil
+}
+
 // Publish is the exported publish-an-event-from-anywhere API (#35): a
 // future subsystem calls this with what happened, and Service resolves
 // the event's effective severity, looks up every enabled channel
@@ -316,7 +370,8 @@ func (s *Service) SetQuietHours(ctx context.Context, enabled bool, start, end st
 // severity is not critical (which always delivers, doc 03 §8.3, and
 // cannot be turned off). It never sends anything itself; Worker does
 // that, so a slow or unreachable channel never blocks the caller that
-// published the event.
+// published the event. Every real event is also persisted for the
+// in-app inbox (#188) and broadcast to SSE subscribers.
 func (s *Service) Publish(ctx context.Context, event EventType, title, message string) error {
 	if !ValidEventType(event) && event != EventTest {
 		return fmt.Errorf("notify: unknown event type %q", event)
@@ -325,6 +380,21 @@ func (s *Service) Publish(ctx context.Context, event EventType, title, message s
 	severity, err := s.Store.GetEffectiveSeverity(ctx, event)
 	if err != nil {
 		return fmt.Errorf("notify: resolving severity for %s: %w", event, err)
+	}
+	if event != EventTest {
+		now := s.now()
+		alert := &Alert{
+			ID:        s.newID(),
+			EventType: event,
+			Severity:  severity,
+			Title:     title,
+			Message:   message,
+			CreatedAt: now,
+		}
+		if err := s.Store.CreateAlert(ctx, alert); err != nil {
+			return fmt.Errorf("notify: persisting in-app alert: %w", err)
+		}
+		s.Hub.Publish(alert)
 	}
 	channels, err := s.Store.ChannelsForEvent(ctx, event)
 	if err != nil {

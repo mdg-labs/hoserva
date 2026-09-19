@@ -415,6 +415,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List in-app notification alerts
+         * @description Unread alerts first, grouped by event type (doc 03 §2). Reads only the central database — never probes block devices.
+         */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark in-app alerts read
+         * @description Marks every alert whose id is listed, or every alert when `all` is true (doc 03 §2's mark-all-read). Omitted ids with `all` false is a no-op that returns the current unread count.
+         */
+        post: operations["markNotificationsRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/general": {
         parameters: {
             query?: never;
@@ -451,6 +491,26 @@ export interface paths {
          * @description One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
          */
         get: operations["getStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Metric time series
+         * @description Returns downsampled samples from metrics.db for one metric/subject over a time window (Q74, doc 03 §2). Resolution is chosen from the window — raw for up to 48 hours, hourly for up to 90 days, daily beyond — so clients cannot force a full raw scan. A missing or empty metrics.db yields an empty series, not an array-health error.
+         */
+        get: operations["getMetrics"];
         put?: never;
         post?: never;
         delete?: never;
@@ -948,6 +1008,7 @@ export interface components {
             event: "notification";
             data: {
                 id: string;
+                eventType: components["schemas"]["NotificationEventType"];
                 level: components["schemas"]["NotificationLevel"];
                 title: string;
                 message: string;
@@ -1054,6 +1115,31 @@ export interface components {
             severity: components["schemas"]["NotificationLevel"];
             channelIds: string[];
         };
+        NotificationAlert: {
+            id: string;
+            eventType: components["schemas"]["NotificationEventType"];
+            level: components["schemas"]["NotificationLevel"];
+            title: string;
+            message: string;
+            /** Format: date-time */
+            createdAt: string;
+            read: boolean;
+        };
+        NotificationGroup: {
+            eventType: components["schemas"]["NotificationEventType"];
+            alerts: components["schemas"]["NotificationAlert"][];
+        };
+        ListNotificationsOK: {
+            groups: components["schemas"]["NotificationGroup"][];
+            unreadCount: number;
+        };
+        MarkNotificationsReadRequest: {
+            ids?: string[];
+            all?: boolean;
+        };
+        MarkNotificationsReadOK: {
+            unreadCount: number;
+        };
         NotificationQuietHours: {
             enabled: boolean;
             /** @description 24-hour local time, e.g. "22:00". */
@@ -1097,6 +1183,27 @@ export interface components {
         DoctorReport: {
             overall: components["schemas"]["DoctorCheckStatus"];
             checks: components["schemas"]["DoctorCheck"][];
+        };
+        /**
+         * @description Q74 retention tier used for this response.
+         * @enum {string}
+         */
+        MetricResolution: "raw" | "hourly" | "daily";
+        MetricPoint: {
+            /** Format: date-time */
+            at: string;
+            /** Format: double */
+            value: number;
+        };
+        MetricSeries: {
+            metric: string;
+            subject: string;
+            resolution: components["schemas"]["MetricResolution"];
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            points: components["schemas"]["MetricPoint"][];
         };
         SystemStatus: {
             healthy: boolean;
@@ -1868,6 +1975,52 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Grouped in-app alerts and the unread count. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListNotificationsOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    markNotificationsRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkNotificationsReadRequest"];
+            };
+        };
+        responses: {
+            /** @description The unread count after the update. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarkNotificationsReadOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getGeneralSettings: {
         parameters: {
             query?: never;
@@ -1930,6 +2083,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMetrics: {
+        parameters: {
+            query: {
+                /** @description Metric identifier, e.g. `disk_throughput_bytes_per_sec` or `network_throughput_bytes_per_sec` for dashboard charts. */
+                metric: string;
+                /** @description Device path for a per-disk metric (SMART, temperature) or omit for a host-wide metric (CPU, RAM, pool throughput). */
+                subject?: string;
+                /** @description Window start (inclusive), UTC. */
+                from: string;
+                /** @description Window end (inclusive), UTC. */
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The matching series, possibly empty. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricSeries"];
                 };
             };
             default: components["responses"]["Error"];

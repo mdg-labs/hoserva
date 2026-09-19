@@ -187,6 +187,33 @@ func channelIDsFromAPI(ids []uuid.UUID) []string {
 
 // quietHoursToAPI attaches the undisable critical-alert override
 // (doc 03 §8.3, CLAUDE.md) — always true, and not a stored value.
+func alertToAPI(a notify.Alert) apiv1.NotificationAlert {
+	return apiv1.NotificationAlert{
+		ID:        a.ID,
+		EventType: apiv1.NotificationEventType(a.EventType),
+		Level:     apiv1.NotificationLevel(a.Severity),
+		Title:     a.Title,
+		Message:   a.Message,
+		CreatedAt: a.CreatedAt,
+		Read:      a.ReadAt != nil,
+	}
+}
+
+func alertGroupsToAPI(groups []notify.AlertGroup) []apiv1.NotificationGroup {
+	out := make([]apiv1.NotificationGroup, 0, len(groups))
+	for _, g := range groups {
+		alerts := make([]apiv1.NotificationAlert, 0, len(g.Alerts))
+		for _, a := range g.Alerts {
+			alerts = append(alerts, alertToAPI(a))
+		}
+		out = append(out, apiv1.NotificationGroup{
+			EventType: apiv1.NotificationEventType(g.EventType),
+			Alerts:    alerts,
+		})
+	}
+	return out
+}
+
 func quietHoursToAPI(qh notify.QuietHours) apiv1.NotificationQuietHours {
 	return apiv1.NotificationQuietHours{
 		Enabled:                qh.Enabled,

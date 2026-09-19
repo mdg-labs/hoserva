@@ -149,6 +149,18 @@ func (UnimplementedHandler) GetJobLog(ctx context.Context, params GetJobLogParam
 	return r, ht.ErrNotImplemented
 }
 
+// GetMetrics implements getMetrics operation.
+//
+// Returns downsampled samples from metrics.db for one metric/subject over a time window (Q74, doc 03
+// §2). Resolution is chosen from the window — raw for up to 48 hours, hourly for up to 90 days,
+// daily beyond — so clients cannot force a full raw scan. A missing or empty metrics.db yields an
+// empty series, not an array-health error.
+//
+// GET /metrics
+func (UnimplementedHandler) GetMetrics(ctx context.Context, params GetMetricsParams) (r *MetricSeries, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetNotificationChannel implements getNotificationChannel operation.
 //
 // A single channel's current configuration, by id, secret excluded.
@@ -256,6 +268,16 @@ func (UnimplementedHandler) ListNotificationChannels(ctx context.Context) (r *Li
 	return r, ht.ErrNotImplemented
 }
 
+// ListNotifications implements listNotifications operation.
+//
+// Unread alerts first, grouped by event type (doc 03 §2). Reads only the central database — never
+// probes block devices.
+//
+// GET /notifications
+func (UnimplementedHandler) ListNotifications(ctx context.Context) (r *ListNotificationsOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ListWakeEvents implements listWakeEvents operation.
 //
 // Reads persisted spin-state transitions from the central database only — never probes block devices
@@ -293,6 +315,16 @@ func (UnimplementedHandler) Login(ctx context.Context, req *LoginRequest) (r *Us
 //
 // POST /auth/logout
 func (UnimplementedHandler) Logout(ctx context.Context) (r *LogoutNoContent, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// MarkNotificationsRead implements markNotificationsRead operation.
+//
+// Marks every alert whose id is listed, or every alert when `all` is true (doc 03 §2's
+// mark-all-read). Omitted ids with `all` false is a no-op that returns the current unread count.
+//
+// POST /notifications/read
+func (UnimplementedHandler) MarkNotificationsRead(ctx context.Context, req *MarkNotificationsReadRequest) (r *MarkNotificationsReadOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

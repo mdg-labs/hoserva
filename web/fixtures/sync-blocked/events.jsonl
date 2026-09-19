@@ -1,1 +1,1 @@
-{"event":"notification","data":{"id":"n-sync-blocked-1","level":"warning","title":"Sync blocked","message":"The free-space threshold guard is tripped on disk3 — sync refused until it clears.","createdAt":"2026-01-04T05:00:08Z"}}
+{"event":"notification","data":{"id":"n-sync-blocked-1","eventType":"sync_blocked_threshold","level":"warning","title":"Sync blocked","message":"The free-space threshold guard is tripped on disk3 — sync refused until it clears.","createdAt":"2026-01-04T05:00:08Z"}}

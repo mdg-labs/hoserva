@@ -1,1 +1,1 @@
-{"event":"notification","data":{"id":"n-fresh-install-1","level":"info","title":"Fresh install","message":"No jobs yet — the array is empty and ready to configure.","createdAt":"2026-01-05T00:00:00Z"}}
+{"event":"notification","data":{"id":"n-fresh-install-1","eventType":"sync_succeeded","level":"info","title":"Fresh install","message":"No jobs yet — the array is empty and ready to configure.","createdAt":"2026-01-05T00:00:00Z"}}

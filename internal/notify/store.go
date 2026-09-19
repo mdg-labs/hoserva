@@ -432,6 +432,70 @@ func (s *Store) UpdateDeliveryAttempt(ctx context.Context, d *Delivery) error {
 	})
 }
 
+// CreateAlert inserts a as a new in-app notification row.
+func (s *Store) CreateAlert(ctx context.Context, a *Alert) error {
+	return s.q.CreateAlert(ctx, storedb.CreateAlertParams{
+		ID:        a.ID,
+		EventType: string(a.EventType),
+		Severity:  string(a.Severity),
+		Title:     a.Title,
+		Message:   a.Message,
+		CreatedAt: a.CreatedAt.UTC().Format(store.TimeFormat),
+		ReadAt:    timeToSQL(a.ReadAt),
+	})
+}
+
+// ListAlerts returns every in-app alert, unread first then newest first.
+func (s *Store) ListAlerts(ctx context.Context) ([]Alert, error) {
+	rows, err := s.q.ListAlerts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Alert, 0, len(rows))
+	for _, row := range rows {
+		a, err := alertFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// CountUnreadAlerts returns how many in-app alerts are still unread.
+func (s *Store) CountUnreadAlerts(ctx context.Context) (int, error) {
+	n, err := s.q.CountUnreadAlerts(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
+// MarkAllAlertsRead sets read_at on every unread alert.
+func (s *Store) MarkAllAlertsRead(ctx context.Context, readAt time.Time) error {
+	_, err := s.q.MarkAllAlertsRead(ctx, sql.NullString{
+		String: readAt.UTC().Format(store.TimeFormat),
+		Valid:  true,
+	})
+	return err
+}
+
+// MarkAlertsReadByIDs sets read_at on the unread alerts whose ids are
+// listed.
+func (s *Store) MarkAlertsReadByIDs(ctx context.Context, ids []string, readAt time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := s.q.MarkAlertsReadByIDs(ctx, storedb.MarkAlertsReadByIDsParams{
+		ReadAt: sql.NullString{
+			String: readAt.UTC().Format(store.TimeFormat),
+			Valid:  true,
+		},
+		Ids: ids,
+	})
+	return err
+}
+
 func channelFromRow(row *storedb.NotifyChannel) (*Channel, error) {
 	var config ChannelConfig
 	if err := json.Unmarshal([]byte(row.Config), &config); err != nil {
@@ -454,6 +518,26 @@ func channelFromRow(row *storedb.NotifyChannel) (*Channel, error) {
 		HasSecret: row.Secret != nil,
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
+	}, nil
+}
+
+func alertFromRow(row *storedb.NotifyAlert) (Alert, error) {
+	createdAt, err := time.Parse(store.TimeFormat, row.CreatedAt)
+	if err != nil {
+		return Alert{}, fmt.Errorf("notify: parsing created_at for alert %s: %w", row.ID, err)
+	}
+	readAt, err := sqlToTime(row.ReadAt)
+	if err != nil {
+		return Alert{}, fmt.Errorf("notify: parsing read_at for alert %s: %w", row.ID, err)
+	}
+	return Alert{
+		ID:        row.ID,
+		EventType: EventType(row.EventType),
+		Severity:  Severity(row.Severity),
+		Title:     row.Title,
+		Message:   row.Message,
+		CreatedAt: createdAt,
+		ReadAt:    readAt,
 	}, nil
 }
 

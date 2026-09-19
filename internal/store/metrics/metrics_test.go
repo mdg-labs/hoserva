@@ -261,6 +261,76 @@ func TestStore_Downsample_PrunesDailyPastTwoYears(t *testing.T) {
 // TestStore_Downsample_IsIdempotent confirms a second, immediate call
 // changes nothing — Downsample is meant to run repeatedly as a
 // maintenance step (doc 01 §4), not exactly once.
+func TestResolutionForWindow(t *testing.T) {
+	cases := []struct {
+		window time.Duration
+		want   Resolution
+	}{
+		{47 * time.Hour, Raw},
+		{48 * time.Hour, Raw},
+		{49 * time.Hour, Hourly},
+		{90 * 24 * time.Hour, Hourly},
+		{91 * 24 * time.Hour, Daily},
+	}
+	for _, tc := range cases {
+		if got := ResolutionForWindow(tc.window); got != tc.want {
+			t.Fatalf("ResolutionForWindow(%v) = %q, want %q", tc.window, got, tc.want)
+		}
+	}
+}
+
+func TestStore_ValuesInRange(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	from := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	mid := from.Add(30 * time.Minute)
+	to := from.Add(time.Hour)
+
+	for _, at := range []time.Time{from, mid, to.Add(time.Hour)} {
+		if err := s.Insert(ctx, Sample{Metric: "cpu_percent", At: at, Value: float64(at.Minute())}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	values, err := s.ValuesInRange(ctx, Raw, "cpu_percent", "", from, to)
+	if err != nil {
+		t.Fatalf("ValuesInRange: %v", err)
+	}
+	if len(values) != 2 {
+		t.Fatalf("len(values) = %d, want 2 (only samples inside [from,to])", len(values))
+	}
+	if !values[0].At.Equal(from) || !values[1].At.Equal(mid) {
+		t.Fatalf("values = %+v, want %v and %v", values, from, mid)
+	}
+}
+
+func TestStore_ValuesInRange_FractionalFromExcludesPriorSecond(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	at := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	if err := s.Insert(ctx, Sample{Metric: "cpu_percent", At: at, Value: 7}); err != nil {
+		t.Fatal(err)
+	}
+
+	from := at.Add(500 * time.Millisecond)
+	to := at.Add(time.Hour)
+	values, err := s.ValuesInRange(ctx, Raw, "cpu_percent", "", from, to)
+	if err != nil {
+		t.Fatalf("ValuesInRange: %v", err)
+	}
+	if len(values) != 0 {
+		t.Fatalf("values = %+v, want none: sample at %v is before fractional from %v", values, at, from)
+	}
+
+	exact, err := s.ValuesInRange(ctx, Raw, "cpu_percent", "", at, to)
+	if err != nil {
+		t.Fatalf("ValuesInRange exact-second from: %v", err)
+	}
+	if len(exact) != 1 || !exact[0].At.Equal(at) {
+		t.Fatalf("exact-second from: values = %+v, want the sample at %v", exact, at)
+	}
+}
+
 func TestStore_Downsample_IsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
