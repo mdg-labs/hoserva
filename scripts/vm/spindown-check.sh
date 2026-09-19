@@ -152,6 +152,14 @@ declare -A LAST_MESSAGE=()
 while (( SECONDS - window_start < WINDOW_S )); do
   for dev in "${ARRAY_DEVS[@]}"; do
     out="$(vm_ssh "sudo smartctl -j -n standby -a /dev/$dev" 2>&1 || true)"
+    # smartctl can exit nonzero on a successful, parseable poll (doc 02
+    # §4 — LinuxProvider.SMART tolerates that too), so the exit status
+    # alone can't gate this. But a missing smartctl JSON object means
+    # the poll never actually happened (ssh failure, sudo failure,
+    # missing smartctl, malformed output) — that must not be able to
+    # masquerade as flat before/after counters below.
+    printf '%s' "$out" | grep -Eq '"smartctl"[[:space:]]*:[[:space:]]*\{' \
+      || die "SMART poll failed for /dev/$dev: $out"
     msg="$(printf '%s' "$out" | grep -o '"string": "[^"]*"' | head -n1)"
     LAST_MESSAGE["$dev"]="$msg"
   done
