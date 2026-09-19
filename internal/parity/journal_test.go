@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -46,9 +48,22 @@ func TestJournal_CountsDistinctEntries(t *testing.T) {
 	// distinct changed files, not raw event volume.
 	pushOne(w, "/mnt/disk1", ChangeEvent{Kind: ChangeCloseWrite, ID: "dir1/a.txt", Name: "a.txt"})
 
+	// Count reaching 2 only means the two distinct entries exist — it says
+	// nothing about whether the third event (a.txt's close-write, which
+	// updates an existing entry rather than changing the count) has been
+	// applied yet. Poll the actual end condition instead: a.txt's kind has
+	// become ChangeCloseWrite.
 	waitFor(t, time.Second, func() bool {
-		s, err := j.Summary("disk1")
-		return err == nil && s.Count == 2
+		files, err := j.Files("disk1")
+		if err != nil {
+			return false
+		}
+		for _, f := range files {
+			if f.Name == "a.txt" {
+				return f.Kind == ChangeCloseWrite
+			}
+		}
+		return false
 	})
 
 	files, err := j.Files("disk1")
@@ -426,6 +441,120 @@ func TestJournal_ResetSincePersists(t *testing.T) {
 	}
 	if len(snap.Entries) != 0 {
 		t.Fatalf("persisted snapshot after ResetSince has %d entries, want 0", len(snap.Entries))
+	}
+}
+
+// TestJournal_ResetSince_OutlastsInFlightDebouncedPersist is issue #167's
+// own reproduction: readLoop's debounced persist can still be mid-flight —
+// already past its dj.mu snapshot capture, not yet on disk — when
+// ResetSince clears the in-memory state and runs its own persist. Before
+// the fix, persist's snapshot-then-write wasn't serialized against other
+// persist calls for the same disk, so whichever writeSnapshotAtomic call's
+// rename landed last won, independent of which one was logically newer.
+// This forces that exact overlap with onBeforeWrite instead of relying on
+// scheduling luck — the same reliance that made the original bug flaky —
+// and asserts the persisted snapshot always ends up reflecting
+// ResetSince's cleared state, never the stale pre-reset write landing
+// after it.
+func TestJournal_ResetSince_OutlastsInFlightDebouncedPersist(t *testing.T) {
+	root := t.TempDir()
+	w := NewFakeWatcher()
+	j := NewJournal(w, root)
+
+	// Installed before AddDisk starts readLoop's goroutine, so its own
+	// happens-before edge is what makes later reads of onBeforeWrite from
+	// that goroutine race-free. readLoop's own first, always-immediate
+	// persist for the initial batch below must reach onBeforeWrite once
+	// while unarmed — firstPersisted signals that deterministically,
+	// rather than the test guessing from Summary (which updates before
+	// persist is even called) when it's safe to arm the pause.
+	var armed atomic.Bool
+	firstPersisted := make(chan struct{})
+	var firstOnce sync.Once
+	release := make(chan struct{})
+	paused := make(chan struct{})
+	secondEntered := make(chan struct{})
+	var armedInvocations atomic.Int32
+	j.onBeforeWrite = func(string) {
+		if !armed.Load() {
+			firstOnce.Do(func() { close(firstPersisted) })
+			return
+		}
+		// Only the first armed invocation (readLoop's stale, debounced
+		// persist) blocks here. A single sync.Once shared across both
+		// invocations would serialize them itself — Do's internal mutex
+		// blocks any concurrent caller until the first's f returns,
+		// regardless of writeMu — which let this test pass even with
+		// writeMu removed (review finding on #171). The second
+		// invocation instead signals its own entry immediately and
+		// returns, so the test can tell writeMu's serialization apart
+		// from this hook accidentally providing its own.
+		if armedInvocations.Add(1) == 1 {
+			close(paused)
+			<-release
+			return
+		}
+		close(secondEntered)
+	}
+
+	t.Cleanup(func() { _ = j.Close() })
+	ctx := context.Background()
+
+	if err := j.AddDisk(ctx, "disk1", "/mnt/disk1"); err != nil {
+		t.Fatalf("AddDisk: %v", err)
+	}
+	pushOne(w, "/mnt/disk1", ChangeEvent{Kind: ChangeCreate, ID: "dir1/a.txt", Name: "a.txt"})
+	<-firstPersisted
+
+	dj := j.disk("disk1")
+	armed.Store(true)
+
+	// Simulates readLoop's own debounced persist call: it still sees the
+	// pre-reset entry, and is blocked (via onBeforeWrite) right after
+	// capturing that stale snapshot, still holding dj.writeMu.
+	staleDone := make(chan struct{})
+	go func() {
+		j.persist("disk1", dj)
+		close(staleDone)
+	}()
+	<-paused
+
+	resetDone := make(chan struct{})
+	go func() {
+		if err := j.ResetSince("disk1"); err != nil {
+			t.Errorf("ResetSince: %v", err)
+		}
+		close(resetDone)
+	}()
+
+	// ResetSince's own persist call must be unable to even reach
+	// onBeforeWrite while the stale one is still holding dj.writeMu —
+	// give it a moment to prove it's genuinely blocked on writeMu.Lock,
+	// not just not yet scheduled. Checking secondEntered rather than
+	// resetDone is what makes this distinguish writeMu's serialization
+	// from the onBeforeWrite hook's own (removed above).
+	select {
+	case <-secondEntered:
+		t.Fatal("ResetSince's persist reached onBeforeWrite while the debounced write still held dj.writeMu — not serialized")
+	case <-resetDone:
+		t.Fatal("ResetSince's persist completed while the debounced write was still in flight — not serialized")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	<-staleDone
+	<-resetDone
+
+	data, err := os.ReadFile(filepath.Join(root, "disk1.json"))
+	if err != nil {
+		t.Fatalf("reading persisted snapshot: %v", err)
+	}
+	var snap journalSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatalf("parsing persisted snapshot: %v", err)
+	}
+	if len(snap.Entries) != 0 {
+		t.Fatalf("persisted snapshot after the race has %d entries, want 0 (ResetSince's cleared state, not the stale pre-reset write)", len(snap.Entries))
 	}
 }
 

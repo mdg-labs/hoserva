@@ -47,6 +47,15 @@ func (i Identity) IdentityPath() string {
 // /dev/disk/by-id entry known to resolve to it. Partition entries (a
 // "-partN" suffix) name a partition's identity, not the disk's, and must
 // already be filtered out by the caller.
+//
+// A virtio- link (libvirt/udev's by-id name for a virtio-blk device,
+// e.g. an L3 VM's array disk, doc 06 §4) is treated the same as a
+// host-attached ata-/scsi-/nvme- disk's: real hardware never presents
+// this prefix (libvirt does not support a <wwn> for a virtio-blk disk),
+// so recognizing it cannot affect real-hardware identity resolution.
+// Unlike those prefixes, a virtio- link carries no vendor_serial
+// underscore convention to split on — the whole remainder after the
+// prefix is the disk's own configured serial (doc 06 §6).
 func ResolveIdentity(byIDNames []string) Identity {
 	var wwn, wwnName string
 	var hostSerial, hostName string
@@ -62,6 +71,11 @@ func ResolveIdentity(byIDNames []string) Identity {
 		case strings.HasPrefix(name, "ata-"), strings.HasPrefix(name, "scsi-"), strings.HasPrefix(name, "nvme-"):
 			if hostSerial == "" {
 				hostSerial = lastSegment(name)
+				hostName = name
+			}
+		case strings.HasPrefix(name, "virtio-"):
+			if hostSerial == "" {
+				hostSerial = strings.TrimPrefix(name, "virtio-")
 				hostName = name
 			}
 		case strings.HasPrefix(name, "usb-"):

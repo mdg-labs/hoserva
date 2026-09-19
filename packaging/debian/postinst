@@ -13,11 +13,67 @@
 # already-tested logic in a second place, in shell, for no benefit.
 set -e
 
+# HOSERVA_TEST_ROOT lets packaging/test-postinst-smartd-mask.sh exercise
+# this exact script's file writes against a throwaway tree instead of a
+# real root — it is never set outside that test, exactly like postrm's
+# own HOSERVA_TEST_ROOT.
+root="${HOSERVA_TEST_ROOT:-}"
+
 case "$1" in
   configure)
     if ! getent group hoserva >/dev/null 2>&1; then
       addgroup --quiet --system hoserva
     fi
+
+    # smartmontools (issue #161's own Depends: addition) is a dependency
+    # configured before this script runs (dpkg configures dependencies
+    # first), and its own postinst unconditionally enables and starts
+    # smartmontools.service (smartd) on install. smartd then runs its own
+    # independent periodic SMART scan on Debian's default cadence — one
+    # of doc 08 §1's own named spindown-wake culprits, and completely
+    # separate from LinuxProvider.SMART/.Spindown's on-demand
+    # `smartctl -n standby`/`hdparm` calls (internal/disk/linux_provider.go).
+    #
+    # preinst already wrote the durable drop-in below before
+    # smartmontools' own postinst ran (safety-critical review finding on
+    # #171: this postinst runs too late to stop that start from ever
+    # happening), so the mask/stop/drop-in-write here are cleanup and
+    # upgrade protection — for a smartmontools already running from
+    # before hoserva was installed, and for every future hoserva
+    # reconfigure — not what closes the original race.
+    #
+    # Masking blocks the unit right now, including a manual `systemctl
+    # start` — but it does NOT survive a future smartmontools upgrade:
+    # smartmontools 7.4-3's own postinst (dh_installsystemd) opens with
+    # `deb-systemd-helper unmask smartmontools.service`, which deletes
+    # this exact mask symlink, before re-enabling and restarting the
+    # unit. The drop-in below is what actually survives that: `unmask`
+    # only ever touches the unit's own mask symlink, never a
+    # `.service.d/` override directory, so a condition placed there
+    # keeps the unit from starting — enabled or not — across any future
+    # smartmontools reinstall or upgrade.
+    #
+    # deb-systemd-helper/deb-systemd-invoke (init-system-helpers) are used
+    # instead of systemctl directly so this is safe under a chroot build
+    # with no systemd running, per Debian policy for maintainer scripts.
+    if command -v deb-systemd-helper >/dev/null 2>&1; then
+      deb-systemd-helper mask smartmontools.service >/dev/null || true
+      deb-systemd-invoke stop smartmontools.service >/dev/null || true
+    fi
+
+    dropin_dir="$root/etc/systemd/system/smartmontools.service.d"
+    mkdir -p "$dropin_dir"
+    cat >"$dropin_dir/hoserva-disable.conf" <<'UNIT'
+[Unit]
+# Hoserva depends on smartmontools for smartctl/hdparm only (D1) and
+# never wants its bundled smartd daemon running unmanaged (doc 08 §1).
+# /nonexistent-hoserva-smartd-disabled is never created, so this
+# condition always fails and systemd skips starting the unit instead of
+# running it — including after a future smartmontools reinstall or
+# upgrade unmasks and re-enables it, because that only ever touches the
+# plain mask symlink above, never this override directory.
+ConditionPathExists=/nonexistent-hoserva-smartd-disabled
+UNIT
     ;;
 esac
 
