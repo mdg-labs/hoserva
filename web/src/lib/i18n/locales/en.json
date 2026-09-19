@@ -77,5 +77,140 @@
   },
   "placeholderPage": {
     "description": "This section is a placeholder — its page is built in a later issue."
+  },
+  "wizard": {
+    "back": "Back",
+    "next": "Next",
+    "stepProgress": "Step {{current}} of {{total}}"
+  },
+  "copyValue": {
+    "label": "Value to copy",
+    "copy": "Copy",
+    "copied": "Copied"
+  },
+  "secretInput": {
+    "show": "Show secret",
+    "hide": "Hide secret",
+    "generate": "Generate secret",
+    "strength": {
+      "weak": "Weak password",
+      "fair": "Fair password",
+      "good": "Good password",
+      "strong": "Strong password"
+    }
+  },
+  "totp": {
+    "label": "Authentication code"
+  },
+  "timezone": {
+    "searchPlaceholder": "Search timezones",
+    "placeholder": "Select a timezone"
+  },
+  "welcome": {
+    "finish": "Finish setup",
+    "confirmTotp": "Confirm authenticator",
+    "steps": {
+      "admin": {
+        "title": "Create the admin account",
+        "description": "Choose the first account that can manage Hoserva. No default credentials exist."
+      },
+      "doctor": {
+        "title": "System check",
+        "description": "Hoserva runs the same checks as hoserva doctor before you continue."
+      },
+      "basics": {
+        "title": "Basics",
+        "description": "Set a few host defaults and optional alerts before you choose a path."
+      },
+      "path": {
+        "title": "Where next?",
+        "description": "Onboarding is complete — choose where to land first."
+      }
+    },
+    "fields": {
+      "username": "Username",
+      "password": "Password",
+      "passwordHint": "At least 12 characters.",
+      "enableTotp": "Set up an authenticator app (recommended)",
+      "hostname": "Hostname",
+      "hostnamePlaceholder": "hoserva",
+      "hostnameHint": "Saved when a settings API lands — shown here for the onboarding flow.",
+      "timezone": "Timezone",
+      "notificationChannel": "Notification channel",
+      "channelNamePlaceholder": "Primary alerts",
+      "channelSecretPlaceholder": "Channel credential",
+      "backupPassphrase": "Backup passphrase"
+    },
+    "channelTypes": {
+      "email": "Email",
+      "gotify": "Gotify",
+      "ntfy": "ntfy",
+      "discord": "Discord",
+      "webhook": "Webhook"
+    },
+    "actions": {
+      "skipChannel": "Skip notification channel",
+      "configureChannel": "Configure a notification channel",
+      "skipBackupPassphrase": "Skip backup passphrase",
+      "setBackupPassphrase": "Set a backup passphrase"
+    },
+    "warnings": {
+      "skipNotificationTitle": "No notification channel configured",
+      "skipNotificationDescription": "You will not be told about disk failures or other alerts until you add a channel in Settings.",
+      "skipBackupTitle": "No backup passphrase set",
+      "skipBackupDescription": "A backup restored without this passphrase restores everything except secrets protected by it."
+    },
+    "totp": {
+      "title": "Authenticator enrolment",
+      "description": "Scan the URI or enter the secret in your authenticator app, then enter a code to confirm.",
+      "uriLabel": "Authenticator URI",
+      "secretLabel": "Manual entry secret",
+      "confirmLabel": "Confirmation code"
+    },
+    "q76": {
+      "heading": "Existing host configuration",
+      "description": "Hoserva never overwrites existing configuration. Choose import or leave each item unmanaged.",
+      "samba": "Samba shares",
+      "nfs": "NFS exports",
+      "fstab": "fstab mounts",
+      "dockerContainers": "Docker containers",
+      "dockerImages": "Docker images",
+      "noneFound": "None detected on this host.",
+      "import": "Import into Hoserva",
+      "leaveUnmanaged": "Leave unmanaged"
+    },
+    "path": {
+      "fresh": {
+        "title": "Fresh install",
+        "description": "Continue to the storage setup wizard and build a new array."
+      },
+      "migrate": {
+        "title": "Migrating from Unraid",
+        "description": "Open the migration tool to import an existing Unraid configuration."
+      }
+    },
+    "errors": {
+      "usernameRequired": "Enter a username.",
+      "passwordTooShort": "The password must be at least 12 characters.",
+      "totpEnrollFailed": "Could not start authenticator enrolment.",
+      "totpConfirmRequired": "Enter the six-digit code from your authenticator app.",
+      "storageBlocked": "Fix the failed storage dependency checks before continuing."
+    }
+  },
+  "login": {
+    "title": "Sign in",
+    "description": "Sign in to manage this Hoserva server.",
+    "submit": "Sign in",
+    "fields": {
+      "username": "Username",
+      "password": "Password",
+      "totp": "Authenticator code",
+      "totpHint": "Enter the six-digit code from your authenticator app."
+    },
+    "errors": {
+      "totpRequired": "This account uses an authenticator — enter the current code.",
+      "totpInvalid": "That authenticator code is not valid. Try again.",
+      "rateLimited": "Too many failed attempts. {{message}}"
+    }
   }
 }
