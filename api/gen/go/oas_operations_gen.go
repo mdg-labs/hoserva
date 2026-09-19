@@ -30,6 +30,7 @@ const (
 	ListDisksOperation                 OperationName = "ListDisks"
 	ListJobsOperation                  OperationName = "ListJobs"
 	ListNotificationChannelsOperation  OperationName = "ListNotificationChannels"
+	ListWakeEventsOperation            OperationName = "ListWakeEvents"
 	LoginOperation                     OperationName = "Login"
 	LogoutOperation                    OperationName = "Logout"
 	ResetUserPasswordOperation         OperationName = "ResetUserPassword"

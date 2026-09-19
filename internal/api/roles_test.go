@@ -141,6 +141,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.GetStatusOperation,
 		apiv1.ImportConfigOperation,
 		apiv1.ListDisksOperation,
+		apiv1.ListWakeEventsOperation,
 		apiv1.ListJobsOperation,
 		apiv1.ListNotificationChannelsOperation,
 		apiv1.LoginOperation,

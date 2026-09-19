@@ -46,6 +46,78 @@ func (q *Queries) InsertSpinEvent(ctx context.Context, arg InsertSpinEventParams
 	return err
 }
 
+const listDailyWakeCounts = `-- name: ListDailyWakeCounts :many
+SELECT device, date(at) AS day, COUNT(*) AS count
+FROM spin_events
+WHERE from_state = 'standby' AND to_state = 'active'
+GROUP BY device, date(at)
+ORDER BY day DESC, device
+`
+
+type ListDailyWakeCountsRow struct {
+	Device string      `json:"device"`
+	Day    interface{} `json:"day"`
+	Count  int64       `json:"count"`
+}
+
+func (q *Queries) ListDailyWakeCounts(ctx context.Context) ([]*ListDailyWakeCountsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDailyWakeCounts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*ListDailyWakeCountsRow
+	for rows.Next() {
+		var i ListDailyWakeCountsRow
+		if err := rows.Scan(&i.Device, &i.Day, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSpinEvents = `-- name: ListSpinEvents :many
+SELECT id, device, from_state, to_state, at
+FROM spin_events
+ORDER BY at DESC
+`
+
+func (q *Queries) ListSpinEvents(ctx context.Context) ([]*SpinEvent, error) {
+	rows, err := q.db.QueryContext(ctx, listSpinEvents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*SpinEvent
+	for rows.Next() {
+		var i SpinEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.Device,
+			&i.FromState,
+			&i.ToState,
+			&i.At,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneSpinEvents = `-- name: PruneSpinEvents :exec
 DELETE FROM spin_events WHERE at < ?
 `

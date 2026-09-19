@@ -11,3 +11,15 @@ SELECT COUNT(*) FROM spin_events;
 
 -- name: PruneSpinEvents :exec
 DELETE FROM spin_events WHERE at < ?;
+
+-- name: ListSpinEvents :many
+SELECT id, device, from_state, to_state, at
+FROM spin_events
+ORDER BY at DESC;
+
+-- name: ListDailyWakeCounts :many
+SELECT device, date(at) AS day, COUNT(*) AS count
+FROM spin_events
+WHERE from_state = 'standby' AND to_state = 'active'
+GROUP BY device, date(at)
+ORDER BY day DESC, device;
