@@ -16,6 +16,7 @@ type Job struct {
 	Cancellable  bool
 	ResourceIDs  []string
 	Checkpoint   []byte
+	Params       []byte
 	ErrorCode    string
 	ErrorMessage string
 	CreatedAt    time.Time

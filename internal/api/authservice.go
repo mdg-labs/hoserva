@@ -485,13 +485,16 @@ func (s *AuthService) verifyTOTPReenrolment(ctx context.Context, u *User, passwo
 }
 
 // ConfirmTOTP activates userID's pending secret once code proves the user
-// has it. The activation itself is conditional, not a read-validate-write
-// pair: AuthStore.ActivateTOTP's UPDATE only matches while
-// totp_pending_secret still holds exactly the secret this call read, so
-// two concurrent confirmTotp calls for the same pending secret can never
-// both activate it (doc 01 §7's replay protection, mirroring Login's own
-// TOTP-step check).
-func (s *AuthService) ConfirmTOTP(ctx context.Context, userID, code string) error {
+// has it, and revokes every other session of that account atomically with
+// the activation (Q84). keepSessionTokenHash is the caller's own session
+// hash — empty revokes every session of the account.
+//
+// The activation itself is conditional, not a read-validate-write pair:
+// AuthStore.ActivateTOTP's UPDATE only matches while totp_pending_secret
+// still holds exactly the secret this call read, so two concurrent
+// confirmTotp calls for the same pending secret can never both activate it
+// (doc 01 §7's replay protection, mirroring Login's own TOTP-step check).
+func (s *AuthService) ConfirmTOTP(ctx context.Context, userID, code, keepSessionTokenHash string) error {
 	u, err := s.Store.GetUserByID(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("looking up user: %w", err)
@@ -511,7 +514,7 @@ func (s *AuthService) ConfirmTOTP(ctx context.Context, userID, code string) erro
 	if !ok {
 		return ErrTOTPInvalid
 	}
-	activated, err := s.Store.ActivateTOTP(ctx, userID, u.TOTPPendingSecret, s.Now(), step, u.TOTPPendingSecret)
+	activated, err := s.Store.ActivateTOTPAndRevokeOtherSessions(ctx, userID, u.TOTPPendingSecret, s.Now(), step, u.TOTPPendingSecret, keepSessionTokenHash)
 	if err != nil {
 		return fmt.Errorf("confirming totp: %w", err)
 	}

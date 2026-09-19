@@ -15,11 +15,11 @@ const createJob = `-- name: CreateJob :exec
 INSERT INTO jobs (
     id, "type", class, "status", progress, resumable, cancellable,
     resource_ids, checkpoint, error_code, error_message,
-    created_at, started_at, finished_at
+    created_at, started_at, finished_at, params
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?,
-    ?, ?, ?
+    ?, ?, ?, ?
 )
 `
 
@@ -38,6 +38,7 @@ type CreateJobParams struct {
 	CreatedAt    string         `json:"created_at"`
 	StartedAt    sql.NullString `json:"started_at"`
 	FinishedAt   sql.NullString `json:"finished_at"`
+	Params       sql.NullString `json:"params"`
 }
 
 // sqlc input (#19, Q60): typed Go query code for the jobs table, generated
@@ -65,6 +66,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) error {
 		arg.CreatedAt,
 		arg.StartedAt,
 		arg.FinishedAt,
+		arg.Params,
 	)
 	return err
 }
@@ -73,7 +75,7 @@ const getJob = `-- name: GetJob :one
 SELECT
     id, "type", class, "status", progress, resumable, cancellable,
     resource_ids, checkpoint, error_code, error_message,
-    created_at, started_at, finished_at
+    created_at, started_at, finished_at, params
 FROM jobs WHERE id = ?
 `
 
@@ -95,6 +97,7 @@ func (q *Queries) GetJob(ctx context.Context, id string) (*Job, error) {
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.Params,
 	)
 	return &i, err
 }
@@ -113,7 +116,7 @@ const listActiveJobs = `-- name: ListActiveJobs :many
 SELECT
     id, "type", class, "status", progress, resumable, cancellable,
     resource_ids, checkpoint, error_code, error_message,
-    created_at, started_at, finished_at
+    created_at, started_at, finished_at, params
 FROM jobs WHERE "status" IN ('queued', 'running') ORDER BY created_at ASC
 `
 
@@ -141,6 +144,7 @@ func (q *Queries) ListActiveJobs(ctx context.Context) ([]*Job, error) {
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.Params,
 		); err != nil {
 			return nil, err
 		}
@@ -159,7 +163,7 @@ const listJobs = `-- name: ListJobs :many
 SELECT
     id, "type", class, "status", progress, resumable, cancellable,
     resource_ids, checkpoint, error_code, error_message,
-    created_at, started_at, finished_at
+    created_at, started_at, finished_at, params
 FROM jobs
 WHERE (?1 IS NULL OR class = ?1)
   AND (?2 IS NULL OR "status" = ?2)
@@ -197,6 +201,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]*Job, err
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.Params,
 		); err != nil {
 			return nil, err
 		}

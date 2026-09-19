@@ -131,7 +131,7 @@ func TestScheduler_SubmitFailsForUnregisteredType(t *testing.T) {
 	ctx := context.Background()
 	s := newTestScheduler(t)
 
-	if _, err := s.Submit(ctx, TypeSync, nil); !errors.Is(err, ErrJobTypeNotRegistered) {
+	if _, err := s.Submit(ctx, TypeSync, nil, nil); !errors.Is(err, ErrJobTypeNotRegistered) {
 		t.Fatalf("Submit(unregistered type) = %v, want ErrJobTypeNotRegistered", err)
 	}
 }
@@ -141,7 +141,7 @@ func TestScheduler_SubmitRunsImmediatelyWhenNoConflict(t *testing.T) {
 	s := newTestScheduler(t)
 
 	started, release := registerBlocking(s, TypeSync, false)
-	j, err := s.Submit(ctx, TypeSync, nil)
+	j, err := s.Submit(ctx, TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -158,14 +158,14 @@ func TestScheduler_SubmitQueuesOnParityConflictThenDispatchesWhenFreed(t *testin
 	s := newTestScheduler(t)
 
 	aStarted, aRelease := registerBlocking(s, TypeSync, false)
-	a, err := s.Submit(ctx, TypeSync, nil)
+	a, err := s.Submit(ctx, TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit a: %v", err)
 	}
 	<-aStarted
 
 	bStarted, bRelease := registerBlocking(s, TypeScrub, false)
-	b, err := s.Submit(ctx, TypeScrub, nil)
+	b, err := s.Submit(ctx, TypeScrub, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit b: %v", err)
 	}
@@ -194,14 +194,14 @@ func TestScheduler_ArrayWriteDifferentDisksRunConcurrently(t *testing.T) {
 	s := newTestScheduler(t)
 
 	aStarted, aRelease := registerBlocking(s, TypeMover, false)
-	a, err := s.Submit(ctx, TypeMover, []string{"disk-1"})
+	a, err := s.Submit(ctx, TypeMover, []string{"disk-1"}, nil)
 	if err != nil {
 		t.Fatalf("Submit a: %v", err)
 	}
 	<-aStarted
 
 	bStarted, bRelease := registerBlocking(s, TypeRebalance, false)
-	b, err := s.Submit(ctx, TypeRebalance, []string{"disk-2"})
+	b, err := s.Submit(ctx, TypeRebalance, []string{"disk-2"}, nil)
 	if err != nil {
 		t.Fatalf("Submit b: %v", err)
 	}
@@ -220,14 +220,14 @@ func TestScheduler_ArrayWriteSameDiskQueues(t *testing.T) {
 	s := newTestScheduler(t)
 
 	aStarted, aRelease := registerBlocking(s, TypeMover, false)
-	a, err := s.Submit(ctx, TypeMover, []string{"disk-1"})
+	a, err := s.Submit(ctx, TypeMover, []string{"disk-1"}, nil)
 	if err != nil {
 		t.Fatalf("Submit a: %v", err)
 	}
 	<-aStarted
 
 	bStarted, bRelease := registerBlocking(s, TypeEvacuation, false)
-	b, err := s.Submit(ctx, TypeEvacuation, []string{"disk-1"})
+	b, err := s.Submit(ctx, TypeEvacuation, []string{"disk-1"}, nil)
 	if err != nil {
 		t.Fatalf("Submit b: %v", err)
 	}
@@ -246,14 +246,14 @@ func TestScheduler_ServiceDifferentContainersRunConcurrently(t *testing.T) {
 	s := newTestScheduler(t)
 
 	aStarted, aRelease := registerBlocking(s, TypeContainerUpdate, false)
-	a, err := s.Submit(ctx, TypeContainerUpdate, []string{"jellyfin"})
+	a, err := s.Submit(ctx, TypeContainerUpdate, []string{"jellyfin"}, nil)
 	if err != nil {
 		t.Fatalf("Submit a: %v", err)
 	}
 	<-aStarted
 
 	bStarted, bRelease := registerBlocking(s, TypeAppdataBackup, false)
-	b, err := s.Submit(ctx, TypeAppdataBackup, []string{"radarr"})
+	b, err := s.Submit(ctx, TypeAppdataBackup, []string{"radarr"}, nil)
 	if err != nil {
 		t.Fatalf("Submit b: %v", err)
 	}
@@ -272,14 +272,14 @@ func TestScheduler_ServiceSameContainerQueues(t *testing.T) {
 	s := newTestScheduler(t)
 
 	aStarted, aRelease := registerBlocking(s, TypeContainerUpdate, false)
-	a, err := s.Submit(ctx, TypeContainerUpdate, []string{"jellyfin"})
+	a, err := s.Submit(ctx, TypeContainerUpdate, []string{"jellyfin"}, nil)
 	if err != nil {
 		t.Fatalf("Submit a: %v", err)
 	}
 	<-aStarted
 
 	bStarted, bRelease := registerBlocking(s, TypeAppdataBackup, false)
-	b, err := s.Submit(ctx, TypeAppdataBackup, []string{"jellyfin"})
+	b, err := s.Submit(ctx, TypeAppdataBackup, []string{"jellyfin"}, nil)
 	if err != nil {
 		t.Fatalf("Submit b: %v", err)
 	}
@@ -299,14 +299,14 @@ func TestScheduler_TopologyExcludesEveryStorageClassButNotServiceOrVM(t *testing
 	s := newTestScheduler(t)
 
 	topStarted, topRelease := registerBlocking(s, TypeDiskAdd, false)
-	_, err := s.Submit(ctx, TypeDiskAdd, nil)
+	_, err := s.Submit(ctx, TypeDiskAdd, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit topology job: %v", err)
 	}
 	<-topStarted
 
 	syncStarted, syncRelease := registerBlocking(s, TypeSync, false)
-	sync, err := s.Submit(ctx, TypeSync, nil)
+	sync, err := s.Submit(ctx, TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit sync: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestScheduler_TopologyExcludesEveryStorageClassButNotServiceOrVM(t *testing
 	}
 
 	vmStarted, vmRelease := registerBlocking(s, TypeVMStart, false)
-	vmJob, err := s.Submit(ctx, TypeVMStart, []string{"vm-1"})
+	vmJob, err := s.Submit(ctx, TypeVMStart, []string{"vm-1"}, nil)
 	if err != nil {
 		t.Fatalf("Submit vm job: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestScheduler_CancelRunningCancellableJob(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	})
-	j, err := s.Submit(ctx, TypeSync, nil)
+	j, err := s.Submit(ctx, TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestScheduler_CancelRunningNonCancellableJobRefuses(t *testing.T) {
 	s := newTestScheduler(t)
 
 	started, release := registerBlocking(s, TypeSync, false)
-	j, err := s.Submit(ctx, TypeSync, nil)
+	j, err := s.Submit(ctx, TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -391,14 +391,14 @@ func TestScheduler_CancelQueuedJobRemovesItRegardlessOfCancellable(t *testing.T)
 	s := newTestScheduler(t)
 
 	aStarted, aRelease := registerBlocking(s, TypeSync, false)
-	a, err := s.Submit(ctx, TypeSync, nil)
+	a, err := s.Submit(ctx, TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit a: %v", err)
 	}
 	<-aStarted
 
 	s.registry.Register(TypeScrub, false, blockingRun(make(chan struct{}), make(chan struct{}), nil))
-	b, err := s.Submit(ctx, TypeScrub, nil)
+	b, err := s.Submit(ctx, TypeScrub, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit b: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestScheduler_CancelJobNotRunningReturnsError(t *testing.T) {
 	s := newTestScheduler(t)
 
 	started, release := registerBlocking(s, TypeSync, false)
-	j, err := s.Submit(ctx, TypeSync, nil)
+	j, err := s.Submit(ctx, TypeSync, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +457,7 @@ func TestScheduler_ResumeRefusesNonResumableType(t *testing.T) {
 	s := newTestScheduler(t)
 
 	started, release := registerBlocking(s, TypeSync, false)
-	j, err := s.Submit(ctx, TypeSync, nil)
+	j, err := s.Submit(ctx, TypeSync, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +479,7 @@ func TestScheduler_ResumeRefusesNonInterruptedJob(t *testing.T) {
 	s := newTestScheduler(t)
 
 	started, release := registerBlocking(s, TypeMover, false)
-	j, err := s.Submit(ctx, TypeMover, nil)
+	j, err := s.Submit(ctx, TypeMover, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +515,7 @@ func TestScheduler_ResumeContinuesFromCheckpoint(t *testing.T) {
 		return nil
 	})
 
-	j, err := s.Submit(ctx, TypeRebalance, nil)
+	j, err := s.Submit(ctx, TypeRebalance, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -568,7 +568,7 @@ func TestScheduler_MaintenanceModeRefusesNewJobs(t *testing.T) {
 		t.Fatal("InMaintenance() = false after EnterMaintenance")
 	}
 
-	_, err := s.Submit(ctx, TypeSync, nil)
+	_, err := s.Submit(ctx, TypeSync, nil, nil)
 	if !errors.Is(err, ErrMaintenanceMode) {
 		t.Fatalf("Submit during maintenance = %v, want ErrMaintenanceMode (Q70)", err)
 	}
@@ -579,14 +579,14 @@ func TestScheduler_MaintenanceModeInterruptsQueuedJobs(t *testing.T) {
 	s := newTestScheduler(t)
 
 	aStarted, aRelease := registerBlocking(s, TypeSync, false)
-	a, err := s.Submit(ctx, TypeSync, nil)
+	a, err := s.Submit(ctx, TypeSync, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-aStarted
 
 	s.registry.Register(TypeScrub, false, blockingRun(make(chan struct{}), make(chan struct{}), nil))
-	b, err := s.Submit(ctx, TypeScrub, nil)
+	b, err := s.Submit(ctx, TypeScrub, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +631,7 @@ func TestScheduler_MaintenanceModeStopsResumableJobAtCheckpoint(t *testing.T) {
 		close(returned)
 		return nil
 	})
-	_, err := s.Submit(ctx, TypeMover, nil)
+	_, err := s.Submit(ctx, TypeMover, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -660,7 +660,7 @@ func TestScheduler_MaintenanceModeCancelsNonResumableRunningJob(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	})
-	j, err := s.Submit(ctx, TypeSync, nil)
+	j, err := s.Submit(ctx, TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -707,7 +707,7 @@ func TestScheduler_Await_ReturnsPromptlyDespiteAFailedFinalStatusWrite(t *testin
 	s := NewScheduler(st, NewLogStore(t.TempDir()), NewHub(), NewRegistry())
 
 	started, release := registerBlocking(s, TypeSync, false)
-	j, err := s.Submit(ctx, TypeSync, nil)
+	j, err := s.Submit(ctx, TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}

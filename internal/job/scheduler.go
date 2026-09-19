@@ -1,6 +1,7 @@
 package job
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -103,9 +104,13 @@ func (s *Scheduler) RecoverFromRestart(ctx context.Context) error {
 // class conflicts with a job already running (doc 01 §4), in which case it
 // is queued until dispatch() finds it a slot. t must have a RunFunc bound
 // through Registry.Register — nothing here knows how to run any job type
-// itself.
-func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string) (*Job, error) {
+// itself. params is the JSON request payload for types that have one
+// (validated here against t); nil or empty for types that have none.
+func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, params []byte) (*Job, error) {
 	if err := ValidateType(t); err != nil {
+		return nil, err
+	}
+	if err := ValidateParams(t, params); err != nil {
 		return nil, err
 	}
 	entry, ok := s.registry.lookup(t)
@@ -128,6 +133,7 @@ func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string) (*
 		Resumable:   Resumable(t),
 		Cancellable: entry.cancellable,
 		ResourceIDs: resourceIDs,
+		Params:      bytes.Clone(params),
 		CreatedAt:   now,
 	}
 	if s.hasConflictWithRunningLocked(class, resourceIDs) {
@@ -480,6 +486,7 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 	rc := &RunContext{
 		ctx:           ctx,
 		checkpoint:    rj.job.Checkpoint,
+		params:        rj.job.Params,
 		stopRequested: rj.stopCh,
 		out:           out,
 		saveCheckpoint: func(data []byte) error {

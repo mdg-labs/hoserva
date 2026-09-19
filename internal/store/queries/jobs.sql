@@ -12,25 +12,25 @@
 INSERT INTO jobs (
     id, "type", class, "status", progress, resumable, cancellable,
     resource_ids, checkpoint, error_code, error_message,
-    created_at, started_at, finished_at
+    created_at, started_at, finished_at, params
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?,
-    ?, ?, ?
+    ?, ?, ?, ?
 );
 
 -- name: GetJob :one
 SELECT
     id, "type", class, "status", progress, resumable, cancellable,
     resource_ids, checkpoint, error_code, error_message,
-    created_at, started_at, finished_at
+    created_at, started_at, finished_at, params
 FROM jobs WHERE id = ?;
 
 -- name: ListJobs :many
 SELECT
     id, "type", class, "status", progress, resumable, cancellable,
     resource_ids, checkpoint, error_code, error_message,
-    created_at, started_at, finished_at
+    created_at, started_at, finished_at, params
 FROM jobs
 WHERE (sqlc.narg('class') IS NULL OR class = sqlc.narg('class'))
   AND (sqlc.narg('status') IS NULL OR "status" = sqlc.narg('status'))
@@ -41,7 +41,7 @@ LIMIT sqlc.arg('row_limit');
 SELECT
     id, "type", class, "status", progress, resumable, cancellable,
     resource_ids, checkpoint, error_code, error_message,
-    created_at, started_at, finished_at
+    created_at, started_at, finished_at, params
 FROM jobs WHERE "status" IN ('queued', 'running') ORDER BY created_at ASC;
 
 -- name: UpdateJobStatus :exec
