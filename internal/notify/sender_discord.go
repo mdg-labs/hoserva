@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 // DiscordSender posts to a Discord webhook (doc 03 §8.3). The webhook URL
@@ -40,12 +42,21 @@ func (d *DiscordSender) Send(ctx context.Context, _ ChannelConfig, secret string
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, secret, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("building discord request: %w", err)
+		// err from NewRequestWithContext is a *url.Error carrying secret
+		// (the webhook URL, the channel's credential, Q28) — never
+		// surface it: this error reaches d.LastError, gets persisted by
+		// UpdateDeliveryAttempt and can be returned by
+		// sendTestNotification, none of which may carry a secret.
+		return errors.New("building discord request: invalid webhook url")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := d.client().Do(req)
 	if err != nil {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			return fmt.Errorf("sending discord request: %w", urlErr.Err)
+		}
 		return fmt.Errorf("sending discord request: %w", err)
 	}
 	return checkHTTPStatus(resp)

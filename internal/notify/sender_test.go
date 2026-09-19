@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/smtp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGotifySenderSendsExpectedRequest(t *testing.T) {
@@ -128,6 +131,26 @@ func TestDiscordSenderRequiresSecret(t *testing.T) {
 	}
 }
 
+// TestDiscordSenderRedactsSecretOnTransportError proves a dial failure
+// never leaks the webhook URL — the channel's credential (Q28) — in the
+// returned error. That error reaches Delivery.LastError and is persisted
+// (UpdateDeliveryAttempt) and can be returned by sendTestNotification, so
+// a *url.Error's default message (which embeds the full URL) must never
+// surface here.
+func TestDiscordSenderRedactsSecretOnTransportError(t *testing.T) {
+	const secretToken = "super-secret-webhook-token-should-never-leak"
+	secret := "http://127.0.0.1:1/api/webhooks/" + secretToken
+
+	sender := &DiscordSender{}
+	err := sender.Send(context.Background(), ChannelConfig{}, secret, Message{Title: "t", Body: "b"})
+	if err == nil {
+		t.Fatal("Send: expected a transport error connecting to a closed port")
+	}
+	if strings.Contains(err.Error(), secretToken) {
+		t.Fatalf("Send error leaked the webhook credential: %v", err)
+	}
+}
+
 func TestWebhookSenderSendsHeadersAndAuth(t *testing.T) {
 	var gotMethod, gotCustom, gotAuth string
 	var gotBody webhookPayload
@@ -196,7 +219,7 @@ func TestEmailSenderBuildsMessageAndCallsSendMail(t *testing.T) {
 	var gotTo []string
 	var gotMsg []byte
 	sender := &EmailSender{
-		SendMail: func(_ context.Context, addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
+		SendMail: func(_ context.Context, addr string, auth smtp.Auth, from string, to []string, msg []byte, _ bool) error {
 			gotAddr, gotFrom, gotTo, gotMsg = addr, from, to, msg
 			return nil
 		},
@@ -228,7 +251,7 @@ var errFakeSMTP = errors.New("fake smtp failure")
 
 func TestEmailSenderPropagatesError(t *testing.T) {
 	sender := &EmailSender{
-		SendMail: func(_ context.Context, addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
+		SendMail: func(_ context.Context, addr string, auth smtp.Auth, from string, to []string, msg []byte, _ bool) error {
 			return errFakeSMTP
 		},
 	}
@@ -241,8 +264,61 @@ func TestEmailSenderPropagatesError(t *testing.T) {
 }
 
 func TestEmailSenderRequiresConfig(t *testing.T) {
-	sender := &EmailSender{SendMail: func(context.Context, string, smtp.Auth, string, []string, []byte) error { return nil }}
+	sender := &EmailSender{SendMail: func(context.Context, string, smtp.Auth, string, []string, []byte, bool) error { return nil }}
 	if err := sender.Send(context.Background(), ChannelConfig{}, "", Message{}); err == nil {
 		t.Fatal("Send: expected an error for missing email config")
+	}
+}
+
+// TestEmailSenderRequireTLSFailsClosed proves the real defaultSendMail path
+// (not a fake SendMail) refuses to fall back to a cleartext send when the
+// operator set EmailStartTLS and the server doesn't advertise STARTTLS —
+// otherwise the alert content silently goes out in the clear (the
+// EmailStartTLS branch in Send/defaultSendMail).
+func TestEmailSenderRequireTLSFailsClosed(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		// A minimal SMTP greeting plus an EHLO reply that never
+		// advertises STARTTLS — enough for smtp.NewClient's handshake;
+		// the client is expected to bail before any further command.
+		_, _ = conn.Write([]byte("220 fake.example.com ESMTP\r\n"))
+		buf := make([]byte, 512)
+		if _, err := conn.Read(buf); err != nil {
+			return
+		}
+		_, _ = conn.Write([]byte("250-fake.example.com\r\n250 8BITMIME\r\n"))
+		_, _ = conn.Read(buf)
+	}()
+
+	host, portStr, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("Atoi: %v", err)
+	}
+
+	sender := &EmailSender{Timeout: 2 * time.Second}
+	cfg := ChannelConfig{
+		EmailHost: host, EmailPort: port,
+		EmailFrom: "a@example.com", EmailTo: []string{"b@example.com"},
+		EmailStartTLS: true,
+	}
+	err = sender.Send(context.Background(), cfg, "", Message{Title: "t", Body: "b"})
+	if err == nil {
+		t.Fatal("Send: expected an error when the server doesn't advertise STARTTLS but the channel requires it")
+	}
+	if !strings.Contains(err.Error(), "STARTTLS") {
+		t.Fatalf("Send error = %v, want it to name the missing STARTTLS advertisement", err)
 	}
 }

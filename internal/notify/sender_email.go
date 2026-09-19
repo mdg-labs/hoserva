@@ -23,14 +23,15 @@ const defaultSMTPTimeout = 30 * time.Second
 // because bounding the conversation on ctx's deadline is the point of
 // this type existing rather than calling smtp.SendMail directly.
 //
-// net/smtp already negotiates STARTTLS opportunistically whenever the
-// server advertises it, before attempting AUTH, so no separate code path
-// is needed for EmailConfig.EmailStartTLS; it exists on the config only
-// as a UI-facing statement of intent (doc 03 §8.3) — the client behaves
-// the same whether or not it is set, since it already refuses to send an
-// AUTH command over a connection the server didn't just upgrade or that
-// wasn't already encrypted.
-type mailSendFunc func(ctx context.Context, addr string, auth smtp.Auth, from string, to []string, msg []byte) error
+// net/smtp's PlainAuth already refuses to send AUTH over a connection
+// that isn't TLS (or localhost), so the credential is safe whether or
+// not requireTLS is set. requireTLS instead protects the alert content
+// itself (subject and body, doc 03 §8.3): without it, STARTTLS is only
+// ever negotiated opportunistically — if the server doesn't advertise it,
+// or an on-path attacker strips the advertisement, the message still
+// sends in cleartext with no error. requireTLS makes EmailConfig's
+// EmailStartTLS fail closed instead.
+type mailSendFunc func(ctx context.Context, addr string, auth smtp.Auth, from string, to []string, msg []byte, requireTLS bool) error
 
 // EmailSender delivers a Message over SMTP (doc 03 §8.3's email channel).
 type EmailSender struct {
@@ -57,8 +58,8 @@ func (e *EmailSender) sendMail() mailSendFunc {
 	if timeout <= 0 {
 		timeout = defaultSMTPTimeout
 	}
-	return func(ctx context.Context, addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
-		return defaultSendMail(ctx, timeout, addr, auth, from, to, msg)
+	return func(ctx context.Context, addr string, auth smtp.Auth, from string, to []string, msg []byte, requireTLS bool) error {
+		return defaultSendMail(ctx, timeout, addr, auth, from, to, msg, requireTLS)
 	}
 }
 
@@ -79,7 +80,7 @@ func (e *EmailSender) Send(ctx context.Context, cfg ChannelConfig, secret string
 		auth = smtp.PlainAuth("", cfg.EmailUsername, secret, cfg.EmailHost)
 	}
 
-	if err := e.sendMail()(ctx, addr, auth, cfg.EmailFrom, cfg.EmailTo, buildEmailMessage(cfg, msg)); err != nil {
+	if err := e.sendMail()(ctx, addr, auth, cfg.EmailFrom, cfg.EmailTo, buildEmailMessage(cfg, msg), cfg.EmailStartTLS); err != nil {
 		return fmt.Errorf("sending email via %s: %w", addr, err)
 	}
 	return nil
@@ -90,7 +91,7 @@ func (e *EmailSender) Send(ctx context.Context, cfg ChannelConfig, secret string
 // connection this function dials and deadlines itself: smtp.SendMail
 // takes no context and imposes no deadline of its own, so a peer that
 // accepts the connection and never responds hangs it forever.
-func defaultSendMail(ctx context.Context, timeout time.Duration, addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
+func defaultSendMail(ctx context.Context, timeout time.Duration, addr string, auth smtp.Auth, from string, to []string, msg []byte, requireTLS bool) error {
 	if err := validateSMTPLine(from); err != nil {
 		return err
 	}
@@ -128,9 +129,11 @@ func defaultSendMail(ctx context.Context, timeout time.Duration, addr string, au
 	defer func() { _ = client.Close() }()
 
 	if ok, _ := client.Extension("STARTTLS"); ok {
-		if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
+		if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
 			return err
 		}
+	} else if requireTLS {
+		return errors.New("smtp: server does not advertise STARTTLS but the channel requires it")
 	}
 	if auth != nil {
 		if ok, _ := client.Extension("AUTH"); !ok {
