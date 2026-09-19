@@ -20,9 +20,13 @@ name: CI
 #
 # ! Another repository setting the maintainer must enable by hand: the
 # ! `dco` job below only reports pass/fail on the commit — making it a
-# ! *required* check in the `main` ruleset (Settings -> Rules -> Rulesets)
-# ! is a manual pick, and only once GitHub has seen it report at least
-# ! once, so it can't be added until after this job first runs.
+# ! *required* check (Settings -> Rules -> Rulesets) is a manual pick, and
+# ! only once GitHub has seen it report at least once, so it can't be
+# ! added until after this job first runs. Require it on the `beta`
+# ! ruleset, not just `main`'s: contributor pull requests target `beta`
+# ! (CONTRIBUTING.md), so `beta` is where an unsigned commit must actually
+# ! be blocked. Keep it required on `main` too if direct changes there
+# ! ever bypass the beta -> main promotion PR.
 
 on:
   push:
@@ -53,13 +57,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # A fork PR's checkout is the PR's own merge commit, so its copy of
+      # scripts/check-dco.sh is attacker-controlled: a contributor could
+      # rewrite it to always exit 0 and pass this required check without
+      # a real Signed-off-by trailer. Run the base branch's copy instead —
+      # untouchable by the PR — falling back to the checked-out copy only
+      # when the base doesn't have the script yet (a same-repo, non-fork
+      # promotion PR, e.g. beta -> main before this check first lands).
+      - name: Resolve a trusted copy of check-dco.sh
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.sha }}"
+          if git cat-file -e "$base:scripts/check-dco.sh" 2>/dev/null; then
+            git show "$base:scripts/check-dco.sh" > /tmp/check-dco.sh
+          else
+            cp scripts/check-dco.sh /tmp/check-dco.sh
+          fi
+          chmod +x /tmp/check-dco.sh
       # `pull_request`'s own github.sha is a synthetic merge commit
       # (refs/pull/N/merge), not anything a contributor actually signed —
       # check the PR's real head/base instead. Falls back to the push
       # event's before/after range otherwise (covers orchestrate's direct
       # pushes to beta, not just contributor PRs).
       - run: >-
-          scripts/check-dco.sh
+          /tmp/check-dco.sh
           "${{ github.event.pull_request.base.sha || github.event.before }}"
           "${{ github.event.pull_request.head.sha || github.sha }}"
 

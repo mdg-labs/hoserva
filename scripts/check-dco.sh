@@ -15,13 +15,16 @@ base=$1
 head=$2
 
 # A brand-new branch's push carries an all-zero `before` SHA (no prior
-# commit to diff against) — check just the pushed tip in that case rather
-# than a nonsensical range.
+# commit to diff against) — there is no real base to range from, so check
+# every commit reachable from head instead of guessing at head~1, which
+# would silently skip everything but the pushed tip.
 case "$base" in
-  0000000000000000000000000000000000000000|"") base="${head}~1" ;;
+  0000000000000000000000000000000000000000|"") range="$head" ;;
+  *)
+    git rev-parse --verify "$base" >/dev/null 2>&1 || die "check-dco: base '$base' is not a known commit (shallow clone? fetch-depth: 0 is required)"
+    range="$base..$head"
+    ;;
 esac
-
-git rev-parse --verify "$base" >/dev/null 2>&1 || die "check-dco: base '$base' is not a known commit (shallow clone? fetch-depth: 0 is required)"
 
 fail=0
 while read -r sha; do
@@ -36,6 +39,6 @@ while read -r sha; do
     printf 'check-dco: %s (%s) has a Signed-off-by trailer that does not match its author email\n' "$sha" "$author_email" >&2
     fail=1
   fi
-done < <(git rev-list --no-merges "$base..$head")
+done < <(git rev-list --no-merges "$range")
 
 exit "$fail"
