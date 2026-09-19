@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
@@ -56,21 +57,26 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		}
 	}
 
+	gate := disk.NewStorageGate(expected)
 	listed, err := disks.List(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("listing disks for storage gate: %w", err)
+		// Leave the gate unevaluated (Ready is false until Evaluate).
+		// Returning the error would abort daemon startup and take the API,
+		// diagnostics, and Stop with it; Start already refuses with
+		// storage_not_ready while the gate is unready.
+		log.Printf("hoservad: listing disks for storage gate: %v — Start will refuse until inventory can be evaluated", err)
+	} else {
+		present := make([]disk.Identity, 0, len(listed))
+		for _, d := range listed {
+			present = append(present, disk.Identity{
+				WWN:          d.WWN,
+				Serial:       d.Serial,
+				WeakIdentity: d.WeakIdentity,
+				ByIDName:     d.ByIDName,
+			})
+		}
+		gate.Evaluate(present)
 	}
-	present := make([]disk.Identity, 0, len(listed))
-	for _, d := range listed {
-		present = append(present, disk.Identity{
-			WWN:          d.WWN,
-			Serial:       d.Serial,
-			WeakIdentity: d.WeakIdentity,
-			ByIDName:     d.ByIDName,
-		})
-	}
-	gate := disk.NewStorageGate(expected)
-	gate.Evaluate(present)
 
 	seq := &job.ArraySequence{
 		Scheduler: scheduler,
