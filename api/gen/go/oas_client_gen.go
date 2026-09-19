@@ -140,6 +140,14 @@ type Invoker interface {
 	//
 	// GET /notifications/routing
 	GetNotificationRouting(ctx context.Context) (*GetNotificationRoutingOK, error)
+	// GetParity invokes getParity operation.
+	//
+	// Reads SnapRAID status from the boot-device content file only — does not run `snapraid diff` or
+	// wake data disks (doc 02 §2, Q13). Threshold-guard state and grouped diff rows reflect the last
+	// explicit `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
+	//
+	// GET /parity
+	GetParity(ctx context.Context) (*ParitySnapshot, error)
 	// GetPool invokes getPool operation.
 	//
 	// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
@@ -236,6 +244,14 @@ type Invoker interface {
 	//
 	// GET /doctor
 	RunDoctor(ctx context.Context) (*DoctorReport, error)
+	// RunParityDiff invokes runParityDiff operation.
+	//
+	// Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk (doc
+	// 02 §2, Q13). Returns grouped changes and threshold-guard evaluation for the parity page; never
+	// polled on a timer.
+	//
+	// POST /parity/diff
+	RunParityDiff(ctx context.Context) (*ParityDiffResult, error)
 	// SendTestNotification invokes sendTestNotification operation.
 	//
 	// Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of
@@ -2346,6 +2362,133 @@ func (c *Client) sendGetNotificationRouting(ctx context.Context) (res *GetNotifi
 	return result, nil
 }
 
+// GetParity invokes getParity operation.
+//
+// Reads SnapRAID status from the boot-device content file only — does not run `snapraid diff` or
+// wake data disks (doc 02 §2, Q13). Threshold-guard state and grouped diff rows reflect the last
+// explicit `POST /parity/diff` (or a sync job's own pre-sync diff) until the next one runs.
+//
+// GET /parity
+func (c *Client) GetParity(ctx context.Context) (*ParitySnapshot, error) {
+	res, err := c.sendGetParity(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetParity(ctx context.Context) (res *ParitySnapshot, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getParity"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/parity"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetParityOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/parity"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetParityOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetParityOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetParityResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetPool invokes getPool operation.
 //
 // Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
@@ -3994,6 +4137,133 @@ func (c *Client) sendRunDoctor(ctx context.Context) (res *DoctorReport, err erro
 
 	stage = "DecodeResponse"
 	result, err := decodeRunDoctorResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RunParityDiff invokes runParityDiff operation.
+//
+// Runs `snapraid diff` on every data disk — an explicit user action that wakes every data disk (doc
+// 02 §2, Q13). Returns grouped changes and threshold-guard evaluation for the parity page; never
+// polled on a timer.
+//
+// POST /parity/diff
+func (c *Client) RunParityDiff(ctx context.Context) (*ParityDiffResult, error) {
+	res, err := c.sendRunParityDiff(ctx)
+	return res, err
+}
+
+func (c *Client) sendRunParityDiff(ctx context.Context) (res *ParityDiffResult, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("runParityDiff"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/parity/diff"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RunParityDiffOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/parity/diff"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RunParityDiffOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RunParityDiffOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRunParityDiffResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

@@ -44,6 +44,9 @@ type Handler struct {
 	// Parity is the SnapRAID engine for doctor freshness — nil skips that
 	// check with a warning.
 	Parity parity.Engine
+	// ParityGuard evaluates threshold-guard state for run-diff (doc 02 §2).
+	ParityGuard parity.Guard
+	paritySnap  *paritySnapshotStore
 	// Backup is the config archive builder for export/import — nil returns
 	// 501 from those operations.
 	Backup *backup.Service
