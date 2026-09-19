@@ -38,6 +38,51 @@ func TestResolveIdentity_FallsBackToSerial(t *testing.T) {
 	}
 }
 
+func TestResolveIdentity_VirtioBlkByIDLink(t *testing.T) {
+	got := ResolveIdentity([]string{
+		"virtio-disk1-hoserva-162-a1",
+	})
+	want := Identity{Serial: "disk1-hoserva-162-a1", ByIDName: "virtio-disk1-hoserva-162-a1"}
+	if got != want {
+		t.Fatalf("ResolveIdentity: got %+v, want %+v", got, want)
+	}
+	if got.WeakIdentity {
+		t.Fatal("ResolveIdentity: a virtio- disk was flagged weak identity")
+	}
+	if got.IdentityPath() != "/dev/disk/by-id/virtio-disk1-hoserva-162-a1" {
+		t.Fatalf("IdentityPath: got %q", got.IdentityPath())
+	}
+}
+
+func TestResolveIdentity_VirtioBlkTruncatedSerialsStillMatch(t *testing.T) {
+	// A real L3 guest kernel truncates the exported serial to
+	// VIRTIO_BLK_ID_BYTES (20 bytes) before udev ever builds this by-id
+	// link (doc 06 §6). create-vm.sh leads with each disk's own role name
+	// so that truncation, whatever it does to the trailing lab id, can
+	// never make two different array disks resolve to the same by-id
+	// link — simulated here for a long, nightly-shaped lab id.
+	parity := ResolveIdentity([]string{truncateVirtioSerial("parity1-hoserva-nightly-9876543210-3")})
+	disk1 := ResolveIdentity([]string{truncateVirtioSerial("disk1-hoserva-nightly-9876543210-3")})
+	if parity.Matches(disk1) {
+		t.Fatalf("ResolveIdentity: distinct array disks matched after truncation: %+v vs %+v", parity, disk1)
+	}
+	if parity.Serial == "" || disk1.Serial == "" {
+		t.Fatalf("ResolveIdentity: expected non-empty serials, got %+v and %+v", parity, disk1)
+	}
+}
+
+// truncateVirtioSerial mimics the guest kernel's own VIRTIO_BLK_ID_BYTES
+// truncation (20 bytes, include/uapi/linux/virtio_blk.h) on the serial
+// create-vm.sh writes, then builds the by-id link name udev derives
+// from it, the same way a real L3 guest's own by-id directory would.
+func truncateVirtioSerial(serial string) string {
+	const virtioBlkIDBytes = 20
+	if len(serial) > virtioBlkIDBytes {
+		serial = serial[:virtioBlkIDBytes]
+	}
+	return "virtio-" + serial
+}
+
 func TestResolveIdentity_USBEnclosureIsWeak(t *testing.T) {
 	got := ResolveIdentity([]string{
 		"usb-WD_easystore_25FB_575836314141304A4A3236-0:0",
