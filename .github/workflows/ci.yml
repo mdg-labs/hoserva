@@ -211,12 +211,13 @@ jobs:
         working-directory: web
       # No outbound request may be baked into the built app (Q49) — SVG/XML
       # namespace URIs and error-message URLs in minified library code
-      # (react-router, Base UI, React itself) are not requests and are
-      # exempted by name; anything else here is a real regression.
+      # (react-router, Base UI, React, Recharts' prop-types) are not
+      # requests and are exempted by name; anything else here is a real
+      # regression.
       - name: Check the build makes no outbound request
         working-directory: web
         run: |
-          allowed="(www\.w3\.org|react\.dev/errors|base-ui\.com/production-error|react\.i18next\.com|reactrouter\.com|localhost)"
+          allowed="(www\.w3\.org|react\.dev/errors|base-ui\.com/production-error|react\.i18next\.com|reactrouter\.com|fb\.me/use-check-prop-types|localhost)"
           found="$(grep -rEho "https?://[^\"'\) ]+" dist | grep -Ev "$allowed" || true)"
           if [ -n "$found" ]; then
             echo "$found"
