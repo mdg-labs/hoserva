@@ -279,6 +279,9 @@ func (s *AuthStore) ActivateTOTPAndRevokeOtherSessions(
 ) (ok bool, err error) {
 	sqlDB, okDB := s.db.(*sql.DB)
 	if !okDB {
+		if _, ok := s.db.(*sql.Tx); !ok {
+			return false, fmt.Errorf("auth store: totp confirmation transaction requires *sql.DB or *sql.Tx")
+		}
 		activated, err := s.ActivateTOTP(ctx, userID, secret, confirmedAt, step, pendingSecret)
 		if err != nil || !activated {
 			return activated, err
