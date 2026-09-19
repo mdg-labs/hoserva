@@ -674,6 +674,46 @@ func (s ExportConfigOK) Read(p []byte) (n int, err error) {
 	return s.Data.Read(p)
 }
 
+// Ref: #/components/schemas/GeneralSettings
+type GeneralSettings struct {
+	// Configured host name, if any.
+	Hostname OptString `json:"hostname"`
+	// IANA timezone name, e.g. "Europe/Berlin".
+	Timezone OptString `json:"timezone"`
+	// Whether a backup passphrase is configured. The passphrase itself is never returned (Q28).
+	BackupPassphraseSet bool `json:"backupPassphraseSet"`
+}
+
+// GetHostname returns the value of Hostname.
+func (s *GeneralSettings) GetHostname() OptString {
+	return s.Hostname
+}
+
+// GetTimezone returns the value of Timezone.
+func (s *GeneralSettings) GetTimezone() OptString {
+	return s.Timezone
+}
+
+// GetBackupPassphraseSet returns the value of BackupPassphraseSet.
+func (s *GeneralSettings) GetBackupPassphraseSet() bool {
+	return s.BackupPassphraseSet
+}
+
+// SetHostname sets the value of Hostname.
+func (s *GeneralSettings) SetHostname(val OptString) {
+	s.Hostname = val
+}
+
+// SetTimezone sets the value of Timezone.
+func (s *GeneralSettings) SetTimezone(val OptString) {
+	s.Timezone = val
+}
+
+// SetBackupPassphraseSet sets the value of BackupPassphraseSet.
+func (s *GeneralSettings) SetBackupPassphraseSet(val bool) {
+	s.BackupPassphraseSet = val
+}
+
 type GetJobLogOK struct {
 	Data io.Reader
 }
@@ -3156,6 +3196,48 @@ func (s *TotpEnrollResponse) SetOtpauthUri(val string) {
 
 // UnlockUserNoContent is response for UnlockUser operation.
 type UnlockUserNoContent struct{}
+
+// Ref: #/components/schemas/UpdateGeneralSettingsRequest
+type UpdateGeneralSettingsRequest struct {
+	// Host name for this server. An empty string clears a previously set value. Omitted leaves hostname
+	// unchanged.
+	Hostname OptString `json:"hostname"`
+	// IANA timezone name. Omitted leaves timezone unchanged.
+	Timezone OptString `json:"timezone"`
+	// Write-only. Sets or replaces the backup passphrase (Q28). Omitted leaves any existing passphrase
+	// unchanged.
+	BackupPassphrase OptString `json:"backupPassphrase"`
+}
+
+// GetHostname returns the value of Hostname.
+func (s *UpdateGeneralSettingsRequest) GetHostname() OptString {
+	return s.Hostname
+}
+
+// GetTimezone returns the value of Timezone.
+func (s *UpdateGeneralSettingsRequest) GetTimezone() OptString {
+	return s.Timezone
+}
+
+// GetBackupPassphrase returns the value of BackupPassphrase.
+func (s *UpdateGeneralSettingsRequest) GetBackupPassphrase() OptString {
+	return s.BackupPassphrase
+}
+
+// SetHostname sets the value of Hostname.
+func (s *UpdateGeneralSettingsRequest) SetHostname(val OptString) {
+	s.Hostname = val
+}
+
+// SetTimezone sets the value of Timezone.
+func (s *UpdateGeneralSettingsRequest) SetTimezone(val OptString) {
+	s.Timezone = val
+}
+
+// SetBackupPassphrase sets the value of BackupPassphrase.
+func (s *UpdateGeneralSettingsRequest) SetBackupPassphrase(val OptString) {
+	s.BackupPassphrase = val
+}
 
 // Same shape as CreateNotificationChannelRequest, a full replace, except `secret` is tri-state:
 // omitted keeps the existing credential, `null` clears it, a string replaces it.

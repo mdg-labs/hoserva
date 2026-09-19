@@ -415,6 +415,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/general": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get general installation settings
+         * @description Hostname, timezone and whether a backup passphrase is configured (doc 03 §1, §8.1). The passphrase itself is never returned (Q28).
+         */
+        get: operations["getGeneralSettings"];
+        /**
+         * Set general installation settings
+         * @description Persists hostname, timezone and/or the backup passphrase. Each field is optional: omitted leaves that value unchanged. An empty `hostname` clears a previously set hostname. `backupPassphrase` is write-only and never echoed back — skipping it during onboarding is valid (Q28).
+         */
+        put: operations["updateGeneralSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/status": {
         parameters: {
             query?: never;
@@ -922,6 +946,22 @@ export interface components {
             enabled: boolean;
             start: string;
             end: string;
+        };
+        GeneralSettings: {
+            /** @description Configured host name, if any. */
+            hostname?: string;
+            /** @description IANA timezone name, e.g. "Europe/Berlin". */
+            timezone?: string;
+            /** @description Whether a backup passphrase is configured. The passphrase itself is never returned (Q28). */
+            backupPassphraseSet: boolean;
+        };
+        UpdateGeneralSettingsRequest: {
+            /** @description Host name for this server. An empty string clears a previously set value. Omitted leaves hostname unchanged. */
+            hostname?: string;
+            /** @description IANA timezone name. Omitted leaves timezone unchanged. */
+            timezone?: string;
+            /** @description Write-only. Sets or replaces the backup passphrase (Q28). Omitted leaves any existing passphrase unchanged. */
+            backupPassphrase?: string;
         };
         /** @enum {string} */
         DoctorCheckStatus: "pass" | "warn" | "fail";
@@ -1560,6 +1600,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NotificationQuietHours"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getGeneralSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current general settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GeneralSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateGeneralSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateGeneralSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated general settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GeneralSettings"];
                 };
             };
             default: components["responses"]["Error"];
