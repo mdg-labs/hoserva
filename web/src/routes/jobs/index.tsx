@@ -29,12 +29,17 @@ export function JobsPage(): React.ReactElement {
   const [typeFilter, setTypeFilter] = useState(JOB_FILTER_ALL);
 
   const loadJobs = async (): Promise<void> => {
-    const { data, error: apiError } = await hoservaClient.GET("/jobs");
-    if (apiError) {
-      setError(apiError.message);
-      return;
+    try {
+      const { data, error: apiError } = await hoservaClient.GET("/jobs");
+      if (apiError) {
+        setError(apiError.message);
+        return;
+      }
+      setError(null);
+      setJobs(data?.jobs ?? []);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
     }
-    setJobs(data?.jobs ?? []);
   };
 
   useEffect(() => {
@@ -46,7 +51,12 @@ export function JobsPage(): React.ReactElement {
         setError(apiError.message);
         return;
       }
+      setError(null);
       setJobs(data?.jobs ?? []);
+    }).catch((err: unknown) => {
+      if (!cancelled) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     });
 
     const interval = window.setInterval(() => {
@@ -69,8 +79,18 @@ export function JobsPage(): React.ReactElement {
   }, [jobs, statusFilter, typeFilter]);
 
   const handleCancel = async (jobId: string): Promise<void> => {
-    await hoservaClient.POST("/jobs/{jobId}/cancel", { params: { path: { jobId } } });
-    await loadJobs();
+    try {
+      const { error: apiError } = await hoservaClient.POST("/jobs/{jobId}/cancel", {
+        params: { path: { jobId } },
+      });
+      if (apiError) {
+        setError(apiError.message);
+        return;
+      }
+      await loadJobs();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const columns: DataTableColumn<Job>[] = [

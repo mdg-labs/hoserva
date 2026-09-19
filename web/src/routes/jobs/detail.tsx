@@ -33,6 +33,10 @@ export function JobDetailPage(): React.ReactElement {
           return;
         }
         setJob(jobResult.data ?? null);
+        if (logResult.error) {
+          setError(logResult.error.message);
+          return;
+        }
         if (typeof logResult.data === "string") {
           setLog(logResult.data);
         }
@@ -46,9 +50,22 @@ export function JobDetailPage(): React.ReactElement {
   }, [jobId]);
 
   const handleCancel = async (): Promise<void> => {
-    await hoservaClient.POST("/jobs/{jobId}/cancel", { params: { path: { jobId } } });
-    const { data } = await hoservaClient.GET("/jobs/{jobId}", { params: { path: { jobId } } });
-    setJob(data ?? null);
+    try {
+      const cancelResult = await hoservaClient.POST("/jobs/{jobId}/cancel", { params: { path: { jobId } } });
+      if (cancelResult.error) {
+        setError(cancelResult.error.message);
+        return;
+      }
+      const refreshResult = await hoservaClient.GET("/jobs/{jobId}", { params: { path: { jobId } } });
+      if (refreshResult.error || !refreshResult.data) {
+        setError(refreshResult.error?.message ?? t("jobs.detail.refreshFailed"));
+        return;
+      }
+      setError(null);
+      setJob(refreshResult.data);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   if (!job && !error) {

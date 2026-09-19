@@ -28,6 +28,7 @@ export function ParityPage(): React.ReactElement {
   const [fixOpen, setFixOpen] = useState(false);
   const [fixStep, setFixStep] = useState(0);
   const [fixDirty, setFixDirty] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const { requestClose, guardDialog } = useUnsavedGuard({
     dirty: fixDirty,
     onClose: () => {
@@ -42,21 +43,51 @@ export function ParityPage(): React.ReactElement {
   const parityJobs = jobs.filter((job) => job.class === "parity");
 
   const handleSync = async (): Promise<void> => {
-    await hoservaClient.POST("/parity/sync", { body: { confirm: true, dryRun: false } });
-    setSyncOpen(false);
-    await refresh();
+    try {
+      const { error: apiError } = await hoservaClient.POST("/parity/sync", {
+        body: { confirm: true, dryRun: false },
+      });
+      if (apiError) {
+        setActionError(apiError.message);
+        return;
+      }
+      setActionError(null);
+      setSyncOpen(false);
+      await refresh();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   const handleFixStart = async (): Promise<void> => {
-    await hoservaClient.POST("/parity/fix", { body: { confirm: true } });
-    setFixOpen(false);
-    setFixStep(0);
-    setFixDirty(false);
-    await refresh();
+    try {
+      const { error: apiError } = await hoservaClient.POST("/parity/fix", { body: { confirm: true } });
+      if (apiError) {
+        setActionError(apiError.message);
+        return;
+      }
+      setActionError(null);
+      setFixOpen(false);
+      setFixStep(0);
+      setFixDirty(false);
+      await refresh();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
   };
 
-  const handleScrub = (): void => {
-    void hoservaClient.POST("/parity/scrub", { body: { percent: 100 } });
+  const handleScrub = async (): Promise<void> => {
+    try {
+      const { error: apiError } = await hoservaClient.POST("/parity/scrub", { body: { percent: 100 } });
+      if (apiError) {
+        setActionError(apiError.message);
+        return;
+      }
+      setActionError(null);
+      await refresh();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
   };
 
   if (loading) {
@@ -70,6 +101,7 @@ export function ParityPage(): React.ReactElement {
         <p className="text-muted-foreground">{t("parity.description")}</p>
       </div>
       {error ? <Banner tone="error" title={error} /> : null}
+      {actionError ? <Banner tone="error" title={actionError} /> : null}
       <Card>
         <CardHeader>
           <CardTitle>{t("parity.status.title")}</CardTitle>
@@ -99,10 +131,10 @@ export function ParityPage(): React.ReactElement {
       </section>
       <div className="flex flex-wrap gap-2">
         <Button onClick={() => setSyncOpen(true)}>{t("parity.actions.sync")}</Button>
-        <Button variant="outline" onClick={handleScrub}>
+        <Button variant="outline" onClick={() => void handleScrub()}>
           {t("parity.actions.scrub")}
         </Button>
-        <Button variant="outline" onClick={() => { setFixOpen(true); setFixDirty(true); }}>
+        <Button variant="outline" onClick={() => setFixOpen(true)}>
           {t("parity.actions.fix")}
         </Button>
       </div>

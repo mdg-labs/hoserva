@@ -17,13 +17,18 @@ import { formatBytes } from "@/routes/storage-setup/config-preview";
 type Disk = components["schemas"]["DiskInventoryEntry"];
 type PoolDisk = components["schemas"]["PoolDiskEntry"];
 
+interface DiskDetailResult {
+  device: string;
+  disk: Disk | null;
+  poolDisk: PoolDisk | null;
+  error: string | null;
+}
+
 export function DiskDetailPage(): React.ReactElement {
   const { t } = useTranslation();
   const { diskId = "" } = useParams();
   const device = decodeURIComponent(diskId);
-  const [disk, setDisk] = useState<Disk | null>(null);
-  const [poolDisk, setPoolDisk] = useState<PoolDisk | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<DiskDetailResult | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -32,21 +37,38 @@ export function DiskDetailPage(): React.ReactElement {
       hoservaClient.GET("/pool", { signal: controller.signal }),
     ])
       .then(([diskResult, poolResult]) => {
+        if (controller.signal.aborted) return;
         if (diskResult.error) {
-          setError(diskResult.error.message);
+          setResult({ device, disk: null, poolDisk: null, error: diskResult.error.message });
           return;
         }
         const found = diskResult.data?.disks.find((entry) => entry.device === device) ?? null;
-        setDisk(found);
-        setPoolDisk(poolResult.data?.disks.find((entry) => entry.device === device) ?? null);
+        setResult({
+          device,
+          disk: found,
+          poolDisk: poolResult.error
+            ? null
+            : (poolResult.data?.disks.find((entry) => entry.device === device) ?? null),
+          error: poolResult.error?.message ?? null,
+        });
       })
       .catch((err: unknown) => {
         if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : String(err));
+          setResult({
+            device,
+            disk: null,
+            poolDisk: null,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       });
     return () => controller.abort();
   }, [device]);
+
+  const current = result?.device === device ? result : null;
+  const disk = current?.disk ?? null;
+  const poolDisk = current?.poolDisk ?? null;
+  const error = current?.error ?? null;
 
   const smartRows = useMemo(
     () => [
@@ -57,8 +79,12 @@ export function DiskDetailPage(): React.ReactElement {
     [disk, t],
   );
 
-  if (!disk && !error) {
+  if (!current) {
     return <LoadingBlock />;
+  }
+
+  if (error && !disk) {
+    return <Banner tone="error" title={error} />;
   }
 
   if (!disk) {

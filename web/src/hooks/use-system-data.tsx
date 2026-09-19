@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { SystemDataContext, type SystemDataValue } from "@/hooks/system-data-context";
 import { hoservaClient, type components } from "@/lib/api/client";
@@ -11,10 +12,10 @@ type DoctorReport = components["schemas"]["DoctorReport"];
 const POLL_MS = 30_000;
 
 async function fetchSystemData(): Promise<{
-  status: SystemStatus | null;
-  pool: PoolStatus | null;
-  jobs: Job[];
-  doctor: DoctorReport | null;
+  status?: SystemStatus | null;
+  pool?: PoolStatus | null;
+  jobs?: Job[];
+  doctor?: DoctorReport | null;
   error: string | null;
 }> {
   const [statusResult, poolResult, jobsResult, doctorResult] = await Promise.all([
@@ -32,15 +33,16 @@ async function fetchSystemData(): Promise<{
     null;
 
   return {
-    status: statusResult.data ?? null,
-    pool: poolResult.data ?? null,
-    jobs: jobsResult.data?.jobs ?? [],
-    doctor: doctorResult.data ?? null,
+    status: statusResult.error ? undefined : (statusResult.data ?? null),
+    pool: poolResult.error ? undefined : (poolResult.data ?? null),
+    jobs: jobsResult.error ? undefined : (jobsResult.data?.jobs ?? []),
+    doctor: doctorResult.error ? undefined : (doctorResult.data ?? null),
     error,
   };
 }
 
 export function SystemDataProvider({ children }: { children: ReactNode }): React.ReactElement {
+  const { t } = useTranslation();
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [pool, setPool] = useState<PoolStatus | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -48,32 +50,37 @@ export function SystemDataProvider({ children }: { children: ReactNode }): React
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const applyFetch = useCallback(
+    (next: Awaited<ReturnType<typeof fetchSystemData>>): void => {
+      if (next.status !== undefined) setStatus(next.status);
+      if (next.pool !== undefined) setPool(next.pool);
+      if (next.jobs !== undefined) setJobs(next.jobs);
+      if (next.doctor !== undefined) setDoctor(next.doctor);
+      setError(next.error);
+      setLoading(false);
+    },
+    [],
+  );
+
   const refresh = useCallback(async (): Promise<void> => {
-    const next = await fetchSystemData();
-    setStatus(next.status);
-    setPool(next.pool);
-    setJobs(next.jobs);
-    setDoctor(next.doctor);
-    setError(next.error);
-    setLoading(false);
-  }, []);
+    try {
+      applyFetch(await fetchSystemData());
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : t("systemData.loadFailed"));
+      setLoading(false);
+    }
+  }, [applyFetch, t]);
 
   useEffect(() => {
     let cancelled = false;
 
     void fetchSystemData()
       .then((next) => {
-        if (cancelled) return;
-        setStatus(next.status);
-        setPool(next.pool);
-        setJobs(next.jobs);
-        setDoctor(next.doctor);
-        setError(next.error);
-        setLoading(false);
+        if (!cancelled) applyFetch(next);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (!cancelled) {
-          setError("Failed to load system data");
+          setError(err instanceof Error ? err.message : t("systemData.loadFailed"));
           setLoading(false);
         }
       });
@@ -86,7 +93,7 @@ export function SystemDataProvider({ children }: { children: ReactNode }): React
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [refresh]);
+  }, [applyFetch, refresh, t]);
 
   const value = useMemo<SystemDataValue>(
     () => ({ status, pool, jobs, doctor, loading, error, refresh }),

@@ -61,6 +61,9 @@
   "loading": {
     "label": "Loading…"
   },
+  "systemData": {
+    "loadFailed": "Failed to load system data"
+  },
   "auth": {
     "loadFailed": "Could not reach the Hoserva API. Check that the daemon is running, then reload this page."
   },
@@ -113,7 +116,8 @@
     "userMenu": {
       "ariaLabel": "User menu",
       "toggleTheme": "Toggle theme",
-      "logout": "Sign out"
+      "logout": "Sign out",
+      "logoutFailed": "Could not sign out. Stay on this page and try again."
     }
   },
   "banners": {
@@ -336,6 +340,7 @@
     "status": {
       "running": "Running",
       "queued": "Queued",
+      "interrupted": "Interrupted",
       "failed": "Failed",
       "succeeded": "Succeeded"
     },
@@ -359,7 +364,8 @@
       "class": "Class: {{value}}",
       "status": "Status:",
       "created": "Created: {{value}}",
-      "log": "Captured output"
+      "log": "Captured output",
+      "refreshFailed": "The job could not be refreshed after cancel."
     }
   },
   "banner": {

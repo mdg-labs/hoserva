@@ -78,6 +78,10 @@ export function DashboardPage(): React.ReactElement {
     return <LoadingBlock rows={6} />;
   }
 
+  if (error && !pool) {
+    return <Banner tone="error" title={error} />;
+  }
+
   if (!pool?.mounted) {
     return (
       <EmptyState
