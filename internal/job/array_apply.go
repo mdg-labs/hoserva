@@ -99,9 +99,10 @@ func poolStateFromStore(settings store.ArraySettings, disks []store.ArrayDisk) c
 		}
 	}
 	return config.PoolState{
-		DataDisks: dataDisks,
-		CachePath: cachePath,
-		Options:   pool.Options{MinFreeSpace: settings.MinFreeSpace},
+		DataDisks:    dataDisks,
+		CachePath:    cachePath,
+		CreatePolicy: pool.CreatePolicy(settings.CreatePolicy),
+		Options:      pool.Options{MinFreeSpace: settings.MinFreeSpace},
 	}
 }
 

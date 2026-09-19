@@ -32,6 +32,9 @@ type PoolState struct {
 	CachePath string       `json:"cache_path"`
 	Shares    []PoolShare  `json:"shares"`
 	Options   pool.Options `json:"options"`
+	// CreatePolicy, when set, is the catch-all pool's mergerfs create
+	// policy from array setup. Empty keeps CatchAllMount's default (Q11).
+	CreatePolicy pool.CreatePolicy `json:"create_policy,omitempty"`
 }
 
 // unitFileName turns where into the systemd unit name a mount at that
@@ -110,6 +113,9 @@ func (g *Generator) WritePoolMounts(ctx context.Context, state PoolState, comman
 	catchAll, err := pool.CatchAllMount(state.DataDisks, state.Options)
 	if err != nil {
 		return fmt.Errorf("config: building catch-all pool mount: %w", err)
+	}
+	if state.CreatePolicy != "" {
+		catchAll.CreatePolicy = state.CreatePolicy
 	}
 	if err := g.writeMount(ctx, catchAll, command, revision, now, desired); err != nil {
 		return err

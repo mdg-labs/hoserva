@@ -362,8 +362,12 @@ func TestRunDiskFormat_SuccessPersistsTopologyAndGeneratesFromSQLite(t *testing.
 		}
 	}
 
-	if _, err := os.Stat(filepath.Join(genRoot, "systemd", "system", "mnt-user.mount")); err != nil {
+	poolUnit, err := os.ReadFile(filepath.Join(genRoot, "systemd", "system", "mnt-user.mount"))
+	if err != nil {
 		t.Fatalf("catch-all pool unit: %v", err)
+	}
+	if !strings.Contains(string(poolUnit), "category.create=mfs") {
+		t.Fatalf("catch-all pool unit missing selected create policy:\n%s", poolUnit)
 	}
 
 	if len(mounter.Mounts) != 3 {
