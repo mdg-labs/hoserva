@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 // ErrDiskNotAssigned is FormatAssigned's refusal: dev is not one of
@@ -12,6 +15,13 @@ import (
 // called, so a wrong device path is refused here rather than trusted to
 // Provider alone.
 var ErrDiskNotAssigned = errors.New("disk: not part of this array-setup plan")
+
+// ErrUnmanagedDevice is FormatAssigned / FormatPlan's refusal of a
+// format target that is neither a loop device (the lab) nor a whole disk
+// currently in Provider.List. A partition path such as /dev/sda1 —
+// standing in for a real disk a bug might name — is refused before
+// Provider.Format, so mkfs never runs against it.
+var ErrUnmanagedDevice = errors.New("disk: format target is not a loop device or a listed whole disk")
 
 // FormatAssigned formats dev through p, refusing (ErrDiskNotAssigned)
 // unless dev is exactly one of plan's own assigned devices. This is the
@@ -37,6 +47,9 @@ func FormatAssigned(ctx context.Context, p Provider, plan TopologyPlan, dev stri
 	assigned, ok := plan.findDevice(dev)
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrDiskNotAssigned, dev)
+	}
+	if err := allowFormatDevice(assigned); err != nil {
+		return err
 	}
 	target, err := resolveFormatTarget(ctx, p, dev, assigned.WWN, assigned.Serial, assigned.ByIDName)
 	if err != nil {
@@ -150,6 +163,9 @@ func FormatPlan(ctx context.Context, p Provider, r Runner, plan TopologyPlan, si
 	if err := plan.Validate(sizes); err != nil {
 		return err
 	}
+	if err := CheckFormatTargets(plan); err != nil {
+		return err
+	}
 
 	disks := plan.assignedDisks()
 
@@ -174,6 +190,52 @@ func FormatPlan(ctx context.Context, p Provider, r Runner, plan TopologyPlan, si
 		}
 	}
 	return nil
+}
+
+// CheckFormatTargets refuses (ErrUnmanagedDevice) a partition path such
+// as /dev/sda1 — standing in for a real disk a bug might name — so mkfs
+// never runs against it. Whole disks and loop devices are left to the
+// assignment, identity and boot guards.
+func CheckFormatTargets(plan TopologyPlan) error {
+	for _, d := range plan.assignedDisks() {
+		if err := allowFormatDevice(d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func allowFormatDevice(assigned AssignedDisk) error {
+	if IsLoopDevice(assigned.Device) {
+		return nil
+	}
+	if looksLikePartition(assigned.Device) {
+		return fmt.Errorf("%w: %s", ErrUnmanagedDevice, assigned.Device)
+	}
+	return nil
+}
+
+// partitionName matches a partition of a whole disk: sda1, nvme0n1p1,
+// mmcblk0p1, loop0p1. Whole disks (sda, nvme0n1, loop0) do not match.
+var partitionName = regexp.MustCompile(`^((nvme|mmcblk)[0-9]+n[0-9]+p[0-9]+|[hsv]d[a-z]+[0-9]+|loop[0-9]+p[0-9]+)$`)
+
+func looksLikePartition(dev string) bool {
+	return partitionName.MatchString(filepath.Base(dev))
+}
+
+// IsLoopDevice reports whether dev is a whole loop device (/dev/loopN).
+func IsLoopDevice(dev string) bool {
+	base := filepath.Base(dev)
+	n, ok := strings.CutPrefix(base, "loop")
+	if !ok || n == "" {
+		return false
+	}
+	for _, c := range n {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // assignedDisks returns every disk in p, in the order Parity, Data,

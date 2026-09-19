@@ -40,6 +40,7 @@ func findAuthorization(h http.Header, prefix string) (string, bool) {
 var operationRolesApiToken = map[string][]string{
 	CancelJobOperation:                 []string{},
 	ConfirmTotpOperation:               []string{},
+	CreateArrayOperation:               []string{},
 	CreateNotificationChannelOperation: []string{},
 	DeleteNotificationChannelOperation: []string{},
 	DisableUserTotpOperation:           []string{},
@@ -98,6 +99,7 @@ func GetRolesForApiToken(operation string) []string {
 var operationRolesSessionCookie = map[string][]string{
 	CancelJobOperation:                 []string{},
 	ConfirmTotpOperation:               []string{},
+	CreateArrayOperation:               []string{},
 	CreateNotificationChannelOperation: []string{},
 	DeleteNotificationChannelOperation: []string{},
 	DisableUserTotpOperation:           []string{},

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 const mockDiskSize = 4_000_000_000_000
@@ -24,16 +25,24 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 	if scenario == "fresh-install" {
 		return []apiv1.DiskInventoryEntry{
 			{
-				Device:    "/dev/sdb",
-				SizeBytes: mockDiskSize,
-				Model:     apiv1.NewOptString("WDC WD40EFRX"),
-				Serial:    apiv1.NewOptString("WD-WCC4E1234567"),
+				Device:          "/dev/sdb",
+				SizeBytes:       mockDiskSize,
+				Model:           apiv1.NewOptString("WDC WD40EFRX"),
+				Serial:          apiv1.NewOptString("WD-WCC4E1234567"),
+				Filesystem:      apiv1.NewOptString("xfs"),
+				Label:           apiv1.NewOptString("disk1"),
+				SmartStatus:     apiv1.NewOptString("ok"),
+				ContainsData:    apiv1.NewOptBool(true),
+				LooksLikeUnraid: apiv1.NewOptBool(true),
 			},
 			{
-				Device:    "/dev/sdc",
-				SizeBytes: mockDiskSize,
-				Model:     apiv1.NewOptString("WDC WD40EFRX"),
-				Serial:    apiv1.NewOptString("WD-WCC4E7654321"),
+				Device:          "/dev/sdc",
+				SizeBytes:       mockDiskSize,
+				Model:           apiv1.NewOptString("WDC WD40EFRX"),
+				Serial:          apiv1.NewOptString("WD-WCC4E7654321"),
+				SmartStatus:     apiv1.NewOptString("ok"),
+				ContainsData:    apiv1.NewOptBool(false),
+				LooksLikeUnraid: apiv1.NewOptBool(false),
 			},
 		}
 	}
@@ -269,6 +278,48 @@ func (h *handler) StartFix(ctx context.Context, req *apiv1.StartFixRequest) (*ap
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.submitParityJob(apiv1.JobTypeFix, true)
+}
+
+func (h *handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest) (*apiv1.Job, error) {
+	plan := mockTopologyPlan(req)
+	if req.Confirmation == "" || plan.CheckConfirmation(req.Confirmation) != nil {
+		return nil, errConfirmRequired()
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := time.Now().UTC()
+	job := apiv1.Job{
+		ID:          uuid.New(),
+		Type:        apiv1.JobTypeDiskFormat,
+		Class:       apiv1.JobClassTopology,
+		Status:      apiv1.JobStatusQueued,
+		Resumable:   false,
+		Cancellable: false,
+		CreatedAt:   now,
+	}
+	h.jobs[job.ID] = job
+	return &job, nil
+}
+
+func mockTopologyPlan(req *apiv1.CreateArrayRequest) disk.TopologyPlan {
+	var plan disk.TopologyPlan
+	for _, a := range req.Disks {
+		assigned := disk.AssignedDisk{
+			Device:     a.Device,
+			Filesystem: disk.XFS,
+			Adopt:      a.Adopt.Or(false),
+		}
+		switch a.Role {
+		case apiv1.ArrayDiskRoleParity:
+			plan.Parity = append(plan.Parity, assigned)
+		case apiv1.ArrayDiskRoleData:
+			plan.Data = append(plan.Data, assigned)
+		case apiv1.ArrayDiskRoleCache:
+			c := assigned
+			plan.Cache = &c
+		}
+	}
+	return plan
 }
 
 func (h *handler) ExportConfig(ctx context.Context) (apiv1.ExportConfigOK, error) {

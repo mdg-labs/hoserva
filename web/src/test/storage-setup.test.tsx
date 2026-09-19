@@ -7,6 +7,7 @@ import { AuthProvider } from "@/lib/api/auth-guard";
 import { StorageSetupPage } from "@/routes/storage-setup";
 import {
   buildConfirmPhrase,
+  buildCreateArrayRequest,
   disksToErase,
   validateRoleAssignment,
   type DiskEntry,
@@ -14,11 +15,12 @@ import {
 } from "@/routes/storage-setup/validation";
 
 const mockGet = vi.fn();
+const mockPost = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   hoservaClient: {
     GET: (...args: unknown[]) => mockGet(...args),
-    POST: vi.fn(),
+    POST: (...args: unknown[]) => mockPost(...args),
   },
 }));
 
@@ -122,14 +124,43 @@ describe("storage setup validation", () => {
     expect(result.errorsByDevice["/dev/sde"]).toBe("weakIdentityParity");
   });
 
-  it("lists every disk to erase for typed confirmation", () => {
+  it("lists every disk to erase for typed confirmation, including cache", () => {
     const roles: Record<string, DiskRole> = {
       "/dev/sdb": "parity",
       "/dev/sdc": "data",
     };
     const erased = disksToErase([DISK_SDB, DISK_SDC], roles, { "/dev/sdc": "format" });
     expect(erased).toEqual(["/dev/sdb", "/dev/sdc"]);
-    expect(buildConfirmPhrase(erased)).toBe("erase /dev/sdb, /dev/sdc");
+    expect(buildConfirmPhrase(erased)).toBe("ERASE /dev/sdb, /dev/sdc");
+
+    const withCache = disksToErase(
+      [DISK_SDB, DISK_SDC, DISK_SMALL],
+      { "/dev/sdb": "parity", "/dev/sdc": "data", "/dev/sdd": "cache" },
+      { "/dev/sdc": "keep" },
+    );
+    expect(withCache).toEqual(["/dev/sdb", "/dev/sdd"]);
+    expect(buildConfirmPhrase(withCache)).toBe("ERASE /dev/sdb, /dev/sdd");
+    expect(buildConfirmPhrase([])).toBe("ADOPT ONLY — NOTHING ERASED");
+  });
+
+  it("builds a createArray body that matches TopologyPlan confirmation", () => {
+    const body = buildCreateArrayRequest(
+      [DISK_SDB, DISK_SDC],
+      { "/dev/sdb": "parity", "/dev/sdc": "data" },
+      { "/dev/sdc": "format" },
+      "mspmfs",
+      50,
+      "ERASE /dev/sdb, /dev/sdc",
+    );
+    expect(body).toEqual({
+      disks: [
+        { device: "/dev/sdb", role: "parity", filesystem: "xfs", adopt: false },
+        { device: "/dev/sdc", role: "data", filesystem: "xfs", adopt: false },
+      ],
+      createPolicy: "mspmfs",
+      minFreeSpace: "50G",
+      confirmation: "ERASE /dev/sdb, /dev/sdc",
+    });
   });
 });
 
@@ -137,6 +168,19 @@ describe("StorageSetupPage", () => {
   beforeEach(() => {
     cleanup();
     mockGet.mockReset();
+    mockPost.mockReset();
+    mockPost.mockResolvedValue({
+      data: {
+        id: "00000000-0000-0000-0000-000000000099",
+        type: "disk_format",
+        class: "topology",
+        status: "queued",
+        resumable: false,
+        cancellable: false,
+        createdAt: "2026-09-19T00:00:00Z",
+      },
+      response: { ok: true },
+    });
     localStorage.clear();
     sessionStorage.clear();
     mockFreshInstall();
@@ -165,6 +209,6 @@ describe("StorageSetupPage", () => {
 
     expect(screen.getByText("/dev/sdb — all data will be erased")).toBeInTheDocument();
     expect(screen.getByText("/dev/sdc — all data will be erased")).toBeInTheDocument();
-    expect(screen.getByText("Type exactly: erase /dev/sdb, /dev/sdc")).toBeInTheDocument();
+    expect(screen.getByText("Type exactly: ERASE /dev/sdb, /dev/sdc")).toBeInTheDocument();
   });
 });

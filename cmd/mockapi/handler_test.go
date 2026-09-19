@@ -250,3 +250,29 @@ func TestSessionCookieOnlyIsAccepted(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", resp.StatusCode, http.StatusOK, body)
 	}
 }
+
+func TestCreateArray_RequiresMatchingConfirmation(t *testing.T) {
+	client := newTestClient(t, "fresh-install")
+	ctx := context.Background()
+
+	disks := []apiv1.ArrayDiskAssignment{
+		{Device: "/dev/sdb", Role: apiv1.ArrayDiskRoleParity, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs)},
+		{Device: "/dev/sdc", Role: apiv1.ArrayDiskRoleData, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs)},
+	}
+
+	_, err := client.CreateArray(ctx, &apiv1.CreateArrayRequest{Disks: disks, Confirmation: "erase /dev/sdb, /dev/sdc"})
+	if err == nil {
+		t.Fatal("CreateArray(wrong confirm): expected an error")
+	}
+	if code := errorCode(t, err); code != "confirmation_required" {
+		t.Fatalf("CreateArray(wrong confirm): code = %q, want confirmation_required", code)
+	}
+
+	got, err := client.CreateArray(ctx, &apiv1.CreateArrayRequest{Disks: disks, Confirmation: "ERASE /dev/sdb, /dev/sdc"})
+	if err != nil {
+		t.Fatalf("CreateArray: %v", err)
+	}
+	if got.Type != apiv1.JobTypeDiskFormat || got.Class != apiv1.JobClassTopology {
+		t.Fatalf("job type/class = %s/%s, want disk_format/topology", got.Type, got.Class)
+	}
+}

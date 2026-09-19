@@ -33,6 +33,19 @@ func (UnimplementedHandler) ConfirmTotp(ctx context.Context, req *TotpConfirmReq
 	return ht.ErrNotImplemented
 }
 
+// CreateArray implements createArray operation.
+//
+// Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4).
+// The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool
+// options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong
+// or missing confirmation is refused with `confirmation_required` and formats nothing. The handler
+// calls `disk.FormatPlan` — never a second formatter (D1).
+//
+// POST /disks/array
+func (UnimplementedHandler) CreateArray(ctx context.Context, req *CreateArrayRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // CreateFirstAdmin implements createFirstAdmin operation.
 //
 // Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a

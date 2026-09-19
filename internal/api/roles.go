@@ -28,6 +28,7 @@ const (
 var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.CancelJobOperation:                 RoleAdmin,
 	apiv1.ConfirmTotpOperation:               RoleViewer,
+	apiv1.CreateArrayOperation:               RoleAdmin,
 	apiv1.CreateFirstAdminOperation:          RolePublic,
 	apiv1.CreateNotificationChannelOperation: RoleAdmin,
 	apiv1.DeleteNotificationChannelOperation: RoleAdmin,

@@ -3,6 +3,14 @@
 package apiv1
 
 // setDefaults set default value of fields.
+func (s *ArrayDiskAssignment) setDefaults() {
+	{
+		val := bool(false)
+		s.Adopt.SetTo(val)
+	}
+}
+
+// setDefaults set default value of fields.
 func (s *StartSyncRequest) setDefaults() {
 	{
 		val := bool(false)

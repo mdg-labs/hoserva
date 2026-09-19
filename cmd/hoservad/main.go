@@ -23,6 +23,7 @@ import (
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/store"
@@ -176,12 +177,14 @@ func run(cfg config) error {
 	logs := job.NewLogStore(logsDir)
 	hub := job.NewHub()
 	registry := job.NewRegistry()
+	linuxDisks := disk.NewLinuxProvider()
+	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(linuxDisks, linuxDisks.Exec))
 	scheduler := job.NewScheduler(jobStore, logs, hub, registry)
 	if err := scheduler.RecoverFromRestart(ctx); err != nil {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
 
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService}
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Disks: linuxDisks}
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
