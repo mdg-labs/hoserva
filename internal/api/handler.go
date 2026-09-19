@@ -47,6 +47,9 @@ type Handler struct {
 	// Backup is the config archive builder for export/import — nil returns
 	// 501 from those operations.
 	Backup *backup.Service
+	// Settings is #178's hostname/timezone/backup-passphrase business
+	// logic — nil returns an internal error from those operations.
+	Settings *SettingsService
 }
 
 var _ apiv1.Handler = (*Handler)(nil)

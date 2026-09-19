@@ -3,17 +3,24 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 const mockDiskSize = 4_000_000_000_000
 
 func errConfirmRequired() error {
 	return &mockError{code: "confirmation_required", statusCode: 409, message: "this operation requires an explicit confirmation"}
+}
+
+func errInvalidPlan(err error) error {
+	return &mockError{code: "invalid_plan", statusCode: 400, message: err.Error()}
 }
 
 func errRootOnlyRecovery() error {
@@ -24,16 +31,24 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 	if scenario == "fresh-install" {
 		return []apiv1.DiskInventoryEntry{
 			{
-				Device:    "/dev/sdb",
-				SizeBytes: mockDiskSize,
-				Model:     apiv1.NewOptString("WDC WD40EFRX"),
-				Serial:    apiv1.NewOptString("WD-WCC4E1234567"),
+				Device:          "/dev/sdb",
+				SizeBytes:       mockDiskSize,
+				Model:           apiv1.NewOptString("WDC WD40EFRX"),
+				Serial:          apiv1.NewOptString("WD-WCC4E1234567"),
+				Filesystem:      apiv1.NewOptString("xfs"),
+				Label:           apiv1.NewOptString("disk1"),
+				SmartStatus:     apiv1.NewOptString("ok"),
+				ContainsData:    apiv1.NewOptBool(true),
+				LooksLikeUnraid: apiv1.NewOptBool(true),
 			},
 			{
-				Device:    "/dev/sdc",
-				SizeBytes: mockDiskSize,
-				Model:     apiv1.NewOptString("WDC WD40EFRX"),
-				Serial:    apiv1.NewOptString("WD-WCC4E7654321"),
+				Device:          "/dev/sdc",
+				SizeBytes:       mockDiskSize,
+				Model:           apiv1.NewOptString("WDC WD40EFRX"),
+				Serial:          apiv1.NewOptString("WD-WCC4E7654321"),
+				SmartStatus:     apiv1.NewOptString("ok"),
+				ContainsData:    apiv1.NewOptBool(false),
+				LooksLikeUnraid: apiv1.NewOptBool(false),
 			},
 		}
 	}
@@ -269,6 +284,90 @@ func (h *handler) StartFix(ctx context.Context, req *apiv1.StartFixRequest) (*ap
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.submitParityJob(apiv1.JobTypeFix, true)
+}
+
+func (h *handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest) (*apiv1.Job, error) {
+	plan, err := mockTopologyPlan(req)
+	if err != nil {
+		return nil, err
+	}
+	if req.Confirmation == "" || plan.CheckConfirmation(req.Confirmation) != nil {
+		return nil, errConfirmRequired()
+	}
+	if err := plan.Validate(mockDiskSizes(h.scenario)); err != nil {
+		return nil, errInvalidPlan(err)
+	}
+	if err := disk.CheckFormatTargets(plan); err != nil {
+		return nil, &mockError{code: "unmanaged_device", statusCode: 400, message: err.Error()}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := time.Now().UTC()
+	job := apiv1.Job{
+		ID:          uuid.New(),
+		Type:        apiv1.JobTypeDiskFormat,
+		Class:       apiv1.JobClassTopology,
+		Status:      apiv1.JobStatusQueued,
+		Resumable:   false,
+		Cancellable: false,
+		CreatedAt:   now,
+	}
+	h.jobs[job.ID] = job
+	return &job, nil
+}
+
+func mockDiskSizes(scenario string) map[string]int64 {
+	sizes := make(map[string]int64)
+	for _, d := range mockDiskInventory(scenario) {
+		sizes[d.Device] = d.SizeBytes
+	}
+	return sizes
+}
+
+func mockTopologyPlan(req *apiv1.CreateArrayRequest) (disk.TopologyPlan, error) {
+	var plan disk.TopologyPlan
+	for _, a := range req.Disks {
+		assigned, err := mockAssignedDisk(a)
+		if err != nil {
+			return disk.TopologyPlan{}, err
+		}
+		switch a.Role {
+		case apiv1.ArrayDiskRoleParity:
+			plan.Parity = append(plan.Parity, assigned)
+		case apiv1.ArrayDiskRoleData:
+			plan.Data = append(plan.Data, assigned)
+		case apiv1.ArrayDiskRoleCache:
+			if plan.Cache != nil {
+				return disk.TopologyPlan{}, errInvalidPlan(errors.New("disk: at most one cache disk can be assigned"))
+			}
+			c := assigned
+			plan.Cache = &c
+		default:
+			return disk.TopologyPlan{}, errInvalidPlan(fmt.Errorf("disk: unknown role %q", a.Role))
+		}
+	}
+	return plan, nil
+}
+
+func mockAssignedDisk(a apiv1.ArrayDiskAssignment) (disk.AssignedDisk, error) {
+	fs := disk.XFS
+	if v, ok := a.Filesystem.Get(); ok {
+		switch v {
+		case apiv1.ArrayDiskFilesystemXfs:
+			fs = disk.XFS
+		case apiv1.ArrayDiskFilesystemExt4:
+			fs = disk.EXT4
+		case apiv1.ArrayDiskFilesystemBtrfs:
+			fs = disk.BTRFS
+		default:
+			return disk.AssignedDisk{}, errInvalidPlan(fmt.Errorf("%w: %s", disk.ErrUnsupportedFilesystem, v))
+		}
+	}
+	return disk.AssignedDisk{
+		Device:     a.Device,
+		Filesystem: fs,
+		Adopt:      a.Adopt.Or(false),
+	}, nil
 }
 
 func (h *handler) ExportConfig(ctx context.Context) (apiv1.ExportConfigOK, error) {

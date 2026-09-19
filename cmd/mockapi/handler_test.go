@@ -250,3 +250,86 @@ func TestSessionCookieOnlyIsAccepted(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", resp.StatusCode, http.StatusOK, body)
 	}
 }
+
+func TestCreateArray_RequiresMatchingConfirmation(t *testing.T) {
+	client := newTestClient(t, "fresh-install")
+	ctx := context.Background()
+
+	disks := []apiv1.ArrayDiskAssignment{
+		{Device: "/dev/sdb", Role: apiv1.ArrayDiskRoleParity, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs)},
+		{Device: "/dev/sdc", Role: apiv1.ArrayDiskRoleData, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs)},
+	}
+
+	_, err := client.CreateArray(ctx, &apiv1.CreateArrayRequest{Disks: disks, Confirmation: "erase /dev/sdb, /dev/sdc"})
+	if err == nil {
+		t.Fatal("CreateArray(wrong confirm): expected an error")
+	}
+	if code := errorCode(t, err); code != "confirmation_required" {
+		t.Fatalf("CreateArray(wrong confirm): code = %q, want confirmation_required", code)
+	}
+
+	got, err := client.CreateArray(ctx, &apiv1.CreateArrayRequest{Disks: disks, Confirmation: "ERASE /dev/sdb, /dev/sdc"})
+	if err != nil {
+		t.Fatalf("CreateArray: %v", err)
+	}
+	if got.Type != apiv1.JobTypeDiskFormat || got.Class != apiv1.JobClassTopology {
+		t.Fatalf("job type/class = %s/%s, want disk_format/topology", got.Type, got.Class)
+	}
+}
+
+func TestCreateArray_RejectsASecondCacheDisk(t *testing.T) {
+	client := newTestClient(t, "healthy")
+	ctx := context.Background()
+
+	disks := []apiv1.ArrayDiskAssignment{
+		{Device: "/dev/sdb", Role: apiv1.ArrayDiskRoleParity, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs)},
+		{Device: "/dev/sdc", Role: apiv1.ArrayDiskRoleData, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs)},
+		{Device: "/dev/sdd", Role: apiv1.ArrayDiskRoleCache, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs)},
+		{Device: "/dev/sde", Role: apiv1.ArrayDiskRoleCache, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs)},
+	}
+	_, err := client.CreateArray(ctx, &apiv1.CreateArrayRequest{
+		Disks:        disks,
+		Confirmation: "ERASE /dev/sdb, /dev/sdc, /dev/sdd, /dev/sde",
+	})
+	if err == nil {
+		t.Fatal("CreateArray(two cache disks): expected an error")
+	}
+	if code := errorCode(t, err); code != "invalid_plan" {
+		t.Fatalf("CreateArray(two cache disks): code = %q, want invalid_plan", code)
+	}
+}
+
+func TestCreateArray_RejectsNonXFSParity(t *testing.T) {
+	client := newTestClient(t, "fresh-install")
+	ctx := context.Background()
+
+	disks := []apiv1.ArrayDiskAssignment{
+		{Device: "/dev/sdb", Role: apiv1.ArrayDiskRoleParity, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemExt4)},
+		{Device: "/dev/sdc", Role: apiv1.ArrayDiskRoleData, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs)},
+	}
+	_, err := client.CreateArray(ctx, &apiv1.CreateArrayRequest{
+		Disks:        disks,
+		Confirmation: "ERASE /dev/sdb, /dev/sdc",
+	})
+	if err == nil {
+		t.Fatal("CreateArray(ext4 parity): expected an error")
+	}
+	if code := errorCode(t, err); code != "invalid_plan" {
+		t.Fatalf("CreateArray(ext4 parity): code = %q, want invalid_plan", code)
+	}
+}
+
+func TestUpdateGeneralSettings_RejectsUnknownTimezone(t *testing.T) {
+	client := newTestClient(t, "fresh-install")
+	ctx := context.Background()
+
+	req := &apiv1.UpdateGeneralSettingsRequest{}
+	req.SetTimezone(apiv1.NewOptString("Not/AZone"))
+	_, err := client.UpdateGeneralSettings(ctx, req)
+	if err == nil {
+		t.Fatal("UpdateGeneralSettings(unknown timezone): expected an error")
+	}
+	if code := errorCode(t, err); code != "settings_invalid_input" {
+		t.Fatalf("UpdateGeneralSettings(unknown timezone): code = %q, want settings_invalid_input", code)
+	}
+}

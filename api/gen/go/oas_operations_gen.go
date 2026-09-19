@@ -8,6 +8,7 @@ type OperationName = string
 const (
 	CancelJobOperation                 OperationName = "CancelJob"
 	ConfirmTotpOperation               OperationName = "ConfirmTotp"
+	CreateArrayOperation               OperationName = "CreateArray"
 	CreateFirstAdminOperation          OperationName = "CreateFirstAdmin"
 	CreateNotificationChannelOperation OperationName = "CreateNotificationChannel"
 	DeleteNotificationChannelOperation OperationName = "DeleteNotificationChannel"
@@ -15,6 +16,7 @@ const (
 	EnrollTotpOperation                OperationName = "EnrollTotp"
 	ExportConfigOperation              OperationName = "ExportConfig"
 	GetCurrentSessionOperation         OperationName = "GetCurrentSession"
+	GetGeneralSettingsOperation        OperationName = "GetGeneralSettings"
 	GetJobOperation                    OperationName = "GetJob"
 	GetJobLogOperation                 OperationName = "GetJobLog"
 	GetNotificationChannelOperation    OperationName = "GetNotificationChannel"
@@ -37,6 +39,7 @@ const (
 	StartScrubOperation                OperationName = "StartScrub"
 	StartSyncOperation                 OperationName = "StartSync"
 	UnlockUserOperation                OperationName = "UnlockUser"
+	UpdateGeneralSettingsOperation     OperationName = "UpdateGeneralSettings"
 	UpdateNotificationChannelOperation OperationName = "UpdateNotificationChannel"
 	UpdateNotificationRouteOperation   OperationName = "UpdateNotificationRoute"
 	UpdateQuietHoursOperation          OperationName = "UpdateQuietHours"

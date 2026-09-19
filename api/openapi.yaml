@@ -57,6 +57,11 @@ tags:
       webhook), per-event routing and quiet hours (doc 03 §8.3, doc 01 §7,
       Q28). Credentials are write-only: a channel response never carries
       the secret it holds, only whether one is configured.
+  - name: settings
+    description: >-
+      General installation settings shared by onboarding and `/settings`
+      (doc 03 §1, §8.1). The backup passphrase is write-only (Q28): a
+      response never carries it, only whether one is configured.
 
 # Two transports (doc 01 §5): a Unix socket for the local root/`hoserva`-group
 # CLI, and TLS-only TCP for the web UI and remote/scripted use. Same handlers,
@@ -670,6 +675,51 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /settings/general:
+    get:
+      operationId: getGeneralSettings
+      summary: Get general installation settings
+      description: >-
+        Hostname, timezone and whether a backup passphrase is configured
+        (doc 03 §1, §8.1). The passphrase itself is never returned (Q28).
+      tags: [settings]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The current general settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeneralSettings'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateGeneralSettings
+      summary: Set general installation settings
+      description: >-
+        Persists hostname, timezone and/or the backup passphrase. Each
+        field is optional: omitted leaves that value unchanged. An empty
+        `hostname` clears a previously set hostname. `backupPassphrase` is
+        write-only and never echoed back — skipping it during onboarding
+        is valid (Q28).
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGeneralSettingsRequest'
+      responses:
+        "200":
+          description: The updated general settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeneralSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
   /status:
     get:
       operationId: getStatus
@@ -727,6 +777,37 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/DiskInventoryEntry'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /disks/array:
+    post:
+      operationId: createArray
+      summary: Create the storage array
+      description: >-
+        Queues a Topology job that formats or adopts the assigned disks
+        (doc 03 §3.1 step 6, doc 02 §4). The request is the wizard's role
+        assignments, per-disk filesystem (including adopt/keep), pool
+        options, and the same typed confirmation string
+        `disk.TopologyPlan.Confirmation` produces. A wrong or missing
+        confirmation is refused with `confirmation_required` and formats
+        nothing. The handler calls `disk.FormatPlan` — never a second
+        formatter (D1).
+      tags: [disks]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateArrayRequest'
+      responses:
+        "200":
+          description: The queued Topology job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
         default:
           $ref: '#/components/responses/Error'
 
@@ -1627,6 +1708,40 @@ components:
           type: string
           pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
 
+    GeneralSettings:
+      type: object
+      required: [backupPassphraseSet]
+      properties:
+        hostname:
+          type: string
+          description: Configured host name, if any.
+        timezone:
+          type: string
+          description: IANA timezone name, e.g. "Europe/Berlin".
+        backupPassphraseSet:
+          type: boolean
+          description: >-
+            Whether a backup passphrase is configured. The passphrase itself
+            is never returned (Q28).
+
+    UpdateGeneralSettingsRequest:
+      type: object
+      properties:
+        hostname:
+          type: string
+          description: >-
+            Host name for this server. An empty string clears a previously
+            set value. Omitted leaves hostname unchanged.
+        timezone:
+          type: string
+          description: IANA timezone name. Omitted leaves timezone unchanged.
+        backupPassphrase:
+          type: string
+          minLength: 1
+          description: >-
+            Write-only. Sets or replaces the backup passphrase (Q28).
+            Omitted leaves any existing passphrase unchanged.
+
     DoctorCheckStatus:
       type: string
       enum: [pass, warn, fail]
@@ -1735,6 +1850,83 @@ components:
           type: boolean
         weakIdentity:
           type: boolean
+        filesystem:
+          type: string
+          description: >-
+            Cached filesystem type from udev (`ID_FS_TYPE`), never probed
+            in a way that wakes a standby disk (doc 02 §1, §4, doc 03 §3.1).
+        label:
+          type: string
+          description: Cached filesystem label from udev (`ID_FS_LABEL`).
+        smartStatus:
+          type: string
+          description: >-
+            SMART summary from a standby-respecting poll. `standby` when
+            the disk was left asleep; `ok` or `failing` from a real read.
+        containsData:
+          type: boolean
+          description: True when udev reports an existing filesystem on the disk.
+        looksLikeUnraid:
+          type: boolean
+          description: >-
+            True when the filesystem label matches Unraid's `diskN` /
+            `parity` / `cache` naming (doc 05) — a conservative heuristic
+            that never mounts the disk to look for `super.dat`.
+
+    ArrayDiskRole:
+      type: string
+      description: A role the array-setup wizard assigns (doc 03 §3.1 step 2). Ignore is omitted — those disks never appear in the plan.
+      enum: [parity, data, cache]
+
+    ArrayDiskFilesystem:
+      type: string
+      description: Filesystem to format with, or to verify when adopt is true (Q23). Parity is always xfs (Q20).
+      enum: [xfs, ext4, btrfs]
+
+    ArrayCreatePolicy:
+      type: string
+      description: Default mergerfs create policy for new shares (doc 02 §1, Q11).
+      enum: [mspmfs, mfs, lfs, ff]
+
+    ArrayDiskAssignment:
+      type: object
+      required: [device, role]
+      properties:
+        device:
+          type: string
+        role:
+          $ref: '#/components/schemas/ArrayDiskRole'
+        filesystem:
+          $ref: '#/components/schemas/ArrayDiskFilesystem'
+        adopt:
+          type: boolean
+          default: false
+          description: Keep the existing filesystem instead of formatting (data and cache only; Q20 forbids this on parity).
+
+    CreateArrayRequest:
+      type: object
+      required: [disks, confirmation]
+      properties:
+        disks:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ArrayDiskAssignment'
+        createPolicy:
+          $ref: '#/components/schemas/ArrayCreatePolicy'
+        minFreeSpace:
+          type: string
+          description: >-
+            mergerfs minfreespace in its size-suffix syntax (doc 02 §1),
+            e.g. `50G`. Omitted uses the engine default.
+        confirmation:
+          type: string
+          description: >-
+            Exact typed confirmation for this plan (doc 03 §3.1 step 6):
+            `ERASE /dev/sda, /dev/sdb` listing every device that will be
+            formatted, sorted, or `ADOPT ONLY — NOTHING ERASED` when every
+            assigned disk is adopted. A wrong or missing string is refused
+            and formats nothing.
 
     StartSyncRequest:
       type: object

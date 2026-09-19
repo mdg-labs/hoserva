@@ -121,6 +121,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 	generated := []apiv1.OperationName{
 		apiv1.CancelJobOperation,
 		apiv1.ConfirmTotpOperation,
+		apiv1.CreateArrayOperation,
 		apiv1.CreateFirstAdminOperation,
 		apiv1.CreateNotificationChannelOperation,
 		apiv1.DeleteNotificationChannelOperation,
@@ -128,6 +129,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.EnrollTotpOperation,
 		apiv1.ExportConfigOperation,
 		apiv1.GetCurrentSessionOperation,
+		apiv1.GetGeneralSettingsOperation,
 		apiv1.GetJobOperation,
 		apiv1.GetJobLogOperation,
 		apiv1.GetNotificationChannelOperation,
@@ -150,6 +152,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.StartScrubOperation,
 		apiv1.StartSyncOperation,
 		apiv1.UnlockUserOperation,
+		apiv1.UpdateGeneralSettingsOperation,
 		apiv1.UpdateNotificationChannelOperation,
 		apiv1.UpdateNotificationRouteOperation,
 		apiv1.UpdateQuietHoursOperation,

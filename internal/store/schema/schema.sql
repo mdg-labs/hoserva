@@ -17,7 +17,10 @@
 CREATE TABLE schema_info (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     installation_id TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    hostname TEXT,
+    timezone TEXT,
+    backup_passphrase BLOB
 ) STRICT;
 
 -- Jobs (#19, doc 01 §4): the persisted record behind every long-running
@@ -251,3 +254,47 @@ CREATE TABLE machine_key_check (
     check_value BLOB NOT NULL,
     created_at TEXT NOT NULL
 ) STRICT;
+
+-- Array topology (#180, D4, doc 01 §2, doc 02 §1): the wizard's plan after
+-- a successful create-array job, which is the source of truth config
+-- generators read. One array per install in v1 (singleton, same pattern as
+-- schema_info). Job-params JSON is the queued request only — after the
+-- Topology job succeeds, these tables are what Render and WritePoolMounts
+-- consume, never the job row. Expand-only (D16): nothing here is dropped.
+-- create_policy / min_free_space are the pool-wide mergerfs options the
+-- wizard collected (doc 02 §1); omitted request fields persist as the
+-- engine defaults (mspmfs / 50G).
+CREATE TABLE array_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    create_policy TEXT NOT NULL,
+    min_free_space TEXT NOT NULL,
+    created_at TEXT NOT NULL
+) STRICT;
+
+-- One assigned disk per row. role_index is 1-based for the documented
+-- mountpoints (doc 01 §6): /mnt/diskN, /mnt/parityN, /mnt/cache (cache is
+-- always role_index 1). fs_uuid is the filesystem UUID mounts bind to
+-- (Q21), recorded after FormatPlan succeeds — a failed format never
+-- inserts a row. UNIQUE(device) and UNIQUE(fs_uuid) are a second,
+-- database-level guard against one physical disk (or one filesystem)
+-- holding two roles. Identities (wwn/serial/by_id_name/weak_identity) are
+-- copied from the Provider.List call that populated the wizard.
+CREATE TABLE array_disks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT NOT NULL CHECK (role IN ('parity', 'data', 'cache')),
+    role_index INTEGER NOT NULL CHECK (role_index >= 1),
+    device TEXT NOT NULL,
+    filesystem TEXT NOT NULL,
+    fs_uuid TEXT NOT NULL,
+    wwn TEXT,
+    serial TEXT,
+    by_id_name TEXT,
+    weak_identity INTEGER NOT NULL CHECK (weak_identity IN (0, 1)),
+    mountpoint TEXT NOT NULL,
+    UNIQUE (role, role_index),
+    UNIQUE (device),
+    UNIQUE (fs_uuid),
+    UNIQUE (mountpoint)
+) STRICT;
+
+CREATE INDEX array_disks_role_idx ON array_disks (role, role_index);

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,6 +102,28 @@ func TestWritePoolMountsBodyMatchesRenderExactly(t *testing.T) {
 	want := Header(command, revision, now) + catchAll.Render()
 	if string(got) != want {
 		t.Fatalf("catch-all unit mismatch:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestWritePoolMounts_ForwardsCatchAllCreatePolicy(t *testing.T) {
+	state := loadPoolState(t)
+	state.CreatePolicy = pool.BalanceAcrossDisks
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	now := time.Date(2026, 9, 14, 10, 33, 12, 0, time.UTC)
+
+	if err := g.WritePoolMounts(ctx, state, "array create", 1, now); err != nil {
+		t.Fatalf("WritePoolMounts: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(g.Root, mountUnitPath(pool.CatchAllPath)))
+	if err != nil {
+		t.Fatalf("reading catch-all unit: %v", err)
+	}
+	if !strings.Contains(string(got), "category.create=mfs") {
+		t.Fatalf("catch-all unit missing selected create policy:\n%s", got)
+	}
+	if strings.Contains(string(got), "category.create=mspmfs") {
+		t.Fatalf("catch-all unit still uses the default create policy:\n%s", got)
 	}
 }
 

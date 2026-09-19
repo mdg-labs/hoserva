@@ -48,10 +48,11 @@ type handler struct {
 	// None of this comes from a fixture: no scenario encodes notification
 	// channels yet, so every mock instance starts with none configured,
 	// exactly like a fresh Hoserva install.
-	notifyMu   sync.Mutex
-	channels   map[uuid.UUID]apiv1.NotificationChannel
-	routing    map[apiv1.NotificationEventType]apiv1.NotificationRoutingEntry
-	quietHours apiv1.NotificationQuietHours
+	notifyMu        sync.Mutex
+	channels        map[uuid.UUID]apiv1.NotificationChannel
+	routing         map[apiv1.NotificationEventType]apiv1.NotificationRoutingEntry
+	quietHours      apiv1.NotificationQuietHours
+	generalSettings apiv1.GeneralSettings
 }
 
 var _ apiv1.Handler = (*handler)(nil)
