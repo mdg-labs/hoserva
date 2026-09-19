@@ -223,7 +223,10 @@ func run(cfg config) error {
 		defer func() { _ = metricsStore.Close() }()
 	}
 
-	parityEngine := newSnapraidEngine(configRoot, cfg.stateDir, nil)
+	parityEngine, err := newSnapraidEngine(configRoot, cfg.stateDir, nil)
+	if err != nil {
+		return fmt.Errorf("opening snapraid.conf: %w", err)
+	}
 	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history}
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
