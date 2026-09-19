@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -426,6 +428,103 @@ func TestJournal_ResetSincePersists(t *testing.T) {
 	}
 	if len(snap.Entries) != 0 {
 		t.Fatalf("persisted snapshot after ResetSince has %d entries, want 0", len(snap.Entries))
+	}
+}
+
+// TestJournal_ResetSince_OutlastsInFlightDebouncedPersist is issue #167's
+// own reproduction: readLoop's debounced persist can still be mid-flight —
+// already past its dj.mu snapshot capture, not yet on disk — when
+// ResetSince clears the in-memory state and runs its own persist. Before
+// the fix, persist's snapshot-then-write wasn't serialized against other
+// persist calls for the same disk, so whichever writeSnapshotAtomic call's
+// rename landed last won, independent of which one was logically newer.
+// This forces that exact overlap with onBeforeWrite instead of relying on
+// scheduling luck — the same reliance that made the original bug flaky —
+// and asserts the persisted snapshot always ends up reflecting
+// ResetSince's cleared state, never the stale pre-reset write landing
+// after it.
+func TestJournal_ResetSince_OutlastsInFlightDebouncedPersist(t *testing.T) {
+	root := t.TempDir()
+	w := NewFakeWatcher()
+	j := NewJournal(w, root)
+
+	// Installed before AddDisk starts readLoop's goroutine, so its own
+	// happens-before edge is what makes later reads of onBeforeWrite from
+	// that goroutine race-free. readLoop's own first, always-immediate
+	// persist for the initial batch below must reach onBeforeWrite once
+	// while unarmed — firstPersisted signals that deterministically,
+	// rather than the test guessing from Summary (which updates before
+	// persist is even called) when it's safe to arm the pause.
+	var armed atomic.Bool
+	firstPersisted := make(chan struct{})
+	var firstOnce sync.Once
+	release := make(chan struct{})
+	paused := make(chan struct{})
+	var pauseOnce sync.Once
+	j.onBeforeWrite = func(string) {
+		if !armed.Load() {
+			firstOnce.Do(func() { close(firstPersisted) })
+			return
+		}
+		pauseOnce.Do(func() {
+			close(paused)
+			<-release
+		})
+	}
+
+	t.Cleanup(func() { _ = j.Close() })
+	ctx := context.Background()
+
+	if err := j.AddDisk(ctx, "disk1", "/mnt/disk1"); err != nil {
+		t.Fatalf("AddDisk: %v", err)
+	}
+	pushOne(w, "/mnt/disk1", ChangeEvent{Kind: ChangeCreate, ID: "dir1/a.txt", Name: "a.txt"})
+	<-firstPersisted
+
+	dj := j.disk("disk1")
+	armed.Store(true)
+
+	// Simulates readLoop's own debounced persist call: it still sees the
+	// pre-reset entry, and is blocked (via onBeforeWrite) right after
+	// capturing that stale snapshot, still holding dj.writeMu.
+	staleDone := make(chan struct{})
+	go func() {
+		j.persist("disk1", dj)
+		close(staleDone)
+	}()
+	<-paused
+
+	resetDone := make(chan struct{})
+	go func() {
+		if err := j.ResetSince("disk1"); err != nil {
+			t.Errorf("ResetSince: %v", err)
+		}
+		close(resetDone)
+	}()
+
+	// ResetSince's own persist call must be unable to complete while the
+	// stale one is still holding dj.writeMu — give it a moment to prove
+	// it's genuinely blocked, not just not yet scheduled.
+	select {
+	case <-resetDone:
+		t.Fatal("ResetSince's persist completed while the debounced write was still in flight — not serialized")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	<-staleDone
+	<-resetDone
+
+	data, err := os.ReadFile(filepath.Join(root, "disk1.json"))
+	if err != nil {
+		t.Fatalf("reading persisted snapshot: %v", err)
+	}
+	var snap journalSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatalf("parsing persisted snapshot: %v", err)
+	}
+	if len(snap.Entries) != 0 {
+		t.Fatalf("persisted snapshot after the race has %d entries, want 0 (ResetSince's cleared state, not the stale pre-reset write)", len(snap.Entries))
 	}
 }
 
