@@ -34,7 +34,7 @@ export function SegmentedChoice({
         <Label
           key={option.value}
           className={cn(
-            "cursor-pointer rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent/50 has-data-checked:bg-background has-data-checked:shadow-xs/5",
+            "cursor-pointer rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent/50 has-data-checked:bg-background has-data-checked:shadow-xs/5 has-focus-visible:ring-2 has-focus-visible:ring-ring has-focus-visible:ring-offset-1 has-focus-visible:ring-offset-background",
             value === option.value && "bg-background shadow-xs/5",
             disabled && "cursor-not-allowed opacity-64",
           )}

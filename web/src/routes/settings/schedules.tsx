@@ -50,6 +50,7 @@ export function SchedulesSettingsPage(): React.ReactElement {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [schedules, setSchedules] = useState<Schedules | null>(null);
+  const [timeDrafts, setTimeDrafts] = useState<Partial<Record<OtherScheduleJobId, string>>>({});
 
   useEffect(() => {
     const controller = new AbortController();
@@ -65,6 +66,11 @@ export function SchedulesSettingsPage(): React.ReactElement {
         }
         if (data) {
           setSchedules(data);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(err instanceof Error ? err.message : String(err));
         }
       })
       .finally(() => {
@@ -116,6 +122,30 @@ export function SchedulesSettingsPage(): React.ReactElement {
     if (data) {
       setSchedules(data);
     }
+  }
+
+  async function commitOtherJobTime(jobId: OtherScheduleJobId, persistedTime: string): Promise<void> {
+    const draft = timeDrafts[jobId];
+    if (draft === undefined) {
+      return;
+    }
+    if (draft === "" || draft === persistedTime) {
+      setTimeDrafts((current) => {
+        const next = { ...current };
+        delete next[jobId];
+        return next;
+      });
+      return;
+    }
+    await updateOtherJob(jobId, { time: draft });
+    setTimeDrafts((current) => {
+      if (current[jobId] !== draft) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[jobId];
+      return next;
+    });
   }
 
   if (loading) {
@@ -227,9 +257,14 @@ export function SchedulesSettingsPage(): React.ReactElement {
                     <FieldLabel>{t("settings.schedules.time")}</FieldLabel>
                     <Input
                       type="time"
-                      value={job.time}
+                      value={timeDrafts[jobId] ?? job.time}
                       disabled={!job.enabled}
-                      onChange={(event) => updateOtherJob(jobId, { time: event.target.value })}
+                      onChange={(event) =>
+                        setTimeDrafts((current) => ({ ...current, [jobId]: event.target.value }))
+                      }
+                      onBlur={() => {
+                        void commitOtherJobTime(jobId, job.time);
+                      }}
                     />
                   </Field>
                   <Field>

@@ -222,6 +222,83 @@ describe("Settings pages", () => {
     expect(screen.queryByRole("button", { name: /move up/i })).not.toBeInTheDocument();
   });
 
+  it("persists other-job time on blur, not on each change", async () => {
+    const schedulesPayload = {
+      chain: {
+        startTime: "02:00",
+        weeklyScrubDay: 0,
+        schedulePreview: "every day at 02:00",
+        nextRun: "2026-06-16T00:00:00.000Z",
+        steps: [
+          { id: "mover", enabled: true },
+          { id: "diff_guard", enabled: true },
+          { id: "sync", enabled: true },
+          { id: "scrub", enabled: true },
+          { id: "config_backup", enabled: true },
+        ],
+      },
+      otherJobs: [
+        {
+          id: "smart_self_test",
+          enabled: true,
+          frequency: "weekly",
+          time: "03:00",
+          schedulePreview: "every Sunday at 03:00",
+          nextRun: "2026-06-21T01:00:00.000Z",
+        },
+        {
+          id: "appdata_backup",
+          enabled: false,
+          frequency: "daily",
+          time: "04:00",
+          schedulePreview: "every day at 04:00",
+          nextRun: "2026-06-16T02:00:00.000Z",
+        },
+        {
+          id: "restore_drill",
+          enabled: false,
+          frequency: "monthly",
+          time: "05:00",
+          schedulePreview: "on the 1st of each month at 05:00",
+          nextRun: "2026-07-01T03:00:00.000Z",
+        },
+        {
+          id: "container_update_check",
+          enabled: true,
+          frequency: "daily",
+          time: "06:00",
+          schedulePreview: "every day at 06:00",
+          nextRun: "2026-06-16T04:00:00.000Z",
+        },
+      ],
+      conflicts: [],
+    };
+    mockGet.mockResolvedValue({ data: schedulesPayload, response: { ok: true } });
+    mockPut.mockResolvedValue({
+      data: {
+        ...schedulesPayload,
+        otherJobs: schedulesPayload.otherJobs.map((job) =>
+          job.id === "smart_self_test" ? { ...job, time: "04:15" } : job,
+        ),
+      },
+      response: { ok: true },
+    });
+
+    renderWithToast(<SchedulesSettingsPage />);
+
+    const timeInput = await screen.findByDisplayValue("03:00");
+    fireEvent.change(timeInput, { target: { value: "04:15" } });
+    expect(mockPut).not.toHaveBeenCalled();
+
+    fireEvent.blur(timeInput);
+    await waitFor(() => {
+      expect(mockPut).toHaveBeenCalledWith("/settings/schedules/jobs/{jobId}", {
+        params: { path: { jobId: "smart_self_test" } },
+        body: { time: "04:15" },
+      });
+    });
+  });
+
   it("routes Update, Rollback and Reboot through confirm", async () => {
     renderWithToast(<UpdatesSettingsPage />);
 

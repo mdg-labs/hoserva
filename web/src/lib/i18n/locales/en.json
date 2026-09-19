@@ -749,7 +749,7 @@
       "chainSchedule": "Schedule",
       "chain.schedulePreview": "Every day at 02:00",
       "nextRun": "Next run",
-      "nextRunUnavailable": "Unavailable until schedule data is exposed through the API.",
+      "nextRunUnavailable": "No next run while this job is disabled.",
       "otherJobsTitle": "Other recurring jobs",
       "otherJobsDescription": "SMART self-tests, appdata backup, restore drill and container update checks.",
       "frequency": "Frequency",

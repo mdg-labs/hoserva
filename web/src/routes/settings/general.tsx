@@ -39,6 +39,11 @@ export function GeneralSettingsPage(): React.ReactElement {
           setTimezone(data.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
         }
       })
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      })
       .finally(() => {
         if (!controller.signal.aborted) {
           setLoading(false);
