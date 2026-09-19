@@ -23,6 +23,8 @@ import (
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
+	cfggen "github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/store"
@@ -89,6 +91,7 @@ type config struct {
 	socketPath      string
 	tcpAddr         string
 	machineKeyPath  string
+	configRoot      string
 	allowAllSources bool
 	dev             bool
 }
@@ -107,6 +110,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.socketPath, "socket-path", "/run/hoserva/hoserva.sock", "Unix socket path (Q44)")
 	flag.StringVar(&cfg.tcpAddr, "tcp-addr", ":8008", "TLS-only TCP listen address (Q9)")
 	flag.StringVar(&cfg.machineKeyPath, "machine-key-path", "/etc/hoserva/secret.key", "machine key path, encrypts secret columns (Q28)")
+	flag.StringVar(&cfg.configRoot, "config-root", "/etc", "root for generated config files (doc 01 §2); disk mount units and snapraid.conf are written relative to this")
 	flag.BoolVar(&cfg.allowAllSources, "allow-all-sources", false, "disable the LAN-only source filter (Q10) — WARNING: accepts connections from any address")
 	flag.BoolVar(&cfg.dev, "dev", false, "development convenience: state dir, socket, machine key and TCP address default to a workspace-local path and 127.0.0.1 (git-ignored); an explicitly set flag always wins over this default")
 	flag.Parse()
@@ -128,6 +132,9 @@ func parseFlags() config {
 		}
 		if !explicit["machine-key-path"] {
 			cfg.machineKeyPath = "./.hoserva-dev/secret.key"
+		}
+		if !explicit["config-root"] {
+			cfg.configRoot = "./.hoserva-dev/etc"
 		}
 		if !explicit["tcp-addr"] {
 			// The production default (":8008") binds every interface —
@@ -169,17 +176,32 @@ func run(cfg config) error {
 	notifyStore := notify.NewStore(db)
 	notifyService := notify.NewService(notifyStore, machineKey, notify.DefaultSenders(&http.Client{Timeout: notifyHTTPTimeout}))
 
+	settingsService := api.NewSettingsService(api.NewSettingsStore(db), machineKey)
+
 	logsDir := filepath.Join(cfg.stateDir, "jobs")
 	jobStore := job.NewStore(db)
 	logs := job.NewLogStore(logsDir)
 	hub := job.NewHub()
 	registry := job.NewRegistry()
+	linuxDisks := disk.NewLinuxProvider()
+	arrayStore := store.NewArrayStore(db)
+	configRoot := cfg.configRoot
+	if configRoot == "" {
+		configRoot = "/etc"
+	}
+	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
+		Provider:  linuxDisks,
+		Runner:    linuxDisks.Exec,
+		Store:     arrayStore,
+		Generator: cfggen.NewGenerator(configRoot),
+		Mounter:   disk.SystemdMounter{Runner: linuxDisks.Exec},
+	}))
 	scheduler := job.NewScheduler(jobStore, logs, hub, registry)
 	if err := scheduler.RecoverFromRestart(ctx); err != nil {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
 
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService}
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Disks: linuxDisks}
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
 	if err != nil {

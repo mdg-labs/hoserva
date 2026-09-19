@@ -48,28 +48,15 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 	return &apiv1.PoolStatus{Mounted: mounted, Disks: entries}, nil
 }
 
-func (h *Handler) ListDisks(ctx context.Context) (*apiv1.ListDisksOK, error) {
-	if h.Disks == nil {
-		return &apiv1.ListDisksOK{Disks: []apiv1.DiskInventoryEntry{}}, nil
-	}
-	disks, err := h.Disks.List(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("listing disks: %w", err)
-	}
-	out := make([]apiv1.DiskInventoryEntry, 0, len(disks))
-	for _, d := range disks {
-		out = append(out, diskToAPI(d))
-	}
-	return &apiv1.ListDisksOK{Disks: out}, nil
-}
-
 func diskToAPI(d disk.Disk) apiv1.DiskInventoryEntry {
 	entry := apiv1.DiskInventoryEntry{
-		Device:       d.Device,
-		SizeBytes:    d.Size,
-		Boot:         d.Boot,
-		Failed:       apiv1.NewOptBool(d.Failed),
-		WeakIdentity: apiv1.NewOptBool(d.WeakIdentity),
+		Device:          d.Device,
+		SizeBytes:       d.Size,
+		Boot:            d.Boot,
+		Failed:          apiv1.NewOptBool(d.Failed),
+		WeakIdentity:    apiv1.NewOptBool(d.WeakIdentity),
+		ContainsData:    apiv1.NewOptBool(d.ContainsData),
+		LooksLikeUnraid: apiv1.NewOptBool(d.LooksLikeUnraid),
 	}
 	if d.Model != "" {
 		entry.Model = apiv1.NewOptString(d.Model)
@@ -80,7 +67,43 @@ func diskToAPI(d disk.Disk) apiv1.DiskInventoryEntry {
 	if d.WWN != "" {
 		entry.Wwn = apiv1.NewOptString(d.WWN)
 	}
+	if d.Filesystem != "" {
+		entry.Filesystem = apiv1.NewOptString(d.Filesystem)
+	}
+	if d.Label != "" {
+		entry.Label = apiv1.NewOptString(d.Label)
+	}
 	return entry
+}
+
+func (h *Handler) ListDisks(ctx context.Context) (*apiv1.ListDisksOK, error) {
+	if h.Disks == nil {
+		return &apiv1.ListDisksOK{Disks: []apiv1.DiskInventoryEntry{}}, nil
+	}
+	disks, err := h.Disks.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing disks: %w", err)
+	}
+	out := make([]apiv1.DiskInventoryEntry, 0, len(disks))
+	for _, d := range disks {
+		entry := diskToAPI(d)
+		report, err := h.Disks.SMART(ctx, d.Device, disk.SMARTPollRespectStandby)
+		if err == nil {
+			entry.SmartStatus = apiv1.NewOptString(smartStatusString(report))
+		}
+		out = append(out, entry)
+	}
+	return &apiv1.ListDisksOK{Disks: out}, nil
+}
+
+func smartStatusString(r disk.SMARTReport) string {
+	if r.Skipped {
+		return "standby"
+	}
+	if r.SelfTestFailed || r.PendingSectors > 0 || r.OfflineUncorrectable > 0 || r.ReallocatedSectors > 0 {
+		return "failing"
+	}
+	return "ok"
 }
 
 func (h *Handler) StartSync(ctx context.Context, req *apiv1.StartSyncRequest) (*apiv1.Job, error) {

@@ -460,6 +460,63 @@ func TestFormatPlan_RefusesWrongConfirmation(t *testing.T) {
 	}
 }
 
+func TestCheckFormatTargets_RefusesAnEMMCPartition(t *testing.T) {
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/mmcblk0p1", Filesystem: XFS}},
+	}
+	if err := CheckFormatTargets(plan); !errors.Is(err, ErrUnmanagedDevice) {
+		t.Fatalf("CheckFormatTargets(/dev/mmcblk0p1): got %v, want ErrUnmanagedDevice", err)
+	}
+}
+
+func TestCheckFormatTargets_AllowsAWholeEMMCDisk(t *testing.T) {
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/mmcblk0", Filesystem: XFS}},
+	}
+	if err := CheckFormatTargets(plan); err != nil {
+		t.Fatalf("CheckFormatTargets(/dev/mmcblk0): %v", err)
+	}
+}
+
+func TestFormatPlan_RefusesNonLoopPathBeforeFormattingAnything(t *testing.T) {
+	p := NewFakeProvider()
+	p.AddDisk("/dev/sda", Disk{Size: 8 * TB})
+	p.AddDisk("/dev/sdb", Disk{Size: 4 * TB})
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sda1", Filesystem: XFS}},
+	}
+	sizes := map[string]int64{"/dev/sda": 8 * TB, "/dev/sda1": 4 * TB}
+
+	if err := FormatPlan(context.Background(), p, NewFakeRunner(), plan, sizes, plan.Confirmation()); !errors.Is(err, ErrUnmanagedDevice) {
+		t.Fatalf("FormatPlan(/dev/sda1 in plan): got %v, want ErrUnmanagedDevice", err)
+	}
+	if _, ok := p.FormattedAs("/dev/sda"); ok {
+		t.Fatal("FormatPlan formatted a disk despite an unmanaged partition path in the plan")
+	}
+	if _, ok := p.FormattedAs("/dev/sda1"); ok {
+		t.Fatal("FormatPlan formatted /dev/sda1")
+	}
+}
+
+func TestFormatAssigned_RefusesNonLoopPathEvenWhenAssigned(t *testing.T) {
+	p := NewFakeProvider()
+	p.AddDisk("/dev/sda", Disk{Size: 8 * TB})
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/sda1", Filesystem: XFS}},
+	}
+
+	if err := FormatAssigned(context.Background(), p, plan, "/dev/sda1", XFS); !errors.Is(err, ErrUnmanagedDevice) {
+		t.Fatalf("FormatAssigned(/dev/sda1): got %v, want ErrUnmanagedDevice", err)
+	}
+	if _, ok := p.FormattedAs("/dev/sda1"); ok {
+		t.Fatal("FormatAssigned formatted /dev/sda1")
+	}
+}
+
 func TestFormatPlan_RefusesAnInvalidPlanBeforeFormattingAnything(t *testing.T) {
 	p := NewFakeProvider()
 	p.AddDisk("/dev/sda", Disk{Size: 4 * TB})

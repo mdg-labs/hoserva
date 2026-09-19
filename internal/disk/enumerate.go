@@ -15,13 +15,15 @@ import (
 // every whole-disk entry under SysBlockDir, identified via ByIDDir (Q21)
 // and marked when it backs the mountpoint ProcMounts resolves as "/" —
 // the boot device, always identified and always excluded from anything
-// destructive. List reads only sysfs, /dev/disk/by-id and a mounts
-// listing; it never queries a device's SMART or power state, so it never
-// risks waking a disk (doc 02 §1, §4).
+// destructive. List reads only sysfs, /dev/disk/by-id, a mounts listing
+// and udev's already-cached ID_FS_* properties; it never queries a
+// device's SMART or power state and never opens a block device, so it
+// never risks waking a disk (doc 02 §1, §4).
 type Lister struct {
 	SysBlockDir string
 	ByIDDir     string
 	ProcMounts  string
+	UdevDataDir string
 }
 
 // NewLister returns a Lister reading the real system paths.
@@ -92,15 +94,20 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 		id := ResolveIdentity(byID[name])
 		dev := "/dev/" + name
 
+		fsType, fsLabel := l.discoveryFS(name)
 		disks = append(disks, Disk{
-			Device:       dev,
-			Size:         size * 512, // /sys/class/block/<dev>/size is always in 512-byte sectors
-			Model:        model,
-			Serial:       id.Serial,
-			WWN:          id.WWN,
-			WeakIdentity: id.WeakIdentity,
-			ByIDName:     id.ByIDName,
-			Boot:         bootSet[dev],
+			Device:          dev,
+			Size:            size * 512, // /sys/class/block/<dev>/size is always in 512-byte sectors
+			Model:           model,
+			Serial:          id.Serial,
+			WWN:             id.WWN,
+			WeakIdentity:    id.WeakIdentity,
+			ByIDName:        id.ByIDName,
+			Boot:            bootSet[dev],
+			Filesystem:      fsType,
+			Label:           fsLabel,
+			ContainsData:    fsType != "",
+			LooksLikeUnraid: LooksLikeUnraidLabel(fsLabel),
 		})
 	}
 

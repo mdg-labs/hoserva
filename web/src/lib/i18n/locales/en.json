@@ -61,6 +61,9 @@
   "loading": {
     "label": "Loading…"
   },
+  "auth": {
+    "loadFailed": "Could not reach the Hoserva API. Check that the daemon is running, then reload this page."
+  },
   "jobProgress": {
     "cancel": "Cancel",
     "cancelNotAvailable": "This job cannot be cancelled",
@@ -77,5 +80,289 @@
   },
   "placeholderPage": {
     "description": "This section is a placeholder — its page is built in a later issue."
+  },
+  "wizard": {
+    "back": "Back",
+    "next": "Next",
+    "stepProgress": "Step {{current}} of {{total}}"
+  },
+  "copyValue": {
+    "label": "Value to copy",
+    "copy": "Copy",
+    "copied": "Copied",
+    "failed": "Could not copy to the clipboard."
+  },
+  "secretInput": {
+    "show": "Show secret",
+    "hide": "Hide secret",
+    "generate": "Generate secret",
+    "strength": {
+      "weak": "Weak password",
+      "fair": "Fair password",
+      "good": "Good password",
+      "strong": "Strong password"
+    }
+  },
+  "totp": {
+    "label": "Authentication code",
+    "digit": "Digit {{current}} of {{total}}"
+  },
+  "timezone": {
+    "searchPlaceholder": "Search timezones",
+    "placeholder": "Select a timezone"
+  },
+  "welcome": {
+    "finish": "Finish setup",
+    "confirmTotp": "Confirm authenticator",
+    "steps": {
+      "admin": {
+        "title": "Create the admin account",
+        "description": "Choose the first account that can manage Hoserva. No default credentials exist."
+      },
+      "doctor": {
+        "title": "System check",
+        "description": "Hoserva runs the same checks as hoserva doctor before you continue."
+      },
+      "basics": {
+        "title": "Basics",
+        "description": "Set a few host defaults and optional alerts before you choose a path."
+      },
+      "path": {
+        "title": "Where next?",
+        "description": "Onboarding is complete — choose where to land first."
+      }
+    },
+    "fields": {
+      "username": "Username",
+      "password": "Password",
+      "passwordHint": "At least 12 characters.",
+      "enableTotp": "Set up an authenticator app (recommended)",
+      "hostname": "Hostname",
+      "hostnamePlaceholder": "hoserva",
+      "hostnameHint": "Used as the hostname for this Hoserva server.",
+      "timezone": "Timezone",
+      "notificationChannel": "Notification channel",
+      "channelNamePlaceholder": "Primary alerts",
+      "channelSecretPlaceholder": "Channel credential",
+      "backupPassphrase": "Backup passphrase"
+    },
+    "channelTypes": {
+      "email": "Email",
+      "gotify": "Gotify",
+      "ntfy": "ntfy",
+      "discord": "Discord",
+      "webhook": "Webhook"
+    },
+    "actions": {
+      "skipChannel": "Skip notification channel",
+      "configureChannel": "Configure a notification channel",
+      "skipBackupPassphrase": "Skip backup passphrase",
+      "setBackupPassphrase": "Set a backup passphrase"
+    },
+    "warnings": {
+      "skipNotificationTitle": "No notification channel configured",
+      "skipNotificationDescription": "You will not be told about disk failures or other alerts until you add a channel in Settings.",
+      "skipBackupTitle": "No backup passphrase set",
+      "skipBackupDescription": "A backup restored without this passphrase restores everything except secrets protected by it."
+    },
+    "totp": {
+      "title": "Authenticator enrolment",
+      "description": "Scan the URI or enter the secret in your authenticator app, then enter a code to confirm.",
+      "uriLabel": "Authenticator URI",
+      "secretLabel": "Manual entry secret",
+      "confirmLabel": "Confirmation code"
+    },
+    "q76": {
+      "heading": "Existing host configuration",
+      "description": "Hoserva never overwrites existing configuration. Choose import or leave each item unmanaged.",
+      "samba": "Samba shares",
+      "nfs": "NFS exports",
+      "fstab": "fstab mounts",
+      "dockerContainers": "Docker containers",
+      "dockerImages": "Docker images",
+      "noneFound": "None detected on this host.",
+      "import": "Import into Hoserva",
+      "leaveUnmanaged": "Leave unmanaged"
+    },
+    "path": {
+      "fresh": {
+        "title": "Fresh install",
+        "description": "Continue to the storage setup wizard and build a new array."
+      },
+      "migrate": {
+        "title": "Migrating from Unraid",
+        "description": "Open the migration tool to import an existing Unraid configuration."
+      }
+    },
+    "errors": {
+      "usernameRequired": "Enter a username.",
+      "passwordTooShort": "The password must be at least 12 characters.",
+      "totpEnrollFailed": "Could not start authenticator enrolment.",
+      "totpConfirmRequired": "Enter the six-digit code from your authenticator app.",
+      "storageBlocked": "Fix the failed storage dependency checks before continuing."
+    }
+  },
+  "common": {
+    "yes": "Yes",
+    "no": "No"
+  },
+  "codeView": {
+    "readOnly": "Read-only configuration preview"
+  },
+  "typedConfirm": {
+    "label": "Type the confirmation phrase",
+    "hint": "Type exactly: {{phrase}}",
+    "mismatch": "The confirmation phrase does not match."
+  },
+  "storageSetup": {
+    "arrayExistsTitle": "An array is already configured",
+    "arrayExistsDescription": "The setup wizard runs only on a system with no array. Manage disks from the pool overview instead.",
+    "loadFailed": "Could not load disks. Check the connection and try again.",
+    "actions": {
+      "createArray": "Create array"
+    },
+    "steps": {
+      "discovery": {
+        "title": "Disk discovery",
+        "description": "Review every block device Hoserva can see. Boot disks are excluded from the array."
+      },
+      "roles": {
+        "title": "Role assignment",
+        "description": "Assign each disk a role. Parity disks must be at least as large as the largest data disk."
+      },
+      "filesystem": {
+        "title": "Filesystem",
+        "description": "Choose whether to format data and cache disks or keep an adoptable existing filesystem."
+      },
+      "pool": {
+        "title": "Pool options",
+        "description": "Set the default create policy for new shares and the minimum free space per disk."
+      },
+      "review": {
+        "title": "Review",
+        "description": "Confirm the plain-language summary and inspect the generated configuration preview."
+      },
+      "confirm": {
+        "title": "Confirm and create",
+        "description": "Every disk that will be erased must be listed and confirmed before creation starts."
+      }
+    },
+    "columns": {
+      "device": "Device",
+      "model": "Model",
+      "serial": "Serial",
+      "size": "Size",
+      "filesystem": "Filesystem",
+      "label": "Label",
+      "smart": "SMART",
+      "containsData": "Contains data",
+      "unraid": "Unraid disk",
+      "status": "Status",
+      "role": "Role"
+    },
+    "discovery": {
+      "bootDisk": "Boot disk",
+      "weakIdentity": "Weak identity",
+      "available": "Available"
+    },
+    "smart": {
+      "ok": "OK",
+      "failed": "Failed"
+    },
+    "roles": {
+      "parity": "Parity",
+      "data": "Data",
+      "cache": "Cache",
+      "ignore": "Ignore",
+      "unassigned": "Unassigned"
+    },
+    "validation": {
+      "errorsTitle": "Fix these problems before continuing",
+      "warningsTitle": "Review these warnings",
+      "errors": {
+        "tooManyParity": "At most two parity disks are supported.",
+        "tooManyCache": "At most one cache disk can be assigned.",
+        "noDataDisk": "Assign at least one data disk.",
+        "noParityDisk": "Assign at least one parity disk.",
+        "parityTooSmall": "Each parity disk must be at least as large as the largest data disk.",
+        "weakIdentityParity": "Disks with weak identity cannot be used as parity."
+      },
+      "warnings": {
+        "weakIdentityData": "A disk with weak identity is assigned as data — parity matching may be unreliable.",
+        "containsData": "A disk with existing data is included in the array.",
+        "smartIssue": "A disk reports SMART issues.",
+        "looksLikeUnraid": "A disk looks like an Unraid disk."
+      }
+    },
+    "filesystem": {
+      "noDataDisks": "No data disks are assigned.",
+      "formatTitle": "Format as XFS",
+      "formatDescription": "Erase the disk and create a fresh {{filesystem}} filesystem.",
+      "keepTitle": "Keep existing data",
+      "keepDescription": "Adopt the existing {{filesystem}} filesystem without formatting.",
+      "parityTitle": "Parity disks are always formatted",
+      "parityDescription": "Parity disks are always formatted as XFS (Q20)."
+    },
+    "pool": {
+      "createPolicy": "Default create policy for new shares",
+      "minFreeSpace": "Minimum free space per disk",
+      "gigabytes": "GB",
+      "policies": {
+        "mspmfs": {
+          "label": "Keep folders together",
+          "term": "mspmfs",
+          "description": "Prefer a disk that already holds the folder; walk up the path if none has room."
+        },
+        "mfs": {
+          "label": "Balance across disks",
+          "term": "mfs",
+          "description": "Place new files on the disk with the most free space."
+        },
+        "lfs": {
+          "label": "Quiet disks",
+          "term": "lfs",
+          "description": "Fill one disk at a time to keep other disks spun down."
+        },
+        "ff": {
+          "label": "Fill disks in order",
+          "term": "ff",
+          "description": "Use the first disk with enough room, in branch order."
+        }
+      }
+    },
+    "review": {
+      "summaryTitle": "Array summary",
+      "summaryLine": "{{disks}} disks, {{usable}} usable, {{parity}} parity disk(s) (largest {{paritySize}}).",
+      "snapraidTitle": "snapraid.conf preview",
+      "mergerfsTitle": "mergerfs mount unit preview",
+      "faultTolerance": {
+        "none": "No fault tolerance configured.",
+        "single": "Single-disk fault tolerance.",
+        "dual": "Dual-disk fault tolerance."
+      }
+    },
+    "confirm": {
+      "eraseTitle": "Disks that will be erased",
+      "eraseDescription": "These disks will be formatted. This cannot be undone.",
+      "eraseItem": "{{device}} — all data will be erased",
+      "createFailed": "Array creation failed",
+      "createFailedDescription": "The create-array request did not return a job. Check the error above and try again."
+    }
+  },
+  "login": {
+    "title": "Sign in",
+    "description": "Sign in to manage this Hoserva server.",
+    "submit": "Sign in",
+    "fields": {
+      "username": "Username",
+      "password": "Password",
+      "totp": "Authenticator code",
+      "totpHint": "Enter the six-digit code from your authenticator app."
+    },
+    "errors": {
+      "totpRequired": "This account uses an authenticator — enter the current code.",
+      "totpInvalid": "That authenticator code is not valid. Try again.",
+      "rateLimited": "Too many failed attempts. {{message}}"
+    }
   }
 }

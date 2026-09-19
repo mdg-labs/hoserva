@@ -22,6 +22,16 @@ type Handler interface {
 	//
 	// POST /auth/totp/confirm
 	ConfirmTotp(ctx context.Context, req *TotpConfirmRequest) error
+	// CreateArray implements createArray operation.
+	//
+	// Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4).
+	// The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool
+	// options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong
+	// or missing confirmation is refused with `confirmation_required` and formats nothing. The handler
+	// calls `disk.FormatPlan` — never a second formatter (D1).
+	//
+	// POST /disks/array
+	CreateArray(ctx context.Context, req *CreateArrayRequest) (*Job, error)
 	// CreateFirstAdmin implements createFirstAdmin operation.
 	//
 	// Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
@@ -76,6 +86,13 @@ type Handler interface {
 	//
 	// GET /auth/session
 	GetCurrentSession(ctx context.Context) (*User, error)
+	// GetGeneralSettings implements getGeneralSettings operation.
+	//
+	// Hostname, timezone and whether a backup passphrase is configured (doc 03 §1, §8.1). The passphrase
+	// itself is never returned (Q28).
+	//
+	// GET /settings/general
+	GetGeneralSettings(ctx context.Context) (*GeneralSettings, error)
 	// GetJob implements getJob operation.
 	//
 	// A single job's current state, by id.
@@ -234,6 +251,14 @@ type Handler interface {
 	//
 	// POST /users/{username}/unlock
 	UnlockUser(ctx context.Context, params UnlockUserParams) error
+	// UpdateGeneralSettings implements updateGeneralSettings operation.
+	//
+	// Persists hostname, timezone and/or the backup passphrase. Each field is optional: omitted leaves
+	// that value unchanged. An empty `hostname` clears a previously set hostname. `backupPassphrase` is
+	// write-only and never echoed back — skipping it during onboarding is valid (Q28).
+	//
+	// PUT /settings/general
+	UpdateGeneralSettings(ctx context.Context, req *UpdateGeneralSettingsRequest) (*GeneralSettings, error)
 	// UpdateNotificationChannel implements updateNotificationChannel operation.
 	//
 	// A full replace, like the request body of createNotificationChannel: every type-specific field the

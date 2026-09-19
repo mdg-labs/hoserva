@@ -28,6 +28,7 @@ const (
 var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.CancelJobOperation:                 RoleAdmin,
 	apiv1.ConfirmTotpOperation:               RoleViewer,
+	apiv1.CreateArrayOperation:               RoleAdmin,
 	apiv1.CreateFirstAdminOperation:          RolePublic,
 	apiv1.CreateNotificationChannelOperation: RoleAdmin,
 	apiv1.DeleteNotificationChannelOperation: RoleAdmin,
@@ -35,6 +36,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.EnrollTotpOperation:                RoleViewer,
 	apiv1.ExportConfigOperation:              RoleAdmin,
 	apiv1.GetCurrentSessionOperation:         RoleViewer,
+	apiv1.GetGeneralSettingsOperation:        RoleViewer,
 	apiv1.GetJobOperation:                    RoleViewer,
 	apiv1.GetJobLogOperation:                 RoleViewer,
 	apiv1.GetNotificationChannelOperation:    RoleViewer,
@@ -57,6 +59,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.StartScrubOperation:                RoleAdmin,
 	apiv1.StartSyncOperation:                 RoleAdmin,
 	apiv1.UnlockUserOperation:                RoleAdmin,
+	apiv1.UpdateGeneralSettingsOperation:     RoleAdmin,
 	apiv1.UpdateNotificationChannelOperation: RoleAdmin,
 	apiv1.UpdateNotificationRouteOperation:   RoleAdmin,
 	apiv1.UpdateQuietHoursOperation:          RoleAdmin,

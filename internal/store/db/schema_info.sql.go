@@ -7,11 +7,13 @@ package storedb
 
 import (
 	"context"
+	"database/sql"
 )
 
 const getSchemaMeta = `-- name: GetSchemaMeta :one
 
-SELECT id, installation_id, created_at FROM schema_info WHERE id = 1
+SELECT id, installation_id, created_at, hostname, timezone, backup_passphrase
+FROM schema_info WHERE id = 1
 `
 
 // sqlc input (Q60): typed Go query code for schema.sql's tables, generated
@@ -19,8 +21,28 @@ SELECT id, installation_id, created_at FROM schema_info WHERE id = 1
 func (q *Queries) GetSchemaMeta(ctx context.Context) (*SchemaInfo, error) {
 	row := q.db.QueryRowContext(ctx, getSchemaMeta)
 	var i SchemaInfo
-	err := row.Scan(&i.ID, &i.InstallationID, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.InstallationID,
+		&i.CreatedAt,
+		&i.Hostname,
+		&i.Timezone,
+		&i.BackupPassphrase,
+	)
 	return &i, err
+}
+
+const hasEncryptedBackupPassphrase = `-- name: HasEncryptedBackupPassphrase :one
+SELECT EXISTS(
+    SELECT 1 FROM schema_info WHERE id = 1 AND backup_passphrase IS NOT NULL AND length(backup_passphrase) > 0
+) AS has_encrypted_backup_passphrase
+`
+
+func (q *Queries) HasEncryptedBackupPassphrase(ctx context.Context) (bool, error) {
+	row := q.db.QueryRowContext(ctx, hasEncryptedBackupPassphrase)
+	var has_encrypted_backup_passphrase bool
+	err := row.Scan(&has_encrypted_backup_passphrase)
+	return has_encrypted_backup_passphrase, err
 }
 
 const insertSchemaMeta = `-- name: InsertSchemaMeta :exec
@@ -34,5 +56,22 @@ type InsertSchemaMetaParams struct {
 
 func (q *Queries) InsertSchemaMeta(ctx context.Context, arg InsertSchemaMetaParams) error {
 	_, err := q.db.ExecContext(ctx, insertSchemaMeta, arg.InstallationID, arg.CreatedAt)
+	return err
+}
+
+const updateGeneralSettings = `-- name: UpdateGeneralSettings :exec
+UPDATE schema_info
+SET hostname = ?, timezone = ?, backup_passphrase = ?
+WHERE id = 1
+`
+
+type UpdateGeneralSettingsParams struct {
+	Hostname         sql.NullString `json:"hostname"`
+	Timezone         sql.NullString `json:"timezone"`
+	BackupPassphrase []byte         `json:"backup_passphrase"`
+}
+
+func (q *Queries) UpdateGeneralSettings(ctx context.Context, arg UpdateGeneralSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, updateGeneralSettings, arg.Hostname, arg.Timezone, arg.BackupPassphrase)
 	return err
 }

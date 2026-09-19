@@ -33,6 +33,19 @@ func (UnimplementedHandler) ConfirmTotp(ctx context.Context, req *TotpConfirmReq
 	return ht.ErrNotImplemented
 }
 
+// CreateArray implements createArray operation.
+//
+// Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4).
+// The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool
+// options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong
+// or missing confirmation is refused with `confirmation_required` and formats nothing. The handler
+// calls `disk.FormatPlan` — never a second formatter (D1).
+//
+// POST /disks/array
+func (UnimplementedHandler) CreateArray(ctx context.Context, req *CreateArrayRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // CreateFirstAdmin implements createFirstAdmin operation.
 //
 // Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
@@ -105,6 +118,16 @@ func (UnimplementedHandler) ExportConfig(ctx context.Context) (r ExportConfigOK,
 //
 // GET /auth/session
 func (UnimplementedHandler) GetCurrentSession(ctx context.Context) (r *User, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetGeneralSettings implements getGeneralSettings operation.
+//
+// Hostname, timezone and whether a backup passphrase is configured (doc 03 §1, §8.1). The passphrase
+// itself is never returned (Q28).
+//
+// GET /settings/general
+func (UnimplementedHandler) GetGeneralSettings(ctx context.Context) (r *GeneralSettings, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -330,6 +353,17 @@ func (UnimplementedHandler) StartSync(ctx context.Context, req *StartSyncRequest
 // POST /users/{username}/unlock
 func (UnimplementedHandler) UnlockUser(ctx context.Context, params UnlockUserParams) error {
 	return ht.ErrNotImplemented
+}
+
+// UpdateGeneralSettings implements updateGeneralSettings operation.
+//
+// Persists hostname, timezone and/or the backup passphrase. Each field is optional: omitted leaves
+// that value unchanged. An empty `hostname` clears a previously set hostname. `backupPassphrase` is
+// write-only and never echoed back — skipping it during onboarding is valid (Q28).
+//
+// PUT /settings/general
+func (UnimplementedHandler) UpdateGeneralSettings(ctx context.Context, req *UpdateGeneralSettingsRequest) (r *GeneralSettings, _ error) {
+	return r, ht.ErrNotImplemented
 }
 
 // UpdateNotificationChannel implements updateNotificationChannel operation.
