@@ -118,7 +118,7 @@ func TestArraySequence_Stop_WaitsForARunningJobToFinishBeforeStoppingServices(t 
 	var log []string
 	s := newTestScheduler(t)
 	started, release := registerBlocking(s, TypeMover, false)
-	if _, err := s.Submit(context.Background(), TypeMover, nil); err != nil {
+	if _, err := s.Submit(context.Background(), TypeMover, nil, nil); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
 	<-started
@@ -158,7 +158,7 @@ func TestArraySequence_Stop_DrainRespectsContextDeadline(t *testing.T) {
 	s := newTestScheduler(t)
 	_, release := registerBlocking(s, TypeMover, false)
 	t.Cleanup(func() { close(release) })
-	if _, err := s.Submit(context.Background(), TypeMover, nil); err != nil {
+	if _, err := s.Submit(context.Background(), TypeMover, nil, nil); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
 

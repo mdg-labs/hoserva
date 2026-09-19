@@ -204,7 +204,7 @@ func (h *Handler) ConfirmTotp(ctx context.Context, req *apiv1.TotpConfirmRequest
 	if principal.Local {
 		return &apiError{code: "no_session", statusCode: 404, message: "the Unix socket has no user account to confirm TOTP for"}
 	}
-	if err := h.Auth.ConfirmTOTP(ctx, principal.UserID, req.Code); err != nil {
+	if err := h.Auth.ConfirmTOTP(ctx, principal.UserID, req.Code, principal.SessionTokenHash); err != nil {
 		return mapAuthError(err)
 	}
 	return nil

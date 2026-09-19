@@ -12,5 +12,8 @@ SELECT token_hash, user_id, created_at, expires_at FROM sessions WHERE token_has
 -- name: DeleteSession :exec
 DELETE FROM sessions WHERE token_hash = ?;
 
+-- name: DeleteOtherUserSessions :exec
+DELETE FROM sessions WHERE user_id = ? AND token_hash != ?;
+
 -- name: DeleteExpiredSessions :exec
 DELETE FROM sessions WHERE expires_at < ?;

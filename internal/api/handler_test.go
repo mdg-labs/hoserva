@@ -90,7 +90,7 @@ func TestHandler_ListJobs_FiltersAndLimit(t *testing.T) {
 	h, s, r := newTestHandler(t)
 
 	r.Register(job.TypeSync, false, blockingRunFunc(make(chan struct{}), make(chan struct{})))
-	syncJob, err := s.Submit(ctx, job.TypeSync, nil)
+	syncJob, err := s.Submit(ctx, job.TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestHandler_GetJob_Found(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	r.Register(job.TypeSync, false, blockingRunFunc(started, release))
-	j, err := s.Submit(ctx, job.TypeSync, nil)
+	j, err := s.Submit(ctx, job.TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestHandler_CancelJob_NotCancellableRefuses(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	r.Register(job.TypeSync, false, blockingRunFunc(started, release))
-	j, err := s.Submit(ctx, job.TypeSync, nil)
+	j, err := s.Submit(ctx, job.TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestHandler_CancelJob_Cancellable(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	})
-	j, err := s.Submit(ctx, job.TypeSync, nil)
+	j, err := s.Submit(ctx, job.TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}

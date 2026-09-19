@@ -61,6 +61,34 @@ func NewAuthStore(db storedb.DBTX) *AuthStore {
 	return &AuthStore{q: storedb.New(db), db: db}
 }
 
+// WithTx returns a store that reads and writes through tx.
+func (s *AuthStore) WithTx(tx *sql.Tx) *AuthStore {
+	return &AuthStore{q: s.q.WithTx(tx), db: tx}
+}
+
+// RunRecoveryTx runs fn inside one SQLite transaction. The transaction
+// commits only when fn returns nil — a Q78 recovery's credential change,
+// audit row and notify_deliveries inserts all succeed or none do.
+func (s *AuthStore) RunRecoveryTx(ctx context.Context, fn func(*AuthStore) error) error {
+	sqlDB, ok := s.db.(*sql.DB)
+	if !ok {
+		return fmt.Errorf("auth store: recovery transaction requires *sql.DB")
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning recovery transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := fn(s.WithTx(tx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing recovery transaction: %w", err)
+	}
+	return nil
+}
+
 // AuthStore also implements auth.MachineKeyStore (Q28): the machine key's
 // check value lives in this same database, so LoadOrGenerateMachineKey
 // reads and writes it through the same store setup.go already builds for
@@ -226,6 +254,58 @@ func (s *AuthStore) GetSession(ctx context.Context, tokenHash string) (*Session,
 // DeleteSession revokes a session server-side (logout).
 func (s *AuthStore) DeleteSession(ctx context.Context, tokenHash string) error {
 	return s.q.DeleteSession(ctx, tokenHash)
+}
+
+// DeleteOtherUserSessions revokes every session of userID except the one
+// identified by keepTokenHash.
+func (s *AuthStore) DeleteOtherUserSessions(ctx context.Context, userID, keepTokenHash string) error {
+	return s.q.DeleteOtherUserSessions(ctx, storedb.DeleteOtherUserSessionsParams{
+		UserID:    userID,
+		TokenHash: keepTokenHash,
+	})
+}
+
+// ActivateTOTPAndRevokeOtherSessions promotes userID's pending secret and
+// revokes every other session of that account in one transaction. ok is
+// false when ActivateTOTP's conditional write matched no row.
+func (s *AuthStore) ActivateTOTPAndRevokeOtherSessions(
+	ctx context.Context,
+	userID string,
+	secret []byte,
+	confirmedAt time.Time,
+	step int64,
+	pendingSecret []byte,
+	keepSessionTokenHash string,
+) (ok bool, err error) {
+	sqlDB, okDB := s.db.(*sql.DB)
+	if !okDB {
+		if _, ok := s.db.(*sql.Tx); !ok {
+			return false, fmt.Errorf("auth store: totp confirmation transaction requires *sql.DB or *sql.Tx")
+		}
+		activated, err := s.ActivateTOTP(ctx, userID, secret, confirmedAt, step, pendingSecret)
+		if err != nil || !activated {
+			return activated, err
+		}
+		return true, s.DeleteOtherUserSessions(ctx, userID, keepSessionTokenHash)
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("beginning totp confirm transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	txStore := s.WithTx(tx)
+	activated, err := txStore.ActivateTOTP(ctx, userID, secret, confirmedAt, step, pendingSecret)
+	if err != nil || !activated {
+		return activated, err
+	}
+	if err := txStore.DeleteOtherUserSessions(ctx, userID, keepSessionTokenHash); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("committing totp confirm transaction: %w", err)
+	}
+	return true, nil
 }
 
 // DeleteExpiredSessions removes every session whose expiry is at or

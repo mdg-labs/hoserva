@@ -3,6 +3,7 @@ package api
 import (
 	"archive/tar"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -86,7 +87,14 @@ func (h *Handler) StartSync(ctx context.Context, req *apiv1.StartSyncRequest) (*
 	if h.Scheduler == nil {
 		return nil, fmt.Errorf("job scheduler not configured")
 	}
-	j, err := h.Scheduler.Submit(ctx, job.TypeSync, nil)
+	params, err := json.Marshal(job.SyncParams{
+		DryRun:  req.DryRun.Or(false),
+		Confirm: req.Confirm.Or(false),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encoding sync params: %w", err)
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeSync, nil, params)
 	if err != nil {
 		return nil, mapSchedulerError(uuid.Nil, err)
 	}
@@ -97,7 +105,16 @@ func (h *Handler) StartScrub(ctx context.Context, req *apiv1.StartScrubRequest) 
 	if h.Scheduler == nil {
 		return nil, fmt.Errorf("job scheduler not configured")
 	}
-	j, err := h.Scheduler.Submit(ctx, job.TypeScrub, nil)
+	p := job.ScrubParams{}
+	if v, ok := req.Percent.Get(); ok {
+		pct := int(v)
+		p.Percent = &pct
+	}
+	params, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("encoding scrub params: %w", err)
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeScrub, nil, params)
 	if err != nil {
 		return nil, mapSchedulerError(uuid.Nil, err)
 	}
@@ -111,7 +128,16 @@ func (h *Handler) StartFix(ctx context.Context, req *apiv1.StartFixRequest) (*ap
 	if h.Scheduler == nil {
 		return nil, fmt.Errorf("job scheduler not configured")
 	}
-	j, err := h.Scheduler.Submit(ctx, job.TypeFix, nil)
+	p := job.FixParams{Confirm: true}
+	if v, ok := req.Disk.Get(); ok {
+		d := int(v)
+		p.Disk = &d
+	}
+	params, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("encoding fix params: %w", err)
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeFix, nil, params)
 	if err != nil {
 		return nil, mapSchedulerError(uuid.Nil, err)
 	}

@@ -32,9 +32,14 @@ CREATE TABLE schema_info (
 -- container" / "same VM" rows); NULL for job types the scheduler never
 -- scopes. checkpoint is the opaque, resumable-job-type checkpoint blob
 -- (Q29); NULL until the first checkpoint is saved, and only ever written
--- for a resumable type. There is no log-path column: job stdout/stderr
--- lives in compressed files under a log directory the daemon passes in
--- (Q74), named by job id, so nothing here duplicates that path.
+-- for a resumable type. params is the request payload for job types that
+-- have one (JSON object: sync's dryRun/confirm, scrub's percent, fix's
+-- confirm/disk); NULL for types that have none. It is never resource_ids
+-- or checkpoint: those stay exclusion keys and resume state. Declared
+-- last because SQLite's ALTER TABLE ADD COLUMN can only append (Q60).
+-- There is no log-path column: job stdout/stderr lives in compressed
+-- files under a log directory the daemon passes in (Q74), named by job
+-- id, so nothing here duplicates that path.
 CREATE TABLE jobs (
     id TEXT PRIMARY KEY,
     "type" TEXT NOT NULL,
@@ -49,7 +54,8 @@ CREATE TABLE jobs (
     error_message TEXT,
     created_at TEXT NOT NULL,
     started_at TEXT,
-    finished_at TEXT
+    finished_at TEXT,
+    params TEXT
 ) STRICT;
 
 CREATE INDEX jobs_status_idx ON jobs ("status");

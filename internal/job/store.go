@@ -41,6 +41,7 @@ func (s *Store) Create(ctx context.Context, j *Job) error {
 		Cancellable:  boolToSQL(j.Cancellable),
 		ResourceIds:  resourceIDs,
 		Checkpoint:   j.Checkpoint,
+		Params:       paramsToSQL(j.Params),
 		ErrorCode:    stringToSQL(j.ErrorCode),
 		ErrorMessage: stringToSQL(j.ErrorMessage),
 		CreatedAt:    j.CreatedAt.Format(store.TimeFormat),
@@ -164,6 +165,7 @@ func fromRow(row *storedb.Job) (*Job, error) {
 		Cancellable:  row.Cancellable != 0,
 		ResourceIDs:  resourceIDs,
 		Checkpoint:   row.Checkpoint,
+		Params:       sqlToParams(row.Params),
 		ErrorCode:    row.ErrorCode.String,
 		ErrorMessage: row.ErrorMessage.String,
 		CreatedAt:    createdAt,
@@ -192,6 +194,20 @@ func decodeResourceIDs(v sql.NullString) ([]string, error) {
 		return nil, err
 	}
 	return ids, nil
+}
+
+func paramsToSQL(p []byte) sql.NullString {
+	if len(p) == 0 {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: string(p), Valid: true}
+}
+
+func sqlToParams(v sql.NullString) []byte {
+	if !v.Valid || v.String == "" {
+		return nil
+	}
+	return []byte(v.String)
 }
 
 func progressToSQL(p *int) sql.NullInt64 {
