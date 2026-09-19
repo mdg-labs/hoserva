@@ -46,6 +46,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.GetQuietHoursOperation:             RoleViewer,
 	apiv1.GetSetupStatusOperation:            RolePublic,
 	apiv1.GetStatusOperation:                 RoleViewer,
+	apiv1.GetMetricsOperation:                RoleViewer,
 	apiv1.ImportConfigOperation:              RoleAdmin,
 	apiv1.ListDisksOperation:                 RoleViewer,
 	apiv1.ListWakeEventsOperation:            RoleViewer,

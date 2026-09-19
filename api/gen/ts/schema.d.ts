@@ -459,6 +459,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Metric time series
+         * @description Returns downsampled samples from metrics.db for one metric/subject over a time window (Q74, doc 03 §2). Resolution is chosen from the window — raw for up to 48 hours, hourly for up to 90 days, daily beyond — so clients cannot force a full raw scan. A missing or empty metrics.db yields an empty series, not an array-health error.
+         */
+        get: operations["getMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pool": {
         parameters: {
             query?: never;
@@ -1097,6 +1117,27 @@ export interface components {
         DoctorReport: {
             overall: components["schemas"]["DoctorCheckStatus"];
             checks: components["schemas"]["DoctorCheck"][];
+        };
+        /**
+         * @description Q74 retention tier used for this response.
+         * @enum {string}
+         */
+        MetricResolution: "raw" | "hourly" | "daily";
+        MetricPoint: {
+            /** Format: date-time */
+            at: string;
+            /** Format: double */
+            value: number;
+        };
+        MetricSeries: {
+            metric: string;
+            subject: string;
+            resolution: components["schemas"]["MetricResolution"];
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            points: components["schemas"]["MetricPoint"][];
         };
         SystemStatus: {
             healthy: boolean;
@@ -1930,6 +1971,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getMetrics: {
+        parameters: {
+            query: {
+                /** @description Metric identifier, e.g. `disk_throughput_bytes_per_sec` or `network_throughput_bytes_per_sec` for dashboard charts. */
+                metric: string;
+                /** @description Device path for a per-disk metric (SMART, temperature) or omit for a host-wide metric (CPU, RAM, pool throughput). */
+                subject?: string;
+                /** @description Window start (inclusive), UTC. */
+                from: string;
+                /** @description Window end (inclusive), UTC. */
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The matching series, possibly empty. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricSeries"];
                 };
             };
             default: components["responses"]["Error"];

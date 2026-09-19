@@ -1682,6 +1682,152 @@ func (s *LogoutNoContent) SetSetCookie(val OptString) {
 	s.SetCookie = val
 }
 
+// Ref: #/components/schemas/MetricPoint
+type MetricPoint struct {
+	At    time.Time `json:"at"`
+	Value float64   `json:"value"`
+}
+
+// GetAt returns the value of At.
+func (s *MetricPoint) GetAt() time.Time {
+	return s.At
+}
+
+// GetValue returns the value of Value.
+func (s *MetricPoint) GetValue() float64 {
+	return s.Value
+}
+
+// SetAt sets the value of At.
+func (s *MetricPoint) SetAt(val time.Time) {
+	s.At = val
+}
+
+// SetValue sets the value of Value.
+func (s *MetricPoint) SetValue(val float64) {
+	s.Value = val
+}
+
+// Q74 retention tier used for this response.
+// Ref: #/components/schemas/MetricResolution
+type MetricResolution string
+
+const (
+	MetricResolutionRaw    MetricResolution = "raw"
+	MetricResolutionHourly MetricResolution = "hourly"
+	MetricResolutionDaily  MetricResolution = "daily"
+)
+
+// AllValues returns all MetricResolution values.
+func (MetricResolution) AllValues() []MetricResolution {
+	return []MetricResolution{
+		MetricResolutionRaw,
+		MetricResolutionHourly,
+		MetricResolutionDaily,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MetricResolution) MarshalText() ([]byte, error) {
+	switch s {
+	case MetricResolutionRaw:
+		return []byte(s), nil
+	case MetricResolutionHourly:
+		return []byte(s), nil
+	case MetricResolutionDaily:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MetricResolution) UnmarshalText(data []byte) error {
+	switch MetricResolution(data) {
+	case MetricResolutionRaw:
+		*s = MetricResolutionRaw
+		return nil
+	case MetricResolutionHourly:
+		*s = MetricResolutionHourly
+		return nil
+	case MetricResolutionDaily:
+		*s = MetricResolutionDaily
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/MetricSeries
+type MetricSeries struct {
+	Metric     string           `json:"metric"`
+	Subject    string           `json:"subject"`
+	Resolution MetricResolution `json:"resolution"`
+	From       time.Time        `json:"from"`
+	To         time.Time        `json:"to"`
+	Points     []MetricPoint    `json:"points"`
+}
+
+// GetMetric returns the value of Metric.
+func (s *MetricSeries) GetMetric() string {
+	return s.Metric
+}
+
+// GetSubject returns the value of Subject.
+func (s *MetricSeries) GetSubject() string {
+	return s.Subject
+}
+
+// GetResolution returns the value of Resolution.
+func (s *MetricSeries) GetResolution() MetricResolution {
+	return s.Resolution
+}
+
+// GetFrom returns the value of From.
+func (s *MetricSeries) GetFrom() time.Time {
+	return s.From
+}
+
+// GetTo returns the value of To.
+func (s *MetricSeries) GetTo() time.Time {
+	return s.To
+}
+
+// GetPoints returns the value of Points.
+func (s *MetricSeries) GetPoints() []MetricPoint {
+	return s.Points
+}
+
+// SetMetric sets the value of Metric.
+func (s *MetricSeries) SetMetric(val string) {
+	s.Metric = val
+}
+
+// SetSubject sets the value of Subject.
+func (s *MetricSeries) SetSubject(val string) {
+	s.Subject = val
+}
+
+// SetResolution sets the value of Resolution.
+func (s *MetricSeries) SetResolution(val MetricResolution) {
+	s.Resolution = val
+}
+
+// SetFrom sets the value of From.
+func (s *MetricSeries) SetFrom(val time.Time) {
+	s.From = val
+}
+
+// SetTo sets the value of To.
+func (s *MetricSeries) SetTo(val time.Time) {
+	s.To = val
+}
+
+// SetPoints sets the value of Points.
+func (s *MetricSeries) SetPoints(val []MetricPoint) {
+	s.Points = val
+}
+
 // Never carries a credential (Q28) — `hasSecret` is the only signal that one is configured. Only the
 // properties relevant to `type` are meaningful; the rest are absent.
 // Ref: #/components/schemas/NotificationChannel

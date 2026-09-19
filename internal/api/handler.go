@@ -23,6 +23,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/store"
+	"github.com/mdg-labs/hoserva/internal/store/metrics"
 )
 
 // Handler implements apiv1.Handler against the job system (#19): no
@@ -62,6 +63,9 @@ type Handler struct {
 	// History is spin-state and audit-log persistence (Q32, Q74). Nil
 	// returns an empty wake-events list rather than an error.
 	History *store.History
+	// Metrics is metrics.db (Q74). Nil returns empty series rather than an
+	// error — losing graphs must not look like array failure (#186).
+	Metrics *metrics.Store
 }
 
 var _ apiv1.Handler = (*Handler)(nil)

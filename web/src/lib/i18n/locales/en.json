@@ -87,7 +87,7 @@
   },
   "chart": {
     "emptyTitle": "No time-series data yet",
-    "emptyDescription": "Throughput and network charts appear here when the API exposes metrics history."
+    "emptyDescription": "Samples appear here once the host poll has recorded enough history."
   },
   "logView": {
     "empty": "No log output captured for this job."
@@ -158,13 +158,14 @@
     "diskStrip": {
       "title": "Disks"
     },
+    "bytesPerSecond": "{{value}}/s",
     "throughput": {
       "title": "Read/write throughput",
-      "description": "Last hour — unavailable until metrics history is exposed."
+      "description": "Last hour of pool read/write throughput."
     },
     "network": {
       "title": "Network throughput",
-      "description": "Last hour — unavailable until metrics history is exposed."
+      "description": "Last hour of host network throughput."
     },
     "activeJobs": {
       "title": "Active jobs"
