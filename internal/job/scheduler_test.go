@@ -859,3 +859,35 @@ func TestScheduler_Await_ReturnsErrorWhenTerminalSnapshotEvicted(t *testing.T) {
 		t.Fatalf("Await(evicted id) = %v, want ErrTerminalSnapshotEvicted", err)
 	}
 }
+
+func TestScheduler_EvictedTerminalSnapshotMarkersAreBounded(t *testing.T) {
+	s := NewScheduler(NewStore(newTestDB(t)), NewLogStore(t.TempDir()), NewHub(), NewRegistry())
+	now := time.Now().UTC()
+	for i := 0; i < maxTerminalSnapshots*2+1; i++ {
+		s.rememberTerminalSnapshot(Job{
+			ID:         fmt.Sprintf("bound-%d", i),
+			Status:     StatusSucceeded,
+			FinishedAt: &now,
+		})
+	}
+
+	s.mu.Lock()
+	n := len(s.evictedTerminalSnapshots)
+	fifo := len(s.evictedTerminalSnapshotFIFO)
+	s.mu.Unlock()
+	if n > maxTerminalSnapshots {
+		t.Fatalf("evicted markers = %d, want <= %d", n, maxTerminalSnapshots)
+	}
+	if fifo != n {
+		t.Fatalf("evicted FIFO = %d, map = %d", fifo, n)
+	}
+
+	recentEvicted := fmt.Sprintf("bound-%d", maxTerminalSnapshots)
+	if !s.terminalSnapshotEvicted(recentEvicted) {
+		t.Fatalf("recently evicted %s has no marker — Await would hang", recentEvicted)
+	}
+	oldest := "bound-0"
+	if s.terminalSnapshotEvicted(oldest) {
+		t.Fatalf("oldest eviction marker for %s was not dropped", oldest)
+	}
+}
