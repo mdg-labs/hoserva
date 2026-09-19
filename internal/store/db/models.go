@@ -115,6 +115,26 @@ type NotifyRoute struct {
 	ChannelID string `json:"channel_id"`
 }
 
+type ScheduleChain struct {
+	ID                  int64  `json:"id"`
+	StartTime           string `json:"start_time"`
+	WeeklyScrubDay      int64  `json:"weekly_scrub_day"`
+	MoverEnabled        int64  `json:"mover_enabled"`
+	DiffGuardEnabled    int64  `json:"diff_guard_enabled"`
+	SyncEnabled         int64  `json:"sync_enabled"`
+	ScrubEnabled        int64  `json:"scrub_enabled"`
+	ConfigBackupEnabled int64  `json:"config_backup_enabled"`
+	UpdatedAt           string `json:"updated_at"`
+}
+
+type ScheduleJob struct {
+	JobID     string `json:"job_id"`
+	Enabled   int64  `json:"enabled"`
+	Frequency string `json:"frequency"`
+	StartTime string `json:"start_time"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 type SchemaInfo struct {
 	ID               int64          `json:"id"`
 	InstallationID   string         `json:"installation_id"`

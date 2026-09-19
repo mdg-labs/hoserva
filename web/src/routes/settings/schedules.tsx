@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
-import { InlineNote } from "@/components/patterns/inline-note";
+import { LoadingBlock } from "@/components/patterns/loading";
 import { SettingSwitch } from "@/components/patterns/setting-switch";
 import { Card, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { hoservaClient, type components } from "@/lib/api/client";
 import {
   MAINTENANCE_CHAIN_STEPS,
   OTHER_SCHEDULE_JOBS,
@@ -22,39 +23,123 @@ import {
   type OtherScheduleJobId,
 } from "@/lib/maintenance-chain";
 
-const CHAIN_SCHEDULE_PREVIEW = "settings.schedules.chain.schedulePreview";
-const OTHER_FREQUENCY_OPTIONS = ["daily", "weekly", "monthly"] as const;
+type Schedules = components["schemas"]["Schedules"];
+type ScheduleFrequency = components["schemas"]["ScheduleFrequency"];
 
-function defaultChainEnabled(): Record<MaintenanceChainStepId, boolean> {
-  return {
-    mover: true,
-    diff_guard: true,
-    sync: true,
-    scrub: true,
-    config_backup: true,
-  };
+const OTHER_FREQUENCY_OPTIONS: ScheduleFrequency[] = ["daily", "weekly", "monthly"];
+
+function formatNextRun(iso: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(iso));
 }
 
-function defaultOtherJobs(): Record<
-  OtherScheduleJobId,
-  { enabled: boolean; frequency: typeof OTHER_FREQUENCY_OPTIONS[number]; time: string }
-> {
-  return {
-    smart_self_test: { enabled: true, frequency: "weekly", time: "03:00" },
-    appdata_backup: { enabled: false, frequency: "daily", time: "04:00" },
-    restore_drill: { enabled: false, frequency: "monthly", time: "05:00" },
-    container_update_check: { enabled: true, frequency: "daily", time: "06:00" },
-  };
+function conflictDescription(
+  conflict: components["schemas"]["ScheduleConflict"],
+  t: (key: string, options?: Record<string, string>) => string,
+): string {
+  return t("settings.schedules.conflictPair", {
+    jobA: t(`settings.schedules.conflictJobs.${conflict.jobA}`, { defaultValue: conflict.jobA }),
+    jobB: t(`settings.schedules.conflictJobs.${conflict.jobB}`, { defaultValue: conflict.jobB }),
+  });
 }
 
 export function SchedulesSettingsPage(): React.ReactElement {
-  const { t } = useTranslation();
-  const [chainEnabled, setChainEnabled] = useState(defaultChainEnabled);
-  const [otherJobs, setOtherJobs] = useState(defaultOtherJobs);
-  const conflicts: string[] = [];
+  const { t, i18n } = useTranslation();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [schedules, setSchedules] = useState<Schedules | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    hoservaClient
+      .GET("/settings/schedules", { signal: controller.signal })
+      .then(({ data, error: apiError }) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+        if (apiError) {
+          setError(apiError.message);
+          return;
+        }
+        if (data) {
+          setSchedules(data);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      controller.abort();
+    };
+  }, []);
+
+  async function updateChainStep(stepId: MaintenanceChainStepId, enabled: boolean): Promise<void> {
+    if (!schedules) {
+      return;
+    }
+    setError(null);
+    const steps = schedules.chain.steps.map((step) =>
+      step.id === stepId ? { ...step, enabled } : step,
+    );
+    const { data, error: apiError } = await hoservaClient.PUT("/settings/schedules/chain", {
+      body: { steps },
+    });
+    if (apiError) {
+      setError(apiError.message);
+      return;
+    }
+    if (data) {
+      setSchedules(data);
+    }
+  }
+
+  async function updateOtherJob(
+    jobId: OtherScheduleJobId,
+    patch: { enabled?: boolean; frequency?: ScheduleFrequency; time?: string },
+  ): Promise<void> {
+    if (!schedules) {
+      return;
+    }
+    setError(null);
+    const { data, error: apiError } = await hoservaClient.PUT("/settings/schedules/jobs/{jobId}", {
+      params: { path: { jobId } },
+      body: patch,
+    });
+    if (apiError) {
+      setError(apiError.message);
+      return;
+    }
+    if (data) {
+      setSchedules(data);
+    }
+  }
+
+  if (loading) {
+    return <LoadingBlock />;
+  }
+
+  if (!schedules) {
+    return (
+      <Banner
+        tone="error"
+        title={t("settings.schedules.loadErrorTitle")}
+        description={error ?? t("settings.schedules.loadErrorDescription")}
+      />
+    );
+  }
+
+  const conflicts = schedules.conflicts.map((conflict) => conflictDescription(conflict, t));
 
   return (
     <div className="flex flex-col gap-4">
+      {error ? (
+        <Banner tone="error" title={t("settings.schedules.saveErrorTitle")} description={error} />
+      ) : null}
+
       {conflicts.length > 0 ? (
         <Banner
           tone="warning"
@@ -62,8 +147,6 @@ export function SchedulesSettingsPage(): React.ReactElement {
           description={conflicts.join(" ")}
         />
       ) : null}
-
-      <InlineNote description={t("settings.schedules.apiNote")} />
 
       <Card>
         <CardHeader>
@@ -74,26 +157,29 @@ export function SchedulesSettingsPage(): React.ReactElement {
           <div className="grid gap-2 sm:grid-cols-2">
             <div>
               <p className="font-medium text-sm">{t("settings.schedules.chainSchedule")}</p>
-              <p className="text-muted-foreground text-sm">{t(CHAIN_SCHEDULE_PREVIEW)}</p>
+              <p className="text-muted-foreground text-sm">{schedules.chain.schedulePreview}</p>
             </div>
             <div>
               <p className="font-medium text-sm">{t("settings.schedules.nextRun")}</p>
-              <p className="text-muted-foreground text-sm">{t("settings.schedules.nextRunUnavailable")}</p>
+              <p className="text-muted-foreground text-sm">
+                {formatNextRun(schedules.chain.nextRun, i18n.language)}
+              </p>
             </div>
           </div>
           <Frame>
-            {MAINTENANCE_CHAIN_STEPS.map((stepId) => (
-              <FramePanel key={stepId}>
-                <SettingSwitch
-                  label={t(`settings.schedules.chainSteps.${stepId}.title`)}
-                  description={t(`settings.schedules.chainSteps.${stepId}.description`)}
-                  checked={chainEnabled[stepId]}
-                  onCheckedChange={(enabled) =>
-                    setChainEnabled((current) => ({ ...current, [stepId]: enabled }))
-                  }
-                />
-              </FramePanel>
-            ))}
+            {MAINTENANCE_CHAIN_STEPS.map((stepId) => {
+              const step = schedules.chain.steps.find((s) => s.id === stepId);
+              return (
+                <FramePanel key={stepId}>
+                  <SettingSwitch
+                    label={t(`settings.schedules.chainSteps.${stepId}.title`)}
+                    description={t(`settings.schedules.chainSteps.${stepId}.description`)}
+                    checked={step?.enabled ?? true}
+                    onCheckedChange={(enabled) => updateChainStep(stepId, enabled)}
+                  />
+                </FramePanel>
+              );
+            })}
           </Frame>
         </CardPanel>
       </Card>
@@ -102,7 +188,10 @@ export function SchedulesSettingsPage(): React.ReactElement {
         <h2 className="font-medium text-lg">{t("settings.schedules.otherJobsTitle")}</h2>
         <p className="text-muted-foreground text-sm">{t("settings.schedules.otherJobsDescription")}</p>
         {OTHER_SCHEDULE_JOBS.map((jobId) => {
-          const job = otherJobs[jobId];
+          const job = schedules.otherJobs.find((j) => j.id === jobId);
+          if (!job) {
+            return null;
+          }
           return (
             <Card key={jobId}>
               <CardPanel className="flex flex-col gap-4">
@@ -110,12 +199,7 @@ export function SchedulesSettingsPage(): React.ReactElement {
                   label={t(`settings.schedules.otherJobs.${jobId}.title`)}
                   description={t(`settings.schedules.otherJobs.${jobId}.description`)}
                   checked={job.enabled}
-                  onCheckedChange={(enabled) =>
-                    setOtherJobs((current) => ({
-                      ...current,
-                      [jobId]: { ...current[jobId], enabled },
-                    }))
-                  }
+                  onCheckedChange={(enabled) => updateOtherJob(jobId, { enabled })}
                 />
                 <div className="grid gap-4 sm:grid-cols-3">
                   <Field>
@@ -124,14 +208,7 @@ export function SchedulesSettingsPage(): React.ReactElement {
                       value={job.frequency}
                       disabled={!job.enabled}
                       onValueChange={(value) =>
-                        value &&
-                        setOtherJobs((current) => ({
-                          ...current,
-                          [jobId]: {
-                            ...current[jobId],
-                            frequency: value as typeof job.frequency,
-                          },
-                        }))
+                        value && updateOtherJob(jobId, { frequency: value as ScheduleFrequency })
                       }
                     >
                       <SelectTrigger>
@@ -152,17 +229,16 @@ export function SchedulesSettingsPage(): React.ReactElement {
                       type="time"
                       value={job.time}
                       disabled={!job.enabled}
-                      onChange={(event) =>
-                        setOtherJobs((current) => ({
-                          ...current,
-                          [jobId]: { ...current[jobId], time: event.target.value },
-                        }))
-                      }
+                      onChange={(event) => updateOtherJob(jobId, { time: event.target.value })}
                     />
                   </Field>
                   <Field>
                     <FieldLabel>{t("settings.schedules.nextRun")}</FieldLabel>
-                    <p className="text-muted-foreground text-sm">{t("settings.schedules.nextRunUnavailable")}</p>
+                    <p className="text-muted-foreground text-sm">
+                      {job.enabled
+                        ? formatNextRun(job.nextRun, i18n.language)
+                        : t("settings.schedules.nextRunUnavailable")}
+                    </p>
                   </Field>
                 </div>
               </CardPanel>

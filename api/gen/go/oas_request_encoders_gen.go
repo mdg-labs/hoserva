@@ -231,6 +231,20 @@ func encodeUpdateGeneralSettingsRequest(
 	return nil
 }
 
+func encodeUpdateMaintenanceChainScheduleRequest(
+	req *UpdateMaintenanceChainScheduleRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeUpdateNotificationChannelRequest(
 	req *UpdateNotificationChannelRequest,
 	r *http.Request,
@@ -261,6 +275,20 @@ func encodeUpdateNotificationRouteRequest(
 
 func encodeUpdateQuietHoursRequest(
 	req *UpdateQuietHoursRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpdateScheduledJobRequest(
+	req *UpdateScheduledJobRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

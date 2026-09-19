@@ -731,8 +731,19 @@
       "criticalAlwaysDeliversDescription": "Critical alerts bypass quiet hours and cannot be disabled."
     },
     "schedules": {
-      "apiNote": "Schedule persistence and conflict detection require schedule HTTP operations that are not in the API yet. Step toggles and other job settings on this page are shown for layout only.",
+      "loading": "Loading schedules…",
+      "loadErrorTitle": "Could not load schedules",
+      "loadErrorDescription": "The schedule API did not return data.",
+      "saveErrorTitle": "Could not save schedule change",
       "conflictTitle": "Schedule conflict detected",
+      "conflictPair": "{{jobA}} overlaps {{jobB}}.",
+      "conflictJobs": {
+        "maintenance_chain": "Nightly maintenance chain",
+        "smart_self_test": "SMART self-tests",
+        "appdata_backup": "Appdata backup",
+        "restore_drill": "Restore drill",
+        "container_update_check": "Container update checks"
+      },
       "chainTitle": "Nightly maintenance chain",
       "chainDescription": "One chained run each night. Each step starts when the previous one finishes, so mover always runs before sync (Q30).",
       "chainSchedule": "Schedule",

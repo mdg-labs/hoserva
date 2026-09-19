@@ -771,6 +771,85 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /settings/schedules:
+    get:
+      operationId: getSchedules
+      summary: List recurring job schedules
+      description: >-
+        The nightly maintenance chain (Q30, doc 03 §8.4) and every separately
+        scheduled job, with server-computed next-run times, human-readable
+        schedule previews and conflict warnings from DetectConflict (doc 01
+        §4). Chain step order is server-defined and not writable.
+      tags: [settings]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: All recurring schedules and any detected conflicts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedules'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/schedules/chain:
+    put:
+      operationId: updateMaintenanceChainSchedule
+      summary: Update the nightly maintenance chain schedule
+      description: >-
+        Persists the chain's start time, weekly scrub day and per-step
+        enabled flags (doc 03 §8.4). Step order is fixed by Q30 and cannot
+        be changed. Omitted step entries leave that step's enabled state
+        unchanged.
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMaintenanceChainScheduleRequest'
+      responses:
+        "200":
+          description: The updated schedules view, including recomputed next runs and conflicts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedules'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/schedules/jobs/{jobId}:
+    parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/OtherScheduleJobId'
+    put:
+      operationId: updateScheduledJob
+      summary: Update a separately scheduled job
+      description: >-
+        Persists enabled state, frequency and start time for one of the
+        recurring jobs outside the nightly chain (doc 03 §8.4).
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateScheduledJobRequest'
+      responses:
+        "200":
+          description: The updated schedules view, including recomputed next runs and conflicts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedules'
+        default:
+          $ref: '#/components/responses/Error'
+
   /status:
     get:
       operationId: getStatus
@@ -2030,6 +2109,131 @@ components:
           description: >-
             Write-only. Sets or replaces the backup passphrase (Q28).
             Omitted leaves any existing passphrase unchanged.
+
+    MaintenanceChainStepId:
+      type: string
+      enum: [mover, diff_guard, sync, scrub, config_backup]
+      description: One step in Q30's fixed nightly maintenance chain order.
+
+    OtherScheduleJobId:
+      type: string
+      enum: [smart_self_test, appdata_backup, restore_drill, container_update_check]
+      description: A recurring job scheduled outside the nightly chain (doc 03 §8.4).
+
+    ScheduleFrequency:
+      type: string
+      enum: [daily, weekly, monthly]
+
+    Weekday:
+      type: integer
+      minimum: 0
+      maximum: 6
+      description: Day of week, 0=Sunday through 6=Saturday.
+
+    MaintenanceChainStep:
+      type: object
+      required: [id, enabled]
+      properties:
+        id:
+          $ref: '#/components/schemas/MaintenanceChainStepId'
+        enabled:
+          type: boolean
+
+    MaintenanceChainSchedule:
+      type: object
+      required: [startTime, weeklyScrubDay, schedulePreview, nextRun, steps]
+      properties:
+        startTime:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: Local time the chain starts (Q30 default 02:00).
+        weeklyScrubDay:
+          $ref: '#/components/schemas/Weekday'
+        schedulePreview:
+          type: string
+          description: Human-readable summary, e.g. "every day at 02:00".
+        nextRun:
+          type: string
+          format: date-time
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/MaintenanceChainStep'
+          description: Q30 order — mover, diff_guard, sync, scrub, config_backup.
+
+    ScheduledJob:
+      type: object
+      required: [id, enabled, frequency, time, schedulePreview, nextRun]
+      properties:
+        id:
+          $ref: '#/components/schemas/OtherScheduleJobId'
+        enabled:
+          type: boolean
+        frequency:
+          $ref: '#/components/schemas/ScheduleFrequency'
+        time:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        schedulePreview:
+          type: string
+        nextRun:
+          type: string
+          format: date-time
+
+    ScheduleConflict:
+      type: object
+      required: [jobA, jobB]
+      properties:
+        jobA:
+          type: string
+          description: >-
+            Identifier of the first colliding schedule — `maintenance_chain`
+            or an OtherScheduleJobId value.
+        jobB:
+          type: string
+          description: Identifier of the second colliding schedule.
+
+    Schedules:
+      type: object
+      required: [chain, otherJobs, conflicts]
+      properties:
+        chain:
+          $ref: '#/components/schemas/MaintenanceChainSchedule'
+        otherJobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScheduledJob'
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScheduleConflict'
+
+    UpdateMaintenanceChainScheduleRequest:
+      type: object
+      properties:
+        startTime:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        weeklyScrubDay:
+          $ref: '#/components/schemas/Weekday'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/MaintenanceChainStep'
+          description: >-
+            Per-step enabled flags only — order is ignored; Q30's order is
+            always server-defined.
+
+    UpdateScheduledJobRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        frequency:
+          $ref: '#/components/schemas/ScheduleFrequency'
+        time:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
 
     DoctorCheckStatus:
       type: string

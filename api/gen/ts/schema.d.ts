@@ -479,6 +479,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List recurring job schedules
+         * @description The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with server-computed next-run times, human-readable schedule previews and conflict warnings from DetectConflict (doc 01 §4). Chain step order is server-defined and not writable.
+         */
+        get: operations["getSchedules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/schedules/chain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update the nightly maintenance chain schedule
+         * @description Persists the chain's start time, weekly scrub day and per-step enabled flags (doc 03 §8.4). Step order is fixed by Q30 and cannot be changed. Omitted step entries leave that step's enabled state unchanged.
+         */
+        put: operations["updateMaintenanceChainSchedule"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/schedules/jobs/{jobId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: components["schemas"]["OtherScheduleJobId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update a separately scheduled job
+         * @description Persists enabled state, frequency and start time for one of the recurring jobs outside the nightly chain (doc 03 §8.4).
+         */
+        put: operations["updateScheduledJob"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/status": {
         parameters: {
             query?: never;
@@ -1168,6 +1230,66 @@ export interface components {
             timezone?: string;
             /** @description Write-only. Sets or replaces the backup passphrase (Q28). Omitted leaves any existing passphrase unchanged. */
             backupPassphrase?: string;
+        };
+        /**
+         * @description One step in Q30's fixed nightly maintenance chain order.
+         * @enum {string}
+         */
+        MaintenanceChainStepId: "mover" | "diff_guard" | "sync" | "scrub" | "config_backup";
+        /**
+         * @description A recurring job scheduled outside the nightly chain (doc 03 §8.4).
+         * @enum {string}
+         */
+        OtherScheduleJobId: "smart_self_test" | "appdata_backup" | "restore_drill" | "container_update_check";
+        /** @enum {string} */
+        ScheduleFrequency: "daily" | "weekly" | "monthly";
+        /** @description Day of week, 0=Sunday through 6=Saturday. */
+        Weekday: number;
+        MaintenanceChainStep: {
+            id: components["schemas"]["MaintenanceChainStepId"];
+            enabled: boolean;
+        };
+        MaintenanceChainSchedule: {
+            /** @description Local time the chain starts (Q30 default 02:00). */
+            startTime: string;
+            weeklyScrubDay: components["schemas"]["Weekday"];
+            /** @description Human-readable summary, e.g. "every day at 02:00". */
+            schedulePreview: string;
+            /** Format: date-time */
+            nextRun: string;
+            /** @description Q30 order — mover, diff_guard, sync, scrub, config_backup. */
+            steps: components["schemas"]["MaintenanceChainStep"][];
+        };
+        ScheduledJob: {
+            id: components["schemas"]["OtherScheduleJobId"];
+            enabled: boolean;
+            frequency: components["schemas"]["ScheduleFrequency"];
+            time: string;
+            schedulePreview: string;
+            /** Format: date-time */
+            nextRun: string;
+        };
+        ScheduleConflict: {
+            /** @description Identifier of the first colliding schedule — `maintenance_chain` or an OtherScheduleJobId value. */
+            jobA: string;
+            /** @description Identifier of the second colliding schedule. */
+            jobB: string;
+        };
+        Schedules: {
+            chain: components["schemas"]["MaintenanceChainSchedule"];
+            otherJobs: components["schemas"]["ScheduledJob"][];
+            conflicts: components["schemas"]["ScheduleConflict"][];
+        };
+        UpdateMaintenanceChainScheduleRequest: {
+            startTime?: string;
+            weeklyScrubDay?: components["schemas"]["Weekday"];
+            /** @description Per-step enabled flags only — order is ignored; Q30's order is always server-defined. */
+            steps?: components["schemas"]["MaintenanceChainStep"][];
+        };
+        UpdateScheduledJobRequest: {
+            enabled?: boolean;
+            frequency?: components["schemas"]["ScheduleFrequency"];
+            time?: string;
         };
         /** @enum {string} */
         DoctorCheckStatus: "pass" | "warn" | "fail";
@@ -2062,6 +2184,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GeneralSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSchedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All recurring schedules and any detected conflicts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedules"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateMaintenanceChainSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMaintenanceChainScheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated schedules view, including recomputed next runs and conflicts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedules"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateScheduledJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: components["schemas"]["OtherScheduleJobId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateScheduledJobRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated schedules view, including recomputed next runs and conflicts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Schedules"];
                 };
             };
             default: components["responses"]["Error"];
