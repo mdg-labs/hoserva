@@ -1,10 +1,14 @@
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { Bell, ListChecks, LogOut, Moon, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { JobProgress } from "@/components/patterns/job-progress";
+import {
+  notificationAlertIds,
+  notificationInboxReducer,
+} from "@/components/patterns/notification-inbox";
 import { StatusBadge } from "@/components/patterns/status-badge";
 import {
   arrayStatusLabel,
@@ -49,17 +53,6 @@ function notificationTone(level: NotificationLevel): "info" | "warning" | "error
     default:
       return "info";
   }
-}
-
-function prependAlert(groups: NotificationGroup[], alert: NotificationAlert): NotificationGroup[] {
-  const next = groups.map((group) => ({ ...group, alerts: [...group.alerts] }));
-  const index = next.findIndex((group) => group.eventType === alert.eventType);
-  if (index >= 0) {
-    const existing = next[index].alerts.filter((item) => item.id !== alert.id);
-    next[index].alerts = [alert, ...existing];
-    return next;
-  }
-  return [{ eventType: alert.eventType, alerts: [alert] }, ...next];
 }
 
 function NotificationInboxPanel({
@@ -127,8 +120,11 @@ export function TopBar(): React.ReactElement {
   const activeCount = status?.activeJobs ?? activeJobs.length;
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [notificationOpen, setNotificationOpen] = useState(false);
-  const [notificationGroups, setNotificationGroups] = useState<NotificationGroup[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [inbox, dispatchInbox] = useReducer(notificationInboxReducer, {
+    groups: [],
+    unreadCount: 0,
+  });
+  const { groups: notificationGroups, unreadCount } = inbox;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -138,8 +134,11 @@ export function TopBar(): React.ReactElement {
         if (result.error || !result.data) {
           return;
         }
-        setNotificationGroups(result.data.groups);
-        setUnreadCount(result.data.unreadCount);
+        dispatchInbox({
+          type: "snapshot",
+          groups: result.data.groups,
+          unreadCount: result.data.unreadCount,
+        });
       })
       .catch(() => {
         // Initial inbox load failure leaves the bell empty until SSE or a reload.
@@ -152,41 +151,30 @@ export function TopBar(): React.ReactElement {
       if (event.event !== "notification") {
         return;
       }
-      const alert: NotificationAlert = {
-        id: event.data.id,
-        eventType: event.data.eventType,
-        level: event.data.level,
-        title: event.data.title,
-        message: event.data.message,
-        createdAt: event.data.createdAt,
-        read: false,
-      };
-      setNotificationGroups((current) => {
-        const alreadyPresent = current.some((group) =>
-          group.alerts.some((item) => item.id === alert.id),
-        );
-        if (!alreadyPresent) {
-          setUnreadCount((count) => count + 1);
-        }
-        return prependAlert(current, alert);
+      dispatchInbox({
+        type: "alert",
+        alert: {
+          id: event.data.id,
+          eventType: event.data.eventType,
+          level: event.data.level,
+          title: event.data.title,
+          message: event.data.message,
+          createdAt: event.data.createdAt,
+          read: false,
+        },
       });
     });
   }, []);
 
   const handleMarkAllRead = async (): Promise<void> => {
+    const knownIds = notificationAlertIds(notificationGroups);
     const { data, error } = await hoservaClient.POST("/notifications/read", {
       body: { all: true },
     });
     if (error || !data) {
       return;
     }
-    setUnreadCount(data.unreadCount);
-    setNotificationGroups((current) =>
-      current.map((group) => ({
-        ...group,
-        alerts: group.alerts.map((alert) => ({ ...alert, read: true })),
-      })),
-    );
+    dispatchInbox({ type: "markKnownRead", knownIds, unreadCount: data.unreadCount });
   };
 
   const handleLogout = async (): Promise<void> => {
