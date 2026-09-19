@@ -263,6 +263,11 @@ func (l *Limiter) Release(subject string, kind SubjectKind) {
 	delete(l.tableFor(kind), subject)
 }
 
+// Clear removes subject's failure history entirely (Q78's unlock command).
+func (l *Limiter) Clear(subject string, kind SubjectKind) {
+	l.Release(subject, kind)
+}
+
 // Len reports how many subjects of kind the limiter is currently
 // tracking — used only by tests, to confirm each table's own bound
 // holds: the address and unknown-account tables never grow past their

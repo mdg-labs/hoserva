@@ -1069,6 +1069,226 @@ func (s *Server) handleDeleteNotificationChannelRequest(args [1]string, argsEsca
 	}
 }
 
+// handleDisableUserTotpRequest handles disableUserTotp operation.
+//
+// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically. Audit-logged
+// and announced through every notification channel.
+//
+// POST /users/{username}/disable-totp
+func (s *Server) handleDisableUserTotpRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("disableUserTotp"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/users/{username}/disable-totp"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), DisableUserTotpOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: DisableUserTotpOperation,
+			ID:   "disableUserTotp",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, DisableUserTotpOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, DisableUserTotpOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+	params, err := decodeDisableUserTotpParams(args, argsEscaped, r)
+	if err != nil {
+		err = &ogenerrors.DecodeParamsError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeParams", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	var rawBody []byte
+
+	var response *DisableUserTotpNoContent
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    DisableUserTotpOperation,
+			OperationSummary: "Disable a user's TOTP",
+			OperationID:      "disableUserTotp",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params: middleware.Parameters{
+				{
+					Name: "username",
+					In:   "path",
+				}: params.Username,
+			},
+			Raw: r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = DisableUserTotpParams
+			Response = *DisableUserTotpNoContent
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			unpackDisableUserTotpParams,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				err = s.h.DisableUserTotp(ctx, params)
+				return response, err
+			},
+		)
+	} else {
+		err = s.h.DisableUserTotp(ctx, params)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeDisableUserTotpResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
 // handleEnrollTotpRequest handles enrollTotp operation.
 //
 // Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
@@ -1287,6 +1507,210 @@ func (s *Server) handleEnrollTotpRequest(args [0]string, argsEscaped bool, w htt
 	}
 
 	if err := encodeEnrollTotpResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleExportConfigRequest handles exportConfig operation.
+//
+// Builds and returns doc 10 §1's `hoserva-config-*.tar.zst` archive.
+//
+// POST /config/export
+func (s *Server) handleExportConfigRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("exportConfig"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/config/export"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), ExportConfigOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: ExportConfigOperation,
+			ID:   "exportConfig",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, ExportConfigOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, ExportConfigOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+
+	var response ExportConfigOK
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    ExportConfigOperation,
+			OperationSummary: "Export a config archive",
+			OperationID:      "exportConfig",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = struct{}
+			Response = ExportConfigOK
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.ExportConfig(ctx)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.ExportConfig(ctx)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeExportConfigResponse(response, w, span); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)
@@ -2362,6 +2786,210 @@ func (s *Server) handleGetNotificationRoutingRequest(args [0]string, argsEscaped
 	}
 }
 
+// handleGetPoolRequest handles getPool operation.
+//
+// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
+//
+// GET /pool
+func (s *Server) handleGetPoolRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getPool"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.HTTPRouteKey.String("/pool"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), GetPoolOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: GetPoolOperation,
+			ID:   "getPool",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, GetPoolOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, GetPoolOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+
+	var response *PoolStatus
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    GetPoolOperation,
+			OperationSummary: "Pool status",
+			OperationID:      "getPool",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = struct{}
+			Response = *PoolStatus
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.GetPool(ctx)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.GetPool(ctx)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeGetPoolResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
 // handleGetQuietHoursRequest handles getQuietHours operation.
 //
 // The current quiet hours window and the always-on critical override (doc 03 §8.3).
@@ -2695,6 +3323,634 @@ func (s *Server) handleGetSetupStatusRequest(args [0]string, argsEscaped bool, w
 	}
 
 	if err := encodeGetSetupStatusResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleGetStatusRequest handles getStatus operation.
+//
+// One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
+//
+// GET /status
+func (s *Server) handleGetStatusRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getStatus"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.HTTPRouteKey.String("/status"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), GetStatusOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: GetStatusOperation,
+			ID:   "getStatus",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, GetStatusOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, GetStatusOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+
+	var response *SystemStatus
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    GetStatusOperation,
+			OperationSummary: "Overall system health",
+			OperationID:      "getStatus",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = struct{}
+			Response = *SystemStatus
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.GetStatus(ctx)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.GetStatus(ctx)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeGetStatusResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleImportConfigRequest handles importConfig operation.
+//
+// Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
+// configuration.
+//
+// POST /config/import
+func (s *Server) handleImportConfigRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("importConfig"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/config/import"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), ImportConfigOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: ImportConfigOperation,
+			ID:   "importConfig",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, ImportConfigOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, ImportConfigOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeImportConfigRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response *ImportConfigNoContent
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    ImportConfigOperation,
+			OperationSummary: "Import a config archive",
+			OperationID:      "importConfig",
+			Body:             request,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = *ImportConfigReq
+			Params   = struct{}
+			Response = *ImportConfigNoContent
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				err = s.h.ImportConfig(ctx, request)
+				return response, err
+			},
+		)
+	} else {
+		err = s.h.ImportConfig(ctx, request)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeImportConfigResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleListDisksRequest handles listDisks operation.
+//
+// Every block device Hoserva knows about (doc 02 §4).
+//
+// GET /disks
+func (s *Server) handleListDisksRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listDisks"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.HTTPRouteKey.String("/disks"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), ListDisksOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: ListDisksOperation,
+			ID:   "listDisks",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, ListDisksOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, ListDisksOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+
+	var response *ListDisksOK
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    ListDisksOperation,
+			OperationSummary: "List disks",
+			OperationID:      "listDisks",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = struct{}
+			Response = *ListDisksOK
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.ListDisks(ctx)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.ListDisks(ctx)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeListDisksResponse(response, w, span); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)
@@ -3503,6 +4759,241 @@ func (s *Server) handleLogoutRequest(args [0]string, argsEscaped bool, w http.Re
 	}
 }
 
+// handleResetUserPasswordRequest handles resetUserPassword operation.
+//
+// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
+// `hoserva` group and TCP are refused. Audit-logged and announced through every notification channel.
+//
+// POST /users/{username}/reset-password
+func (s *Server) handleResetUserPasswordRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("resetUserPassword"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/users/{username}/reset-password"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), ResetUserPasswordOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: ResetUserPasswordOperation,
+			ID:   "resetUserPassword",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, ResetUserPasswordOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, ResetUserPasswordOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+	params, err := decodeResetUserPasswordParams(args, argsEscaped, r)
+	if err != nil {
+		err = &ogenerrors.DecodeParamsError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeParams", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeResetUserPasswordRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response *ResetUserPasswordNoContent
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    ResetUserPasswordOperation,
+			OperationSummary: "Reset a user's password",
+			OperationID:      "resetUserPassword",
+			Body:             request,
+			RawBody:          rawBody,
+			Params: middleware.Parameters{
+				{
+					Name: "username",
+					In:   "path",
+				}: params.Username,
+			},
+			Raw: r,
+		}
+
+		type (
+			Request  = *ResetUserPasswordRequest
+			Params   = ResetUserPasswordParams
+			Response = *ResetUserPasswordNoContent
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			unpackResetUserPasswordParams,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				err = s.h.ResetUserPassword(ctx, request, params)
+				return response, err
+			},
+		)
+	} else {
+		err = s.h.ResetUserPassword(ctx, request, params)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeResetUserPasswordResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
 // handleResumeJobRequest handles resumeJob operation.
 //
 // Only resumable job types (mover, rebalance, evacuation, share relocation) persist a checkpoint to
@@ -3716,6 +5207,211 @@ func (s *Server) handleResumeJobRequest(args [1]string, argsEscaped bool, w http
 	}
 
 	if err := encodeResumeJobResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleRunDoctorRequest handles runDoctor operation.
+//
+// Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity
+// (`hoserva doctor`, doc 01 §3).
+//
+// GET /doctor
+func (s *Server) handleRunDoctorRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("runDoctor"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.HTTPRouteKey.String("/doctor"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), RunDoctorOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: RunDoctorOperation,
+			ID:   "runDoctor",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, RunDoctorOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, RunDoctorOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+
+	var response *DoctorReport
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    RunDoctorOperation,
+			OperationSummary: "Run prerequisite checks",
+			OperationID:      "runDoctor",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = struct{}
+			Response = *DoctorReport
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.RunDoctor(ctx)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.RunDoctor(ctx)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeRunDoctorResponse(response, w, span); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)
@@ -3938,6 +5634,885 @@ func (s *Server) handleSendTestNotificationRequest(args [1]string, argsEscaped b
 	}
 
 	if err := encodeSendTestNotificationResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleStartFixRequest handles startFix operation.
+//
+// Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from
+// parity.
+//
+// POST /parity/fix
+func (s *Server) handleStartFixRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startFix"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/parity/fix"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), StartFixOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: StartFixOperation,
+			ID:   "startFix",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, StartFixOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, StartFixOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeStartFixRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response *Job
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    StartFixOperation,
+			OperationSummary: "Start a SnapRAID fix",
+			OperationID:      "startFix",
+			Body:             request,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = *StartFixRequest
+			Params   = struct{}
+			Response = *Job
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.StartFix(ctx, request)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.StartFix(ctx, request)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeStartFixResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleStartScrubRequest handles startScrub operation.
+//
+// Queues a scrub job (`hoserva scrub`, doc 01 §3).
+//
+// POST /parity/scrub
+func (s *Server) handleStartScrubRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startScrub"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/parity/scrub"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), StartScrubOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: StartScrubOperation,
+			ID:   "startScrub",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, StartScrubOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, StartScrubOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeStartScrubRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response *Job
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    StartScrubOperation,
+			OperationSummary: "Start a SnapRAID scrub",
+			OperationID:      "startScrub",
+			Body:             request,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = *StartScrubRequest
+			Params   = struct{}
+			Response = *Job
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.StartScrub(ctx, request)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.StartScrub(ctx, request)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeStartScrubResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleStartSyncRequest handles startSync operation.
+//
+// Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
+// requires `confirm: true` after reviewing the diff.
+//
+// POST /parity/sync
+func (s *Server) handleStartSyncRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startSync"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/parity/sync"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), StartSyncOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: StartSyncOperation,
+			ID:   "startSync",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, StartSyncOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, StartSyncOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeStartSyncRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response *Job
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    StartSyncOperation,
+			OperationSummary: "Start a SnapRAID sync",
+			OperationID:      "startSync",
+			Body:             request,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = *StartSyncRequest
+			Params   = struct{}
+			Response = *Job
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.StartSync(ctx, request)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.StartSync(ctx, request)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeStartSyncResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleUnlockUserRequest handles unlockUser operation.
+//
+// Clears the account's login rate-limiter lockout (doc 01 §7, Q78). Root-only over the Unix socket,
+// checked against the peer's uid 0 specifically. Audit-logged like the other recovery commands.
+//
+// POST /users/{username}/unlock
+func (s *Server) handleUnlockUserRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("unlockUser"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/users/{username}/unlock"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), UnlockUserOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: UnlockUserOperation,
+			ID:   "unlockUser",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, UnlockUserOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, UnlockUserOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+	params, err := decodeUnlockUserParams(args, argsEscaped, r)
+	if err != nil {
+		err = &ogenerrors.DecodeParamsError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeParams", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+
+	var rawBody []byte
+
+	var response *UnlockUserNoContent
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    UnlockUserOperation,
+			OperationSummary: "Clear login lockout",
+			OperationID:      "unlockUser",
+			Body:             nil,
+			RawBody:          rawBody,
+			Params: middleware.Parameters{
+				{
+					Name: "username",
+					In:   "path",
+				}: params.Username,
+			},
+			Raw: r,
+		}
+
+		type (
+			Request  = struct{}
+			Params   = UnlockUserParams
+			Response = *UnlockUserNoContent
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			unpackUnlockUserParams,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				err = s.h.UnlockUser(ctx, params)
+				return response, err
+			},
+		)
+	} else {
+		err = s.h.UnlockUser(ctx, params)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeUnlockUserResponse(response, w, span); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)

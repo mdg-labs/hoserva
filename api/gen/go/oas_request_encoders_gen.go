@@ -4,10 +4,15 @@ package apiv1
 
 import (
 	"bytes"
+	"mime"
+	"mime/multipart"
 	"net/http"
 
+	"github.com/go-faster/errors"
 	"github.com/go-faster/jx"
+	"github.com/ogen-go/ogen/conv"
 	ht "github.com/ogen-go/ogen/http"
+	"github.com/ogen-go/ogen/uri"
 )
 
 func encodeConfirmTotpRequest(
@@ -66,8 +71,98 @@ func encodeEnrollTotpRequest(
 	return nil
 }
 
+func encodeImportConfigRequest(
+	req *ImportConfigReq,
+	r *http.Request,
+) error {
+	const contentType = "multipart/form-data"
+	request := req
+
+	q := uri.NewFormEncoder(map[string]string{})
+	{
+		// Encode "confirm" form field.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "confirm",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			return e.EncodeValue(conv.BoolToString(request.Confirm))
+		}); err != nil {
+			return errors.Wrap(err, "encode query")
+		}
+	}
+	body, boundary := ht.CreateMultipartBody(func(w *multipart.Writer) error {
+		if err := request.Archive.WriteMultipart("archive", w); err != nil {
+			return errors.Wrap(err, "write \"archive\"")
+		}
+		if err := q.WriteMultipart(w); err != nil {
+			return errors.Wrap(err, "write multipart")
+		}
+		return nil
+	})
+	ht.SetCloserBody(r, body, mime.FormatMediaType(contentType, map[string]string{"boundary": boundary}))
+	return nil
+}
+
 func encodeLoginRequest(
 	req *LoginRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeResetUserPasswordRequest(
+	req *ResetUserPasswordRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeStartFixRequest(
+	req *StartFixRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeStartScrubRequest(
+	req *StartScrubRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeStartSyncRequest(
+	req *StartSyncRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"
