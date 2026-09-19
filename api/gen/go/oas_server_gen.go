@@ -30,6 +30,20 @@ type Handler interface {
 	//
 	// POST /setup/admin
 	CreateFirstAdmin(ctx context.Context, req *CreateFirstAdminRequest) (*UserHeaders, error)
+	// CreateNotificationChannel implements createNotificationChannel operation.
+	//
+	// A credential supplied in `secret` (Q28) is encrypted with the machine key before it reaches the
+	// database and is never returned by any later read — `hasSecret` on the response is the only trace
+	// of it.
+	//
+	// POST /notifications/channels
+	CreateNotificationChannel(ctx context.Context, req *CreateNotificationChannelRequest) (*NotificationChannel, error)
+	// DeleteNotificationChannel implements deleteNotificationChannel operation.
+	//
+	// Also removes every routing entry that named this channel.
+	//
+	// DELETE /notifications/channels/{channelId}
+	DeleteNotificationChannel(ctx context.Context, params DeleteNotificationChannelParams) error
 	// EnrollTotp implements enrollTotp operation.
 	//
 	// Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
@@ -61,6 +75,26 @@ type Handler interface {
 	//
 	// GET /jobs/{jobId}/log
 	GetJobLog(ctx context.Context, params GetJobLogParams) (GetJobLogOK, error)
+	// GetNotificationChannel implements getNotificationChannel operation.
+	//
+	// A single channel's current configuration, by id, secret excluded.
+	//
+	// GET /notifications/channels/{channelId}
+	GetNotificationChannel(ctx context.Context, params GetNotificationChannelParams) (*NotificationChannel, error)
+	// GetNotificationRouting implements getNotificationRouting operation.
+	//
+	// One entry per event type in doc 03 §8.3's fixed catalog, in the order that doc lists them — every
+	// event type appears even before it has ever been routed anywhere, with its compiled-in default
+	// severity and an empty channel list.
+	//
+	// GET /notifications/routing
+	GetNotificationRouting(ctx context.Context) (*GetNotificationRoutingOK, error)
+	// GetQuietHours implements getQuietHours operation.
+	//
+	// The current quiet hours window and the always-on critical override (doc 03 §8.3).
+	//
+	// GET /notifications/quiet-hours
+	GetQuietHours(ctx context.Context) (*NotificationQuietHours, error)
 	// GetSetupStatus implements getSetupStatus operation.
 	//
 	// Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are
@@ -76,6 +110,12 @@ type Handler interface {
 	//
 	// GET /jobs
 	ListJobs(ctx context.Context, params ListJobsParams) (*ListJobsOK, error)
+	// ListNotificationChannels implements listNotificationChannels operation.
+	//
+	// Every configured alerting destination (doc 03 §8.3).
+	//
+	// GET /notifications/channels
+	ListNotificationChannels(ctx context.Context) (*ListNotificationChannelsOK, error)
 	// Login implements login operation.
 	//
 	// Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather
@@ -106,6 +146,41 @@ type Handler interface {
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
+	// SendTestNotification implements sendTestNotification operation.
+	//
+	// Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of
+	// the channel's own configuration, not a routed event, so it reports success or the delivery error
+	// directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested
+	// notification config is the same as no notification config").
+	//
+	// POST /notifications/channels/{channelId}/test
+	SendTestNotification(ctx context.Context, params SendTestNotificationParams) (*NotificationTestResult, error)
+	// UpdateNotificationChannel implements updateNotificationChannel operation.
+	//
+	// A full replace, like the request body of createNotificationChannel: every type-specific field the
+	// request omits is cleared, not left as it was. `secret` is tri-state — omitted keeps the existing
+	// credential, `null` clears it, a string replaces it — since this is the one field a response never
+	// echoes back for a client to resend unchanged (Q28).
+	//
+	// PUT /notifications/channels/{channelId}
+	UpdateNotificationChannel(ctx context.Context, req *UpdateNotificationChannelRequest, params UpdateNotificationChannelParams) (*NotificationChannel, error)
+	// UpdateNotificationRoute implements updateNotificationRoute operation.
+	//
+	// A full replace of eventType's own row in the matrix: the channel list becomes exactly channelIds,
+	// and the severity becomes exactly severity — including reverting to the compiled-in default when
+	// the request's severity matches it, and un-routing every channel by sending an empty list, e.g. for
+	// `sync_succeeded`'s opt-in, off-by-default event (doc 03 §8.3).
+	//
+	// PUT /notifications/routing/{eventType}
+	UpdateNotificationRoute(ctx context.Context, req *UpdateNotificationRouteRequest, params UpdateNotificationRouteParams) (*NotificationRoutingEntry, error)
+	// UpdateQuietHours implements updateQuietHours operation.
+	//
+	// `criticalAlwaysDelivers` is not part of the request body: doc 03 §8.3's override that critical
+	// alerts always deliver cannot be disabled, so there is nothing for a client to set — the response
+	// always reports it `true`.
+	//
+	// PUT /notifications/quiet-hours
+	UpdateQuietHours(ctx context.Context, req *UpdateQuietHoursRequest) (*NotificationQuietHours, error)
 	// NewError creates *ErrorStatusCode from error returned by handler.
 	//
 	// Used for common default response.

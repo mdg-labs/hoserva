@@ -17,6 +17,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/notify"
 )
 
 // Handler implements apiv1.Handler against the job system (#19): no
@@ -31,6 +32,9 @@ type Handler struct {
 	// Auth is #22's setup/login/session/TOTP business logic — nil is only
 	// valid in tests that exercise none of those operations.
 	Auth *AuthService
+	// Notify is #35's channel/routing/quiet-hours business logic — nil is
+	// only valid in tests that exercise none of those operations.
+	Notify *notify.Service
 }
 
 var _ apiv1.Handler = (*Handler)(nil)

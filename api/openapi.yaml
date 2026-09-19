@@ -37,6 +37,12 @@ tags:
       it, unauthenticated, exactly as they do on TCP, since the same
       handlers serve both transports (doc 01 §5). Personal API tokens
       (Q43) are Phase 2 and have no operations here yet.
+  - name: notifications
+    description: >-
+      Alerting channels (email, Gotify, ntfy, Discord webhook, generic
+      webhook), per-event routing and quiet hours (doc 03 §8.3, doc 01 §7,
+      Q28). Credentials are write-only: a channel response never carries
+      the secret it holds, only whether one is configured.
 
 # Two transports (doc 01 §5): a Unix socket for the local root/`hoserva`-group
 # CLI, and TLS-only TCP for the web UI and remote/scripted use. Same handlers,
@@ -420,6 +426,236 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /notifications/channels:
+    get:
+      operationId: listNotificationChannels
+      summary: List notification channels
+      description: Every configured alerting destination (doc 03 §8.3).
+      tags: [notifications]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Every configured channel.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [channels]
+                properties:
+                  channels:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NotificationChannel'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createNotificationChannel
+      summary: Add a notification channel
+      description: >-
+        A credential supplied in `secret` (Q28) is encrypted with the
+        machine key before it reaches the database and is never returned
+        by any later read — `hasSecret` on the response is the only trace
+        of it.
+      tags: [notifications]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNotificationChannelRequest'
+      responses:
+        "201":
+          description: The new channel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationChannel'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /notifications/channels/{channelId}:
+    parameters:
+      - $ref: '#/components/parameters/ChannelId'
+    get:
+      operationId: getNotificationChannel
+      summary: Get a notification channel
+      description: A single channel's current configuration, by id, secret excluded.
+      tags: [notifications]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The channel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationChannel'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateNotificationChannel
+      summary: Replace a notification channel's configuration
+      description: >-
+        A full replace, like the request body of createNotificationChannel:
+        every type-specific field the request omits is cleared, not left
+        as it was. `secret` is tri-state — omitted keeps the existing
+        credential, `null` clears it, a string replaces it — since this is
+        the one field a response never echoes back for a client to resend
+        unchanged (Q28).
+      tags: [notifications]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNotificationChannelRequest'
+      responses:
+        "200":
+          description: The updated channel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationChannel'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: deleteNotificationChannel
+      summary: Remove a notification channel
+      description: Also removes every routing entry that named this channel.
+      tags: [notifications]
+      x-hoserva-role: admin
+      responses:
+        "204":
+          description: Removed.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /notifications/channels/{channelId}/test:
+    parameters:
+      - $ref: '#/components/parameters/ChannelId'
+    post:
+      operationId: sendTestNotification
+      summary: Send a test notification through a channel
+      description: >-
+        Sent immediately, outside the delivery queue and its retry policy
+        — this is a synchronous probe of the channel's own configuration,
+        not a routed event, so it reports success or the delivery error
+        directly rather than being retried and logged like a routed
+        notification (doc 03 §8.3: "untested notification config is the
+        same as no notification config").
+      tags: [notifications]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: Whether the test notification was delivered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationTestResult'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /notifications/routing:
+    get:
+      operationId: getNotificationRouting
+      summary: Get the full per-event routing matrix
+      description: >-
+        One entry per event type in doc 03 §8.3's fixed catalog, in the
+        order that doc lists them — every event type appears even before
+        it has ever been routed anywhere, with its compiled-in default
+        severity and an empty channel list.
+      tags: [notifications]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The routing matrix.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [routing]
+                properties:
+                  routing:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NotificationRoutingEntry'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /notifications/routing/{eventType}:
+    parameters:
+      - $ref: '#/components/parameters/EventType'
+    put:
+      operationId: updateNotificationRoute
+      summary: Set one event type's severity and routed channels
+      description: >-
+        A full replace of eventType's own row in the matrix: the channel
+        list becomes exactly channelIds, and the severity becomes exactly
+        severity — including reverting to the compiled-in default when the
+        request's severity matches it, and un-routing every channel by
+        sending an empty list, e.g. for `sync_succeeded`'s opt-in,
+        off-by-default event (doc 03 §8.3).
+      tags: [notifications]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNotificationRouteRequest'
+      responses:
+        "200":
+          description: The event type's updated routing entry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationRoutingEntry'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /notifications/quiet-hours:
+    get:
+      operationId: getQuietHours
+      summary: Get the quiet hours configuration
+      description: The current quiet hours window and the always-on critical override (doc 03 §8.3).
+      tags: [notifications]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The current quiet hours configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationQuietHours'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateQuietHours
+      summary: Set the quiet hours window
+      description: >-
+        `criticalAlwaysDelivers` is not part of the request body: doc
+        03 §8.3's override that critical alerts always deliver cannot be
+        disabled, so there is nothing for a client to set — the response
+        always reports it `true`.
+      tags: [notifications]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateQuietHoursRequest'
+      responses:
+        "200":
+          description: The updated quiet hours configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationQuietHours'
+        default:
+          $ref: '#/components/responses/Error'
+
 components:
   parameters:
     JobId:
@@ -429,6 +665,21 @@ components:
       schema:
         type: string
         format: uuid
+
+    ChannelId:
+      name: channelId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    EventType:
+      name: eventType
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/NotificationEventType'
 
   responses:
     Error:
@@ -801,3 +1052,290 @@ components:
           disk_state: '#/components/schemas/DiskStateEvent'
           container_state: '#/components/schemas/ContainerStateEvent'
           notification: '#/components/schemas/NotificationEvent'
+
+    NotificationEventType:
+      type: string
+      description: >-
+        The fixed event catalog doc 03 §8.3 lists, in that doc's own order.
+        internal/notify assigns every one of these a compiled-in default
+        severity (NotificationLevel); notify_event_severity overrides it
+        per event type.
+      enum:
+        - smart_warning
+        - smart_failure
+        - disk_offline
+        - array_degraded
+        - sync_succeeded
+        - sync_failed
+        - sync_blocked_threshold
+        - scrub_errors_found
+        - pool_above_threshold
+        - disk_near_minfreespace
+        - cache_above_threshold
+        - mover_skipping_files
+        - config_drift_detected
+        - container_unhealthy
+        - container_update_available
+        - hoserva_update_available
+        - reboot_required
+        - ups_on_battery
+        - ups_battery_low
+        - login_failure_burst
+        - credential_reset
+        - certificate_expiring
+        - config_backup_failed
+        - appdata_backup_failed
+        - backup_destination_stale
+        - restore_drill_failed
+
+    NotificationChannelType:
+      type: string
+      enum: [email, gotify, ntfy, discord, webhook]
+
+    NotificationWebhookMethod:
+      type: string
+      enum: [POST, PUT]
+
+    NotificationWebhookHeaders:
+      type: object
+      additionalProperties:
+        type: string
+
+    NotificationChannel:
+      type: object
+      description: >-
+        Never carries a credential (Q28) — `hasSecret` is the only signal
+        that one is configured. Only the properties relevant to `type` are
+        meaningful; the rest are absent.
+      required: [id, name, type, enabled, hasSecret, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        type:
+          $ref: '#/components/schemas/NotificationChannelType'
+        enabled:
+          type: boolean
+        hasSecret:
+          type: boolean
+          description: Whether a credential is configured for this channel.
+        emailHost:
+          type: string
+        emailPort:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 65535
+        emailUsername:
+          type: string
+        emailFrom:
+          type: string
+        emailTo:
+          type: array
+          items:
+            type: string
+        emailStartTls:
+          type: boolean
+        gotifyUrl:
+          type: string
+        ntfyUrl:
+          type: string
+        ntfyTopic:
+          type: string
+        webhookUrl:
+          type: string
+        webhookMethod:
+          $ref: '#/components/schemas/NotificationWebhookMethod'
+        webhookHeaders:
+          $ref: '#/components/schemas/NotificationWebhookHeaders'
+        webhookAuthHeaderName:
+          type: string
+          description: >-
+            The header carrying the generic webhook's credential, e.g.
+            `Authorization` — the header's value is `secret`, never a
+            plain property here.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateNotificationChannelRequest:
+      type: object
+      required: [name, type, enabled]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        type:
+          $ref: '#/components/schemas/NotificationChannelType'
+        enabled:
+          type: boolean
+        secret:
+          type: string
+          description: >-
+            The channel's credential, e.g. an SMTP password, a Gotify app
+            token, an ntfy auth token, a Discord webhook URL, or a generic
+            webhook's auth header value. Encrypted with the machine key
+            before it reaches the database (Q28) and never returned by any
+            later read.
+        emailHost:
+          type: string
+        emailPort:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 65535
+        emailUsername:
+          type: string
+        emailFrom:
+          type: string
+        emailTo:
+          type: array
+          items:
+            type: string
+        emailStartTls:
+          type: boolean
+        gotifyUrl:
+          type: string
+        ntfyUrl:
+          type: string
+        ntfyTopic:
+          type: string
+        webhookUrl:
+          type: string
+        webhookMethod:
+          $ref: '#/components/schemas/NotificationWebhookMethod'
+        webhookHeaders:
+          $ref: '#/components/schemas/NotificationWebhookHeaders'
+        webhookAuthHeaderName:
+          type: string
+
+    UpdateNotificationChannelRequest:
+      type: object
+      description: >-
+        Same shape as CreateNotificationChannelRequest, a full replace,
+        except `secret` is tri-state: omitted keeps the existing
+        credential, `null` clears it, a string replaces it.
+      required: [name, type, enabled]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        type:
+          $ref: '#/components/schemas/NotificationChannelType'
+        enabled:
+          type: boolean
+        secret:
+          type:
+            - string
+            - "null"
+        emailHost:
+          type: string
+        emailPort:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 65535
+        emailUsername:
+          type: string
+        emailFrom:
+          type: string
+        emailTo:
+          type: array
+          items:
+            type: string
+        emailStartTls:
+          type: boolean
+        gotifyUrl:
+          type: string
+        ntfyUrl:
+          type: string
+        ntfyTopic:
+          type: string
+        webhookUrl:
+          type: string
+        webhookMethod:
+          $ref: '#/components/schemas/NotificationWebhookMethod'
+        webhookHeaders:
+          $ref: '#/components/schemas/NotificationWebhookHeaders'
+        webhookAuthHeaderName:
+          type: string
+
+    NotificationTestResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        error:
+          type:
+            - string
+            - "null"
+          description: The delivery error, present only when success is false.
+
+    NotificationRoutingEntry:
+      type: object
+      required: [eventType, severity, channelIds]
+      properties:
+        eventType:
+          $ref: '#/components/schemas/NotificationEventType'
+        severity:
+          $ref: '#/components/schemas/NotificationLevel'
+        channelIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    UpdateNotificationRouteRequest:
+      type: object
+      required: [severity, channelIds]
+      properties:
+        severity:
+          $ref: '#/components/schemas/NotificationLevel'
+        channelIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    NotificationQuietHours:
+      type: object
+      required: [enabled, start, end, criticalAlwaysDelivers]
+      properties:
+        enabled:
+          type: boolean
+        start:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: 24-hour local time, e.g. "22:00".
+        end:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        criticalAlwaysDelivers:
+          type: boolean
+          description: >-
+            Always true (doc 03 §8.3) — critical alerts deliver regardless
+            of quiet hours, and this cannot be disabled, so there is no
+            request field that ever sets it otherwise.
+
+    UpdateQuietHoursRequest:
+      type: object
+      required: [enabled, start, end]
+      properties:
+        enabled:
+          type: boolean
+        start:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+        end:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
