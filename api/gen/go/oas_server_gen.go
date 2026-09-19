@@ -224,6 +224,15 @@ type Handler interface {
 	//
 	// POST /notifications/channels/{channelId}/test
 	SendTestNotification(ctx context.Context, params SendTestNotificationParams) (*NotificationTestResult, error)
+	// StartArray implements startArray operation.
+	//
+	// Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
+	// paths, then start services in the reverse of stop order, and exit maintenance mode only once every
+	// step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when
+	// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted.
+	//
+	// POST /array/start
+	StartArray(ctx context.Context) (*SystemStatus, error)
 	// StartFix implements startFix operation.
 	//
 	// Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from
@@ -244,6 +253,17 @@ type Handler interface {
 	//
 	// POST /parity/sync
 	StartSync(ctx context.Context, req *StartSyncRequest) (*Job, error)
+	// StopArray implements stopArray operation.
+	//
+	// Enters maintenance mode (Q70, doc 02 §4, `hoserva array stop`): refuse new jobs and interrupt
+	// non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share
+	// paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog
+	// already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure
+	// leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true`
+	// is required.
+	//
+	// POST /array/stop
+	StopArray(ctx context.Context, req *StopArrayRequest) (*SystemStatus, error)
 	// UnlockUser implements unlockUser operation.
 	//
 	// Clears the account's login rate-limiter lockout (doc 01 §7, Q78). Root-only over the Unix socket,

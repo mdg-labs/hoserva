@@ -245,6 +245,15 @@ type Invoker interface {
 	//
 	// POST /notifications/channels/{channelId}/test
 	SendTestNotification(ctx context.Context, params SendTestNotificationParams) (*NotificationTestResult, error)
+	// StartArray invokes startArray operation.
+	//
+	// Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
+	// paths, then start services in the reverse of stop order, and exit maintenance mode only once every
+	// step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when
+	// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted.
+	//
+	// POST /array/start
+	StartArray(ctx context.Context) (*SystemStatus, error)
 	// StartFix invokes startFix operation.
 	//
 	// Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from
@@ -265,6 +274,17 @@ type Invoker interface {
 	//
 	// POST /parity/sync
 	StartSync(ctx context.Context, request *StartSyncRequest) (*Job, error)
+	// StopArray invokes stopArray operation.
+	//
+	// Enters maintenance mode (Q70, doc 02 §4, `hoserva array stop`): refuse new jobs and interrupt
+	// non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share
+	// paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog
+	// already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure
+	// leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true`
+	// is required.
+	//
+	// POST /array/stop
+	StopArray(ctx context.Context, request *StopArrayRequest) (*SystemStatus, error)
 	// UnlockUser invokes unlockUser operation.
 	//
 	// Clears the account's login rate-limiter lockout (doc 01 §7, Q78). Root-only over the Unix socket,
@@ -4128,6 +4148,134 @@ func (c *Client) sendSendTestNotification(ctx context.Context, params SendTestNo
 	return result, nil
 }
 
+// StartArray invokes startArray operation.
+//
+// Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
+// paths, then start services in the reverse of stop order, and exit maintenance mode only once every
+// step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when
+// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted.
+//
+// POST /array/start
+func (c *Client) StartArray(ctx context.Context) (*SystemStatus, error) {
+	res, err := c.sendStartArray(ctx)
+	return res, err
+}
+
+func (c *Client) sendStartArray(ctx context.Context) (res *SystemStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startArray"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/array/start"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartArrayOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/array/start"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartArrayOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartArrayOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartArrayResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // StartFix invokes startFix operation.
 //
 // Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from
@@ -4507,6 +4655,139 @@ func (c *Client) sendStartSync(ctx context.Context, request *StartSyncRequest) (
 
 	stage = "DecodeResponse"
 	result, err := decodeStartSyncResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// StopArray invokes stopArray operation.
+//
+// Enters maintenance mode (Q70, doc 02 §4, `hoserva array stop`): refuse new jobs and interrupt
+// non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share
+// paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog
+// already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure
+// leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true`
+// is required.
+//
+// POST /array/stop
+func (c *Client) StopArray(ctx context.Context, request *StopArrayRequest) (*SystemStatus, error) {
+	res, err := c.sendStopArray(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendStopArray(ctx context.Context, request *StopArrayRequest) (res *SystemStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("stopArray"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/array/stop"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StopArrayOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/array/stop"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeStopArrayRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StopArrayOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StopArrayOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStopArrayResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

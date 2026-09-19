@@ -208,7 +208,7 @@ func mockDoctorReport(scenario string) *apiv1.DoctorReport {
 	return &apiv1.DoctorReport{Overall: overall, Checks: checks}
 }
 
-func mockSystemStatus(scenario string, activeJobs int32) *apiv1.SystemStatus {
+func mockSystemStatus(scenario string, activeJobs int32, maintenance bool) *apiv1.SystemStatus {
 	report := mockDoctorReport(scenario)
 	healthy := report.Overall != apiv1.DoctorCheckStatusFail
 	summary := "All checks passed"
@@ -219,9 +219,10 @@ func mockSystemStatus(scenario string, activeJobs int32) *apiv1.SystemStatus {
 	}
 
 	status := &apiv1.SystemStatus{
-		Healthy:    healthy,
-		Summary:    summary,
-		ActiveJobs: apiv1.NewOptInt32(activeJobs),
+		Healthy:         healthy,
+		Summary:         summary,
+		ActiveJobs:      apiv1.NewOptInt32(activeJobs),
+		MaintenanceMode: apiv1.NewOptBool(maintenance),
 	}
 	if scenario == "degraded" {
 		status.ArrayDegraded = apiv1.NewOptBool(true)
@@ -250,7 +251,7 @@ func (h *handler) submitParityJob(jobType apiv1.JobType, cancellable bool) (*api
 func (h *handler) GetStatus(ctx context.Context) (*apiv1.SystemStatus, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return mockSystemStatus(h.scenario, h.countActiveJobs()), nil
+	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance), nil
 }
 
 func (h *handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
@@ -380,4 +381,21 @@ func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		return errConfirmRequired()
 	}
 	return nil
+}
+
+func (h *handler) StopArray(ctx context.Context, req *apiv1.StopArrayRequest) (*apiv1.SystemStatus, error) {
+	if !req.Confirm {
+		return nil, errConfirmRequired()
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.maintenance = true
+	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance), nil
+}
+
+func (h *handler) StartArray(ctx context.Context) (*apiv1.SystemStatus, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.maintenance = false
+	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance), nil
 }

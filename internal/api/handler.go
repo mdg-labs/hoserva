@@ -50,6 +50,9 @@ type Handler struct {
 	// Settings is #178's hostname/timezone/backup-passphrase business
 	// logic — nil returns an internal error from those operations.
 	Settings *SettingsService
+	// Array is Q70's stop/start sequence. Nil returns 501 from those
+	// operations — the handler never duplicates the sequence itself.
+	Array *job.ArraySequence
 }
 
 var _ apiv1.Handler = (*Handler)(nil)

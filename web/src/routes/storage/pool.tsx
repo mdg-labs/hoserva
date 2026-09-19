@@ -9,14 +9,55 @@ import { MetricTile } from "@/components/patterns/metric-tile";
 import { StatusBadge } from "@/components/patterns/status-badge";
 import { Button } from "@/components/ui/button";
 import { useSystemData } from "@/hooks/use-system-status";
+import { hoservaClient } from "@/lib/api/client";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
 export function PoolOverviewPage(): React.ReactElement {
   const { t } = useTranslation();
-  const { status, pool, loading, error } = useSystemData();
+  const { status, pool, loading, error, refresh } = useSystemData();
   const [stopOpen, setStopOpen] = useState(false);
   const [startOpen, setStartOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const maintenance = Boolean(status?.maintenanceMode);
+
+  const handleStop = async (): Promise<void> => {
+    setPending(true);
+    try {
+      const { error: apiError } = await hoservaClient.POST("/array/stop", {
+        body: { confirm: true },
+      });
+      if (apiError) {
+        setActionError(apiError.message);
+        return;
+      }
+      setActionError(null);
+      setStopOpen(false);
+      await refresh();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const handleStart = async (): Promise<void> => {
+    setPending(true);
+    try {
+      const { error: apiError } = await hoservaClient.POST("/array/start");
+      if (apiError) {
+        setActionError(apiError.message);
+        return;
+      }
+      setActionError(null);
+      setStartOpen(false);
+      await refresh();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  };
 
   if (loading) {
     return <LoadingBlock />;
@@ -56,6 +97,7 @@ export function PoolOverviewPage(): React.ReactElement {
         </div>
       </div>
       {error ? <Banner tone="error" title={error} /> : null}
+      {actionError ? <Banner tone="error" title={actionError} /> : null}
       <InlineNote description={t("pool.noRebuildNote")} />
       <div className="grid gap-4 md:grid-cols-2">
         <MetricTile
@@ -100,7 +142,8 @@ export function PoolOverviewPage(): React.ReactElement {
         items={stopItems}
         confirmLabel={t("pool.stop.confirm")}
         destructive
-        onConfirm={() => setStopOpen(false)}
+        loading={pending}
+        onConfirm={() => void handleStop()}
       />
       <ConfirmDialog
         open={startOpen}
@@ -108,7 +151,8 @@ export function PoolOverviewPage(): React.ReactElement {
         title={t("pool.start.title")}
         description={t("pool.start.description")}
         confirmLabel={t("pool.start.confirm")}
-        onConfirm={() => setStartOpen(false)}
+        loading={pending}
+        onConfirm={() => void handleStart()}
       />
     </div>
   );

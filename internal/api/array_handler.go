@@ -116,6 +116,40 @@ func diskFormatParamsFromRequest(req *apiv1.CreateArrayRequest, listed []disk.Di
 	return params, plan, nil
 }
 
+func errArrayNotConfigured() error {
+	return &apiError{code: "not_configured", statusCode: 501, message: "array stop/start is not configured on this daemon"}
+}
+
+func mapArraySequenceError(err error, failedCode string) error {
+	if errors.Is(err, job.ErrStorageNotReady) {
+		return &apiError{code: "storage_not_ready", statusCode: 409, message: err.Error()}
+	}
+	return &apiError{code: failedCode, statusCode: 409, message: err.Error()}
+}
+
+func (h *Handler) StopArray(ctx context.Context, req *apiv1.StopArrayRequest) (*apiv1.SystemStatus, error) {
+	if !req.Confirm {
+		return nil, errConfirmRequired
+	}
+	if h.Array == nil {
+		return nil, errArrayNotConfigured()
+	}
+	if err := h.Array.Stop(ctx); err != nil {
+		return nil, mapArraySequenceError(err, "array_stop_failed")
+	}
+	return h.GetStatus(ctx)
+}
+
+func (h *Handler) StartArray(ctx context.Context) (*apiv1.SystemStatus, error) {
+	if h.Array == nil {
+		return nil, errArrayNotConfigured()
+	}
+	if err := h.Array.Start(ctx); err != nil {
+		return nil, mapArraySequenceError(err, "array_start_failed")
+	}
+	return h.GetStatus(ctx)
+}
+
 func assignedFromRequest(a apiv1.ArrayDiskAssignment) (disk.AssignedDisk, error) {
 	fs := disk.XFS
 	if v, ok := a.Filesystem.Get(); ok {

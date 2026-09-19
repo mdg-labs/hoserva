@@ -23,6 +23,23 @@ func statusCmd() *cobra.Command {
 	}
 }
 
+func arrayCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "array", Short: "Start or stop the array"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "stop",
+		Short: "Enter maintenance mode and unmount the array (Q70)",
+		RunE: runAPI(func(c *apiv1.Client) (any, error) {
+			return c.StopArray(apiCtx(), &apiv1.StopArrayRequest{Confirm: true})
+		}),
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "start",
+		Short: "Mount the array and leave maintenance mode (Q70)",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.StartArray(apiCtx()) }),
+	})
+	return cmd
+}
+
 func poolCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "pool", Short: "Pool commands"}
 	cmd.AddCommand(&cobra.Command{

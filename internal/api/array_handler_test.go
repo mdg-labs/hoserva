@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -296,5 +297,271 @@ func TestHandler_ListDisks_DiscoveryFieldsAndStandbySMART(t *testing.T) {
 		if call.Woke {
 			t.Fatalf("SMART(%s) woke a standby disk", call.Device)
 		}
+	}
+}
+
+// seqLogService / seqLogMount are ArraySequence fakes for the API-layer
+// Q70 tests: they record Stop/Start/Mount/Unmount into a shared log so a
+// failed service stop can be shown not to have been skipped past on the
+// way to unmounting storage (doc 02 §4).
+type seqLogService struct {
+	name     string
+	stopErr  error
+	startErr error
+	log      *[]string
+}
+
+func (f *seqLogService) Name() string { return f.name }
+
+func (f *seqLogService) Stop(ctx context.Context) error {
+	*f.log = append(*f.log, "stop:"+f.name)
+	return f.stopErr
+}
+
+func (f *seqLogService) Start(ctx context.Context) error {
+	*f.log = append(*f.log, "start:"+f.name)
+	return f.startErr
+}
+
+type seqLogMount struct {
+	where      string
+	mountErr   error
+	unmountErr error
+	log        *[]string
+}
+
+func (f *seqLogMount) Where() string { return f.where }
+
+func (f *seqLogMount) Mount(ctx context.Context) error {
+	*f.log = append(*f.log, "mount:"+f.where)
+	return f.mountErr
+}
+
+func (f *seqLogMount) Unmount(ctx context.Context) error {
+	*f.log = append(*f.log, "unmount:"+f.where)
+	return f.unmountErr
+}
+
+type seqReadinessGate struct{ ready bool }
+
+func (g seqReadinessGate) Ready() bool { return g.ready }
+
+func seqEqual(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v (differs at index %d)", got, want, i)
+		}
+	}
+}
+
+func attachArraySequence(h *api.Handler, s *job.Scheduler, seq job.ArraySequence) {
+	seq.Scheduler = s
+	h.Array = &seq
+}
+
+func confirmStop() *apiv1.StopArrayRequest {
+	return &apiv1.StopArrayRequest{Confirm: true}
+}
+
+// TestHandler_StopArray_ServiceMustStopBeforeAnyUnmount is this issue's
+// central data-loss-prevention test (doc 02 §4, Q70, safety-critical): the
+// handler must call job.ArraySequence, not a second unmount order. A
+// container that will not stop — still holding a file open on the pool is
+// the literal doc 02 §4 example — must hold the whole stop, not be skipped
+// past on the way to unmounting storage under it. Unmounting while that
+// write is still in flight would lose it or land it on the now-empty
+// directory that stands in for the mount.
+func TestHandler_StopArray_ServiceMustStopBeforeAnyUnmount(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+
+	var log []string
+	container := &seqLogService{name: "container", stopErr: errors.New("container still holds /mnt/user/media/movie.mkv open"), log: &log}
+	share := &seqLogMount{where: "/mnt/user/media", log: &log}
+	catchAll := &seqLogMount{where: "/mnt/user", log: &log}
+	disk1 := &seqLogMount{where: "/mnt/disk1", log: &log}
+	attachArraySequence(h, s, job.ArraySequence{
+		Services:    []job.ArrayService{container},
+		ShareMounts: []job.ArrayMount{share},
+		CatchAll:    catchAll,
+		Disks:       []job.ArrayMount{disk1},
+	})
+
+	_, err := h.StopArray(ctx, confirmStop())
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "array_stop_failed" {
+		t.Fatalf("StopArray = %+v, want 409 array_stop_failed", status)
+	}
+	for _, m := range log {
+		if strings.HasPrefix(m, "unmount:") {
+			t.Fatalf("StopArray unmounted %q after the container failed to stop — this is the exact data-loss scenario doc 02 §4 exists to prevent; full log: %v", m, log)
+		}
+	}
+	seqEqual(t, log, []string{"stop:container"})
+	if !s.InMaintenance() {
+		t.Fatal("StopArray: scheduler must stay in maintenance mode after a failed stop")
+	}
+	got, err := h.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if !got.MaintenanceMode.Or(false) {
+		t.Fatal("GetStatus: maintenanceMode must stay true after a failed stop")
+	}
+}
+
+func TestHandler_StopArray_MissingConfirmUnmountsNothing(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+
+	var log []string
+	svc := &seqLogService{name: "container", log: &log}
+	disk1 := &seqLogMount{where: "/mnt/disk1", log: &log}
+	attachArraySequence(h, s, job.ArraySequence{
+		Services: []job.ArrayService{svc},
+		Disks:    []job.ArrayMount{disk1},
+	})
+
+	_, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: false})
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "confirmation_required" {
+		t.Fatalf("StopArray(confirm=false) = %+v, want 409 confirmation_required", status)
+	}
+	if len(log) != 0 {
+		t.Fatalf("missing confirm touched the sequence: %v", log)
+	}
+	if s.InMaintenance() {
+		t.Fatal("StopArray(confirm=false) entered maintenance mode")
+	}
+}
+
+func TestHandler_StopArray_UnmountsInOrderAndEntersMaintenance(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+
+	var log []string
+	vm := &seqLogService{name: "vm", log: &log}
+	container := &seqLogService{name: "container", log: &log}
+	share := &seqLogMount{where: "/mnt/user/media", log: &log}
+	catchAll := &seqLogMount{where: "/mnt/user", log: &log}
+	disk1 := &seqLogMount{where: "/mnt/disk1", log: &log}
+	attachArraySequence(h, s, job.ArraySequence{
+		Services:    []job.ArrayService{vm, container},
+		ShareMounts: []job.ArrayMount{share},
+		CatchAll:    catchAll,
+		Disks:       []job.ArrayMount{disk1},
+	})
+
+	got, err := h.StopArray(ctx, confirmStop())
+	if err != nil {
+		t.Fatalf("StopArray: %v", err)
+	}
+	seqEqual(t, log, []string{
+		"stop:vm", "stop:container",
+		"unmount:/mnt/user/media",
+		"unmount:/mnt/user",
+		"unmount:/mnt/disk1",
+	})
+	if !got.MaintenanceMode.Or(false) {
+		t.Fatal("StopArray: maintenanceMode must be true after a successful stop")
+	}
+	if !s.InMaintenance() {
+		t.Fatal("StopArray: scheduler must be in maintenance mode after a successful stop")
+	}
+}
+
+func TestHandler_StartArray_ReversesAndExitsMaintenance(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+
+	var log []string
+	vm := &seqLogService{name: "vm", log: &log}
+	container := &seqLogService{name: "container", log: &log}
+	share := &seqLogMount{where: "/mnt/user/media", log: &log}
+	catchAll := &seqLogMount{where: "/mnt/user", log: &log}
+	disk1 := &seqLogMount{where: "/mnt/disk1", log: &log}
+	attachArraySequence(h, s, job.ArraySequence{
+		Services:    []job.ArrayService{vm, container},
+		ShareMounts: []job.ArrayMount{share},
+		CatchAll:    catchAll,
+		Disks:       []job.ArrayMount{disk1},
+	})
+
+	got, err := h.StartArray(ctx)
+	if err != nil {
+		t.Fatalf("StartArray: %v", err)
+	}
+	seqEqual(t, log, []string{
+		"mount:/mnt/disk1",
+		"mount:/mnt/user",
+		"mount:/mnt/user/media",
+		"start:container", "start:vm",
+	})
+	if got.MaintenanceMode.Or(false) {
+		t.Fatal("StartArray: maintenanceMode must be false after a successful start")
+	}
+	if s.InMaintenance() {
+		t.Fatal("StartArray: scheduler must leave maintenance mode after a successful start")
+	}
+}
+
+func TestHandler_StartArray_RefusesWhenGateIsNotReady(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+
+	var log []string
+	disk1 := &seqLogMount{where: "/mnt/disk1", log: &log}
+	attachArraySequence(h, s, job.ArraySequence{
+		Gate:  seqReadinessGate{ready: false},
+		Disks: []job.ArrayMount{disk1},
+	})
+
+	_, err := h.StartArray(ctx)
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "storage_not_ready" {
+		t.Fatalf("StartArray = %+v, want 409 storage_not_ready", status)
+	}
+	if !strings.Contains(status.Response.Message, job.ErrStorageNotReady.Error()) {
+		t.Fatalf("StartArray message = %q, want %q", status.Response.Message, job.ErrStorageNotReady)
+	}
+	if len(log) != 0 {
+		t.Fatalf("StartArray mounted %v while the gate reported not ready", log)
+	}
+}
+
+func TestHandler_StartArray_DoesNotExitMaintenanceOnFailure(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+
+	var log []string
+	disk1 := &seqLogMount{where: "/mnt/disk1", mountErr: errors.New("device timeout"), log: &log}
+	attachArraySequence(h, s, job.ArraySequence{
+		Disks: []job.ArrayMount{disk1},
+	})
+
+	_, err := h.StartArray(ctx)
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "array_start_failed" {
+		t.Fatalf("StartArray = %+v, want 409 array_start_failed", status)
+	}
+	if !s.InMaintenance() {
+		t.Fatal("StartArray: maintenance mode must stay active when a mount step fails")
+	}
+	got, err := h.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if !got.MaintenanceMode.Or(false) {
+		t.Fatal("GetStatus: maintenanceMode must stay true after a failed start")
 	}
 }

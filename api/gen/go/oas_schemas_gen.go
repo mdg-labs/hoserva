@@ -3468,6 +3468,24 @@ func (s *StartSyncRequest) SetConfirm(val OptBool) {
 	s.Confirm = val
 }
 
+// Ref: #/components/schemas/StopArrayRequest
+type StopArrayRequest struct {
+	// Must be true after reviewing the Q70 stop list the `/storage` confirm dialog already shows: refuse
+	// new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and
+	// NFS, then unmount share paths, the catch-all and data disks.
+	Confirm bool `json:"confirm"`
+}
+
+// GetConfirm returns the value of Confirm.
+func (s *StopArrayRequest) GetConfirm() bool {
+	return s.Confirm
+}
+
+// SetConfirm sets the value of Confirm.
+func (s *StopArrayRequest) SetConfirm(val bool) {
+	s.Confirm = val
+}
+
 // Ref: #/components/schemas/SystemStatus
 type SystemStatus struct {
 	Healthy         bool     `json:"healthy"`
