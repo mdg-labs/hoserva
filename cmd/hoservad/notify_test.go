@@ -37,6 +37,24 @@ func newNotifyTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+// sentSignal wraps notify.FakeSender so a test can observe a send through
+// a channel instead of reading FakeSender.Sent while runNotifyDeliveryLoop
+// is still running on its own goroutine — FakeSender holds no lock, so a
+// concurrent read of Sent from the test goroutine is a data race.
+type sentSignal struct {
+	inner *notify.FakeSender
+	title chan string
+}
+
+func (s *sentSignal) Send(ctx context.Context, cfg notify.ChannelConfig, secret string, msg notify.Message) error {
+	err := s.inner.Send(ctx, cfg, secret, msg)
+	select {
+	case s.title <- msg.Title:
+	default:
+	}
+	return err
+}
+
 // TestRunNotifyDeliveryLoopSendsQueuedDelivery proves #165's own wiring,
 // not #35's already-tested retry logic: a delivery queued through the
 // exact same *notify.Service construction main.go's run() wires up
@@ -45,7 +63,7 @@ func newNotifyTestDB(t *testing.T) *sql.DB {
 func TestRunNotifyDeliveryLoopSendsQueuedDelivery(t *testing.T) {
 	db := newNotifyTestDB(t)
 	notifyStore := notify.NewStore(db)
-	sender := &notify.FakeSender{}
+	sender := &sentSignal{inner: &notify.FakeSender{}, title: make(chan string, 1)}
 	svc := notify.NewService(notifyStore, notify.FakeSecretCipher{}, notify.Senders{notify.ChannelWebhook: sender})
 	svc.Log = func(string, ...any) {}
 
@@ -71,16 +89,15 @@ func TestRunNotifyDeliveryLoopSendsQueuedDelivery(t *testing.T) {
 		close(done)
 	}()
 
-	deadline := time.Now().Add(2 * time.Second)
-	for len(sender.Sent) == 0 {
-		if time.Now().After(deadline) {
-			cancel()
-			t.Fatal("timed out waiting for runNotifyDeliveryLoop to send the queued delivery")
-		}
-		time.Sleep(5 * time.Millisecond)
+	var got string
+	select {
+	case got = <-sender.title:
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("timed out waiting for runNotifyDeliveryLoop to send the queued delivery")
 	}
-	if got := sender.Sent[0].Title; got != "Disk offline" {
-		t.Fatalf("sender.Sent[0].Title = %q, want %q", got, "Disk offline")
+	if got != "Disk offline" {
+		t.Fatalf("delivered title = %q, want %q", got, "Disk offline")
 	}
 
 	cancel()

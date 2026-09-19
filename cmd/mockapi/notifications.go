@@ -35,6 +35,15 @@ func errNotificationChannelNotFound(id uuid.UUID) error {
 	return &mockError{code: "notification_channel_not_found", statusCode: 404, message: fmt.Sprintf("no notification channel with id %s", id)}
 }
 
+// errNotificationUnknownChannel mirrors mapNotifyError's mapping of
+// notify.ErrUnknownChannel (internal/api/notify_handler.go): the code and
+// status UpdateNotificationRoute returns for a channel id that doesn't
+// exist, distinct from errNotificationChannelNotFound's 404 (used where a
+// request names one specific channel by id, e.g. delete or test-send).
+func errNotificationUnknownChannel(id uuid.UUID) error {
+	return &mockError{code: "notification_unknown_channel", statusCode: 400, message: fmt.Sprintf("unknown channel id %s", id)}
+}
+
 func (h *handler) ListNotificationChannels(ctx context.Context) (*apiv1.ListNotificationChannelsOK, error) {
 	h.notifyMu.Lock()
 	defer h.notifyMu.Unlock()
@@ -177,6 +186,12 @@ func (h *handler) GetNotificationRouting(ctx context.Context) (*apiv1.GetNotific
 func (h *handler) UpdateNotificationRoute(ctx context.Context, req *apiv1.UpdateNotificationRouteRequest, params apiv1.UpdateNotificationRouteParams) (*apiv1.NotificationRoutingEntry, error) {
 	h.notifyMu.Lock()
 	defer h.notifyMu.Unlock()
+
+	for _, id := range req.ChannelIds {
+		if _, ok := h.channels[id]; !ok {
+			return nil, errNotificationUnknownChannel(id)
+		}
+	}
 
 	entry := apiv1.NotificationRoutingEntry{
 		EventType:  params.EventType,

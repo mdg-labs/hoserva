@@ -27,7 +27,7 @@ func newNotifyTestHandler(t *testing.T) (*api.Handler, *notify.Service, map[noti
 		t.Fatalf("loading embedded migrations: %v", err)
 	}
 	dbPath := filepath.Join(t.TempDir(), "notify-handler-test.db")
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", store.DSN(dbPath))
 	if err != nil {
 		t.Fatalf("opening test database: %v", err)
 	}

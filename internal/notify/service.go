@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ func NewService(store *Store, cipher SecretCipher, senders Senders) *Service {
 }
 
 func defaultLog(format string, args ...any) {
-	fmt.Printf("notify: "+format+"\n", args...)
+	log.Printf("notify: "+format, args...)
 }
 
 func (s *Service) now() time.Time {
@@ -258,7 +259,7 @@ func (s *Service) SetRoute(ctx context.Context, event EventType, severity Severi
 	}
 
 	if err := s.Store.SetRoute(ctx, event, severity, channelIDs); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("notify: setting route for %s: %w", event, err)
 	}
 	return &RoutingEntry{EventType: event, Severity: severity, ChannelIDs: channelIDs}, nil
 }
@@ -302,7 +303,7 @@ func (s *Service) SetQuietHours(ctx context.Context, enabled bool, start, end st
 	}
 	qh := QuietHours{Enabled: enabled, StartTime: start, EndTime: end, UpdatedAt: s.now()}
 	if err := s.Store.SetQuietHours(ctx, qh); err != nil {
-		return QuietHours{}, err
+		return QuietHours{}, fmt.Errorf("notify: setting quiet hours: %w", err)
 	}
 	return qh, nil
 }
