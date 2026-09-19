@@ -172,7 +172,7 @@ func (c *MaintenanceChain) runStep(ctx context.Context, step Step) (StepResult, 
 // turn (doc 01 §4) and makes a slow step delay the next one rather than
 // overlap it.
 func (c *MaintenanceChain) runJobStep(ctx context.Context, step Step, t Type) (StepResult, bool, error) {
-	j, err := c.Scheduler.Submit(ctx, t, nil)
+	j, err := c.Scheduler.Submit(ctx, t, nil, nil)
 	if err != nil {
 		wrapped := fmt.Errorf("job: maintenance chain: starting %s: %w", t, err)
 		return StepResult{Step: step, Err: wrapped}, false, wrapped

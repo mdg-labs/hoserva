@@ -178,3 +178,29 @@ func TestStore_UpdateProgressAndCheckpoint(t *testing.T) {
 		t.Fatalf("Checkpoint = %q, want the saved JSON", got.Checkpoint)
 	}
 }
+
+func TestStore_ParamsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	s := NewStore(db)
+
+	want := []byte(`{"dryRun":true,"confirm":false}`)
+	j := &Job{
+		ID:        "job-params",
+		Type:      TypeSync,
+		Class:     ClassParity,
+		Status:    StatusQueued,
+		Params:    want,
+		CreatedAt: time.Now().UTC().Truncate(time.Second),
+	}
+	if err := s.Create(ctx, j); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := s.Get(ctx, "job-params")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if string(got.Params) != string(want) {
+		t.Fatalf("Params = %s, want %s", got.Params, want)
+	}
+}
