@@ -262,3 +262,12 @@ jobs:
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
         run: make lab-destroy
+
+  pages-site:
+    name: Pages site assembly (Q66)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/release/test-pages-site.sh

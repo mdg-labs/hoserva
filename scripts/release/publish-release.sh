@@ -6,13 +6,12 @@
 # architectures' .deb into artifacts_dir.
 #
 # Q66 also has this update the signed release index on the project
-# site — not done here: site/ (area:site) does not exist yet, so there
-# is nowhere to publish that index to. This instead emits
-# release-index-entry.json as its own release asset: a self-contained
-# fragment (tag, channel, version, per-arch asset URL and checksum) that
-# a future site/ deploy workflow can fetch from every past release to
-# assemble the real index, without this script needing to know anything
-# about how that site is built.
+# site. This emits release-index-entry.json as a release asset: a
+# self-contained fragment (tag, channel, version, per-arch asset URL
+# and checksum) that .github/workflows/pages.yml fetches from every
+# past release (scripts/release/fetch-release-index-entries.sh) and
+# assembles into the permanent URL
+# https://hoserva.dev/releases/index.json.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
