@@ -28,6 +28,7 @@ require (
 require (
 	cel.dev/expr v0.25.2 // indirect
 	cloud.google.com/go v0.123.0 // indirect
+	filippo.io/age v1.2.1 // indirect
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/TwiN/go-color v1.4.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
@@ -59,6 +60,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.2 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-sqlite3 v0.32.0 // indirect
