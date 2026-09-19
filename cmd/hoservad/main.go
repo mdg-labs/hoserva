@@ -203,7 +203,12 @@ func run(cfg config) error {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
 
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Disks: linuxDisks}
+	arraySeq, err := newArraySequence(ctx, scheduler, arrayStore, linuxDisks, linuxDisks.Exec)
+	if err != nil {
+		return fmt.Errorf("building array stop/start sequence: %w", err)
+	}
+
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Disks: linuxDisks, Array: arraySeq}
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
