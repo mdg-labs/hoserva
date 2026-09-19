@@ -144,6 +144,65 @@ describe("Settings pages", () => {
   });
 
   it("renders the Q30 maintenance chain without a reorder control", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/settings/schedules") {
+        return Promise.resolve({
+          data: {
+            chain: {
+              startTime: "02:00",
+              weeklyScrubDay: 0,
+              schedulePreview: "every day at 02:00",
+              nextRun: "2026-06-16T00:00:00.000Z",
+              steps: [
+                { id: "mover", enabled: true },
+                { id: "diff_guard", enabled: true },
+                { id: "sync", enabled: true },
+                { id: "scrub", enabled: true },
+                { id: "config_backup", enabled: true },
+              ],
+            },
+            otherJobs: [
+              {
+                id: "smart_self_test",
+                enabled: true,
+                frequency: "weekly",
+                time: "03:00",
+                schedulePreview: "every week at 03:00",
+                nextRun: "2026-06-16T01:00:00.000Z",
+              },
+              {
+                id: "appdata_backup",
+                enabled: false,
+                frequency: "daily",
+                time: "04:00",
+                schedulePreview: "every day at 04:00",
+                nextRun: "2026-06-16T02:00:00.000Z",
+              },
+              {
+                id: "restore_drill",
+                enabled: false,
+                frequency: "monthly",
+                time: "05:00",
+                schedulePreview: "every month at 05:00",
+                nextRun: "2026-07-16T03:00:00.000Z",
+              },
+              {
+                id: "container_update_check",
+                enabled: true,
+                frequency: "daily",
+                time: "06:00",
+                schedulePreview: "every day at 06:00",
+                nextRun: "2026-06-16T04:00:00.000Z",
+              },
+            ],
+            conflicts: [],
+          },
+          response: { ok: true },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
     renderWithToast(<SchedulesSettingsPage />);
 
     expect(await screen.findByText("Nightly maintenance chain")).toBeInTheDocument();

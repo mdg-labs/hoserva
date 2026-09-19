@@ -179,7 +179,9 @@ func run(cfg config) error {
 	notifyService := notify.NewService(notifyStore, machineKey, notify.DefaultSenders(&http.Client{Timeout: notifyHTTPTimeout}))
 	notifyService.Hub = notifyHub
 
-	settingsService := api.NewSettingsService(api.NewSettingsStore(db), machineKey)
+	settingsStore := api.NewSettingsStore(db)
+	settingsService := api.NewSettingsService(settingsStore, machineKey)
+	scheduleService := api.NewScheduleService(api.NewScheduleStore(db), settingsStore)
 
 	logsDir := filepath.Join(cfg.stateDir, "jobs")
 	jobStore := job.NewStore(db)
@@ -222,7 +224,7 @@ func run(cfg config) error {
 	}
 
 	parityEngine := newSnapraidEngine(configRoot, cfg.stateDir, nil)
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history}
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history}
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
 	}

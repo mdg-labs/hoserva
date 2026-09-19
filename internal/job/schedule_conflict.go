@@ -4,8 +4,8 @@ import "time"
 
 // ScheduledWindow is one job's next scheduled run: the class and resource
 // scope it would run under, and the time span it is expected to occupy. It
-// carries no cron expression or persistence of its own — the schedule
-// settings page (#41) computes each separately-scheduled job's next-run
+// carries no cron expression or persistence of its own — internal/api's
+// schedule service computes each separately-scheduled job's next-run
 // instant and expected duration and builds one of these per job.
 // DetectConflict is the reusable check "would these two actually collide"
 // that the nightly chain itself no longer needs (its own steps are already

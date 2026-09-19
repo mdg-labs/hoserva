@@ -265,6 +265,19 @@ func encodeGetQuietHoursResponse(response *NotificationQuietHours, w http.Respon
 	return nil
 }
 
+func encodeGetSchedulesResponse(response *Schedules, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeGetSetupStatusResponse(response *SetupStatus, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -576,6 +589,19 @@ func encodeUpdateGeneralSettingsResponse(response *GeneralSettings, w http.Respo
 	return nil
 }
 
+func encodeUpdateMaintenanceChainScheduleResponse(response *Schedules, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeUpdateNotificationChannelResponse(response *NotificationChannel, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -603,6 +629,19 @@ func encodeUpdateNotificationRouteResponse(response *NotificationRoutingEntry, w
 }
 
 func encodeUpdateQuietHoursResponse(response *NotificationQuietHours, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeUpdateScheduledJobResponse(response *Schedules, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 

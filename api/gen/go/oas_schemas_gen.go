@@ -1708,6 +1708,158 @@ func (s *LogoutNoContent) SetSetCookie(val OptString) {
 	s.SetCookie = val
 }
 
+// Ref: #/components/schemas/MaintenanceChainSchedule
+type MaintenanceChainSchedule struct {
+	// Local time the chain starts (Q30 default 02:00).
+	StartTime      string  `json:"startTime"`
+	WeeklyScrubDay Weekday `json:"weeklyScrubDay"`
+	// Human-readable summary, e.g. "every day at 02:00".
+	SchedulePreview string    `json:"schedulePreview"`
+	NextRun         time.Time `json:"nextRun"`
+	// Q30 order — mover, diff_guard, sync, scrub, config_backup.
+	Steps []MaintenanceChainStep `json:"steps"`
+}
+
+// GetStartTime returns the value of StartTime.
+func (s *MaintenanceChainSchedule) GetStartTime() string {
+	return s.StartTime
+}
+
+// GetWeeklyScrubDay returns the value of WeeklyScrubDay.
+func (s *MaintenanceChainSchedule) GetWeeklyScrubDay() Weekday {
+	return s.WeeklyScrubDay
+}
+
+// GetSchedulePreview returns the value of SchedulePreview.
+func (s *MaintenanceChainSchedule) GetSchedulePreview() string {
+	return s.SchedulePreview
+}
+
+// GetNextRun returns the value of NextRun.
+func (s *MaintenanceChainSchedule) GetNextRun() time.Time {
+	return s.NextRun
+}
+
+// GetSteps returns the value of Steps.
+func (s *MaintenanceChainSchedule) GetSteps() []MaintenanceChainStep {
+	return s.Steps
+}
+
+// SetStartTime sets the value of StartTime.
+func (s *MaintenanceChainSchedule) SetStartTime(val string) {
+	s.StartTime = val
+}
+
+// SetWeeklyScrubDay sets the value of WeeklyScrubDay.
+func (s *MaintenanceChainSchedule) SetWeeklyScrubDay(val Weekday) {
+	s.WeeklyScrubDay = val
+}
+
+// SetSchedulePreview sets the value of SchedulePreview.
+func (s *MaintenanceChainSchedule) SetSchedulePreview(val string) {
+	s.SchedulePreview = val
+}
+
+// SetNextRun sets the value of NextRun.
+func (s *MaintenanceChainSchedule) SetNextRun(val time.Time) {
+	s.NextRun = val
+}
+
+// SetSteps sets the value of Steps.
+func (s *MaintenanceChainSchedule) SetSteps(val []MaintenanceChainStep) {
+	s.Steps = val
+}
+
+// Ref: #/components/schemas/MaintenanceChainStep
+type MaintenanceChainStep struct {
+	ID      MaintenanceChainStepId `json:"id"`
+	Enabled bool                   `json:"enabled"`
+}
+
+// GetID returns the value of ID.
+func (s *MaintenanceChainStep) GetID() MaintenanceChainStepId {
+	return s.ID
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *MaintenanceChainStep) GetEnabled() bool {
+	return s.Enabled
+}
+
+// SetID sets the value of ID.
+func (s *MaintenanceChainStep) SetID(val MaintenanceChainStepId) {
+	s.ID = val
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *MaintenanceChainStep) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// One step in Q30's fixed nightly maintenance chain order.
+// Ref: #/components/schemas/MaintenanceChainStepId
+type MaintenanceChainStepId string
+
+const (
+	MaintenanceChainStepIdMover        MaintenanceChainStepId = "mover"
+	MaintenanceChainStepIdDiffGuard    MaintenanceChainStepId = "diff_guard"
+	MaintenanceChainStepIdSync         MaintenanceChainStepId = "sync"
+	MaintenanceChainStepIdScrub        MaintenanceChainStepId = "scrub"
+	MaintenanceChainStepIdConfigBackup MaintenanceChainStepId = "config_backup"
+)
+
+// AllValues returns all MaintenanceChainStepId values.
+func (MaintenanceChainStepId) AllValues() []MaintenanceChainStepId {
+	return []MaintenanceChainStepId{
+		MaintenanceChainStepIdMover,
+		MaintenanceChainStepIdDiffGuard,
+		MaintenanceChainStepIdSync,
+		MaintenanceChainStepIdScrub,
+		MaintenanceChainStepIdConfigBackup,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s MaintenanceChainStepId) MarshalText() ([]byte, error) {
+	switch s {
+	case MaintenanceChainStepIdMover:
+		return []byte(s), nil
+	case MaintenanceChainStepIdDiffGuard:
+		return []byte(s), nil
+	case MaintenanceChainStepIdSync:
+		return []byte(s), nil
+	case MaintenanceChainStepIdScrub:
+		return []byte(s), nil
+	case MaintenanceChainStepIdConfigBackup:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *MaintenanceChainStepId) UnmarshalText(data []byte) error {
+	switch MaintenanceChainStepId(data) {
+	case MaintenanceChainStepIdMover:
+		*s = MaintenanceChainStepIdMover
+		return nil
+	case MaintenanceChainStepIdDiffGuard:
+		*s = MaintenanceChainStepIdDiffGuard
+		return nil
+	case MaintenanceChainStepIdSync:
+		*s = MaintenanceChainStepIdSync
+		return nil
+	case MaintenanceChainStepIdScrub:
+		*s = MaintenanceChainStepIdScrub
+		return nil
+	case MaintenanceChainStepIdConfigBackup:
+		*s = MaintenanceChainStepIdConfigBackup
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/MarkNotificationsReadOK
 type MarkNotificationsReadOK struct {
 	UnreadCount int `json:"unreadCount"`
@@ -3624,6 +3776,52 @@ func (o OptParityGuardState) Or(d ParityGuardState) ParityGuardState {
 	return d
 }
 
+// NewOptScheduleFrequency returns new OptScheduleFrequency with value set to v.
+func NewOptScheduleFrequency(v ScheduleFrequency) OptScheduleFrequency {
+	return OptScheduleFrequency{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptScheduleFrequency is optional ScheduleFrequency.
+type OptScheduleFrequency struct {
+	Value ScheduleFrequency
+	Set   bool
+}
+
+// IsSet returns true if OptScheduleFrequency was set.
+func (o OptScheduleFrequency) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptScheduleFrequency) Reset() {
+	var v ScheduleFrequency
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptScheduleFrequency) SetTo(v ScheduleFrequency) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptScheduleFrequency) Get() (v ScheduleFrequency, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptScheduleFrequency) Or(d ScheduleFrequency) ScheduleFrequency {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptString returns new OptString with value set to v.
 func NewOptString(v string) OptString {
 	return OptString{
@@ -3668,6 +3866,109 @@ func (o OptString) Or(d string) string {
 		return v
 	}
 	return d
+}
+
+// NewOptWeekday returns new OptWeekday with value set to v.
+func NewOptWeekday(v Weekday) OptWeekday {
+	return OptWeekday{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptWeekday is optional Weekday.
+type OptWeekday struct {
+	Value Weekday
+	Set   bool
+}
+
+// IsSet returns true if OptWeekday was set.
+func (o OptWeekday) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptWeekday) Reset() {
+	var v Weekday
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptWeekday) SetTo(v Weekday) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptWeekday) Get() (v Weekday, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptWeekday) Or(d Weekday) Weekday {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// A recurring job scheduled outside the nightly chain (doc 03 §8.4).
+// Ref: #/components/schemas/OtherScheduleJobId
+type OtherScheduleJobId string
+
+const (
+	OtherScheduleJobIdSmartSelfTest        OtherScheduleJobId = "smart_self_test"
+	OtherScheduleJobIdAppdataBackup        OtherScheduleJobId = "appdata_backup"
+	OtherScheduleJobIdRestoreDrill         OtherScheduleJobId = "restore_drill"
+	OtherScheduleJobIdContainerUpdateCheck OtherScheduleJobId = "container_update_check"
+)
+
+// AllValues returns all OtherScheduleJobId values.
+func (OtherScheduleJobId) AllValues() []OtherScheduleJobId {
+	return []OtherScheduleJobId{
+		OtherScheduleJobIdSmartSelfTest,
+		OtherScheduleJobIdAppdataBackup,
+		OtherScheduleJobIdRestoreDrill,
+		OtherScheduleJobIdContainerUpdateCheck,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s OtherScheduleJobId) MarshalText() ([]byte, error) {
+	switch s {
+	case OtherScheduleJobIdSmartSelfTest:
+		return []byte(s), nil
+	case OtherScheduleJobIdAppdataBackup:
+		return []byte(s), nil
+	case OtherScheduleJobIdRestoreDrill:
+		return []byte(s), nil
+	case OtherScheduleJobIdContainerUpdateCheck:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *OtherScheduleJobId) UnmarshalText(data []byte) error {
+	switch OtherScheduleJobId(data) {
+	case OtherScheduleJobIdSmartSelfTest:
+		*s = OtherScheduleJobIdSmartSelfTest
+		return nil
+	case OtherScheduleJobIdAppdataBackup:
+		*s = OtherScheduleJobIdAppdataBackup
+		return nil
+	case OtherScheduleJobIdRestoreDrill:
+		*s = OtherScheduleJobIdRestoreDrill
+		return nil
+	case OtherScheduleJobIdContainerUpdateCheck:
+		*s = OtherScheduleJobIdContainerUpdateCheck
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // One doc 02 §2 diff group; moved-by-Hoserva is Q15's relocation manifest match.
@@ -4273,6 +4574,190 @@ func (s *ResetUserPasswordRequest) SetPassword(val string) {
 	s.Password = val
 }
 
+// Ref: #/components/schemas/ScheduleConflict
+type ScheduleConflict struct {
+	// Identifier of the first colliding schedule — `maintenance_chain` or an OtherScheduleJobId value.
+	JobA string `json:"jobA"`
+	// Identifier of the second colliding schedule.
+	JobB string `json:"jobB"`
+}
+
+// GetJobA returns the value of JobA.
+func (s *ScheduleConflict) GetJobA() string {
+	return s.JobA
+}
+
+// GetJobB returns the value of JobB.
+func (s *ScheduleConflict) GetJobB() string {
+	return s.JobB
+}
+
+// SetJobA sets the value of JobA.
+func (s *ScheduleConflict) SetJobA(val string) {
+	s.JobA = val
+}
+
+// SetJobB sets the value of JobB.
+func (s *ScheduleConflict) SetJobB(val string) {
+	s.JobB = val
+}
+
+// Ref: #/components/schemas/ScheduleFrequency
+type ScheduleFrequency string
+
+const (
+	ScheduleFrequencyDaily   ScheduleFrequency = "daily"
+	ScheduleFrequencyWeekly  ScheduleFrequency = "weekly"
+	ScheduleFrequencyMonthly ScheduleFrequency = "monthly"
+)
+
+// AllValues returns all ScheduleFrequency values.
+func (ScheduleFrequency) AllValues() []ScheduleFrequency {
+	return []ScheduleFrequency{
+		ScheduleFrequencyDaily,
+		ScheduleFrequencyWeekly,
+		ScheduleFrequencyMonthly,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ScheduleFrequency) MarshalText() ([]byte, error) {
+	switch s {
+	case ScheduleFrequencyDaily:
+		return []byte(s), nil
+	case ScheduleFrequencyWeekly:
+		return []byte(s), nil
+	case ScheduleFrequencyMonthly:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ScheduleFrequency) UnmarshalText(data []byte) error {
+	switch ScheduleFrequency(data) {
+	case ScheduleFrequencyDaily:
+		*s = ScheduleFrequencyDaily
+		return nil
+	case ScheduleFrequencyWeekly:
+		*s = ScheduleFrequencyWeekly
+		return nil
+	case ScheduleFrequencyMonthly:
+		*s = ScheduleFrequencyMonthly
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ScheduledJob
+type ScheduledJob struct {
+	ID              OtherScheduleJobId `json:"id"`
+	Enabled         bool               `json:"enabled"`
+	Frequency       ScheduleFrequency  `json:"frequency"`
+	Time            string             `json:"time"`
+	SchedulePreview string             `json:"schedulePreview"`
+	NextRun         time.Time          `json:"nextRun"`
+}
+
+// GetID returns the value of ID.
+func (s *ScheduledJob) GetID() OtherScheduleJobId {
+	return s.ID
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *ScheduledJob) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetFrequency returns the value of Frequency.
+func (s *ScheduledJob) GetFrequency() ScheduleFrequency {
+	return s.Frequency
+}
+
+// GetTime returns the value of Time.
+func (s *ScheduledJob) GetTime() string {
+	return s.Time
+}
+
+// GetSchedulePreview returns the value of SchedulePreview.
+func (s *ScheduledJob) GetSchedulePreview() string {
+	return s.SchedulePreview
+}
+
+// GetNextRun returns the value of NextRun.
+func (s *ScheduledJob) GetNextRun() time.Time {
+	return s.NextRun
+}
+
+// SetID sets the value of ID.
+func (s *ScheduledJob) SetID(val OtherScheduleJobId) {
+	s.ID = val
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *ScheduledJob) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetFrequency sets the value of Frequency.
+func (s *ScheduledJob) SetFrequency(val ScheduleFrequency) {
+	s.Frequency = val
+}
+
+// SetTime sets the value of Time.
+func (s *ScheduledJob) SetTime(val string) {
+	s.Time = val
+}
+
+// SetSchedulePreview sets the value of SchedulePreview.
+func (s *ScheduledJob) SetSchedulePreview(val string) {
+	s.SchedulePreview = val
+}
+
+// SetNextRun sets the value of NextRun.
+func (s *ScheduledJob) SetNextRun(val time.Time) {
+	s.NextRun = val
+}
+
+// Ref: #/components/schemas/Schedules
+type Schedules struct {
+	Chain     MaintenanceChainSchedule `json:"chain"`
+	OtherJobs []ScheduledJob           `json:"otherJobs"`
+	Conflicts []ScheduleConflict       `json:"conflicts"`
+}
+
+// GetChain returns the value of Chain.
+func (s *Schedules) GetChain() MaintenanceChainSchedule {
+	return s.Chain
+}
+
+// GetOtherJobs returns the value of OtherJobs.
+func (s *Schedules) GetOtherJobs() []ScheduledJob {
+	return s.OtherJobs
+}
+
+// GetConflicts returns the value of Conflicts.
+func (s *Schedules) GetConflicts() []ScheduleConflict {
+	return s.Conflicts
+}
+
+// SetChain sets the value of Chain.
+func (s *Schedules) SetChain(val MaintenanceChainSchedule) {
+	s.Chain = val
+}
+
+// SetOtherJobs sets the value of OtherJobs.
+func (s *Schedules) SetOtherJobs(val []ScheduledJob) {
+	s.OtherJobs = val
+}
+
+// SetConflicts sets the value of Conflicts.
+func (s *Schedules) SetConflicts(val []ScheduleConflict) {
+	s.Conflicts = val
+}
+
 type SessionCookie struct {
 	APIKey string
 	Roles  []string
@@ -4733,6 +5218,44 @@ func (s *UpdateGeneralSettingsRequest) SetBackupPassphrase(val OptString) {
 	s.BackupPassphrase = val
 }
 
+// Ref: #/components/schemas/UpdateMaintenanceChainScheduleRequest
+type UpdateMaintenanceChainScheduleRequest struct {
+	StartTime      OptString  `json:"startTime"`
+	WeeklyScrubDay OptWeekday `json:"weeklyScrubDay"`
+	// Per-step enabled flags only — order is ignored; Q30's order is always server-defined.
+	Steps []MaintenanceChainStep `json:"steps"`
+}
+
+// GetStartTime returns the value of StartTime.
+func (s *UpdateMaintenanceChainScheduleRequest) GetStartTime() OptString {
+	return s.StartTime
+}
+
+// GetWeeklyScrubDay returns the value of WeeklyScrubDay.
+func (s *UpdateMaintenanceChainScheduleRequest) GetWeeklyScrubDay() OptWeekday {
+	return s.WeeklyScrubDay
+}
+
+// GetSteps returns the value of Steps.
+func (s *UpdateMaintenanceChainScheduleRequest) GetSteps() []MaintenanceChainStep {
+	return s.Steps
+}
+
+// SetStartTime sets the value of StartTime.
+func (s *UpdateMaintenanceChainScheduleRequest) SetStartTime(val OptString) {
+	s.StartTime = val
+}
+
+// SetWeeklyScrubDay sets the value of WeeklyScrubDay.
+func (s *UpdateMaintenanceChainScheduleRequest) SetWeeklyScrubDay(val OptWeekday) {
+	s.WeeklyScrubDay = val
+}
+
+// SetSteps sets the value of Steps.
+func (s *UpdateMaintenanceChainScheduleRequest) SetSteps(val []MaintenanceChainStep) {
+	s.Steps = val
+}
+
 // Same shape as CreateNotificationChannelRequest, a full replace, except `secret` is tri-state:
 // omitted keeps the existing credential, `null` clears it, a string replaces it.
 // Ref: #/components/schemas/UpdateNotificationChannelRequest
@@ -4989,6 +5512,43 @@ func (s *UpdateQuietHoursRequest) SetEnd(val string) {
 	s.End = val
 }
 
+// Ref: #/components/schemas/UpdateScheduledJobRequest
+type UpdateScheduledJobRequest struct {
+	Enabled   OptBool              `json:"enabled"`
+	Frequency OptScheduleFrequency `json:"frequency"`
+	Time      OptString            `json:"time"`
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *UpdateScheduledJobRequest) GetEnabled() OptBool {
+	return s.Enabled
+}
+
+// GetFrequency returns the value of Frequency.
+func (s *UpdateScheduledJobRequest) GetFrequency() OptScheduleFrequency {
+	return s.Frequency
+}
+
+// GetTime returns the value of Time.
+func (s *UpdateScheduledJobRequest) GetTime() OptString {
+	return s.Time
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *UpdateScheduledJobRequest) SetEnabled(val OptBool) {
+	s.Enabled = val
+}
+
+// SetFrequency sets the value of Frequency.
+func (s *UpdateScheduledJobRequest) SetFrequency(val OptScheduleFrequency) {
+	s.Frequency = val
+}
+
+// SetTime sets the value of Time.
+func (s *UpdateScheduledJobRequest) SetTime(val OptString) {
+	s.Time = val
+}
+
 // Ref: #/components/schemas/User
 type User struct {
 	ID       uuid.UUID `json:"id"`
@@ -5132,3 +5692,5 @@ func (s *WakeEventsResponse) SetEvents(val []SpinTransition) {
 func (s *WakeEventsResponse) SetDailyWakeCounts(val []DailyWakeCount) {
 	s.DailyWakeCounts = val
 }
+
+type Weekday int
