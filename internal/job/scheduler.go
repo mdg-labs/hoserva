@@ -75,13 +75,14 @@ type Scheduler struct {
 	hub      *Hub
 	registry *Registry
 
-	mu                       sync.Mutex
-	running                  map[string]*runningJob
-	queue                    []*queuedJob
-	terminalSnapshots        map[string]*Job
-	terminalSnapshotFIFO     []string
-	evictedTerminalSnapshots map[string]struct{}
-	maintenance              bool
+	mu                          sync.Mutex
+	running                     map[string]*runningJob
+	queue                       []*queuedJob
+	terminalSnapshots           map[string]*Job
+	terminalSnapshotFIFO        []string
+	evictedTerminalSnapshots    map[string]struct{}
+	evictedTerminalSnapshotFIFO []string
+	maintenance                 bool
 }
 
 // NewScheduler wires a Scheduler to its persistence, log capture, event
@@ -450,6 +451,7 @@ func (s *Scheduler) rememberTerminalSnapshot(j Job) {
 		s.terminalSnapshots = make(map[string]*Job)
 		s.evictedTerminalSnapshots = make(map[string]struct{})
 	}
+	s.clearEvictedTerminalSnapshotLocked(j.ID)
 	if _, exists := s.terminalSnapshots[j.ID]; exists {
 		snap := terminalSnapshotFrom(j)
 		s.terminalSnapshots[j.ID] = &snap
@@ -459,11 +461,38 @@ func (s *Scheduler) rememberTerminalSnapshot(j Job) {
 		evictID := s.terminalSnapshotFIFO[0]
 		s.terminalSnapshotFIFO = s.terminalSnapshotFIFO[1:]
 		delete(s.terminalSnapshots, evictID)
-		s.evictedTerminalSnapshots[evictID] = struct{}{}
+		s.markTerminalSnapshotEvictedLocked(evictID)
 	}
 	snap := terminalSnapshotFrom(j)
 	s.terminalSnapshots[j.ID] = &snap
 	s.terminalSnapshotFIFO = append(s.terminalSnapshotFIFO, j.ID)
+}
+
+func (s *Scheduler) markTerminalSnapshotEvictedLocked(id string) {
+	if _, ok := s.evictedTerminalSnapshots[id]; ok {
+		return
+	}
+	s.evictedTerminalSnapshots[id] = struct{}{}
+	s.evictedTerminalSnapshotFIFO = append(s.evictedTerminalSnapshotFIFO, id)
+	for len(s.evictedTerminalSnapshotFIFO) > maxTerminalSnapshots {
+		old := s.evictedTerminalSnapshotFIFO[0]
+		s.evictedTerminalSnapshotFIFO = s.evictedTerminalSnapshotFIFO[1:]
+		delete(s.evictedTerminalSnapshots, old)
+	}
+}
+
+func (s *Scheduler) clearEvictedTerminalSnapshotLocked(id string) {
+	delete(s.evictedTerminalSnapshots, id)
+	removeString(&s.evictedTerminalSnapshotFIFO, id)
+}
+
+func removeString(ids *[]string, id string) {
+	for i, fid := range *ids {
+		if fid == id {
+			*ids = append((*ids)[:i], (*ids)[i+1:]...)
+			return
+		}
+	}
 }
 
 func (s *Scheduler) terminalSnapshotEvicted(id string) bool {
@@ -477,13 +506,8 @@ func (s *Scheduler) forgetTerminalSnapshot(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.terminalSnapshots, id)
-	delete(s.evictedTerminalSnapshots, id)
-	for i, fid := range s.terminalSnapshotFIFO {
-		if fid == id {
-			s.terminalSnapshotFIFO = append(s.terminalSnapshotFIFO[:i], s.terminalSnapshotFIFO[i+1:]...)
-			break
-		}
-	}
+	s.clearEvictedTerminalSnapshotLocked(id)
+	removeString(&s.terminalSnapshotFIFO, id)
 }
 
 // hasConflictWithRunningLocked reports whether a job of class/resourceIDs
