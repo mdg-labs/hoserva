@@ -219,7 +219,11 @@ func run(cfg config) error {
 		defer func() { _ = metricsStore.Close() }()
 	}
 
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Disks: linuxDisks, Array: arraySeq, Metrics: metricsStore}
+	parityEngine := newSnapraidEngine(configRoot, cfg.stateDir, nil)
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Disks: linuxDisks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine}
+	if parityEngine != nil {
+		handler.ParityGuard = parityEngine.Guard
+	}
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
