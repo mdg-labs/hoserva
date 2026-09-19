@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/google/uuid"
 
@@ -48,6 +49,7 @@ type Handler struct {
 	// ParityGuard evaluates threshold-guard state for run-diff (doc 02 §2).
 	ParityGuard parity.Guard
 	paritySnap  *paritySnapshotStore
+	parityOnce  sync.Once
 	// Backup is the config archive builder for export/import — nil returns
 	// 501 from those operations.
 	Backup *backup.Service

@@ -12,6 +12,7 @@ type WakeEventRow = {
   device: string;
   timestamp: string;
   wakeCount: number;
+  awakeDuration: string;
 };
 
 type SpinTransition = components["schemas"]["SpinTransition"];
@@ -20,10 +21,49 @@ type DailyWakeCount = components["schemas"]["DailyWakeCount"];
 const columns = (t: ReturnType<typeof useTranslation>["t"]): DataTableColumn<WakeEventRow>[] => [
   { id: "device", header: t("wakeEvents.columns.device"), cell: (row) => row.device },
   { id: "timestamp", header: t("wakeEvents.columns.timestamp"), cell: (row) => row.timestamp },
+  { id: "duration", header: t("wakeEvents.columns.duration"), cell: (row) => row.awakeDuration },
   { id: "count", header: t("wakeEvents.columns.count"), cell: (row) => row.wakeCount },
 ];
 
-function buildWakeEventRows(events: SpinTransition[], dailyWakeCounts: DailyWakeCount[]): WakeEventRow[] {
+function formatAwakeDuration(
+  seconds: number | null | undefined,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
+  if (seconds == null) {
+    return t("wakeEvents.durationUnknown");
+  }
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  const parts: string[] = [];
+  if (hours > 0) {
+    parts.push(t("wakeEvents.durationHours", { count: hours }));
+  }
+  if (minutes > 0 || hours > 0) {
+    parts.push(t("wakeEvents.durationMinutes", { count: minutes }));
+  }
+  parts.push(t("wakeEvents.durationSeconds", { count: rest }));
+  return parts.join(" ");
+}
+
+function latestWake(events: SpinTransition[], device: string): SpinTransition | null {
+  let latest: SpinTransition | null = null;
+  for (const event of events) {
+    if (event.device !== device || event.fromState !== "standby" || event.toState !== "active") {
+      continue;
+    }
+    if (latest === null || event.at > latest.at) {
+      latest = event;
+    }
+  }
+  return latest;
+}
+
+function buildWakeEventRows(
+  events: SpinTransition[],
+  dailyWakeCounts: DailyWakeCount[],
+  t: ReturnType<typeof useTranslation>["t"],
+): WakeEventRow[] {
   const today = new Date().toISOString().slice(0, 10);
   const devices = new Set<string>();
 
@@ -38,13 +78,7 @@ function buildWakeEventRows(events: SpinTransition[], dailyWakeCounts: DailyWake
 
   const rows: WakeEventRow[] = [];
   for (const device of devices) {
-    const wakes = events.filter((event) => event.device === device && event.fromState === "standby" && event.toState === "active");
-    const lastWake = wakes.reduce<string | null>((latest, event) => {
-      if (latest === null || event.at > latest) {
-        return event.at;
-      }
-      return latest;
-    }, null);
+    const lastWake = latestWake(events, device);
     const wakeCount = dailyWakeCounts.find((count) => count.device === device && count.date === today)?.count ?? 0;
 
     if (lastWake === null && wakeCount === 0) {
@@ -53,8 +87,9 @@ function buildWakeEventRows(events: SpinTransition[], dailyWakeCounts: DailyWake
 
     rows.push({
       device,
-      timestamp: lastWake ? new Date(lastWake).toLocaleString() : "—",
+      timestamp: lastWake ? new Date(lastWake.at).toLocaleString() : "—",
       wakeCount,
+      awakeDuration: formatAwakeDuration(lastWake?.awakeDurationSeconds, t),
     });
   }
 
@@ -77,7 +112,7 @@ export function WakeEventsPage(): React.ReactElement {
         }
         const events = result.data?.events ?? [];
         const dailyWakeCounts = result.data?.dailyWakeCounts ?? [];
-        setRows(buildWakeEventRows(events, dailyWakeCounts));
+        setRows(buildWakeEventRows(events, dailyWakeCounts, t));
       })
       .catch((err: unknown) => {
         if (!controller.signal.aborted) {
@@ -85,7 +120,7 @@ export function WakeEventsPage(): React.ReactElement {
         }
       });
     return () => controller.abort();
-  }, []);
+  }, [t]);
 
   const tableRows = useMemo(() => rows ?? [], [rows]);
 

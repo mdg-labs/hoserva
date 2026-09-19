@@ -233,8 +233,13 @@
     "columns": {
       "device": "Disk",
       "timestamp": "Last wake",
+      "duration": "Awake duration",
       "count": "Wakes today"
     },
+    "durationUnknown": "—",
+    "durationHours": "{{count}}h",
+    "durationMinutes": "{{count}}m",
+    "durationSeconds": "{{count}}s",
     "empty": {
       "title": "No wake events recorded yet",
       "description": "Wake events appear here after the spin-state log is available through the API."

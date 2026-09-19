@@ -114,19 +114,24 @@ export function ParityPage(): React.ReactElement {
       setRunDiffOpen(false);
       if (data) {
         setDiffGroups(parityDiffGroupsFromAPI(data.groups));
-        setParity((current) =>
-          current
-            ? {
-                ...current,
-                guard: data.guard,
-                groups: data.groups,
-              }
-            : {
-                freshness: "green",
-                guard: data.guard,
-                groups: data.groups,
-              },
-        );
+        const parityRefresh = await hoservaClient.GET("/parity");
+        if (!parityRefresh.error && parityRefresh.data) {
+          setParityError(null);
+          setParity(parityRefresh.data);
+          if (parityRefresh.data.groups?.length) {
+            setDiffGroups(parityDiffGroupsFromAPI(parityRefresh.data.groups));
+          }
+        } else {
+          setParity((current) =>
+            current
+              ? {
+                  ...current,
+                  guard: data.guard,
+                  groups: data.groups,
+                }
+              : current,
+          );
+        }
       }
     } catch (err: unknown) {
       setActionError(err instanceof Error ? err.message : String(err));
