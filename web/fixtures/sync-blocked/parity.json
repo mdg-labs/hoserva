@@ -1,0 +1,49 @@
+{
+  "freshness": "amber",
+  "lastSyncAt": "2026-01-01T06:00:00Z",
+  "changedSinceSync": 640,
+  "dataDisks": 3,
+  "parityDisks": 1,
+  "guard": {
+    "wouldBlock": true,
+    "triggers": ["removed-count"],
+    "removedCount": 600,
+    "removedUpdatedPercent": 6.0,
+    "summary": "600 removed files exceed the threshold"
+  },
+  "groups": [
+    {
+      "category": "removed",
+      "count": 600,
+      "paths": [
+        "/mnt/disk3/photos/vacation-001.jpg",
+        "/mnt/disk3/photos/vacation-002.jpg"
+      ]
+    },
+    {
+      "category": "updated",
+      "count": 12,
+      "paths": []
+    },
+    {
+      "category": "added",
+      "count": 28,
+      "paths": ["/mnt/disk1/incoming/new-file.mkv"]
+    },
+    {
+      "category": "moved",
+      "count": 0,
+      "paths": []
+    },
+    {
+      "category": "copied",
+      "count": 0,
+      "paths": []
+    },
+    {
+      "category": "moved_by_hoserva",
+      "count": 3,
+      "paths": ["/mnt/disk1/media/show-s01e01.mkv"]
+    }
+  ]
+}

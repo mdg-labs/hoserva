@@ -1,0 +1,42 @@
+{
+  "freshness": "green",
+  "lastSyncAt": "2026-01-01T06:00:00Z",
+  "changedSinceSync": 12,
+  "dataDisks": 3,
+  "parityDisks": 1,
+  "guard": {
+    "wouldBlock": false
+  },
+  "groups": [
+    {
+      "category": "removed",
+      "count": 0,
+      "paths": []
+    },
+    {
+      "category": "updated",
+      "count": 2,
+      "paths": []
+    },
+    {
+      "category": "added",
+      "count": 10,
+      "paths": ["/mnt/disk1/movies/new.mkv"]
+    },
+    {
+      "category": "moved",
+      "count": 0,
+      "paths": []
+    },
+    {
+      "category": "copied",
+      "count": 0,
+      "paths": []
+    },
+    {
+      "category": "moved_by_hoserva",
+      "count": 0,
+      "paths": []
+    }
+  ]
+}

@@ -35,6 +35,8 @@ tags:
     description: Pool topology and per-disk breakdown (`hoserva pool status`).
   - name: disks
     description: Disk inventory and lifecycle (`hoserva disk`, doc 01 §3).
+  - name: array
+    description: Array start and stop / maintenance mode (Q70, `hoserva array stop|start`).
   - name: parity
     description: SnapRAID sync, scrub and fix through the threshold guard (doc 02 §2).
   - name: config
@@ -780,6 +782,28 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /disks/wake-events:
+    get:
+      operationId: listWakeEvents
+      summary: List spin-state wake events
+      description: >-
+        Reads persisted spin-state transitions from the central database
+        only — never probes block devices (Q32, doc 03 §3.3a Phase 1).
+        Returns every recorded transition plus per-device wake counts
+        grouped by UTC day so the wake-events page can show when each
+        disk woke, how long it stayed awake, and how often it woke.
+      tags: [disks]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Spin-state transition log and daily wake counts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WakeEventsResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   /disks/array:
     post:
       operationId: createArray
@@ -808,6 +832,107 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /array/stop:
+    post:
+      operationId: stopArray
+      summary: Stop the array
+      description: >-
+        Enters maintenance mode (Q70, doc 02 §4, `hoserva array stop`):
+        refuse new jobs and interrupt non-resumable jobs, shut down
+        running VMs, stop containers, stop Samba and NFS, then unmount
+        share paths, the catch-all and data disks — the same list the
+        `/storage` Stop array confirm dialog already shows. The handler
+        calls `job.ArraySequence.Stop` and does not write parity. A
+        failure leaves maintenance mode active so nothing new starts
+        against a half-stopped array. `confirm: true` is required.
+      tags: [array]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopArrayRequest'
+      responses:
+        "200":
+          description: >-
+            System status after the sequence. `maintenanceMode` is true.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatus'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /array/start:
+    post:
+      operationId: startArray
+      summary: Start the array
+      description: >-
+        Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`):
+        mount disks, the catch-all and share paths, then start services
+        in the reverse of stop order, and exit maintenance mode only
+        once every step succeeds. The handler calls
+        `job.ArraySequence.Start`. Refused with `storage_not_ready`
+        when the storage gate is not ready (Q69, `ErrStorageNotReady`)
+        — nothing is mounted.
+      tags: [array]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: >-
+            System status after the sequence. `maintenanceMode` is false
+            on success.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatus'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /parity:
+    get:
+      operationId: getParity
+      summary: Parity status and guard state
+      description: >-
+        Reads SnapRAID status from the boot-device content file only — does
+        not run `snapraid diff` or wake data disks (doc 02 §2, Q13).
+        Threshold-guard state and grouped diff rows reflect the last
+        explicit `POST /parity/diff` (or a sync job's own pre-sync diff)
+        until the next one runs.
+      tags: [parity]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Current parity freshness and guard snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParitySnapshot'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /parity/diff:
+    post:
+      operationId: runParityDiff
+      summary: Run a SnapRAID diff
+      description: >-
+        Runs `snapraid diff` on every data disk — an explicit user action
+        that wakes every data disk (doc 02 §2, Q13). Returns grouped
+        changes and threshold-guard evaluation for the parity page; never
+        polled on a timer.
+      tags: [parity]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: Grouped diff and guard evaluation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParityDiffResult'
         default:
           $ref: '#/components/responses/Error'
 
@@ -1829,6 +1954,60 @@ components:
           items:
             $ref: '#/components/schemas/PoolDiskEntry'
 
+    SpinTransition:
+      type: object
+      required: [device, fromState, toState, at]
+      properties:
+        device:
+          type: string
+          description: e.g. `/dev/sdb` — as recorded, never accepted back as input (doc 01 §7).
+        fromState:
+          type: string
+          enum: [active, standby]
+        toState:
+          type: string
+          enum: [active, standby]
+        at:
+          type: string
+          format: date-time
+        awakeDurationSeconds:
+          type:
+            - integer
+            - "null"
+          format: int64
+          description: >-
+            Present when this row is a wake (standby → active) and a later
+            active → standby transition exists for the same device; seconds
+            until that transition.
+
+    DailyWakeCount:
+      type: object
+      required: [device, date, count]
+      properties:
+        device:
+          type: string
+        date:
+          type: string
+          format: date
+          description: UTC calendar day the wakes occurred on.
+        count:
+          type: integer
+          format: int32
+          minimum: 0
+
+    WakeEventsResponse:
+      type: object
+      required: [events, dailyWakeCounts]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpinTransition'
+        dailyWakeCounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyWakeCount'
+
     DiskInventoryEntry:
       type: object
       required: [device, sizeBytes, boot]
@@ -1928,6 +2107,114 @@ components:
             assigned disk is adopted. A wrong or missing string is refused
             and formats nothing.
 
+    ParityFreshness:
+      type: string
+      description: Parity age from `snapraid status` (doc 02 §2).
+      enum: [green, amber, red]
+
+    ParityGuardTrigger:
+      type: string
+      enum: [removed-count, removed-updated-percent, zero-files]
+
+    ParityZeroFilesDisk:
+      type: object
+      required: [disk, filesBefore]
+      properties:
+        disk:
+          type: string
+          description: Data-disk mount point.
+        filesBefore:
+          type: integer
+          format: int32
+
+    ParityGuardState:
+      type: object
+      required: [wouldBlock]
+      properties:
+        wouldBlock:
+          type: boolean
+          description: True when the threshold guard would block a sync (doc 02 §2).
+        triggers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParityGuardTrigger'
+        removedCount:
+          type: integer
+          format: int32
+          description: Accounted-for removals compared against the removed-count threshold.
+        removedUpdatedPercent:
+          type: number
+          format: float
+          description: Accounted removals plus updated, as a percent of files before the diff.
+        zeroFilesDisks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParityZeroFilesDisk'
+        summary:
+          type: string
+          description: Plain-language why the guard would block, when wouldBlock is true.
+
+    ParityDiffCategory:
+      type: string
+      description: One doc 02 §2 diff group; moved-by-Hoserva is Q15's relocation manifest match.
+      enum: [removed, updated, added, moved, copied, moved_by_hoserva]
+
+    ParityDiffGroup:
+      type: object
+      required: [category, count, paths]
+      properties:
+        category:
+          $ref: '#/components/schemas/ParityDiffCategory'
+        count:
+          type: integer
+          format: int32
+        paths:
+          type: array
+          items:
+            type: string
+          description: >-
+            `mount/relative` paths when SnapRAID named individual files.
+            Empty when only an aggregate count is known (updated, moved).
+
+    ParitySnapshot:
+      type: object
+      required: [freshness]
+      properties:
+        freshness:
+          $ref: '#/components/schemas/ParityFreshness'
+        lastSyncAt:
+          type: string
+          format: date-time
+          description: Last successful sync, when known.
+        changedSinceSync:
+          type: integer
+          format: int32
+          description: Files changed since last sync (`status` / change journal).
+        dataDisks:
+          type: integer
+          format: int32
+        parityDisks:
+          type: integer
+          format: int32
+        guard:
+          $ref: '#/components/schemas/ParityGuardState'
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParityDiffGroup'
+          description: Present after the last explicit run-diff; omitted until then.
+
+    ParityDiffResult:
+      type: object
+      required: [groups, guard]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParityDiffGroup'
+        guard:
+          $ref: '#/components/schemas/ParityGuardState'
+
     StartSyncRequest:
       type: object
       properties:
@@ -1961,6 +2248,19 @@ components:
           format: int32
           minimum: 1
           description: SnapRAID disk index (`hoserva fix --disk N`).
+
+    StopArrayRequest:
+      type: object
+      required: [confirm]
+      properties:
+        confirm:
+          type: boolean
+          description: >-
+            Must be true after reviewing the Q70 stop list the `/storage`
+            confirm dialog already shows: refuse new jobs and interrupt
+            non-resumable jobs, shut down running VMs, stop containers,
+            stop Samba and NFS, then unmount share paths, the catch-all
+            and data disks.
 
     ResetUserPasswordRequest:
       type: object

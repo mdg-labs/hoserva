@@ -333,3 +333,61 @@ func TestUpdateGeneralSettings_RejectsUnknownTimezone(t *testing.T) {
 		t.Fatalf("UpdateGeneralSettings(unknown timezone): code = %q, want settings_invalid_input", code)
 	}
 }
+
+func TestArrayStopAndStartFlipsMaintenanceMode(t *testing.T) {
+	client := newTestClient(t, "healthy")
+	ctx := context.Background()
+
+	before, err := client.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if before.MaintenanceMode.Or(false) {
+		t.Fatal("healthy scenario starts in maintenanceMode")
+	}
+
+	_, err = client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: false})
+	if err == nil {
+		t.Fatal("StopArray(confirm=false): expected an error")
+	}
+	if code := errorCode(t, err); code != "confirmation_required" {
+		t.Fatalf("StopArray(confirm=false): code = %q, want confirmation_required", code)
+	}
+	still, err := client.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus after refused stop: %v", err)
+	}
+	if still.MaintenanceMode.Or(false) {
+		t.Fatal("refused StopArray flipped maintenanceMode")
+	}
+
+	stopped, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true})
+	if err != nil {
+		t.Fatalf("StopArray: %v", err)
+	}
+	if !stopped.MaintenanceMode.Or(false) {
+		t.Fatal("StopArray: maintenanceMode is false")
+	}
+	afterStop, err := client.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus after stop: %v", err)
+	}
+	if !afterStop.MaintenanceMode.Or(false) {
+		t.Fatal("GetStatus after StopArray: maintenanceMode is false")
+	}
+
+	started, err := client.StartArray(ctx)
+	if err != nil {
+		t.Fatalf("StartArray: %v", err)
+	}
+	if started.MaintenanceMode.Or(false) {
+		t.Fatal("StartArray: maintenanceMode is still true")
+	}
+	afterStart, err := client.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus after start: %v", err)
+	}
+	if afterStart.MaintenanceMode.Or(false) {
+		t.Fatal("GetStatus after StartArray: maintenanceMode is still true")
+	}
+}

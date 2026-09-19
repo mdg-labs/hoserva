@@ -23,6 +23,31 @@ func statusCmd() *cobra.Command {
 	}
 }
 
+func arrayCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "array", Short: "Start or stop the array"}
+	var confirmStop bool
+	stop := &cobra.Command{
+		Use:   "stop",
+		Short: "Enter maintenance mode and unmount the array (Q70)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !confirmStop {
+				return fmt.Errorf("array stop requires --confirm")
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				return c.StopArray(apiCtx(), &apiv1.StopArrayRequest{Confirm: true})
+			})(cmd, args)
+		},
+	}
+	stop.Flags().BoolVar(&confirmStop, "confirm", false, "Confirm stopping the array (required)")
+	cmd.AddCommand(stop)
+	cmd.AddCommand(&cobra.Command{
+		Use:   "start",
+		Short: "Mount the array and leave maintenance mode (Q70)",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.StartArray(apiCtx()) }),
+	})
+	return cmd
+}
+
 func poolCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "pool", Short: "Pool commands"}
 	cmd.AddCommand(&cobra.Command{

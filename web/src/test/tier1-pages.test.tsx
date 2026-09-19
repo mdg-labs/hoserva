@@ -9,6 +9,7 @@ import { JOB_STATUS_FILTER_VALUES } from "@/hooks/job-filter-options";
 import { DashboardPage } from "@/routes/dashboard";
 import { PoolOverviewPage } from "@/routes/storage/pool";
 import { ParityPage } from "@/routes/storage/parity";
+import { WakeEventsPage } from "@/routes/storage/wake-events";
 import { JobsPage } from "@/routes/jobs/index";
 
 const mockGet = vi.fn();
@@ -112,6 +113,15 @@ function mockApiForStatus(status: Record<string, unknown>, jobs: unknown[] = [])
         response: { ok: true },
       });
     }
+    if (path === "/parity") {
+      return Promise.resolve({
+        data: {
+          freshness: "green",
+          guard: { wouldBlock: false },
+        },
+        response: { ok: true },
+      });
+    }
     return Promise.resolve({ data: null, response: { ok: false } });
   });
 }
@@ -204,9 +214,9 @@ describe("Tier 1 pages", () => {
 
   it("lists removals before other parity diff groups", () => {
     const groups = sortParityDiffGroups([
-      { category: "added", paths: ["/a"] },
-      { category: "removed", paths: ["/b"] },
-      { category: "updated", paths: ["/c"] },
+      { category: "added", paths: ["/a"], count: 1 },
+      { category: "removed", paths: ["/b"], count: 1 },
+      { category: "updated", paths: ["/c"], count: 1 },
     ]);
 
     render(
@@ -371,6 +381,100 @@ describe("Tier 1 pages", () => {
 
     expect(await screen.findByText("pool unavailable")).toBeInTheDocument();
     expect(screen.queryByText("No array configured")).not.toBeInTheDocument();
+  });
+
+  it("does not invent green freshness when parity status is missing after a successful diff", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/status") {
+        return Promise.resolve({
+          data: { healthy: true, summary: "OK", parityBlocked: false },
+          response: { ok: true },
+        });
+      }
+      if (path === "/pool") {
+        return Promise.resolve({ data: mountedPool(), response: { ok: true } });
+      }
+      if (path === "/jobs") {
+        return Promise.resolve({ data: { jobs: [] }, response: { ok: true } });
+      }
+      if (path === "/doctor") {
+        return Promise.resolve({
+          data: {
+            overall: "warn",
+            checks: [
+              {
+                id: "parity_freshness",
+                name: "Parity freshness",
+                status: "warn",
+                message: "Synced 6h ago",
+              },
+            ],
+          },
+          response: { ok: true },
+        });
+      }
+      if (path === "/parity") {
+        return Promise.resolve({ error: { message: "parity unavailable" }, response: { ok: false } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    mockPost.mockResolvedValue({
+      data: { groups: [], guard: { wouldBlock: false } },
+      response: { ok: true },
+    });
+
+    render(
+      <MemoryRouter>
+        <AppShell>
+          <ParityPage />
+        </AppShell>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("parity unavailable")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run diff" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Run diff anyway" }));
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalled();
+    });
+    const freshnessBadges = screen.getAllByText("Synced 6h ago");
+    expect(freshnessBadges.some((el) => el.className.includes("bg-success"))).toBe(false);
+  });
+
+  it("renders the latest completed wake duration on the wake-events page", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/disks/wake-events") {
+        return Promise.resolve({
+          data: {
+            events: [
+              {
+                device: "/dev/sdb",
+                fromState: "standby",
+                toState: "active",
+                at: "2026-09-19T10:00:00Z",
+                awakeDurationSeconds: 3661,
+              },
+            ],
+            dailyWakeCounts: [{ device: "/dev/sdb", date: today, count: 2 }],
+          },
+          response: { ok: true },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <WakeEventsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Awake duration")).toBeInTheDocument();
+    expect(screen.getByText("1h 1m 1s")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
   });
 
   it("keeps the sync dialog open when the parity sync request fails", async () => {

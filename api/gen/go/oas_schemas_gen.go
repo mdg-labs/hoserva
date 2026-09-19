@@ -526,6 +526,44 @@ func (s *CreateNotificationChannelRequest) SetWebhookAuthHeaderName(val OptStrin
 	s.WebhookAuthHeaderName = val
 }
 
+// Ref: #/components/schemas/DailyWakeCount
+type DailyWakeCount struct {
+	Device string `json:"device"`
+	// UTC calendar day the wakes occurred on.
+	Date  time.Time `json:"date"`
+	Count int32     `json:"count"`
+}
+
+// GetDevice returns the value of Device.
+func (s *DailyWakeCount) GetDevice() string {
+	return s.Device
+}
+
+// GetDate returns the value of Date.
+func (s *DailyWakeCount) GetDate() time.Time {
+	return s.Date
+}
+
+// GetCount returns the value of Count.
+func (s *DailyWakeCount) GetCount() int32 {
+	return s.Count
+}
+
+// SetDevice sets the value of Device.
+func (s *DailyWakeCount) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetDate sets the value of Date.
+func (s *DailyWakeCount) SetDate(val time.Time) {
+	s.Date = val
+}
+
+// SetCount sets the value of Count.
+func (s *DailyWakeCount) SetCount(val int32) {
+	s.Count = val
+}
+
 // DeleteNotificationChannelNoContent is response for DeleteNotificationChannel operation.
 type DeleteNotificationChannelNoContent struct{}
 
@@ -2512,6 +2550,52 @@ func (o OptBool) Or(d bool) bool {
 	return d
 }
 
+// NewOptDateTime returns new OptDateTime with value set to v.
+func NewOptDateTime(v time.Time) OptDateTime {
+	return OptDateTime{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptDateTime is optional time.Time.
+type OptDateTime struct {
+	Value time.Time
+	Set   bool
+}
+
+// IsSet returns true if OptDateTime was set.
+func (o OptDateTime) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptDateTime) Reset() {
+	var v time.Time
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptDateTime) SetTo(v time.Time) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptDateTime) Get() (v time.Time, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptDateTime) Or(d time.Time) time.Time {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptErrorDetails returns new OptErrorDetails with value set to v.
 func NewOptErrorDetails(v ErrorDetails) OptErrorDetails {
 	return OptErrorDetails{
@@ -2552,6 +2636,52 @@ func (o OptErrorDetails) Get() (v ErrorDetails, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptErrorDetails) Or(d ErrorDetails) ErrorDetails {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptFloat32 returns new OptFloat32 with value set to v.
+func NewOptFloat32(v float32) OptFloat32 {
+	return OptFloat32{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptFloat32 is optional float32.
+type OptFloat32 struct {
+	Value float32
+	Set   bool
+}
+
+// IsSet returns true if OptFloat32 was set.
+func (o OptFloat32) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptFloat32) Reset() {
+	var v float32
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptFloat32) SetTo(v float32) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptFloat32) Get() (v float32, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptFloat32) Or(d float32) float32 {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -3128,6 +3258,52 @@ func (o OptNotificationWebhookMethod) Or(d NotificationWebhookMethod) Notificati
 	return d
 }
 
+// NewOptParityGuardState returns new OptParityGuardState with value set to v.
+func NewOptParityGuardState(v ParityGuardState) OptParityGuardState {
+	return OptParityGuardState{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptParityGuardState is optional ParityGuardState.
+type OptParityGuardState struct {
+	Value ParityGuardState
+	Set   bool
+}
+
+// IsSet returns true if OptParityGuardState was set.
+func (o OptParityGuardState) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptParityGuardState) Reset() {
+	var v ParityGuardState
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptParityGuardState) SetTo(v ParityGuardState) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptParityGuardState) Get() (v ParityGuardState, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptParityGuardState) Or(d ParityGuardState) ParityGuardState {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptString returns new OptString with value set to v.
 func NewOptString(v string) OptString {
 	return OptString{
@@ -3172,6 +3348,426 @@ func (o OptString) Or(d string) string {
 		return v
 	}
 	return d
+}
+
+// One doc 02 §2 diff group; moved-by-Hoserva is Q15's relocation manifest match.
+// Ref: #/components/schemas/ParityDiffCategory
+type ParityDiffCategory string
+
+const (
+	ParityDiffCategoryRemoved        ParityDiffCategory = "removed"
+	ParityDiffCategoryUpdated        ParityDiffCategory = "updated"
+	ParityDiffCategoryAdded          ParityDiffCategory = "added"
+	ParityDiffCategoryMoved          ParityDiffCategory = "moved"
+	ParityDiffCategoryCopied         ParityDiffCategory = "copied"
+	ParityDiffCategoryMovedByHoserva ParityDiffCategory = "moved_by_hoserva"
+)
+
+// AllValues returns all ParityDiffCategory values.
+func (ParityDiffCategory) AllValues() []ParityDiffCategory {
+	return []ParityDiffCategory{
+		ParityDiffCategoryRemoved,
+		ParityDiffCategoryUpdated,
+		ParityDiffCategoryAdded,
+		ParityDiffCategoryMoved,
+		ParityDiffCategoryCopied,
+		ParityDiffCategoryMovedByHoserva,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ParityDiffCategory) MarshalText() ([]byte, error) {
+	switch s {
+	case ParityDiffCategoryRemoved:
+		return []byte(s), nil
+	case ParityDiffCategoryUpdated:
+		return []byte(s), nil
+	case ParityDiffCategoryAdded:
+		return []byte(s), nil
+	case ParityDiffCategoryMoved:
+		return []byte(s), nil
+	case ParityDiffCategoryCopied:
+		return []byte(s), nil
+	case ParityDiffCategoryMovedByHoserva:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ParityDiffCategory) UnmarshalText(data []byte) error {
+	switch ParityDiffCategory(data) {
+	case ParityDiffCategoryRemoved:
+		*s = ParityDiffCategoryRemoved
+		return nil
+	case ParityDiffCategoryUpdated:
+		*s = ParityDiffCategoryUpdated
+		return nil
+	case ParityDiffCategoryAdded:
+		*s = ParityDiffCategoryAdded
+		return nil
+	case ParityDiffCategoryMoved:
+		*s = ParityDiffCategoryMoved
+		return nil
+	case ParityDiffCategoryCopied:
+		*s = ParityDiffCategoryCopied
+		return nil
+	case ParityDiffCategoryMovedByHoserva:
+		*s = ParityDiffCategoryMovedByHoserva
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ParityDiffGroup
+type ParityDiffGroup struct {
+	Category ParityDiffCategory `json:"category"`
+	Count    int32              `json:"count"`
+	// `mount/relative` paths when SnapRAID named individual files. Empty when only an aggregate count is
+	// known (updated, moved).
+	Paths []string `json:"paths"`
+}
+
+// GetCategory returns the value of Category.
+func (s *ParityDiffGroup) GetCategory() ParityDiffCategory {
+	return s.Category
+}
+
+// GetCount returns the value of Count.
+func (s *ParityDiffGroup) GetCount() int32 {
+	return s.Count
+}
+
+// GetPaths returns the value of Paths.
+func (s *ParityDiffGroup) GetPaths() []string {
+	return s.Paths
+}
+
+// SetCategory sets the value of Category.
+func (s *ParityDiffGroup) SetCategory(val ParityDiffCategory) {
+	s.Category = val
+}
+
+// SetCount sets the value of Count.
+func (s *ParityDiffGroup) SetCount(val int32) {
+	s.Count = val
+}
+
+// SetPaths sets the value of Paths.
+func (s *ParityDiffGroup) SetPaths(val []string) {
+	s.Paths = val
+}
+
+// Ref: #/components/schemas/ParityDiffResult
+type ParityDiffResult struct {
+	Groups []ParityDiffGroup `json:"groups"`
+	Guard  ParityGuardState  `json:"guard"`
+}
+
+// GetGroups returns the value of Groups.
+func (s *ParityDiffResult) GetGroups() []ParityDiffGroup {
+	return s.Groups
+}
+
+// GetGuard returns the value of Guard.
+func (s *ParityDiffResult) GetGuard() ParityGuardState {
+	return s.Guard
+}
+
+// SetGroups sets the value of Groups.
+func (s *ParityDiffResult) SetGroups(val []ParityDiffGroup) {
+	s.Groups = val
+}
+
+// SetGuard sets the value of Guard.
+func (s *ParityDiffResult) SetGuard(val ParityGuardState) {
+	s.Guard = val
+}
+
+// Parity age from `snapraid status` (doc 02 §2).
+// Ref: #/components/schemas/ParityFreshness
+type ParityFreshness string
+
+const (
+	ParityFreshnessGreen ParityFreshness = "green"
+	ParityFreshnessAmber ParityFreshness = "amber"
+	ParityFreshnessRed   ParityFreshness = "red"
+)
+
+// AllValues returns all ParityFreshness values.
+func (ParityFreshness) AllValues() []ParityFreshness {
+	return []ParityFreshness{
+		ParityFreshnessGreen,
+		ParityFreshnessAmber,
+		ParityFreshnessRed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ParityFreshness) MarshalText() ([]byte, error) {
+	switch s {
+	case ParityFreshnessGreen:
+		return []byte(s), nil
+	case ParityFreshnessAmber:
+		return []byte(s), nil
+	case ParityFreshnessRed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ParityFreshness) UnmarshalText(data []byte) error {
+	switch ParityFreshness(data) {
+	case ParityFreshnessGreen:
+		*s = ParityFreshnessGreen
+		return nil
+	case ParityFreshnessAmber:
+		*s = ParityFreshnessAmber
+		return nil
+	case ParityFreshnessRed:
+		*s = ParityFreshnessRed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ParityGuardState
+type ParityGuardState struct {
+	// True when the threshold guard would block a sync (doc 02 §2).
+	WouldBlock bool                 `json:"wouldBlock"`
+	Triggers   []ParityGuardTrigger `json:"triggers"`
+	// Accounted-for removals compared against the removed-count threshold.
+	RemovedCount OptInt32 `json:"removedCount"`
+	// Accounted removals plus updated, as a percent of files before the diff.
+	RemovedUpdatedPercent OptFloat32            `json:"removedUpdatedPercent"`
+	ZeroFilesDisks        []ParityZeroFilesDisk `json:"zeroFilesDisks"`
+	// Plain-language why the guard would block, when wouldBlock is true.
+	Summary OptString `json:"summary"`
+}
+
+// GetWouldBlock returns the value of WouldBlock.
+func (s *ParityGuardState) GetWouldBlock() bool {
+	return s.WouldBlock
+}
+
+// GetTriggers returns the value of Triggers.
+func (s *ParityGuardState) GetTriggers() []ParityGuardTrigger {
+	return s.Triggers
+}
+
+// GetRemovedCount returns the value of RemovedCount.
+func (s *ParityGuardState) GetRemovedCount() OptInt32 {
+	return s.RemovedCount
+}
+
+// GetRemovedUpdatedPercent returns the value of RemovedUpdatedPercent.
+func (s *ParityGuardState) GetRemovedUpdatedPercent() OptFloat32 {
+	return s.RemovedUpdatedPercent
+}
+
+// GetZeroFilesDisks returns the value of ZeroFilesDisks.
+func (s *ParityGuardState) GetZeroFilesDisks() []ParityZeroFilesDisk {
+	return s.ZeroFilesDisks
+}
+
+// GetSummary returns the value of Summary.
+func (s *ParityGuardState) GetSummary() OptString {
+	return s.Summary
+}
+
+// SetWouldBlock sets the value of WouldBlock.
+func (s *ParityGuardState) SetWouldBlock(val bool) {
+	s.WouldBlock = val
+}
+
+// SetTriggers sets the value of Triggers.
+func (s *ParityGuardState) SetTriggers(val []ParityGuardTrigger) {
+	s.Triggers = val
+}
+
+// SetRemovedCount sets the value of RemovedCount.
+func (s *ParityGuardState) SetRemovedCount(val OptInt32) {
+	s.RemovedCount = val
+}
+
+// SetRemovedUpdatedPercent sets the value of RemovedUpdatedPercent.
+func (s *ParityGuardState) SetRemovedUpdatedPercent(val OptFloat32) {
+	s.RemovedUpdatedPercent = val
+}
+
+// SetZeroFilesDisks sets the value of ZeroFilesDisks.
+func (s *ParityGuardState) SetZeroFilesDisks(val []ParityZeroFilesDisk) {
+	s.ZeroFilesDisks = val
+}
+
+// SetSummary sets the value of Summary.
+func (s *ParityGuardState) SetSummary(val OptString) {
+	s.Summary = val
+}
+
+// Ref: #/components/schemas/ParityGuardTrigger
+type ParityGuardTrigger string
+
+const (
+	ParityGuardTriggerRemovedCount          ParityGuardTrigger = "removed-count"
+	ParityGuardTriggerRemovedUpdatedPercent ParityGuardTrigger = "removed-updated-percent"
+	ParityGuardTriggerZeroFiles             ParityGuardTrigger = "zero-files"
+)
+
+// AllValues returns all ParityGuardTrigger values.
+func (ParityGuardTrigger) AllValues() []ParityGuardTrigger {
+	return []ParityGuardTrigger{
+		ParityGuardTriggerRemovedCount,
+		ParityGuardTriggerRemovedUpdatedPercent,
+		ParityGuardTriggerZeroFiles,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ParityGuardTrigger) MarshalText() ([]byte, error) {
+	switch s {
+	case ParityGuardTriggerRemovedCount:
+		return []byte(s), nil
+	case ParityGuardTriggerRemovedUpdatedPercent:
+		return []byte(s), nil
+	case ParityGuardTriggerZeroFiles:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ParityGuardTrigger) UnmarshalText(data []byte) error {
+	switch ParityGuardTrigger(data) {
+	case ParityGuardTriggerRemovedCount:
+		*s = ParityGuardTriggerRemovedCount
+		return nil
+	case ParityGuardTriggerRemovedUpdatedPercent:
+		*s = ParityGuardTriggerRemovedUpdatedPercent
+		return nil
+	case ParityGuardTriggerZeroFiles:
+		*s = ParityGuardTriggerZeroFiles
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ParitySnapshot
+type ParitySnapshot struct {
+	Freshness ParityFreshness `json:"freshness"`
+	// Last successful sync, when known.
+	LastSyncAt OptDateTime `json:"lastSyncAt"`
+	// Files changed since last sync (`status` / change journal).
+	ChangedSinceSync OptInt32            `json:"changedSinceSync"`
+	DataDisks        OptInt32            `json:"dataDisks"`
+	ParityDisks      OptInt32            `json:"parityDisks"`
+	Guard            OptParityGuardState `json:"guard"`
+	// Present after the last explicit run-diff; omitted until then.
+	Groups []ParityDiffGroup `json:"groups"`
+}
+
+// GetFreshness returns the value of Freshness.
+func (s *ParitySnapshot) GetFreshness() ParityFreshness {
+	return s.Freshness
+}
+
+// GetLastSyncAt returns the value of LastSyncAt.
+func (s *ParitySnapshot) GetLastSyncAt() OptDateTime {
+	return s.LastSyncAt
+}
+
+// GetChangedSinceSync returns the value of ChangedSinceSync.
+func (s *ParitySnapshot) GetChangedSinceSync() OptInt32 {
+	return s.ChangedSinceSync
+}
+
+// GetDataDisks returns the value of DataDisks.
+func (s *ParitySnapshot) GetDataDisks() OptInt32 {
+	return s.DataDisks
+}
+
+// GetParityDisks returns the value of ParityDisks.
+func (s *ParitySnapshot) GetParityDisks() OptInt32 {
+	return s.ParityDisks
+}
+
+// GetGuard returns the value of Guard.
+func (s *ParitySnapshot) GetGuard() OptParityGuardState {
+	return s.Guard
+}
+
+// GetGroups returns the value of Groups.
+func (s *ParitySnapshot) GetGroups() []ParityDiffGroup {
+	return s.Groups
+}
+
+// SetFreshness sets the value of Freshness.
+func (s *ParitySnapshot) SetFreshness(val ParityFreshness) {
+	s.Freshness = val
+}
+
+// SetLastSyncAt sets the value of LastSyncAt.
+func (s *ParitySnapshot) SetLastSyncAt(val OptDateTime) {
+	s.LastSyncAt = val
+}
+
+// SetChangedSinceSync sets the value of ChangedSinceSync.
+func (s *ParitySnapshot) SetChangedSinceSync(val OptInt32) {
+	s.ChangedSinceSync = val
+}
+
+// SetDataDisks sets the value of DataDisks.
+func (s *ParitySnapshot) SetDataDisks(val OptInt32) {
+	s.DataDisks = val
+}
+
+// SetParityDisks sets the value of ParityDisks.
+func (s *ParitySnapshot) SetParityDisks(val OptInt32) {
+	s.ParityDisks = val
+}
+
+// SetGuard sets the value of Guard.
+func (s *ParitySnapshot) SetGuard(val OptParityGuardState) {
+	s.Guard = val
+}
+
+// SetGroups sets the value of Groups.
+func (s *ParitySnapshot) SetGroups(val []ParityDiffGroup) {
+	s.Groups = val
+}
+
+// Ref: #/components/schemas/ParityZeroFilesDisk
+type ParityZeroFilesDisk struct {
+	// Data-disk mount point.
+	Disk        string `json:"disk"`
+	FilesBefore int32  `json:"filesBefore"`
+}
+
+// GetDisk returns the value of Disk.
+func (s *ParityZeroFilesDisk) GetDisk() string {
+	return s.Disk
+}
+
+// GetFilesBefore returns the value of FilesBefore.
+func (s *ParityZeroFilesDisk) GetFilesBefore() int32 {
+	return s.FilesBefore
+}
+
+// SetDisk sets the value of Disk.
+func (s *ParityZeroFilesDisk) SetDisk(val string) {
+	s.Disk = val
+}
+
+// SetFilesBefore sets the value of FilesBefore.
+func (s *ParityZeroFilesDisk) SetFilesBefore(val int32) {
+	s.FilesBefore = val
 }
 
 // Ref: #/components/schemas/PoolDiskEntry
@@ -3397,6 +3993,150 @@ func (s *SetupStatus) SetAdminExists(val bool) {
 	s.AdminExists = val
 }
 
+// Ref: #/components/schemas/SpinTransition
+type SpinTransition struct {
+	// E.g. `/dev/sdb` — as recorded, never accepted back as input (doc 01 §7).
+	Device    string                  `json:"device"`
+	FromState SpinTransitionFromState `json:"fromState"`
+	ToState   SpinTransitionToState   `json:"toState"`
+	At        time.Time               `json:"at"`
+	// Present when this row is a wake (standby → active) and a later active → standby transition
+	// exists for the same device; seconds until that transition.
+	AwakeDurationSeconds OptNilInt64 `json:"awakeDurationSeconds"`
+}
+
+// GetDevice returns the value of Device.
+func (s *SpinTransition) GetDevice() string {
+	return s.Device
+}
+
+// GetFromState returns the value of FromState.
+func (s *SpinTransition) GetFromState() SpinTransitionFromState {
+	return s.FromState
+}
+
+// GetToState returns the value of ToState.
+func (s *SpinTransition) GetToState() SpinTransitionToState {
+	return s.ToState
+}
+
+// GetAt returns the value of At.
+func (s *SpinTransition) GetAt() time.Time {
+	return s.At
+}
+
+// GetAwakeDurationSeconds returns the value of AwakeDurationSeconds.
+func (s *SpinTransition) GetAwakeDurationSeconds() OptNilInt64 {
+	return s.AwakeDurationSeconds
+}
+
+// SetDevice sets the value of Device.
+func (s *SpinTransition) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetFromState sets the value of FromState.
+func (s *SpinTransition) SetFromState(val SpinTransitionFromState) {
+	s.FromState = val
+}
+
+// SetToState sets the value of ToState.
+func (s *SpinTransition) SetToState(val SpinTransitionToState) {
+	s.ToState = val
+}
+
+// SetAt sets the value of At.
+func (s *SpinTransition) SetAt(val time.Time) {
+	s.At = val
+}
+
+// SetAwakeDurationSeconds sets the value of AwakeDurationSeconds.
+func (s *SpinTransition) SetAwakeDurationSeconds(val OptNilInt64) {
+	s.AwakeDurationSeconds = val
+}
+
+type SpinTransitionFromState string
+
+const (
+	SpinTransitionFromStateActive  SpinTransitionFromState = "active"
+	SpinTransitionFromStateStandby SpinTransitionFromState = "standby"
+)
+
+// AllValues returns all SpinTransitionFromState values.
+func (SpinTransitionFromState) AllValues() []SpinTransitionFromState {
+	return []SpinTransitionFromState{
+		SpinTransitionFromStateActive,
+		SpinTransitionFromStateStandby,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s SpinTransitionFromState) MarshalText() ([]byte, error) {
+	switch s {
+	case SpinTransitionFromStateActive:
+		return []byte(s), nil
+	case SpinTransitionFromStateStandby:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *SpinTransitionFromState) UnmarshalText(data []byte) error {
+	switch SpinTransitionFromState(data) {
+	case SpinTransitionFromStateActive:
+		*s = SpinTransitionFromStateActive
+		return nil
+	case SpinTransitionFromStateStandby:
+		*s = SpinTransitionFromStateStandby
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type SpinTransitionToState string
+
+const (
+	SpinTransitionToStateActive  SpinTransitionToState = "active"
+	SpinTransitionToStateStandby SpinTransitionToState = "standby"
+)
+
+// AllValues returns all SpinTransitionToState values.
+func (SpinTransitionToState) AllValues() []SpinTransitionToState {
+	return []SpinTransitionToState{
+		SpinTransitionToStateActive,
+		SpinTransitionToStateStandby,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s SpinTransitionToState) MarshalText() ([]byte, error) {
+	switch s {
+	case SpinTransitionToStateActive:
+		return []byte(s), nil
+	case SpinTransitionToStateStandby:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *SpinTransitionToState) UnmarshalText(data []byte) error {
+	switch SpinTransitionToState(data) {
+	case SpinTransitionToStateActive:
+		*s = SpinTransitionToStateActive
+		return nil
+	case SpinTransitionToStateStandby:
+		*s = SpinTransitionToStateStandby
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/StartFixRequest
 type StartFixRequest struct {
 	// Must be true — fix rewrites data from parity.
@@ -3465,6 +4205,24 @@ func (s *StartSyncRequest) SetDryRun(val OptBool) {
 
 // SetConfirm sets the value of Confirm.
 func (s *StartSyncRequest) SetConfirm(val OptBool) {
+	s.Confirm = val
+}
+
+// Ref: #/components/schemas/StopArrayRequest
+type StopArrayRequest struct {
+	// Must be true after reviewing the Q70 stop list the `/storage` confirm dialog already shows: refuse
+	// new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and
+	// NFS, then unmount share paths, the catch-all and data disks.
+	Confirm bool `json:"confirm"`
+}
+
+// GetConfirm returns the value of Confirm.
+func (s *StopArrayRequest) GetConfirm() bool {
+	return s.Confirm
+}
+
+// SetConfirm sets the value of Confirm.
+func (s *StopArrayRequest) SetConfirm(val bool) {
 	s.Confirm = val
 }
 
@@ -4027,4 +4785,30 @@ func (s *UserRole) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/WakeEventsResponse
+type WakeEventsResponse struct {
+	Events          []SpinTransition `json:"events"`
+	DailyWakeCounts []DailyWakeCount `json:"dailyWakeCounts"`
+}
+
+// GetEvents returns the value of Events.
+func (s *WakeEventsResponse) GetEvents() []SpinTransition {
+	return s.Events
+}
+
+// GetDailyWakeCounts returns the value of DailyWakeCounts.
+func (s *WakeEventsResponse) GetDailyWakeCounts() []DailyWakeCount {
+	return s.DailyWakeCounts
+}
+
+// SetEvents sets the value of Events.
+func (s *WakeEventsResponse) SetEvents(val []SpinTransition) {
+	s.Events = val
+}
+
+// SetDailyWakeCounts sets the value of DailyWakeCounts.
+func (s *WakeEventsResponse) SetDailyWakeCounts(val []DailyWakeCount) {
+	s.DailyWakeCounts = val
 }
