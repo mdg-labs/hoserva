@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +17,10 @@ const mockDiskSize = 4_000_000_000_000
 
 func errConfirmRequired() error {
 	return &mockError{code: "confirmation_required", statusCode: 409, message: "this operation requires an explicit confirmation"}
+}
+
+func errInvalidPlan(err error) error {
+	return &mockError{code: "invalid_plan", statusCode: 400, message: err.Error()}
 }
 
 func errRootOnlyRecovery() error {
@@ -281,9 +287,18 @@ func (h *handler) StartFix(ctx context.Context, req *apiv1.StartFixRequest) (*ap
 }
 
 func (h *handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest) (*apiv1.Job, error) {
-	plan := mockTopologyPlan(req)
+	plan, err := mockTopologyPlan(req)
+	if err != nil {
+		return nil, err
+	}
 	if req.Confirmation == "" || plan.CheckConfirmation(req.Confirmation) != nil {
 		return nil, errConfirmRequired()
+	}
+	if err := plan.Validate(mockDiskSizes(h.scenario)); err != nil {
+		return nil, errInvalidPlan(err)
+	}
+	if err := disk.CheckFormatTargets(plan); err != nil {
+		return nil, &mockError{code: "unmanaged_device", statusCode: 400, message: err.Error()}
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -301,13 +316,20 @@ func (h *handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest
 	return &job, nil
 }
 
-func mockTopologyPlan(req *apiv1.CreateArrayRequest) disk.TopologyPlan {
+func mockDiskSizes(scenario string) map[string]int64 {
+	sizes := make(map[string]int64)
+	for _, d := range mockDiskInventory(scenario) {
+		sizes[d.Device] = d.SizeBytes
+	}
+	return sizes
+}
+
+func mockTopologyPlan(req *apiv1.CreateArrayRequest) (disk.TopologyPlan, error) {
 	var plan disk.TopologyPlan
 	for _, a := range req.Disks {
-		assigned := disk.AssignedDisk{
-			Device:     a.Device,
-			Filesystem: disk.XFS,
-			Adopt:      a.Adopt.Or(false),
+		assigned, err := mockAssignedDisk(a)
+		if err != nil {
+			return disk.TopologyPlan{}, err
 		}
 		switch a.Role {
 		case apiv1.ArrayDiskRoleParity:
@@ -315,11 +337,37 @@ func mockTopologyPlan(req *apiv1.CreateArrayRequest) disk.TopologyPlan {
 		case apiv1.ArrayDiskRoleData:
 			plan.Data = append(plan.Data, assigned)
 		case apiv1.ArrayDiskRoleCache:
+			if plan.Cache != nil {
+				return disk.TopologyPlan{}, errInvalidPlan(errors.New("disk: at most one cache disk can be assigned"))
+			}
 			c := assigned
 			plan.Cache = &c
+		default:
+			return disk.TopologyPlan{}, errInvalidPlan(fmt.Errorf("disk: unknown role %q", a.Role))
 		}
 	}
-	return plan
+	return plan, nil
+}
+
+func mockAssignedDisk(a apiv1.ArrayDiskAssignment) (disk.AssignedDisk, error) {
+	fs := disk.XFS
+	if v, ok := a.Filesystem.Get(); ok {
+		switch v {
+		case apiv1.ArrayDiskFilesystemXfs:
+			fs = disk.XFS
+		case apiv1.ArrayDiskFilesystemExt4:
+			fs = disk.EXT4
+		case apiv1.ArrayDiskFilesystemBtrfs:
+			fs = disk.BTRFS
+		default:
+			return disk.AssignedDisk{}, errInvalidPlan(fmt.Errorf("%w: %s", disk.ErrUnsupportedFilesystem, v))
+		}
+	}
+	return disk.AssignedDisk{
+		Device:     a.Device,
+		Filesystem: fs,
+		Adopt:      a.Adopt.Or(false),
+	}, nil
 }
 
 func (h *handler) ExportConfig(ctx context.Context) (apiv1.ExportConfigOK, error) {
