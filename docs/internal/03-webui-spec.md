@@ -497,7 +497,7 @@ All recurring jobs in one place: the nightly maintenance chain, SMART self-tests
 
 **The nightly maintenance chain** (Q30) is one schedule entry with ordered steps: mover → diff + threshold guard → sync → config backup, plus scrub on the weekly day. Each step starts when the previous one finishes, so the mover-before-sync order cannot be broken by a slow run. Individual steps can be disabled, not reordered.
 
-Per job: enabled, cron-like schedule with a human-readable preview ("every day at 02:00"), and the next run time. Conflict detection covers jobs scheduled outside the chain — e.g. appdata backup overlapping the chain, or two heavy jobs at once.
+Per job: enabled, cron-like schedule with a human-readable preview ("every day at 02:00"), and the next run time. Conflict detection covers jobs scheduled outside the chain — per doc 01 §4's mutually exclusive classes, when two scheduled windows overlap and the scheduler would refuse to run them together (e.g. two Parity jobs at once, or two Array-write jobs on the same disks).
 
 **Components:** the nightly chain as `stacked-checks` with one `setting-switch` per step and no reordering control; every other job as a Card with an enable Switch, frequency Select, time Input, the human-readable preview and the next run; conflicts as a warning `banner`.
 

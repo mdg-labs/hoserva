@@ -169,6 +169,14 @@ type Invoker interface {
 	//
 	// GET /notifications/quiet-hours
 	GetQuietHours(ctx context.Context) (*NotificationQuietHours, error)
+	// GetSchedules invokes getSchedules operation.
+	//
+	// The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with
+	// server-computed next-run times, human-readable schedule previews and conflict warnings from
+	// DetectConflict (doc 01 §4). Chain step order is server-defined and not writable.
+	//
+	// GET /settings/schedules
+	GetSchedules(ctx context.Context) (*Schedules, error)
 	// GetSetupStatus invokes getSetupStatus operation.
 	//
 	// Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are
@@ -348,6 +356,14 @@ type Invoker interface {
 	//
 	// PUT /settings/general
 	UpdateGeneralSettings(ctx context.Context, request *UpdateGeneralSettingsRequest) (*GeneralSettings, error)
+	// UpdateMaintenanceChainSchedule invokes updateMaintenanceChainSchedule operation.
+	//
+	// Persists the chain's start time, weekly scrub day and per-step enabled flags (doc 03 §8.4). Step
+	// order is fixed by Q30 and cannot be changed. Omitted step entries leave that step's enabled state
+	// unchanged.
+	//
+	// PUT /settings/schedules/chain
+	UpdateMaintenanceChainSchedule(ctx context.Context, request *UpdateMaintenanceChainScheduleRequest) (*Schedules, error)
 	// UpdateNotificationChannel invokes updateNotificationChannel operation.
 	//
 	// A full replace, like the request body of createNotificationChannel: every type-specific field the
@@ -374,6 +390,13 @@ type Invoker interface {
 	//
 	// PUT /notifications/quiet-hours
 	UpdateQuietHours(ctx context.Context, request *UpdateQuietHoursRequest) (*NotificationQuietHours, error)
+	// UpdateScheduledJob invokes updateScheduledJob operation.
+	//
+	// Persists enabled state, frequency and start time for one of the recurring jobs outside the nightly
+	// chain (doc 03 §8.4).
+	//
+	// PUT /settings/schedules/jobs/{jobId}
+	UpdateScheduledJob(ctx context.Context, request *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (*Schedules, error)
 }
 
 // Client implements OAS client.
@@ -2955,6 +2978,133 @@ func (c *Client) sendGetQuietHours(ctx context.Context) (res *NotificationQuietH
 
 	stage = "DecodeResponse"
 	result, err := decodeGetQuietHoursResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetSchedules invokes getSchedules operation.
+//
+// The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with
+// server-computed next-run times, human-readable schedule previews and conflict warnings from
+// DetectConflict (doc 01 §4). Chain step order is server-defined and not writable.
+//
+// GET /settings/schedules
+func (c *Client) GetSchedules(ctx context.Context) (*Schedules, error) {
+	res, err := c.sendGetSchedules(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetSchedules(ctx context.Context) (res *Schedules, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getSchedules"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/settings/schedules"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetSchedulesOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/schedules"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetSchedulesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetSchedulesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetSchedulesResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -5946,6 +6096,136 @@ func (c *Client) sendUpdateGeneralSettings(ctx context.Context, request *UpdateG
 	return result, nil
 }
 
+// UpdateMaintenanceChainSchedule invokes updateMaintenanceChainSchedule operation.
+//
+// Persists the chain's start time, weekly scrub day and per-step enabled flags (doc 03 §8.4). Step
+// order is fixed by Q30 and cannot be changed. Omitted step entries leave that step's enabled state
+// unchanged.
+//
+// PUT /settings/schedules/chain
+func (c *Client) UpdateMaintenanceChainSchedule(ctx context.Context, request *UpdateMaintenanceChainScheduleRequest) (*Schedules, error) {
+	res, err := c.sendUpdateMaintenanceChainSchedule(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendUpdateMaintenanceChainSchedule(ctx context.Context, request *UpdateMaintenanceChainScheduleRequest) (res *Schedules, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateMaintenanceChainSchedule"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/settings/schedules/chain"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateMaintenanceChainScheduleOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/schedules/chain"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateMaintenanceChainScheduleRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateMaintenanceChainScheduleOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateMaintenanceChainScheduleOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateMaintenanceChainScheduleResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // UpdateNotificationChannel invokes updateNotificationChannel operation.
 //
 // A full replace, like the request body of createNotificationChannel: every type-specific field the
@@ -6367,6 +6647,153 @@ func (c *Client) sendUpdateQuietHours(ctx context.Context, request *UpdateQuietH
 
 	stage = "DecodeResponse"
 	result, err := decodeUpdateQuietHoursResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateScheduledJob invokes updateScheduledJob operation.
+//
+// Persists enabled state, frequency and start time for one of the recurring jobs outside the nightly
+// chain (doc 03 §8.4).
+//
+// PUT /settings/schedules/jobs/{jobId}
+func (c *Client) UpdateScheduledJob(ctx context.Context, request *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (*Schedules, error) {
+	res, err := c.sendUpdateScheduledJob(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendUpdateScheduledJob(ctx context.Context, request *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (res *Schedules, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateScheduledJob"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/settings/schedules/jobs/{jobId}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateScheduledJobOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/settings/schedules/jobs/"
+	{
+		// Encode "jobId" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "jobId",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(string(params.JobId)))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateScheduledJobRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateScheduledJobOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateScheduledJobOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateScheduledJobResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

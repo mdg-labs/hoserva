@@ -26,6 +26,11 @@ const (
 // the only lever MaintenanceChain.Enabled gives a caller.
 var chainOrder = []Step{StepMover, StepDiffGuard, StepSync, StepScrub, StepConfigBackup}
 
+// ChainOrder returns Q30's fixed maintenance chain step order.
+func ChainOrder() []Step {
+	return chainOrder
+}
+
 // DiffGuard is the chain's "diff + guard" step (doc 02 §2): run `snapraid
 // diff` and evaluate the deletion threshold guard against it. It is
 // deliberately not a Scheduler job — like parity.Engine's own Diff method,

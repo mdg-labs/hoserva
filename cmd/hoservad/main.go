@@ -179,7 +179,9 @@ func run(cfg config) error {
 	notifyService := notify.NewService(notifyStore, machineKey, notify.DefaultSenders(&http.Client{Timeout: notifyHTTPTimeout}))
 	notifyService.Hub = notifyHub
 
-	settingsService := api.NewSettingsService(api.NewSettingsStore(db), machineKey)
+	settingsStore := api.NewSettingsStore(db)
+	settingsService := api.NewSettingsService(settingsStore, machineKey)
+	scheduleService := api.NewScheduleService(api.NewScheduleStore(db), settingsStore)
 
 	logsDir := filepath.Join(cfg.stateDir, "jobs")
 	jobStore := job.NewStore(db)
@@ -187,13 +189,15 @@ func run(cfg config) error {
 	hub := job.NewHub()
 	registry := job.NewRegistry()
 	linuxDisks := disk.NewLinuxProvider()
+	history := store.NewHistory(db)
+	disks := newPersistingDiskProvider(linuxDisks, history)
 	arrayStore := store.NewArrayStore(db)
 	configRoot := cfg.configRoot
 	if configRoot == "" {
 		configRoot = "/etc"
 	}
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
-		Provider:  linuxDisks,
+		Provider:  disks,
 		Runner:    linuxDisks.Exec,
 		Store:     arrayStore,
 		Generator: cfggen.NewGenerator(configRoot),
@@ -204,7 +208,7 @@ func run(cfg config) error {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
 
-	arraySeq, err := newArraySequence(ctx, scheduler, arrayStore, linuxDisks, linuxDisks.Exec)
+	arraySeq, err := newArraySequence(ctx, scheduler, arrayStore, disks, linuxDisks.Exec)
 	if err != nil {
 		return fmt.Errorf("building array stop/start sequence: %w", err)
 	}
@@ -219,7 +223,14 @@ func run(cfg config) error {
 		defer func() { _ = metricsStore.Close() }()
 	}
 
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Disks: linuxDisks, Array: arraySeq, Metrics: metricsStore}
+	parityEngine, err := newSnapraidEngine(configRoot, cfg.stateDir, nil)
+	if err != nil {
+		return fmt.Errorf("opening snapraid.conf: %w", err)
+	}
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history}
+	if parityEngine != nil {
+		handler.ParityGuard = parityEngine.Guard
+	}
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
@@ -245,8 +256,8 @@ func run(cfg config) error {
 	}
 	applySocketGroupPermissions(cfg.socketPath)
 
-	pruneOnce(ctx, jobStore, logs, authStore)
-	go runDailyPrune(ctx, jobStore, logs, authStore)
+	pruneOnce(ctx, jobStore, logs, authStore, history)
+	go runDailyPrune(ctx, jobStore, logs, authStore, history)
 	go runNotifyDeliveryLoop(ctx, notifyService, notifyDeliveryInterval, notifyDeliveryBatchLimit)
 
 	errCh := make(chan error, 2)
@@ -455,10 +466,11 @@ func buildTCPListener(cfg config) (net.Listener, error) {
 
 // pruneOnce runs every retention sweep this daemon does on its own state
 // (never a data disk — CLAUDE.md's "nothing on a timer walks a data
-// disk" doesn't apply to any of this): job logs (Q74) and expired
-// sessions, which otherwise accumulate in the sessions table forever
-// since nothing else ever deletes a row past its own expiry.
-func pruneOnce(ctx context.Context, jobStore *job.Store, logs *job.LogStore, authStore *api.AuthStore) {
+// disk" doesn't apply to any of this): job logs (Q74), spin-state events
+// and audit-log rows, and expired sessions, which otherwise accumulate
+// in the central database forever since nothing else ever deletes them
+// past their own retention.
+func pruneOnce(ctx context.Context, jobStore *job.Store, logs *job.LogStore, authStore *api.AuthStore, history *store.History) {
 	active, err := activeJobIDs(ctx, jobStore)
 	if err != nil {
 		log.Printf("hoservad: listing active jobs for log retention: %v", err)
@@ -469,9 +481,13 @@ func pruneOnce(ctx context.Context, jobStore *job.Store, logs *job.LogStore, aut
 	if err := authStore.DeleteExpiredSessions(ctx, time.Now()); err != nil {
 		log.Printf("hoservad: pruning expired sessions: %v", err)
 	}
+
+	if err := history.PruneHistory(ctx, time.Now()); err != nil {
+		log.Printf("hoservad: pruning spin-state events and audit log: %v", err)
+	}
 }
 
-func runDailyPrune(ctx context.Context, jobStore *job.Store, logs *job.LogStore, authStore *api.AuthStore) {
+func runDailyPrune(ctx context.Context, jobStore *job.Store, logs *job.LogStore, authStore *api.AuthStore, history *store.History) {
 	ticker := time.NewTicker(logPruneInterval)
 	defer ticker.Stop()
 	for {
@@ -479,7 +495,7 @@ func runDailyPrune(ctx context.Context, jobStore *job.Store, logs *job.LogStore,
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			pruneOnce(ctx, jobStore, logs, authStore)
+			pruneOnce(ctx, jobStore, logs, authStore, history)
 		}
 	}
 }

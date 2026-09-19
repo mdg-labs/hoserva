@@ -210,6 +210,17 @@ func (UnimplementedHandler) GetQuietHours(ctx context.Context) (r *NotificationQ
 	return r, ht.ErrNotImplemented
 }
 
+// GetSchedules implements getSchedules operation.
+//
+// The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with
+// server-computed next-run times, human-readable schedule previews and conflict warnings from
+// DetectConflict (doc 01 §4). Chain step order is server-defined and not writable.
+//
+// GET /settings/schedules
+func (UnimplementedHandler) GetSchedules(ctx context.Context) (r *Schedules, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetSetupStatus implements getSetupStatus operation.
 //
 // Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are
@@ -458,6 +469,17 @@ func (UnimplementedHandler) UpdateGeneralSettings(ctx context.Context, req *Upda
 	return r, ht.ErrNotImplemented
 }
 
+// UpdateMaintenanceChainSchedule implements updateMaintenanceChainSchedule operation.
+//
+// Persists the chain's start time, weekly scrub day and per-step enabled flags (doc 03 §8.4). Step
+// order is fixed by Q30 and cannot be changed. Omitted step entries leave that step's enabled state
+// unchanged.
+//
+// PUT /settings/schedules/chain
+func (UnimplementedHandler) UpdateMaintenanceChainSchedule(ctx context.Context, req *UpdateMaintenanceChainScheduleRequest) (r *Schedules, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // UpdateNotificationChannel implements updateNotificationChannel operation.
 //
 // A full replace, like the request body of createNotificationChannel: every type-specific field the
@@ -490,6 +512,16 @@ func (UnimplementedHandler) UpdateNotificationRoute(ctx context.Context, req *Up
 //
 // PUT /notifications/quiet-hours
 func (UnimplementedHandler) UpdateQuietHours(ctx context.Context, req *UpdateQuietHoursRequest) (r *NotificationQuietHours, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateScheduledJob implements updateScheduledJob operation.
+//
+// Persists enabled state, frequency and start time for one of the recurring jobs outside the nightly
+// chain (doc 03 §8.4).
+//
+// PUT /settings/schedules/jobs/{jobId}
+func (UnimplementedHandler) UpdateScheduledJob(ctx context.Context, req *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (r *Schedules, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
