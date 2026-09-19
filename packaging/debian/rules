@@ -33,6 +33,7 @@ override_dh_auto_test:
 override_dh_auto_install:
 	install -D -m0755 hoservad debian/hoserva/usr/bin/hoservad
 	install -D -m0755 hoserva debian/hoserva/usr/bin/hoserva
+	install -D -m0644 debian/51hoserva-unattended-upgrades debian/hoserva/etc/apt/apt.conf.d/51hoserva-unattended-upgrades
 
 # hoservad and hoserva are fully static (CGO_ENABLED=0, modernc.org/sqlite
 # is pure Go) — there is nothing for dpkg-shlibdeps to scan, and no

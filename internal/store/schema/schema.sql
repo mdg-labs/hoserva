@@ -20,7 +20,10 @@ CREATE TABLE schema_info (
     created_at TEXT NOT NULL,
     hostname TEXT,
     timezone TEXT,
-    backup_passphrase BLOB
+    backup_passphrase BLOB,
+    update_channel TEXT NOT NULL DEFAULT 'stable' CHECK (update_channel IN ('stable', 'beta')),
+    update_check_enabled INTEGER NOT NULL DEFAULT 1 CHECK (update_check_enabled IN (0, 1)),
+    previous_version TEXT
 ) STRICT;
 
 -- Jobs (#19, doc 01 §4): the persisted record behind every long-running

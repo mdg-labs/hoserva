@@ -137,12 +137,15 @@ type ScheduleJob struct {
 }
 
 type SchemaInfo struct {
-	ID               int64          `json:"id"`
-	InstallationID   string         `json:"installation_id"`
-	CreatedAt        string         `json:"created_at"`
-	Hostname         sql.NullString `json:"hostname"`
-	Timezone         sql.NullString `json:"timezone"`
-	BackupPassphrase []byte         `json:"backup_passphrase"`
+	ID                 int64          `json:"id"`
+	InstallationID     string         `json:"installation_id"`
+	CreatedAt          string         `json:"created_at"`
+	Hostname           sql.NullString `json:"hostname"`
+	Timezone           sql.NullString `json:"timezone"`
+	BackupPassphrase   []byte         `json:"backup_passphrase"`
+	UpdateChannel      string         `json:"update_channel"`
+	UpdateCheckEnabled int64          `json:"update_check_enabled"`
+	PreviousVersion    sql.NullString `json:"previous_version"`
 }
 
 type Session struct {

@@ -37,7 +37,7 @@ Depends: adduser, mergerfs (>= 2.40.2), snapraid (>= 12.4), smartmontools, hdpar
 # a dependency here (D8): it is a prerequisite the user installs from
 # Docker's own repository, checked and reported by `hoservad`/`hoserva
 # doctor`, not something this package pulls in.
-Recommends: rclone
+Recommends: rclone, unattended-upgrades
 Description: Home server management for mixed-size disks
  Hoserva is a management layer over mergerfs and SnapRAID: a daemon, CLI
  and web UI that pool mismatched drives behind one mergerfs mount, keep

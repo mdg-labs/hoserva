@@ -13,6 +13,13 @@ var storageClasses = map[Class]bool{
 	ClassTopology:   true,
 }
 
+// IsStorageClass reports whether c is one of doc 01 §4's three storage
+// classes — Parity, Array-write or Topology. Self-update, rollback and
+// reboot consult this so they never run over a live sync (Q67, Q68).
+func IsStorageClass(c Class) bool {
+	return storageClasses[c]
+}
+
 // conflicts reports whether a job of class/scope a and a job of
 // class/scope b may never run at the same time, per doc 01 §4's
 // mutually-exclusive-class table:
