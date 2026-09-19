@@ -48,9 +48,22 @@ func TestJournal_CountsDistinctEntries(t *testing.T) {
 	// distinct changed files, not raw event volume.
 	pushOne(w, "/mnt/disk1", ChangeEvent{Kind: ChangeCloseWrite, ID: "dir1/a.txt", Name: "a.txt"})
 
+	// Count reaching 2 only means the two distinct entries exist — it says
+	// nothing about whether the third event (a.txt's close-write, which
+	// updates an existing entry rather than changing the count) has been
+	// applied yet. Poll the actual end condition instead: a.txt's kind has
+	// become ChangeCloseWrite.
 	waitFor(t, time.Second, func() bool {
-		s, err := j.Summary("disk1")
-		return err == nil && s.Count == 2
+		files, err := j.Files("disk1")
+		if err != nil {
+			return false
+		}
+		for _, f := range files {
+			if f.Name == "a.txt" {
+				return f.Kind == ChangeCloseWrite
+			}
+		}
+		return false
 	})
 
 	files, err := j.Files("disk1")
