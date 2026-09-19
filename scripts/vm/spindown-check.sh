@@ -49,20 +49,20 @@ vm_domain_running "$VM_DOMAIN" || die "domain '$VM_DOMAIN' is not running — ru
 # A virtio-blk device's own exported serial is truncated by the guest
 # kernel to VIRTIO_BLK_ID_BYTES (20 bytes, include/uapi/linux/virtio_blk.h)
 # before it ever reaches the guest's /sys/block/<dev>/serial — confirmed
-# directly against a real VM, where create-vm.sh's own 21-byte
-# "hoserva-$HOSERVA_LAB_ID-parity1" serial (for lab id 33-a1) reaches the
-# guest as the 20-byte "hoserva-33-a1-parity". That truncation point
-# depends on $HOSERVA_LAB_ID's own length, so no fixed-length guest-side
-# pattern is safe for every lab id this harness can be given — a longer
-# id (this project's own nightly shape, doc 08 Spike 1's L3 addendum)
-# truncates the disk-role suffix away entirely, and a shorter one changes
-# which characters survive. Disks are discovered from the live domain
-# definition instead: libvirt's own dumpxml holds the exact, untruncated
-# <serial> create-vm.sh wrote, so this never touches the guest's
-# (potentially-truncated) copy or depends on $HOSERVA_LAB_ID's length at
-# all. Matched against each disk's own <target dev='vdX'/> rather than
-# any assumption about device enumeration order beyond what create-vm.sh
-# itself already relies on (ascending PCI slot per array disk).
+# directly against a real VM. create-vm.sh leads each array disk's
+# <serial> with its own disk_name and trails it with $HOSERVA_LAB_ID (not
+# the reverse) for exactly this reason: $HOSERVA_LAB_ID's length is
+# unbounded (this project's own nightly shape is far longer than a
+# short, hand-picked lab id), so a leading lab id can push the
+# disk-identifying suffix past the truncation point entirely, colliding
+# every array disk onto the same guest-side serial. Disks are discovered
+# from the live domain definition instead: libvirt's own dumpxml holds
+# the exact, untruncated <serial> create-vm.sh wrote, so this never
+# touches the guest's (potentially-truncated) copy or depends on
+# $HOSERVA_LAB_ID's length at all. Matched against each disk's own
+# <target dev='vdX'/> rather than any assumption about device enumeration
+# order beyond what create-vm.sh itself already relies on (ascending PCI
+# slot per array disk).
 echo "spindown-check[$HOSERVA_LAB_ID]: discovering array disks from the live domain XML (never the guest's own, virtio-blk-truncated serial)"
 DOMXML="$(virsh -c "$VM_CONNECT" dumpxml "$VM_DOMAIN")" || die "could not read domain XML for '$VM_DOMAIN'"
 
@@ -83,10 +83,10 @@ while IFS= read -r line; do
   if [[ "$line" == *'</disk>'* ]]; then
     if [[ -n "$dev" && -n "$serial" ]]; then
       case "$serial" in
-        "hoserva-$HOSERVA_LAB_ID-cache")
+        "cache-hoserva-$HOSERVA_LAB_ID")
           CACHE_DEVS+=("$dev")
           ;;
-        "hoserva-$HOSERVA_LAB_ID-parity"*|"hoserva-$HOSERVA_LAB_ID-disk"*)
+        "parity"*"-hoserva-$HOSERVA_LAB_ID"|"disk"*"-hoserva-$HOSERVA_LAB_ID")
           ARRAY_DEVS+=("$dev")
           ;;
       esac
@@ -96,7 +96,7 @@ while IFS= read -r line; do
   fi
 done <<<"$DOMXML"
 
-[[ "${#ARRAY_DEVS[@]}" -gt 0 ]] || die "no array disks found in the domain XML for '$VM_DOMAIN' with a hoserva-$HOSERVA_LAB_ID-{parity,disk}* serial — is this the right domain?"
+[[ "${#ARRAY_DEVS[@]}" -gt 0 ]] || die "no array disks found in the domain XML for '$VM_DOMAIN' with a {parity,disk}*-hoserva-$HOSERVA_LAB_ID serial — is this the right domain?"
 echo "spindown-check[$HOSERVA_LAB_ID]: array disks: ${ARRAY_DEVS[*]}; cache disk(s): ${CACHE_DEVS[*]:-none}"
 
 echo "spindown-check[$HOSERVA_LAB_ID]: ensuring smartctl is present on the guest"
@@ -105,9 +105,11 @@ vm_ssh 'command -v smartctl >/dev/null 2>&1 || (sudo apt-get update -qq && sudo 
 # smartd's own default periodic scan (enabled by the smartmontools
 # package itself) is one of doc 08's own named culprits ("the SMART
 # polling loop itself") — disabled here so it cannot contaminate this
-# measurement of hoservad's own poller command. Hoserva's packaging not
-# depending on or disabling this on install is a separate, real gap
-# (packaging/ is outside this issue's scope) — recorded, not fixed, here.
+# measurement of hoservad's own poller command. Hoserva's packaging
+# (packaging/debian/postinst) now masks and stops this service on install
+# (#161); it is disabled here too because this script measures
+# hoservad's own poller command in isolation, independent of what
+# packaging does on a real install.
 vm_ssh 'sudo systemctl disable --now smartmontools >/dev/null 2>&1 || true'
 
 snapshot_stats() {

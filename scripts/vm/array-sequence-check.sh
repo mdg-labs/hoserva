@@ -98,7 +98,7 @@ while IFS= read -r line; do
     slot="${BASH_REMATCH[1]}"
   fi
   if [[ "$line" == *'</disk>'* ]]; then
-    if [[ -n "$dev" && -n "$serial" && -n "$slot" && "$serial" == "hoserva-$HOSERVA_LAB_ID-"* ]]; then
+    if [[ -n "$dev" && -n "$serial" && -n "$slot" && "$serial" == *"-hoserva-$HOSERVA_LAB_ID" ]]; then
       ARRAY_DEVS+=("$dev:$serial:$slot")
     fi
     dev=""
@@ -114,15 +114,15 @@ echo "array-sequence-check[$HOSERVA_LAB_ID]: array disks: ${ARRAY_DEVS[*]}"
 # parsed above (ARRAY_DEVS), never from the guest's own copy: a virtio-blk
 # device's exported serial is truncated by the guest kernel to
 # VIRTIO_BLK_ID_BYTES (20 bytes, include/uapi/linux/virtio_blk.h) before
-# it ever reaches /sys/class/block/<dev>/serial, and that truncation point
-# depends on $HOSERVA_LAB_ID's own length — this project's own nightly
-# lab id ("nightly-<run_id>-<attempt>") is long enough that every array
-# disk's serial collides on the guest's truncated copy, which would make
-# every disk look identical to this script and the L3 test it drives.
-# This is exactly the hazard scripts/vm/spindown-check.sh's own device
-# discovery already avoids the same way: read the untruncated <serial>
-# from `virsh dumpxml`, never touch the guest's own (potentially-
-# truncated) copy at all.
+# it ever reaches /sys/class/block/<dev>/serial. create-vm.sh's own
+# disk_name-leads-$HOSERVA_LAB_ID serial ordering keeps every array disk
+# distinct within that 20-byte window regardless of $HOSERVA_LAB_ID's
+# length (this project's own nightly lab id, "nightly-<run_id>-<attempt>",
+# included) — but this script still reads the untruncated <serial> from
+# `virsh dumpxml` rather than the guest's own (truncated) copy, the same
+# way scripts/vm/spindown-check.sh's own device discovery does, so
+# neither depends on that ordering surviving future changes to either
+# script.
 EXPECTED_SERIALS=""
 for entry in "${ARRAY_DEVS[@]}"; do
   rest="${entry#*:}"       # "serial:slot"
@@ -131,7 +131,7 @@ done
 echo "array-sequence-check[$HOSERVA_LAB_ID]: expected serials (untruncated, from the domain XML): $EXPECTED_SERIALS"
 
 # The first genuinely data-role array disk (create-vm.sh's own "diskN"
-# serial suffix, e.g. vdc for "disk1") — parity1 is declared first in
+# serial prefix, e.g. vdc for "disk1") — parity1 is declared first in
 # ARRAY_DEVS (create-vm.sh's own disk declaration order) and is
 # deliberately not the one detached here, since detaching it would not
 # exercise "a real data disk is missing", which is what this scenario and
@@ -144,7 +144,7 @@ for entry in "${ARRAY_DEVS[@]}"; do
   rest="${entry#*:}"                # "serial:slot"
   candidate_serial="${rest%:*}"
   case "$candidate_serial" in
-    "hoserva-$HOSERVA_LAB_ID-disk"*)
+    "disk"*"-hoserva-$HOSERVA_LAB_ID")
       DETACH_TARGET="${entry%%:*}"
       DETACH_SERIAL="$candidate_serial"
       DETACH_SLOT="${rest##*:}"
@@ -152,7 +152,7 @@ for entry in "${ARRAY_DEVS[@]}"; do
       ;;
   esac
 done
-[[ -n "$DETACH_TARGET" ]] || die "no data-role (hoserva-$HOSERVA_LAB_ID-disk*) array disk found in the domain XML to detach — is this domain fresh from 'make vm-up'?"
+[[ -n "$DETACH_TARGET" ]] || die "no data-role (disk*-hoserva-$HOSERVA_LAB_ID) array disk found in the domain XML to detach — is this domain fresh from 'make vm-up'?"
 echo "array-sequence-check[$HOSERVA_LAB_ID]: will detach $DETACH_TARGET (serial $DETACH_SERIAL, PCI slot 0x$DETACH_SLOT) before the next boot"
 
 # The slot:serial mapping the L3 test uses to identify each disk still

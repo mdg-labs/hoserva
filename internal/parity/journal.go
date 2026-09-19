@@ -174,6 +174,13 @@ type Journal struct {
 	now             Clock
 	persistInterval time.Duration
 
+	// onBeforeWrite, when set, runs inside persist immediately before the
+	// disk write — a test seam only (#167's own race test uses it to force
+	// a debounced persist and ResetSince's persist to overlap on demand,
+	// rather than relying on scheduling luck); production code never sets
+	// it.
+	onBeforeWrite func(diskID string)
+
 	mu    sync.Mutex
 	disks map[string]*diskJournal
 }
@@ -208,6 +215,15 @@ type diskJournal struct {
 	persistErr    error
 	dirty         bool      // true when in-memory state has changed since the last write to disk.
 	lastPersistAt time.Time // zero until the first successful (or attempted) persist.
+
+	// writeMu serializes persist's whole snapshot-and-write sequence for
+	// this disk (#167): held across both the dj.mu snapshot capture and
+	// the disk write, so two persist calls for the same disk — e.g.
+	// readLoop's debounced one racing ResetSince's own — can never have
+	// their writeSnapshotAtomic calls in flight at once. Separate from
+	// dj.mu so the write itself never extends dj.mu's hold time and stalls
+	// the fanotify read loop.
+	writeMu sync.Mutex
 }
 
 // AddDisk starts tracking diskID at mountpoint: it arms a mark and, if a
@@ -344,14 +360,32 @@ func (j *Journal) readLoop(diskID string, dj *diskJournal) {
 // persist writes dj's current state to disk unconditionally, recording
 // when it did so (for the next batch's debounce check) and clearing
 // dirty. A no-op when this Journal has no root (persistence disabled).
+//
+// dj.writeMu holds the whole snapshot-and-write sequence, not just the
+// dj.mu snapshot capture: without it, two concurrent persist calls for the
+// same disk each capture and write their own snapshot independently, and
+// whichever writeSnapshotAtomic rename lands on disk last wins —
+// regardless of which snapshot is logically newer (#167, e.g. readLoop's
+// debounced persist racing ResetSince's). Serializing the whole sequence
+// per disk makes persist calls fully ordered: a later call's snapshot,
+// captured under dj.mu after the earlier call released writeMu, always
+// reflects everything the earlier call could have seen, so the write that
+// actually lands last is always the persist call that ran last — never a
+// function of disk I/O scheduling.
 func (j *Journal) persist(diskID string, dj *diskJournal) {
 	if j.root == "" {
 		return
 	}
+	dj.writeMu.Lock()
+	defer dj.writeMu.Unlock()
+
 	dj.mu.Lock()
 	snap := dj.snapshotLocked(j.now())
 	dj.mu.Unlock()
 
+	if j.onBeforeWrite != nil {
+		j.onBeforeWrite(diskID)
+	}
 	err := writeSnapshotAtomic(j.root, diskID, snap)
 
 	dj.mu.Lock()
