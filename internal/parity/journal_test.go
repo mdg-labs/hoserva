@@ -473,16 +473,28 @@ func TestJournal_ResetSince_OutlastsInFlightDebouncedPersist(t *testing.T) {
 	var firstOnce sync.Once
 	release := make(chan struct{})
 	paused := make(chan struct{})
-	var pauseOnce sync.Once
+	secondEntered := make(chan struct{})
+	var armedInvocations atomic.Int32
 	j.onBeforeWrite = func(string) {
 		if !armed.Load() {
 			firstOnce.Do(func() { close(firstPersisted) })
 			return
 		}
-		pauseOnce.Do(func() {
+		// Only the first armed invocation (readLoop's stale, debounced
+		// persist) blocks here. A single sync.Once shared across both
+		// invocations would serialize them itself — Do's internal mutex
+		// blocks any concurrent caller until the first's f returns,
+		// regardless of writeMu — which let this test pass even with
+		// writeMu removed (review finding on #171). The second
+		// invocation instead signals its own entry immediately and
+		// returns, so the test can tell writeMu's serialization apart
+		// from this hook accidentally providing its own.
+		if armedInvocations.Add(1) == 1 {
 			close(paused)
 			<-release
-		})
+			return
+		}
+		close(secondEntered)
 	}
 
 	t.Cleanup(func() { _ = j.Close() })
@@ -515,10 +527,15 @@ func TestJournal_ResetSince_OutlastsInFlightDebouncedPersist(t *testing.T) {
 		close(resetDone)
 	}()
 
-	// ResetSince's own persist call must be unable to complete while the
-	// stale one is still holding dj.writeMu — give it a moment to prove
-	// it's genuinely blocked, not just not yet scheduled.
+	// ResetSince's own persist call must be unable to even reach
+	// onBeforeWrite while the stale one is still holding dj.writeMu —
+	// give it a moment to prove it's genuinely blocked on writeMu.Lock,
+	// not just not yet scheduled. Checking secondEntered rather than
+	// resetDone is what makes this distinguish writeMu's serialization
+	// from the onBeforeWrite hook's own (removed above).
 	select {
+	case <-secondEntered:
+		t.Fatal("ResetSince's persist reached onBeforeWrite while the debounced write still held dj.writeMu — not serialized")
 	case <-resetDone:
 		t.Fatal("ResetSince's persist completed while the debounced write was still in flight — not serialized")
 	case <-time.After(50 * time.Millisecond):
