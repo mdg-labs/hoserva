@@ -76,6 +76,13 @@ type Handler interface {
 	//
 	// GET /auth/session
 	GetCurrentSession(ctx context.Context) (*User, error)
+	// GetGeneralSettings implements getGeneralSettings operation.
+	//
+	// Hostname, timezone and whether a backup passphrase is configured (doc 03 §1, §8.1). The passphrase
+	// itself is never returned (Q28).
+	//
+	// GET /settings/general
+	GetGeneralSettings(ctx context.Context) (*GeneralSettings, error)
 	// GetJob implements getJob operation.
 	//
 	// A single job's current state, by id.
@@ -234,6 +241,14 @@ type Handler interface {
 	//
 	// POST /users/{username}/unlock
 	UnlockUser(ctx context.Context, params UnlockUserParams) error
+	// UpdateGeneralSettings implements updateGeneralSettings operation.
+	//
+	// Persists hostname, timezone and/or the backup passphrase. Each field is optional: omitted leaves
+	// that value unchanged. An empty `hostname` clears a previously set hostname. `backupPassphrase` is
+	// write-only and never echoed back — skipping it during onboarding is valid (Q28).
+	//
+	// PUT /settings/general
+	UpdateGeneralSettings(ctx context.Context, req *UpdateGeneralSettingsRequest) (*GeneralSettings, error)
 	// UpdateNotificationChannel implements updateNotificationChannel operation.
 	//
 	// A full replace, like the request body of createNotificationChannel: every type-specific field the

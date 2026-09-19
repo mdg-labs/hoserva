@@ -17,7 +17,10 @@
 CREATE TABLE schema_info (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     installation_id TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    hostname TEXT,
+    timezone TEXT,
+    backup_passphrase BLOB
 ) STRICT;
 
 -- Jobs (#19, doc 01 §4): the persisted record behind every long-running

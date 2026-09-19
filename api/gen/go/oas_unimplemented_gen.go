@@ -108,6 +108,16 @@ func (UnimplementedHandler) GetCurrentSession(ctx context.Context) (r *User, _ e
 	return r, ht.ErrNotImplemented
 }
 
+// GetGeneralSettings implements getGeneralSettings operation.
+//
+// Hostname, timezone and whether a backup passphrase is configured (doc 03 §1, §8.1). The passphrase
+// itself is never returned (Q28).
+//
+// GET /settings/general
+func (UnimplementedHandler) GetGeneralSettings(ctx context.Context) (r *GeneralSettings, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetJob implements getJob operation.
 //
 // A single job's current state, by id.
@@ -330,6 +340,17 @@ func (UnimplementedHandler) StartSync(ctx context.Context, req *StartSyncRequest
 // POST /users/{username}/unlock
 func (UnimplementedHandler) UnlockUser(ctx context.Context, params UnlockUserParams) error {
 	return ht.ErrNotImplemented
+}
+
+// UpdateGeneralSettings implements updateGeneralSettings operation.
+//
+// Persists hostname, timezone and/or the backup passphrase. Each field is optional: omitted leaves
+// that value unchanged. An empty `hostname` clears a previously set hostname. `backupPassphrase` is
+// write-only and never echoed back — skipping it during onboarding is valid (Q28).
+//
+// PUT /settings/general
+func (UnimplementedHandler) UpdateGeneralSettings(ctx context.Context, req *UpdateGeneralSettingsRequest) (r *GeneralSettings, _ error) {
+	return r, ht.ErrNotImplemented
 }
 
 // UpdateNotificationChannel implements updateNotificationChannel operation.

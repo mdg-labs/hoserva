@@ -241,6 +241,28 @@ export function WelcomePage(): React.ReactElement {
           return;
         }
       }
+
+      const settingsBody: {
+        hostname?: string;
+        timezone?: string;
+        backupPassphrase?: string;
+      } = {
+        timezone,
+      };
+      if (hostname.trim().length > 0) {
+        settingsBody.hostname = hostname.trim();
+      }
+      if (!skipBackupPassphrase && backupPassphrase.length > 0) {
+        settingsBody.backupPassphrase = backupPassphrase;
+      }
+      const { error: settingsError } = await hoservaClient.PUT("/settings/general", {
+        body: settingsBody,
+      });
+      if (settingsError) {
+        setError(settingsError.message);
+        return;
+      }
+
       setStep(3);
     } finally {
       setLoading(false);

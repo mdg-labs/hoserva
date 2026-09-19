@@ -209,7 +209,14 @@ func (s *AuthStore) HasEncryptedSecrets(ctx context.Context) (bool, error) {
 	if hasTOTP {
 		return true, nil
 	}
-	return s.q.HasEncryptedNotifySecrets(ctx)
+	hasNotify, err := s.q.HasEncryptedNotifySecrets(ctx)
+	if err != nil {
+		return false, err
+	}
+	if hasNotify {
+		return true, nil
+	}
+	return s.q.HasEncryptedBackupPassphrase(ctx)
 }
 
 // KeyCheckValue implements auth.MachineKeyStore.

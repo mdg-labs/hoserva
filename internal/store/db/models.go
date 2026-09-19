@@ -85,9 +85,12 @@ type NotifyRoute struct {
 }
 
 type SchemaInfo struct {
-	ID             int64  `json:"id"`
-	InstallationID string `json:"installation_id"`
-	CreatedAt      string `json:"created_at"`
+	ID               int64          `json:"id"`
+	InstallationID   string         `json:"installation_id"`
+	CreatedAt        string         `json:"created_at"`
+	Hostname         sql.NullString `json:"hostname"`
+	Timezone         sql.NullString `json:"timezone"`
+	BackupPassphrase []byte         `json:"backup_passphrase"`
 }
 
 type Session struct {

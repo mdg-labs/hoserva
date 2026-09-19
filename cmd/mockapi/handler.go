@@ -51,7 +51,8 @@ type handler struct {
 	notifyMu   sync.Mutex
 	channels   map[uuid.UUID]apiv1.NotificationChannel
 	routing    map[apiv1.NotificationEventType]apiv1.NotificationRoutingEntry
-	quietHours apiv1.NotificationQuietHours
+	quietHours      apiv1.NotificationQuietHours
+	generalSettings apiv1.GeneralSettings
 }
 
 var _ apiv1.Handler = (*handler)(nil)

@@ -169,6 +169,8 @@ func run(cfg config) error {
 	notifyStore := notify.NewStore(db)
 	notifyService := notify.NewService(notifyStore, machineKey, notify.DefaultSenders(&http.Client{Timeout: notifyHTTPTimeout}))
 
+	settingsService := api.NewSettingsService(api.NewSettingsStore(db), machineKey)
+
 	logsDir := filepath.Join(cfg.stateDir, "jobs")
 	jobStore := job.NewStore(db)
 	logs := job.NewLogStore(logsDir)
@@ -179,7 +181,7 @@ func run(cfg config) error {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
 
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService}
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService}
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
