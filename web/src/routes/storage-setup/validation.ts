@@ -1,12 +1,6 @@
 import type { components } from "@/lib/api/client";
 
-export type DiskEntry = components["schemas"]["DiskInventoryEntry"] & {
-  filesystem?: string;
-  label?: string;
-  smartStatus?: string;
-  containsData?: boolean;
-  looksLikeUnraid?: boolean;
-};
+export type DiskEntry = components["schemas"]["DiskInventoryEntry"];
 
 export type DiskRole = "parity" | "data" | "cache" | "ignore" | "unassigned";
 
@@ -132,6 +126,10 @@ export function disksToErase(
       erased.push(disk.device);
       continue;
     }
+    if (role === "cache" && filesystemChoices[disk.device] !== "keep") {
+      erased.push(disk.device);
+      continue;
+    }
     if (role === "data" && filesystemChoices[disk.device] !== "keep") {
       erased.push(disk.device);
     }
@@ -141,11 +139,63 @@ export function disksToErase(
 
 export function buildConfirmPhrase(devices: string[]): string {
   if (devices.length === 0) {
-    return "";
+    return "ADOPT ONLY — NOTHING ERASED";
   }
-  return `erase ${devices.join(", ")}`;
+  return `ERASE ${devices.join(", ")}`;
 }
 
 export function typedConfirmMatches(value: string, phrase: string): boolean {
   return value === phrase;
+}
+
+type ArrayDiskFilesystem = components["schemas"]["ArrayDiskFilesystem"];
+
+export function assignmentFilesystem(
+  disk: DiskEntry,
+  role: DiskRole,
+  choice: FilesystemChoice,
+): { filesystem: ArrayDiskFilesystem; adopt: boolean } {
+  if (role === "parity") {
+    return { filesystem: "xfs", adopt: false };
+  }
+  if ((role === "data" || role === "cache") && choice === "keep" && canKeepFilesystem(disk)) {
+    const normalized = disk.filesystem?.toLowerCase() ?? "";
+    if (normalized.includes("btrfs")) {
+      return { filesystem: "btrfs", adopt: true };
+    }
+    if (normalized.includes("ext4")) {
+      return { filesystem: "ext4", adopt: true };
+    }
+    return { filesystem: "xfs", adopt: true };
+  }
+  return { filesystem: "xfs", adopt: false };
+}
+
+export function buildCreateArrayRequest(
+  disks: DiskEntry[],
+  roles: Record<string, DiskRole>,
+  filesystemChoices: Record<string, FilesystemChoice>,
+  createPolicy: CreatePolicy,
+  minFreeSpaceGb: number,
+  confirmation: string,
+): components["schemas"]["CreateArrayRequest"] {
+  const assignments: components["schemas"]["ArrayDiskAssignment"][] = [];
+  for (const disk of assignableDisks(disks)) {
+    const role = roles[disk.device];
+    if (role !== "parity" && role !== "data" && role !== "cache") {
+      continue;
+    }
+    const { filesystem, adopt } = assignmentFilesystem(
+      disk,
+      role,
+      filesystemChoices[disk.device] ?? "format",
+    );
+    assignments.push({ device: disk.device, role, filesystem, adopt });
+  }
+  return {
+    disks: assignments,
+    createPolicy,
+    minFreeSpace: `${minFreeSpaceGb}G`,
+    confirmation,
+  };
 }

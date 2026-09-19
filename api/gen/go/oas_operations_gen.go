@@ -8,6 +8,7 @@ type OperationName = string
 const (
 	CancelJobOperation                 OperationName = "CancelJob"
 	ConfirmTotpOperation               OperationName = "ConfirmTotp"
+	CreateArrayOperation               OperationName = "CreateArray"
 	CreateFirstAdminOperation          OperationName = "CreateFirstAdmin"
 	CreateNotificationChannelOperation OperationName = "CreateNotificationChannel"
 	DeleteNotificationChannelOperation OperationName = "DeleteNotificationChannel"

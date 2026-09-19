@@ -14,6 +14,437 @@ import (
 	"github.com/ogen-go/ogen/validate"
 )
 
+// Encode encodes ArrayCreatePolicy as json.
+func (s ArrayCreatePolicy) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ArrayCreatePolicy from json.
+func (s *ArrayCreatePolicy) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ArrayCreatePolicy to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ArrayCreatePolicy(v) {
+	case ArrayCreatePolicyMspmfs:
+		*s = ArrayCreatePolicyMspmfs
+	case ArrayCreatePolicyMfs:
+		*s = ArrayCreatePolicyMfs
+	case ArrayCreatePolicyLfs:
+		*s = ArrayCreatePolicyLfs
+	case ArrayCreatePolicyFf:
+		*s = ArrayCreatePolicyFf
+	default:
+		*s = ArrayCreatePolicy(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ArrayCreatePolicy) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ArrayCreatePolicy) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ArrayDiskAssignment) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ArrayDiskAssignment) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("device")
+		e.Str(s.Device)
+	}
+	{
+		e.FieldStart("role")
+		s.Role.Encode(e)
+	}
+	{
+		if s.Filesystem.Set {
+			e.FieldStart("filesystem")
+			s.Filesystem.Encode(e)
+		}
+	}
+	{
+		if s.Adopt.Set {
+			e.FieldStart("adopt")
+			s.Adopt.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfArrayDiskAssignment = [4]string{
+	0: "device",
+	1: "role",
+	2: "filesystem",
+	3: "adopt",
+}
+
+// Decode decodes ArrayDiskAssignment from json.
+func (s *ArrayDiskAssignment) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ArrayDiskAssignment to nil")
+	}
+	var requiredBitSet [1]uint8
+	s.setDefaults()
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "device":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Device = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"device\"")
+			}
+		case "role":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Role.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"role\"")
+			}
+		case "filesystem":
+			if err := func() error {
+				s.Filesystem.Reset()
+				if err := s.Filesystem.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"filesystem\"")
+			}
+		case "adopt":
+			if err := func() error {
+				s.Adopt.Reset()
+				if err := s.Adopt.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"adopt\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ArrayDiskAssignment")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfArrayDiskAssignment) {
+					name = jsonFieldsNameOfArrayDiskAssignment[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ArrayDiskAssignment) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ArrayDiskAssignment) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ArrayDiskFilesystem as json.
+func (s ArrayDiskFilesystem) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ArrayDiskFilesystem from json.
+func (s *ArrayDiskFilesystem) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ArrayDiskFilesystem to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ArrayDiskFilesystem(v) {
+	case ArrayDiskFilesystemXfs:
+		*s = ArrayDiskFilesystemXfs
+	case ArrayDiskFilesystemExt4:
+		*s = ArrayDiskFilesystemExt4
+	case ArrayDiskFilesystemBtrfs:
+		*s = ArrayDiskFilesystemBtrfs
+	default:
+		*s = ArrayDiskFilesystem(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ArrayDiskFilesystem) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ArrayDiskFilesystem) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ArrayDiskRole as json.
+func (s ArrayDiskRole) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ArrayDiskRole from json.
+func (s *ArrayDiskRole) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ArrayDiskRole to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ArrayDiskRole(v) {
+	case ArrayDiskRoleParity:
+		*s = ArrayDiskRoleParity
+	case ArrayDiskRoleData:
+		*s = ArrayDiskRoleData
+	case ArrayDiskRoleCache:
+		*s = ArrayDiskRoleCache
+	default:
+		*s = ArrayDiskRole(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ArrayDiskRole) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ArrayDiskRole) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *CreateArrayRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CreateArrayRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("disks")
+		e.ArrStart()
+		for _, elem := range s.Disks {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+	{
+		if s.CreatePolicy.Set {
+			e.FieldStart("createPolicy")
+			s.CreatePolicy.Encode(e)
+		}
+	}
+	{
+		if s.MinFreeSpace.Set {
+			e.FieldStart("minFreeSpace")
+			s.MinFreeSpace.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("confirmation")
+		e.Str(s.Confirmation)
+	}
+}
+
+var jsonFieldsNameOfCreateArrayRequest = [4]string{
+	0: "disks",
+	1: "createPolicy",
+	2: "minFreeSpace",
+	3: "confirmation",
+}
+
+// Decode decodes CreateArrayRequest from json.
+func (s *CreateArrayRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CreateArrayRequest to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "disks":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				s.Disks = make([]ArrayDiskAssignment, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem ArrayDiskAssignment
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Disks = append(s.Disks, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"disks\"")
+			}
+		case "createPolicy":
+			if err := func() error {
+				s.CreatePolicy.Reset()
+				if err := s.CreatePolicy.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"createPolicy\"")
+			}
+		case "minFreeSpace":
+			if err := func() error {
+				s.MinFreeSpace.Reset()
+				if err := s.MinFreeSpace.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"minFreeSpace\"")
+			}
+		case "confirmation":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Str()
+				s.Confirmation = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"confirmation\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CreateArrayRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00001001,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfCreateArrayRequest) {
+					name = jsonFieldsNameOfCreateArrayRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CreateArrayRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CreateArrayRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode implements json.Marshaler.
 func (s *CreateFirstAdminRequest) Encode(e *jx.Encoder) {
 	e.ObjStart()
@@ -559,17 +990,52 @@ func (s *DiskInventoryEntry) encodeFields(e *jx.Encoder) {
 			s.WeakIdentity.Encode(e)
 		}
 	}
+	{
+		if s.Filesystem.Set {
+			e.FieldStart("filesystem")
+			s.Filesystem.Encode(e)
+		}
+	}
+	{
+		if s.Label.Set {
+			e.FieldStart("label")
+			s.Label.Encode(e)
+		}
+	}
+	{
+		if s.SmartStatus.Set {
+			e.FieldStart("smartStatus")
+			s.SmartStatus.Encode(e)
+		}
+	}
+	{
+		if s.ContainsData.Set {
+			e.FieldStart("containsData")
+			s.ContainsData.Encode(e)
+		}
+	}
+	{
+		if s.LooksLikeUnraid.Set {
+			e.FieldStart("looksLikeUnraid")
+			s.LooksLikeUnraid.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfDiskInventoryEntry = [8]string{
-	0: "device",
-	1: "sizeBytes",
-	2: "model",
-	3: "serial",
-	4: "wwn",
-	5: "boot",
-	6: "failed",
-	7: "weakIdentity",
+var jsonFieldsNameOfDiskInventoryEntry = [13]string{
+	0:  "device",
+	1:  "sizeBytes",
+	2:  "model",
+	3:  "serial",
+	4:  "wwn",
+	5:  "boot",
+	6:  "failed",
+	7:  "weakIdentity",
+	8:  "filesystem",
+	9:  "label",
+	10: "smartStatus",
+	11: "containsData",
+	12: "looksLikeUnraid",
 }
 
 // Decode decodes DiskInventoryEntry from json.
@@ -577,7 +1043,7 @@ func (s *DiskInventoryEntry) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode DiskInventoryEntry to nil")
 	}
-	var requiredBitSet [1]uint8
+	var requiredBitSet [2]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -667,6 +1133,56 @@ func (s *DiskInventoryEntry) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"weakIdentity\"")
 			}
+		case "filesystem":
+			if err := func() error {
+				s.Filesystem.Reset()
+				if err := s.Filesystem.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"filesystem\"")
+			}
+		case "label":
+			if err := func() error {
+				s.Label.Reset()
+				if err := s.Label.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"label\"")
+			}
+		case "smartStatus":
+			if err := func() error {
+				s.SmartStatus.Reset()
+				if err := s.SmartStatus.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"smartStatus\"")
+			}
+		case "containsData":
+			if err := func() error {
+				s.ContainsData.Reset()
+				if err := s.ContainsData.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"containsData\"")
+			}
+		case "looksLikeUnraid":
+			if err := func() error {
+				s.LooksLikeUnraid.Reset()
+				if err := s.LooksLikeUnraid.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"looksLikeUnraid\"")
+			}
 		default:
 			return d.Skip()
 		}
@@ -676,8 +1192,9 @@ func (s *DiskInventoryEntry) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
+	for i, mask := range [2]uint8{
 		0b00100011,
+		0b00000000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -3507,6 +4024,72 @@ func (s *NotificationWebhookMethod) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes ArrayCreatePolicy as json.
+func (o OptArrayCreatePolicy) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes ArrayCreatePolicy from json.
+func (o *OptArrayCreatePolicy) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptArrayCreatePolicy to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptArrayCreatePolicy) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptArrayCreatePolicy) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ArrayDiskFilesystem as json.
+func (o OptArrayDiskFilesystem) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes ArrayDiskFilesystem from json.
+func (o *OptArrayDiskFilesystem) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptArrayDiskFilesystem to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptArrayDiskFilesystem) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptArrayDiskFilesystem) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes bool as json.
 func (o OptBool) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -3607,6 +4190,72 @@ func (s OptInt32) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptInt32) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes JobClass as json.
+func (o OptJobClass) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes JobClass from json.
+func (o *OptJobClass) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptJobClass to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptJobClass) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptJobClass) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes JobStatus as json.
+func (o OptJobStatus) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes JobStatus from json.
+func (o *OptJobStatus) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptJobStatus to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptJobStatus) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptJobStatus) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

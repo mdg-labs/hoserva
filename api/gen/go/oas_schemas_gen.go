@@ -42,8 +42,269 @@ func (s *ApiToken) SetRoles(val []string) {
 	s.Roles = val
 }
 
+// Default mergerfs create policy for new shares (doc 02 §1, Q11).
+// Ref: #/components/schemas/ArrayCreatePolicy
+type ArrayCreatePolicy string
+
+const (
+	ArrayCreatePolicyMspmfs ArrayCreatePolicy = "mspmfs"
+	ArrayCreatePolicyMfs    ArrayCreatePolicy = "mfs"
+	ArrayCreatePolicyLfs    ArrayCreatePolicy = "lfs"
+	ArrayCreatePolicyFf     ArrayCreatePolicy = "ff"
+)
+
+// AllValues returns all ArrayCreatePolicy values.
+func (ArrayCreatePolicy) AllValues() []ArrayCreatePolicy {
+	return []ArrayCreatePolicy{
+		ArrayCreatePolicyMspmfs,
+		ArrayCreatePolicyMfs,
+		ArrayCreatePolicyLfs,
+		ArrayCreatePolicyFf,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ArrayCreatePolicy) MarshalText() ([]byte, error) {
+	switch s {
+	case ArrayCreatePolicyMspmfs:
+		return []byte(s), nil
+	case ArrayCreatePolicyMfs:
+		return []byte(s), nil
+	case ArrayCreatePolicyLfs:
+		return []byte(s), nil
+	case ArrayCreatePolicyFf:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ArrayCreatePolicy) UnmarshalText(data []byte) error {
+	switch ArrayCreatePolicy(data) {
+	case ArrayCreatePolicyMspmfs:
+		*s = ArrayCreatePolicyMspmfs
+		return nil
+	case ArrayCreatePolicyMfs:
+		*s = ArrayCreatePolicyMfs
+		return nil
+	case ArrayCreatePolicyLfs:
+		*s = ArrayCreatePolicyLfs
+		return nil
+	case ArrayCreatePolicyFf:
+		*s = ArrayCreatePolicyFf
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ArrayDiskAssignment
+type ArrayDiskAssignment struct {
+	Device     string                 `json:"device"`
+	Role       ArrayDiskRole          `json:"role"`
+	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
+	// Keep the existing filesystem instead of formatting (data and cache only; Q20 forbids this on
+	// parity).
+	Adopt OptBool `json:"adopt"`
+}
+
+// GetDevice returns the value of Device.
+func (s *ArrayDiskAssignment) GetDevice() string {
+	return s.Device
+}
+
+// GetRole returns the value of Role.
+func (s *ArrayDiskAssignment) GetRole() ArrayDiskRole {
+	return s.Role
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *ArrayDiskAssignment) GetFilesystem() OptArrayDiskFilesystem {
+	return s.Filesystem
+}
+
+// GetAdopt returns the value of Adopt.
+func (s *ArrayDiskAssignment) GetAdopt() OptBool {
+	return s.Adopt
+}
+
+// SetDevice sets the value of Device.
+func (s *ArrayDiskAssignment) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetRole sets the value of Role.
+func (s *ArrayDiskAssignment) SetRole(val ArrayDiskRole) {
+	s.Role = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *ArrayDiskAssignment) SetFilesystem(val OptArrayDiskFilesystem) {
+	s.Filesystem = val
+}
+
+// SetAdopt sets the value of Adopt.
+func (s *ArrayDiskAssignment) SetAdopt(val OptBool) {
+	s.Adopt = val
+}
+
+// Filesystem to format with, or to verify when adopt is true (Q23). Parity is always xfs (Q20).
+// Ref: #/components/schemas/ArrayDiskFilesystem
+type ArrayDiskFilesystem string
+
+const (
+	ArrayDiskFilesystemXfs   ArrayDiskFilesystem = "xfs"
+	ArrayDiskFilesystemExt4  ArrayDiskFilesystem = "ext4"
+	ArrayDiskFilesystemBtrfs ArrayDiskFilesystem = "btrfs"
+)
+
+// AllValues returns all ArrayDiskFilesystem values.
+func (ArrayDiskFilesystem) AllValues() []ArrayDiskFilesystem {
+	return []ArrayDiskFilesystem{
+		ArrayDiskFilesystemXfs,
+		ArrayDiskFilesystemExt4,
+		ArrayDiskFilesystemBtrfs,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ArrayDiskFilesystem) MarshalText() ([]byte, error) {
+	switch s {
+	case ArrayDiskFilesystemXfs:
+		return []byte(s), nil
+	case ArrayDiskFilesystemExt4:
+		return []byte(s), nil
+	case ArrayDiskFilesystemBtrfs:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ArrayDiskFilesystem) UnmarshalText(data []byte) error {
+	switch ArrayDiskFilesystem(data) {
+	case ArrayDiskFilesystemXfs:
+		*s = ArrayDiskFilesystemXfs
+		return nil
+	case ArrayDiskFilesystemExt4:
+		*s = ArrayDiskFilesystemExt4
+		return nil
+	case ArrayDiskFilesystemBtrfs:
+		*s = ArrayDiskFilesystemBtrfs
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// A role the array-setup wizard assigns (doc 03 §3.1 step 2). Ignore is omitted — those disks never
+// appear in the plan.
+// Ref: #/components/schemas/ArrayDiskRole
+type ArrayDiskRole string
+
+const (
+	ArrayDiskRoleParity ArrayDiskRole = "parity"
+	ArrayDiskRoleData   ArrayDiskRole = "data"
+	ArrayDiskRoleCache  ArrayDiskRole = "cache"
+)
+
+// AllValues returns all ArrayDiskRole values.
+func (ArrayDiskRole) AllValues() []ArrayDiskRole {
+	return []ArrayDiskRole{
+		ArrayDiskRoleParity,
+		ArrayDiskRoleData,
+		ArrayDiskRoleCache,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ArrayDiskRole) MarshalText() ([]byte, error) {
+	switch s {
+	case ArrayDiskRoleParity:
+		return []byte(s), nil
+	case ArrayDiskRoleData:
+		return []byte(s), nil
+	case ArrayDiskRoleCache:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ArrayDiskRole) UnmarshalText(data []byte) error {
+	switch ArrayDiskRole(data) {
+	case ArrayDiskRoleParity:
+		*s = ArrayDiskRoleParity
+		return nil
+	case ArrayDiskRoleData:
+		*s = ArrayDiskRoleData
+		return nil
+	case ArrayDiskRoleCache:
+		*s = ArrayDiskRoleCache
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // ConfirmTotpNoContent is response for ConfirmTotp operation.
 type ConfirmTotpNoContent struct{}
+
+// Ref: #/components/schemas/CreateArrayRequest
+type CreateArrayRequest struct {
+	Disks        []ArrayDiskAssignment `json:"disks"`
+	CreatePolicy OptArrayCreatePolicy  `json:"createPolicy"`
+	// Mergerfs minfreespace in its size-suffix syntax (doc 02 §1), e.g. `50G`. Omitted uses the engine
+	// default.
+	MinFreeSpace OptString `json:"minFreeSpace"`
+	// Exact typed confirmation for this plan (doc 03 §3.1 step 6): `ERASE /dev/sda, /dev/sdb` listing
+	// every device that will be formatted, sorted, or `ADOPT ONLY — NOTHING ERASED` when every assigned
+	// disk is adopted. A wrong or missing string is refused and formats nothing.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetDisks returns the value of Disks.
+func (s *CreateArrayRequest) GetDisks() []ArrayDiskAssignment {
+	return s.Disks
+}
+
+// GetCreatePolicy returns the value of CreatePolicy.
+func (s *CreateArrayRequest) GetCreatePolicy() OptArrayCreatePolicy {
+	return s.CreatePolicy
+}
+
+// GetMinFreeSpace returns the value of MinFreeSpace.
+func (s *CreateArrayRequest) GetMinFreeSpace() OptString {
+	return s.MinFreeSpace
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *CreateArrayRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetDisks sets the value of Disks.
+func (s *CreateArrayRequest) SetDisks(val []ArrayDiskAssignment) {
+	s.Disks = val
+}
+
+// SetCreatePolicy sets the value of CreatePolicy.
+func (s *CreateArrayRequest) SetCreatePolicy(val OptArrayCreatePolicy) {
+	s.CreatePolicy = val
+}
+
+// SetMinFreeSpace sets the value of MinFreeSpace.
+func (s *CreateArrayRequest) SetMinFreeSpace(val OptString) {
+	s.MinFreeSpace = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *CreateArrayRequest) SetConfirmation(val string) {
+	s.Confirmation = val
+}
 
 // Ref: #/components/schemas/CreateFirstAdminRequest
 type CreateFirstAdminRequest struct {
@@ -281,6 +542,19 @@ type DiskInventoryEntry struct {
 	Boot         bool      `json:"boot"`
 	Failed       OptBool   `json:"failed"`
 	WeakIdentity OptBool   `json:"weakIdentity"`
+	// Cached filesystem type from udev (`ID_FS_TYPE`), never probed in a way that wakes a standby disk
+	// (doc 02 §1, §4, doc 03 §3.1).
+	Filesystem OptString `json:"filesystem"`
+	// Cached filesystem label from udev (`ID_FS_LABEL`).
+	Label OptString `json:"label"`
+	// SMART summary from a standby-respecting poll. `standby` when the disk was left asleep; `ok` or
+	// `failing` from a real read.
+	SmartStatus OptString `json:"smartStatus"`
+	// True when udev reports an existing filesystem on the disk.
+	ContainsData OptBool `json:"containsData"`
+	// True when the filesystem label matches Unraid's `diskN` / `parity` / `cache` naming (doc 05) — a
+	// conservative heuristic that never mounts the disk to look for `super.dat`.
+	LooksLikeUnraid OptBool `json:"looksLikeUnraid"`
 }
 
 // GetDevice returns the value of Device.
@@ -323,6 +597,31 @@ func (s *DiskInventoryEntry) GetWeakIdentity() OptBool {
 	return s.WeakIdentity
 }
 
+// GetFilesystem returns the value of Filesystem.
+func (s *DiskInventoryEntry) GetFilesystem() OptString {
+	return s.Filesystem
+}
+
+// GetLabel returns the value of Label.
+func (s *DiskInventoryEntry) GetLabel() OptString {
+	return s.Label
+}
+
+// GetSmartStatus returns the value of SmartStatus.
+func (s *DiskInventoryEntry) GetSmartStatus() OptString {
+	return s.SmartStatus
+}
+
+// GetContainsData returns the value of ContainsData.
+func (s *DiskInventoryEntry) GetContainsData() OptBool {
+	return s.ContainsData
+}
+
+// GetLooksLikeUnraid returns the value of LooksLikeUnraid.
+func (s *DiskInventoryEntry) GetLooksLikeUnraid() OptBool {
+	return s.LooksLikeUnraid
+}
+
 // SetDevice sets the value of Device.
 func (s *DiskInventoryEntry) SetDevice(val string) {
 	s.Device = val
@@ -361,6 +660,31 @@ func (s *DiskInventoryEntry) SetFailed(val OptBool) {
 // SetWeakIdentity sets the value of WeakIdentity.
 func (s *DiskInventoryEntry) SetWeakIdentity(val OptBool) {
 	s.WeakIdentity = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *DiskInventoryEntry) SetFilesystem(val OptString) {
+	s.Filesystem = val
+}
+
+// SetLabel sets the value of Label.
+func (s *DiskInventoryEntry) SetLabel(val OptString) {
+	s.Label = val
+}
+
+// SetSmartStatus sets the value of SmartStatus.
+func (s *DiskInventoryEntry) SetSmartStatus(val OptString) {
+	s.SmartStatus = val
+}
+
+// SetContainsData sets the value of ContainsData.
+func (s *DiskInventoryEntry) SetContainsData(val OptBool) {
+	s.ContainsData = val
+}
+
+// SetLooksLikeUnraid sets the value of LooksLikeUnraid.
+func (s *DiskInventoryEntry) SetLooksLikeUnraid(val OptBool) {
+	s.LooksLikeUnraid = val
 }
 
 // Ref: #/components/schemas/DiskState
@@ -2048,6 +2372,98 @@ func (s *NotificationWebhookMethod) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// NewOptArrayCreatePolicy returns new OptArrayCreatePolicy with value set to v.
+func NewOptArrayCreatePolicy(v ArrayCreatePolicy) OptArrayCreatePolicy {
+	return OptArrayCreatePolicy{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptArrayCreatePolicy is optional ArrayCreatePolicy.
+type OptArrayCreatePolicy struct {
+	Value ArrayCreatePolicy
+	Set   bool
+}
+
+// IsSet returns true if OptArrayCreatePolicy was set.
+func (o OptArrayCreatePolicy) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptArrayCreatePolicy) Reset() {
+	var v ArrayCreatePolicy
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptArrayCreatePolicy) SetTo(v ArrayCreatePolicy) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptArrayCreatePolicy) Get() (v ArrayCreatePolicy, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptArrayCreatePolicy) Or(d ArrayCreatePolicy) ArrayCreatePolicy {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptArrayDiskFilesystem returns new OptArrayDiskFilesystem with value set to v.
+func NewOptArrayDiskFilesystem(v ArrayDiskFilesystem) OptArrayDiskFilesystem {
+	return OptArrayDiskFilesystem{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptArrayDiskFilesystem is optional ArrayDiskFilesystem.
+type OptArrayDiskFilesystem struct {
+	Value ArrayDiskFilesystem
+	Set   bool
+}
+
+// IsSet returns true if OptArrayDiskFilesystem was set.
+func (o OptArrayDiskFilesystem) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptArrayDiskFilesystem) Reset() {
+	var v ArrayDiskFilesystem
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptArrayDiskFilesystem) SetTo(v ArrayDiskFilesystem) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptArrayDiskFilesystem) Get() (v ArrayDiskFilesystem, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptArrayDiskFilesystem) Or(d ArrayDiskFilesystem) ArrayDiskFilesystem {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
 }
 
 // NewOptBool returns new OptBool with value set to v.

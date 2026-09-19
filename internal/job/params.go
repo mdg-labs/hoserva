@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/parity"
 )
 
@@ -34,6 +35,25 @@ type FixParams struct {
 	Disk    *int `json:"disk,omitempty"`
 }
 
+// DiskFormatParams is createArray's persisted Topology-job payload: the
+// wizard's plan, sizes from the same Provider.List call that populated
+// inventory, and the typed confirmation FormatPlan checks again at run
+// time so a queued job cannot skip the guard.
+type DiskFormatParams struct {
+	Confirmation string              `json:"confirmation"`
+	Parity       []disk.AssignedDisk `json:"parity"`
+	Data         []disk.AssignedDisk `json:"data"`
+	Cache        *disk.AssignedDisk  `json:"cache,omitempty"`
+	Sizes        map[string]int64    `json:"sizes"`
+	CreatePolicy string              `json:"createPolicy,omitempty"`
+	MinFreeSpace string              `json:"minFreeSpace,omitempty"`
+}
+
+// Plan reconstructs the TopologyPlan FormatPlan consumes.
+func (p DiskFormatParams) Plan() disk.TopologyPlan {
+	return disk.TopologyPlan{Parity: p.Parity, Data: p.Data, Cache: p.Cache}
+}
+
 // ValidateParams checks params against t at Submit time (not in SQL).
 // Empty or null is valid for types whose payload is optional. TypeFix
 // requires confirm=true, so an absent payload is rejected. Types that
@@ -43,6 +63,9 @@ func ValidateParams(t Type, params []byte) error {
 	if len(params) == 0 || string(params) == "null" {
 		if t == TypeFix {
 			return fmt.Errorf("job: fix params require confirm=true")
+		}
+		if t == TypeDiskFormat {
+			return fmt.Errorf("job: disk_format params require confirmation")
 		}
 		return nil
 	}
@@ -55,6 +78,9 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeFix:
 		_, err := decodeFixParams(params)
+		return err
+	case TypeDiskFormat:
+		_, err := decodeDiskFormatParams(params)
 		return err
 	default:
 		return fmt.Errorf("job: type %s does not take params", t)
@@ -137,6 +163,23 @@ func decodeFixParams(params []byte) (FixParams, error) {
 	}
 	if p.Disk != nil && *p.Disk < 1 {
 		return FixParams{}, fmt.Errorf("job: fix disk index must be >= 1")
+	}
+	return p, nil
+}
+
+func decodeDiskFormatParams(params []byte) (DiskFormatParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return DiskFormatParams{}, fmt.Errorf("job: disk_format params require confirmation")
+	}
+	var p DiskFormatParams
+	if err := decodeJSON(params, &p); err != nil {
+		return DiskFormatParams{}, err
+	}
+	if p.Confirmation == "" {
+		return DiskFormatParams{}, fmt.Errorf("job: disk_format params require confirmation")
+	}
+	if len(p.Parity) == 0 && len(p.Data) == 0 && p.Cache == nil {
+		return DiskFormatParams{}, fmt.Errorf("job: disk_format params require a plan")
 	}
 	return p, nil
 }

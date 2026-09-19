@@ -338,8 +338,8 @@
       "eraseTitle": "Disks that will be erased",
       "eraseDescription": "These disks will be formatted. This cannot be undone.",
       "eraseItem": "{{device}} — all data will be erased",
-      "apiPendingTitle": "Array creation API not available yet",
-      "apiPendingDescription": "The wizard captured your choices, but no create-array endpoint exists in the API yet. Job progress will appear here once that operation lands."
+      "createFailed": "Array creation failed",
+      "createFailedDescription": "The create-array request did not return a job. Check the error above and try again."
     }
   },
   "login": {

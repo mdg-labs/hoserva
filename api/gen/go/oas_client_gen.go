@@ -43,6 +43,16 @@ type Invoker interface {
 	//
 	// POST /auth/totp/confirm
 	ConfirmTotp(ctx context.Context, request *TotpConfirmRequest) error
+	// CreateArray invokes createArray operation.
+	//
+	// Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4).
+	// The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool
+	// options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong
+	// or missing confirmation is refused with `confirmation_required` and formats nothing. The handler
+	// calls `disk.FormatPlan` — never a second formatter (D1).
+	//
+	// POST /disks/array
+	CreateArray(ctx context.Context, request *CreateArrayRequest) (*Job, error)
 	// CreateFirstAdmin invokes createFirstAdmin operation.
 	//
 	// Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
@@ -606,6 +616,138 @@ func (c *Client) sendConfirmTotp(ctx context.Context, request *TotpConfirmReques
 
 	stage = "DecodeResponse"
 	result, err := decodeConfirmTotpResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// CreateArray invokes createArray operation.
+//
+// Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4).
+// The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool
+// options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong
+// or missing confirmation is refused with `confirmation_required` and formats nothing. The handler
+// calls `disk.FormatPlan` — never a second formatter (D1).
+//
+// POST /disks/array
+func (c *Client) CreateArray(ctx context.Context, request *CreateArrayRequest) (*Job, error) {
+	res, err := c.sendCreateArray(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendCreateArray(ctx context.Context, request *CreateArrayRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("createArray"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, CreateArrayOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeCreateArrayRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, CreateArrayOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, CreateArrayOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeCreateArrayResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

@@ -13,6 +13,7 @@ import { Wizard } from "@/components/patterns/wizard";
 import { Card, CardDescription, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
 import { hoservaClient, type components } from "@/lib/api/client";
+import { isApiError } from "@/lib/api/errors";
 import { buildConfigPreview, formatBytes } from "@/routes/storage-setup/config-preview";
 import {
   buildDiscoveryColumns,
@@ -26,6 +27,8 @@ import {
 } from "@/routes/storage-setup/pool-options";
 import {
   assignableDisks,
+  buildConfirmPhrase,
+  buildCreateArrayRequest,
   canKeepFilesystem,
   disksToErase,
   roleAssignmentValid,
@@ -90,7 +93,7 @@ export function StorageSetupPage(): React.ReactElement {
   const [minFreeSpaceGb, setMinFreeSpaceGb] = useState(DEFAULT_MIN_FREE_GB);
   const [confirmText, setConfirmText] = useState("");
   const [activeJob, setActiveJob] = useState<Job | null>(null);
-  const [createRequested, setCreateRequested] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -139,12 +142,7 @@ export function StorageSetupPage(): React.ReactElement {
     [disks, roles, filesystemChoices, createPolicy, minFreeSpaceGb],
   );
   const eraseList = useMemo(() => disksToErase(disks, roles, filesystemChoices), [disks, roles, filesystemChoices]);
-  const confirmPhrase = useMemo(() => {
-    if (eraseList.length === 0) {
-      return "";
-    }
-    return `erase ${eraseList.join(", ")}`;
-  }, [eraseList]);
+  const confirmPhrase = useMemo(() => buildConfirmPhrase(eraseList), [eraseList]);
 
   const dataDisks = assignableDisks(disks).filter((disk) => roles[disk.device] === "data");
   const optionalColumns = useMemo(() => discoveryOptionalColumns(disks), [disks]);
@@ -194,9 +192,21 @@ export function StorageSetupPage(): React.ReactElement {
     { title: t("storageSetup.steps.confirm.title"), description: t("storageSetup.steps.confirm.description") },
   ][step];
 
-  function handleCreate(): void {
-    setCreateRequested(true);
+  async function handleCreate(): Promise<void> {
     setActiveJob(null);
+    setCreating(true);
+    setError(null);
+    const { data, error: apiError } = await hoservaClient.POST("/disks/array", {
+      body: buildCreateArrayRequest(disks, roles, filesystemChoices, createPolicy, minFreeSpaceGb, confirmPhrase),
+    });
+    setCreating(false);
+    if (apiError) {
+      setError(isApiError(apiError) ? apiError.message : t("storageSetup.confirm.createFailed"));
+      return;
+    }
+    if (data) {
+      setActiveJob(data);
+    }
   }
 
   function handleNext(): void {
@@ -208,7 +218,7 @@ export function StorageSetupPage(): React.ReactElement {
     if (!typedConfirmMatches(confirmText, confirmPhrase)) {
       return;
     }
-    handleCreate();
+    void handleCreate();
   }
 
   function handleBack(): void {
@@ -218,6 +228,7 @@ export function StorageSetupPage(): React.ReactElement {
 
   const nextDisabled =
     loading ||
+    creating ||
     poolMounted ||
     (step === 0 && assignableDisks(disks).length === 0) ||
     (step === 1 && !roleAssignmentValid(validation)) ||
@@ -271,6 +282,7 @@ export function StorageSetupPage(): React.ReactElement {
       onBack={step > 0 ? handleBack : undefined}
       onNext={handleNext}
       nextDisabled={nextDisabled}
+      nextLoading={creating}
       nextLabel={nextLabel}
     >
       {error ? <Banner tone="error" title={error} /> : null}
@@ -407,17 +419,7 @@ export function StorageSetupPage(): React.ReactElement {
             description={t("storageSetup.confirm.eraseDescription")}
             items={eraseList.map((device) => t("storageSetup.confirm.eraseItem", { device }))}
           />
-          {createRequested ? (
-            activeJob ? (
-              <JobProgress job={activeJob} />
-            ) : (
-              <Banner
-                tone="info"
-                title={t("storageSetup.confirm.apiPendingTitle")}
-                description={t("storageSetup.confirm.apiPendingDescription")}
-              />
-            )
-          ) : null}
+          {activeJob ? <JobProgress job={activeJob} /> : null}
         </div>
       ) : null}
     </Wizard>

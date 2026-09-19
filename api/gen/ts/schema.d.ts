@@ -499,6 +499,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/disks/array": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create the storage array
+         * @description Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4). The request is the wizard's role assignments, per-disk filesystem (including adopt/keep), pool options, and the same typed confirmation string `disk.TopologyPlan.Confirmation` produces. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing. The handler calls `disk.FormatPlan` — never a second formatter (D1).
+         */
+        post: operations["createArray"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/parity/sync": {
         parameters: {
             query?: never;
@@ -1012,6 +1032,49 @@ export interface components {
             boot: boolean;
             failed?: boolean;
             weakIdentity?: boolean;
+            /** @description Cached filesystem type from udev (`ID_FS_TYPE`), never probed in a way that wakes a standby disk (doc 02 §1, §4, doc 03 §3.1). */
+            filesystem?: string;
+            /** @description Cached filesystem label from udev (`ID_FS_LABEL`). */
+            label?: string;
+            /** @description SMART summary from a standby-respecting poll. `standby` when the disk was left asleep; `ok` or `failing` from a real read. */
+            smartStatus?: string;
+            /** @description True when udev reports an existing filesystem on the disk. */
+            containsData?: boolean;
+            /** @description True when the filesystem label matches Unraid's `diskN` / `parity` / `cache` naming (doc 05) — a conservative heuristic that never mounts the disk to look for `super.dat`. */
+            looksLikeUnraid?: boolean;
+        };
+        /**
+         * @description A role the array-setup wizard assigns (doc 03 §3.1 step 2). Ignore is omitted — those disks never appear in the plan.
+         * @enum {string}
+         */
+        ArrayDiskRole: "parity" | "data" | "cache";
+        /**
+         * @description Filesystem to format with, or to verify when adopt is true (Q23). Parity is always xfs (Q20).
+         * @enum {string}
+         */
+        ArrayDiskFilesystem: "xfs" | "ext4" | "btrfs";
+        /**
+         * @description Default mergerfs create policy for new shares (doc 02 §1, Q11).
+         * @enum {string}
+         */
+        ArrayCreatePolicy: "mspmfs" | "mfs" | "lfs" | "ff";
+        ArrayDiskAssignment: {
+            device: string;
+            role: components["schemas"]["ArrayDiskRole"];
+            filesystem?: components["schemas"]["ArrayDiskFilesystem"];
+            /**
+             * @description Keep the existing filesystem instead of formatting (data and cache only; Q20 forbids this on parity).
+             * @default false
+             */
+            adopt: boolean;
+        };
+        CreateArrayRequest: {
+            disks: components["schemas"]["ArrayDiskAssignment"][];
+            createPolicy?: components["schemas"]["ArrayCreatePolicy"];
+            /** @description mergerfs minfreespace in its size-suffix syntax (doc 02 §1), e.g. `50G`. Omitted uses the engine default. */
+            minFreeSpace?: string;
+            /** @description Exact typed confirmation for this plan (doc 03 §3.1 step 6): `ERASE /dev/sda, /dev/sdb` listing every device that will be formatted, sorted, or `ADOPT ONLY — NOTHING ERASED` when every assigned disk is adopted. A wrong or missing string is refused and formats nothing. */
+            confirmation: string;
         };
         StartSyncRequest: {
             /** @default false */
@@ -1711,6 +1774,31 @@ export interface operations {
                     "application/json": {
                         disks: components["schemas"]["DiskInventoryEntry"][];
                     };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createArray: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateArrayRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued Topology job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
             default: components["responses"]["Error"];

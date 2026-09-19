@@ -121,6 +121,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 	generated := []apiv1.OperationName{
 		apiv1.CancelJobOperation,
 		apiv1.ConfirmTotpOperation,
+		apiv1.CreateArrayOperation,
 		apiv1.CreateFirstAdminOperation,
 		apiv1.CreateNotificationChannelOperation,
 		apiv1.DeleteNotificationChannelOperation,
