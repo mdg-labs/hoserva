@@ -460,6 +460,26 @@ func TestFormatPlan_RefusesWrongConfirmation(t *testing.T) {
 	}
 }
 
+func TestCheckFormatTargets_RefusesAnEMMCPartition(t *testing.T) {
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/mmcblk0p1", Filesystem: XFS}},
+	}
+	if err := CheckFormatTargets(plan); !errors.Is(err, ErrUnmanagedDevice) {
+		t.Fatalf("CheckFormatTargets(/dev/mmcblk0p1): got %v, want ErrUnmanagedDevice", err)
+	}
+}
+
+func TestCheckFormatTargets_AllowsAWholeEMMCDisk(t *testing.T) {
+	plan := TopologyPlan{
+		Parity: []AssignedDisk{{Device: "/dev/sda", Filesystem: XFS}},
+		Data:   []AssignedDisk{{Device: "/dev/mmcblk0", Filesystem: XFS}},
+	}
+	if err := CheckFormatTargets(plan); err != nil {
+		t.Fatalf("CheckFormatTargets(/dev/mmcblk0): %v", err)
+	}
+}
+
 func TestFormatPlan_RefusesNonLoopPathBeforeFormattingAnything(t *testing.T) {
 	p := NewFakeProvider()
 	p.AddDisk("/dev/sda", Disk{Size: 8 * TB})
