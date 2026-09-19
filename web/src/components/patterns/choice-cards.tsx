@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils";
 
 export interface ChoiceCardOption {
   value: string;
-  title: string;
-  description: string;
+  title: ReactNode;
+  description: ReactNode;
   icon?: ReactNode;
 }
 

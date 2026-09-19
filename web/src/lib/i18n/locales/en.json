@@ -197,6 +197,151 @@
       "storageBlocked": "Fix the failed storage dependency checks before continuing."
     }
   },
+  "common": {
+    "yes": "Yes",
+    "no": "No"
+  },
+  "codeView": {
+    "readOnly": "Read-only configuration preview"
+  },
+  "typedConfirm": {
+    "label": "Type the confirmation phrase",
+    "hint": "Type exactly: {{phrase}}",
+    "mismatch": "The confirmation phrase does not match."
+  },
+  "storageSetup": {
+    "arrayExistsTitle": "An array is already configured",
+    "arrayExistsDescription": "The setup wizard runs only on a system with no array. Manage disks from the pool overview instead.",
+    "actions": {
+      "createArray": "Create array"
+    },
+    "steps": {
+      "discovery": {
+        "title": "Disk discovery",
+        "description": "Review every block device Hoserva can see. Boot disks are excluded from the array."
+      },
+      "roles": {
+        "title": "Role assignment",
+        "description": "Assign each disk a role. Parity disks must be at least as large as the largest data disk."
+      },
+      "filesystem": {
+        "title": "Filesystem",
+        "description": "Choose whether to format data disks or keep an adoptable existing filesystem."
+      },
+      "pool": {
+        "title": "Pool options",
+        "description": "Set the default create policy for new shares and the minimum free space per disk."
+      },
+      "review": {
+        "title": "Review",
+        "description": "Confirm the plain-language summary and inspect the generated configuration preview."
+      },
+      "confirm": {
+        "title": "Confirm and create",
+        "description": "Every disk that will be erased must be listed and confirmed before creation starts."
+      }
+    },
+    "columns": {
+      "device": "Device",
+      "model": "Model",
+      "serial": "Serial",
+      "size": "Size",
+      "filesystem": "Filesystem",
+      "label": "Label",
+      "smart": "SMART",
+      "containsData": "Contains data",
+      "unraid": "Unraid disk",
+      "status": "Status",
+      "role": "Role"
+    },
+    "discovery": {
+      "bootDisk": "Boot disk",
+      "weakIdentity": "Weak identity",
+      "available": "Available"
+    },
+    "smart": {
+      "ok": "OK",
+      "failed": "Failed"
+    },
+    "roles": {
+      "parity": "Parity",
+      "data": "Data",
+      "cache": "Cache",
+      "ignore": "Ignore",
+      "unassigned": "Unassigned"
+    },
+    "validation": {
+      "errorsTitle": "Fix these problems before continuing",
+      "warningsTitle": "Review these warnings",
+      "errors": {
+        "tooManyParity": "At most two parity disks are supported.",
+        "noDataDisk": "Assign at least one data disk.",
+        "noParityDisk": "Assign at least one parity disk.",
+        "parityTooSmall": "Each parity disk must be at least as large as the largest data disk.",
+        "weakIdentityParity": "Disks with weak identity cannot be used as parity."
+      },
+      "warnings": {
+        "weakIdentityData": "A disk with weak identity is assigned as data — parity matching may be unreliable.",
+        "containsData": "A disk with existing data is included in the array.",
+        "smartIssue": "A disk reports SMART issues.",
+        "looksLikeUnraid": "A disk looks like an Unraid disk."
+      }
+    },
+    "filesystem": {
+      "noDataDisks": "No data disks are assigned.",
+      "formatTitle": "Format as XFS",
+      "formatDescription": "Erase the disk and create a fresh {{filesystem}} filesystem.",
+      "keepTitle": "Keep existing data",
+      "keepDescription": "Adopt the existing {{filesystem}} filesystem without formatting.",
+      "parityTitle": "Parity disks are always formatted",
+      "parityDescription": "Parity disks are always formatted as XFS (Q20)."
+    },
+    "pool": {
+      "createPolicy": "Default create policy for new shares",
+      "minFreeSpace": "Minimum free space per disk",
+      "gigabytes": "GB",
+      "policies": {
+        "mspmfs": {
+          "label": "Keep folders together",
+          "term": "mspmfs",
+          "description": "Prefer a disk that already holds the folder; walk up the path if none has room."
+        },
+        "mfs": {
+          "label": "Balance across disks",
+          "term": "mfs",
+          "description": "Place new files on the disk with the most free space."
+        },
+        "lfs": {
+          "label": "Quiet disks",
+          "term": "lfs",
+          "description": "Fill one disk at a time to keep other disks spun down."
+        },
+        "ff": {
+          "label": "Fill disks in order",
+          "term": "ff",
+          "description": "Use the first disk with enough room, in branch order."
+        }
+      }
+    },
+    "review": {
+      "summaryTitle": "Array summary",
+      "summaryLine": "{{disks}} disks, {{usable}} usable, {{parity}} parity disk(s) (largest {{paritySize}}).",
+      "snapraidTitle": "snapraid.conf preview",
+      "mergerfsTitle": "mergerfs mount unit preview",
+      "faultTolerance": {
+        "none": "No fault tolerance configured.",
+        "single": "Single-disk fault tolerance.",
+        "dual": "Dual-disk fault tolerance."
+      }
+    },
+    "confirm": {
+      "eraseTitle": "Disks that will be erased",
+      "eraseDescription": "These disks will be formatted. This cannot be undone.",
+      "eraseItem": "{{device}} — all data will be erased",
+      "apiPendingTitle": "Array creation API not available yet",
+      "apiPendingDescription": "The wizard captured your choices, but no create-array endpoint exists in the API yet. Job progress will appear here once that operation lands."
+    }
+  },
   "login": {
     "title": "Sign in",
     "description": "Sign in to manage this Hoserva server.",

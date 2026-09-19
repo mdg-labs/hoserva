@@ -9,6 +9,7 @@ import { JobsPage } from "@/routes/jobs";
 import { LoginPage } from "@/routes/login";
 import { PlaceholderPage } from "@/routes/placeholder-page";
 import { SectionLayout } from "@/routes/section-layout";
+import { StorageSetupPage } from "@/routes/storage-setup";
 import { WelcomePage } from "@/routes/welcome";
 
 const STORAGE_NAV = (t: ReturnType<typeof useTranslation>["t"]) => [
@@ -64,7 +65,7 @@ function AuthenticatedRoutes(): React.ReactElement {
           />
           <Route path="storage/parity" element={<PlaceholderPage titleKey="storageNav.parity" />} />
           <Route path="storage/cache" element={<PlaceholderPage titleKey="storageNav.cache" />} />
-          <Route path="storage/setup" element={<PlaceholderPage titleKey="storageNav.setup" />} />
+          <Route path="storage/setup" element={<StorageSetupPage />} />
         </Route>
         <Route path="storage/disks/:diskId" element={<PlaceholderPage titleKey="storageNav.disks" />} />
 
