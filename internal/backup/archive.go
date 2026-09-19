@@ -163,17 +163,13 @@ func copyTreeIfExists(src, dst string, include func(rel string) bool) error {
 		if rel == "." {
 			return nil
 		}
-		if include != nil && !include(rel) {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
+		if d.IsDir() {
 			return nil
 		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o700)
+		if include != nil && !include(rel) {
+			return nil
 		}
-		return copyPath(target, path)
+		return copyPath(filepath.Join(dst, rel), path)
 	})
 }
 

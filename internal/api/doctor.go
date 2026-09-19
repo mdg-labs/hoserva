@@ -20,6 +20,7 @@ import (
 const (
 	mergerfsMinVersion = "2.40.2"
 	snapraidMinVersion = "12.4"
+	doctorProbeTimeout = 8 * time.Second
 )
 
 // DiskLister enumerates block devices for doctor and disk list handlers.
@@ -34,9 +35,9 @@ func runDoctorChecks(ctx context.Context, disks disk.Provider, parityEng parity.
 		probe = pathIsMountpoint
 	}
 	checks := []apiv1.DoctorCheck{
-		packageVersionCheck("mergerfs", mergerfsMinVersion),
-		packageVersionCheck("snapraid", snapraidMinVersion),
-		dockerCheck(),
+		packageVersionCheck(ctx, "mergerfs", mergerfsMinVersion),
+		packageVersionCheck(ctx, "snapraid", snapraidMinVersion),
+		dockerCheck(ctx),
 		bootSpaceCheck(),
 		mountStateCheck(probe, pool.CatchAllPath),
 		parityFreshnessCheck(ctx, parityEng),
@@ -58,9 +59,9 @@ func runDoctorChecks(ctx context.Context, disks disk.Provider, parityEng parity.
 	return &apiv1.DoctorReport{Overall: overall, Checks: checks}
 }
 
-func packageVersionCheck(pkg, minVersion string) apiv1.DoctorCheck {
+func packageVersionCheck(ctx context.Context, pkg, minVersion string) apiv1.DoctorCheck {
 	id := "pkg_" + pkg
-	out, err := exec.Command("dpkg-query", "-W", "-f=${Version}", pkg).Output()
+	out, err := doctorCommandOutput(ctx, "dpkg-query", "-W", "-f=${Version}", pkg)
 	if err != nil {
 		return apiv1.DoctorCheck{
 			ID:          id,
@@ -84,7 +85,7 @@ func packageVersionCheck(pkg, minVersion string) apiv1.DoctorCheck {
 	}
 }
 
-func dockerCheck() apiv1.DoctorCheck {
+func dockerCheck(ctx context.Context) apiv1.DoctorCheck {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return apiv1.DoctorCheck{
 			ID:          "docker",
@@ -94,7 +95,7 @@ func dockerCheck() apiv1.DoctorCheck {
 			Remediation: apiv1.NewOptNilString("Install Docker Engine and the Compose v2 plugin"),
 		}
 	}
-	out, err := exec.Command("docker", "compose", "version", "--short").Output()
+	out, err := doctorCommandOutput(ctx, "docker", "compose", "version", "--short")
 	if err != nil {
 		return apiv1.DoctorCheck{
 			ID:          "docker_compose",
@@ -164,9 +165,58 @@ func diskInventoryCheck(ctx context.Context, lister DiskLister) apiv1.DoctorChec
 }
 
 func versionBelow(installed, minimum string) bool {
-	installed = strings.SplitN(installed, "-", 2)[0]
-	minimum = strings.SplitN(minimum, "-", 2)[0]
-	return installed < minimum
+	return cmpDebianVersion(installed, minimum) < 0
+}
+
+func cmpDebianVersion(a, b string) int {
+	ap, bp := debianVersionParts(a), debianVersionParts(b)
+	n := len(ap)
+	if len(bp) > n {
+		n = len(bp)
+	}
+	for i := 0; i < n; i++ {
+		var av, bv int
+		if i < len(ap) {
+			av = ap[i]
+		}
+		if i < len(bp) {
+			bv = bp[i]
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+	}
+	return 0
+}
+
+func debianVersionParts(v string) []int {
+	v = strings.TrimSpace(v)
+	if i := strings.IndexByte(v, ':'); i >= 0 {
+		v = v[i+1:]
+	}
+	v = strings.SplitN(v, "-", 2)[0]
+	v = strings.SplitN(v, "+", 2)[0]
+	var parts []int
+	for _, p := range strings.Split(v, ".") {
+		n := 0
+		for _, c := range p {
+			if c < '0' || c > '9' {
+				break
+			}
+			n = n*10 + int(c-'0')
+		}
+		parts = append(parts, n)
+	}
+	return parts
+}
+
+func doctorCommandOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, doctorProbeTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).Output()
 }
 
 func mountStateCheck(probe mountProbe, path string) apiv1.DoctorCheck {

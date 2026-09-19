@@ -213,3 +213,15 @@ func TestRetentionPrune(t *testing.T) {
 		}
 	}
 }
+
+func TestArchiveName_MatchesRetentionPattern(t *testing.T) {
+	now := time.Date(2026, 9, 14, 15, 42, 0, 0, time.UTC)
+	name := archiveName(now)
+	want := "hoserva-config-2026-09-14T15-42.tar.zst"
+	if name != want {
+		t.Fatalf("archiveName = %q, want %q", name, want)
+	}
+	if archiveNamePattern.FindStringSubmatch(name) == nil {
+		t.Fatalf("%q does not match archiveNamePattern", name)
+	}
+}

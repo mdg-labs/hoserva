@@ -79,5 +79,5 @@ func (s *Service) Run(ctx context.Context) error {
 }
 
 func archiveName(now time.Time) string {
-	return fmt.Sprintf("hoserva-config-%s.tar.zst", now.UTC().Format("2006-01-02T%H-%M"))
+	return fmt.Sprintf("hoserva-config-%s.tar.zst", now.UTC().Format("2006-01-02T15-04"))
 }
