@@ -48,7 +48,14 @@ jobs:
     # of its own two scenarios, so the budget grows again with it.
     timeout-minutes: 105
     steps:
+      # fetch-depth: 0 — the default (1) skips tags entirely (fetch-tags
+      # defaults to false), which would make the vm-suite step's own
+      # `git tag --list 'v*'` fallback check below always find nothing
+      # and always build the placeholder v0.0.0-beta.1, even once a real
+      # release tag exists.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Derive this run's lab id
         id: lab
