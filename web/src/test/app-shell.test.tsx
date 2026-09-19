@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import { App } from "@/App";
@@ -25,6 +25,7 @@ function mockMatchMedia(prefersDark: boolean): void {
 
 describe("App shell", () => {
   beforeEach(() => {
+    cleanup();
     mockGet.mockReset();
     localStorage.clear();
     sessionStorage.clear();
@@ -71,5 +72,37 @@ describe("App shell", () => {
     await waitFor(() => {
       expect(document.documentElement.classList.contains("dark")).toBe(false);
     });
+  });
+
+  it("sends a returning user without a session to login, not welcome", async () => {
+    mockMatchMedia(false);
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/setup/status") {
+        return Promise.resolve({ data: { adminExists: true }, response: { ok: true } });
+      }
+      if (path === "/auth/session") {
+        return Promise.resolve({ data: null, response: { ok: false } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    window.history.replaceState({}, "", "/");
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByText("Create the admin account")).not.toBeInTheDocument();
+  });
+
+  it("does not treat a failed setup probe as an unconfigured install", async () => {
+    mockMatchMedia(false);
+    mockGet.mockImplementation(() => Promise.reject(new Error("network down")));
+    window.history.replaceState({}, "", "/");
+    render(<App />);
+
+    expect(
+      await screen.findByText(
+        "Could not reach the Hoserva API. Check that the daemon is running, then reload this page.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Create the admin account")).not.toBeInTheDocument();
   });
 });

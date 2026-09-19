@@ -10,6 +10,7 @@ export type FilesystemChoice = "format" | "keep";
 
 export type RoleValidationCode =
   | "tooManyParity"
+  | "tooManyCache"
   | "noDataDisk"
   | "noParityDisk"
   | "parityTooSmall"
@@ -50,9 +51,13 @@ export function validateRoleAssignment(
   const candidates = assignableDisks(disks);
   const parityDisks = candidates.filter((disk) => roles[disk.device] === "parity");
   const dataDisks = candidates.filter((disk) => roles[disk.device] === "data");
+  const cacheDisks = candidates.filter((disk) => roles[disk.device] === "cache");
 
   if (parityDisks.length > 2) {
     errorCodes.push("tooManyParity");
+  }
+  if (cacheDisks.length > 1) {
+    errorCodes.push("tooManyCache");
   }
   if (dataDisks.length === 0) {
     errorCodes.push("noDataDisk");

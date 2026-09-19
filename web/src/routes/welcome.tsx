@@ -74,7 +74,7 @@ function findQ76Check(checks: DoctorCheck[], id: string): DoctorCheck | undefine
 export function WelcomePage(): React.ReactElement {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { refresh } = useAuth();
+  const { refresh, acceptSession } = useAuth();
 
   const [step, setStep] = useState(() => readOnboardingStep());
   const [error, setError] = useState<string | null>(null);
@@ -154,8 +154,33 @@ export function WelcomePage(): React.ReactElement {
     },
   ][step];
 
+  async function enrollTotp(): Promise<boolean> {
+    const enroll = await hoservaClient.POST("/auth/totp/enroll", { body: {} });
+    if (enroll.error) {
+      setError(enroll.error.message);
+      return false;
+    }
+    if (!enroll.data) {
+      setError(t("welcome.errors.totpEnrollFailed"));
+      return false;
+    }
+    setTotpSecret(enroll.data.secret);
+    setOtpauthUri(enroll.data.otpauthUri);
+    return true;
+  }
+
   async function handleAdminStep(): Promise<void> {
-    if (adminCreated && enableTotp && totpSecret) {
+    if (adminCreated && enableTotp) {
+      if (!totpSecret) {
+        setError(null);
+        setLoading(true);
+        try {
+          await enrollTotp();
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
       if (totpConfirmCode.length < 6) {
         setError(t("welcome.errors.totpConfirmRequired"));
         return;
@@ -199,21 +224,12 @@ export function WelcomePage(): React.ReactElement {
         return;
       }
       markOnboardingIncomplete();
+      acceptSession(data);
       await refresh();
       setAdminCreated(true);
 
       if (enableTotp) {
-        const enroll = await hoservaClient.POST("/auth/totp/enroll", { body: {} });
-        if (enroll.error) {
-          setError(enroll.error.message);
-          return;
-        }
-        if (!enroll.data) {
-          setError(t("welcome.errors.totpEnrollFailed"));
-          return;
-        }
-        setTotpSecret(enroll.data.secret);
-        setOtpauthUri(enroll.data.otpauthUri);
+        await enrollTotp();
         return;
       }
 
@@ -304,12 +320,12 @@ export function WelcomePage(): React.ReactElement {
     (step === 0 &&
       !adminCreated &&
       (username.trim().length === 0 || password.length < 12)) ||
-    (step === 0 && adminCreated && enableTotp && totpConfirmCode.length < 6) ||
+    (step === 0 && adminCreated && enableTotp && Boolean(totpSecret) && totpConfirmCode.length < 6) ||
     (step === 1 && (doctorChecks === null || doctorBlocksProgress(doctorChecks))) ||
     (step === 3 && pathChoice.length === 0);
 
   const nextLabel =
-    step === 0 && adminCreated && enableTotp
+    step === 0 && adminCreated && enableTotp && totpSecret
       ? t("welcome.confirmTotp")
       : step === STEP_COUNT - 1
         ? t("welcome.finish")

@@ -23,13 +23,13 @@ export function TotpInput({
       disabled={disabled}
       aria-label={t("totp.label")}
     >
-      <OTPFieldInput aria-invalid={ariaInvalid} />
-      <OTPFieldInput aria-invalid={ariaInvalid} />
-      <OTPFieldInput aria-invalid={ariaInvalid} />
+      <OTPFieldInput aria-invalid={ariaInvalid} aria-label={t("totp.digit", { current: 1, total: 6 })} />
+      <OTPFieldInput aria-invalid={ariaInvalid} aria-label={t("totp.digit", { current: 2, total: 6 })} />
+      <OTPFieldInput aria-invalid={ariaInvalid} aria-label={t("totp.digit", { current: 3, total: 6 })} />
       <OTPFieldSeparator />
-      <OTPFieldInput aria-invalid={ariaInvalid} />
-      <OTPFieldInput aria-invalid={ariaInvalid} />
-      <OTPFieldInput aria-invalid={ariaInvalid} />
+      <OTPFieldInput aria-invalid={ariaInvalid} aria-label={t("totp.digit", { current: 4, total: 6 })} />
+      <OTPFieldInput aria-invalid={ariaInvalid} aria-label={t("totp.digit", { current: 5, total: 6 })} />
+      <OTPFieldInput aria-invalid={ariaInvalid} aria-label={t("totp.digit", { current: 6, total: 6 })} />
     </OTPField>
   );
 }

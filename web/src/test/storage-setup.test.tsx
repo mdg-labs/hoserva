@@ -9,10 +9,12 @@ import {
   buildConfirmPhrase,
   buildCreateArrayRequest,
   disksToErase,
+  roleAssignmentValid,
   validateRoleAssignment,
   type DiskEntry,
   type DiskRole,
 } from "@/routes/storage-setup/validation";
+import { buildConfigPreview, formatBytes } from "@/routes/storage-setup/config-preview";
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
@@ -104,6 +106,23 @@ describe("storage setup validation", () => {
     expect(result.errorCodes).toContain("tooManyParity");
   });
 
+  it("refuses more than one cache disk", () => {
+    const disks = [DISK_SDB, DISK_SDC, DISK_SMALL];
+    const roles: Record<string, DiskRole> = {
+      "/dev/sdb": "parity",
+      "/dev/sdc": "data",
+      "/dev/sdd": "cache",
+    };
+    const withSecondCache = {
+      ...roles,
+      "/dev/sde": "cache" as DiskRole,
+    };
+    const disksWithFourth = [...disks, { ...DISK_SMALL, device: "/dev/sde" }];
+    const result = validateRoleAssignment(disksWithFourth, withSecondCache);
+    expect(result.errorCodes).toContain("tooManyCache");
+    expect(roleAssignmentValid(result)).toBe(false);
+  });
+
   it("refuses parity smaller than the largest data disk", () => {
     const roles: Record<string, DiskRole> = {
       "/dev/sdd": "parity",
@@ -161,6 +180,30 @@ describe("storage setup validation", () => {
       minFreeSpace: "50G",
       confirmation: "ERASE /dev/sdb, /dev/sdc",
     });
+  });
+
+  it("places content files on the largest data disks' assigned mounts", () => {
+    const smallFirst: DiskEntry = { ...DISK_SMALL, device: "/dev/sdb" };
+    const largeSecond: DiskEntry = { ...DISK_SDB, device: "/dev/sdc", sizeBytes: 8_000_000_000_000 };
+    const preview = buildConfigPreview({
+      disks: [
+        smallFirst,
+        largeSecond,
+        { ...DISK_SMALL, device: "/dev/sdd", sizeBytes: 8_000_000_000_000 },
+        { ...DISK_SMALL, device: "/dev/sde" },
+      ],
+      roles: { "/dev/sdb": "data", "/dev/sdc": "data", "/dev/sdd": "parity", "/dev/sde": "cache" },
+      filesystemChoices: { "/dev/sdb": "format", "/dev/sdc": "format" },
+      createPolicy: "mspmfs",
+      minFreeSpaceGb: 50,
+    });
+    expect(preview.snapraidConf).toContain("content /mnt/disk2/snapraid.content");
+    expect(preview.snapraidConf).not.toContain("content /mnt/disk1/snapraid.content");
+  });
+
+  it("labels binary byte sizes with KiB-style units", () => {
+    expect(formatBytes(1024)).toBe("1.00 KiB");
+    expect(formatBytes(4 * 1024 ** 4)).toBe("4.00 TiB");
   });
 });
 

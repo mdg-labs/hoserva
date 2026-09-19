@@ -19,7 +19,7 @@ const CURRENT_PASSWORD_AUTOCOMPLETE = "current-password";
 export function LoginPage(): React.ReactElement {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { refresh } = useAuth();
+  const { refresh, acceptSession } = useAuth();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -33,7 +33,7 @@ export function LoginPage(): React.ReactElement {
     setError(null);
     setLoading(true);
     try {
-      const { error: apiError } = await hoservaClient.POST("/auth/login", {
+      const { data, error: apiError } = await hoservaClient.POST("/auth/login", {
         body: {
           username: username.trim(),
           password,
@@ -59,6 +59,9 @@ export function LoginPage(): React.ReactElement {
         }
         setError(apiError.message);
         return;
+      }
+      if (data) {
+        acceptSession(data);
       }
       await refresh();
       navigate("/");

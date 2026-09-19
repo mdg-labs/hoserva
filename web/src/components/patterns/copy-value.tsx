@@ -10,27 +10,37 @@ const END_ALIGN = "inline-end" as const;
 export function CopyValue({ value, label }: { value: string; label?: string }): React.ReactElement {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
 
   async function handleCopy(): Promise<void> {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setCopyError(false);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+      setCopyError(true);
+    }
   }
 
   return (
-    <InputGroup>
-      <InputGroupInput readOnly value={value} aria-label={label ?? t("copyValue.label")} />
-      <InputGroupAddon align={END_ALIGN}>
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          aria-label={copied ? t("copyValue.copied") : t("copyValue.copy")}
-          onClick={() => void handleCopy()}
-        >
-          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-        </Button>
-      </InputGroupAddon>
-    </InputGroup>
+    <div className="flex flex-col gap-1">
+      <InputGroup>
+        <InputGroupInput readOnly value={value} aria-label={label ?? t("copyValue.label")} />
+        <InputGroupAddon align={END_ALIGN}>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label={copied ? t("copyValue.copied") : t("copyValue.copy")}
+            onClick={() => void handleCopy()}
+          >
+            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          </Button>
+        </InputGroupAddon>
+      </InputGroup>
+      {copyError ? <p className="text-destructive text-sm">{t("copyValue.failed")}</p> : null}
+    </div>
   );
 }

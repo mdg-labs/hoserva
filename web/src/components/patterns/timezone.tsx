@@ -24,6 +24,17 @@ const COMMON_TIMEZONES = [
   "Australia/Sydney",
 ];
 
+function listTimezones(): string[] {
+  try {
+    if (typeof Intl.supportedValuesOf === "function") {
+      return Intl.supportedValuesOf("timeZone");
+    }
+  } catch {
+    // Fall through to the short list on older runtimes.
+  }
+  return COMMON_TIMEZONES;
+}
+
 export function TimezoneSelect({
   value,
   onChange,
@@ -36,13 +47,15 @@ export function TimezoneSelect({
 
   const options = useMemo(() => {
     const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const merged = Array.from(new Set([detected, ...COMMON_TIMEZONES].filter(Boolean)));
+    const merged = Array.from(
+      new Set([value, detected, "UTC", ...listTimezones()].filter(Boolean)),
+    );
     const needle = query.trim().toLowerCase();
     if (!needle) {
       return merged;
     }
     return merged.filter((zone) => zone.toLowerCase().includes(needle));
-  }, [query]);
+  }, [query, value]);
 
   return (
     <div className="flex flex-col gap-2">

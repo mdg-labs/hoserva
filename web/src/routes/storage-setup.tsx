@@ -73,7 +73,7 @@ function initialFilesystemChoices(
 ): Record<string, FilesystemChoice> {
   const choices: Record<string, FilesystemChoice> = {};
   for (const disk of disks) {
-    if (roles[disk.device] === "data") {
+    if (roles[disk.device] === "data" || roles[disk.device] === "cache") {
       choices[disk.device] = FORMAT_CHOICE;
     }
   }
@@ -101,33 +101,41 @@ export function StorageSetupPage(): React.ReactElement {
     Promise.all([
       hoservaClient.GET("/pool", {}),
       hoservaClient.GET("/disks", {}),
-    ]).then(([poolResult, disksResult]) => {
-      if (cancelled) {
-        return;
-      }
-      if (poolResult.error) {
-        setError(poolResult.error.message);
+    ])
+      .then(([poolResult, disksResult]) => {
+        if (cancelled) {
+          return;
+        }
+        if (poolResult.error) {
+          setError(poolResult.error.message);
+          setLoading(false);
+          return;
+        }
+        if (disksResult.error) {
+          setError(disksResult.error.message);
+          setLoading(false);
+          return;
+        }
+        const inventory = (disksResult.data?.disks ?? []) as DiskEntry[];
+        const nextRoles = initialRoles(inventory);
+        setPoolMounted(poolResult.data?.mounted ?? false);
+        setDisks(inventory);
+        setRoles(nextRoles);
+        setFilesystemChoices(initialFilesystemChoices(inventory, nextRoles));
         setLoading(false);
-        return;
-      }
-      if (disksResult.error) {
-        setError(disksResult.error.message);
+      })
+      .catch(() => {
+        if (cancelled) {
+          return;
+        }
+        setError(t("storageSetup.loadFailed"));
         setLoading(false);
-        return;
-      }
-      const inventory = (disksResult.data?.disks ?? []) as DiskEntry[];
-      const nextRoles = initialRoles(inventory);
-      setPoolMounted(poolResult.data?.mounted ?? false);
-      setDisks(inventory);
-      setRoles(nextRoles);
-      setFilesystemChoices(initialFilesystemChoices(inventory, nextRoles));
-      setLoading(false);
-    });
+      });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   const validation = useMemo(() => validateRoleAssignment(disks, roles), [disks, roles]);
   const preview = useMemo(
@@ -144,7 +152,9 @@ export function StorageSetupPage(): React.ReactElement {
   const eraseList = useMemo(() => disksToErase(disks, roles, filesystemChoices), [disks, roles, filesystemChoices]);
   const confirmPhrase = useMemo(() => buildConfirmPhrase(eraseList), [eraseList]);
 
-  const dataDisks = assignableDisks(disks).filter((disk) => roles[disk.device] === "data");
+  const filesystemDisks = assignableDisks(disks).filter(
+    (disk) => roles[disk.device] === "data" || roles[disk.device] === "cache",
+  );
   const optionalColumns = useMemo(() => discoveryOptionalColumns(disks), [disks]);
   const discoveryColumns = useMemo(() => buildDiscoveryColumns(t, optionalColumns), [t, optionalColumns]);
   const poolPolicyOptions = useMemo(() => buildPoolPolicyOptions(t), [t]);
@@ -167,7 +177,7 @@ export function StorageSetupPage(): React.ReactElement {
 
   const setRole = useCallback((device: string, role: DiskRole): void => {
     setRoles((current) => ({ ...current, [device]: role }));
-    if (role === "data") {
+    if (role === "data" || role === "cache") {
       setFilesystemChoices((current) => ({ ...current, [device]: current[device] ?? FORMAT_CHOICE }));
       return;
     }
@@ -196,16 +206,21 @@ export function StorageSetupPage(): React.ReactElement {
     setActiveJob(null);
     setCreating(true);
     setError(null);
-    const { data, error: apiError } = await hoservaClient.POST("/disks/array", {
-      body: buildCreateArrayRequest(disks, roles, filesystemChoices, createPolicy, minFreeSpaceGb, confirmPhrase),
-    });
-    setCreating(false);
-    if (apiError) {
-      setError(isApiError(apiError) ? apiError.message : t("storageSetup.confirm.createFailed"));
-      return;
-    }
-    if (data) {
-      setActiveJob(data);
+    try {
+      const { data, error: apiError } = await hoservaClient.POST("/disks/array", {
+        body: buildCreateArrayRequest(disks, roles, filesystemChoices, createPolicy, minFreeSpaceGb, confirmPhrase),
+      });
+      if (apiError) {
+        setError(isApiError(apiError) ? apiError.message : t("storageSetup.confirm.createFailed"));
+        return;
+      }
+      if (data) {
+        setActiveJob(data);
+      }
+    } catch {
+      setError(t("storageSetup.confirm.createFailed"));
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -310,10 +325,10 @@ export function StorageSetupPage(): React.ReactElement {
 
       {step === 2 ? (
         <div className="flex flex-col gap-4">
-          {dataDisks.length === 0 ? (
+          {filesystemDisks.length === 0 ? (
             <p className="text-muted-foreground text-sm">{t("storageSetup.filesystem.noDataDisks")}</p>
           ) : (
-            dataDisks.map((disk) => {
+            filesystemDisks.map((disk) => {
               const choice = filesystemChoices[disk.device] ?? FORMAT_CHOICE;
               const options = [
                 {
