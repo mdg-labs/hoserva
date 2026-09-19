@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,12 +11,13 @@ import (
 	"testing"
 	"time"
 
+	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 )
 
 func withPeerCred(req *http.Request, cred auth.PeerCredential) *http.Request {
-	return req.WithContext(withPeerCredential(req.Context(), cred))
+	return req.WithContext(auth.WithPeerCredential(req.Context(), cred))
 }
 
 func TestUnixSocketAuthMiddlewareRoot(t *testing.T) {
@@ -231,5 +233,89 @@ func TestUnixConnContextNonUnixConn(t *testing.T) {
 	got := unixConnContext(ctx, nil)
 	if got != ctx {
 		t.Error("unixConnContext must return ctx unchanged for a non-*net.UnixConn (nil included)")
+	}
+}
+
+// TestUnixConnContextAttachesAuthPeerCredential is the #173 regression:
+// unixConnContext must store SO_PEERCRED with auth.WithPeerCredential so
+// downstream handlers (Q78 recovery) read the same key the middleware does.
+func TestUnixConnContextAttachesAuthPeerCredential(t *testing.T) {
+	sockPath := filepath.Join(t.TempDir(), "test.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	acceptedCh := make(chan *net.UnixConn, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			errCh <- acceptErr
+			return
+		}
+		acceptedCh <- conn.(*net.UnixConn)
+	}()
+
+	client, err := net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	var server *net.UnixConn
+	select {
+	case server = <-acceptedCh:
+	case acceptErr := <-errCh:
+		t.Fatalf("accept: %v", acceptErr)
+	}
+	defer func() { _ = server.Close() }()
+
+	ctx := unixConnContext(context.Background(), server)
+	cred, ok := auth.PeerCredentialFromContext(ctx)
+	if !ok {
+		t.Fatal("unixConnContext must attach the peer via auth.WithPeerCredential")
+	}
+	if int(cred.UID) != os.Getuid() {
+		t.Errorf("UID = %d, want %d", cred.UID, os.Getuid())
+	}
+}
+
+// recoveryThroughMiddleware exercises Q78 over the same middleware chain
+// hoservad serves: socket admission (Q44) is separate from recovery's
+// uid-0 requirement (Q78). UnlockUser is called with Auth unset so the
+// test stops at requireRootPeer — a non-root caller must get
+// ErrRootOnlyRecovery; uid 0 must not.
+func recoveryThroughMiddleware(t *testing.T, cred auth.PeerCredential, daemonUID uint32) int {
+	t.Helper()
+	h := &api.Handler{}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := h.UnlockUser(r.Context(), apiv1.UnlockUserParams{Username: "admin"})
+		if errors.Is(err, api.ErrRootOnlyRecovery) {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	lookup := &auth.FakeGroupLookup{Group: "hoserva", Exists: true}
+	mw := unixSocketAuthMiddleware(next, lookup, daemonUID)
+
+	req := withPeerCred(httptest.NewRequest("POST", "/api/v1/users/admin/unlock", nil), cred)
+	rec := httptest.NewRecorder()
+	mw.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+func TestUnixSocketRecoveryRootAllowed(t *testing.T) {
+	if recoveryThroughMiddleware(t, auth.PeerCredential{UID: 0, GID: 0}, 1000) != http.StatusOK {
+		t.Error("uid 0 must reach the recovery handler over the Unix socket")
+	}
+}
+
+func TestUnixSocketRecoveryDaemonUIDRefused(t *testing.T) {
+	const daemonUID = 1000
+	if recoveryThroughMiddleware(t, auth.PeerCredential{UID: daemonUID, GID: 999}, daemonUID) != http.StatusForbidden {
+		t.Error("the daemon's own uid must be admitted to the socket (Q44) but refused for recovery (Q78)")
 	}
 }
