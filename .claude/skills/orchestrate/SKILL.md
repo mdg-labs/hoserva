@@ -224,7 +224,13 @@ Never work in the real repo; never share a clone between concurrent units.
 ```
 mkdir -p <scratchpad dir>/orchestrate
 git clone <real repo path> <scratchpad dir>/orchestrate/<unit-id>-a1
+git -C <scratchpad dir>/orchestrate/<unit-id>-a1 config core.hooksPath scripts/devenv/hooks
 ```
+
+A plain `git clone` doesn't carry hooks over — the second line points this
+clone at the repo-tracked `prepare-commit-msg` hook (CONTRIBUTING.md, doc 13
+Q2) so every commit the executor makes here is signed off automatically,
+the same as `make hooks-install` does for a human clone.
 
 `<unit-id>` is the issue number (`57-a1`) or bundle members joined with `+`
 (`57+58-a1`). **The lab id is derived from it**: `HOSERVA_LAB_ID=<unit-id>`
@@ -382,7 +388,9 @@ git cherry-pick -n FETCH_HEAD
   it the filter matches nothing and every landing would close the epic.
 
   Commit with the executor's message, adding `Fixes #<epic>` only if it is
-  really the last:
+  really the last. This runs in the real repo, so it needs `make
+  hooks-install` run there once (CONTRIBUTING.md, doc 13 Q2) — the
+  `prepare-commit-msg` hook then adds the `Signed-off-by` trailer itself:
   ```
   git commit -m "$(cat <<'EOF'
   <the executor's own commit message>

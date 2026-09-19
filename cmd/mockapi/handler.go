@@ -42,6 +42,16 @@ type handler struct {
 
 	mu   sync.Mutex
 	jobs map[uuid.UUID]apiv1.Job
+
+	// notifyMu guards the in-memory notification state below (#35) —
+	// separate from mu (jobs) since neither ever needs the other's lock.
+	// None of this comes from a fixture: no scenario encodes notification
+	// channels yet, so every mock instance starts with none configured,
+	// exactly like a fresh Hoserva install.
+	notifyMu   sync.Mutex
+	channels   map[uuid.UUID]apiv1.NotificationChannel
+	routing    map[apiv1.NotificationEventType]apiv1.NotificationRoutingEntry
+	quietHours apiv1.NotificationQuietHours
 }
 
 var _ apiv1.Handler = (*handler)(nil)
@@ -71,7 +81,13 @@ func newHandler(scenario string) (*handler, error) {
 		jobs[job.ID] = job
 	}
 
-	return &handler{scenario: scenario, jobs: jobs}, nil
+	return &handler{
+		scenario:   scenario,
+		jobs:       jobs,
+		channels:   make(map[uuid.UUID]apiv1.NotificationChannel),
+		routing:    defaultNotificationRouting(),
+		quietHours: apiv1.NotificationQuietHours{Enabled: false, Start: "22:00", End: "07:00", CriticalAlwaysDelivers: true},
+	}, nil
 }
 
 // errJobNotFound and friends are sentinels handed to NewError, keeping the

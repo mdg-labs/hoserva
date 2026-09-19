@@ -24,6 +24,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/web"
 
@@ -40,6 +41,27 @@ const apiPathPrefix = "/api/v1"
 // its database, never a data disk, so this is not the kind of timer
 // CLAUDE.md forbids ("nothing on a timer walks a data disk").
 const logPruneInterval = 24 * time.Hour
+
+// notifyDeliveryInterval is how often the daemon drives
+// notify.Service.RunDueDeliveries (#165) — the notify_deliveries queue
+// lives in the central database, never a data disk, so this is not the
+// kind of timer CLAUDE.md forbids. Short and frequent favors "retried and
+// logged, never silently dropped" (#35's own acceptance criteria) over
+// batching efficiency, which is the right tradeoff for a notification
+// queue on a single-admin NAS.
+const notifyDeliveryInterval = 30 * time.Second
+
+// notifyDeliveryBatchLimit bounds how many due deliveries one
+// RunDueDeliveries call attempts — comfortably above what a single-admin
+// NAS's routing matrix can queue in one notifyDeliveryInterval tick.
+const notifyDeliveryBatchLimit = 20
+
+// notifyHTTPTimeout bounds every HTTP-based channel send (Gotify, ntfy,
+// Discord, generic webhook) — without it, an unreachable or misconfigured
+// channel's server could hang RunDueDeliveries indefinitely, since it
+// processes deliveries one at a time and the daemon's own lifecycle
+// context carries no deadline of its own.
+const notifyHTTPTimeout = 30 * time.Second
 
 // maxRequestBodyBytes bounds every unauthenticated and authenticated API
 // request body alike (both listeners, cmd/hoservad's own
@@ -144,6 +166,9 @@ func run(cfg config) error {
 
 	authService := api.NewAuthService(authStore, machineKey)
 
+	notifyStore := notify.NewStore(db)
+	notifyService := notify.NewService(notifyStore, machineKey, notify.DefaultSenders(&http.Client{Timeout: notifyHTTPTimeout}))
+
 	logsDir := filepath.Join(cfg.stateDir, "jobs")
 	jobStore := job.NewStore(db)
 	logs := job.NewLogStore(logsDir)
@@ -154,7 +179,7 @@ func run(cfg config) error {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
 
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService}
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService}
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
@@ -182,6 +207,7 @@ func run(cfg config) error {
 
 	pruneOnce(ctx, jobStore, logs, authStore)
 	go runDailyPrune(ctx, jobStore, logs, authStore)
+	go runNotifyDeliveryLoop(ctx, notifyService, notifyDeliveryInterval, notifyDeliveryBatchLimit)
 
 	errCh := make(chan error, 2)
 	go func() {
@@ -414,6 +440,28 @@ func runDailyPrune(ctx context.Context, jobStore *job.Store, logs *job.LogStore,
 			return
 		case <-ticker.C:
 			pruneOnce(ctx, jobStore, logs, authStore)
+		}
+	}
+}
+
+// runNotifyDeliveryLoop drives notify.Service.RunDueDeliveries (#165) on
+// interval, attempting up to limit due deliveries per tick, until ctx is
+// cancelled — the same shutdown discipline as runDailyPrune. A failure
+// here is the delivery store itself misbehaving, not a channel-side send
+// failure (RunDueDeliveries already handles and persists those without
+// returning an error), so it is logged and the loop keeps ticking rather
+// than exiting.
+func runNotifyDeliveryLoop(ctx context.Context, notifyService *notify.Service, interval time.Duration, limit int) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := notifyService.RunDueDeliveries(ctx, limit); err != nil {
+				log.Printf("hoservad: running due notification deliveries: %v", err)
+			}
 		}
 	}
 }

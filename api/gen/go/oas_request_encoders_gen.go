@@ -38,6 +38,20 @@ func encodeCreateFirstAdminRequest(
 	return nil
 }
 
+func encodeCreateNotificationChannelRequest(
+	req *CreateNotificationChannelRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeEnrollTotpRequest(
 	req *TotpEnrollRequest,
 	r *http.Request,
@@ -54,6 +68,48 @@ func encodeEnrollTotpRequest(
 
 func encodeLoginRequest(
 	req *LoginRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpdateNotificationChannelRequest(
+	req *UpdateNotificationChannelRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpdateNotificationRouteRequest(
+	req *UpdateNotificationRouteRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpdateQuietHoursRequest(
+	req *UpdateQuietHoursRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

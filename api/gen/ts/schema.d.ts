@@ -273,6 +273,148 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/notifications/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List notification channels
+         * @description Every configured alerting destination (doc 03 §8.3).
+         */
+        get: operations["listNotificationChannels"];
+        put?: never;
+        /**
+         * Add a notification channel
+         * @description A credential supplied in `secret` (Q28) is encrypted with the machine key before it reaches the database and is never returned by any later read — `hasSecret` on the response is the only trace of it.
+         */
+        post: operations["createNotificationChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/channels/{channelId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channelId: components["parameters"]["ChannelId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a notification channel
+         * @description A single channel's current configuration, by id, secret excluded.
+         */
+        get: operations["getNotificationChannel"];
+        /**
+         * Replace a notification channel's configuration
+         * @description A full replace, like the request body of createNotificationChannel: every type-specific field the request omits is cleared, not left as it was. `secret` is tri-state — omitted keeps the existing credential, `null` clears it, a string replaces it — since this is the one field a response never echoes back for a client to resend unchanged (Q28).
+         */
+        put: operations["updateNotificationChannel"];
+        post?: never;
+        /**
+         * Remove a notification channel
+         * @description Also removes every routing entry that named this channel.
+         */
+        delete: operations["deleteNotificationChannel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/channels/{channelId}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channelId: components["parameters"]["ChannelId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a test notification through a channel
+         * @description Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of the channel's own configuration, not a routed event, so it reports success or the delivery error directly rather than being retried and logged like a routed notification (doc 03 §8.3: "untested notification config is the same as no notification config").
+         */
+        post: operations["sendTestNotification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/routing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the full per-event routing matrix
+         * @description One entry per event type in doc 03 §8.3's fixed catalog, in the order that doc lists them — every event type appears even before it has ever been routed anywhere, with its compiled-in default severity and an empty channel list.
+         */
+        get: operations["getNotificationRouting"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/routing/{eventType}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eventType: components["parameters"]["EventType"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set one event type's severity and routed channels
+         * @description A full replace of eventType's own row in the matrix: the channel list becomes exactly channelIds, and the severity becomes exactly severity — including reverting to the compiled-in default when the request's severity matches it, and un-routing every channel by sending an empty list, e.g. for `sync_succeeded`'s opt-in, off-by-default event (doc 03 §8.3).
+         */
+        put: operations["updateNotificationRoute"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/quiet-hours": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the quiet hours configuration
+         * @description The current quiet hours window and the always-on critical override (doc 03 §8.3).
+         */
+        get: operations["getQuietHours"];
+        /**
+         * Set the quiet hours window
+         * @description `criticalAlwaysDelivers` is not part of the request body: doc 03 §8.3's override that critical alerts always deliver cannot be disabled, so there is nothing for a client to set — the response always reports it `true`.
+         */
+        put: operations["updateQuietHours"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -425,6 +567,116 @@ export interface components {
         };
         /** @description The full set of `/api/v1/events` SSE event types (doc 01 §5). */
         Event: components["schemas"]["JobProgressEvent"] | components["schemas"]["DiskStateEvent"] | components["schemas"]["ContainerStateEvent"] | components["schemas"]["NotificationEvent"];
+        /**
+         * @description The fixed event catalog doc 03 §8.3 lists, in that doc's own order. internal/notify assigns every one of these a compiled-in default severity (NotificationLevel); notify_event_severity overrides it per event type.
+         * @enum {string}
+         */
+        NotificationEventType: "smart_warning" | "smart_failure" | "disk_offline" | "array_degraded" | "sync_succeeded" | "sync_failed" | "sync_blocked_threshold" | "scrub_errors_found" | "pool_above_threshold" | "disk_near_minfreespace" | "cache_above_threshold" | "mover_skipping_files" | "config_drift_detected" | "container_unhealthy" | "container_update_available" | "hoserva_update_available" | "reboot_required" | "ups_on_battery" | "ups_battery_low" | "login_failure_burst" | "credential_reset" | "certificate_expiring" | "config_backup_failed" | "appdata_backup_failed" | "backup_destination_stale" | "restore_drill_failed";
+        /** @enum {string} */
+        NotificationChannelType: "email" | "gotify" | "ntfy" | "discord" | "webhook";
+        /** @enum {string} */
+        NotificationWebhookMethod: "POST" | "PUT";
+        NotificationWebhookHeaders: {
+            [key: string]: string;
+        };
+        /** @description Never carries a credential (Q28) — `hasSecret` is the only signal that one is configured. Only the properties relevant to `type` are meaningful; the rest are absent. */
+        NotificationChannel: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            type: components["schemas"]["NotificationChannelType"];
+            enabled: boolean;
+            /** @description Whether a credential is configured for this channel. */
+            hasSecret: boolean;
+            emailHost?: string;
+            /** Format: int32 */
+            emailPort?: number;
+            emailUsername?: string;
+            emailFrom?: string;
+            emailTo?: string[];
+            emailStartTls?: boolean;
+            gotifyUrl?: string;
+            ntfyUrl?: string;
+            ntfyTopic?: string;
+            webhookUrl?: string;
+            webhookMethod?: components["schemas"]["NotificationWebhookMethod"];
+            webhookHeaders?: components["schemas"]["NotificationWebhookHeaders"];
+            /** @description The header carrying the generic webhook's credential, e.g. `Authorization` — the header's value is `secret`, never a plain property here. */
+            webhookAuthHeaderName?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        CreateNotificationChannelRequest: {
+            name: string;
+            type: components["schemas"]["NotificationChannelType"];
+            enabled: boolean;
+            /** @description The channel's credential, e.g. an SMTP password, a Gotify app token, an ntfy auth token, a Discord webhook URL, or a generic webhook's auth header value. Encrypted with the machine key before it reaches the database (Q28) and never returned by any later read. */
+            secret?: string;
+            emailHost?: string;
+            /** Format: int32 */
+            emailPort?: number;
+            emailUsername?: string;
+            emailFrom?: string;
+            emailTo?: string[];
+            emailStartTls?: boolean;
+            gotifyUrl?: string;
+            ntfyUrl?: string;
+            ntfyTopic?: string;
+            webhookUrl?: string;
+            webhookMethod?: components["schemas"]["NotificationWebhookMethod"];
+            webhookHeaders?: components["schemas"]["NotificationWebhookHeaders"];
+            webhookAuthHeaderName?: string;
+        };
+        /** @description Same shape as CreateNotificationChannelRequest, a full replace, except `secret` is tri-state: omitted keeps the existing credential, `null` clears it, a string replaces it. */
+        UpdateNotificationChannelRequest: {
+            name: string;
+            type: components["schemas"]["NotificationChannelType"];
+            enabled: boolean;
+            secret?: string | null;
+            emailHost?: string;
+            /** Format: int32 */
+            emailPort?: number;
+            emailUsername?: string;
+            emailFrom?: string;
+            emailTo?: string[];
+            emailStartTls?: boolean;
+            gotifyUrl?: string;
+            ntfyUrl?: string;
+            ntfyTopic?: string;
+            webhookUrl?: string;
+            webhookMethod?: components["schemas"]["NotificationWebhookMethod"];
+            webhookHeaders?: components["schemas"]["NotificationWebhookHeaders"];
+            webhookAuthHeaderName?: string;
+        };
+        NotificationTestResult: {
+            success: boolean;
+            /** @description The delivery error, present only when success is false. */
+            error?: string | null;
+        };
+        NotificationRoutingEntry: {
+            eventType: components["schemas"]["NotificationEventType"];
+            severity: components["schemas"]["NotificationLevel"];
+            channelIds: string[];
+        };
+        UpdateNotificationRouteRequest: {
+            severity: components["schemas"]["NotificationLevel"];
+            channelIds: string[];
+        };
+        NotificationQuietHours: {
+            enabled: boolean;
+            /** @description 24-hour local time, e.g. "22:00". */
+            start: string;
+            end: string;
+            /** @description Always true (doc 03 §8.3) — critical alerts deliver regardless of quiet hours, and this cannot be disabled, so there is no request field that ever sets it otherwise. */
+            criticalAlwaysDelivers: boolean;
+        };
+        UpdateQuietHoursRequest: {
+            enabled: boolean;
+            start: string;
+            end: string;
+        };
     };
     responses: {
         /** @description An error response (doc 01 §5). */
@@ -439,6 +691,8 @@ export interface components {
     };
     parameters: {
         JobId: string;
+        ChannelId: string;
+        EventType: components["schemas"]["NotificationEventType"];
     };
     requestBodies: never;
     headers: never;
@@ -744,6 +998,244 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listNotificationChannels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every configured channel. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        channels: components["schemas"]["NotificationChannel"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateNotificationChannelRequest"];
+            };
+        };
+        responses: {
+            /** @description The new channel. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannel"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channelId: components["parameters"]["ChannelId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The channel. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannel"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channelId: components["parameters"]["ChannelId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateNotificationChannelRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated channel. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationChannel"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteNotificationChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channelId: components["parameters"]["ChannelId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    sendTestNotification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channelId: components["parameters"]["ChannelId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether the test notification was delivered. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTestResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getNotificationRouting: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The routing matrix. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        routing: components["schemas"]["NotificationRoutingEntry"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateNotificationRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eventType: components["parameters"]["EventType"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateNotificationRouteRequest"];
+            };
+        };
+        responses: {
+            /** @description The event type's updated routing entry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationRoutingEntry"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getQuietHours: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current quiet hours configuration. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationQuietHours"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateQuietHours: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateQuietHoursRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated quiet hours configuration. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationQuietHours"];
+                };
             };
             default: components["responses"]["Error"];
         };

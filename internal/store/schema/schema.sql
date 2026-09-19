@@ -150,6 +150,87 @@ CREATE TABLE audit_log (
 
 CREATE INDEX audit_log_at_idx ON audit_log (at);
 
+-- Notification channels (#35, Q28): each row is one configured alerting
+-- destination (email, gotify, ntfy, discord webhook, generic webhook).
+-- config holds every non-secret field the channel type needs, JSON-encoded
+-- by internal/notify; secret is nullable and, when present, is ciphertext
+-- from internal/auth.MachineKey.Encrypt (nonce||AES-256-GCM ciphertext) —
+-- the SMTP password, Gotify app token, ntfy auth token, Discord webhook
+-- URL or generic webhook auth header value, whichever the channel type
+-- has. A leaked database file alone never yields a usable credential.
+CREATE TABLE notify_channels (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    "type" TEXT NOT NULL CHECK ("type" IN ('email', 'gotify', 'ntfy', 'discord', 'webhook')),
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    config TEXT NOT NULL,
+    secret BLOB,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT;
+
+-- Per-event routing (doc 03 §8.3's routing matrix): presence of a row
+-- means event_type is routed to channel_id. Deleting a channel drops
+-- every route that named it. There is deliberately no "enabled" column
+-- here — unrouting an event from a channel is removing the row, not
+-- flagging one.
+CREATE TABLE notify_routes (
+    event_type TEXT NOT NULL,
+    channel_id TEXT NOT NULL REFERENCES notify_channels (id) ON DELETE CASCADE,
+    PRIMARY KEY (event_type, channel_id)
+) STRICT;
+
+CREATE INDEX notify_routes_channel_id_idx ON notify_routes (channel_id);
+
+-- Per-event severity overrides (doc 03 §8.3's per-row severity Select).
+-- internal/notify's fixed event catalog carries a compiled-in default
+-- severity for every event type; a row here overrides it. No row means
+-- "use the compiled-in default" — every event type is valid whether or
+-- not it has ever been overridden, so there is nothing to seed here.
+CREATE TABLE notify_event_severity (
+    event_type TEXT PRIMARY KEY,
+    severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'error', 'critical'))
+) STRICT;
+
+-- Quiet hours (doc 03 §8.3): one row, id=1, the same singleton pattern as
+-- schema_info above. The "critical alerts always deliver" override is not
+-- a column here — doc 03 §8.3 and CLAUDE.md both require it to be
+-- impossible to disable, so internal/notify hardcodes it rather than
+-- reading a value that could ever be set to false.
+CREATE TABLE notify_quiet_hours (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT;
+
+-- Delivery queue (#35): every notification a channel should receive is one
+-- row here, sent by internal/notify's own delivery worker and retried on
+-- failure — "delivery failures retried and logged, never silently
+-- dropped" survives a daemon restart because the row, not an in-memory
+-- queue, is what durably says a delivery is still owed. `suppressed` is
+-- not a failure: quiet hours can suppress every severity but critical,
+-- and this is where a would-be delivery is still recorded, so "why
+-- nothing was sent" is never silent either.
+CREATE TABLE notify_deliveries (
+    id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL REFERENCES notify_channels (id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'error', 'critical')),
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    "status" TEXT NOT NULL CHECK ("status" IN ('pending', 'delivered', 'failed', 'suppressed')),
+    attempts INTEGER NOT NULL,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    next_attempt_at TEXT NOT NULL,
+    delivered_at TEXT
+) STRICT;
+
+CREATE INDEX notify_deliveries_status_idx ON notify_deliveries ("status", next_attempt_at);
+CREATE INDEX notify_deliveries_channel_id_idx ON notify_deliveries (channel_id);
+
 -- The machine key's check value (#22, Q28). Written once, the moment
 -- this installation's machine key is first generated, and read at every
 -- later start (auth.LoadOrGenerateMachineKey) to prove a candidate key

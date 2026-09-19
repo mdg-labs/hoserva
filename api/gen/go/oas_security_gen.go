@@ -38,15 +38,25 @@ func findAuthorization(h http.Header, prefix string) (string, bool) {
 
 // operationRolesApiToken is a private map storing roles per operation.
 var operationRolesApiToken = map[string][]string{
-	CancelJobOperation:         []string{},
-	ConfirmTotpOperation:       []string{},
-	EnrollTotpOperation:        []string{},
-	GetCurrentSessionOperation: []string{},
-	GetJobOperation:            []string{},
-	GetJobLogOperation:         []string{},
-	ListJobsOperation:          []string{},
-	LogoutOperation:            []string{},
-	ResumeJobOperation:         []string{},
+	CancelJobOperation:                 []string{},
+	ConfirmTotpOperation:               []string{},
+	CreateNotificationChannelOperation: []string{},
+	DeleteNotificationChannelOperation: []string{},
+	EnrollTotpOperation:                []string{},
+	GetCurrentSessionOperation:         []string{},
+	GetJobOperation:                    []string{},
+	GetJobLogOperation:                 []string{},
+	GetNotificationChannelOperation:    []string{},
+	GetNotificationRoutingOperation:    []string{},
+	GetQuietHoursOperation:             []string{},
+	ListJobsOperation:                  []string{},
+	ListNotificationChannelsOperation:  []string{},
+	LogoutOperation:                    []string{},
+	ResumeJobOperation:                 []string{},
+	SendTestNotificationOperation:      []string{},
+	UpdateNotificationChannelOperation: []string{},
+	UpdateNotificationRouteOperation:   []string{},
+	UpdateQuietHoursOperation:          []string{},
 }
 
 // GetRolesForApiToken returns the required roles for the given operation.
@@ -72,15 +82,25 @@ func GetRolesForApiToken(operation string) []string {
 
 // operationRolesSessionCookie is a private map storing roles per operation.
 var operationRolesSessionCookie = map[string][]string{
-	CancelJobOperation:         []string{},
-	ConfirmTotpOperation:       []string{},
-	EnrollTotpOperation:        []string{},
-	GetCurrentSessionOperation: []string{},
-	GetJobOperation:            []string{},
-	GetJobLogOperation:         []string{},
-	ListJobsOperation:          []string{},
-	LogoutOperation:            []string{},
-	ResumeJobOperation:         []string{},
+	CancelJobOperation:                 []string{},
+	ConfirmTotpOperation:               []string{},
+	CreateNotificationChannelOperation: []string{},
+	DeleteNotificationChannelOperation: []string{},
+	EnrollTotpOperation:                []string{},
+	GetCurrentSessionOperation:         []string{},
+	GetJobOperation:                    []string{},
+	GetJobLogOperation:                 []string{},
+	GetNotificationChannelOperation:    []string{},
+	GetNotificationRoutingOperation:    []string{},
+	GetQuietHoursOperation:             []string{},
+	ListJobsOperation:                  []string{},
+	ListNotificationChannelsOperation:  []string{},
+	LogoutOperation:                    []string{},
+	ResumeJobOperation:                 []string{},
+	SendTestNotificationOperation:      []string{},
+	UpdateNotificationChannelOperation: []string{},
+	UpdateNotificationRouteOperation:   []string{},
+	UpdateQuietHoursOperation:          []string{},
 }
 
 // GetRolesForSessionCookie returns the required roles for the given operation.
