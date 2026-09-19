@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -24,6 +25,9 @@ type DirectMounter struct {
 }
 
 // Mount creates unit.Where if needed and mounts UUID=unit.UUID there.
+// A disk already mounted at unit.Where by that same UUID is success, so
+// a create-array retry after a partial apply does not fail as a second
+// format would.
 func (m DirectMounter) Mount(ctx context.Context, unit MountUnit) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -32,6 +36,10 @@ func (m DirectMounter) Mount(ctx context.Context, unit MountUnit) error {
 		return fmt.Errorf("disk: creating mountpoint %s: %w", unit.Where, err)
 	}
 	if _, err := m.Runner.Run(ctx, "mount", "-t", string(unit.Filesystem), "-o", "defaults,nofail", "-U", unit.UUID, unit.Where); err != nil {
+		out, findErr := m.Runner.Run(ctx, "findmnt", "-n", "-o", "UUID", unit.Where)
+		if findErr == nil && strings.TrimSpace(string(out)) == unit.UUID {
+			return nil
+		}
 		return fmt.Errorf("disk: mounting %s at %s: %w", unit.UUID, unit.Where, err)
 	}
 	return nil

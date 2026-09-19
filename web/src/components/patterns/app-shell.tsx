@@ -18,6 +18,8 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 
+import { PersistentBanners } from "@/components/patterns/persistent-banners";
+import { TopBar } from "@/components/patterns/top-bar";
 import {
   Sidebar,
   SidebarContent,
@@ -32,6 +34,7 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { SystemDataProvider } from "@/hooks/use-system-data";
 
 interface NavEntry {
   to: string;
@@ -63,38 +66,44 @@ export function AppShell({ children }: { children: ReactNode }): React.ReactElem
   const location = useLocation();
 
   return (
-    <SidebarProvider>
-      <Sidebar>
-        <SidebarHeader>
-          <span className="px-2 text-lg font-semibold font-heading">{t("shell.title")}</span>
-        </SidebarHeader>
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {NAV_ENTRIES.map(({ to, labelKey, icon: Icon }) => (
-                  <SidebarMenuItem key={to}>
-                    <SidebarMenuButton
-                      isActive={isNavEntryActive(location.pathname, to)}
-                      render={<Link to={to} />}
-                    >
-                      <Icon aria-hidden="true" />
-                      <span>{t(labelKey)}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarRail />
-      </Sidebar>
-      <SidebarInset>
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-          <SidebarTrigger aria-label={t("shell.toggleSidebar")} />
-        </header>
-        <main className="flex-1 p-4">{children}</main>
-      </SidebarInset>
-    </SidebarProvider>
+    <SystemDataProvider>
+      <SidebarProvider>
+        <Sidebar>
+          <SidebarHeader>
+            <span className="px-2 text-lg font-semibold font-heading">{t("shell.title")}</span>
+          </SidebarHeader>
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {NAV_ENTRIES.map(({ to, labelKey, icon: Icon }) => (
+                    <SidebarMenuItem key={to}>
+                      <SidebarMenuButton
+                        isActive={isNavEntryActive(location.pathname, to)}
+                        render={<Link to={to} />}
+                      >
+                        <Icon aria-hidden="true" />
+                        <span>{t(labelKey)}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+          <SidebarRail />
+        </Sidebar>
+        <SidebarInset>
+          <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+            <SidebarTrigger aria-label={t("shell.toggleSidebar")} />
+            <TopBar />
+          </header>
+          <main className="flex flex-1 flex-col gap-4 p-4">
+            <PersistentBanners />
+            {children}
+          </main>
+        </SidebarInset>
+      </SidebarProvider>
+    </SystemDataProvider>
   );
 }

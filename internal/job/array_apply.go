@@ -14,8 +14,9 @@ import (
 
 // applyArrayFromStore generates disk mount units, mergerfs pool units and
 // snapraid.conf from SQLite topology (D4, D1) and mounts each physical
-// disk by the filesystem UUID stored there (Q21). It never reads
-// job-params JSON.
+// disk by the filesystem UUID stored there (Q21). Rewriting units and
+// remounting a disk already mounted by that stored UUID is success, not
+// a second format. It never reads job-params JSON and never formats.
 func applyArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Generator, mounter disk.UnitMounter, now time.Time) error {
 	settings, disks, err := st.GetArray(ctx)
 	if err != nil {

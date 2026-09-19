@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,29 @@ import (
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
+
+// formatCountingProvider records every Format call so a retry after
+// persist-then-apply failure can prove FormatPlan did not run again.
+type formatCountingProvider struct {
+	disk.Provider
+	mu    sync.Mutex
+	calls []string
+}
+
+func (p *formatCountingProvider) Format(ctx context.Context, dev string, fs disk.FilesystemType) error {
+	p.mu.Lock()
+	p.calls = append(p.calls, dev)
+	p.mu.Unlock()
+	return p.Provider.Format(ctx, dev, fs)
+}
+
+func (p *formatCountingProvider) formatCalls() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]string, len(p.calls))
+	copy(out, p.calls)
+	return out
+}
 
 func validFormatParams(parity, data string, sizes map[string]int64) DiskFormatParams {
 	plan := disk.TopologyPlan{
@@ -49,19 +73,24 @@ func scriptFilesystemUUID(r *disk.FakeRunner, dev, uuid string) {
 	r.Script("blkid", []string{"-s", "UUID", "-o", "value", dev}, []byte(uuid+"\n"), nil)
 }
 
+func registerDiskFormatDeps(t *testing.T, s *Scheduler, p disk.Provider, r disk.Runner, st *store.ArrayStore, genRoot string, mounter disk.UnitMounter) {
+	t.Helper()
+	s.registry.Register(TypeDiskFormat, false, RunDiskFormat(DiskFormatDeps{
+		Provider:  p,
+		Runner:    r,
+		Store:     st,
+		Generator: config.NewGenerator(genRoot),
+		Mounter:   mounter,
+		Now:       func() time.Time { return time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC) },
+	}))
+}
+
 func registerDiskFormat(t *testing.T, s *Scheduler, p disk.Provider, r disk.Runner) (*store.ArrayStore, string, *disk.FakeMounter) {
 	t.Helper()
 	arrayStore := store.NewArrayStore(newTestDB(t))
 	genRoot := t.TempDir()
 	mounter := disk.NewFakeMounter()
-	s.registry.Register(TypeDiskFormat, false, RunDiskFormat(DiskFormatDeps{
-		Provider:  p,
-		Runner:    r,
-		Store:     arrayStore,
-		Generator: config.NewGenerator(genRoot),
-		Mounter:   mounter,
-		Now:       func() time.Time { return time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC) },
-	}))
+	registerDiskFormatDeps(t, s, p, r, arrayStore, genRoot, mounter)
 	return arrayStore, genRoot, mounter
 }
 
@@ -405,6 +434,9 @@ func TestRunDiskFormat_PartialFormatFailureWritesNoTopology(t *testing.T) {
 }
 
 func TestRunDiskFormat_ExistingArrayFormatsNothing(t *testing.T) {
+	// Stored topology is parity+data; the retry names an extra cache
+	// disk, so the plans do not match. Mismatch must still refuse
+	// (ErrArrayExists), format nothing, write no units, and not remount.
 	ctx := context.Background()
 	s := newTestScheduler(t)
 	p := disk.NewFakeProvider()
@@ -448,6 +480,191 @@ func TestRunDiskFormat_ExistingArrayFormatsNothing(t *testing.T) {
 	}
 	if len(mounter.Mounts) != 0 {
 		t.Fatalf("existing array mounted units: %+v", mounter.Mounts)
+	}
+}
+
+// TestRunDiskFormat_RetryAfterApplyFailureDoesNotReformat is the
+// data-loss scenario: FormatPlan and PutArray have already succeeded,
+// applyArrayFromStore then fails, and a retry of the same plan must not
+// invoke format on the already-formatted assigned disks (Q29: this job
+// type is not resumable from format). It must re-apply from SQLite and
+// leave those disks mounted by the stored filesystem UUID.
+func TestRunDiskFormat_RetryAfterApplyFailureDoesNotReformat(t *testing.T) {
+	ctx := context.Background()
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB})
+	counter := &formatCountingProvider{Provider: p}
+	runner := disk.NewFakeRunner()
+	scriptFilesystemUUID(runner, "/dev/sda", "uuid-parity1")
+	scriptFilesystemUUID(runner, "/dev/sdb", "uuid-disk1")
+	scriptFilesystemUUID(runner, "/dev/sdc", "uuid-cache")
+
+	st := store.NewArrayStore(newTestDB(t))
+	genRoot := t.TempDir()
+	mounter := disk.NewFakeMounter()
+	mounter.Err = errors.New("injected apply failure after persist")
+
+	s := newTestScheduler(t)
+	registerDiskFormatDeps(t, s, counter, runner, st, genRoot, mounter)
+
+	params := validFormatParamsWithCache("/dev/sda", "/dev/sdb", "/dev/sdc", map[string]int64{
+		"/dev/sda": 8 * disk.TB, "/dev/sdb": 4 * disk.TB, "/dev/sdc": 4 * disk.TB,
+	})
+	j, err := s.Submit(ctx, TypeDiskFormat, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("first job status = %s (%s), want failed", finished.Status, finished.ErrorMessage)
+	}
+	if !strings.Contains(finished.ErrorMessage, "injected apply failure after persist") {
+		t.Fatalf("first job ErrorMessage = %q, want injected apply failure", finished.ErrorMessage)
+	}
+	exists, err := st.Exists(ctx)
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if !exists {
+		t.Fatal("first job did not persist topology before apply failed")
+	}
+	firstCalls := counter.formatCalls()
+	if len(firstCalls) != 3 {
+		t.Fatalf("first job Format calls = %v, want 3 assigned disks", firstCalls)
+	}
+
+	mounter.Err = nil
+	j2, err := s.Submit(ctx, TypeDiskFormat, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit retry: %v", err)
+	}
+	retry := await(t, s, j2.ID)
+	if retry.Status != StatusSucceeded {
+		t.Fatalf("retry status = %s (%s), want succeeded", retry.Status, retry.ErrorMessage)
+	}
+	retryCalls := counter.formatCalls()
+	if len(retryCalls) != len(firstCalls) {
+		t.Fatalf("retry invoked format on already-formatted disks: calls after retry = %v, want %v", retryCalls, firstCalls)
+	}
+
+	_, disks, err := st.GetArray(ctx)
+	if err != nil {
+		t.Fatalf("GetArray: %v", err)
+	}
+	if len(mounter.Mounts) != 3 {
+		t.Fatalf("retry mounted %d units, want 3: %+v", len(mounter.Mounts), mounter.Mounts)
+	}
+	byUUID := map[string]store.ArrayDisk{}
+	for _, d := range disks {
+		byUUID[d.FSUUID] = d
+	}
+	for _, u := range mounter.Mounts {
+		stored, ok := byUUID[u.UUID]
+		if !ok {
+			t.Fatalf("retry mounted UUID %q which is not in stored topology: %+v", u.UUID, disks)
+		}
+		if u.Where != stored.Mountpoint {
+			t.Fatalf("retry mounted %+v, want stored mountpoint %s", u, stored.Mountpoint)
+		}
+	}
+
+	diskUnit, err := os.ReadFile(filepath.Join(genRoot, "systemd", "system", "mnt-disk1.mount"))
+	if err != nil {
+		t.Fatalf("reading data disk unit: %v", err)
+	}
+	if !strings.Contains(string(diskUnit), "What=/dev/disk/by-uuid/uuid-disk1") {
+		t.Fatalf("data disk unit not mounted by stored UUID:\n%s", diskUnit)
+	}
+	conf, err := os.ReadFile(filepath.Join(genRoot, "snapraid.conf"))
+	if err != nil {
+		t.Fatalf("reading snapraid.conf: %v", err)
+	}
+	got := string(conf)
+	for _, want := range []string{"/mnt/parity1", "/mnt/disk1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("snapraid.conf missing stored mount %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "/mnt/disk2") {
+		t.Fatalf("snapraid.conf names a disk the stored plan did not assign:\n%s", got)
+	}
+}
+
+func TestRunDiskFormat_MismatchedRetryAfterPersistFormatsNothing(t *testing.T) {
+	ctx := context.Background()
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdd", disk.Disk{Size: 4 * disk.TB})
+	counter := &formatCountingProvider{Provider: p}
+	runner := disk.NewFakeRunner()
+	scriptFilesystemUUID(runner, "/dev/sda", "uuid-parity1")
+	scriptFilesystemUUID(runner, "/dev/sdb", "uuid-disk1")
+	scriptFilesystemUUID(runner, "/dev/sdc", "uuid-cache")
+
+	st := store.NewArrayStore(newTestDB(t))
+	genRoot := t.TempDir()
+	mounter := disk.NewFakeMounter()
+	mounter.Err = errors.New("injected apply failure after persist")
+
+	s := newTestScheduler(t)
+	registerDiskFormatDeps(t, s, counter, runner, st, genRoot, mounter)
+
+	params := validFormatParamsWithCache("/dev/sda", "/dev/sdb", "/dev/sdc", map[string]int64{
+		"/dev/sda": 8 * disk.TB, "/dev/sdb": 4 * disk.TB, "/dev/sdc": 4 * disk.TB,
+	})
+	j, err := s.Submit(ctx, TypeDiskFormat, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("first job status = %s (%s), want failed", finished.Status, finished.ErrorMessage)
+	}
+	firstCalls := counter.formatCalls()
+	if len(firstCalls) != 3 {
+		t.Fatalf("first job Format calls = %v, want 3", firstCalls)
+	}
+
+	mounter.Err = nil
+	mismatch := DiskFormatParams{
+		Parity: []disk.AssignedDisk{{Device: "/dev/sda", Filesystem: disk.XFS}},
+		Data: []disk.AssignedDisk{
+			{Device: "/dev/sdb", Filesystem: disk.XFS},
+			{Device: "/dev/sdd", Filesystem: disk.XFS},
+		},
+		Cache: params.Cache,
+		Sizes: map[string]int64{
+			"/dev/sda": 8 * disk.TB, "/dev/sdb": 4 * disk.TB, "/dev/sdc": 4 * disk.TB, "/dev/sdd": 4 * disk.TB,
+		},
+	}
+	mismatch.Confirmation = mismatch.Plan().Confirmation()
+	j2, err := s.Submit(ctx, TypeDiskFormat, nil, mustJSON(t, mismatch))
+	if err != nil {
+		t.Fatalf("Submit mismatch: %v", err)
+	}
+	retry := await(t, s, j2.ID)
+	if retry.Status != StatusFailed {
+		t.Fatalf("mismatch status = %s (%s), want failed", retry.Status, retry.ErrorMessage)
+	}
+	if !strings.Contains(retry.ErrorMessage, "already exists") {
+		t.Fatalf("mismatch ErrorMessage = %q, want already exists", retry.ErrorMessage)
+	}
+	retryCalls := counter.formatCalls()
+	if len(retryCalls) != len(firstCalls) {
+		t.Fatalf("mismatched retry formatted disks: calls = %v, want %v", retryCalls, firstCalls)
+	}
+	if _, ok := p.FormattedAs("/dev/sdd"); ok {
+		t.Fatal("mismatched retry formatted extra data disk /dev/sdd")
+	}
+	if _, err := os.Stat(filepath.Join(genRoot, "systemd", "system", "mnt-disk2.mount")); !os.IsNotExist(err) {
+		t.Fatal("mismatched retry wrote a unit for a disk that is not in stored topology")
+	}
+	if len(mounter.Mounts) != 0 {
+		t.Fatalf("mismatched retry remounted units: %+v", mounter.Mounts)
 	}
 }
 

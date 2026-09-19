@@ -1,0 +1,34 @@
+"use client";
+
+import { Avatar as AvatarPrimitive } from "@base-ui/react/avatar";
+import type React from "react";
+import { cn } from "@/lib/utils";
+
+export function Avatar({
+  className,
+  ...props
+}: AvatarPrimitive.Root.Props): React.ReactElement {
+  return (
+    <AvatarPrimitive.Root
+      className={cn(
+        "inline-flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-sm font-medium",
+        className,
+      )}
+      data-slot="avatar"
+      {...props}
+    />
+  );
+}
+
+export function AvatarFallback({
+  className,
+  ...props
+}: AvatarPrimitive.Fallback.Props): React.ReactElement {
+  return (
+    <AvatarPrimitive.Fallback
+      className={cn("flex size-full items-center justify-center", className)}
+      data-slot="avatar-fallback"
+      {...props}
+    />
+  );
+}
