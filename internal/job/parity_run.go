@@ -6,10 +6,9 @@ import (
 	"github.com/mdg-labs/hoserva/internal/parity"
 )
 
-// RunSync is the RunFunc a later wiring issue registers for TypeSync: it
-// reads persisted params from RunContext and calls eng.Sync. Tests
-// register it against FakeEngine; production Registry.Register is out of
-// this issue's scope.
+// RunSync is the RunFunc hoservad registers for TypeSync: it reads
+// persisted params from RunContext and calls eng.Sync. Tests register it
+// against FakeEngine.
 func RunSync(eng parity.Engine) RunFunc {
 	return func(ctx context.Context, rc *RunContext) error {
 		opts, err := SyncOptsFromParams(rc.Params())

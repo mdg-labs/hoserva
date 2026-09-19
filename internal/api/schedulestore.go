@@ -18,6 +18,7 @@ type ScheduleChainRow struct {
 	SyncEnabled         bool
 	ScrubEnabled        bool
 	ConfigBackupEnabled bool
+	LastRunAt           string
 	UpdatedAt           string
 }
 
@@ -54,6 +55,7 @@ func (s *ScheduleStore) GetChain(ctx context.Context) (*ScheduleChainRow, error)
 		SyncEnabled:         row.SyncEnabled != 0,
 		ScrubEnabled:        row.ScrubEnabled != 0,
 		ConfigBackupEnabled: row.ConfigBackupEnabled != 0,
+		LastRunAt:           row.LastRunAt.String,
 		UpdatedAt:           row.UpdatedAt,
 	}, nil
 }
@@ -70,6 +72,11 @@ func (s *ScheduleStore) UpsertChain(ctx context.Context, row ScheduleChainRow) e
 		ConfigBackupEnabled: boolToInt(row.ConfigBackupEnabled),
 		UpdatedAt:           row.UpdatedAt,
 	})
+}
+
+// SetChainLastRun records when the current chain window was claimed.
+func (s *ScheduleStore) SetChainLastRun(ctx context.Context, lastRunAt string) error {
+	return s.q.SetScheduleChainLastRun(ctx, sql.NullString{String: lastRunAt, Valid: true})
 }
 
 // ListJobs returns every separately scheduled job row.
