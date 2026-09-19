@@ -3174,6 +3174,335 @@ func (s *LoginRequest) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *MaintenanceChainSchedule) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MaintenanceChainSchedule) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("startTime")
+		e.Str(s.StartTime)
+	}
+	{
+		e.FieldStart("weeklyScrubDay")
+		s.WeeklyScrubDay.Encode(e)
+	}
+	{
+		e.FieldStart("schedulePreview")
+		e.Str(s.SchedulePreview)
+	}
+	{
+		e.FieldStart("nextRun")
+		json.EncodeDateTime(e, s.NextRun)
+	}
+	{
+		e.FieldStart("steps")
+		e.ArrStart()
+		for _, elem := range s.Steps {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfMaintenanceChainSchedule = [5]string{
+	0: "startTime",
+	1: "weeklyScrubDay",
+	2: "schedulePreview",
+	3: "nextRun",
+	4: "steps",
+}
+
+// Decode decodes MaintenanceChainSchedule from json.
+func (s *MaintenanceChainSchedule) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MaintenanceChainSchedule to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "startTime":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.StartTime = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"startTime\"")
+			}
+		case "weeklyScrubDay":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.WeeklyScrubDay.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"weeklyScrubDay\"")
+			}
+		case "schedulePreview":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Str()
+				s.SchedulePreview = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"schedulePreview\"")
+			}
+		case "nextRun":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := json.DecodeDateTime(d)
+				s.NextRun = v
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"nextRun\"")
+			}
+		case "steps":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				s.Steps = make([]MaintenanceChainStep, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MaintenanceChainStep
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Steps = append(s.Steps, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"steps\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MaintenanceChainSchedule")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00011111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMaintenanceChainSchedule) {
+					name = jsonFieldsNameOfMaintenanceChainSchedule[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MaintenanceChainSchedule) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MaintenanceChainSchedule) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *MaintenanceChainStep) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *MaintenanceChainStep) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("id")
+		s.ID.Encode(e)
+	}
+	{
+		e.FieldStart("enabled")
+		e.Bool(s.Enabled)
+	}
+}
+
+var jsonFieldsNameOfMaintenanceChainStep = [2]string{
+	0: "id",
+	1: "enabled",
+}
+
+// Decode decodes MaintenanceChainStep from json.
+func (s *MaintenanceChainStep) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MaintenanceChainStep to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "id":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.ID.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"id\"")
+			}
+		case "enabled":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Bool()
+				s.Enabled = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"enabled\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode MaintenanceChainStep")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfMaintenanceChainStep) {
+					name = jsonFieldsNameOfMaintenanceChainStep[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *MaintenanceChainStep) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MaintenanceChainStep) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes MaintenanceChainStepId as json.
+func (s MaintenanceChainStepId) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes MaintenanceChainStepId from json.
+func (s *MaintenanceChainStepId) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode MaintenanceChainStepId to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch MaintenanceChainStepId(v) {
+	case MaintenanceChainStepIdMover:
+		*s = MaintenanceChainStepIdMover
+	case MaintenanceChainStepIdDiffGuard:
+		*s = MaintenanceChainStepIdDiffGuard
+	case MaintenanceChainStepIdSync:
+		*s = MaintenanceChainStepIdSync
+	case MaintenanceChainStepIdScrub:
+		*s = MaintenanceChainStepIdScrub
+	case MaintenanceChainStepIdConfigBackup:
+		*s = MaintenanceChainStepIdConfigBackup
+	default:
+		*s = MaintenanceChainStepId(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s MaintenanceChainStepId) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *MaintenanceChainStepId) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *MarkNotificationsReadOK) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -5784,6 +6113,39 @@ func (s *OptParityGuardState) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes ScheduleFrequency as json.
+func (o OptScheduleFrequency) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes ScheduleFrequency from json.
+func (o *OptScheduleFrequency) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptScheduleFrequency to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptScheduleFrequency) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptScheduleFrequency) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes string as json.
 func (o OptString) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -5815,6 +6177,83 @@ func (s OptString) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptString) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes Weekday as json.
+func (o OptWeekday) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes Weekday from json.
+func (o *OptWeekday) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptWeekday to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptWeekday) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptWeekday) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes OtherScheduleJobId as json.
+func (s OtherScheduleJobId) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes OtherScheduleJobId from json.
+func (s *OtherScheduleJobId) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode OtherScheduleJobId to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch OtherScheduleJobId(v) {
+	case OtherScheduleJobIdSmartSelfTest:
+		*s = OtherScheduleJobIdSmartSelfTest
+	case OtherScheduleJobIdAppdataBackup:
+		*s = OtherScheduleJobIdAppdataBackup
+	case OtherScheduleJobIdRestoreDrill:
+		*s = OtherScheduleJobIdRestoreDrill
+	case OtherScheduleJobIdContainerUpdateCheck:
+		*s = OtherScheduleJobIdContainerUpdateCheck
+	default:
+		*s = OtherScheduleJobId(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OtherScheduleJobId) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OtherScheduleJobId) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -7180,6 +7619,486 @@ func (s *ResetUserPasswordRequest) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *ScheduleConflict) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ScheduleConflict) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("jobA")
+		e.Str(s.JobA)
+	}
+	{
+		e.FieldStart("jobB")
+		e.Str(s.JobB)
+	}
+}
+
+var jsonFieldsNameOfScheduleConflict = [2]string{
+	0: "jobA",
+	1: "jobB",
+}
+
+// Decode decodes ScheduleConflict from json.
+func (s *ScheduleConflict) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ScheduleConflict to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "jobA":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.JobA = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"jobA\"")
+			}
+		case "jobB":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.JobB = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"jobB\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ScheduleConflict")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfScheduleConflict) {
+					name = jsonFieldsNameOfScheduleConflict[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ScheduleConflict) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ScheduleConflict) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ScheduleFrequency as json.
+func (s ScheduleFrequency) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ScheduleFrequency from json.
+func (s *ScheduleFrequency) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ScheduleFrequency to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ScheduleFrequency(v) {
+	case ScheduleFrequencyDaily:
+		*s = ScheduleFrequencyDaily
+	case ScheduleFrequencyWeekly:
+		*s = ScheduleFrequencyWeekly
+	case ScheduleFrequencyMonthly:
+		*s = ScheduleFrequencyMonthly
+	default:
+		*s = ScheduleFrequency(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ScheduleFrequency) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ScheduleFrequency) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ScheduledJob) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ScheduledJob) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("id")
+		s.ID.Encode(e)
+	}
+	{
+		e.FieldStart("enabled")
+		e.Bool(s.Enabled)
+	}
+	{
+		e.FieldStart("frequency")
+		s.Frequency.Encode(e)
+	}
+	{
+		e.FieldStart("time")
+		e.Str(s.Time)
+	}
+	{
+		e.FieldStart("schedulePreview")
+		e.Str(s.SchedulePreview)
+	}
+	{
+		e.FieldStart("nextRun")
+		json.EncodeDateTime(e, s.NextRun)
+	}
+}
+
+var jsonFieldsNameOfScheduledJob = [6]string{
+	0: "id",
+	1: "enabled",
+	2: "frequency",
+	3: "time",
+	4: "schedulePreview",
+	5: "nextRun",
+}
+
+// Decode decodes ScheduledJob from json.
+func (s *ScheduledJob) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ScheduledJob to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "id":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.ID.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"id\"")
+			}
+		case "enabled":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Bool()
+				s.Enabled = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"enabled\"")
+			}
+		case "frequency":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				if err := s.Frequency.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"frequency\"")
+			}
+		case "time":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Str()
+				s.Time = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"time\"")
+			}
+		case "schedulePreview":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				v, err := d.Str()
+				s.SchedulePreview = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"schedulePreview\"")
+			}
+		case "nextRun":
+			requiredBitSet[0] |= 1 << 5
+			if err := func() error {
+				v, err := json.DecodeDateTime(d)
+				s.NextRun = v
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"nextRun\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ScheduledJob")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00111111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfScheduledJob) {
+					name = jsonFieldsNameOfScheduledJob[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ScheduledJob) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ScheduledJob) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *Schedules) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *Schedules) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("chain")
+		s.Chain.Encode(e)
+	}
+	{
+		e.FieldStart("otherJobs")
+		e.ArrStart()
+		for _, elem := range s.OtherJobs {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+	{
+		e.FieldStart("conflicts")
+		e.ArrStart()
+		for _, elem := range s.Conflicts {
+			elem.Encode(e)
+		}
+		e.ArrEnd()
+	}
+}
+
+var jsonFieldsNameOfSchedules = [3]string{
+	0: "chain",
+	1: "otherJobs",
+	2: "conflicts",
+}
+
+// Decode decodes Schedules from json.
+func (s *Schedules) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode Schedules to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "chain":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.Chain.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"chain\"")
+			}
+		case "otherJobs":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				s.OtherJobs = make([]ScheduledJob, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem ScheduledJob
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.OtherJobs = append(s.OtherJobs, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"otherJobs\"")
+			}
+		case "conflicts":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				s.Conflicts = make([]ScheduleConflict, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem ScheduleConflict
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Conflicts = append(s.Conflicts, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"conflicts\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode Schedules")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfSchedules) {
+					name = jsonFieldsNameOfSchedules[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *Schedules) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *Schedules) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *SetupStatus) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -8436,6 +9355,114 @@ func (s *UpdateGeneralSettingsRequest) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *UpdateMaintenanceChainScheduleRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *UpdateMaintenanceChainScheduleRequest) encodeFields(e *jx.Encoder) {
+	{
+		if s.StartTime.Set {
+			e.FieldStart("startTime")
+			s.StartTime.Encode(e)
+		}
+	}
+	{
+		if s.WeeklyScrubDay.Set {
+			e.FieldStart("weeklyScrubDay")
+			s.WeeklyScrubDay.Encode(e)
+		}
+	}
+	{
+		if s.Steps != nil {
+			e.FieldStart("steps")
+			e.ArrStart()
+			for _, elem := range s.Steps {
+				elem.Encode(e)
+			}
+			e.ArrEnd()
+		}
+	}
+}
+
+var jsonFieldsNameOfUpdateMaintenanceChainScheduleRequest = [3]string{
+	0: "startTime",
+	1: "weeklyScrubDay",
+	2: "steps",
+}
+
+// Decode decodes UpdateMaintenanceChainScheduleRequest from json.
+func (s *UpdateMaintenanceChainScheduleRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UpdateMaintenanceChainScheduleRequest to nil")
+	}
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "startTime":
+			if err := func() error {
+				s.StartTime.Reset()
+				if err := s.StartTime.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"startTime\"")
+			}
+		case "weeklyScrubDay":
+			if err := func() error {
+				s.WeeklyScrubDay.Reset()
+				if err := s.WeeklyScrubDay.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"weeklyScrubDay\"")
+			}
+		case "steps":
+			if err := func() error {
+				s.Steps = make([]MaintenanceChainStep, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem MaintenanceChainStep
+					if err := elem.Decode(d); err != nil {
+						return err
+					}
+					s.Steps = append(s.Steps, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"steps\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode UpdateMaintenanceChainScheduleRequest")
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *UpdateMaintenanceChainScheduleRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UpdateMaintenanceChainScheduleRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *UpdateNotificationChannelRequest) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -9070,6 +10097,103 @@ func (s *UpdateQuietHoursRequest) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *UpdateScheduledJobRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *UpdateScheduledJobRequest) encodeFields(e *jx.Encoder) {
+	{
+		if s.Enabled.Set {
+			e.FieldStart("enabled")
+			s.Enabled.Encode(e)
+		}
+	}
+	{
+		if s.Frequency.Set {
+			e.FieldStart("frequency")
+			s.Frequency.Encode(e)
+		}
+	}
+	{
+		if s.Time.Set {
+			e.FieldStart("time")
+			s.Time.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfUpdateScheduledJobRequest = [3]string{
+	0: "enabled",
+	1: "frequency",
+	2: "time",
+}
+
+// Decode decodes UpdateScheduledJobRequest from json.
+func (s *UpdateScheduledJobRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UpdateScheduledJobRequest to nil")
+	}
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "enabled":
+			if err := func() error {
+				s.Enabled.Reset()
+				if err := s.Enabled.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"enabled\"")
+			}
+		case "frequency":
+			if err := func() error {
+				s.Frequency.Reset()
+				if err := s.Frequency.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"frequency\"")
+			}
+		case "time":
+			if err := func() error {
+				s.Time.Reset()
+				if err := s.Time.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"time\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode UpdateScheduledJobRequest")
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *UpdateScheduledJobRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UpdateScheduledJobRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *User) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -9383,6 +10507,46 @@ func (s *WakeEventsResponse) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *WakeEventsResponse) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes Weekday as json.
+func (s Weekday) Encode(e *jx.Encoder) {
+	unwrapped := int(s)
+
+	e.Int(unwrapped)
+}
+
+// Decode decodes Weekday from json.
+func (s *Weekday) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode Weekday to nil")
+	}
+	var unwrapped int
+	if err := func() error {
+		v, err := d.Int()
+		unwrapped = int(v)
+		if err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		return errors.Wrap(err, "alias")
+	}
+	*s = Weekday(unwrapped)
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s Weekday) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *Weekday) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

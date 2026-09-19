@@ -148,6 +148,14 @@ type Handler interface {
 	//
 	// GET /notifications/quiet-hours
 	GetQuietHours(ctx context.Context) (*NotificationQuietHours, error)
+	// GetSchedules implements getSchedules operation.
+	//
+	// The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with
+	// server-computed next-run times, human-readable schedule previews and conflict warnings from
+	// DetectConflict (doc 01 §4). Chain step order is server-defined and not writable.
+	//
+	// GET /settings/schedules
+	GetSchedules(ctx context.Context) (*Schedules, error)
 	// GetSetupStatus implements getSetupStatus operation.
 	//
 	// Reachable before an admin exists: this operation, createFirstAdmin and the SPA's static assets are
@@ -327,6 +335,14 @@ type Handler interface {
 	//
 	// PUT /settings/general
 	UpdateGeneralSettings(ctx context.Context, req *UpdateGeneralSettingsRequest) (*GeneralSettings, error)
+	// UpdateMaintenanceChainSchedule implements updateMaintenanceChainSchedule operation.
+	//
+	// Persists the chain's start time, weekly scrub day and per-step enabled flags (doc 03 §8.4). Step
+	// order is fixed by Q30 and cannot be changed. Omitted step entries leave that step's enabled state
+	// unchanged.
+	//
+	// PUT /settings/schedules/chain
+	UpdateMaintenanceChainSchedule(ctx context.Context, req *UpdateMaintenanceChainScheduleRequest) (*Schedules, error)
 	// UpdateNotificationChannel implements updateNotificationChannel operation.
 	//
 	// A full replace, like the request body of createNotificationChannel: every type-specific field the
@@ -353,6 +369,13 @@ type Handler interface {
 	//
 	// PUT /notifications/quiet-hours
 	UpdateQuietHours(ctx context.Context, req *UpdateQuietHoursRequest) (*NotificationQuietHours, error)
+	// UpdateScheduledJob implements updateScheduledJob operation.
+	//
+	// Persists enabled state, frequency and start time for one of the recurring jobs outside the nightly
+	// chain (doc 03 §8.4).
+	//
+	// PUT /settings/schedules/jobs/{jobId}
+	UpdateScheduledJob(ctx context.Context, req *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (*Schedules, error)
 	// NewError creates *ErrorStatusCode from error returned by handler.
 	//
 	// Used for common default response.
