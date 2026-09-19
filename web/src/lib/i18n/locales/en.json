@@ -683,6 +683,160 @@
       "createFailedDescription": "The create-array request did not return a job. Check the error above and try again."
     }
   },
+  "settings": {
+    "actions": {
+      "save": "Save changes",
+      "cancel": "Cancel"
+    },
+    "general": {
+      "title": "General settings",
+      "hostname": "Hostname",
+      "hostnamePlaceholder": "hoserva",
+      "hostnameHint": "Used as the hostname for this Hoserva server.",
+      "timezone": "Timezone"
+    },
+    "notifications": {
+      "channelsTitle": "Notification channels",
+      "addChannel": "Add channel",
+      "addChannelDescription": "Configure a channel for alerts. Untested notification config is the same as no notification config.",
+      "noChannels": "No notification channels configured yet.",
+      "channelEnabled": "Enabled",
+      "channelType": "Channel type",
+      "channelName": "Channel name",
+      "channelSecret": "Credential",
+      "channelNameRequired": "Enter a channel name.",
+      "channelAdded": "Notification channel added.",
+      "sendTest": "Send test notification",
+      "testSucceeded": "Test notification sent.",
+      "testFailed": "Test notification failed",
+      "routingTitle": "Event routing",
+      "routingDescription": "Choose which events reach which channels and at what severity.",
+      "routeToChannel": "Route {{event}} to {{channel}}",
+      "columns": {
+        "event": "Event",
+        "severity": "Severity"
+      },
+      "levels": {
+        "info": "Info",
+        "warning": "Warning",
+        "error": "Error",
+        "critical": "Critical"
+      },
+      "quietHoursTitle": "Quiet hours",
+      "quietHoursEnabled": "Enable quiet hours",
+      "quietHoursDescription": "Routine alerts are held during quiet hours.",
+      "quietHoursStart": "From",
+      "quietHoursEnd": "To",
+      "criticalAlwaysDelivers": "Critical alerts always deliver",
+      "criticalAlwaysDeliversDescription": "Critical alerts bypass quiet hours and cannot be disabled."
+    },
+    "schedules": {
+      "apiNote": "Schedule persistence and conflict detection require schedule HTTP operations that are not in the API yet. Step toggles and other job settings on this page are shown for layout only.",
+      "conflictTitle": "Schedule conflict detected",
+      "chainTitle": "Nightly maintenance chain",
+      "chainDescription": "One chained run each night. Each step starts when the previous one finishes, so mover always runs before sync (Q30).",
+      "chainSchedule": "Schedule",
+      "chain.schedulePreview": "Every day at 02:00",
+      "nextRun": "Next run",
+      "nextRunUnavailable": "Unavailable until schedule data is exposed through the API.",
+      "otherJobsTitle": "Other recurring jobs",
+      "otherJobsDescription": "SMART self-tests, appdata backup, restore drill and container update checks.",
+      "frequency": "Frequency",
+      "time": "Time",
+      "frequencies": {
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "monthly": "Monthly"
+      },
+      "chainSteps": {
+        "mover": {
+          "title": "Mover",
+          "description": "Move files according to cache and share policies before parity work."
+        },
+        "diff_guard": {
+          "title": "Diff and threshold guard",
+          "description": "Compare the array against parity and evaluate the deletion threshold guard."
+        },
+        "sync": {
+          "title": "Parity sync",
+          "description": "Update parity to match current data after the mover and guard pass."
+        },
+        "scrub": {
+          "title": "Scrub",
+          "description": "Verify parity on the weekly day, after sync completes."
+        },
+        "config_backup": {
+          "title": "Config backup",
+          "description": "Snapshot Hoserva configuration after the night's sync."
+        }
+      },
+      "otherJobs": {
+        "smart_self_test": {
+          "title": "SMART self-tests",
+          "description": "Run disk SMART short tests on a schedule."
+        },
+        "appdata_backup": {
+          "title": "Appdata backup",
+          "description": "Back up container appdata to configured destinations."
+        },
+        "restore_drill": {
+          "title": "Restore drill",
+          "description": "Verify that backups can be restored."
+        },
+        "container_update_check": {
+          "title": "Container update checks",
+          "description": "Check installed containers for available image updates."
+        }
+      }
+    },
+    "updates": {
+      "apiNote": "Self-update, rollback and Debian update status require backend operations tracked in issue #112. Buttons below use the confirm pattern but do not call a missing API.",
+      "versionTitle": "Hoserva version",
+      "currentVersion": "Installed version",
+      "versionUnknown": "Unknown",
+      "noUpdate": "Up to date",
+      "changelog": "Changelog",
+      "changelogEmpty": "No changelog available yet.",
+      "channel": "Update channel",
+      "channels": {
+        "stable": "Stable",
+        "beta": "Beta"
+      },
+      "updateCheck": "Check for updates",
+      "updateCheckDescription": "Read the signed release index for the selected channel (Q67).",
+      "dependenciesTitle": "Storage engine packages",
+      "dependenciesEmpty": "Installed mergerfs and SnapRAID versions appear here once the update backend is available.",
+      "columns": {
+        "package": "Package",
+        "installed": "Installed",
+        "available": "Available",
+        "inRange": "Tested range"
+      },
+      "systemTitle": "System updates and reboot",
+      "systemDescription": "Security updates install unattended (Q68). Reboot is always your action.",
+      "actions": {
+        "update": "Update Hoserva",
+        "rollback": "Rollback",
+        "reboot": "Reboot"
+      },
+      "actionUnavailable": "Update backend not available",
+      "actionUnavailableDescription": "Self-update, rollback and reboot require the update API from issue #112.",
+      "confirm": {
+        "update": {
+          "title": "Update Hoserva?",
+          "description": "Hoserva downloads the release package, verifies checksums, runs a config backup and installs in a transient unit. The update is refused while parity, array-write or topology jobs run."
+        },
+        "rollback": {
+          "title": "Rollback Hoserva?",
+          "description": "Rollback installs the previous release package and restores its pre-migration database snapshot (Q67)."
+        },
+        "reboot": {
+          "title": "Reboot the server?",
+          "description": "Reboot waits for parity, array-write and topology jobs, then runs the clean shutdown sequence (Q68, Q70)."
+        }
+      }
+    }
+  },
   "login": {
     "title": "Sign in",
     "description": "Sign in to manage this Hoserva server.",
