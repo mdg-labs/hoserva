@@ -53,6 +53,10 @@ type handler struct {
 	routing         map[apiv1.NotificationEventType]apiv1.NotificationRoutingEntry
 	quietHours      apiv1.NotificationQuietHours
 	generalSettings apiv1.GeneralSettings
+
+	// maintenance is Q70's maintenance mode for this mock instance:
+	// StopArray sets it, StartArray clears it, GetStatus reports it.
+	maintenance bool
 }
 
 var _ apiv1.Handler = (*handler)(nil)

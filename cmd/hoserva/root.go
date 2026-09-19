@@ -19,6 +19,7 @@ func rootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&socketPath, "socket", defaultSocket, "Path to hoservad's Unix socket")
 	cmd.AddCommand(
 		statusCmd(),
+		arrayCmd(),
 		poolCmd(),
 		diskCmd(),
 		syncCmd(),

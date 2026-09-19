@@ -442,9 +442,14 @@ func (h *Handler) GetStatus(ctx context.Context) (*apiv1.SystemStatus, error) {
 			active = int32(len(jobs))
 		}
 	}
+	maintenance := false
+	if h.Scheduler != nil {
+		maintenance = h.Scheduler.InMaintenance()
+	}
 	return &apiv1.SystemStatus{
-		Healthy:    healthy,
-		Summary:    summary,
-		ActiveJobs: apiv1.NewOptInt32(active),
+		Healthy:         healthy,
+		Summary:         summary,
+		ActiveJobs:      apiv1.NewOptInt32(active),
+		MaintenanceMode: apiv1.NewOptBool(maintenance),
 	}, nil
 }

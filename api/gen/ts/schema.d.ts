@@ -519,6 +519,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/array/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop the array
+         * @description Enters maintenance mode (Q70, doc 02 §4, `hoserva array stop`): refuse new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true` is required.
+         */
+        post: operations["stopArray"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/array/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the array
+         * @description Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share paths, then start services in the reverse of stop order, and exit maintenance mode only once every step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted.
+         */
+        post: operations["startArray"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/parity/sync": {
         parameters: {
             query?: never;
@@ -1100,6 +1140,10 @@ export interface components {
              * @description SnapRAID disk index (`hoserva fix --disk N`).
              */
             disk?: number;
+        };
+        StopArrayRequest: {
+            /** @description Must be true after reviewing the Q70 stop list the `/storage` confirm dialog already shows: refuse new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all and data disks. */
+            confirm: boolean;
         };
         ResetUserPasswordRequest: {
             password: string;
@@ -1799,6 +1843,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    stopArray: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StopArrayRequest"];
+            };
+        };
+        responses: {
+            /** @description System status after the sequence. `maintenanceMode` is true. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startArray: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description System status after the sequence. `maintenanceMode` is false on success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
                 };
             };
             default: components["responses"]["Error"];
