@@ -44,6 +44,13 @@ type Handler interface {
 	//
 	// DELETE /notifications/channels/{channelId}
 	DeleteNotificationChannel(ctx context.Context, params DeleteNotificationChannelParams) error
+	// DisableUserTotp implements disableUserTotp operation.
+	//
+	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically. Audit-logged
+	// and announced through every notification channel.
+	//
+	// POST /users/{username}/disable-totp
+	DisableUserTotp(ctx context.Context, params DisableUserTotpParams) error
 	// EnrollTotp implements enrollTotp operation.
 	//
 	// Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
@@ -57,6 +64,12 @@ type Handler interface {
 	//
 	// POST /auth/totp/enroll
 	EnrollTotp(ctx context.Context, req *TotpEnrollRequest) (*TotpEnrollResponse, error)
+	// ExportConfig implements exportConfig operation.
+	//
+	// Builds and returns doc 10 §1's `hoserva-config-*.tar.zst` archive.
+	//
+	// POST /config/export
+	ExportConfig(ctx context.Context) (ExportConfigOK, error)
 	// GetCurrentSession implements getCurrentSession operation.
 	//
 	// The signed-in user this session cookie belongs to.
@@ -89,6 +102,12 @@ type Handler interface {
 	//
 	// GET /notifications/routing
 	GetNotificationRouting(ctx context.Context) (*GetNotificationRoutingOK, error)
+	// GetPool implements getPool operation.
+	//
+	// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
+	//
+	// GET /pool
+	GetPool(ctx context.Context) (*PoolStatus, error)
 	// GetQuietHours implements getQuietHours operation.
 	//
 	// The current quiet hours window and the always-on critical override (doc 03 §8.3).
@@ -103,6 +122,25 @@ type Handler interface {
 	//
 	// GET /setup/status
 	GetSetupStatus(ctx context.Context) (*SetupStatus, error)
+	// GetStatus implements getStatus operation.
+	//
+	// One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
+	//
+	// GET /status
+	GetStatus(ctx context.Context) (*SystemStatus, error)
+	// ImportConfig implements importConfig operation.
+	//
+	// Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
+	// configuration.
+	//
+	// POST /config/import
+	ImportConfig(ctx context.Context, req *ImportConfigReq) error
+	// ListDisks implements listDisks operation.
+	//
+	// Every block device Hoserva knows about (doc 02 §4).
+	//
+	// GET /disks
+	ListDisks(ctx context.Context) (*ListDisksOK, error)
 	// ListJobs implements listJobs operation.
 	//
 	// Every long-running operation is a job (doc 01 §4). Filterable by class and status so the UI's jobs
@@ -138,6 +176,13 @@ type Handler interface {
 	//
 	// POST /auth/logout
 	Logout(ctx context.Context) (*LogoutNoContent, error)
+	// ResetUserPassword implements resetUserPassword operation.
+	//
+	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
+	// `hoserva` group and TCP are refused. Audit-logged and announced through every notification channel.
+	//
+	// POST /users/{username}/reset-password
+	ResetUserPassword(ctx context.Context, req *ResetUserPasswordRequest, params ResetUserPasswordParams) error
 	// ResumeJob implements resumeJob operation.
 	//
 	// Only resumable job types (mover, rebalance, evacuation, share relocation) persist a checkpoint to
@@ -146,6 +191,13 @@ type Handler interface {
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
+	// RunDoctor implements runDoctor operation.
+	//
+	// Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity
+	// (`hoserva doctor`, doc 01 §3).
+	//
+	// GET /doctor
+	RunDoctor(ctx context.Context) (*DoctorReport, error)
 	// SendTestNotification implements sendTestNotification operation.
 	//
 	// Sent immediately, outside the delivery queue and its retry policy — this is a synchronous probe of
@@ -155,6 +207,33 @@ type Handler interface {
 	//
 	// POST /notifications/channels/{channelId}/test
 	SendTestNotification(ctx context.Context, params SendTestNotificationParams) (*NotificationTestResult, error)
+	// StartFix implements startFix operation.
+	//
+	// Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from
+	// parity.
+	//
+	// POST /parity/fix
+	StartFix(ctx context.Context, req *StartFixRequest) (*Job, error)
+	// StartScrub implements startScrub operation.
+	//
+	// Queues a scrub job (`hoserva scrub`, doc 01 §3).
+	//
+	// POST /parity/scrub
+	StartScrub(ctx context.Context, req *StartScrubRequest) (*Job, error)
+	// StartSync implements startSync operation.
+	//
+	// Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
+	// requires `confirm: true` after reviewing the diff.
+	//
+	// POST /parity/sync
+	StartSync(ctx context.Context, req *StartSyncRequest) (*Job, error)
+	// UnlockUser implements unlockUser operation.
+	//
+	// Clears the account's login rate-limiter lockout (doc 01 §7, Q78). Root-only over the Unix socket,
+	// checked against the peer's uid 0 specifically. Audit-logged like the other recovery commands.
+	//
+	// POST /users/{username}/unlock
+	UnlockUser(ctx context.Context, params UnlockUserParams) error
 	// UpdateNotificationChannel implements updateNotificationChannel operation.
 	//
 	// A full replace, like the request body of createNotificationChannel: every type-specific field the

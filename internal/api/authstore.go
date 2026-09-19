@@ -52,12 +52,13 @@ type Session struct {
 // AuthService owns password/TOTP verification and rate limiting; AuthStore
 // only reads and writes rows (mirroring internal/job.Store's own split).
 type AuthStore struct {
-	q *storedb.Queries
+	q  *storedb.Queries
+	db storedb.DBTX
 }
 
 // NewAuthStore wraps db (typically *sql.DB) for auth persistence.
 func NewAuthStore(db storedb.DBTX) *AuthStore {
-	return &AuthStore{q: storedb.New(db)}
+	return &AuthStore{q: storedb.New(db), db: db}
 }
 
 // AuthStore also implements auth.MachineKeyStore (Q28): the machine key's
@@ -231,6 +232,57 @@ func (s *AuthStore) DeleteSession(ctx context.Context, tokenHash string) error {
 // before now.
 func (s *AuthStore) DeleteExpiredSessions(ctx context.Context, now time.Time) error {
 	return s.q.DeleteExpiredSessions(ctx, now.UTC().Format(timeFormat))
+}
+
+// UpdatePasswordHash replaces userID's password hash.
+func (s *AuthStore) UpdatePasswordHash(ctx context.Context, userID, hash string) error {
+	_, err := s.db.ExecContext(ctx,
+		"UPDATE users SET password_hash = ? WHERE id = ?", hash, userID)
+	if err != nil {
+		return fmt.Errorf("updating password: %w", err)
+	}
+	return nil
+}
+
+// ClearUserTOTP removes every TOTP credential from userID.
+func (s *AuthStore) ClearUserTOTP(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE users SET totp_secret = NULL, totp_confirmed_at = NULL,
+    totp_pending_secret = NULL, totp_last_step = 0 WHERE id = ?`, userID)
+	if err != nil {
+		return fmt.Errorf("clearing totp: %w", err)
+	}
+	return nil
+}
+
+// CreateRecoveryDelivery queues one credential-reset notification to ch.
+func (s *AuthStore) CreateRecoveryDelivery(ctx context.Context, id, channelID, title, message, at string) error {
+	return s.q.CreateDelivery(ctx, storedb.CreateDeliveryParams{
+		ID:            id,
+		ChannelID:     channelID,
+		EventType:     "credential_reset",
+		Severity:      "critical",
+		Title:         title,
+		Message:       message,
+		Status:        "pending",
+		Attempts:      0,
+		CreatedAt:     at,
+		NextAttemptAt: at,
+	})
+}
+
+// InsertAuditLog records one audit-log entry (doc 01 §7).
+func (s *AuthStore) InsertAuditLog(ctx context.Context, actor, action, detail string, at time.Time) error {
+	var detailArg sql.NullString
+	if detail != "" {
+		detailArg = sql.NullString{String: detail, Valid: true}
+	}
+	return s.q.InsertAuditLogEntry(ctx, storedb.InsertAuditLogEntryParams{
+		Actor:  actor,
+		Action: action,
+		Detail: detailArg,
+		At:     at.UTC().Format(timeFormat),
+	})
 }
 
 func optionalTimeToSQL(t *time.Time) sql.NullString {

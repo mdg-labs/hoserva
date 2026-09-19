@@ -64,6 +64,16 @@ func (UnimplementedHandler) DeleteNotificationChannel(ctx context.Context, param
 	return ht.ErrNotImplemented
 }
 
+// DisableUserTotp implements disableUserTotp operation.
+//
+// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically. Audit-logged
+// and announced through every notification channel.
+//
+// POST /users/{username}/disable-totp
+func (UnimplementedHandler) DisableUserTotp(ctx context.Context, params DisableUserTotpParams) error {
+	return ht.ErrNotImplemented
+}
+
 // EnrollTotp implements enrollTotp operation.
 //
 // Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
@@ -77,6 +87,15 @@ func (UnimplementedHandler) DeleteNotificationChannel(ctx context.Context, param
 //
 // POST /auth/totp/enroll
 func (UnimplementedHandler) EnrollTotp(ctx context.Context, req *TotpEnrollRequest) (r *TotpEnrollResponse, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ExportConfig implements exportConfig operation.
+//
+// Builds and returns doc 10 §1's `hoserva-config-*.tar.zst` archive.
+//
+// POST /config/export
+func (UnimplementedHandler) ExportConfig(ctx context.Context) (r ExportConfigOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -127,6 +146,15 @@ func (UnimplementedHandler) GetNotificationRouting(ctx context.Context) (r *GetN
 	return r, ht.ErrNotImplemented
 }
 
+// GetPool implements getPool operation.
+//
+// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
+//
+// GET /pool
+func (UnimplementedHandler) GetPool(ctx context.Context) (r *PoolStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetQuietHours implements getQuietHours operation.
 //
 // The current quiet hours window and the always-on critical override (doc 03 §8.3).
@@ -144,6 +172,34 @@ func (UnimplementedHandler) GetQuietHours(ctx context.Context) (r *NotificationQ
 //
 // GET /setup/status
 func (UnimplementedHandler) GetSetupStatus(ctx context.Context) (r *SetupStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetStatus implements getStatus operation.
+//
+// One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
+//
+// GET /status
+func (UnimplementedHandler) GetStatus(ctx context.Context) (r *SystemStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ImportConfig implements importConfig operation.
+//
+// Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
+// configuration.
+//
+// POST /config/import
+func (UnimplementedHandler) ImportConfig(ctx context.Context, req *ImportConfigReq) error {
+	return ht.ErrNotImplemented
+}
+
+// ListDisks implements listDisks operation.
+//
+// Every block device Hoserva knows about (doc 02 §4).
+//
+// GET /disks
+func (UnimplementedHandler) ListDisks(ctx context.Context) (r *ListDisksOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -194,6 +250,16 @@ func (UnimplementedHandler) Logout(ctx context.Context) (r *LogoutNoContent, _ e
 	return r, ht.ErrNotImplemented
 }
 
+// ResetUserPassword implements resetUserPassword operation.
+//
+// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
+// `hoserva` group and TCP are refused. Audit-logged and announced through every notification channel.
+//
+// POST /users/{username}/reset-password
+func (UnimplementedHandler) ResetUserPassword(ctx context.Context, req *ResetUserPasswordRequest, params ResetUserPasswordParams) error {
+	return ht.ErrNotImplemented
+}
+
 // ResumeJob implements resumeJob operation.
 //
 // Only resumable job types (mover, rebalance, evacuation, share relocation) persist a checkpoint to
@@ -202,6 +268,16 @@ func (UnimplementedHandler) Logout(ctx context.Context) (r *LogoutNoContent, _ e
 //
 // POST /jobs/{jobId}/resume
 func (UnimplementedHandler) ResumeJob(ctx context.Context, params ResumeJobParams) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// RunDoctor implements runDoctor operation.
+//
+// Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity
+// (`hoserva doctor`, doc 01 §3).
+//
+// GET /doctor
+func (UnimplementedHandler) RunDoctor(ctx context.Context) (r *DoctorReport, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -215,6 +291,45 @@ func (UnimplementedHandler) ResumeJob(ctx context.Context, params ResumeJobParam
 // POST /notifications/channels/{channelId}/test
 func (UnimplementedHandler) SendTestNotification(ctx context.Context, params SendTestNotificationParams) (r *NotificationTestResult, _ error) {
 	return r, ht.ErrNotImplemented
+}
+
+// StartFix implements startFix operation.
+//
+// Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from
+// parity.
+//
+// POST /parity/fix
+func (UnimplementedHandler) StartFix(ctx context.Context, req *StartFixRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// StartScrub implements startScrub operation.
+//
+// Queues a scrub job (`hoserva scrub`, doc 01 §3).
+//
+// POST /parity/scrub
+func (UnimplementedHandler) StartScrub(ctx context.Context, req *StartScrubRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// StartSync implements startSync operation.
+//
+// Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
+// requires `confirm: true` after reviewing the diff.
+//
+// POST /parity/sync
+func (UnimplementedHandler) StartSync(ctx context.Context, req *StartSyncRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UnlockUser implements unlockUser operation.
+//
+// Clears the account's login rate-limiter lockout (doc 01 §7, Q78). Root-only over the Unix socket,
+// checked against the peer's uid 0 specifically. Audit-logged like the other recovery commands.
+//
+// POST /users/{username}/unlock
+func (UnimplementedHandler) UnlockUser(ctx context.Context, params UnlockUserParams) error {
+	return ht.ErrNotImplemented
 }
 
 // UpdateNotificationChannel implements updateNotificationChannel operation.

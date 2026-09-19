@@ -16,8 +16,11 @@ import (
 	"github.com/google/uuid"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
+	"github.com/mdg-labs/hoserva/internal/parity"
 )
 
 // Handler implements apiv1.Handler against the job system (#19): no
@@ -35,6 +38,15 @@ type Handler struct {
 	// Notify is #35's channel/routing/quiet-hours business logic — nil is
 	// only valid in tests that exercise none of those operations.
 	Notify *notify.Service
+	// Disks is the disk provider for list/doctor/status — nil returns empty
+	// inventory rather than an error.
+	Disks disk.Provider
+	// Parity is the SnapRAID engine for doctor freshness — nil skips that
+	// check with a warning.
+	Parity parity.Engine
+	// Backup is the config archive builder for export/import — nil returns
+	// 501 from those operations.
+	Backup *backup.Service
 }
 
 var _ apiv1.Handler = (*Handler)(nil)

@@ -10,6 +10,7 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/go-faster/jx"
 	"github.com/google/uuid"
+	ht "github.com/ogen-go/ogen/http"
 )
 
 func (s *ErrorStatusCode) Error() string {
@@ -267,6 +268,300 @@ func (s *CreateNotificationChannelRequest) SetWebhookAuthHeaderName(val OptStrin
 // DeleteNotificationChannelNoContent is response for DeleteNotificationChannel operation.
 type DeleteNotificationChannelNoContent struct{}
 
+// DisableUserTotpNoContent is response for DisableUserTotp operation.
+type DisableUserTotpNoContent struct{}
+
+// Ref: #/components/schemas/DiskInventoryEntry
+type DiskInventoryEntry struct {
+	Device       string    `json:"device"`
+	SizeBytes    int64     `json:"sizeBytes"`
+	Model        OptString `json:"model"`
+	Serial       OptString `json:"serial"`
+	Wwn          OptString `json:"wwn"`
+	Boot         bool      `json:"boot"`
+	Failed       OptBool   `json:"failed"`
+	WeakIdentity OptBool   `json:"weakIdentity"`
+}
+
+// GetDevice returns the value of Device.
+func (s *DiskInventoryEntry) GetDevice() string {
+	return s.Device
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *DiskInventoryEntry) GetSizeBytes() int64 {
+	return s.SizeBytes
+}
+
+// GetModel returns the value of Model.
+func (s *DiskInventoryEntry) GetModel() OptString {
+	return s.Model
+}
+
+// GetSerial returns the value of Serial.
+func (s *DiskInventoryEntry) GetSerial() OptString {
+	return s.Serial
+}
+
+// GetWwn returns the value of Wwn.
+func (s *DiskInventoryEntry) GetWwn() OptString {
+	return s.Wwn
+}
+
+// GetBoot returns the value of Boot.
+func (s *DiskInventoryEntry) GetBoot() bool {
+	return s.Boot
+}
+
+// GetFailed returns the value of Failed.
+func (s *DiskInventoryEntry) GetFailed() OptBool {
+	return s.Failed
+}
+
+// GetWeakIdentity returns the value of WeakIdentity.
+func (s *DiskInventoryEntry) GetWeakIdentity() OptBool {
+	return s.WeakIdentity
+}
+
+// SetDevice sets the value of Device.
+func (s *DiskInventoryEntry) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *DiskInventoryEntry) SetSizeBytes(val int64) {
+	s.SizeBytes = val
+}
+
+// SetModel sets the value of Model.
+func (s *DiskInventoryEntry) SetModel(val OptString) {
+	s.Model = val
+}
+
+// SetSerial sets the value of Serial.
+func (s *DiskInventoryEntry) SetSerial(val OptString) {
+	s.Serial = val
+}
+
+// SetWwn sets the value of Wwn.
+func (s *DiskInventoryEntry) SetWwn(val OptString) {
+	s.Wwn = val
+}
+
+// SetBoot sets the value of Boot.
+func (s *DiskInventoryEntry) SetBoot(val bool) {
+	s.Boot = val
+}
+
+// SetFailed sets the value of Failed.
+func (s *DiskInventoryEntry) SetFailed(val OptBool) {
+	s.Failed = val
+}
+
+// SetWeakIdentity sets the value of WeakIdentity.
+func (s *DiskInventoryEntry) SetWeakIdentity(val OptBool) {
+	s.WeakIdentity = val
+}
+
+// Ref: #/components/schemas/DiskState
+type DiskState string
+
+const (
+	DiskStateActive     DiskState = "active"
+	DiskStateStandby    DiskState = "standby"
+	DiskStateSpinningUp DiskState = "spinning_up"
+	DiskStateMissing    DiskState = "missing"
+	DiskStateFailed     DiskState = "failed"
+)
+
+// AllValues returns all DiskState values.
+func (DiskState) AllValues() []DiskState {
+	return []DiskState{
+		DiskStateActive,
+		DiskStateStandby,
+		DiskStateSpinningUp,
+		DiskStateMissing,
+		DiskStateFailed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s DiskState) MarshalText() ([]byte, error) {
+	switch s {
+	case DiskStateActive:
+		return []byte(s), nil
+	case DiskStateStandby:
+		return []byte(s), nil
+	case DiskStateSpinningUp:
+		return []byte(s), nil
+	case DiskStateMissing:
+		return []byte(s), nil
+	case DiskStateFailed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *DiskState) UnmarshalText(data []byte) error {
+	switch DiskState(data) {
+	case DiskStateActive:
+		*s = DiskStateActive
+		return nil
+	case DiskStateStandby:
+		*s = DiskStateStandby
+		return nil
+	case DiskStateSpinningUp:
+		*s = DiskStateSpinningUp
+		return nil
+	case DiskStateMissing:
+		*s = DiskStateMissing
+		return nil
+	case DiskStateFailed:
+		*s = DiskStateFailed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/DoctorCheck
+type DoctorCheck struct {
+	ID string `json:"id"`
+	// Plain-language label for the check.
+	Name    string            `json:"name"`
+	Status  DoctorCheckStatus `json:"status"`
+	Message string            `json:"message"`
+	// What to run or change when status is not pass.
+	Remediation OptNilString `json:"remediation"`
+}
+
+// GetID returns the value of ID.
+func (s *DoctorCheck) GetID() string {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *DoctorCheck) GetName() string {
+	return s.Name
+}
+
+// GetStatus returns the value of Status.
+func (s *DoctorCheck) GetStatus() DoctorCheckStatus {
+	return s.Status
+}
+
+// GetMessage returns the value of Message.
+func (s *DoctorCheck) GetMessage() string {
+	return s.Message
+}
+
+// GetRemediation returns the value of Remediation.
+func (s *DoctorCheck) GetRemediation() OptNilString {
+	return s.Remediation
+}
+
+// SetID sets the value of ID.
+func (s *DoctorCheck) SetID(val string) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *DoctorCheck) SetName(val string) {
+	s.Name = val
+}
+
+// SetStatus sets the value of Status.
+func (s *DoctorCheck) SetStatus(val DoctorCheckStatus) {
+	s.Status = val
+}
+
+// SetMessage sets the value of Message.
+func (s *DoctorCheck) SetMessage(val string) {
+	s.Message = val
+}
+
+// SetRemediation sets the value of Remediation.
+func (s *DoctorCheck) SetRemediation(val OptNilString) {
+	s.Remediation = val
+}
+
+// Ref: #/components/schemas/DoctorCheckStatus
+type DoctorCheckStatus string
+
+const (
+	DoctorCheckStatusPass DoctorCheckStatus = "pass"
+	DoctorCheckStatusWarn DoctorCheckStatus = "warn"
+	DoctorCheckStatusFail DoctorCheckStatus = "fail"
+)
+
+// AllValues returns all DoctorCheckStatus values.
+func (DoctorCheckStatus) AllValues() []DoctorCheckStatus {
+	return []DoctorCheckStatus{
+		DoctorCheckStatusPass,
+		DoctorCheckStatusWarn,
+		DoctorCheckStatusFail,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s DoctorCheckStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case DoctorCheckStatusPass:
+		return []byte(s), nil
+	case DoctorCheckStatusWarn:
+		return []byte(s), nil
+	case DoctorCheckStatusFail:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *DoctorCheckStatus) UnmarshalText(data []byte) error {
+	switch DoctorCheckStatus(data) {
+	case DoctorCheckStatusPass:
+		*s = DoctorCheckStatusPass
+		return nil
+	case DoctorCheckStatusWarn:
+		*s = DoctorCheckStatusWarn
+		return nil
+	case DoctorCheckStatusFail:
+		*s = DoctorCheckStatusFail
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/DoctorReport
+type DoctorReport struct {
+	Overall DoctorCheckStatus `json:"overall"`
+	Checks  []DoctorCheck     `json:"checks"`
+}
+
+// GetOverall returns the value of Overall.
+func (s *DoctorReport) GetOverall() DoctorCheckStatus {
+	return s.Overall
+}
+
+// GetChecks returns the value of Checks.
+func (s *DoctorReport) GetChecks() []DoctorCheck {
+	return s.Checks
+}
+
+// SetOverall sets the value of Overall.
+func (s *DoctorReport) SetOverall(val DoctorCheckStatus) {
+	s.Overall = val
+}
+
+// SetChecks sets the value of Checks.
+func (s *DoctorReport) SetChecks(val []DoctorCheck) {
+	s.Checks = val
+}
+
 // Ref: #/components/schemas/Error
 type Error struct {
 	// A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation (#22) can
@@ -365,6 +660,20 @@ func (s *ErrorStatusCode) SetResponse(val Error) {
 	s.Response = val
 }
 
+type ExportConfigOK struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s ExportConfigOK) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
 type GetJobLogOK struct {
 	Data io.Reader
 }
@@ -391,6 +700,35 @@ func (s *GetNotificationRoutingOK) GetRouting() []NotificationRoutingEntry {
 // SetRouting sets the value of Routing.
 func (s *GetNotificationRoutingOK) SetRouting(val []NotificationRoutingEntry) {
 	s.Routing = val
+}
+
+// ImportConfigNoContent is response for ImportConfig operation.
+type ImportConfigNoContent struct{}
+
+type ImportConfigReq struct {
+	Archive ht.MultipartFile `json:"archive"`
+	// Must be true — import is destructive.
+	Confirm bool `json:"confirm"`
+}
+
+// GetArchive returns the value of Archive.
+func (s *ImportConfigReq) GetArchive() ht.MultipartFile {
+	return s.Archive
+}
+
+// GetConfirm returns the value of Confirm.
+func (s *ImportConfigReq) GetConfirm() bool {
+	return s.Confirm
+}
+
+// SetArchive sets the value of Archive.
+func (s *ImportConfigReq) SetArchive(val ht.MultipartFile) {
+	s.Archive = val
+}
+
+// SetConfirm sets the value of Confirm.
+func (s *ImportConfigReq) SetConfirm(val bool) {
+	s.Confirm = val
 }
 
 // Ref: #/components/schemas/Job
@@ -845,6 +1183,20 @@ func (s *JobType) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+type ListDisksOK struct {
+	Disks []DiskInventoryEntry `json:"disks"`
+}
+
+// GetDisks returns the value of Disks.
+func (s *ListDisksOK) GetDisks() []DiskInventoryEntry {
+	return s.Disks
+}
+
+// SetDisks sets the value of Disks.
+func (s *ListDisksOK) SetDisks(val []DiskInventoryEntry) {
+	s.Disks = val
 }
 
 type ListJobsOK struct {
@@ -2092,6 +2444,74 @@ func (o OptNilInt32) Or(d int32) int32 {
 	return d
 }
 
+// NewOptNilInt64 returns new OptNilInt64 with value set to v.
+func NewOptNilInt64(v int64) OptNilInt64 {
+	return OptNilInt64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilInt64 is optional nullable int64.
+type OptNilInt64 struct {
+	Value int64
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilInt64 was set.
+func (o OptNilInt64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilInt64) Reset() {
+	var v int64
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilInt64) SetTo(v int64) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilInt64) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilInt64) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v int64
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilInt64) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilInt64) Get() (v int64, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilInt64) Or(d int64) int64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptNilString returns new OptNilString with value set to v.
 func NewOptNilString(v string) OptNilString {
 	return OptNilString{
@@ -2298,6 +2718,189 @@ func (o OptString) Or(d string) string {
 	return d
 }
 
+// Ref: #/components/schemas/PoolDiskEntry
+type PoolDiskEntry struct {
+	Device     string            `json:"device"`
+	MountPoint string            `json:"mountPoint"`
+	Role       PoolDiskEntryRole `json:"role"`
+	State      DiskState         `json:"state"`
+	SizeBytes  OptNilInt64       `json:"sizeBytes"`
+	UsedBytes  OptNilInt64       `json:"usedBytes"`
+}
+
+// GetDevice returns the value of Device.
+func (s *PoolDiskEntry) GetDevice() string {
+	return s.Device
+}
+
+// GetMountPoint returns the value of MountPoint.
+func (s *PoolDiskEntry) GetMountPoint() string {
+	return s.MountPoint
+}
+
+// GetRole returns the value of Role.
+func (s *PoolDiskEntry) GetRole() PoolDiskEntryRole {
+	return s.Role
+}
+
+// GetState returns the value of State.
+func (s *PoolDiskEntry) GetState() DiskState {
+	return s.State
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *PoolDiskEntry) GetSizeBytes() OptNilInt64 {
+	return s.SizeBytes
+}
+
+// GetUsedBytes returns the value of UsedBytes.
+func (s *PoolDiskEntry) GetUsedBytes() OptNilInt64 {
+	return s.UsedBytes
+}
+
+// SetDevice sets the value of Device.
+func (s *PoolDiskEntry) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetMountPoint sets the value of MountPoint.
+func (s *PoolDiskEntry) SetMountPoint(val string) {
+	s.MountPoint = val
+}
+
+// SetRole sets the value of Role.
+func (s *PoolDiskEntry) SetRole(val PoolDiskEntryRole) {
+	s.Role = val
+}
+
+// SetState sets the value of State.
+func (s *PoolDiskEntry) SetState(val DiskState) {
+	s.State = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *PoolDiskEntry) SetSizeBytes(val OptNilInt64) {
+	s.SizeBytes = val
+}
+
+// SetUsedBytes sets the value of UsedBytes.
+func (s *PoolDiskEntry) SetUsedBytes(val OptNilInt64) {
+	s.UsedBytes = val
+}
+
+type PoolDiskEntryRole string
+
+const (
+	PoolDiskEntryRoleData       PoolDiskEntryRole = "data"
+	PoolDiskEntryRoleParity     PoolDiskEntryRole = "parity"
+	PoolDiskEntryRoleCache      PoolDiskEntryRole = "cache"
+	PoolDiskEntryRoleBoot       PoolDiskEntryRole = "boot"
+	PoolDiskEntryRoleExternal   PoolDiskEntryRole = "external"
+	PoolDiskEntryRoleUnassigned PoolDiskEntryRole = "unassigned"
+)
+
+// AllValues returns all PoolDiskEntryRole values.
+func (PoolDiskEntryRole) AllValues() []PoolDiskEntryRole {
+	return []PoolDiskEntryRole{
+		PoolDiskEntryRoleData,
+		PoolDiskEntryRoleParity,
+		PoolDiskEntryRoleCache,
+		PoolDiskEntryRoleBoot,
+		PoolDiskEntryRoleExternal,
+		PoolDiskEntryRoleUnassigned,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s PoolDiskEntryRole) MarshalText() ([]byte, error) {
+	switch s {
+	case PoolDiskEntryRoleData:
+		return []byte(s), nil
+	case PoolDiskEntryRoleParity:
+		return []byte(s), nil
+	case PoolDiskEntryRoleCache:
+		return []byte(s), nil
+	case PoolDiskEntryRoleBoot:
+		return []byte(s), nil
+	case PoolDiskEntryRoleExternal:
+		return []byte(s), nil
+	case PoolDiskEntryRoleUnassigned:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *PoolDiskEntryRole) UnmarshalText(data []byte) error {
+	switch PoolDiskEntryRole(data) {
+	case PoolDiskEntryRoleData:
+		*s = PoolDiskEntryRoleData
+		return nil
+	case PoolDiskEntryRoleParity:
+		*s = PoolDiskEntryRoleParity
+		return nil
+	case PoolDiskEntryRoleCache:
+		*s = PoolDiskEntryRoleCache
+		return nil
+	case PoolDiskEntryRoleBoot:
+		*s = PoolDiskEntryRoleBoot
+		return nil
+	case PoolDiskEntryRoleExternal:
+		*s = PoolDiskEntryRoleExternal
+		return nil
+	case PoolDiskEntryRoleUnassigned:
+		*s = PoolDiskEntryRoleUnassigned
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/PoolStatus
+type PoolStatus struct {
+	Mounted bool            `json:"mounted"`
+	Disks   []PoolDiskEntry `json:"disks"`
+}
+
+// GetMounted returns the value of Mounted.
+func (s *PoolStatus) GetMounted() bool {
+	return s.Mounted
+}
+
+// GetDisks returns the value of Disks.
+func (s *PoolStatus) GetDisks() []PoolDiskEntry {
+	return s.Disks
+}
+
+// SetMounted sets the value of Mounted.
+func (s *PoolStatus) SetMounted(val bool) {
+	s.Mounted = val
+}
+
+// SetDisks sets the value of Disks.
+func (s *PoolStatus) SetDisks(val []PoolDiskEntry) {
+	s.Disks = val
+}
+
+// ResetUserPasswordNoContent is response for ResetUserPassword operation.
+type ResetUserPasswordNoContent struct{}
+
+// Ref: #/components/schemas/ResetUserPasswordRequest
+type ResetUserPasswordRequest struct {
+	Password string `json:"password"`
+}
+
+// GetPassword returns the value of Password.
+func (s *ResetUserPasswordRequest) GetPassword() string {
+	return s.Password
+}
+
+// SetPassword sets the value of Password.
+func (s *ResetUserPasswordRequest) SetPassword(val string) {
+	s.Password = val
+}
+
 type SessionCookie struct {
 	APIKey string
 	Roles  []string
@@ -2336,6 +2939,147 @@ func (s *SetupStatus) GetAdminExists() bool {
 // SetAdminExists sets the value of AdminExists.
 func (s *SetupStatus) SetAdminExists(val bool) {
 	s.AdminExists = val
+}
+
+// Ref: #/components/schemas/StartFixRequest
+type StartFixRequest struct {
+	// Must be true — fix rewrites data from parity.
+	Confirm bool `json:"confirm"`
+	// SnapRAID disk index (`hoserva fix --disk N`).
+	Disk OptInt32 `json:"disk"`
+}
+
+// GetConfirm returns the value of Confirm.
+func (s *StartFixRequest) GetConfirm() bool {
+	return s.Confirm
+}
+
+// GetDisk returns the value of Disk.
+func (s *StartFixRequest) GetDisk() OptInt32 {
+	return s.Disk
+}
+
+// SetConfirm sets the value of Confirm.
+func (s *StartFixRequest) SetConfirm(val bool) {
+	s.Confirm = val
+}
+
+// SetDisk sets the value of Disk.
+func (s *StartFixRequest) SetDisk(val OptInt32) {
+	s.Disk = val
+}
+
+// Ref: #/components/schemas/StartScrubRequest
+type StartScrubRequest struct {
+	// Scrub percentage cap (doc 01 §3 `hoserva scrub [--percent N]`).
+	Percent OptInt32 `json:"percent"`
+}
+
+// GetPercent returns the value of Percent.
+func (s *StartScrubRequest) GetPercent() OptInt32 {
+	return s.Percent
+}
+
+// SetPercent sets the value of Percent.
+func (s *StartScrubRequest) SetPercent(val OptInt32) {
+	s.Percent = val
+}
+
+// Ref: #/components/schemas/StartSyncRequest
+type StartSyncRequest struct {
+	DryRun OptBool `json:"dryRun"`
+	// Required true to sync past a tripped threshold guard.
+	Confirm OptBool `json:"confirm"`
+}
+
+// GetDryRun returns the value of DryRun.
+func (s *StartSyncRequest) GetDryRun() OptBool {
+	return s.DryRun
+}
+
+// GetConfirm returns the value of Confirm.
+func (s *StartSyncRequest) GetConfirm() OptBool {
+	return s.Confirm
+}
+
+// SetDryRun sets the value of DryRun.
+func (s *StartSyncRequest) SetDryRun(val OptBool) {
+	s.DryRun = val
+}
+
+// SetConfirm sets the value of Confirm.
+func (s *StartSyncRequest) SetConfirm(val OptBool) {
+	s.Confirm = val
+}
+
+// Ref: #/components/schemas/SystemStatus
+type SystemStatus struct {
+	Healthy         bool     `json:"healthy"`
+	Summary         string   `json:"summary"`
+	MaintenanceMode OptBool  `json:"maintenanceMode"`
+	ArrayDegraded   OptBool  `json:"arrayDegraded"`
+	ParityBlocked   OptBool  `json:"parityBlocked"`
+	ActiveJobs      OptInt32 `json:"activeJobs"`
+}
+
+// GetHealthy returns the value of Healthy.
+func (s *SystemStatus) GetHealthy() bool {
+	return s.Healthy
+}
+
+// GetSummary returns the value of Summary.
+func (s *SystemStatus) GetSummary() string {
+	return s.Summary
+}
+
+// GetMaintenanceMode returns the value of MaintenanceMode.
+func (s *SystemStatus) GetMaintenanceMode() OptBool {
+	return s.MaintenanceMode
+}
+
+// GetArrayDegraded returns the value of ArrayDegraded.
+func (s *SystemStatus) GetArrayDegraded() OptBool {
+	return s.ArrayDegraded
+}
+
+// GetParityBlocked returns the value of ParityBlocked.
+func (s *SystemStatus) GetParityBlocked() OptBool {
+	return s.ParityBlocked
+}
+
+// GetActiveJobs returns the value of ActiveJobs.
+func (s *SystemStatus) GetActiveJobs() OptInt32 {
+	return s.ActiveJobs
+}
+
+// SetHealthy sets the value of Healthy.
+func (s *SystemStatus) SetHealthy(val bool) {
+	s.Healthy = val
+}
+
+// SetSummary sets the value of Summary.
+func (s *SystemStatus) SetSummary(val string) {
+	s.Summary = val
+}
+
+// SetMaintenanceMode sets the value of MaintenanceMode.
+func (s *SystemStatus) SetMaintenanceMode(val OptBool) {
+	s.MaintenanceMode = val
+}
+
+// SetArrayDegraded sets the value of ArrayDegraded.
+func (s *SystemStatus) SetArrayDegraded(val OptBool) {
+	s.ArrayDegraded = val
+}
+
+// SetParityBlocked sets the value of ParityBlocked.
+func (s *SystemStatus) SetParityBlocked(val OptBool) {
+	s.ParityBlocked = val
+}
+
+// SetActiveJobs sets the value of ActiveJobs.
+func (s *SystemStatus) SetActiveJobs(val OptInt32) {
+	s.ActiveJobs = val
 }
 
 // Ref: #/components/schemas/TotpConfirmRequest
@@ -2409,6 +3153,9 @@ func (s *TotpEnrollResponse) SetSecret(val string) {
 func (s *TotpEnrollResponse) SetOtpauthUri(val string) {
 	s.OtpauthUri = val
 }
+
+// UnlockUserNoContent is response for UnlockUser operation.
+type UnlockUserNoContent struct{}
 
 // Same shape as CreateNotificationChannelRequest, a full replace, except `secret` is tri-state:
 // omitted keeps the existing credential, `null` clears it, a string replaces it.

@@ -1,9 +1,24 @@
 package auth
 
 import (
+	"context"
 	"fmt"
 	"os/user"
 )
+
+type peerCredentialContextKey struct{}
+
+// WithPeerCredential attaches cred to ctx for downstream handlers (Q78).
+func WithPeerCredential(ctx context.Context, cred PeerCredential) context.Context {
+	return context.WithValue(ctx, peerCredentialContextKey{}, cred)
+}
+
+// PeerCredentialFromContext returns the Unix socket peer credential when
+// present — set by the daemon's ConnContext hook (doc 01 §5, Q44).
+func PeerCredentialFromContext(ctx context.Context) (PeerCredential, bool) {
+	cred, ok := ctx.Value(peerCredentialContextKey{}).(PeerCredential)
+	return cred, ok
+}
 
 // PeerCredential is a Unix socket connection's kernel-verified identity
 // (SO_PEERCRED, doc 01 §5) — the socket carries no bearer or cookie

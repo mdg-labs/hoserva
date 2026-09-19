@@ -415,6 +415,252 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Overall system health
+         * @description One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
+         */
+        get: operations["getStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pool": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pool status
+         * @description Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
+         */
+        get: operations["getPool"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/disks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List disks
+         * @description Every block device Hoserva knows about (doc 02 §4).
+         */
+        get: operations["listDisks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/parity/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a SnapRAID sync
+         * @description Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard requires `confirm: true` after reviewing the diff.
+         */
+        post: operations["startSync"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/parity/scrub": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a SnapRAID scrub
+         * @description Queues a scrub job (`hoserva scrub`, doc 01 §3).
+         */
+        post: operations["startScrub"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/parity/fix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a SnapRAID fix
+         * @description Queues a fix job (`hoserva fix`, doc 01 §3). Requires `confirm: true` — fix rewrites data from parity.
+         */
+        post: operations["startFix"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/config/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export a config archive
+         * @description Builds and returns doc 10 §1's `hoserva-config-*.tar.zst` archive.
+         */
+        post: operations["exportConfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/config/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import a config archive
+         * @description Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running configuration.
+         */
+        post: operations["importConfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/doctor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run prerequisite checks
+         * @description Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity (`hoserva doctor`, doc 01 §3).
+         */
+        get: operations["runDoctor"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{username}/reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["parameters"]["Username"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset a user's password
+         * @description Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the `hoserva` group and TCP are refused. Audit-logged and announced through every notification channel.
+         */
+        post: operations["resetUserPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{username}/disable-totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["parameters"]["Username"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disable a user's TOTP
+         * @description Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically. Audit-logged and announced through every notification channel.
+         */
+        post: operations["disableUserTotp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{username}/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["parameters"]["Username"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear login lockout
+         * @description Clears the account's login rate-limiter lockout (doc 01 §7, Q78). Root-only over the Unix socket, checked against the peer's uid 0 specifically. Audit-logged like the other recovery commands.
+         */
+        post: operations["unlockUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -677,6 +923,84 @@ export interface components {
             start: string;
             end: string;
         };
+        /** @enum {string} */
+        DoctorCheckStatus: "pass" | "warn" | "fail";
+        DoctorCheck: {
+            id: string;
+            /** @description Plain-language label for the check. */
+            name: string;
+            status: components["schemas"]["DoctorCheckStatus"];
+            message: string;
+            /** @description What to run or change when status is not pass. */
+            remediation?: string | null;
+        };
+        DoctorReport: {
+            overall: components["schemas"]["DoctorCheckStatus"];
+            checks: components["schemas"]["DoctorCheck"][];
+        };
+        SystemStatus: {
+            healthy: boolean;
+            summary: string;
+            maintenanceMode?: boolean;
+            arrayDegraded?: boolean;
+            parityBlocked?: boolean;
+            /** Format: int32 */
+            activeJobs?: number;
+        };
+        PoolDiskEntry: {
+            device: string;
+            mountPoint: string;
+            /** @enum {string} */
+            role: "data" | "parity" | "cache" | "boot" | "external" | "unassigned";
+            state: components["schemas"]["DiskState"];
+            /** Format: int64 */
+            sizeBytes?: number | null;
+            /** Format: int64 */
+            usedBytes?: number | null;
+        };
+        PoolStatus: {
+            mounted: boolean;
+            disks: components["schemas"]["PoolDiskEntry"][];
+        };
+        DiskInventoryEntry: {
+            device: string;
+            /** Format: int64 */
+            sizeBytes: number;
+            model?: string;
+            serial?: string;
+            wwn?: string;
+            boot: boolean;
+            failed?: boolean;
+            weakIdentity?: boolean;
+        };
+        StartSyncRequest: {
+            /** @default false */
+            dryRun: boolean;
+            /**
+             * @description Required true to sync past a tripped threshold guard.
+             * @default false
+             */
+            confirm: boolean;
+        };
+        StartScrubRequest: {
+            /**
+             * Format: int32
+             * @description Scrub percentage cap (doc 01 §3 `hoserva scrub [--percent N]`).
+             */
+            percent?: number;
+        };
+        StartFixRequest: {
+            /** @description Must be true — fix rewrites data from parity. */
+            confirm: boolean;
+            /**
+             * Format: int32
+             * @description SnapRAID disk index (`hoserva fix --disk N`).
+             */
+            disk?: number;
+        };
+        ResetUserPasswordRequest: {
+            password: string;
+        };
     };
     responses: {
         /** @description An error response (doc 01 §5). */
@@ -693,6 +1017,7 @@ export interface components {
         JobId: string;
         ChannelId: string;
         EventType: components["schemas"]["NotificationEventType"];
+        Username: string;
     };
     requestBodies: never;
     headers: never;
@@ -1236,6 +1561,283 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["NotificationQuietHours"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current health summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getPool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pool topology and disk breakdown. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listDisks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disk inventory. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        disks: components["schemas"]["DiskInventoryEntry"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startSync: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartSyncRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued or running sync job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startScrub: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartScrubRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued or running scrub job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startFix: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartFixRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued or running fix job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    exportConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The config archive. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zstd": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    importConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    archive: string;
+                    /** @description Must be true — import is destructive. */
+                    confirm: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Import completed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    runDoctor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plain-language check results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DoctorReport"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    resetUserPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["parameters"]["Username"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetUserPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Password reset. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    disableUserTotp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["parameters"]["Username"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description TOTP disabled. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    unlockUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["parameters"]["Username"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lockout cleared. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };
