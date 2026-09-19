@@ -1,0 +1,59 @@
+#!/bin/sh
+# preinst (doc 08 §1, safety-critical review finding on #171). Writes
+# only the durable smartmontools.service.d/ drop-in — nothing else
+# postinst does belongs here, and nothing here ever touches a data disk
+# under /mnt.
+#
+# Why this can't wait for postinst: smartmontools (packaging/debian/control's
+# own Depends:) is configured by dpkg *before* this package's postinst
+# runs, and its 7.4-3 postinst unconditionally enables and starts
+# smartmontools.service (smartd) as part of that configuration — doc 08
+# §1's own named spindown-wake culprit. dpkg unpacks every package in an
+# install run before configuring any of them, so this preinst — which
+# runs as hoserva's own package is unpacked — reliably lands before
+# smartmontools' postinst configures and starts it, closing the window
+# postinst's own mask+stop (too late by then) cannot.
+#
+# Only the drop-in survives that: `deb-systemd-helper mask` writes a
+# plain symlink, and smartmontools' postinst opens by unmasking exactly
+# that symlink before re-enabling and starting the unit — see postinst's
+# own comment. A `.service.d/` override directory is never touched by
+# that unmask, so writing it here, before smartmontools' postinst ever
+# runs, makes its "start" step a no-op via the unit's own Condition,
+# rather than racing to stop an already-started daemon after the fact.
+#
+# postinst still masks, stops and re-writes this same drop-in on every
+# configure — cleanup for a smartmontools already running from before
+# hoserva was installed, and upgrade protection matching this file's own
+# reasoning.
+#
+# HOSERVA_TEST_ROOT lets packaging/test-preinst-smartd-dropin.sh exercise
+# this exact script's file writes against a throwaway tree instead of a
+# real root — it is never set outside that test, exactly like
+# postinst/postrm's own HOSERVA_TEST_ROOT.
+set -e
+
+root="${HOSERVA_TEST_ROOT:-}"
+
+case "$1" in
+  install|upgrade)
+    dropin_dir="$root/etc/systemd/system/smartmontools.service.d"
+    mkdir -p "$dropin_dir"
+    cat >"$dropin_dir/hoserva-disable.conf" <<'UNIT'
+[Unit]
+# Hoserva depends on smartmontools for smartctl/hdparm only (D1) and
+# never wants its bundled smartd daemon running unmanaged (doc 08 §1).
+# /nonexistent-hoserva-smartd-disabled is never created, so this
+# condition always fails and systemd skips starting the unit instead of
+# running it — including smartmontools' own postinst starting it during
+# this same install, and after a future smartmontools reinstall or
+# upgrade unmasks and re-enables it, because either only ever touches
+# the plain mask symlink, never this override directory.
+ConditionPathExists=/nonexistent-hoserva-smartd-disabled
+UNIT
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0
