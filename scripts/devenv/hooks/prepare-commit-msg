@@ -1,0 +1,17 @@
+#!/bin/sh
+# DCO sign-off (CONTRIBUTING.md, doc 13 Q2). Installed via `make
+# hooks-install` (core.hooksPath) and by the orchestrate skill's scratch
+# clone step, so every commit in this repo picks it up automatically —
+# human or agent, interactive or scratch clone.
+set -eu
+
+msg_file="$1"
+
+name="$(git config user.name || true)"
+email="$(git config user.email || true)"
+[ -n "$name" ] && [ -n "$email" ] || exit 0
+
+trailer="Signed-off-by: $name <$email>"
+grep -qF "$trailer" "$msg_file" && exit 0
+
+printf '\n%s\n' "$trailer" >> "$msg_file"

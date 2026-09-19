@@ -17,6 +17,12 @@ name: CI
 # push (issue #42, packaging/) with a fixed placeholder version — it
 # only proves the package still builds; publishing a real release only
 # happens from release.yml, on a `v*` tag push.
+#
+# ! Another repository setting the maintainer must enable by hand: the
+# ! `dco` job below only reports pass/fail on the commit — making it a
+# ! *required* check in the `main` ruleset (Settings -> Rules -> Rulesets)
+# ! is a manual pick, and only once GitHub has seen it report at least
+# ! once, so it can't be added until after this job first runs.
 
 on:
   push:
@@ -38,6 +44,25 @@ env:
   NODE_VERSION: "24.21.0"
 
 jobs:
+  dco:
+    name: DCO sign-off (CONTRIBUTING.md)
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 — check-dco.sh needs the base commit itself, not
+      # just the range, to exist locally.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # `pull_request`'s own github.sha is a synthetic merge commit
+      # (refs/pull/N/merge), not anything a contributor actually signed —
+      # check the PR's real head/base instead. Falls back to the push
+      # event's before/after range otherwise (covers orchestrate's direct
+      # pushes to beta, not just contributor PRs).
+      - run: >-
+          scripts/check-dco.sh
+          "${{ github.event.pull_request.base.sha || github.event.before }}"
+          "${{ github.event.pull_request.head.sha || github.sha }}"
+
   lint-and-unit:
     name: Lint, vet, unit tests (L1)
     runs-on: ubuntu-latest

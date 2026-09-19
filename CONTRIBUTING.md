@@ -15,7 +15,9 @@ Every commit must carry a `Signed-off-by:` trailer certifying the
 Signed-off-by: Jane Doe <jane@example.com>
 ```
 
-`git commit -s` adds this automatically.
+`git commit -s` adds this automatically, or run `make hooks-install` once
+after cloning and every commit gets it without having to remember `-s`. CI
+rejects a pull request carrying a commit without one.
 
 Hoserva does not use a Contributor License Agreement. There is no
 relicensing intent behind this project, and a CLA would signal one — the

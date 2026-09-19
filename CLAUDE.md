@@ -138,6 +138,7 @@ A `spike` issue's deliverable is **recorded findings, not product code**: a find
 - The UI is coss ui (D15): use the component and particle doc 03 names for each element, build shared patterns once in `web/src/components/patterns/`, and use the `coss` / `coss-particles` skills when writing them. What coss lacks uses Q59's libraries.
 - Golden files change only deliberately — a golden diff is explained in the commit message, never regenerated to make a test pass.
 - Conventional commits (`feat(parity): …`, `fix(mover): …`), one issue per commit, `Fixes #n` trailer.
+- Every commit carries a DCO `Signed-off-by:` trailer (CONTRIBUTING.md, doc 13 Q2) — run `make hooks-install` once per clone (including a scratch clone) and it's automatic; CI's `dco` job rejects a commit that's missing one.
 - `make test` (L1 + L2) before landing, once the Makefile exists. If a workflow isn't a `make` target, it doesn't exist.
 
 # Anti-patterns specific to this project

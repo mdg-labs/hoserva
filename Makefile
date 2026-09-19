@@ -258,7 +258,14 @@ $(error invalid DEB: must not contain '$$' — no Make or shell expansion syntax
 endif
 export DEB
 
-.PHONY: build test test-unit packaging-test lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite
+.PHONY: build test test-unit packaging-test lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite hooks-install
+
+# One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
+# DCO Signed-off-by trailer. This points git at the repo-tracked hook
+# instead of copying it into .git/hooks, so `git pull` keeps it current.
+hooks-install:
+	git config core.hooksPath scripts/devenv/hooks
+	@echo "hooks-install: core.hooksPath -> scripts/devenv/hooks (commits are now signed off automatically)"
 
 # web/ (issue #21, Q8): the Vite build has to run before the Go binaries so
 # web/dist/ is real before cmd/hoservad's //go:embed (web/embed.go) reads

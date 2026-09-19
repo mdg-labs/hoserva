@@ -41,10 +41,12 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 **Settled: AGPL-3.0**, promoted to the decision log as D17, with `LICENSE` added at the repository root. The reasoning stays in doc 00 §6.
 
 ### Q2 — Contribution terms
-**Status:** Default · **Gate:** now · **Affects:** `CONTRIBUTING.md` (when written)
+**Status:** Default · **Gate:** now · **Affects:** `CONTRIBUTING.md`, `scripts/devenv/hooks/`, `.github/workflows/ci.yml`
 
 **Default: DCO sign-off (`Signed-off-by:`), no CLA.**
 A CLA signals an intent to relicense, which undercuts AGPL's trust signal exactly where the project needs it. A hosted monitoring service can be its own codebase and needs no relicensing of this one.
+
+Enforced, not just documented: `make hooks-install` (a repo-tracked `prepare-commit-msg` hook) signs off every commit automatically for a human clone or an `orchestrate` scratch clone, and CI's `dco` job rejects a push or pull request carrying a commit without one. Every pre-existing commit on `main` and `beta` was retroactively signed off the same way (a one-time history rewrite, done directly rather than through the issue tracker).
 
 ### Q3 — Where the public docs site lives
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 05 §7, doc 06 §9, doc 12 §2, §7
