@@ -13,6 +13,7 @@ import (
 type RunContext struct {
 	ctx           context.Context
 	checkpoint    []byte
+	params        []byte
 	stopRequested <-chan struct{}
 	out           io.Writer
 
@@ -30,6 +31,12 @@ func (rc *RunContext) Context() context.Context { return rc.ctx }
 // InitialCheckpoint is the checkpoint data Resume was called with — nil
 // for a job's first run, or for a non-resumable job type.
 func (rc *RunContext) InitialCheckpoint() []byte { return rc.checkpoint }
+
+// Params is the JSON request payload Submit persisted for this job —
+// nil when the type has none. RunFunc must read options from here, not
+// from the original HTTP request, so they survive a restart between
+// queue and run.
+func (rc *RunContext) Params() []byte { return rc.params }
 
 // StopRequested is closed when maintenance mode asks a resumable job to
 // stop at its next checkpoint (Q70) rather than keep working. A resumable

@@ -31,6 +31,7 @@ type Job struct {
 	CreatedAt    string         `json:"created_at"`
 	StartedAt    sql.NullString `json:"started_at"`
 	FinishedAt   sql.NullString `json:"finished_at"`
+	Params       sql.NullString `json:"params"`
 }
 
 type MachineKeyCheck struct {
