@@ -9,8 +9,6 @@ import (
 const (
 	exitOK     = 0
 	exitError  = 1
-	exitUsage  = 2
-	exitAPI    = 3
 	exitDoctor = 4
 )
 
@@ -27,11 +25,6 @@ func emit(v any) {
 		return
 	}
 	printHuman(v)
-}
-
-func fail(code int, format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "hoserva: "+format+"\n", args...)
-	os.Exit(code)
 }
 
 func printHuman(v any) {
