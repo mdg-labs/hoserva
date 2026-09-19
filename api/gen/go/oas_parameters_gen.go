@@ -145,6 +145,91 @@ func decodeDeleteNotificationChannelParams(args [1]string, argsEscaped bool, r *
 	return params, nil
 }
 
+// DisableUserTotpParams is parameters of disableUserTotp operation.
+type DisableUserTotpParams struct {
+	Username string
+}
+
+func unpackDisableUserTotpParams(packed middleware.Parameters) (params DisableUserTotpParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "username",
+			In:   "path",
+		}
+		params.Username = packed[key].(string)
+	}
+	return params
+}
+
+func decodeDisableUserTotpParams(args [1]string, argsEscaped bool, r *http.Request) (params DisableUserTotpParams, _ error) {
+	// Decode path: username.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "username",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Username = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := (validate.String{
+					MinLength:     1,
+					MinLengthSet:  true,
+					MaxLength:     64,
+					MaxLengthSet:  true,
+					Email:         false,
+					Hostname:      false,
+					Regex:         nil,
+					MinNumeric:    0,
+					MinNumericSet: false,
+					MaxNumeric:    0,
+					MaxNumericSet: false,
+				}).Validate(string(params.Username)); err != nil {
+					return errors.Wrap(err, "string")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "username",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // GetJobParams is parameters of getJob operation.
 type GetJobParams struct {
 	JobId uuid.UUID
@@ -566,6 +651,91 @@ func decodeListJobsParams(args [0]string, argsEscaped bool, r *http.Request) (pa
 	return params, nil
 }
 
+// ResetUserPasswordParams is parameters of resetUserPassword operation.
+type ResetUserPasswordParams struct {
+	Username string
+}
+
+func unpackResetUserPasswordParams(packed middleware.Parameters) (params ResetUserPasswordParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "username",
+			In:   "path",
+		}
+		params.Username = packed[key].(string)
+	}
+	return params
+}
+
+func decodeResetUserPasswordParams(args [1]string, argsEscaped bool, r *http.Request) (params ResetUserPasswordParams, _ error) {
+	// Decode path: username.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "username",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Username = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := (validate.String{
+					MinLength:     1,
+					MinLengthSet:  true,
+					MaxLength:     64,
+					MaxLengthSet:  true,
+					Email:         false,
+					Hostname:      false,
+					Regex:         nil,
+					MinNumeric:    0,
+					MinNumericSet: false,
+					MaxNumeric:    0,
+					MaxNumericSet: false,
+				}).Validate(string(params.Username)); err != nil {
+					return errors.Wrap(err, "string")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "username",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // ResumeJobParams is parameters of resumeJob operation.
 type ResumeJobParams struct {
 	JobId uuid.UUID
@@ -689,6 +859,91 @@ func decodeSendTestNotificationParams(args [1]string, argsEscaped bool, r *http.
 	}(); err != nil {
 		return params, &ogenerrors.DecodeParamError{
 			Name: "channelId",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// UnlockUserParams is parameters of unlockUser operation.
+type UnlockUserParams struct {
+	Username string
+}
+
+func unpackUnlockUserParams(packed middleware.Parameters) (params UnlockUserParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "username",
+			In:   "path",
+		}
+		params.Username = packed[key].(string)
+	}
+	return params
+}
+
+func decodeUnlockUserParams(args [1]string, argsEscaped bool, r *http.Request) (params UnlockUserParams, _ error) {
+	// Decode path: username.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "username",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Username = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := (validate.String{
+					MinLength:     1,
+					MinLengthSet:  true,
+					MaxLength:     64,
+					MaxLengthSet:  true,
+					Email:         false,
+					Hostname:      false,
+					Regex:         nil,
+					MinNumeric:    0,
+					MinNumericSet: false,
+					MaxNumeric:    0,
+					MaxNumericSet: false,
+				}).Validate(string(params.Username)); err != nil {
+					return errors.Wrap(err, "string")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "username",
 			In:   "path",
 			Err:  err,
 		}

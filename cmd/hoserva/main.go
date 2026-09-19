@@ -1,9 +1,9 @@
-// Command hoserva is the Hoserva CLI (doc 01 §3). It speaks to hoservad over
-// the API and is a stub until that API exists.
+// Command hoserva is the Hoserva CLI (doc 01 §3). It speaks to hoservad
+// over the Unix socket API through the generated Go client (D5, D18).
 package main
 
-import "fmt"
+import "os"
 
 func main() {
-	fmt.Println("hoserva: not yet implemented")
+	os.Exit(runCLI())
 }

@@ -108,17 +108,6 @@ func applySocketGroupPermissions(path string) {
 	}
 }
 
-type peerCredentialContextKey struct{}
-
-func withPeerCredential(ctx context.Context, cred auth.PeerCredential) context.Context {
-	return context.WithValue(ctx, peerCredentialContextKey{}, cred)
-}
-
-func peerCredentialFromContext(ctx context.Context) (auth.PeerCredential, bool) {
-	cred, ok := ctx.Value(peerCredentialContextKey{}).(auth.PeerCredential)
-	return cred, ok
-}
-
 // unixConnContext is http.Server.ConnContext for the Unix listener: it
 // reads SO_PEERCRED once per connection (not per request — the kernel's
 // answer cannot change mid-connection) and attaches it to every request
@@ -133,7 +122,7 @@ func unixConnContext(ctx context.Context, c net.Conn) context.Context {
 		log.Printf("hoservad: reading the Unix socket peer's credentials: %v", err)
 		return ctx
 	}
-	return withPeerCredential(ctx, cred)
+	return auth.WithPeerCredential(ctx, cred)
 }
 
 // unixSocketAuthMiddleware refuses any request whose connection's peer
@@ -154,7 +143,7 @@ func unixSocketAuthMiddleware(next http.Handler, lookup auth.GroupLookup, daemon
 	var warnMissingGroupOnce sync.Once
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cred, ok := peerCredentialFromContext(r.Context())
+		cred, ok := auth.PeerCredentialFromContext(r.Context())
 		if !ok {
 			http.Error(w, "could not determine the caller's identity", http.StatusForbidden)
 			return

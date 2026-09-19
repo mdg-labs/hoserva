@@ -29,6 +29,20 @@ tags:
     description: The job system (doc 01 §4) — every long-running operation.
   - name: events
     description: Live data over Server-Sent Events (doc 01 §5).
+  - name: status
+    description: Overall system health (`hoserva status`, doc 01 §3).
+  - name: pool
+    description: Pool topology and per-disk breakdown (`hoserva pool status`).
+  - name: disks
+    description: Disk inventory and lifecycle (`hoserva disk`, doc 01 §3).
+  - name: parity
+    description: SnapRAID sync, scrub and fix through the threshold guard (doc 02 §2).
+  - name: config
+    description: Config archive export and import (doc 10 §1).
+  - name: doctor
+    description: Prerequisite and sanity checks (`hoserva doctor`, doc 01 §3).
+  - name: users
+    description: Account recovery over the Unix socket (Q78).
   - name: auth
     description: >-
       First-run setup, sessions and TOTP over TCP (doc 01 §5, §7, Q9, Q10,
@@ -656,6 +670,270 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /status:
+    get:
+      operationId: getStatus
+      summary: Overall system health
+      description: >-
+        One-screen health summary for the dashboard and `hoserva status`
+        (doc 01 §3, §5).
+      tags: [status]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Current health summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatus'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /pool:
+    get:
+      operationId: getPool
+      summary: Pool status
+      description: >-
+        Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
+      tags: [pool]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Pool topology and disk breakdown.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PoolStatus'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /disks:
+    get:
+      operationId: listDisks
+      summary: List disks
+      description: Every block device Hoserva knows about (doc 02 §4).
+      tags: [disks]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Disk inventory.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [disks]
+                properties:
+                  disks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DiskInventoryEntry'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /parity/sync:
+    post:
+      operationId: startSync
+      summary: Start a SnapRAID sync
+      description: >-
+        Queues a sync job through the threshold guard (doc 02 §2). A
+        non-dry-run sync past a tripped guard requires `confirm: true`
+        after reviewing the diff.
+      tags: [parity]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartSyncRequest'
+      responses:
+        "200":
+          description: The queued or running sync job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /parity/scrub:
+    post:
+      operationId: startScrub
+      summary: Start a SnapRAID scrub
+      description: Queues a scrub job (`hoserva scrub`, doc 01 §3).
+      tags: [parity]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartScrubRequest'
+      responses:
+        "200":
+          description: The queued or running scrub job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /parity/fix:
+    post:
+      operationId: startFix
+      summary: Start a SnapRAID fix
+      description: >-
+        Queues a fix job (`hoserva fix`, doc 01 §3). Requires
+        `confirm: true` — fix rewrites data from parity.
+      tags: [parity]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartFixRequest'
+      responses:
+        "200":
+          description: The queued or running fix job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /config/export:
+    post:
+      operationId: exportConfig
+      summary: Export a config archive
+      description: >-
+        Builds and returns doc 10 §1's `hoserva-config-*.tar.zst` archive.
+      tags: [config]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The config archive.
+          content:
+            application/zstd:
+              schema:
+                type: string
+                format: binary
+        default:
+          $ref: '#/components/responses/Error'
+
+  /config/import:
+    post:
+      operationId: importConfig
+      summary: Import a config archive
+      description: >-
+        Restores from doc 10 §1's archive format. Requires `confirm: true`
+        — this replaces the running configuration.
+      tags: [config]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [archive, confirm]
+              properties:
+                archive:
+                  type: string
+                  format: binary
+                confirm:
+                  type: boolean
+                  description: Must be true — import is destructive.
+      responses:
+        "204":
+          description: Import completed.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /doctor:
+    get:
+      operationId: runDoctor
+      summary: Run prerequisite checks
+      description: >-
+        Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART,
+        free space and permission sanity (`hoserva doctor`, doc 01 §3).
+      tags: [doctor]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Plain-language check results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DoctorReport'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /users/{username}/reset-password:
+    parameters:
+      - $ref: '#/components/parameters/Username'
+    post:
+      operationId: resetUserPassword
+      summary: Reset a user's password
+      description: >-
+        Root-only over the Unix socket (Q78). Checked against the peer's
+        uid 0 specifically — the `hoserva` group and TCP are refused.
+        Audit-logged and announced through every notification channel.
+      tags: [users]
+      x-hoserva-role: admin
+      x-hoserva-root-only: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetUserPasswordRequest'
+      responses:
+        "204":
+          description: Password reset.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /users/{username}/disable-totp:
+    parameters:
+      - $ref: '#/components/parameters/Username'
+    post:
+      operationId: disableUserTotp
+      summary: Disable a user's TOTP
+      description: >-
+        Root-only over the Unix socket (Q78). Checked against the peer's
+        uid 0 specifically. Audit-logged and announced through every
+        notification channel.
+      tags: [users]
+      x-hoserva-role: admin
+      x-hoserva-root-only: true
+      responses:
+        "204":
+          description: TOTP disabled.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /users/{username}/unlock:
+    parameters:
+      - $ref: '#/components/parameters/Username'
+    post:
+      operationId: unlockUser
+      summary: Clear login lockout
+      description: >-
+        Clears the account's login rate-limiter lockout (doc 01 §7, Q78).
+        Root-only over the Unix socket, checked against the peer's uid 0
+        specifically. Audit-logged like the other recovery commands.
+      tags: [users]
+      x-hoserva-role: admin
+      x-hoserva-root-only: true
+      responses:
+        "204":
+          description: Lockout cleared.
+        default:
+          $ref: '#/components/responses/Error'
+
 components:
   parameters:
     JobId:
@@ -680,6 +958,15 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/NotificationEventType'
+
+    Username:
+      name: username
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
 
   responses:
     Error:
@@ -1339,3 +1626,155 @@ components:
         end:
           type: string
           pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+
+    DoctorCheckStatus:
+      type: string
+      enum: [pass, warn, fail]
+
+    DoctorCheck:
+      type: object
+      required: [id, name, status, message]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          description: Plain-language label for the check.
+        status:
+          $ref: '#/components/schemas/DoctorCheckStatus'
+        message:
+          type: string
+        remediation:
+          type:
+            - string
+            - "null"
+          description: What to run or change when status is not pass.
+
+    DoctorReport:
+      type: object
+      required: [checks, overall]
+      properties:
+        overall:
+          $ref: '#/components/schemas/DoctorCheckStatus'
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/DoctorCheck'
+
+    SystemStatus:
+      type: object
+      required: [healthy, summary]
+      properties:
+        healthy:
+          type: boolean
+        summary:
+          type: string
+        maintenanceMode:
+          type: boolean
+        arrayDegraded:
+          type: boolean
+        parityBlocked:
+          type: boolean
+        activeJobs:
+          type: integer
+          format: int32
+
+    PoolDiskEntry:
+      type: object
+      required: [device, mountPoint, role, state]
+      properties:
+        device:
+          type: string
+        mountPoint:
+          type: string
+        role:
+          type: string
+          enum: [data, parity, cache, boot, external, unassigned]
+        state:
+          $ref: '#/components/schemas/DiskState'
+        sizeBytes:
+          type:
+            - integer
+            - "null"
+          format: int64
+        usedBytes:
+          type:
+            - integer
+            - "null"
+          format: int64
+
+    PoolStatus:
+      type: object
+      required: [mounted, disks]
+      properties:
+        mounted:
+          type: boolean
+        disks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PoolDiskEntry'
+
+    DiskInventoryEntry:
+      type: object
+      required: [device, sizeBytes, boot]
+      properties:
+        device:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        model:
+          type: string
+        serial:
+          type: string
+        wwn:
+          type: string
+        boot:
+          type: boolean
+        failed:
+          type: boolean
+        weakIdentity:
+          type: boolean
+
+    StartSyncRequest:
+      type: object
+      properties:
+        dryRun:
+          type: boolean
+          default: false
+        confirm:
+          type: boolean
+          default: false
+          description: Required true to sync past a tripped threshold guard.
+
+    StartScrubRequest:
+      type: object
+      properties:
+        percent:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+          description: Scrub percentage cap (doc 01 §3 `hoserva scrub [--percent N]`).
+
+    StartFixRequest:
+      type: object
+      required: [confirm]
+      properties:
+        confirm:
+          type: boolean
+          description: Must be true — fix rewrites data from parity.
+        disk:
+          type: integer
+          format: int32
+          minimum: 1
+          description: SnapRAID disk index (`hoserva fix --disk N`).
+
+    ResetUserPasswordRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          minLength: 12
+          maxLength: 256
