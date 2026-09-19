@@ -256,6 +256,18 @@ func (UnimplementedHandler) ListNotificationChannels(ctx context.Context) (r *Li
 	return r, ht.ErrNotImplemented
 }
 
+// ListWakeEvents implements listWakeEvents operation.
+//
+// Reads persisted spin-state transitions from the central database only — never probes block devices
+// (Q32, doc 03 §3.3a Phase 1). Returns every recorded transition plus per-device wake counts grouped
+// by UTC day so the wake-events page can show when each disk woke, how long it stayed awake, and how
+// often it woke.
+//
+// GET /disks/wake-events
+func (UnimplementedHandler) ListWakeEvents(ctx context.Context) (r *WakeEventsResponse, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // Login implements login operation.
 //
 // Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather

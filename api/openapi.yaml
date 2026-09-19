@@ -782,6 +782,28 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /disks/wake-events:
+    get:
+      operationId: listWakeEvents
+      summary: List spin-state wake events
+      description: >-
+        Reads persisted spin-state transitions from the central database
+        only — never probes block devices (Q32, doc 03 §3.3a Phase 1).
+        Returns every recorded transition plus per-device wake counts
+        grouped by UTC day so the wake-events page can show when each
+        disk woke, how long it stayed awake, and how often it woke.
+      tags: [disks]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Spin-state transition log and daily wake counts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WakeEventsResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   /disks/array:
     post:
       operationId: createArray
@@ -1931,6 +1953,60 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PoolDiskEntry'
+
+    SpinTransition:
+      type: object
+      required: [device, fromState, toState, at]
+      properties:
+        device:
+          type: string
+          description: e.g. `/dev/sdb` — as recorded, never accepted back as input (doc 01 §7).
+        fromState:
+          type: string
+          enum: [active, standby]
+        toState:
+          type: string
+          enum: [active, standby]
+        at:
+          type: string
+          format: date-time
+        awakeDurationSeconds:
+          type:
+            - integer
+            - "null"
+          format: int64
+          description: >-
+            Present when this row is a wake (standby → active) and a later
+            active → standby transition exists for the same device; seconds
+            until that transition.
+
+    DailyWakeCount:
+      type: object
+      required: [device, date, count]
+      properties:
+        device:
+          type: string
+        date:
+          type: string
+          format: date
+          description: UTC calendar day the wakes occurred on.
+        count:
+          type: integer
+          format: int32
+          minimum: 0
+
+    WakeEventsResponse:
+      type: object
+      required: [events, dailyWakeCounts]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpinTransition'
+        dailyWakeCounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyWakeCount'
 
     DiskInventoryEntry:
       type: object

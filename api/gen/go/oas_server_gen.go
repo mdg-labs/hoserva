@@ -179,6 +179,15 @@ type Handler interface {
 	//
 	// GET /notifications/channels
 	ListNotificationChannels(ctx context.Context) (*ListNotificationChannelsOK, error)
+	// ListWakeEvents implements listWakeEvents operation.
+	//
+	// Reads persisted spin-state transitions from the central database only — never probes block devices
+	// (Q32, doc 03 §3.3a Phase 1). Returns every recorded transition plus per-device wake counts grouped
+	// by UTC day so the wake-events page can show when each disk woke, how long it stayed awake, and how
+	// often it woke.
+	//
+	// GET /disks/wake-events
+	ListWakeEvents(ctx context.Context) (*WakeEventsResponse, error)
 	// Login implements login operation.
 	//
 	// Username is matched case-insensitively, using simple lowercasing (Go's `strings.ToLower`) rather

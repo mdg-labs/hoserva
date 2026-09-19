@@ -526,6 +526,44 @@ func (s *CreateNotificationChannelRequest) SetWebhookAuthHeaderName(val OptStrin
 	s.WebhookAuthHeaderName = val
 }
 
+// Ref: #/components/schemas/DailyWakeCount
+type DailyWakeCount struct {
+	Device string `json:"device"`
+	// UTC calendar day the wakes occurred on.
+	Date  time.Time `json:"date"`
+	Count int32     `json:"count"`
+}
+
+// GetDevice returns the value of Device.
+func (s *DailyWakeCount) GetDevice() string {
+	return s.Device
+}
+
+// GetDate returns the value of Date.
+func (s *DailyWakeCount) GetDate() time.Time {
+	return s.Date
+}
+
+// GetCount returns the value of Count.
+func (s *DailyWakeCount) GetCount() int32 {
+	return s.Count
+}
+
+// SetDevice sets the value of Device.
+func (s *DailyWakeCount) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetDate sets the value of Date.
+func (s *DailyWakeCount) SetDate(val time.Time) {
+	s.Date = val
+}
+
+// SetCount sets the value of Count.
+func (s *DailyWakeCount) SetCount(val int32) {
+	s.Count = val
+}
+
 // DeleteNotificationChannelNoContent is response for DeleteNotificationChannel operation.
 type DeleteNotificationChannelNoContent struct{}
 
@@ -3955,6 +3993,150 @@ func (s *SetupStatus) SetAdminExists(val bool) {
 	s.AdminExists = val
 }
 
+// Ref: #/components/schemas/SpinTransition
+type SpinTransition struct {
+	// E.g. `/dev/sdb` — as recorded, never accepted back as input (doc 01 §7).
+	Device    string                  `json:"device"`
+	FromState SpinTransitionFromState `json:"fromState"`
+	ToState   SpinTransitionToState   `json:"toState"`
+	At        time.Time               `json:"at"`
+	// Present when this row is a wake (standby → active) and a later active → standby transition
+	// exists for the same device; seconds until that transition.
+	AwakeDurationSeconds OptNilInt64 `json:"awakeDurationSeconds"`
+}
+
+// GetDevice returns the value of Device.
+func (s *SpinTransition) GetDevice() string {
+	return s.Device
+}
+
+// GetFromState returns the value of FromState.
+func (s *SpinTransition) GetFromState() SpinTransitionFromState {
+	return s.FromState
+}
+
+// GetToState returns the value of ToState.
+func (s *SpinTransition) GetToState() SpinTransitionToState {
+	return s.ToState
+}
+
+// GetAt returns the value of At.
+func (s *SpinTransition) GetAt() time.Time {
+	return s.At
+}
+
+// GetAwakeDurationSeconds returns the value of AwakeDurationSeconds.
+func (s *SpinTransition) GetAwakeDurationSeconds() OptNilInt64 {
+	return s.AwakeDurationSeconds
+}
+
+// SetDevice sets the value of Device.
+func (s *SpinTransition) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetFromState sets the value of FromState.
+func (s *SpinTransition) SetFromState(val SpinTransitionFromState) {
+	s.FromState = val
+}
+
+// SetToState sets the value of ToState.
+func (s *SpinTransition) SetToState(val SpinTransitionToState) {
+	s.ToState = val
+}
+
+// SetAt sets the value of At.
+func (s *SpinTransition) SetAt(val time.Time) {
+	s.At = val
+}
+
+// SetAwakeDurationSeconds sets the value of AwakeDurationSeconds.
+func (s *SpinTransition) SetAwakeDurationSeconds(val OptNilInt64) {
+	s.AwakeDurationSeconds = val
+}
+
+type SpinTransitionFromState string
+
+const (
+	SpinTransitionFromStateActive  SpinTransitionFromState = "active"
+	SpinTransitionFromStateStandby SpinTransitionFromState = "standby"
+)
+
+// AllValues returns all SpinTransitionFromState values.
+func (SpinTransitionFromState) AllValues() []SpinTransitionFromState {
+	return []SpinTransitionFromState{
+		SpinTransitionFromStateActive,
+		SpinTransitionFromStateStandby,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s SpinTransitionFromState) MarshalText() ([]byte, error) {
+	switch s {
+	case SpinTransitionFromStateActive:
+		return []byte(s), nil
+	case SpinTransitionFromStateStandby:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *SpinTransitionFromState) UnmarshalText(data []byte) error {
+	switch SpinTransitionFromState(data) {
+	case SpinTransitionFromStateActive:
+		*s = SpinTransitionFromStateActive
+		return nil
+	case SpinTransitionFromStateStandby:
+		*s = SpinTransitionFromStateStandby
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type SpinTransitionToState string
+
+const (
+	SpinTransitionToStateActive  SpinTransitionToState = "active"
+	SpinTransitionToStateStandby SpinTransitionToState = "standby"
+)
+
+// AllValues returns all SpinTransitionToState values.
+func (SpinTransitionToState) AllValues() []SpinTransitionToState {
+	return []SpinTransitionToState{
+		SpinTransitionToStateActive,
+		SpinTransitionToStateStandby,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s SpinTransitionToState) MarshalText() ([]byte, error) {
+	switch s {
+	case SpinTransitionToStateActive:
+		return []byte(s), nil
+	case SpinTransitionToStateStandby:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *SpinTransitionToState) UnmarshalText(data []byte) error {
+	switch SpinTransitionToState(data) {
+	case SpinTransitionToStateActive:
+		*s = SpinTransitionToStateActive
+		return nil
+	case SpinTransitionToStateStandby:
+		*s = SpinTransitionToStateStandby
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/StartFixRequest
 type StartFixRequest struct {
 	// Must be true — fix rewrites data from parity.
@@ -4603,4 +4785,30 @@ func (s *UserRole) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/WakeEventsResponse
+type WakeEventsResponse struct {
+	Events          []SpinTransition `json:"events"`
+	DailyWakeCounts []DailyWakeCount `json:"dailyWakeCounts"`
+}
+
+// GetEvents returns the value of Events.
+func (s *WakeEventsResponse) GetEvents() []SpinTransition {
+	return s.Events
+}
+
+// GetDailyWakeCounts returns the value of DailyWakeCounts.
+func (s *WakeEventsResponse) GetDailyWakeCounts() []DailyWakeCount {
+	return s.DailyWakeCounts
+}
+
+// SetEvents sets the value of Events.
+func (s *WakeEventsResponse) SetEvents(val []SpinTransition) {
+	s.Events = val
+}
+
+// SetDailyWakeCounts sets the value of DailyWakeCounts.
+func (s *WakeEventsResponse) SetDailyWakeCounts(val []DailyWakeCount) {
+	s.DailyWakeCounts = val
 }

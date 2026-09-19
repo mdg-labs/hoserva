@@ -499,6 +499,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/disks/wake-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List spin-state wake events
+         * @description Reads persisted spin-state transitions from the central database only — never probes block devices (Q32, doc 03 §3.3a Phase 1). Returns every recorded transition plus per-device wake counts grouped by UTC day so the wake-events page can show when each disk woke, how long it stayed awake, and how often it woke.
+         */
+        get: operations["listWakeEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/disks/array": {
         parameters: {
             query?: never;
@@ -1101,6 +1121,35 @@ export interface components {
         PoolStatus: {
             mounted: boolean;
             disks: components["schemas"]["PoolDiskEntry"][];
+        };
+        SpinTransition: {
+            /** @description e.g. `/dev/sdb` — as recorded, never accepted back as input (doc 01 §7). */
+            device: string;
+            /** @enum {string} */
+            fromState: "active" | "standby";
+            /** @enum {string} */
+            toState: "active" | "standby";
+            /** Format: date-time */
+            at: string;
+            /**
+             * Format: int64
+             * @description Present when this row is a wake (standby → active) and a later active → standby transition exists for the same device; seconds until that transition.
+             */
+            awakeDurationSeconds?: number | null;
+        };
+        DailyWakeCount: {
+            device: string;
+            /**
+             * Format: date
+             * @description UTC calendar day the wakes occurred on.
+             */
+            date: string;
+            /** Format: int32 */
+            count: number;
+        };
+        WakeEventsResponse: {
+            events: components["schemas"]["SpinTransition"][];
+            dailyWakeCounts: components["schemas"]["DailyWakeCount"][];
         };
         DiskInventoryEntry: {
             device: string;
@@ -1925,6 +1974,27 @@ export interface operations {
                     "application/json": {
                         disks: components["schemas"]["DiskInventoryEntry"][];
                     };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listWakeEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Spin-state transition log and daily wake counts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WakeEventsResponse"];
                 };
             };
             default: components["responses"]["Error"];

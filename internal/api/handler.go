@@ -21,6 +21,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // Handler implements apiv1.Handler against the job system (#19): no
@@ -56,6 +57,9 @@ type Handler struct {
 	// Array is Q70's stop/start sequence. Nil returns 501 from those
 	// operations — the handler never duplicates the sequence itself.
 	Array *job.ArraySequence
+	// History is spin-state and audit-log persistence (Q32, Q74). Nil
+	// returns an empty wake-events list rather than an error.
+	History *store.History
 }
 
 var _ apiv1.Handler = (*Handler)(nil)
