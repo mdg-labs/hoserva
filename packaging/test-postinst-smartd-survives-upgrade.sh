@@ -30,7 +30,7 @@ postinst_dir="$script_dir/debian"
 fail=0
 note() { printf 'test-postinst-smartd-survives-upgrade: %s\n' "$*" >&2; }
 
-if ! command -v docker >/dev/null 2>&1; then
+if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
   note "SKIP: docker not available in this environment"
   exit 0
 fi
