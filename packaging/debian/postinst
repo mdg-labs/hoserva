@@ -34,6 +34,14 @@ case "$1" in
     # separate from LinuxProvider.SMART/.Spindown's on-demand
     # `smartctl -n standby`/`hdparm` calls (internal/disk/linux_provider.go).
     #
+    # preinst already wrote the durable drop-in below before
+    # smartmontools' own postinst ran (safety-critical review finding on
+    # #171: this postinst runs too late to stop that start from ever
+    # happening), so the mask/stop/drop-in-write here are cleanup and
+    # upgrade protection — for a smartmontools already running from
+    # before hoserva was installed, and for every future hoserva
+    # reconfigure — not what closes the original race.
+    #
     # Masking blocks the unit right now, including a manual `systemctl
     # start` — but it does NOT survive a future smartmontools upgrade:
     # smartmontools 7.4-3's own postinst (dh_installsystemd) opens with

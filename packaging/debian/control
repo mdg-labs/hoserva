@@ -27,8 +27,9 @@ Architecture: any
 # reimplements (D1). Listed here, not Recommends, so `hoserva doctor`'s
 # storage-dependency checks (doc 03, onboarding Step 2) can never find
 # them missing.
-# postinst masks smartmontools' own smartd service immediately after it
-# installs — see postinst's own comment for why.
+# preinst writes a durable drop-in before smartmontools' own postinst
+# starts its smartd service, and postinst masks/stops it as cleanup —
+# see each script's own comment for why.
 Depends: adduser, mergerfs (>= 2.40.2), snapraid (>= 12.4), smartmontools, hdparm, ${misc:Depends}
 # Optional off-box backup destinations (Q41, doc 10 §1) — local
 # destinations work without it, and the UI offers the install command
