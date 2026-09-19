@@ -681,6 +681,51 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /notifications:
+    get:
+      operationId: listNotifications
+      summary: List in-app notification alerts
+      description: >-
+        Unread alerts first, grouped by event type (doc 03 §2). Reads only
+        the central database — never probes block devices.
+      tags: [notifications]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Grouped in-app alerts and the unread count.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListNotificationsOK'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /notifications/read:
+    post:
+      operationId: markNotificationsRead
+      summary: Mark in-app alerts read
+      description: >-
+        Marks every alert whose id is listed, or every alert when `all` is
+        true (doc 03 §2's mark-all-read). Omitted ids with `all` false is a
+        no-op that returns the current unread count.
+      tags: [notifications]
+      x-hoserva-role: viewer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkNotificationsReadRequest'
+      responses:
+        "200":
+          description: The unread count after the update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkNotificationsReadOK'
+        default:
+          $ref: '#/components/responses/Error'
+
   /settings/general:
     get:
       operationId: getGeneralSettings
@@ -1573,10 +1618,12 @@ components:
           const: notification
         data:
           type: object
-          required: [id, level, title, message, createdAt]
+          required: [id, eventType, level, title, message, createdAt]
           properties:
             id:
               type: string
+            eventType:
+              $ref: '#/components/schemas/NotificationEventType'
             level:
               $ref: '#/components/schemas/NotificationLevel'
             title:
@@ -1855,6 +1902,67 @@ components:
           items:
             type: string
             format: uuid
+
+    NotificationAlert:
+      type: object
+      required: [id, eventType, level, title, message, createdAt, read]
+      properties:
+        id:
+          type: string
+        eventType:
+          $ref: '#/components/schemas/NotificationEventType'
+        level:
+          $ref: '#/components/schemas/NotificationLevel'
+        title:
+          type: string
+        message:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        read:
+          type: boolean
+
+    NotificationGroup:
+      type: object
+      required: [eventType, alerts]
+      properties:
+        eventType:
+          $ref: '#/components/schemas/NotificationEventType'
+        alerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationAlert'
+
+    ListNotificationsOK:
+      type: object
+      required: [groups, unreadCount]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationGroup'
+        unreadCount:
+          type: integer
+          minimum: 0
+
+    MarkNotificationsReadRequest:
+      type: object
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+        all:
+          type: boolean
+
+    MarkNotificationsReadOK:
+      type: object
+      required: [unreadCount]
+      properties:
+        unreadCount:
+          type: integer
+          minimum: 0
 
     NotificationQuietHours:
       type: object

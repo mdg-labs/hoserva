@@ -209,6 +209,13 @@ type Invoker interface {
 	//
 	// GET /notifications/channels
 	ListNotificationChannels(ctx context.Context) (*ListNotificationChannelsOK, error)
+	// ListNotifications invokes listNotifications operation.
+	//
+	// Unread alerts first, grouped by event type (doc 03 §2). Reads only the central database — never
+	// probes block devices.
+	//
+	// GET /notifications
+	ListNotifications(ctx context.Context) (*ListNotificationsOK, error)
 	// ListWakeEvents invokes listWakeEvents operation.
 	//
 	// Reads persisted spin-state transitions from the central database only — never probes block devices
@@ -240,6 +247,13 @@ type Invoker interface {
 	//
 	// POST /auth/logout
 	Logout(ctx context.Context) (*LogoutNoContent, error)
+	// MarkNotificationsRead invokes markNotificationsRead operation.
+	//
+	// Marks every alert whose id is listed, or every alert when `all` is true (doc 03 §2's
+	// mark-all-read). Omitted ids with `all` false is a no-op that returns the current unread count.
+	//
+	// POST /notifications/read
+	MarkNotificationsRead(ctx context.Context, request *MarkNotificationsReadRequest) (*MarkNotificationsReadOK, error)
 	// ResetUserPassword invokes resetUserPassword operation.
 	//
 	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
@@ -3715,6 +3729,132 @@ func (c *Client) sendListNotificationChannels(ctx context.Context) (res *ListNot
 	return result, nil
 }
 
+// ListNotifications invokes listNotifications operation.
+//
+// Unread alerts first, grouped by event type (doc 03 §2). Reads only the central database — never
+// probes block devices.
+//
+// GET /notifications
+func (c *Client) ListNotifications(ctx context.Context) (*ListNotificationsOK, error) {
+	res, err := c.sendListNotifications(ctx)
+	return res, err
+}
+
+func (c *Client) sendListNotifications(ctx context.Context) (res *ListNotificationsOK, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listNotifications"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/notifications"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListNotificationsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/notifications"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListNotificationsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListNotificationsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListNotificationsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ListWakeEvents invokes listWakeEvents operation.
 //
 // Reads persisted spin-state transitions from the central database only — never probes block devices
@@ -4054,6 +4194,135 @@ func (c *Client) sendLogout(ctx context.Context) (res *LogoutNoContent, err erro
 
 	stage = "DecodeResponse"
 	result, err := decodeLogoutResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// MarkNotificationsRead invokes markNotificationsRead operation.
+//
+// Marks every alert whose id is listed, or every alert when `all` is true (doc 03 §2's
+// mark-all-read). Omitted ids with `all` false is a no-op that returns the current unread count.
+//
+// POST /notifications/read
+func (c *Client) MarkNotificationsRead(ctx context.Context, request *MarkNotificationsReadRequest) (*MarkNotificationsReadOK, error) {
+	res, err := c.sendMarkNotificationsRead(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendMarkNotificationsRead(ctx context.Context, request *MarkNotificationsReadRequest) (res *MarkNotificationsReadOK, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("markNotificationsRead"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/notifications/read"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, MarkNotificationsReadOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/notifications/read"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeMarkNotificationsReadRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, MarkNotificationsReadOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, MarkNotificationsReadOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeMarkNotificationsReadResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

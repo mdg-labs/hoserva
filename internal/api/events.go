@@ -9,6 +9,7 @@ import (
 
 	"github.com/mdg-labs/hoserva/api/gen/go/events"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/notify"
 )
 
 // jobToEvent translates a *job.Job into the generated events.JobProgressEvent
@@ -50,6 +51,20 @@ func jobToEvent(j *job.Job) (events.Event, error) {
 	}), nil
 }
 
+func alertToEvent(a *notify.Alert) (events.Event, error) {
+	return events.NewNotificationEventEvent(events.NotificationEvent{
+		Event: string(events.NotificationEventEvent),
+		Data: events.NotificationEventData{
+			ID:        a.ID,
+			EventType: events.NotificationEventType(a.EventType),
+			Level:     events.NotificationLevel(a.Severity),
+			Title:     a.Title,
+			Message:   a.Message,
+			CreatedAt: a.CreatedAt,
+		},
+	}), nil
+}
+
 // defaultKeepAlive paces the SSE comment lines EventsHandler sends while
 // idle, so a client (and any reverse proxy in front of hoservad) sees the
 // connection is still alive rather than timing it out.
@@ -70,6 +85,7 @@ const defaultKeepAlive = 15 * time.Second
 // exists.
 type EventsHandler struct {
 	Hub          *job.Hub
+	NotifyHub    *notify.Hub
 	Authenticate func(r *http.Request) error
 	KeepAlive    time.Duration
 }
@@ -90,8 +106,14 @@ func (h *EventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch, unsubscribe := h.Hub.Subscribe()
-	defer unsubscribe()
+	jobCh, unsubscribeJobs := h.Hub.Subscribe()
+	defer unsubscribeJobs()
+	var notifyCh <-chan *notify.Alert
+	var unsubscribeNotify func()
+	if h.NotifyHub != nil {
+		notifyCh, unsubscribeNotify = h.NotifyHub.Subscribe()
+		defer unsubscribeNotify()
+	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -113,22 +135,20 @@ func (h *EventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case j, ok := <-ch:
+		case j, ok := <-jobCh:
 			if !ok {
 				return
 			}
-			ev, err := jobToEvent(j)
-			if err != nil {
-				continue
-			}
-			frame, err := ev.MarshalJSON()
-			if err != nil {
-				continue
-			}
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", frame); err != nil {
+			if err := writeEvent(w, flusher, func() (events.Event, error) { return jobToEvent(j) }); err != nil {
 				return
 			}
-			flusher.Flush()
+		case a, ok := <-notifyCh:
+			if !ok {
+				return
+			}
+			if err := writeEvent(w, flusher, func() (events.Event, error) { return alertToEvent(a) }); err != nil {
+				return
+			}
 		case <-ticker.C:
 			// A ":"-prefixed line is an SSE comment: it reaches no
 			// "message"/EventSource listener, only keeps the connection
@@ -139,6 +159,22 @@ func (h *EventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+func writeEvent(w http.ResponseWriter, flusher http.Flusher, build func() (events.Event, error)) error {
+	ev, err := build()
+	if err != nil {
+		return nil
+	}
+	frame, err := ev.MarshalJSON()
+	if err != nil {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", frame); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
 }
 
 const (

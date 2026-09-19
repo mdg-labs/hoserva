@@ -61,6 +61,16 @@ type MachineKeyCheck struct {
 	CreatedAt  string `json:"created_at"`
 }
 
+type NotifyAlert struct {
+	ID        string         `json:"id"`
+	EventType string         `json:"event_type"`
+	Severity  string         `json:"severity"`
+	Title     string         `json:"title"`
+	Message   string         `json:"message"`
+	CreatedAt string         `json:"created_at"`
+	ReadAt    sql.NullString `json:"read_at"`
+}
+
 type NotifyChannel struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`

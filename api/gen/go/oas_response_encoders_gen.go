@@ -336,6 +336,19 @@ func encodeListNotificationChannelsResponse(response *ListNotificationChannelsOK
 	return nil
 }
 
+func encodeListNotificationsResponse(response *ListNotificationsOK, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeListWakeEventsResponse(response *WakeEventsResponse, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -404,6 +417,19 @@ func encodeLogoutResponse(response *LogoutNoContent, w http.ResponseWriter, span
 		}
 	}
 	w.WriteHeader(204)
+
+	return nil
+}
+
+func encodeMarkNotificationsReadResponse(response *MarkNotificationsReadOK, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
 
 	return nil
 }

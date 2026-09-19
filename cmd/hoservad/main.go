@@ -174,7 +174,9 @@ func run(cfg config) error {
 	authService := api.NewAuthService(authStore, machineKey)
 
 	notifyStore := notify.NewStore(db)
+	notifyHub := notify.NewHub()
 	notifyService := notify.NewService(notifyStore, machineKey, notify.DefaultSenders(&http.Client{Timeout: notifyHTTPTimeout}))
+	notifyService.Hub = notifyHub
 
 	settingsService := api.NewSettingsService(api.NewSettingsStore(db), machineKey)
 
@@ -208,11 +210,11 @@ func run(cfg config) error {
 		return fmt.Errorf("opening embedded web assets: %w", err)
 	}
 
-	tcpServer, err := buildTCPServer(handler, authStore, authService, hub, webRoot)
+	tcpServer, err := buildTCPServer(handler, authStore, authService, hub, notifyHub, webRoot)
 	if err != nil {
 		return fmt.Errorf("building TCP server: %w", err)
 	}
-	unixServer, err := buildUnixServer(handler, authStore, hub)
+	unixServer, err := buildUnixServer(handler, authStore, hub, notifyHub)
 	if err != nil {
 		return fmt.Errorf("building Unix socket server: %w", err)
 	}
@@ -325,7 +327,7 @@ func withSourceAddrMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func buildTCPServer(handler *api.Handler, authStore *api.AuthStore, authService *api.AuthService, hub *job.Hub, webRoot fs.FS) (*http.Server, error) {
+func buildTCPServer(handler *api.Handler, authStore *api.AuthStore, authService *api.AuthService, hub *job.Hub, notifyHub *notify.Hub, webRoot fs.FS) (*http.Server, error) {
 	security := &api.SessionSecurityHandler{Auth: authService}
 	apiServer, err := apiv1.NewServer(handler, security,
 		apiv1.WithPathPrefix(apiPathPrefix),
@@ -336,7 +338,7 @@ func buildTCPServer(handler *api.Handler, authStore *api.AuthStore, authService 
 		return nil, fmt.Errorf("building generated API server: %w", err)
 	}
 
-	events := &api.EventsHandler{Hub: hub, Authenticate: tcpEventsAuthenticate(authService)}
+	events := &api.EventsHandler{Hub: hub, NotifyHub: notifyHub, Authenticate: tcpEventsAuthenticate(authService)}
 
 	mux := http.NewServeMux()
 	// http.MaxBytesHandler wraps both API routes, not the SPA branch
@@ -381,7 +383,7 @@ func tcpEventsAuthenticate(authService *api.AuthService) func(r *http.Request) e
 	}
 }
 
-func buildUnixServer(handler *api.Handler, authStore *api.AuthStore, hub *job.Hub) (*http.Server, error) {
+func buildUnixServer(handler *api.Handler, authStore *api.AuthStore, hub *job.Hub, notifyHub *notify.Hub) (*http.Server, error) {
 	security := api.TrustedSecurityHandler{}
 	apiServer, err := apiv1.NewServer(handler, security,
 		apiv1.WithPathPrefix(apiPathPrefix),
@@ -395,7 +397,7 @@ func buildUnixServer(handler *api.Handler, authStore *api.AuthStore, hub *job.Hu
 	// The connection's own SO_PEERCRED already authorized it before any
 	// request on it reaches this handler at all (unixSocketAuthMiddleware,
 	// below) — there is nothing left to authenticate for /events.
-	events := &api.EventsHandler{Hub: hub, Authenticate: func(r *http.Request) error { return nil }}
+	events := &api.EventsHandler{Hub: hub, NotifyHub: notifyHub, Authenticate: func(r *http.Request) error { return nil }}
 
 	mux := http.NewServeMux()
 	// http.MaxBytesHandler wraps both API routes — see
