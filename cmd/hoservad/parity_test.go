@@ -40,7 +40,10 @@ func newParityTestHandler() *api.Handler {
 
 func attachDaemonParity(t *testing.T, configRoot, stateDir string, runner parity.Runner, h *api.Handler) {
 	t.Helper()
-	engine := newSnapraidEngine(configRoot, stateDir, runner)
+	engine, err := newSnapraidEngine(configRoot, stateDir, runner)
+	if err != nil {
+		t.Fatalf("newSnapraidEngine: %v", err)
+	}
 	if engine == nil {
 		t.Fatal("newSnapraidEngine returned nil with snapraid.conf present — GET /parity would 501")
 	}
@@ -98,7 +101,11 @@ func TestNewSnapraidEngine_NilWhenNoConf(t *testing.T) {
 	stateDir := t.TempDir()
 	h := newParityTestHandler()
 
-	if engine := newSnapraidEngine(configRoot, stateDir, nil); engine != nil {
+	engine, err := newSnapraidEngine(configRoot, stateDir, nil)
+	if err != nil {
+		t.Fatalf("newSnapraidEngine without conf: %v", err)
+	}
+	if engine != nil {
 		t.Fatal("newSnapraidEngine returned non-nil without snapraid.conf")
 	}
 	if h.Parity != nil {
@@ -106,7 +113,7 @@ func TestNewSnapraidEngine_NilWhenNoConf(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, err := h.GetParity(ctx)
+	_, err = h.GetParity(ctx)
 	status := handlerAPIError(t, h, err)
 	if status.StatusCode != 501 || status.Response.Code != "not_configured" {
 		t.Fatalf("GetParity = %+v, want 501 not_configured", status)
@@ -199,7 +206,11 @@ var _ interface{ ExitCode() int } = (*parityExitError)(nil)
 // TestNewSnapraidEngine_ConstructionNilWithoutConf confirms
 // newSnapraidEngine itself returns nil when the config file is absent.
 func TestNewSnapraidEngine_ConstructionNilWithoutConf(t *testing.T) {
-	if got := newSnapraidEngine(t.TempDir(), t.TempDir(), nil); got != nil {
+	got, err := newSnapraidEngine(t.TempDir(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("newSnapraidEngine without conf: %v", err)
+	}
+	if got != nil {
 		t.Fatalf("newSnapraidEngine = %v, want nil without snapraid.conf", got)
 	}
 }
@@ -211,7 +222,10 @@ func TestNewSnapraidEngine_ConstructionReturnsEngineWithConf(t *testing.T) {
 	stateDir := t.TempDir()
 	confPath := writeSnapraidConf(t, configRoot)
 
-	got := newSnapraidEngine(configRoot, stateDir, nil)
+	got, err := newSnapraidEngine(configRoot, stateDir, nil)
+	if err != nil {
+		t.Fatalf("newSnapraidEngine: %v", err)
+	}
 	if got == nil {
 		t.Fatal("newSnapraidEngine returned nil with snapraid.conf present")
 	}
@@ -223,6 +237,25 @@ func TestNewSnapraidEngine_ConstructionReturnsEngineWithConf(t *testing.T) {
 	}
 	if got.Runner != nil {
 		t.Fatal("Runner should be nil in production wiring — CommandRunner is the default")
+	}
+}
+
+// TestNewSnapraidEngine_PropagatesStatError is the non-missing half of
+// the config check: permission errors must not look like "no snapraid.conf".
+func TestNewSnapraidEngine_PropagatesStatError(t *testing.T) {
+	configRoot := t.TempDir()
+	writeSnapraidConf(t, configRoot)
+	if err := os.Chmod(configRoot, 0); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(configRoot, 0o755) })
+
+	got, err := newSnapraidEngine(configRoot, t.TempDir(), nil)
+	if err == nil {
+		t.Fatal("newSnapraidEngine succeeded on an unreadable config directory")
+	}
+	if got != nil {
+		t.Fatalf("newSnapraidEngine = %v, want nil engine when Stat fails", got)
 	}
 }
 
