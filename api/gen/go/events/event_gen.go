@@ -985,16 +985,22 @@ func (s *NotificationEvent) SetData(val NotificationEventData) {
 }
 
 type NotificationEventData struct {
-	ID        string            `json:"id"`
-	Level     NotificationLevel `json:"level"`
-	Title     string            `json:"title"`
-	Message   string            `json:"message"`
-	CreatedAt time.Time         `json:"createdAt"`
+	ID        string                `json:"id"`
+	EventType NotificationEventType `json:"eventType"`
+	Level     NotificationLevel     `json:"level"`
+	Title     string                `json:"title"`
+	Message   string                `json:"message"`
+	CreatedAt time.Time             `json:"createdAt"`
 }
 
 // GetID returns the value of ID.
 func (s *NotificationEventData) GetID() string {
 	return s.ID
+}
+
+// GetEventType returns the value of EventType.
+func (s *NotificationEventData) GetEventType() NotificationEventType {
+	return s.EventType
 }
 
 // GetLevel returns the value of Level.
@@ -1022,6 +1028,11 @@ func (s *NotificationEventData) SetID(val string) {
 	s.ID = val
 }
 
+// SetEventType sets the value of EventType.
+func (s *NotificationEventData) SetEventType(val NotificationEventType) {
+	s.EventType = val
+}
+
 // SetLevel sets the value of Level.
 func (s *NotificationEventData) SetLevel(val NotificationLevel) {
 	s.Level = val
@@ -1040,6 +1051,219 @@ func (s *NotificationEventData) SetMessage(val string) {
 // SetCreatedAt sets the value of CreatedAt.
 func (s *NotificationEventData) SetCreatedAt(val time.Time) {
 	s.CreatedAt = val
+}
+
+// The fixed event catalog doc 03 §8.3 lists, in that doc's own order. internal/notify assigns every
+// one of these a compiled-in default severity (NotificationLevel); notify_event_severity overrides it
+// per event type.
+// Ref: #/components/schemas/NotificationEventType
+type NotificationEventType string
+
+const (
+	NotificationEventTypeSmartWarning             NotificationEventType = "smart_warning"
+	NotificationEventTypeSmartFailure             NotificationEventType = "smart_failure"
+	NotificationEventTypeDiskOffline              NotificationEventType = "disk_offline"
+	NotificationEventTypeArrayDegraded            NotificationEventType = "array_degraded"
+	NotificationEventTypeSyncSucceeded            NotificationEventType = "sync_succeeded"
+	NotificationEventTypeSyncFailed               NotificationEventType = "sync_failed"
+	NotificationEventTypeSyncBlockedThreshold     NotificationEventType = "sync_blocked_threshold"
+	NotificationEventTypeScrubErrorsFound         NotificationEventType = "scrub_errors_found"
+	NotificationEventTypePoolAboveThreshold       NotificationEventType = "pool_above_threshold"
+	NotificationEventTypeDiskNearMinfreespace     NotificationEventType = "disk_near_minfreespace"
+	NotificationEventTypeCacheAboveThreshold      NotificationEventType = "cache_above_threshold"
+	NotificationEventTypeMoverSkippingFiles       NotificationEventType = "mover_skipping_files"
+	NotificationEventTypeConfigDriftDetected      NotificationEventType = "config_drift_detected"
+	NotificationEventTypeContainerUnhealthy       NotificationEventType = "container_unhealthy"
+	NotificationEventTypeContainerUpdateAvailable NotificationEventType = "container_update_available"
+	NotificationEventTypeHoservaUpdateAvailable   NotificationEventType = "hoserva_update_available"
+	NotificationEventTypeRebootRequired           NotificationEventType = "reboot_required"
+	NotificationEventTypeUpsOnBattery             NotificationEventType = "ups_on_battery"
+	NotificationEventTypeUpsBatteryLow            NotificationEventType = "ups_battery_low"
+	NotificationEventTypeLoginFailureBurst        NotificationEventType = "login_failure_burst"
+	NotificationEventTypeCredentialReset          NotificationEventType = "credential_reset"
+	NotificationEventTypeCertificateExpiring      NotificationEventType = "certificate_expiring"
+	NotificationEventTypeConfigBackupFailed       NotificationEventType = "config_backup_failed"
+	NotificationEventTypeAppdataBackupFailed      NotificationEventType = "appdata_backup_failed"
+	NotificationEventTypeBackupDestinationStale   NotificationEventType = "backup_destination_stale"
+	NotificationEventTypeRestoreDrillFailed       NotificationEventType = "restore_drill_failed"
+)
+
+// AllValues returns all NotificationEventType values.
+func (NotificationEventType) AllValues() []NotificationEventType {
+	return []NotificationEventType{
+		NotificationEventTypeSmartWarning,
+		NotificationEventTypeSmartFailure,
+		NotificationEventTypeDiskOffline,
+		NotificationEventTypeArrayDegraded,
+		NotificationEventTypeSyncSucceeded,
+		NotificationEventTypeSyncFailed,
+		NotificationEventTypeSyncBlockedThreshold,
+		NotificationEventTypeScrubErrorsFound,
+		NotificationEventTypePoolAboveThreshold,
+		NotificationEventTypeDiskNearMinfreespace,
+		NotificationEventTypeCacheAboveThreshold,
+		NotificationEventTypeMoverSkippingFiles,
+		NotificationEventTypeConfigDriftDetected,
+		NotificationEventTypeContainerUnhealthy,
+		NotificationEventTypeContainerUpdateAvailable,
+		NotificationEventTypeHoservaUpdateAvailable,
+		NotificationEventTypeRebootRequired,
+		NotificationEventTypeUpsOnBattery,
+		NotificationEventTypeUpsBatteryLow,
+		NotificationEventTypeLoginFailureBurst,
+		NotificationEventTypeCredentialReset,
+		NotificationEventTypeCertificateExpiring,
+		NotificationEventTypeConfigBackupFailed,
+		NotificationEventTypeAppdataBackupFailed,
+		NotificationEventTypeBackupDestinationStale,
+		NotificationEventTypeRestoreDrillFailed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s NotificationEventType) MarshalText() ([]byte, error) {
+	switch s {
+	case NotificationEventTypeSmartWarning:
+		return []byte(s), nil
+	case NotificationEventTypeSmartFailure:
+		return []byte(s), nil
+	case NotificationEventTypeDiskOffline:
+		return []byte(s), nil
+	case NotificationEventTypeArrayDegraded:
+		return []byte(s), nil
+	case NotificationEventTypeSyncSucceeded:
+		return []byte(s), nil
+	case NotificationEventTypeSyncFailed:
+		return []byte(s), nil
+	case NotificationEventTypeSyncBlockedThreshold:
+		return []byte(s), nil
+	case NotificationEventTypeScrubErrorsFound:
+		return []byte(s), nil
+	case NotificationEventTypePoolAboveThreshold:
+		return []byte(s), nil
+	case NotificationEventTypeDiskNearMinfreespace:
+		return []byte(s), nil
+	case NotificationEventTypeCacheAboveThreshold:
+		return []byte(s), nil
+	case NotificationEventTypeMoverSkippingFiles:
+		return []byte(s), nil
+	case NotificationEventTypeConfigDriftDetected:
+		return []byte(s), nil
+	case NotificationEventTypeContainerUnhealthy:
+		return []byte(s), nil
+	case NotificationEventTypeContainerUpdateAvailable:
+		return []byte(s), nil
+	case NotificationEventTypeHoservaUpdateAvailable:
+		return []byte(s), nil
+	case NotificationEventTypeRebootRequired:
+		return []byte(s), nil
+	case NotificationEventTypeUpsOnBattery:
+		return []byte(s), nil
+	case NotificationEventTypeUpsBatteryLow:
+		return []byte(s), nil
+	case NotificationEventTypeLoginFailureBurst:
+		return []byte(s), nil
+	case NotificationEventTypeCredentialReset:
+		return []byte(s), nil
+	case NotificationEventTypeCertificateExpiring:
+		return []byte(s), nil
+	case NotificationEventTypeConfigBackupFailed:
+		return []byte(s), nil
+	case NotificationEventTypeAppdataBackupFailed:
+		return []byte(s), nil
+	case NotificationEventTypeBackupDestinationStale:
+		return []byte(s), nil
+	case NotificationEventTypeRestoreDrillFailed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *NotificationEventType) UnmarshalText(data []byte) error {
+	switch NotificationEventType(data) {
+	case NotificationEventTypeSmartWarning:
+		*s = NotificationEventTypeSmartWarning
+		return nil
+	case NotificationEventTypeSmartFailure:
+		*s = NotificationEventTypeSmartFailure
+		return nil
+	case NotificationEventTypeDiskOffline:
+		*s = NotificationEventTypeDiskOffline
+		return nil
+	case NotificationEventTypeArrayDegraded:
+		*s = NotificationEventTypeArrayDegraded
+		return nil
+	case NotificationEventTypeSyncSucceeded:
+		*s = NotificationEventTypeSyncSucceeded
+		return nil
+	case NotificationEventTypeSyncFailed:
+		*s = NotificationEventTypeSyncFailed
+		return nil
+	case NotificationEventTypeSyncBlockedThreshold:
+		*s = NotificationEventTypeSyncBlockedThreshold
+		return nil
+	case NotificationEventTypeScrubErrorsFound:
+		*s = NotificationEventTypeScrubErrorsFound
+		return nil
+	case NotificationEventTypePoolAboveThreshold:
+		*s = NotificationEventTypePoolAboveThreshold
+		return nil
+	case NotificationEventTypeDiskNearMinfreespace:
+		*s = NotificationEventTypeDiskNearMinfreespace
+		return nil
+	case NotificationEventTypeCacheAboveThreshold:
+		*s = NotificationEventTypeCacheAboveThreshold
+		return nil
+	case NotificationEventTypeMoverSkippingFiles:
+		*s = NotificationEventTypeMoverSkippingFiles
+		return nil
+	case NotificationEventTypeConfigDriftDetected:
+		*s = NotificationEventTypeConfigDriftDetected
+		return nil
+	case NotificationEventTypeContainerUnhealthy:
+		*s = NotificationEventTypeContainerUnhealthy
+		return nil
+	case NotificationEventTypeContainerUpdateAvailable:
+		*s = NotificationEventTypeContainerUpdateAvailable
+		return nil
+	case NotificationEventTypeHoservaUpdateAvailable:
+		*s = NotificationEventTypeHoservaUpdateAvailable
+		return nil
+	case NotificationEventTypeRebootRequired:
+		*s = NotificationEventTypeRebootRequired
+		return nil
+	case NotificationEventTypeUpsOnBattery:
+		*s = NotificationEventTypeUpsOnBattery
+		return nil
+	case NotificationEventTypeUpsBatteryLow:
+		*s = NotificationEventTypeUpsBatteryLow
+		return nil
+	case NotificationEventTypeLoginFailureBurst:
+		*s = NotificationEventTypeLoginFailureBurst
+		return nil
+	case NotificationEventTypeCredentialReset:
+		*s = NotificationEventTypeCredentialReset
+		return nil
+	case NotificationEventTypeCertificateExpiring:
+		*s = NotificationEventTypeCertificateExpiring
+		return nil
+	case NotificationEventTypeConfigBackupFailed:
+		*s = NotificationEventTypeConfigBackupFailed
+		return nil
+	case NotificationEventTypeAppdataBackupFailed:
+		*s = NotificationEventTypeAppdataBackupFailed
+		return nil
+	case NotificationEventTypeBackupDestinationStale:
+		*s = NotificationEventTypeBackupDestinationStale
+		return nil
+	case NotificationEventTypeRestoreDrillFailed:
+		*s = NotificationEventTypeRestoreDrillFailed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/NotificationLevel
@@ -2949,6 +3173,10 @@ func (s *NotificationEventData) encodeFields(e *jx.Encoder) {
 		e.Str(s.ID)
 	}
 	{
+		e.FieldStart("eventType")
+		s.EventType.Encode(e)
+	}
+	{
 		e.FieldStart("level")
 		s.Level.Encode(e)
 	}
@@ -2966,12 +3194,13 @@ func (s *NotificationEventData) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfNotificationEventData = [5]string{
+var jsonFieldsNameOfNotificationEventData = [6]string{
 	0: "id",
-	1: "level",
-	2: "title",
-	3: "message",
-	4: "createdAt",
+	1: "eventType",
+	2: "level",
+	3: "title",
+	4: "message",
+	5: "createdAt",
 }
 
 // Decode decodes NotificationEventData from json.
@@ -2995,8 +3224,18 @@ func (s *NotificationEventData) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"id\"")
 			}
-		case "level":
+		case "eventType":
 			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.EventType.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"eventType\"")
+			}
+		case "level":
+			requiredBitSet[0] |= 1 << 2
 			if err := func() error {
 				if err := s.Level.Decode(d); err != nil {
 					return err
@@ -3006,7 +3245,7 @@ func (s *NotificationEventData) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"level\"")
 			}
 		case "title":
-			requiredBitSet[0] |= 1 << 2
+			requiredBitSet[0] |= 1 << 3
 			if err := func() error {
 				v, err := d.Str()
 				s.Title = string(v)
@@ -3018,7 +3257,7 @@ func (s *NotificationEventData) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"title\"")
 			}
 		case "message":
-			requiredBitSet[0] |= 1 << 3
+			requiredBitSet[0] |= 1 << 4
 			if err := func() error {
 				v, err := d.Str()
 				s.Message = string(v)
@@ -3030,7 +3269,7 @@ func (s *NotificationEventData) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"message\"")
 			}
 		case "createdAt":
-			requiredBitSet[0] |= 1 << 4
+			requiredBitSet[0] |= 1 << 5
 			if err := func() error {
 				v, err := json.DecodeDateTime(d)
 				s.CreatedAt = v
@@ -3051,7 +3290,7 @@ func (s *NotificationEventData) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00011111,
+		0b00111111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -3093,6 +3332,94 @@ func (s *NotificationEventData) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *NotificationEventData) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes NotificationEventType as json.
+func (s NotificationEventType) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes NotificationEventType from json.
+func (s *NotificationEventType) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode NotificationEventType to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch NotificationEventType(v) {
+	case NotificationEventTypeSmartWarning:
+		*s = NotificationEventTypeSmartWarning
+	case NotificationEventTypeSmartFailure:
+		*s = NotificationEventTypeSmartFailure
+	case NotificationEventTypeDiskOffline:
+		*s = NotificationEventTypeDiskOffline
+	case NotificationEventTypeArrayDegraded:
+		*s = NotificationEventTypeArrayDegraded
+	case NotificationEventTypeSyncSucceeded:
+		*s = NotificationEventTypeSyncSucceeded
+	case NotificationEventTypeSyncFailed:
+		*s = NotificationEventTypeSyncFailed
+	case NotificationEventTypeSyncBlockedThreshold:
+		*s = NotificationEventTypeSyncBlockedThreshold
+	case NotificationEventTypeScrubErrorsFound:
+		*s = NotificationEventTypeScrubErrorsFound
+	case NotificationEventTypePoolAboveThreshold:
+		*s = NotificationEventTypePoolAboveThreshold
+	case NotificationEventTypeDiskNearMinfreespace:
+		*s = NotificationEventTypeDiskNearMinfreespace
+	case NotificationEventTypeCacheAboveThreshold:
+		*s = NotificationEventTypeCacheAboveThreshold
+	case NotificationEventTypeMoverSkippingFiles:
+		*s = NotificationEventTypeMoverSkippingFiles
+	case NotificationEventTypeConfigDriftDetected:
+		*s = NotificationEventTypeConfigDriftDetected
+	case NotificationEventTypeContainerUnhealthy:
+		*s = NotificationEventTypeContainerUnhealthy
+	case NotificationEventTypeContainerUpdateAvailable:
+		*s = NotificationEventTypeContainerUpdateAvailable
+	case NotificationEventTypeHoservaUpdateAvailable:
+		*s = NotificationEventTypeHoservaUpdateAvailable
+	case NotificationEventTypeRebootRequired:
+		*s = NotificationEventTypeRebootRequired
+	case NotificationEventTypeUpsOnBattery:
+		*s = NotificationEventTypeUpsOnBattery
+	case NotificationEventTypeUpsBatteryLow:
+		*s = NotificationEventTypeUpsBatteryLow
+	case NotificationEventTypeLoginFailureBurst:
+		*s = NotificationEventTypeLoginFailureBurst
+	case NotificationEventTypeCredentialReset:
+		*s = NotificationEventTypeCredentialReset
+	case NotificationEventTypeCertificateExpiring:
+		*s = NotificationEventTypeCertificateExpiring
+	case NotificationEventTypeConfigBackupFailed:
+		*s = NotificationEventTypeConfigBackupFailed
+	case NotificationEventTypeAppdataBackupFailed:
+		*s = NotificationEventTypeAppdataBackupFailed
+	case NotificationEventTypeBackupDestinationStale:
+		*s = NotificationEventTypeBackupDestinationStale
+	case NotificationEventTypeRestoreDrillFailed:
+		*s = NotificationEventTypeRestoreDrillFailed
+	default:
+		*s = NotificationEventType(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NotificationEventType) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NotificationEventType) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -3694,6 +4021,17 @@ func (s *NotificationEventData) Validate() error {
 
 	var failures []validate.FieldError
 	if err := func() error {
+		if err := s.EventType.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "eventType",
+			Error: err,
+		})
+	}
+	if err := func() error {
 		if err := s.Level.Validate(); err != nil {
 			return err
 		}
@@ -3708,6 +4046,65 @@ func (s *NotificationEventData) Validate() error {
 		return &validate.Error{Fields: failures}
 	}
 	return nil
+}
+
+func (s NotificationEventType) Validate() error {
+	switch s {
+	case "smart_warning":
+		return nil
+	case "smart_failure":
+		return nil
+	case "disk_offline":
+		return nil
+	case "array_degraded":
+		return nil
+	case "sync_succeeded":
+		return nil
+	case "sync_failed":
+		return nil
+	case "sync_blocked_threshold":
+		return nil
+	case "scrub_errors_found":
+		return nil
+	case "pool_above_threshold":
+		return nil
+	case "disk_near_minfreespace":
+		return nil
+	case "cache_above_threshold":
+		return nil
+	case "mover_skipping_files":
+		return nil
+	case "config_drift_detected":
+		return nil
+	case "container_unhealthy":
+		return nil
+	case "container_update_available":
+		return nil
+	case "hoserva_update_available":
+		return nil
+	case "reboot_required":
+		return nil
+	case "ups_on_battery":
+		return nil
+	case "ups_battery_low":
+		return nil
+	case "login_failure_burst":
+		return nil
+	case "credential_reset":
+		return nil
+	case "certificate_expiring":
+		return nil
+	case "config_backup_failed":
+		return nil
+	case "appdata_backup_failed":
+		return nil
+	case "backup_destination_stale":
+		return nil
+	case "restore_drill_failed":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
 }
 
 func (s NotificationLevel) Validate() error {

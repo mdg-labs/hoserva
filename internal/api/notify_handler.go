@@ -113,3 +113,26 @@ func (h *Handler) UpdateQuietHours(ctx context.Context, req *apiv1.UpdateQuietHo
 	out := quietHoursToAPI(qh)
 	return &out, nil
 }
+
+func (h *Handler) ListNotifications(ctx context.Context) (*apiv1.ListNotificationsOK, error) {
+	groups, unread, err := h.Notify.ListInbox(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing notifications: %w", err)
+	}
+	return &apiv1.ListNotificationsOK{
+		Groups:      alertGroupsToAPI(groups),
+		UnreadCount: unread,
+	}, nil
+}
+
+func (h *Handler) MarkNotificationsRead(ctx context.Context, req *apiv1.MarkNotificationsReadRequest) (*apiv1.MarkNotificationsReadOK, error) {
+	all := false
+	if v, ok := req.All.Get(); ok {
+		all = v
+	}
+	unread, err := h.Notify.MarkRead(ctx, req.Ids, all)
+	if err != nil {
+		return nil, fmt.Errorf("marking notifications read: %w", err)
+	}
+	return &apiv1.MarkNotificationsReadOK{UnreadCount: unread}, nil
+}

@@ -70,10 +70,11 @@ type Scheduler struct {
 	hub      *Hub
 	registry *Registry
 
-	mu          sync.Mutex
-	running     map[string]*runningJob
-	queue       []*queuedJob
-	maintenance bool
+	mu                sync.Mutex
+	running           map[string]*runningJob
+	queue             []*queuedJob
+	terminalSnapshots map[string]*Job
+	maintenance       bool
 }
 
 // NewScheduler wires a Scheduler to its persistence, log capture, event
@@ -362,11 +363,11 @@ const awaitPollInterval = 25 * time.Millisecond
 // Hub regardless of whether the matching Store.UpdateStatus itself
 // succeeded (it only logs that failure) — so a store row can be left
 // non-terminal even after the job has genuinely finished. Awaiting only
-// s.store.Get would then poll forever until ctx is done. When the
-// delivered Hub message is id's own and already terminal, Await trusts it
-// immediately instead of only using it as a hint to recheck the store —
-// that in-memory snapshot is the same one runJob just built from the
-// job's actual outcome, not a value that can itself be stale.
+// s.store.Get would then poll forever until ctx is done. When the store
+// row is still non-terminal, Await also consults the scheduler's own
+// terminalSnapshots entry — the same snapshot runJob built when the final
+// write failed — and trusts a delivered Hub message for id that is already
+// terminal, instead of only using Hub as a hint to recheck the store.
 func (s *Scheduler) Await(ctx context.Context, id string) (*Job, error) {
 	ch, unsubscribe := s.hub.Subscribe()
 	defer unsubscribe()
@@ -377,7 +378,11 @@ func (s *Scheduler) Await(ctx context.Context, id string) (*Job, error) {
 			return nil, fmt.Errorf("job: awaiting job %s: %w", id, err)
 		}
 		if j.Status.Terminal() {
+			s.forgetTerminalSnapshot(id)
 			return j, nil
+		}
+		if snap, ok := s.terminalSnapshot(id); ok {
+			return snap, nil
 		}
 		select {
 		case published := <-ch:
@@ -393,6 +398,33 @@ func (s *Scheduler) Await(ctx context.Context, id string) (*Job, error) {
 			return nil, fmt.Errorf("job: awaiting job %s: %w", id, ctx.Err())
 		}
 	}
+}
+
+func (s *Scheduler) terminalSnapshot(id string) (*Job, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap, ok := s.terminalSnapshots[id]
+	if !ok || !snap.Status.Terminal() {
+		return nil, false
+	}
+	copy := *snap
+	return &copy, true
+}
+
+func (s *Scheduler) rememberTerminalSnapshot(j Job) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.terminalSnapshots == nil {
+		s.terminalSnapshots = make(map[string]*Job)
+	}
+	copy := j
+	s.terminalSnapshots[j.ID] = &copy
+}
+
+func (s *Scheduler) forgetTerminalSnapshot(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.terminalSnapshots, id)
 }
 
 // hasConflictWithRunningLocked reports whether a job of class/resourceIDs
@@ -533,8 +565,9 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 		status = StatusSucceeded
 	}
 
-	if err := s.store.UpdateStatus(context.Background(), rj.job.ID, status, rj.job.Progress, errCode, errMessage, rj.job.StartedAt, &now); err != nil {
-		log.Printf("job: recording final status for job %s: %v", rj.job.ID, err)
+	storeErr := s.store.UpdateStatus(context.Background(), rj.job.ID, status, rj.job.Progress, errCode, errMessage, rj.job.StartedAt, &now)
+	if storeErr != nil {
+		log.Printf("job: recording final status for job %s: %v", rj.job.ID, storeErr)
 	}
 
 	s.mu.Lock()
@@ -545,6 +578,10 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 	finished := *rj.job
 	delete(s.running, rj.job.ID)
 	s.mu.Unlock()
+
+	if storeErr != nil {
+		s.rememberTerminalSnapshot(finished)
+	}
 
 	s.hub.Publish(&finished)
 	s.dispatch()

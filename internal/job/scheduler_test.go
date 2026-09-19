@@ -700,36 +700,94 @@ func (f *failWritesDB) ExecContext(ctx context.Context, query string, args ...an
 // hiccup right at completion must not leave Await polling a store row
 // that will never turn terminal, all the way until its own context ends.
 func TestScheduler_Await_ReturnsPromptlyDespiteAFailedFinalStatusWrite(t *testing.T) {
-	ctx := context.Background()
-	db := newTestDB(t)
-	wrapped := &failWritesDB{DB: db}
-	st := NewStore(wrapped)
-	s := NewScheduler(st, NewLogStore(t.TempDir()), NewHub(), NewRegistry())
+	t.Run("subscribedBeforeRelease", func(t *testing.T) {
+		ctx := context.Background()
+		db := newTestDB(t)
+		wrapped := &failWritesDB{DB: db}
+		st := NewStore(wrapped)
+		s := NewScheduler(st, NewLogStore(t.TempDir()), NewHub(), NewRegistry())
 
-	started, release := registerBlocking(s, TypeSync, false)
-	j, err := s.Submit(ctx, TypeSync, nil, nil)
-	if err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
-	<-started
+		started, release := registerBlocking(s, TypeSync, false)
+		j, err := s.Submit(ctx, TypeSync, nil, nil)
+		if err != nil {
+			t.Fatalf("Submit: %v", err)
+		}
+		<-started
 
-	wrapped.fail.Store(true)
-	close(release)
+		wrapped.fail.Store(true)
 
-	awaitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+		awaitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
 
-	start := time.Now()
-	finished, err := s.Await(awaitCtx, j.ID)
-	elapsed := time.Since(start)
+		type awaitResult struct {
+			job     *Job
+			err     error
+			elapsed time.Duration
+		}
+		resultCh := make(chan awaitResult, 1)
+		go func() {
+			start := time.Now()
+			finished, err := s.Await(awaitCtx, j.ID)
+			resultCh <- awaitResult{finished, err, time.Since(start)}
+		}()
 
-	if err != nil {
-		t.Fatalf("Await: %v (took %v — did it fall back to polling until awaitCtx expired?)", err, elapsed)
-	}
-	if finished.Status != StatusSucceeded {
-		t.Fatalf("Await: Status = %s, want succeeded", finished.Status)
-	}
-	if elapsed >= time.Second {
-		t.Fatalf("Await took %v to return — it fell back to polling the (permanently non-terminal) store row instead of trusting the published terminal snapshot", elapsed)
-	}
+		waitFor(t, time.Second, func() bool {
+			s.hub.mu.Lock()
+			defer s.hub.mu.Unlock()
+			return len(s.hub.subs) > 0
+		})
+
+		close(release)
+
+		result := <-resultCh
+		if result.err != nil {
+			t.Fatalf("Await: %v (took %v — did it fall back to polling until awaitCtx expired?)", result.err, result.elapsed)
+		}
+		if result.job.Status != StatusSucceeded {
+			t.Fatalf("Await: Status = %s, want succeeded", result.job.Status)
+		}
+		if result.elapsed >= time.Second {
+			t.Fatalf("Await took %v to return — it fell back to polling the (permanently non-terminal) store row instead of trusting the published terminal snapshot", result.elapsed)
+		}
+	})
+
+	t.Run("subscribedAfterPublish", func(t *testing.T) {
+		ctx := context.Background()
+		db := newTestDB(t)
+		wrapped := &failWritesDB{DB: db}
+		st := NewStore(wrapped)
+		s := NewScheduler(st, NewLogStore(t.TempDir()), NewHub(), NewRegistry())
+
+		started, release := registerBlocking(s, TypeScrub, false)
+		j, err := s.Submit(ctx, TypeScrub, nil, nil)
+		if err != nil {
+			t.Fatalf("Submit: %v", err)
+		}
+		<-started
+
+		wrapped.fail.Store(true)
+		close(release)
+
+		waitFor(t, time.Second, func() bool {
+			_, ok := s.terminalSnapshot(j.ID)
+			return ok
+		})
+
+		awaitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		start := time.Now()
+		finished, err := s.Await(awaitCtx, j.ID)
+		elapsed := time.Since(start)
+
+		if err != nil {
+			t.Fatalf("Await: %v (took %v — did it fall back to polling until awaitCtx expired?)", err, elapsed)
+		}
+		if finished.Status != StatusSucceeded {
+			t.Fatalf("Await: Status = %s, want succeeded", finished.Status)
+		}
+		if elapsed >= time.Second {
+			t.Fatalf("Await took %v to return — it missed the Hub publish and did not consult the in-memory terminal snapshot", elapsed)
+		}
+	})
 }

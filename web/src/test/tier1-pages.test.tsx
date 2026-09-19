@@ -169,7 +169,7 @@ describe("Tier 1 pages", () => {
     expect(await screen.findByText("Degraded")).toBeInTheDocument();
     expect(screen.getByText("Array degraded")).toBeInTheDocument();
     expect(screen.getByLabelText("Active jobs")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Notifications")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
   });
 
   it("shows sync-blocked banner and parity chip", async () => {

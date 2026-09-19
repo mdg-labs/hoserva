@@ -22,7 +22,7 @@ func TestEventsReaderDecodesEveryEventType(t *testing.T) {
 		`data: {"event":"container_state","data":{"containerId":"c1","name":"jellyfin","state":"running","at":"2026-01-01T00:00:00Z"}}` + "\n" +
 		"\n" +
 		"event: notification\n" +
-		`data: {"event":"notification","data":{"id":"n1","level":"warning","title":"t","message":"m","createdAt":"2026-01-01T00:00:00Z"}}` + "\n" +
+		`data: {"event":"notification","data":{"id":"n1","eventType":"pool_above_threshold","level":"warning","title":"t","message":"m","createdAt":"2026-01-01T00:00:00Z"}}` + "\n" +
 		"\n"
 
 	r := events.NewReader(strings.NewReader(stream))

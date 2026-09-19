@@ -32,6 +32,13 @@ const (
 	Daily  Resolution = "daily"
 )
 
+// DiskThroughputBytesPerSec and NetworkThroughputBytesPerSec are host-wide
+// dashboard metrics (doc 03 §2) written by the host poll (#110).
+const (
+	DiskThroughputBytesPerSec    = "disk_throughput_bytes_per_sec"
+	NetworkThroughputBytesPerSec = "network_throughput_bytes_per_sec"
+)
+
 // Retention periods, per Q74's default: "raw samples for 48 hours, hourly
 // for 90 days, daily for two years".
 const (
@@ -188,9 +195,50 @@ func (s *Store) count(ctx context.Context, resolution Resolution) (int, error) {
 	return n, nil
 }
 
+// ResolutionForWindow picks the Q74 tier for a query window: raw for up to
+// 48 hours, hourly for up to 90 days, daily beyond.
+func ResolutionForWindow(window time.Duration) Resolution {
+	switch {
+	case window <= RawRetention:
+		return Raw
+	case window <= HourlyRetention:
+		return Hourly
+	default:
+		return Daily
+	}
+}
+
+// ValuesInRange returns metric/subject's samples at resolution within
+// [from, to], oldest first — the read path for GET /metrics (#186).
+func (s *Store) ValuesInRange(ctx context.Context, resolution Resolution, metric, subject string, from, to time.Time) ([]Sample, error) {
+	fromUTC := from.UTC()
+	fromUnix := fromUTC.Unix()
+	if fromUTC.Nanosecond() != 0 {
+		fromUnix++
+	}
+	toUnix := to.UTC().Unix()
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT at, value FROM samples WHERE resolution = ? AND metric = ? AND subject = ? AND at >= ? AND at <= ? ORDER BY at`,
+		resolution, metric, subject, fromUnix, toUnix)
+	if err != nil {
+		return nil, fmt.Errorf("metrics: reading %s/%s at %s in range: %w", metric, subject, resolution, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []Sample
+	for rows.Next() {
+		var at int64
+		var value float64
+		if err := rows.Scan(&at, &value); err != nil {
+			return nil, fmt.Errorf("metrics: scanning %s/%s at %s in range: %w", metric, subject, resolution, err)
+		}
+		out = append(out, Sample{Metric: metric, Subject: subject, At: time.Unix(at, 0).UTC(), Value: value})
+	}
+	return out, rows.Err()
+}
+
 // Values returns metric/subject's samples at resolution, oldest first —
-// used by tests to check rollup arithmetic, and by the eventual history
-// API (doc 03 §3.4) to read a graph's data.
+// used by tests to check rollup arithmetic, and by the history API.
 func (s *Store) Values(ctx context.Context, resolution Resolution, metric, subject string) ([]Sample, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT at, value FROM samples WHERE resolution = ? AND metric = ? AND subject = ? ORDER BY at`,
