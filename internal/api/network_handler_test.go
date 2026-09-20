@@ -16,10 +16,15 @@ type fakeHTTPS struct {
 	port     int
 	restart  bool
 	notAfter time.Time
+	kind     string
 }
 
 func (f *fakeHTTPS) Certificate() (api.TLSCertView, error) {
-	return api.TLSCertView{NotAfter: f.notAfter}, nil
+	kind := f.kind
+	if kind == "" {
+		kind = "self_signed"
+	}
+	return api.TLSCertView{Kind: kind, NotAfter: f.notAfter}, nil
 }
 
 func (f *fakeHTTPS) Regenerate(context.Context) (api.TLSCertView, error) {

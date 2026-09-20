@@ -5,11 +5,10 @@ import (
 )
 
 // ServiceSecretSource reads the backup passphrase SettingsService persisted
-// (Q28, #178). DatabaseSecrets is not implemented here — callers that need
-// the secrets.age bundle supply database ciphertexts through a wrapper or a
-// test fake until a later issue collects them from every encrypted column.
+// (Q28, #178) and optional encrypted database columns (ACME keys, Q28).
 type ServiceSecretSource struct {
 	BackupPassphraseFn func(ctx context.Context) (string, bool, error)
+	DatabaseSecretsFn  func(ctx context.Context) ([]DatabaseSecret, error)
 }
 
 func (s *ServiceSecretSource) BackupPassphrase(ctx context.Context) (string, bool, error) {
@@ -20,5 +19,8 @@ func (s *ServiceSecretSource) BackupPassphrase(ctx context.Context) (string, boo
 }
 
 func (s *ServiceSecretSource) DatabaseSecrets(ctx context.Context) ([]DatabaseSecret, error) {
-	return nil, nil
+	if s == nil || s.DatabaseSecretsFn == nil {
+		return nil, nil
+	}
+	return s.DatabaseSecretsFn(ctx)
 }

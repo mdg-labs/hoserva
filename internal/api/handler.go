@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/acme"
 	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
@@ -94,6 +95,9 @@ type Handler struct {
 	// HTTPS is certificate, access-scope and listen-port controls for the
 	// network settings page. Nil omits live values (tests).
 	HTTPS HTTPSControl
+	// ACME is Let's Encrypt DNS-01 (#211). Nil omits status and returns 501
+	// from configure/disable.
+	ACME *acme.Service
 }
 
 var _ apiv1.Handler = (*Handler)(nil)

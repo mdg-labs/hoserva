@@ -1,9 +1,18 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadOrGenerateTLSCertificateGeneratesAndReuses(t *testing.T) {
@@ -57,4 +66,105 @@ func TestGenerateSelfSignedCertificateParses(t *testing.T) {
 	if len(certPEM) == 0 || len(keyPEM) == 0 {
 		t.Fatal("expected non-empty cert and key PEM")
 	}
+}
+
+func TestInstallTLSCertificateRejectsInvalidPEMAndLeavesExisting(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "hoserva.crt")
+	keyPath := filepath.Join(dir, "hoserva.key")
+	if _, err := loadOrGenerateTLSCertificate(certPath, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	origCert, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installTLSCertificate(certPath, keyPath, []byte("not-a-cert"), []byte("not-a-key")); err == nil {
+		t.Fatal("expected invalid PEM to be rejected")
+	}
+	got, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(origCert) {
+		t.Fatal("failed install must leave the existing certificate in place")
+	}
+}
+
+func TestInstallTLSCertificateReplacesSelfSigned(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "hoserva.crt")
+	keyPath := filepath.Join(dir, "hoserva.key")
+	if _, err := loadOrGenerateTLSCertificate(certPath, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	orig, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuedCert, issuedKey, err := generateNamedCertificate("nas.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installTLSCertificate(certPath, keyPath, issuedCert, issuedKey); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) == string(orig) {
+		t.Fatal("install should replace the self-signed certificate")
+	}
+	info, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("key file mode = %o, want 0600", perm)
+	}
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := tlsCertViewFromParsed(parsed)
+	if view.Kind != "lets_encrypt" || view.Domain != "nas.example.com" {
+		t.Fatalf("view = %+v", view)
+	}
+}
+
+func generateNamedCertificate(domain string) (certPEM, keyPEM []byte, err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, nil, err
+	}
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: domain},
+		NotBefore:    now.Add(-time.Hour),
+		NotAfter:     now.Add(90 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{domain},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM, nil
 }

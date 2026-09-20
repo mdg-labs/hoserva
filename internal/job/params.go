@@ -82,6 +82,9 @@ func ValidateParams(t Type, params []byte) error {
 	case TypeDiskFormat:
 		_, err := decodeDiskFormatParams(params)
 		return err
+	case TypeACMEIssue:
+		_, err := decodeACMEIssueParams(params)
+		return err
 	default:
 		return fmt.Errorf("job: type %s does not take params", t)
 	}
@@ -180,6 +183,32 @@ func decodeDiskFormatParams(params []byte) (DiskFormatParams, error) {
 	}
 	if len(p.Parity) == 0 && len(p.Data) == 0 && p.Cache == nil {
 		return DiskFormatParams{}, fmt.Errorf("job: disk_format params require a plan")
+	}
+	return p, nil
+}
+
+// ACMEIssueParams is configureLetsEncrypt / unattended renewal's payload.
+type ACMEIssueParams struct {
+	Renew bool `json:"renew,omitempty"`
+}
+
+// ACMERenewFromParams reports whether this acme_issue job is a renewal
+// (notify on failure, never replace the live cert with a self-signed one).
+func ACMERenewFromParams(params []byte) (bool, error) {
+	p, err := decodeACMEIssueParams(bytes.TrimSpace(params))
+	if err != nil {
+		return false, err
+	}
+	return p.Renew, nil
+}
+
+func decodeACMEIssueParams(params []byte) (ACMEIssueParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return ACMEIssueParams{}, nil
+	}
+	var p ACMEIssueParams
+	if err := decodeJSON(params, &p); err != nil {
+		return ACMEIssueParams{}, err
 	}
 	return p, nil
 }

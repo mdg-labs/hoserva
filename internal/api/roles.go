@@ -92,6 +92,8 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.ApplyNetworkSettingsOperation:           RoleAdmin,
 	apiv1.ConfirmNetworkSettingsOperation:         RoleAdmin,
 	apiv1.RegenerateTLSCertificateOperation:       RoleAdmin,
+	apiv1.ConfigureLetsEncryptOperation:           RoleAdmin,
+	apiv1.DisableLetsEncryptOperation:             RoleAdmin,
 }
 
 // RoleFor returns operation's required role, and false if the operation

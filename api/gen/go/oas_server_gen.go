@@ -59,6 +59,17 @@ type Handler interface {
 	//
 	// POST /settings/updates/check
 	CheckForUpdate(ctx context.Context) (*UpdateStatus, error)
+	// ConfigureLetsEncrypt implements configureLetsEncrypt operation.
+	//
+	// Stores the domain and DNS-01 provider credentials (encrypted at rest, Q28) and queues an
+	// `acme_issue` job that talks to the ACME directory over DNS-01 only. Ports 80 and 443 are never
+	// claimed (Q9). HTTP-01 and TLS-ALPN-01 are not offered. On success the issued certificate replaces
+	// the self-signed cert on `:8008`. Unattended renewal stays armed while `letsEncrypt.enabled` is true.
+	// A failed issue or renew keeps serving the existing certificate and notifies; it never silently falls
+	// back to a new self-signed cert.
+	//
+	// POST /settings/network/lets-encrypt
+	ConfigureLetsEncrypt(ctx context.Context, req *ConfigureLetsEncryptRequest) (*Job, error)
 	// ConfirmNetworkSettings implements confirmNetworkSettings operation.
 	//
 	// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
@@ -130,6 +141,14 @@ type Handler interface {
 	//
 	// POST /shares/{name}/data/delete
 	DeleteShareData(ctx context.Context, req *DeleteShareDataRequest, params DeleteShareDataParams) error
+	// DisableLetsEncrypt implements disableLetsEncrypt operation.
+	//
+	// Disarms unattended renewal. The certificate currently served on `:8008` is left in place — this
+	// does not generate a self-signed replacement. DNS credentials remain stored until overwritten by a
+	// later `configureLetsEncrypt` or cleared by regenerating a self-signed certificate.
+	//
+	// DELETE /settings/network/lets-encrypt
+	DisableLetsEncrypt(ctx context.Context) (*NetworkSettings, error)
 	// DisableUserTotp implements disableUserTotp operation.
 	//
 	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically. Audit-logged
@@ -358,8 +377,10 @@ type Handler interface {
 	RebootHost(ctx context.Context, req *ConfirmUpdateRequest) (*UpdateStatus, error)
 	// RegenerateTLSCertificate implements regenerateTLSCertificate operation.
 	//
-	// Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new
-	// cert. Let's Encrypt DNS-01 is not implemented here.
+	// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
+	// hot-reloads it so new connections use the new cert. If Let's Encrypt DNS-01 is configured,
+	// unattended renewal is disarmed so this self-signed cert is not overwritten without another explicit
+	// setup. Let's Encrypt issue and renew are `configureLetsEncrypt`, not this operation.
 	//
 	// POST /settings/network/certificate
 	RegenerateTLSCertificate(ctx context.Context) (*NetworkSettings, error)

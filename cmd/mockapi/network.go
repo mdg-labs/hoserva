@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 )
 
@@ -27,6 +29,7 @@ func defaultMockNetwork() apiv1.NetworkSettings {
 			NotAfter:      time.Date(2036, 9, 20, 0, 0, 0, 0, time.UTC),
 			DaysRemaining: 3650,
 		},
+		LetsEncrypt:     apiv1.LetsEncryptStatus{Configured: false, Enabled: false},
 		AllowAllSources: false,
 		ListenPort:      8008,
 	}
@@ -112,9 +115,50 @@ func (h *handler) RegenerateTLSCertificate(context.Context) (*apiv1.NetworkSetti
 	h.notifyMu.Lock()
 	defer h.notifyMu.Unlock()
 	n := atomic.AddInt64(&h.certSerial, 1)
+	h.network.Certificate.Kind = apiv1.TLSCertificateKindSelfSigned
+	h.network.Certificate.Domain.Reset()
 	h.network.Certificate.NotAfter = time.Now().UTC().Add(10 * 365 * 24 * time.Hour)
 	h.network.Certificate.DaysRemaining = 3650
+	h.network.LetsEncrypt = apiv1.LetsEncryptStatus{Configured: false, Enabled: false}
 	_ = n
+	out := h.network
+	out.Interfaces = append([]apiv1.NetworkInterface(nil), h.network.Interfaces...)
+	return &out, nil
+}
+
+func (h *handler) ConfigureLetsEncrypt(_ context.Context, req *apiv1.ConfigureLetsEncryptRequest) (*apiv1.Job, error) {
+	h.notifyMu.Lock()
+	h.network.LetsEncrypt = apiv1.LetsEncryptStatus{
+		Configured: true,
+		Enabled:    true,
+		Domain:     apiv1.NewOptString(req.GetDomain()),
+		Provider:   apiv1.NewOptDNS01Provider(req.GetProvider()),
+		HasSecret:  apiv1.NewOptBool(true),
+	}
+	h.notifyMu.Unlock()
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := time.Now().UTC()
+	job := apiv1.Job{
+		ID:          uuid.New(),
+		Type:        apiv1.JobTypeAcmeIssue,
+		Class:       apiv1.JobClassService,
+		Status:      apiv1.JobStatusQueued,
+		Resumable:   false,
+		Cancellable: true,
+		CreatedAt:   now,
+	}
+	h.jobs[job.ID] = job
+	return &job, nil
+}
+
+func (h *handler) DisableLetsEncrypt(context.Context) (*apiv1.NetworkSettings, error) {
+	h.notifyMu.Lock()
+	defer h.notifyMu.Unlock()
+	le := h.network.LetsEncrypt
+	le.Enabled = false
+	h.network.LetsEncrypt = le
 	out := h.network
 	out.Interfaces = append([]apiv1.NetworkInterface(nil), h.network.Interfaces...)
 	return &out, nil
