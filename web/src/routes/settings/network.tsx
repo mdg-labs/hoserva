@@ -22,6 +22,7 @@ type NetworkInterface = components["schemas"]["NetworkInterface"];
 const METHOD_DHCP = "dhcp";
 const METHOD_STATIC = "static";
 const ADDRESS_METHOD_FIELD = "address-method";
+const INTERFACE_FIELD = "network-interface";
 
 function dnsToDraft(dns: string[] | undefined): string {
   return (dns ?? []).join(", ");
@@ -311,7 +312,7 @@ export function NetworkSettingsPage(): React.ReactElement {
           <Field>
             <FieldLabel>{t("settings.network.selectInterface")}</FieldLabel>
             <SegmentedChoice
-              name="network-interface"
+              name={INTERFACE_FIELD}
               value={selected}
               onChange={(name) => {
                 const next = (settings?.interfaces ?? []).find((iface) => iface.name === name);
