@@ -486,7 +486,7 @@ Channels: email (SMTP), Gotify, ntfy, Discord webhook, generic webhook. Each wit
 
 Per-event routing matrix: which events go to which channels, at which severity.
 
-Events to cover: SMART warning, SMART failure, disk offline, array degraded, sync succeeded (opt-in, off by default), sync failed, **sync blocked by threshold**, scrub found errors, pool above threshold, **any single disk near `minfreespace`** (doc 09 §5), cache above threshold, mover repeatedly skipping files, config drift detected, container unhealthy or crash-looping, container update available, Hoserva update available, reboot required, UPS on battery, UPS battery low, login failure burst, admin password or TOTP reset, certificate expiring, config backup failed, appdata backup failed, backup destination stale, restore drill failed.
+Events to cover: SMART warning, SMART failure, disk offline, array degraded, sync succeeded (opt-in, off by default), sync failed, **sync blocked by threshold**, scrub found errors, pool above threshold, **any single disk near `minfreespace`** (doc 09 §5), cache above threshold, mover repeatedly skipping files, config drift detected, container unhealthy or crash-looping, container update available, Hoserva update available, Hoserva update failed, reboot required, UPS on battery, UPS battery low, login failure burst, admin password or TOTP reset, certificate expiring, config backup failed, appdata backup failed, backup destination stale, restore drill failed.
 
 Quiet hours, with a "critical alerts always deliver" override that cannot be disabled.
 

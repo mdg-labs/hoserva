@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/mdg-labs/hoserva/internal/job"
@@ -155,8 +154,8 @@ func DefaultMemorySettings() *MemorySettings {
 }
 
 func (n *FakeNotifier) notifiedFailure() bool {
-	for _, t := range n.Titles {
-		if strings.Contains(strings.ToLower(t), "not installed") {
+	for _, event := range n.Events {
+		if event == notify.EventHoservaUpdateFailed {
 			return true
 		}
 	}

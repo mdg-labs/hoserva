@@ -1076,6 +1076,7 @@ const (
 	NotificationEventTypeContainerUnhealthy       NotificationEventType = "container_unhealthy"
 	NotificationEventTypeContainerUpdateAvailable NotificationEventType = "container_update_available"
 	NotificationEventTypeHoservaUpdateAvailable   NotificationEventType = "hoserva_update_available"
+	NotificationEventTypeHoservaUpdateFailed      NotificationEventType = "hoserva_update_failed"
 	NotificationEventTypeRebootRequired           NotificationEventType = "reboot_required"
 	NotificationEventTypeUpsOnBattery             NotificationEventType = "ups_on_battery"
 	NotificationEventTypeUpsBatteryLow            NotificationEventType = "ups_battery_low"
@@ -1107,6 +1108,7 @@ func (NotificationEventType) AllValues() []NotificationEventType {
 		NotificationEventTypeContainerUnhealthy,
 		NotificationEventTypeContainerUpdateAvailable,
 		NotificationEventTypeHoservaUpdateAvailable,
+		NotificationEventTypeHoservaUpdateFailed,
 		NotificationEventTypeRebootRequired,
 		NotificationEventTypeUpsOnBattery,
 		NotificationEventTypeUpsBatteryLow,
@@ -1154,6 +1156,8 @@ func (s NotificationEventType) MarshalText() ([]byte, error) {
 	case NotificationEventTypeContainerUpdateAvailable:
 		return []byte(s), nil
 	case NotificationEventTypeHoservaUpdateAvailable:
+		return []byte(s), nil
+	case NotificationEventTypeHoservaUpdateFailed:
 		return []byte(s), nil
 	case NotificationEventTypeRebootRequired:
 		return []byte(s), nil
@@ -1230,6 +1234,9 @@ func (s *NotificationEventType) UnmarshalText(data []byte) error {
 		return nil
 	case NotificationEventTypeHoservaUpdateAvailable:
 		*s = NotificationEventTypeHoservaUpdateAvailable
+		return nil
+	case NotificationEventTypeHoservaUpdateFailed:
+		*s = NotificationEventTypeHoservaUpdateFailed
 		return nil
 	case NotificationEventTypeRebootRequired:
 		*s = NotificationEventTypeRebootRequired
@@ -3384,6 +3391,8 @@ func (s *NotificationEventType) Decode(d *jx.Decoder) error {
 		*s = NotificationEventTypeContainerUpdateAvailable
 	case NotificationEventTypeHoservaUpdateAvailable:
 		*s = NotificationEventTypeHoservaUpdateAvailable
+	case NotificationEventTypeHoservaUpdateFailed:
+		*s = NotificationEventTypeHoservaUpdateFailed
 	case NotificationEventTypeRebootRequired:
 		*s = NotificationEventTypeRebootRequired
 	case NotificationEventTypeUpsOnBattery:
@@ -4081,6 +4090,8 @@ func (s NotificationEventType) Validate() error {
 	case "container_update_available":
 		return nil
 	case "hoserva_update_available":
+		return nil
+	case "hoserva_update_failed":
 		return nil
 	case "reboot_required":
 		return nil
