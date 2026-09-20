@@ -314,20 +314,79 @@ func TestUpdate_ApplyFailureRestoresGeneratedFiles(t *testing.T) {
 }
 
 func TestDelete_UnmanagedExportsRestoresRowAndFiles(t *testing.T) {
-	ctx, svc, _, _ := testService(t)
+	ctx, svc, _, mounter := testService(t)
 	createTestShare(t, svc, "media", pool.ArrayOnly)
 	if err := svc.Gen.KeepUnmanaged(ctx, config.PathNFS); err != nil {
 		t.Fatalf("KeepUnmanaged exports: %v", err)
 	}
 	before := snapshotGenerated(t, svc.Gen.Root)
+	unmountsBefore := len(mounter.unmounts)
 	if err := svc.Delete(ctx, "media", true); !errors.Is(err, config.ErrUnmanaged) && !errors.Is(err, config.ErrExistingHostFile) {
 		t.Fatalf("Delete = %v, want ErrUnmanaged or ErrExistingHostFile", err)
 	}
 	if _, err := svc.Get(ctx, "media"); err != nil {
 		t.Fatalf("definition should remain after refused delete: %v", err)
 	}
+	if len(mounter.unmounts) != unmountsBefore {
+		t.Fatalf("refused delete unmounted %v", mounter.unmounts[unmountsBefore:])
+	}
 	after := snapshotGenerated(t, svc.Gen.Root)
 	assertGeneratedUnchanged(t, before, after)
+}
+
+func TestUpdate_ApplyFailureRemountsPrevious(t *testing.T) {
+	ctx, svc, _, mounter := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	mounter.failMounts = 1
+	mode := pool.CacheThenMove
+	if _, err := svc.Update(ctx, "media", UpdateInput{CacheMode: &mode}); err == nil {
+		t.Fatal("Update must fail when apply fails")
+	}
+	got, err := svc.Get(ctx, "media")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CacheMode != pool.ArrayOnly {
+		t.Fatalf("cache mode after failed update = %q, want array-only", got.CacheMode)
+	}
+	shareMounts, moverMounts := 0, 0
+	for _, w := range mounter.mounts {
+		if w == pool.SharePath("media") {
+			shareMounts++
+		}
+		if w == pool.MoverTargetPath("media") {
+			moverMounts++
+		}
+	}
+	if shareMounts < 2 || moverMounts < 2 {
+		t.Fatalf("rollback must remount previous share and mover topology, mounts=%v", mounter.mounts)
+	}
+}
+
+func TestUpdate_CacheOnlyRollbackUnmountsMover(t *testing.T) {
+	ctx, svc, _, mounter := testService(t)
+	createTestShare(t, svc, "media", pool.CacheOnly)
+	mounter.failMounts = 1
+	mode := pool.CacheThenMove
+	if _, err := svc.Update(ctx, "media", UpdateInput{CacheMode: &mode}); err == nil {
+		t.Fatal("Update must fail when apply fails")
+	}
+	got, err := svc.Get(ctx, "media")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CacheMode != pool.CacheOnly {
+		t.Fatalf("cache mode after failed update = %q, want cache-only", got.CacheMode)
+	}
+	foundMoverUnmount := false
+	for _, w := range mounter.unmounts {
+		if w == pool.MoverTargetPath("media") {
+			foundMoverUnmount = true
+		}
+	}
+	if !foundMoverUnmount {
+		t.Fatalf("restoring cache-only must drop the mover mount, unmounts=%v mounts=%v", mounter.unmounts, mounter.mounts)
+	}
 }
 
 func TestUpdate_CacheOnlyUnmountsMoverTarget(t *testing.T) {

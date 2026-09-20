@@ -3,6 +3,7 @@ package share
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,9 +27,14 @@ type recordingMounter struct {
 	unmounts   []string
 	mountErr   error
 	unmountErr error
+	failMounts int
 }
 
 func (m *recordingMounter) Mount(_ context.Context, mnt pool.Mount) error {
+	if m.failMounts > 0 {
+		m.failMounts--
+		return errors.New("mount failed")
+	}
 	if m.mountErr != nil {
 		return m.mountErr
 	}
