@@ -31,6 +31,7 @@ export const NOTIFICATION_EVENT_TYPES: NotificationEventType[] = [
   "container_unhealthy",
   "container_update_available",
   "hoserva_update_available",
+  "hoserva_update_failed",
   "reboot_required",
   "ups_on_battery",
   "ups_battery_low",

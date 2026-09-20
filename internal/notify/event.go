@@ -34,6 +34,7 @@ const (
 	EventContainerUnhealthy       EventType = "container_unhealthy"
 	EventContainerUpdateAvailable EventType = "container_update_available"
 	EventHoservaUpdateAvailable   EventType = "hoserva_update_available"
+	EventHoservaUpdateFailed      EventType = "hoserva_update_failed"
 	EventRebootRequired           EventType = "reboot_required"
 	EventUPSOnBattery             EventType = "ups_on_battery"
 	EventUPSBatteryLow            EventType = "ups_battery_low"
@@ -74,6 +75,7 @@ var EventCatalog = []EventType{
 	EventContainerUnhealthy,
 	EventContainerUpdateAvailable,
 	EventHoservaUpdateAvailable,
+	EventHoservaUpdateFailed,
 	EventRebootRequired,
 	EventUPSOnBattery,
 	EventUPSBatteryLow,
@@ -110,6 +112,7 @@ var defaultSeverity = map[EventType]Severity{
 	EventContainerUnhealthy:       SeverityError,
 	EventContainerUpdateAvailable: SeverityInfo,
 	EventHoservaUpdateAvailable:   SeverityInfo,
+	EventHoservaUpdateFailed:      SeverityError,
 	EventRebootRequired:           SeverityWarning,
 	EventUPSOnBattery:             SeverityWarning,
 	EventUPSBatteryLow:            SeverityCritical,

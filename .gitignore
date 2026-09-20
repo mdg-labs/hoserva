@@ -46,5 +46,8 @@ web/dist/*
 # certificate and job logs for a local dev run, never committed.
 .hoserva-dev/
 
+# Maintainer-held release-signing public PEM (never committed).
+/release.pub
+
 # Editors and OS
 .DS_Store

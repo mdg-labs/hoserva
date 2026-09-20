@@ -1399,7 +1399,9 @@ paths:
       summary: Run prerequisite checks
       description: >-
         Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART,
-        free space and permission sanity (`hoserva doctor`, doc 01 §3).
+        free space and permission sanity (`hoserva doctor`, doc 01 §3),
+        plus existing host configuration (Samba shares, NFS exports,
+        fstab mounts, Docker containers and images) for onboarding (Q76).
       tags: [doctor]
       x-hoserva-role: viewer
       responses:
@@ -1409,6 +1411,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DoctorReport'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /doctor/host-config:
+    post:
+      operationId: applyHostConfig
+      summary: Apply onboarding choices for existing host configuration
+      description: >-
+        Q76: each detected Samba file, NFS exports file, fstab, Docker
+        containers list and images list is imported into the database or
+        left unmanaged under the drift model (doc 01 §2). Existing host
+        files are never overwritten unless the caller chose import.
+        Docker's data-root stays at `/var/lib/docker` when containers or
+        images exist, or when there is no cache disk (Q62).
+      tags: [doctor]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyHostConfigRequest'
+      responses:
+        "200":
+          description: Applied choices.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyHostConfigResult'
         default:
           $ref: '#/components/responses/Error'
 
@@ -1907,6 +1938,7 @@ components:
         - container_unhealthy
         - container_update_available
         - hoserva_update_available
+        - hoserva_update_failed
         - reboot_required
         - ups_on_battery
         - ups_battery_low
@@ -2524,6 +2556,53 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DoctorCheck'
+
+    HostConfigID:
+      type: string
+      enum: [host_samba, host_nfs, host_fstab, host_docker_containers, host_docker_images]
+      description: Q76 onboarding category, matching DoctorCheck.id.
+
+    HostConfigDecision:
+      type: string
+      enum: [import, leave]
+      description: >-
+        import persists parsed facts in SQLite so a later generate may
+        take ownership; leave marks the host file unmanaged so Generator
+        never writes it (doc 01 §2).
+
+    HostConfigChoice:
+      type: object
+      required: [id, decision]
+      properties:
+        id:
+          $ref: '#/components/schemas/HostConfigID'
+        decision:
+          $ref: '#/components/schemas/HostConfigDecision'
+
+    ApplyHostConfigRequest:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/HostConfigChoice'
+
+    ApplyHostConfigResult:
+      type: object
+      required: [files, dockerDataRoot]
+      properties:
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/HostConfigChoice'
+        dockerDataRoot:
+          type: string
+          description: >-
+            Docker's data-root after this apply (Q62, Q76). Always
+            `/var/lib/docker` when containers or images exist, when
+            there is no cache disk, or when the caller did not accept
+            a move.
 
     MetricResolution:
       type: string

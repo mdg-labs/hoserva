@@ -128,6 +128,58 @@ func TestCheckAndDiffAndKeepUnmanagedRejectEscapingPaths(t *testing.T) {
 	}
 }
 
+func TestWriteRefusesAnExistingHostFileUntilImported(t *testing.T) {
+	root := t.TempDir()
+	g := NewGenerator(root)
+	ctx := context.Background()
+	full := filepath.Join(root, "samba", "smb.conf")
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "[media]\npath = /srv/media\n"
+	if err := os.WriteFile(full, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	file := File{Path: PathSamba, Command: "share create", Body: []byte("[global]\n")}
+	if err := g.Write(ctx, file, 1, time.Now()); !errors.Is(err, ErrExistingHostFile) {
+		t.Fatalf("Write on an existing host file = %v, want ErrExistingHostFile", err)
+	}
+	got, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("Write changed the existing host file:\n%s", got)
+	}
+
+	if err := g.RecordImported(ctx, PathSamba); err != nil {
+		t.Fatalf("RecordImported: %v", err)
+	}
+	if err := g.Write(ctx, file, 1, time.Now()); err != nil {
+		t.Fatalf("Write after import: %v", err)
+	}
+}
+
+func TestAtomicWriteExclusiveRefusesExistingDestination(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "smb.conf")
+	original := "[media]\npath = /srv/media\n"
+	if err := os.WriteFile(dest, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(dest, []byte("[global]\n"), 0o644, true); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("exclusive atomicWrite = %v, want os.ErrExist", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("exclusive write changed the destination:\n%s", got)
+	}
+}
+
 func TestWriteRefusesAnUnmanagedFile(t *testing.T) {
 	g := NewGenerator(t.TempDir())
 	ctx := context.Background()

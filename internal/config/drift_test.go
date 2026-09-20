@@ -233,6 +233,69 @@ func TestKeepUnmanagedErrorsForAPathNeverGenerated(t *testing.T) {
 	}
 }
 
+func TestKeepUnmanagedRecordsAnExistingNeverGeneratedFile(t *testing.T) {
+	root := t.TempDir()
+	g := NewGenerator(root)
+	ctx := context.Background()
+	full := filepath.Join(root, PathNFS)
+	original := "/export/media *(ro)\n"
+	if err := os.WriteFile(full, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.KeepUnmanaged(ctx, PathNFS); err != nil {
+		t.Fatalf("KeepUnmanaged on an existing host file: %v", err)
+	}
+	status, err := g.Check(ctx, PathNFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != StatusUnmanaged {
+		t.Fatalf("Check = %v, want StatusUnmanaged", status)
+	}
+	got, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("KeepUnmanaged changed the file: %q", got)
+	}
+	file := File{Path: PathNFS, Command: "share create", Body: []byte("/generated *(rw)\n")}
+	if err := g.Write(ctx, file, 1, time.Now()); !errors.Is(err, ErrUnmanaged) {
+		t.Fatalf("Write after leave-unmanaged = %v, want ErrUnmanaged", err)
+	}
+	got, err = os.ReadFile(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("Write after leave-unmanaged changed the file: %q", got)
+	}
+}
+
+func TestApplyHostFileDecisionsDoesNotPartialCommit(t *testing.T) {
+	root := t.TempDir()
+	g := NewGenerator(root)
+	ctx := context.Background()
+	if err := os.WriteFile(filepath.Join(root, PathNFS), []byte("/export/media *(ro)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := g.ApplyHostFileDecisions(ctx, []HostFileDecision{
+		{Path: PathNFS, Decision: DecisionLeave},
+		{Path: PathSamba, Decision: DecisionLeave},
+	}); err == nil {
+		t.Fatal("missing samba should fail the whole batch")
+	}
+	status, err := g.Check(ctx, PathNFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != StatusUnknown {
+		t.Fatalf("Check(nfs) = %v, want StatusUnknown after a later file failed", status)
+	}
+}
+
 func TestManageReversesKeepUnmanaged(t *testing.T) {
 	g := NewGenerator(t.TempDir())
 	ctx := context.Background()

@@ -6,6 +6,7 @@ package apiv1
 type OperationName = string
 
 const (
+	ApplyHostConfigOperation                OperationName = "ApplyHostConfig"
 	ApplyUpdateOperation                    OperationName = "ApplyUpdate"
 	CancelJobOperation                      OperationName = "CancelJob"
 	CheckForUpdateOperation                 OperationName = "CheckForUpdate"

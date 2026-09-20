@@ -133,6 +133,7 @@
         "container_unhealthy": "Container unhealthy",
         "container_update_available": "Container update available",
         "hoserva_update_available": "Hoserva update available",
+        "hoserva_update_failed": "Hoserva update failed",
         "reboot_required": "Reboot required",
         "ups_on_battery": "UPS on battery",
         "ups_battery_low": "UPS battery low",

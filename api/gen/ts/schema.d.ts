@@ -954,11 +954,31 @@ export interface paths {
         };
         /**
          * Run prerequisite checks
-         * @description Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity (`hoserva doctor`, doc 01 §3).
+         * @description Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity (`hoserva doctor`, doc 01 §3), plus existing host configuration (Samba shares, NFS exports, fstab mounts, Docker containers and images) for onboarding (Q76).
          */
         get: operations["runDoctor"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/doctor/host-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply onboarding choices for existing host configuration
+         * @description Q76: each detected Samba file, NFS exports file, fstab, Docker containers list and images list is imported into the database or left unmanaged under the drift model (doc 01 §2). Existing host files are never overwritten unless the caller chose import. Docker's data-root stays at `/var/lib/docker` when containers or images exist, or when there is no cache disk (Q62).
+         */
+        post: operations["applyHostConfig"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1188,7 +1208,7 @@ export interface components {
          * @description The fixed event catalog doc 03 §8.3 lists, in that doc's own order. internal/notify assigns every one of these a compiled-in default severity (NotificationLevel); notify_event_severity overrides it per event type.
          * @enum {string}
          */
-        NotificationEventType: "smart_warning" | "smart_failure" | "disk_offline" | "array_degraded" | "sync_succeeded" | "sync_failed" | "sync_blocked_threshold" | "scrub_errors_found" | "pool_above_threshold" | "disk_near_minfreespace" | "cache_above_threshold" | "mover_skipping_files" | "config_drift_detected" | "container_unhealthy" | "container_update_available" | "hoserva_update_available" | "reboot_required" | "ups_on_battery" | "ups_battery_low" | "login_failure_burst" | "credential_reset" | "certificate_expiring" | "config_backup_failed" | "appdata_backup_failed" | "backup_destination_stale" | "restore_drill_failed";
+        NotificationEventType: "smart_warning" | "smart_failure" | "disk_offline" | "array_degraded" | "sync_succeeded" | "sync_failed" | "sync_blocked_threshold" | "scrub_errors_found" | "pool_above_threshold" | "disk_near_minfreespace" | "cache_above_threshold" | "mover_skipping_files" | "config_drift_detected" | "container_unhealthy" | "container_update_available" | "hoserva_update_available" | "hoserva_update_failed" | "reboot_required" | "ups_on_battery" | "ups_battery_low" | "login_failure_burst" | "credential_reset" | "certificate_expiring" | "config_backup_failed" | "appdata_backup_failed" | "backup_destination_stale" | "restore_drill_failed";
         /** @enum {string} */
         NotificationChannelType: "email" | "gotify" | "ntfy" | "discord" | "webhook";
         /** @enum {string} */
@@ -1463,6 +1483,28 @@ export interface components {
         DoctorReport: {
             overall: components["schemas"]["DoctorCheckStatus"];
             checks: components["schemas"]["DoctorCheck"][];
+        };
+        /**
+         * @description Q76 onboarding category, matching DoctorCheck.id.
+         * @enum {string}
+         */
+        HostConfigID: "host_samba" | "host_nfs" | "host_fstab" | "host_docker_containers" | "host_docker_images";
+        /**
+         * @description import persists parsed facts in SQLite so a later generate may take ownership; leave marks the host file unmanaged so Generator never writes it (doc 01 §2).
+         * @enum {string}
+         */
+        HostConfigDecision: "import" | "leave";
+        HostConfigChoice: {
+            id: components["schemas"]["HostConfigID"];
+            decision: components["schemas"]["HostConfigDecision"];
+        };
+        ApplyHostConfigRequest: {
+            files: components["schemas"]["HostConfigChoice"][];
+        };
+        ApplyHostConfigResult: {
+            files: components["schemas"]["HostConfigChoice"][];
+            /** @description Docker's data-root after this apply (Q62, Q76). Always `/var/lib/docker` when containers or images exist, when there is no cache disk, or when the caller did not accept a move. */
+            dockerDataRoot: string;
         };
         /**
          * @description Q74 retention tier used for this response.
@@ -2931,6 +2973,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DoctorReport"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    applyHostConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyHostConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Applied choices. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplyHostConfigResult"];
                 };
             };
             default: components["responses"]["Error"];

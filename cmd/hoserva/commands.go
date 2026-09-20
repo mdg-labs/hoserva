@@ -308,7 +308,7 @@ func configCmd() *cobra.Command {
 }
 
 func doctorCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run prerequisite checks",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -332,6 +332,106 @@ func doctorCmd() *cobra.Command {
 			}
 			return nil
 		},
+	}
+	cmd.AddCommand(applyHostConfigCmd())
+	return cmd
+}
+
+func applyHostConfigCmd() *cobra.Command {
+	var leaveAll bool
+	var samba, nfs, fstab, dockerContainers, dockerImages string
+	cmd := &cobra.Command{
+		Use:   "apply-host-config",
+		Short: "Import or leave unmanaged existing host configuration (Q76)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newAPIClient(socketPath)
+			if err != nil {
+				return err
+			}
+			choices := map[apiv1.HostConfigID]apiv1.HostConfigDecision{}
+			if leaveAll {
+				report, err := c.RunDoctor(apiCtx())
+				if err != nil {
+					return mapAPIErr(err)
+				}
+				for _, check := range report.Checks {
+					kind, ok := hostConfigIDFromDoctor(check.ID)
+					if ok {
+						choices[kind] = apiv1.HostConfigDecisionLeave
+					}
+				}
+			}
+			setChoice := func(id apiv1.HostConfigID, raw string) error {
+				if raw == "" {
+					return nil
+				}
+				switch raw {
+				case "import":
+					choices[id] = apiv1.HostConfigDecisionImport
+				case "leave":
+					choices[id] = apiv1.HostConfigDecisionLeave
+				default:
+					return fmt.Errorf("%s must be import or leave", id)
+				}
+				return nil
+			}
+			if err := setChoice(apiv1.HostConfigIDHostSamba, samba); err != nil {
+				return err
+			}
+			if err := setChoice(apiv1.HostConfigIDHostNfs, nfs); err != nil {
+				return err
+			}
+			if err := setChoice(apiv1.HostConfigIDHostFstab, fstab); err != nil {
+				return err
+			}
+			if err := setChoice(apiv1.HostConfigIDHostDockerContainers, dockerContainers); err != nil {
+				return err
+			}
+			if err := setChoice(apiv1.HostConfigIDHostDockerImages, dockerImages); err != nil {
+				return err
+			}
+			files := make([]apiv1.HostConfigChoice, 0, len(choices))
+			for id, decision := range choices {
+				files = append(files, apiv1.HostConfigChoice{ID: id, Decision: decision})
+			}
+			out, err := c.ApplyHostConfig(apiCtx(), &apiv1.ApplyHostConfigRequest{Files: files})
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			if jsonOutput {
+				emit(out)
+				return nil
+			}
+			for _, f := range out.Files {
+				fmt.Printf("%s: %s\n", f.ID, f.Decision)
+			}
+			fmt.Printf("docker data-root: %s\n", out.DockerDataRoot)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&leaveAll, "leave-all", false, "Leave every detected host file unmanaged")
+	cmd.Flags().StringVar(&samba, "samba", "", "import or leave")
+	cmd.Flags().StringVar(&nfs, "nfs", "", "import or leave")
+	cmd.Flags().StringVar(&fstab, "fstab", "", "import or leave")
+	cmd.Flags().StringVar(&dockerContainers, "docker-containers", "", "import or leave")
+	cmd.Flags().StringVar(&dockerImages, "docker-images", "", "import or leave")
+	return cmd
+}
+
+func hostConfigIDFromDoctor(id string) (apiv1.HostConfigID, bool) {
+	switch {
+	case id == string(apiv1.HostConfigIDHostSamba) || strings.HasPrefix(id, "host_samba_"):
+		return apiv1.HostConfigIDHostSamba, true
+	case id == string(apiv1.HostConfigIDHostNfs) || strings.HasPrefix(id, "host_nfs_"):
+		return apiv1.HostConfigIDHostNfs, true
+	case id == string(apiv1.HostConfigIDHostFstab) || strings.HasPrefix(id, "host_fstab_"):
+		return apiv1.HostConfigIDHostFstab, true
+	case id == string(apiv1.HostConfigIDHostDockerContainers) || strings.HasPrefix(id, "host_docker_containers_"):
+		return apiv1.HostConfigIDHostDockerContainers, true
+	case id == string(apiv1.HostConfigIDHostDockerImages) || strings.HasPrefix(id, "host_docker_images_"):
+		return apiv1.HostConfigIDHostDockerImages, true
+	default:
+		return "", false
 	}
 }
 
