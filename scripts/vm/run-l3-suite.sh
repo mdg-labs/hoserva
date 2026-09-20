@@ -68,11 +68,12 @@ if vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if [[ "$SETUP_STATUS" == *'"adminExists":false'* ]]; then
     CREATE_RESULT="$(vm_ssh "curl -sk -X POST https://127.0.0.1:8008/api/v1/setup/admin -H 'Content-Type: application/json' -d '{\"username\":\"hoserva-l3\",\"password\":\"hoserva-l3-suite-password\"}'" 2>/dev/null || true)"
     if [[ "$CREATE_RESULT" == *'"username":"hoserva-l3"'* ]]; then
-      APPLY_RESULT="$(vm_ssh "sudo hoserva doctor apply-host-config --leave-all" 2>/dev/null || true)"
-      if [[ "$APPLY_RESULT" == *"docker data-root:"* ]] || [[ "$APPLY_RESULT" == *"host_samba"* ]] || [[ "$APPLY_RESULT" == *"leave"* ]]; then
+      APPLY_STATUS=0
+      APPLY_RESULT="$(vm_ssh "sudo hoserva doctor apply-host-config --leave-all" 2>&1)" || APPLY_STATUS=$?
+      if [[ "$APPLY_STATUS" -eq 0 && "$APPLY_RESULT" == *"docker data-root:"* ]]; then
         pass "onboarding"
       else
-        fail "onboarding" "apply-host-config --leave-all did not succeed: $APPLY_RESULT"
+        fail "onboarding" "apply-host-config --leave-all exited ${APPLY_STATUS}: ${APPLY_RESULT}"
       fi
     else
       fail "onboarding" "createFirstAdmin did not return the expected admin: $CREATE_RESULT"
