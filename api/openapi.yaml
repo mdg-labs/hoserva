@@ -865,7 +865,7 @@ paths:
         use the new cert. If Let's Encrypt DNS-01 is configured, unattended
         renewal is disarmed so this self-signed cert is not overwritten
         without another explicit setup. Let's Encrypt issue and renew are
-        `configureLetsEncrypt`, not this operation.
+        handled by `configureLetsEncrypt`, not by this operation.
       tags: [settings]
       x-hoserva-role: admin
       responses:

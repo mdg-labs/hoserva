@@ -73,6 +73,7 @@ export function NetworkSettingsPage(): React.ReactElement {
   const [leNameserver, setLeNameserver] = useState("");
   const [leTsigKey, setLeTsigKey] = useState("");
   const [leTsigSecret, setLeTsigSecret] = useState("");
+  const [leError, setLeError] = useState<string | null>(null);
   const formSeeded = useRef(false);
 
   const seedForm = (data: NetworkSettings): void => {
@@ -217,10 +218,10 @@ export function NetworkSettingsPage(): React.ReactElement {
 
   async function handleLetsEncrypt(): Promise<void> {
     if (leDomain.trim().length === 0) {
-      setError(t("settings.network.leDomainRequired"));
+      setLeError(t("settings.network.leDomainRequired"));
       return;
     }
-    setError(null);
+    setLeError(null);
     setLeBusy(true);
     try {
       const { error: apiError } = await hoservaClient.POST("/settings/network/lets-encrypt", {
@@ -234,7 +235,7 @@ export function NetworkSettingsPage(): React.ReactElement {
         },
       });
       if (apiError) {
-        setError(apiError.message);
+        setLeError(apiError.message);
         return;
       }
       setLeOpen(false);
@@ -492,6 +493,7 @@ export function NetworkSettingsPage(): React.ReactElement {
             onClick={() => {
               setLeDomain(settings?.letsEncrypt.domain ?? "");
               setLeProvider(settings?.letsEncrypt.provider === PROVIDER_RFC2136 ? PROVIDER_RFC2136 : PROVIDER_CLOUDFLARE);
+              setLeError(null);
               setLeOpen(true);
             }}
           >
@@ -553,7 +555,12 @@ export function NetworkSettingsPage(): React.ReactElement {
 
       <FormOverlay
         open={leOpen}
-        onOpenChange={setLeOpen}
+        onOpenChange={(open) => {
+          setLeOpen(open);
+          if (open) {
+            setLeError(null);
+          }
+        }}
         title={t("settings.network.leSetup")}
         description={t("settings.network.leDescription")}
         footer={
@@ -567,6 +574,7 @@ export function NetworkSettingsPage(): React.ReactElement {
           </div>
         }
       >
+        {leError ? <Banner tone="error" title={leError} /> : null}
         <Field>
           <FieldLabel>{t("settings.network.leDomain")}</FieldLabel>
           <Input

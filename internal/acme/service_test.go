@@ -58,8 +58,8 @@ func TestIssueFailureDoesNotInstallCertificate(t *testing.T) {
 	if installer.View.Kind != KindSelfSigned {
 		t.Fatalf("kind = %s, want self_signed still served", installer.View.Kind)
 	}
-	if len(pub.Events) != 1 || pub.Events[0][0] != eventCertificateRenewalFailed {
-		t.Fatalf("notify events = %#v, want certificate_renewal_failed", pub.Events)
+	if len(pub.Events) != 1 || pub.Events[0][0] != eventCertificateRenewalFailed || pub.Events[0][1] != renewalFailedTitle {
+		t.Fatalf("notify events = %#v, want certificate_renewal_failed renewal title", pub.Events)
 	}
 	status, err := svc.Status(context.Background())
 	if err != nil {
@@ -67,6 +67,34 @@ func TestIssueFailureDoesNotInstallCertificate(t *testing.T) {
 	}
 	if status.LastError == "" {
 		t.Fatal("lastError should record the failure")
+	}
+}
+
+func TestIssueFailureNotifiesOnFirstIssuance(t *testing.T) {
+	db := newTestDB(t)
+	st := NewStore(db)
+	installer := &RecordingInstaller{View: CertView{Kind: KindSelfSigned, NotAfter: time.Now().Add(10 * 365 * 24 * time.Hour)}}
+	pub := &FakePublisher{}
+	client := &FakeClient{IssueFn: func(context.Context, IssueRequest) (*Certificate, error) {
+		return nil, errors.New("directory unreachable")
+	}}
+	svc := &Service{Store: st, Cipher: FakeCipher{}, Client: client, Installer: installer, Publisher: pub}
+	if err := svc.Configure(context.Background(), Setup{
+		Domain:             "nas.example.com",
+		Provider:           ProviderCloudflare,
+		CloudflareAPIToken: "token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.Issue(context.Background(), false); err == nil {
+		t.Fatal("expected first issuance to fail")
+	}
+	if installer.Installs != 0 {
+		t.Fatalf("Install called %d times on a failed issue; the existing cert must stay", installer.Installs)
+	}
+	if len(pub.Events) != 1 || pub.Events[0][0] != eventCertificateRenewalFailed || pub.Events[0][1] != issueFailedTitle {
+		t.Fatalf("notify events = %#v, want certificate_renewal_failed issue title", pub.Events)
 	}
 }
 
@@ -164,5 +192,43 @@ func TestConfigureEncryptsSecrets(t *testing.T) {
 	}
 	if len(cfg.AccountKey) == 0 {
 		t.Fatal("account key missing")
+	}
+}
+
+func TestConfigureRejectsInvalidSetup(t *testing.T) {
+	db := newTestDB(t)
+	svc := &Service{Store: NewStore(db), Cipher: FakeCipher{}}
+	err := svc.Configure(context.Background(), Setup{Domain: "not a host", Provider: ProviderCloudflare, CloudflareAPIToken: "token"})
+	if !errors.Is(err, ErrInvalidSetup) {
+		t.Fatalf("invalid domain: %v, want ErrInvalidSetup", err)
+	}
+	err = svc.Configure(context.Background(), Setup{Domain: "nas.example.com", Provider: "route53", CloudflareAPIToken: "token"})
+	if !errors.Is(err, ErrInvalidSetup) {
+		t.Fatalf("invalid provider: %v, want ErrInvalidSetup", err)
+	}
+	err = svc.Configure(context.Background(), Setup{Domain: "nas.example.com", Provider: ProviderCloudflare})
+	if !errors.Is(err, ErrInvalidSetup) {
+		t.Fatalf("missing credential: %v, want ErrInvalidSetup", err)
+	}
+}
+
+type failCipher struct{}
+
+func (failCipher) Encrypt([]byte) ([]byte, error) { return nil, errors.New("kms down") }
+func (failCipher) Decrypt([]byte) ([]byte, error) { return nil, errors.New("kms down") }
+
+func TestConfigureEncryptFailureIsNotInvalidSetup(t *testing.T) {
+	db := newTestDB(t)
+	svc := &Service{Store: NewStore(db), Cipher: failCipher{}}
+	err := svc.Configure(context.Background(), Setup{
+		Domain:             "nas.example.com",
+		Provider:           ProviderCloudflare,
+		CloudflareAPIToken: "token",
+	})
+	if err == nil {
+		t.Fatal("expected encrypt failure")
+	}
+	if errors.Is(err, ErrInvalidSetup) {
+		t.Fatalf("encrypt failure = %v, must not be ErrInvalidSetup", err)
 	}
 }

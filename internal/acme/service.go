@@ -11,8 +11,13 @@ import (
 
 const (
 	eventCertificateRenewalFailed = "certificate_renewal_failed"
+	issueFailedTitle              = "Certificate issue failed"
 	renewalFailedTitle            = "Certificate renewal failed"
 )
+
+// ErrInvalidSetup marks a caller-supplied Let's Encrypt configuration
+// problem, as opposed to a storage or crypto failure.
+var ErrInvalidSetup = errors.New("acme: invalid Let's Encrypt setup")
 
 // Setup is the user-supplied Let's Encrypt DNS-01 configuration.
 type Setup struct {
@@ -85,11 +90,11 @@ func (s *Service) Configure(ctx context.Context, setup Setup) error {
 	}
 	domain, err := normalizeDomain(setup.Domain)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrInvalidSetup, err)
 	}
 	provider := strings.ToLower(strings.TrimSpace(setup.Provider))
 	if provider != ProviderCloudflare && provider != ProviderRFC2136 {
-		return fmt.Errorf("acme: provider must be cloudflare or rfc2136")
+		return fmt.Errorf("%w: provider must be cloudflare or rfc2136", ErrInvalidSetup)
 	}
 	existing, err := s.Store.Get(ctx)
 	if err != nil {
@@ -101,7 +106,7 @@ func (s *Service) Configure(ctx context.Context, setup Setup) error {
 	if provider == ProviderRFC2136 {
 		secret = setup.RFC2136TSIGSecret
 		if setup.RFC2136Nameserver == "" || setup.RFC2136TSIGKeyName == "" {
-			return fmt.Errorf("acme: RFC 2136 nameserver and TSIG key name are required")
+			return fmt.Errorf("%w: RFC 2136 nameserver and TSIG key name are required", ErrInvalidSetup)
 		}
 		settings.Nameserver = setup.RFC2136Nameserver
 		settings.TSIGKeyName = setup.RFC2136TSIGKeyName
@@ -122,7 +127,7 @@ func (s *Service) Configure(ctx context.Context, setup Setup) error {
 	} else if existing != nil && len(existing.DNSSecret) > 0 && existing.Provider == provider {
 		dnsCipher = existing.DNSSecret
 	} else {
-		return fmt.Errorf("acme: a DNS credential is required")
+		return fmt.Errorf("%w: a DNS credential is required", ErrInvalidSetup)
 	}
 
 	accountCipher := []byte(nil)
@@ -235,9 +240,15 @@ func (s *Service) solver(cfg *Config, secret string) (DNS01Solver, error) {
 
 func (s *Service) fail(ctx context.Context, renew bool, err error) error {
 	_ = s.Store.SetLastError(ctx, err.Error())
-	if renew && s.Publisher != nil {
-		msg := fmt.Sprintf("Let's Encrypt renewal failed. The existing certificate is still in use and was not replaced with a self-signed certificate. %s", err.Error())
-		if pubErr := s.Publisher.Publish(ctx, eventCertificateRenewalFailed, renewalFailedTitle, msg); pubErr != nil {
+	if s.Publisher != nil {
+		action := "issue"
+		title := issueFailedTitle
+		if renew {
+			action = "renewal"
+			title = renewalFailedTitle
+		}
+		msg := fmt.Sprintf("Let's Encrypt %s failed. The existing certificate is still in use and was not replaced with a self-signed certificate. %s", action, err.Error())
+		if pubErr := s.Publisher.Publish(ctx, eventCertificateRenewalFailed, title, msg); pubErr != nil {
 			return fmt.Errorf("%w (also notifying: %v)", err, pubErr)
 		}
 	}
