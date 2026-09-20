@@ -243,7 +243,8 @@ func run(cfg config) error {
 		registry.Register(job.TypeScrub, false, job.RunScrub(parityEngine))
 		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}
 	}
-	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, arraySeq, notifyService, linuxDisks.Exec)
+	backupService := newBackupService(ctx, cfg, db, machineKey, settingsService, linuxDisks.Exec)
+	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, arraySeq, notifyService, linuxDisks.Exec, backupService)
 	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine, Generator: generator, HostConfig: store.NewHostConfigStore(db), Docker: cfggen.ExecDocker{}, ArrayStore: arrayStore}
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
@@ -280,6 +281,7 @@ func run(cfg config) error {
 		Schedules: scheduleService,
 		Scheduler: scheduler,
 		Guard:     chainGuard,
+		Backup:    backupService,
 		Notifier:  &scheduleNotifier{svc: notifyService},
 	}, scheduleTickInterval)
 

@@ -40,15 +40,14 @@ func packageVersion(ctx context.Context, runner disk.Runner, name string) string
 	return v
 }
 
-func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, settings *api.SettingsService, scheduler *job.Scheduler, arraySeq *job.ArraySequence, notifyService *notify.Service, runner disk.Runner) *update.Engine {
-	exe, err := os.Executable()
-	if err != nil {
-		exe = "/usr/bin/hoservad"
+func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, settings *api.SettingsService, runner disk.Runner) *backup.Service {
+	configRoot := cfg.configRoot
+	if configRoot == "" {
+		configRoot = "/etc"
 	}
-	current := packageVersion(ctx, runner, "hoserva")
-	backupSvc := &backup.Service{
+	return &backup.Service{
 		DB:    db,
-		Paths: backup.DefaultPaths(cfg.stateDir, filepath.Join(cfg.configRoot, "hoserva")),
+		Paths: backup.DefaultPaths(cfg.stateDir, filepath.Join(configRoot, "hoserva")),
 		Destinations: []backup.Destination{{
 			ID:      "boot",
 			Path:    filepath.Join(cfg.stateDir, "backups"),
@@ -61,8 +60,16 @@ func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *au
 		}},
 		Secrets: &backup.ServiceSecretSource{BackupPassphraseFn: settings.BackupPassphrase},
 		Cipher:  machineKey,
-		Version: current,
+		Version: packageVersion(ctx, runner, "hoserva"),
 	}
+}
+
+func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, settings *api.SettingsService, scheduler *job.Scheduler, arraySeq *job.ArraySequence, notifyService *notify.Service, runner disk.Runner, backupSvc *backup.Service) *update.Engine {
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "/usr/bin/hoservad"
+	}
+	current := packageVersion(ctx, runner, "hoserva")
 	var shutdown update.Shutdown
 	if arraySeq != nil {
 		shutdown = arraySeq

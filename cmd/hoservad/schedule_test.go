@@ -428,3 +428,61 @@ func TestRunScheduleLoopStopsOnCancel(t *testing.T) {
 type blockingGuard struct{}
 
 func (blockingGuard) Evaluate(context.Context) (bool, error) { return false, nil }
+
+type recordingBackup struct {
+	mu   sync.Mutex
+	runs int
+}
+
+func (b *recordingBackup) Run(context.Context) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.runs++
+	return nil
+}
+
+func (b *recordingBackup) count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.runs
+}
+
+func TestScheduleRunner_DueChainRunsConfigBackup(t *testing.T) {
+	now := time.Date(2026, 6, 15, 2, 1, 0, 0, time.UTC)
+	eng := newRecordingEngine()
+	eng.SetDiff(parity.DiffReport{Removed: 1, PerDisk: map[string]parity.DiskDiff{
+		"/mnt/disk1": {FilesBefore: 1000, FilesAfter: 999},
+	}})
+	eng.ScriptSync([]parity.Progress{{Phase: "syncing", Percent: 100}}, nil)
+
+	backup := &recordingBackup{}
+	h := newScheduleHarness(t, utcClock(now), job.EngineDiffGuard{Engine: eng, Guard: parity.Guard{}})
+	h.runner.Backup = backup
+	h.registry.Register(job.TypeSync, false, job.RunSync(eng))
+
+	if err := h.runner.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if backup.count() != 1 {
+		t.Fatalf("ConfigBackup.Run calls = %d, want 1", backup.count())
+	}
+}
+
+func TestScheduleRunner_NilBackupSkipsConfigBackup(t *testing.T) {
+	now := time.Date(2026, 6, 15, 2, 1, 0, 0, time.UTC)
+	eng := newRecordingEngine()
+	eng.SetDiff(parity.DiffReport{Removed: 1, PerDisk: map[string]parity.DiskDiff{
+		"/mnt/disk1": {FilesBefore: 1000, FilesAfter: 999},
+	}})
+	eng.ScriptSync([]parity.Progress{{Phase: "syncing", Percent: 100}}, nil)
+
+	h := newScheduleHarness(t, utcClock(now), job.EngineDiffGuard{Engine: eng, Guard: parity.Guard{}})
+	h.registry.Register(job.TypeSync, false, job.RunSync(eng))
+
+	if err := h.runner.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v — nil backup must not fail the chain", err)
+	}
+	if h.runner.Backup != nil {
+		t.Fatal("harness should leave Backup nil")
+	}
+}
