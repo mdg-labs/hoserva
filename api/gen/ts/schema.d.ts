@@ -1592,6 +1592,7 @@ export interface components {
         ApplyNetworkSettingsRequest: {
             /** @description Interface to reconfigure. Required when any of `method`, `address`, `prefix`, `gateway` or `dns` is set. */
             interface?: string;
+            /** @description Required when any of `interface`, `address`, `prefix`, `gateway` or `dns` is set — the managed ifupdown stanza is always rewritten in full. */
             method?: components["schemas"]["NetworkAddressMethod"];
             /** @description Static address without prefix. Required when `method` is static. */
             address?: string;
