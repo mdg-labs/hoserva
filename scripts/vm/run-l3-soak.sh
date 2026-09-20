@@ -312,20 +312,21 @@ for night in $(seq 1 "$NIGHTS"); do
     fi
     if ! $powered; then
       note_finding "night $night: power-loss injection missed a running sync job"
+      die "power-loss injection missed a running sync job"
     fi
   fi
   guest wait-idle --timeout 1800 >/dev/null || true
 
   if [[ "$inject" == "yank" ]]; then
     reattach_disk
-    checksum_ok yank || true
+    checksum_ok yank
   fi
   if [[ "$inject" == "full-disk" ]]; then
     guest unfill
-    checksum_ok full-disk || true
+    checksum_ok full-disk
   fi
   if [[ "$inject" == "power-loss" ]]; then
-    checksum_ok power-loss || true
+    checksum_ok power-loss
     recover="$(guest sync --confirm || true)"
     printf '%s\n' "$recover" >"$NIGHT_DIR/$night.recover.json" || true
     rid="$(python3 -c 'import json,sys

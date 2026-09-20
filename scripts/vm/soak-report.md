@@ -9,7 +9,7 @@ Array: 1×2G parity, 5×2G data, 1×512M cache; minfreespace 32M (soak-sized so 
 
 Q30 order is mover → diff + guard → (touch, Q17) → sync → config backup, with weekly scrub after sync on Sunday.
 - **Mover:** TypeMover is not registered in hoservad; MaintenanceChain skips it (`ErrJobTypeNotRegistered`). Phase 2 product work. No second placement algorithm was invented.
-- **Config backup:** scheduleRunner.Backup is nil, so the chain skips the step. `POST /config/export` exists and was not substituted into the chain.
+- **Config backup:** `scheduleRunner.Backup` is the `backup.Service` from `newBackupService` (boot destination under the state dir), so the Q30 `config_backup` step runs in the chain. It was not substituted with a lone `POST /config/export`.
 - **Sync / scrub / guard:** driven by the real nightly chain (ClaimDueChain + MaintenanceChain.Run) after advancing the guest clock past 02:00 each simulated day.
 
 ## Injected failures
