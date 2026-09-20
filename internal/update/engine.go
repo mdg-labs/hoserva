@@ -166,19 +166,29 @@ func (e *Engine) fetchIndex(ctx context.Context) (*Index, error) {
 }
 
 // allowURL refuses api.github.com and any URL that isn't the configured
-// index or a GitHub Releases *download* (asset) URL. The GitHub API is
-// never used (Q67).
-func (e *Engine) allowURL(url string) error {
-	if strings.Contains(url, "api.github.com") {
-		return fmt.Errorf("%w: %s", ErrIndexURL, url)
+// index or a GitHub Releases *download* (asset) URL. Hosts are compared
+// after parsing, never as a substring. The GitHub API is never used (Q67).
+func (e *Engine) allowURL(raw string) error {
+	u, err := parseHTTPSURL(raw)
+	if err != nil {
+		return err
 	}
-	if url == e.indexURL() {
+	if hostnameIs(u, "api.github.com") {
+		return fmt.Errorf("%w: %s", ErrIndexURL, raw)
+	}
+	if raw == e.indexURL() {
 		return nil
 	}
-	if strings.Contains(url, "github.com/") && strings.Contains(url, "/releases/download/") {
+	if hostnameIs(u, "github.com") && strings.Contains(u.Path, "/releases/download/") {
 		return nil
 	}
-	return fmt.Errorf("%w: %s", ErrIndexURL, url)
+	return fmt.Errorf("%w: %s", ErrIndexURL, raw)
+}
+
+// PersistedSettings returns the stored channel and check-enabled flags
+// without talking to apt or the release index.
+func (e *Engine) PersistedSettings(ctx context.Context) (SettingsRow, error) {
+	return e.settings(ctx)
 }
 
 // SetSettings persists channel and check-enabled.
