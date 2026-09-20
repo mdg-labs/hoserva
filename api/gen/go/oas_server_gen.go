@@ -17,6 +17,17 @@ type Handler interface {
 	//
 	// POST /doctor/host-config
 	ApplyHostConfig(ctx context.Context, req *ApplyHostConfigRequest) (*ApplyHostConfigResult, error)
+	// ApplyNetworkSettings implements applyNetworkSettings operation.
+	//
+	// Address, DNS and gateway changes are written to one managed ifupdown file under
+	// `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert (Q75): unless
+	// `confirmNetworkSettings` is called over the new configuration before the window expires (or the
+	// daemon dies), the previous file is restored. Access scope and listen port apply without that window
+	// — access scope takes effect immediately; a listen-port change is persisted and used on the next
+	// daemon start. Addressing fields are refused when the backend is not ifupdown.
+	//
+	// PUT /settings/network
+	ApplyNetworkSettings(ctx context.Context, req *ApplyNetworkSettingsRequest) (*NetworkSettings, error)
 	// ApplyUpdate implements applyUpdate operation.
 	//
 	// Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
@@ -26,6 +37,14 @@ type Handler interface {
 	//
 	// POST /settings/updates/apply
 	ApplyUpdate(ctx context.Context, req *ConfirmUpdateRequest) (*UpdateStatus, error)
+	// BrowseShare implements browseShare operation.
+	//
+	// Lists one directory of the share, including the holding disk per entry from mergerfs
+	// `user.mergerfs.basepath` (doc 03 §4.2). This is an explicit call and may wake disks — it is never
+	// polled.
+	//
+	// GET /shares/{name}/browse
+	BrowseShare(ctx context.Context, params BrowseShareParams) (*ShareBrowseResult, error)
 	// CancelJob implements cancelJob operation.
 	//
 	// Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be
@@ -40,6 +59,15 @@ type Handler interface {
 	//
 	// POST /settings/updates/check
 	CheckForUpdate(ctx context.Context) (*UpdateStatus, error)
+	// ConfirmNetworkSettings implements confirmNetworkSettings operation.
+	//
+	// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
+	// ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After
+	// the window expires, or if the daemon died before confirm, the previous configuration has already
+	// been restored and this returns `network_confirm_expired`.
+	//
+	// POST /settings/network/confirm
+	ConfirmNetworkSettings(ctx context.Context) (*NetworkSettings, error)
 	// ConfirmTotp implements confirmTotp operation.
 	//
 	// Activates the pending secret enrollTotp created, once a code proves the signed-in user actually has
@@ -73,12 +101,35 @@ type Handler interface {
 	//
 	// POST /notifications/channels
 	CreateNotificationChannel(ctx context.Context, req *CreateNotificationChannelRequest) (*NotificationChannel, error)
+	// CreateShare implements createShare operation.
+	//
+	// Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the
+	// per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1,
+	// doc 03 §4).
+	//
+	// POST /shares
+	CreateShare(ctx context.Context, req *CreateShareRequest) (*Share, error)
 	// DeleteNotificationChannel implements deleteNotificationChannel operation.
 	//
 	// Also removes every routing entry that named this channel.
 	//
 	// DELETE /notifications/channels/{channelId}
 	DeleteNotificationChannel(ctx context.Context, params DeleteNotificationChannelParams) error
+	// DeleteShare implements deleteShare operation.
+	//
+	// Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc
+	// 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`.
+	//
+	// DELETE /shares/{name}
+	DeleteShare(ctx context.Context, req *ConfirmShareRequest, params DeleteShareParams) error
+	// DeleteShareData implements deleteShareData operation.
+	//
+	// Deletes this share's files on the branches that hold it, and nothing else — not other shares, not
+	// the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in
+	// place. `confirmation` must equal the share name.
+	//
+	// POST /shares/{name}/data/delete
+	DeleteShareData(ctx context.Context, req *DeleteShareDataRequest, params DeleteShareDataParams) error
 	// DisableUserTotp implements disableUserTotp operation.
 	//
 	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically. Audit-logged
@@ -139,6 +190,15 @@ type Handler interface {
 	//
 	// GET /metrics
 	GetMetrics(ctx context.Context, params GetMetricsParams) (*MetricSeries, error)
+	// GetNetworkSettings implements getNetworkSettings operation.
+	//
+	// Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
+	// expiry, LAN-only access scope (Q10) and the listen port (doc 03 §8.2, Q75). Editing address, DNS or
+	// gateway is only possible when the backend is ifupdown; otherwise `editable` is false and
+	// `readOnlyReason` says why.
+	//
+	// GET /settings/network
+	GetNetworkSettings(ctx context.Context) (*NetworkSettings, error)
 	// GetNotificationChannel implements getNotificationChannel operation.
 	//
 	// A single channel's current configuration, by id, secret excluded.
@@ -189,6 +249,12 @@ type Handler interface {
 	//
 	// GET /setup/status
 	GetSetupStatus(ctx context.Context) (*SetupStatus, error)
+	// GetShare implements getShare operation.
+	//
+	// One share by name (doc 03 §4.2).
+	//
+	// GET /shares/{name}
+	GetShare(ctx context.Context, params GetShareParams) (*Share, error)
 	// GetStatus implements getStatus operation.
 	//
 	// One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
@@ -238,6 +304,13 @@ type Handler interface {
 	//
 	// GET /notifications
 	ListNotifications(ctx context.Context) (*ListNotificationsOK, error)
+	// ListShares implements listShares operation.
+	//
+	// Every configured share (doc 03 §4.1). Does not walk data disks; size and per-disk distribution are
+	// later issues.
+	//
+	// GET /shares
+	ListShares(ctx context.Context) (*ListSharesOK, error)
 	// ListWakeEvents implements listWakeEvents operation.
 	//
 	// Reads persisted spin-state transitions from the central database only — never probes block devices
@@ -283,6 +356,13 @@ type Handler interface {
 	//
 	// POST /settings/updates/reboot
 	RebootHost(ctx context.Context, req *ConfirmUpdateRequest) (*UpdateStatus, error)
+	// RegenerateTLSCertificate implements regenerateTLSCertificate operation.
+	//
+	// Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new
+	// cert. Let's Encrypt DNS-01 is not implemented here.
+	//
+	// POST /settings/network/certificate
+	RegenerateTLSCertificate(ctx context.Context) (*NetworkSettings, error)
 	// ResetUserPassword implements resetUserPassword operation.
 	//
 	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
@@ -428,6 +508,13 @@ type Handler interface {
 	//
 	// PUT /settings/schedules/jobs/{jobId}
 	UpdateScheduledJob(ctx context.Context, req *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (*Schedules, error)
+	// UpdateShare implements updateShare operation.
+	//
+	// Updates cache mode, create policy and SMB options, then regenerates the per-share mount and
+	// `smb.conf`. Does not relocate existing files (doc 09 §2).
+	//
+	// PATCH /shares/{name}
+	UpdateShare(ctx context.Context, req *UpdateShareRequest, params UpdateShareParams) (*Share, error)
 	// UpdateUpdateSettings implements updateUpdateSettings operation.
 	//
 	// Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49,

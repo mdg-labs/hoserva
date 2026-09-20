@@ -154,6 +154,14 @@ func parseFlags() config {
 			cfg.tcpAddr = "127.0.0.1:8008"
 		}
 	}
+	if persisted, ok := loadPersistedHTTPS(cfg.stateDir); ok {
+		if !explicit["allow-all-sources"] {
+			cfg.allowAllSources = persisted.AllowAllSources
+		}
+		if !explicit["tcp-addr"] && persisted.ListenPort > 0 {
+			cfg.tcpAddr = applyPersistedListenPort(cfg.tcpAddr, persisted.ListenPort)
+		}
+	}
 	return cfg
 }
 
@@ -245,7 +253,17 @@ func run(cfg config) error {
 	}
 	backupService := newBackupService(ctx, cfg, db, machineKey, settingsService, linuxDisks.Exec)
 	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, arraySeq, notifyService, linuxDisks.Exec, backupService)
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine, Generator: generator, HostConfig: store.NewHostConfigStore(db), Docker: cfggen.ExecDocker{}, ArrayStore: arrayStore}
+	networkSvc := &cfggen.NetworkService{
+		Generator: generator,
+		Detector:  cfggen.ExecDetector{Root: configRoot},
+		Runner:    rootedIfupdown{root: configRoot, inner: cfggen.ExecIfupdown{}},
+		Links:     cfggen.LinuxLinks{},
+		StateDir:  cfg.stateDir,
+	}
+	if err := networkSvc.Recover(ctx); err != nil {
+		log.Printf("hoservad: restoring unconfirmed network change: %v", err)
+	}
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine, Generator: generator, HostConfig: store.NewHostConfigStore(db), Docker: cfggen.ExecDocker{}, ArrayStore: arrayStore, Network: networkSvc}
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
 	}
@@ -264,10 +282,11 @@ func run(cfg config) error {
 		return fmt.Errorf("building Unix socket server: %w", err)
 	}
 
-	tcpListener, err := buildTCPListener(cfg)
+	tcpListener, httpsCtrl, err := buildTCPListener(cfg)
 	if err != nil {
 		return fmt.Errorf("starting TCP listener: %w", err)
 	}
+	handler.HTTPS = httpsCtrl
 	unixListener, err := setupUnixListener(cfg.socketPath)
 	if err != nil {
 		return fmt.Errorf("starting Unix socket listener: %w", err)
@@ -314,6 +333,7 @@ func run(cfg config) error {
 	defer cancel()
 	_ = tcpServer.Shutdown(shutdownCtx)
 	_ = unixServer.Shutdown(shutdownCtx)
+	networkSvc.Close()
 	return runErr
 }
 
@@ -471,10 +491,10 @@ func buildUnixServer(handler *api.Handler, authStore *api.AuthStore, hub *job.Hu
 	}, nil
 }
 
-func buildTCPListener(cfg config) (net.Listener, error) {
+func buildTCPListener(cfg config) (net.Listener, *httpsControl, error) {
 	ln, err := net.Listen("tcp", cfg.tcpAddr)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	filtered := newSourceFilteringListener(ln, cfg.allowAllSources)
 
@@ -483,10 +503,11 @@ func buildTCPListener(cfg config) (net.Listener, error) {
 	cert, err := loadOrGenerateTLSCertificate(certPath, keyPath)
 	if err != nil {
 		_ = ln.Close()
-		return nil, err
+		return nil, nil, err
 	}
-	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
-	return newTLSSniffingListener(filtered, tlsConfig), nil
+	httpsCtrl := newHTTPSControl(cfg.stateDir, certPath, keyPath, filtered, listenPortOf(cfg.tcpAddr), cfg.allowAllSources, cert)
+	tlsConfig := &tls.Config{GetCertificate: httpsCtrl.GetCertificate, MinVersion: tls.VersionTLS12}
+	return newTLSSniffingListener(filtered, tlsConfig), httpsCtrl, nil
 }
 
 // pruneOnce runs every retention sweep this daemon does on its own state

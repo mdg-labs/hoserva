@@ -203,7 +203,7 @@ Unbounded history in the main database would break doc 10 §1's single-digit-MB 
 **Status:** Default · **Gate:** Phase 2 · **Affects:** doc 03 §8.2, doc 14 §4, Q54
 
 **Default: Hoserva changes host networking only when the host uses ifupdown, writing one managed file under `/etc/network/interfaces.d/`; on NetworkManager or systemd-networkd hosts the network page is read-only in v1 and says why. Every network change — address, DNS, gateway, the `vmbr0` bridge — applies with a 60-second confirm-or-revert: unless the browser confirms over the new configuration, the previous one is restored. The ISO (Phase 4) installs ifupdown.**
-A wrong address on a headless box means carrying a monitor to it; confirm-or-revert makes the mistake recoverable. One backend done well beats three done badly, and ifupdown is what a minimal Debian server install uses — confirmed on a fresh Debian 13 install in L3 when this is built.
+A wrong address on a headless box means carrying a monitor to it; confirm-or-revert makes the mistake recoverable. One backend done well beats three done badly. **A Debian 13 generic cloud image (this repo's L3 base, `debian-13-generic-amd64`) uses netplan → systemd-networkd, not ifupdown** — confirmed in L3 (issue #114): `NetworkManager=inactive systemd-networkd=active`, `ifup` and `/etc/network/interfaces` both missing, netplan `50-cloud-init.yaml` driving `ens20`. v1 still only edits ifupdown; the ISO installs ifupdown so a Hoserva appliance is editable. A debian-installer "minimal server" image was not the L3 guest.
 
 ### Q76 — Installing onto a Debian system that is already in use
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §2, doc 03 §1, doc 04 §3, Q62
