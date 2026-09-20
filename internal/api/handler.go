@@ -87,6 +87,12 @@ type Handler struct {
 	// ArrayStore is create-array topology, used to decide whether a Docker
 	// data-root move to cache is even possible (Q62). Nil means no cache.
 	ArrayStore *store.ArrayStore
+	// DiskMounter mounts and unmounts external disks by filesystem UUID
+	// (Q72). Nil uses DirectMounter over DiskRunner.
+	DiskMounter disk.UnitMounter
+	// DiskRunner is the argv runner for blkid/mount/umount on external
+	// disks. Nil uses CommandRunner.
+	DiskRunner disk.Runner
 	// Shares is the share model (#46). Nil returns 501 from share operations.
 	Shares *share.Service
 	// Network is host ifupdown settings with confirm-or-revert (Q75, #114).

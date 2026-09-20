@@ -215,6 +215,15 @@ func (UnimplementedHandler) DisableUserTotp(ctx context.Context, params DisableU
 	return ht.ErrNotImplemented
 }
 
+// EjectExternalDisk implements ejectExternalDisk operation.
+//
+// Unmounts `/mnt/disks/<label>`, then spins the disk down (Q72).
+//
+// POST /disks/external/{label}/eject
+func (UnimplementedHandler) EjectExternalDisk(ctx context.Context, params EjectExternalDiskParams) (r *ExternalDisk, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // EnrollTotp implements enrollTotp operation.
 //
 // Generates a new secret (RFC 6238), stored encrypted with the machine key (Q28) but not yet active
@@ -237,6 +246,17 @@ func (UnimplementedHandler) EnrollTotp(ctx context.Context, req *TotpEnrollReque
 //
 // POST /config/export
 func (UnimplementedHandler) ExportConfig(ctx context.Context) (r ExportConfigOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// FormatExternalDisk implements formatExternalDisk operation.
+//
+// Formats the disk after the same typed confirmation array setup uses
+// (`disk.TopologyPlan.Confirmation`, doc 03 §3.1 step 6). The boot device is never offered. A wrong
+// or missing confirmation is refused with `confirmation_required` and formats nothing.
+//
+// POST /disks/external/{label}/format
+func (UnimplementedHandler) FormatExternalDisk(ctx context.Context, req *FormatExternalDiskRequest, params FormatExternalDiskParams) (r *ExternalDisk, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -422,6 +442,17 @@ func (UnimplementedHandler) ListDisks(ctx context.Context) (r *ListDisksOK, _ er
 	return r, ht.ErrNotImplemented
 }
 
+// ListExternalDisks implements listExternalDisks operation.
+//
+// Disks outside the array (Q72, doc 02 §4, doc 03 §3.3): Ignore-role or a later USB disk, never a
+// pool or parity member. Registered external disks plus inventory disks that are not the boot device
+// and not in the array. Nothing is mounted by this call.
+//
+// GET /disks/external
+func (UnimplementedHandler) ListExternalDisks(ctx context.Context) (r *ListExternalDisksOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ListJobs implements listJobs operation.
 //
 // Every long-running operation is a job (doc 01 §4). Filterable by class and status so the UI's jobs
@@ -511,6 +542,16 @@ func (UnimplementedHandler) MarkNotificationsRead(ctx context.Context, req *Mark
 	return r, ht.ErrNotImplemented
 }
 
+// MountExternalDisk implements mountExternalDisk operation.
+//
+// Mounts the disk by filesystem UUID at `/mnt/disks/<label>` (Q21, Q72). Nothing mounts automatically
+// on plug-in. The boot device and array disks are refused.
+//
+// POST /disks/external/{label}/mount
+func (UnimplementedHandler) MountExternalDisk(ctx context.Context, params MountExternalDiskParams) (r *ExternalDisk, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // RebootHost implements rebootHost operation.
 //
 // Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -530,6 +571,16 @@ func (UnimplementedHandler) RebootHost(ctx context.Context, req *ConfirmUpdateRe
 //
 // POST /settings/network/certificate
 func (UnimplementedHandler) RegenerateTLSCertificate(ctx context.Context) (r *NetworkSettings, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// RegisterExternalDisk implements registerExternalDisk operation.
+//
+// Assigns a non-array, non-boot disk the Ignore/external role (Q72) with a label used as
+// `/mnt/disks/<label>`. Does not mount or format. The boot device is refused.
+//
+// POST /disks/external
+func (UnimplementedHandler) RegisterExternalDisk(ctx context.Context, req *RegisterExternalDiskRequest) (r *ExternalDisk, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -663,6 +714,15 @@ func (UnimplementedHandler) StopArray(ctx context.Context, req *StopArrayRequest
 // POST /users/{username}/unlock
 func (UnimplementedHandler) UnlockUser(ctx context.Context, params UnlockUserParams) error {
 	return ht.ErrNotImplemented
+}
+
+// UpdateExternalDisk implements updateExternalDisk operation.
+//
+// Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
+//
+// PATCH /disks/external/{label}
+func (UnimplementedHandler) UpdateExternalDisk(ctx context.Context, req *UpdateExternalDiskRequest, params UpdateExternalDiskParams) (r *ExternalDisk, _ error) {
+	return r, ht.ErrNotImplemented
 }
 
 // UpdateGeneralSettings implements updateGeneralSettings operation.

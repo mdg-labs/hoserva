@@ -11,6 +11,14 @@ func (s *ArrayDiskAssignment) setDefaults() {
 }
 
 // setDefaults set default value of fields.
+func (s *RegisterExternalDiskRequest) setDefaults() {
+	{
+		val := bool(false)
+		s.BackupDestination.SetTo(val)
+	}
+}
+
+// setDefaults set default value of fields.
 func (s *StartSyncRequest) setDefaults() {
 	{
 		val := bool(false)

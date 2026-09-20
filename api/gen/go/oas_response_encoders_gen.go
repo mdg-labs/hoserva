@@ -234,6 +234,19 @@ func encodeDisableUserTotpResponse(response *DisableUserTotpNoContent, w http.Re
 	return nil
 }
 
+func encodeEjectExternalDiskResponse(response *ExternalDisk, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeEnrollTotpResponse(response *TotpEnrollResponse, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -256,6 +269,19 @@ func encodeExportConfigResponse(response ExportConfigOK, w http.ResponseWriter, 
 		defer closer.Close()
 	}
 	if _, err := io.Copy(writer, response); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeFormatExternalDiskResponse(response *ExternalDisk, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
 		return errors.Wrap(err, "write")
 	}
 
@@ -491,6 +517,19 @@ func encodeListDisksResponse(response *ListDisksOK, w http.ResponseWriter, span 
 	return nil
 }
 
+func encodeListExternalDisksResponse(response *ListExternalDisksOK, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeListJobsResponse(response *ListJobsOK, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -628,6 +667,19 @@ func encodeMarkNotificationsReadResponse(response *MarkNotificationsReadOK, w ht
 	return nil
 }
 
+func encodeMountExternalDiskResponse(response *ExternalDisk, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeRebootHostResponse(response *UpdateStatus, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -642,6 +694,19 @@ func encodeRebootHostResponse(response *UpdateStatus, w http.ResponseWriter, spa
 }
 
 func encodeRegenerateTLSCertificateResponse(response *NetworkSettings, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeRegisterExternalDiskResponse(response *ExternalDisk, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 
@@ -792,6 +857,19 @@ func encodeStopArrayResponse(response *SystemStatus, w http.ResponseWriter, span
 
 func encodeUnlockUserResponse(response *UnlockUserNoContent, w http.ResponseWriter, span trace.Span) error {
 	w.WriteHeader(204)
+
+	return nil
+}
+
+func encodeUpdateExternalDiskResponse(response *ExternalDisk, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
 
 	return nil
 }

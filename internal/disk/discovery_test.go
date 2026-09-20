@@ -28,8 +28,8 @@ func TestLister_List_ReadsUdevFilesystemWithoutOpeningDevice(t *testing.T) {
 	mustWriteFile(t, filepath.Join(l.SysBlockDir, "sda", "dev"), "8:0\n")
 	mustWriteFile(t, filepath.Join(l.SysBlockDir, "sda1", "dev"), "8:1\n")
 	mustWriteFile(t, filepath.Join(l.SysBlockDir, "sdb", "dev"), "8:16\n")
-	mustWriteFile(t, filepath.Join(udev, "b8:1"), "I:1\nE:ID_FS_TYPE=xfs\nE:ID_FS_LABEL=disk1\n")
-	mustWriteFile(t, filepath.Join(udev, "b8:16"), "I:2\nE:ID_FS_TYPE=ext4\nE:ID_FS_LABEL=backup\n")
+	mustWriteFile(t, filepath.Join(udev, "b8:1"), "I:1\nE:ID_FS_TYPE=xfs\nE:ID_FS_LABEL=disk1\nE:ID_FS_UUID=uuid-disk1\n")
+	mustWriteFile(t, filepath.Join(udev, "b8:16"), "I:2\nE:ID_FS_TYPE=ext4\nE:ID_FS_LABEL=backup\nE:ID_FS_UUID=uuid-backup\n")
 	l.UdevDataDir = udev
 
 	got, err := l.List(context.Background())
@@ -41,8 +41,8 @@ func TestLister_List_ReadsUdevFilesystemWithoutOpeningDevice(t *testing.T) {
 	}
 
 	sda := got[0]
-	if sda.Filesystem != "xfs" || sda.Label != "disk1" {
-		t.Fatalf("sda filesystem/label = %q/%q, want xfs/disk1 (from partition udev data)", sda.Filesystem, sda.Label)
+	if sda.Filesystem != "xfs" || sda.Label != "disk1" || sda.FSUUID != "uuid-disk1" {
+		t.Fatalf("sda filesystem/label/uuid = %q/%q/%q, want xfs/disk1/uuid-disk1 (from partition udev data)", sda.Filesystem, sda.Label, sda.FSUUID)
 	}
 	if !sda.ContainsData {
 		t.Fatal("sda.ContainsData = false, want true")
@@ -52,8 +52,8 @@ func TestLister_List_ReadsUdevFilesystemWithoutOpeningDevice(t *testing.T) {
 	}
 
 	sdb := got[1]
-	if sdb.Filesystem != "ext4" || sdb.Label != "backup" {
-		t.Fatalf("sdb filesystem/label = %q/%q, want ext4/backup", sdb.Filesystem, sdb.Label)
+	if sdb.Filesystem != "ext4" || sdb.Label != "backup" || sdb.FSUUID != "uuid-backup" {
+		t.Fatalf("sdb filesystem/label/uuid = %q/%q/%q, want ext4/backup/uuid-backup", sdb.Filesystem, sdb.Label, sdb.FSUUID)
 	}
 	if sdb.LooksLikeUnraid {
 		t.Fatal("sdb.LooksLikeUnraid = true, want false (label backup)")

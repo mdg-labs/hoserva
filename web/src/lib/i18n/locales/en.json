@@ -260,7 +260,39 @@
       "title": "No disks found",
       "description": "Disk discovery runs at setup and when hardware changes."
     },
-    "viewWakeEvents": "View wake events"
+    "viewWakeEvents": "View wake events",
+    "external": {
+      "title": "External disks",
+      "description": "Disks outside the array — mounted on request, never pooled or used for parity.",
+      "columns": {
+        "label": "Label",
+        "mount": "Mount point",
+        "containerPath": "Container path",
+        "mounted": "Mounted",
+        "backup": "Backup destination",
+        "actions": "Actions"
+      },
+      "mounted": "Mounted",
+      "unmounted": "Not mounted",
+      "actions": {
+        "menu": "Actions for {{label}}",
+        "mount": "Mount",
+        "eject": "Eject",
+        "format": "Format"
+      },
+      "empty": {
+        "title": "No external disks",
+        "description": "A USB disk or an Ignore-role disk appears here. Nothing mounts automatically when you plug it in."
+      },
+      "format": {
+        "title": "Format external disk",
+        "description": "This erases the disk. Type the same confirmation phrase array setup uses.",
+        "confirmTitle": "This will erase the disk",
+        "confirmDescription": "The boot device is never offered. Eject the disk first if it is mounted.",
+        "eraseItem": "Erase {{device}}",
+        "submit": "Format disk"
+      }
+    }
   },
   "wakeEvents": {
     "description": "When disks woke and how often — the first step toward answering spindown questions.",
