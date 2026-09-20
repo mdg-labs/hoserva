@@ -290,8 +290,7 @@ A power cut mid-sync is recoverable (doc 02 §6), but a clean shutdown is better
 ### Q16 — Guard threshold values
 **Status:** Default · **Gate:** Phase 1 end · **Affects:** doc 02 §2
 
-**Default: keep 500 removed files / 10% removed+updated. Revisit using the soak test's diff history (doc 06 §6) at the end of Phase 1.**
-The numbers are guesses until real nightly diffs exist. The soak test already produces that data.
+**Default: keep 500 removed files / 10% removed+updated.** Confirmed by the L3 soak (issue #44, `scripts/vm/soak-history.jsonl`, `scripts/vm/soak-report.md`): 25 routine nights of seeded add/edit/rename/delete churn peaked at 16 snapraid-removed files (a night that also carried the previous yanked-disk night's unsynced churn) and well under 10% removed+updated; two mass-delete nights (600 removals, 35.6% and 48.2% removed+updated) tripped both count and percent triggers. Raising either number would let a ransomware-scale deletion through; lowering them would block ordinary churn the soak never produced. Re-run as lab `210-a1` on current `beta` (catch-all mkdir in `Mounter.Mount`, config backup wired into the chain, fail-closed recovery) reproduced the same figures.
 
 ### Q17 — `snapraid touch` before syncs
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §2

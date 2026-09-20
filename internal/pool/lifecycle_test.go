@@ -8,15 +8,16 @@ import (
 )
 
 func TestMountController_MountAndUnmount(t *testing.T) {
-	m := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	where := testWhere(t)
+	m := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
 	argv := m.Argv()
 	r := disk.NewFakeRunner()
 	r.Script(argv[0], argv[1:], nil, nil)
-	r.Script("fusermount", []string{"-u", "/mnt/user"}, nil, nil)
+	r.Script("fusermount", []string{"-u", where}, nil, nil)
 
 	c := MountController{Mnt: m, Mounter: Mounter{Runner: r}}
-	if got := c.Where(); got != "/mnt/user" {
-		t.Fatalf("Where() = %q, want /mnt/user", got)
+	if got := c.Where(); got != where {
+		t.Fatalf("Where() = %q, want %q", got, where)
 	}
 	if err := c.Mount(context.Background()); err != nil {
 		t.Fatalf("Mount: %v", err)
