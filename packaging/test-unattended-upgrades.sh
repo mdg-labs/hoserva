@@ -31,7 +31,7 @@ if grep -qE 'Unattended-Upgrade::Automatic-Reboot[[:space:]]+"true"' "$conf"; th
   fail=1
 fi
 
-if grep -qE 'label=Debian"' "$conf" && ! grep -qE 'label=Debian-Security' "$conf"; then
+if grep -qE 'label=Debian"' "$conf"; then
   note "FAIL: Origins-Pattern allows non-security Debian updates"
   fail=1
 fi
