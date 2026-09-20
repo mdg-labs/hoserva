@@ -89,8 +89,10 @@ func (s *ApplyHostConfigResult) SetDockerDataRoot(val string) {
 type ApplyNetworkSettingsRequest struct {
 	// Interface to reconfigure. Required when any of `method`, `address`, `prefix`, `gateway` or `dns` is
 	// set.
-	Interface OptString               `json:"interface"`
-	Method    OptNetworkAddressMethod `json:"method"`
+	Interface OptString `json:"interface"`
+	// Required when any of `interface`, `address`, `prefix`, `gateway` or `dns` is set — the managed
+	// ifupdown stanza is always rewritten in full.
+	Method OptNetworkAddressMethod `json:"method"`
 	// Static address without prefix. Required when `method` is static.
 	Address OptString `json:"address"`
 	// Prefix length for a static address. Required when `method` is static.
