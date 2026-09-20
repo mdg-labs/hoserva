@@ -1485,6 +1485,8 @@ func (s NotificationEventType) Validate() error {
 		return nil
 	case "hoserva_update_available":
 		return nil
+	case "hoserva_update_failed":
+		return nil
 	case "reboot_required":
 		return nil
 	case "ups_on_battery":

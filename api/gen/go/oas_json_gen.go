@@ -5531,6 +5531,8 @@ func (s *NotificationEventType) Decode(d *jx.Decoder) error {
 		*s = NotificationEventTypeContainerUpdateAvailable
 	case NotificationEventTypeHoservaUpdateAvailable:
 		*s = NotificationEventTypeHoservaUpdateAvailable
+	case NotificationEventTypeHoservaUpdateFailed:
+		*s = NotificationEventTypeHoservaUpdateFailed
 	case NotificationEventTypeRebootRequired:
 		*s = NotificationEventTypeRebootRequired
 	case NotificationEventTypeUpsOnBattery:

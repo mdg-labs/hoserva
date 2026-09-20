@@ -125,6 +125,13 @@ func TestApply_ChecksumMismatchInstallsNothingAndNotifies(t *testing.T) {
 	if !notes.notifiedFailure() {
 		t.Fatalf("failed checksum did not notify: %v", notes.Titles)
 	}
+	if len(notes.Events) != 1 || notes.Events[0] != notify.EventHoservaUpdateFailed {
+		t.Fatalf("notify events = %v, want [%s]", notes.Events, notify.EventHoservaUpdateFailed)
+	}
+	severity, ok := notify.DefaultSeverity(notify.EventHoservaUpdateFailed)
+	if !ok || severity != notify.SeverityError {
+		t.Fatalf("hoserva_update_failed severity = %q, want error", severity)
+	}
 	if host.RebootCalls != 0 {
 		t.Fatalf("Apply rebooted (%d) — Hoserva never reboots on its own", host.RebootCalls)
 	}
@@ -144,6 +151,11 @@ func TestApply_IndexSHAMismatchInstallsNothing(t *testing.T) {
 	}
 	if !notes.notifiedFailure() {
 		t.Fatalf("did not notify: %v", notes.Titles)
+	}
+	for _, event := range notes.Events {
+		if event == notify.EventHoservaUpdateAvailable {
+			t.Fatalf("checksum failure published %s, want %s", event, notify.EventHoservaUpdateFailed)
+		}
 	}
 }
 
@@ -658,8 +670,17 @@ func (r *recordingRunner) Run(ctx context.Context, name string, args ...string) 
 	return nil, nil
 }
 
-func TestNotifyUsesExistingEventType(t *testing.T) {
-	if notify.EventHoservaUpdateAvailable == "" {
-		t.Fatal("missing hoserva_update_available")
+func TestCheck_NotifiesUpdateAvailableNotFailed(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, []byte("deb"), "")
+	e, _, notes, _, _, _ := testEngine(t, f)
+	e.Current = "0.1.0"
+
+	_, err := e.Check(ctx)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(notes.Events) != 1 || notes.Events[0] != notify.EventHoservaUpdateAvailable {
+		t.Fatalf("notify events = %v, want [%s]", notes.Events, notify.EventHoservaUpdateAvailable)
 	}
 }
