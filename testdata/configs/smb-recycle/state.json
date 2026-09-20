@@ -1,0 +1,12 @@
+{
+  "shares": [
+    {
+      "name": "downloads",
+      "guest": false,
+      "read_only": false,
+      "browseable": true,
+      "recycle": true,
+      "time_machine": false
+    }
+  ]
+}

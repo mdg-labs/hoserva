@@ -25,6 +25,20 @@ func (UnimplementedHandler) ApplyHostConfig(ctx context.Context, req *ApplyHostC
 	return r, ht.ErrNotImplemented
 }
 
+// ApplyNetworkSettings implements applyNetworkSettings operation.
+//
+// Address, DNS and gateway changes are written to one managed ifupdown file under
+// `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert (Q75): unless
+// `confirmNetworkSettings` is called over the new configuration before the window expires (or the
+// daemon dies), the previous file is restored. Access scope and listen port apply without that window
+// — access scope takes effect immediately; a listen-port change is persisted and used on the next
+// daemon start. Addressing fields are refused when the backend is not ifupdown.
+//
+// PUT /settings/network
+func (UnimplementedHandler) ApplyNetworkSettings(ctx context.Context, req *ApplyNetworkSettingsRequest) (r *NetworkSettings, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ApplyUpdate implements applyUpdate operation.
 //
 // Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
@@ -34,6 +48,17 @@ func (UnimplementedHandler) ApplyHostConfig(ctx context.Context, req *ApplyHostC
 //
 // POST /settings/updates/apply
 func (UnimplementedHandler) ApplyUpdate(ctx context.Context, req *ConfirmUpdateRequest) (r *UpdateStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// BrowseShare implements browseShare operation.
+//
+// Lists one directory of the share, including the holding disk per entry from mergerfs
+// `user.mergerfs.basepath` (doc 03 §4.2). This is an explicit call and may wake disks — it is never
+// polled.
+//
+// GET /shares/{name}/browse
+func (UnimplementedHandler) BrowseShare(ctx context.Context, params BrowseShareParams) (r *ShareBrowseResult, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -54,6 +79,18 @@ func (UnimplementedHandler) CancelJob(ctx context.Context, params CancelJobParam
 //
 // POST /settings/updates/check
 func (UnimplementedHandler) CheckForUpdate(ctx context.Context) (r *UpdateStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ConfirmNetworkSettings implements confirmNetworkSettings operation.
+//
+// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
+// ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After
+// the window expires, or if the daemon died before confirm, the previous configuration has already
+// been restored and this returns `network_confirm_expired`.
+//
+// POST /settings/network/confirm
+func (UnimplementedHandler) ConfirmNetworkSettings(ctx context.Context) (r *NetworkSettings, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -102,12 +139,44 @@ func (UnimplementedHandler) CreateNotificationChannel(ctx context.Context, req *
 	return r, ht.ErrNotImplemented
 }
 
+// CreateShare implements createShare operation.
+//
+// Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the
+// per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1,
+// doc 03 §4).
+//
+// POST /shares
+func (UnimplementedHandler) CreateShare(ctx context.Context, req *CreateShareRequest) (r *Share, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // DeleteNotificationChannel implements deleteNotificationChannel operation.
 //
 // Also removes every routing entry that named this channel.
 //
 // DELETE /notifications/channels/{channelId}
 func (UnimplementedHandler) DeleteNotificationChannel(ctx context.Context, params DeleteNotificationChannelParams) error {
+	return ht.ErrNotImplemented
+}
+
+// DeleteShare implements deleteShare operation.
+//
+// Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc
+// 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`.
+//
+// DELETE /shares/{name}
+func (UnimplementedHandler) DeleteShare(ctx context.Context, req *ConfirmShareRequest, params DeleteShareParams) error {
+	return ht.ErrNotImplemented
+}
+
+// DeleteShareData implements deleteShareData operation.
+//
+// Deletes this share's files on the branches that hold it, and nothing else — not other shares, not
+// the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in
+// place. `confirmation` must equal the share name.
+//
+// POST /shares/{name}/data/delete
+func (UnimplementedHandler) DeleteShareData(ctx context.Context, req *DeleteShareDataRequest, params DeleteShareDataParams) error {
 	return ht.ErrNotImplemented
 }
 
@@ -195,6 +264,18 @@ func (UnimplementedHandler) GetMetrics(ctx context.Context, params GetMetricsPar
 	return r, ht.ErrNotImplemented
 }
 
+// GetNetworkSettings implements getNetworkSettings operation.
+//
+// Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
+// expiry, LAN-only access scope (Q10) and the listen port (doc 03 §8.2, Q75). Editing address, DNS or
+// gateway is only possible when the backend is ifupdown; otherwise `editable` is false and
+// `readOnlyReason` says why.
+//
+// GET /settings/network
+func (UnimplementedHandler) GetNetworkSettings(ctx context.Context) (r *NetworkSettings, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetNotificationChannel implements getNotificationChannel operation.
 //
 // A single channel's current configuration, by id, secret excluded.
@@ -263,6 +344,15 @@ func (UnimplementedHandler) GetSchedules(ctx context.Context) (r *Schedules, _ e
 //
 // GET /setup/status
 func (UnimplementedHandler) GetSetupStatus(ctx context.Context) (r *SetupStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetShare implements getShare operation.
+//
+// One share by name (doc 03 §4.2).
+//
+// GET /shares/{name}
+func (UnimplementedHandler) GetShare(ctx context.Context, params GetShareParams) (r *Share, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -336,6 +426,16 @@ func (UnimplementedHandler) ListNotifications(ctx context.Context) (r *ListNotif
 	return r, ht.ErrNotImplemented
 }
 
+// ListShares implements listShares operation.
+//
+// Every configured share (doc 03 §4.1). Does not walk data disks; size and per-disk distribution are
+// later issues.
+//
+// GET /shares
+func (UnimplementedHandler) ListShares(ctx context.Context) (r *ListSharesOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ListWakeEvents implements listWakeEvents operation.
 //
 // Reads persisted spin-state transitions from the central database only — never probes block devices
@@ -393,6 +493,16 @@ func (UnimplementedHandler) MarkNotificationsRead(ctx context.Context, req *Mark
 //
 // POST /settings/updates/reboot
 func (UnimplementedHandler) RebootHost(ctx context.Context, req *ConfirmUpdateRequest) (r *UpdateStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// RegenerateTLSCertificate implements regenerateTLSCertificate operation.
+//
+// Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new
+// cert. Let's Encrypt DNS-01 is not implemented here.
+//
+// POST /settings/network/certificate
+func (UnimplementedHandler) RegenerateTLSCertificate(ctx context.Context) (r *NetworkSettings, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -592,6 +702,16 @@ func (UnimplementedHandler) UpdateQuietHours(ctx context.Context, req *UpdateQui
 //
 // PUT /settings/schedules/jobs/{jobId}
 func (UnimplementedHandler) UpdateScheduledJob(ctx context.Context, req *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (r *Schedules, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateShare implements updateShare operation.
+//
+// Updates cache mode, create policy and SMB options, then regenerates the per-share mount and
+// `smb.conf`. Does not relocate existing files (doc 09 §2).
+//
+// PATCH /shares/{name}
+func (UnimplementedHandler) UpdateShare(ctx context.Context, req *UpdateShareRequest, params UpdateShareParams) (r *Share, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

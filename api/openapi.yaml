@@ -69,7 +69,14 @@ tags:
       (doc 03 §1, §8.1). The backup passphrase is write-only (Q28): a
       response never carries it, only whether one is configured. Self-update,
       rollback and Debian update status live under `/settings/updates`
-      (doc 03 §8.6, Q67, Q68).
+      (doc 03 §8.6, Q67, Q68). Host networking, TLS certificate expiry,
+      LAN-only access scope (Q10) and the listen port live under
+      `/settings/network` (doc 03 §8.2, Q75).
+  - name: shares
+    description: >-
+      User shares as first-class SQLite state (D4, doc 03 §4): each share
+      has its own mergerfs mount (doc 02 §1, Q12) and Samba is generated
+      from the same rows. NFS exports and per-user ACLs are later issues.
 
 # Two transports (doc 01 §5): a Unix socket for the local root/`hoserva`-group
 # CLI, and TLS-only TCP for the web UI and remote/scripted use. Same handlers,
@@ -773,6 +780,101 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /settings/network:
+    get:
+      operationId: getNetworkSettings
+      summary: Host network, TLS and access-scope settings
+      description: >-
+        Current network backend, interfaces, any in-flight confirm-or-revert
+        window, the TLS certificate's expiry, LAN-only access scope (Q10)
+        and the listen port (doc 03 §8.2, Q75). Editing address, DNS or
+        gateway is only possible when the backend is ifupdown; otherwise
+        `editable` is false and `readOnlyReason` says why.
+      tags: [settings]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Current network settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkSettings'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: applyNetworkSettings
+      summary: Apply host network, access-scope or listen-port changes
+      description: >-
+        Address, DNS and gateway changes are written to one managed
+        ifupdown file under `/etc/network/interfaces.d/` and applied with
+        a 60-second confirm-or-revert (Q75): unless `confirmNetworkSettings`
+        is called over the new configuration before the window expires
+        (or the daemon dies), the previous file is restored. Access scope
+        and listen port apply without that window — access scope takes
+        effect immediately; a listen-port change is persisted and used on
+        the next daemon start. Addressing fields are refused when the
+        backend is not ifupdown.
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyNetworkSettingsRequest'
+      responses:
+        "200":
+          description: Settings after the apply, including any pending confirm window.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/network/confirm:
+    post:
+      operationId: confirmNetworkSettings
+      summary: Keep the pending network configuration
+      description: >-
+        Called over the new configuration during the confirm-or-revert
+        window (Q75). Keeps the managed ifupdown file. An unreachable
+        address cannot be confirmed because this request never arrives.
+        After the window expires, or if the daemon died before confirm,
+        the previous configuration has already been restored and this
+        returns `network_confirm_expired`.
+      tags: [settings]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: Settings after confirm; `pending` is omitted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/network/certificate:
+    post:
+      operationId: regenerateTLSCertificate
+      summary: Regenerate the self-signed TLS certificate
+      description: >-
+        Replaces the daemon's self-signed certificate (Q9) and hot-reloads
+        it so new connections use the new cert. Let's Encrypt DNS-01 is
+        not implemented here.
+      tags: [settings]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: Settings including the new certificate expiry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
   /settings/schedules:
     get:
       operationId: getSchedules
@@ -1091,6 +1193,174 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PoolStatus'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /shares:
+    get:
+      operationId: listShares
+      summary: List shares
+      description: >-
+        Every configured share (doc 03 §4.1). Does not walk data disks;
+        size and per-disk distribution are later issues.
+      tags: [shares]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Configured shares, sorted by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [shares]
+                properties:
+                  shares:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Share'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createShare
+      summary: Create a share
+      description: >-
+        Persists the share (D4), creates its directory tree on the
+        branches its cache mode uses, writes the per-share mergerfs
+        mount through the existing pool renderer, and regenerates
+        `smb.conf` (doc 02 §1, doc 03 §4).
+      tags: [shares]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateShareRequest'
+      responses:
+        "200":
+          description: The created share.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Share'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /shares/{name}:
+    parameters:
+      - $ref: '#/components/parameters/ShareName'
+    get:
+      operationId: getShare
+      summary: Get a share
+      description: One share by name (doc 03 §4.2).
+      tags: [shares]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The share.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Share'
+        default:
+          $ref: '#/components/responses/Error'
+    patch:
+      operationId: updateShare
+      summary: Update a share
+      description: >-
+        Updates cache mode, create policy and SMB options, then
+        regenerates the per-share mount and `smb.conf`. Does not relocate
+        existing files (doc 09 §2).
+      tags: [shares]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateShareRequest'
+      responses:
+        "200":
+          description: The updated share.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Share'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: deleteShare
+      summary: Delete a share definition
+      description: >-
+        Removes the share row and regenerates mounts and `smb.conf`.
+        Leaves the share's files on disk (doc 03 §4.2 danger zone).
+        `confirm: true` is required. Deleting the data is
+        `deleteShareData`.
+      tags: [shares]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmShareRequest'
+      responses:
+        "204":
+          description: Share definition removed.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /shares/{name}/data/delete:
+    parameters:
+      - $ref: '#/components/parameters/ShareName'
+    post:
+      operationId: deleteShareData
+      summary: Delete a share's files
+      description: >-
+        Deletes this share's files on the branches that hold it, and
+        nothing else — not other shares, not the parity file, not disks
+        that do not hold this share (doc 03 §4.2). The definition is
+        left in place. `confirmation` must equal the share name.
+      tags: [shares]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteShareDataRequest'
+      responses:
+        "204":
+          description: Share data deleted.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /shares/{name}/browse:
+    parameters:
+      - $ref: '#/components/parameters/ShareName'
+    get:
+      operationId: browseShare
+      summary: List a share directory
+      description: >-
+        Lists one directory of the share, including the holding disk per
+        entry from mergerfs `user.mergerfs.basepath` (doc 03 §4.2). This
+        is an explicit call and may wake disks — it is never polled.
+      tags: [shares]
+      x-hoserva-role: viewer
+      parameters:
+        - name: path
+          in: query
+          description: Directory relative to the share root. Empty is the share root.
+          schema:
+            type: string
+            default: ""
+      responses:
+        "200":
+          description: Directory listing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareBrowseResult'
         default:
           $ref: '#/components/responses/Error'
 
@@ -1539,6 +1809,13 @@ components:
         type: string
         minLength: 1
         maxLength: 64
+
+    ShareName:
+      name: name
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ShareName'
 
   responses:
     Error:
@@ -2297,6 +2574,158 @@ components:
             Write-only. Sets or replaces the backup passphrase (Q28).
             Omitted leaves any existing passphrase unchanged.
 
+    NetworkBackend:
+      type: string
+      enum: [ifupdown, networkmanager, systemd-networkd, unknown]
+      description: Detected host network backend (Q75).
+
+    NetworkAddressMethod:
+      type: string
+      enum: [dhcp, static]
+      description: How this interface obtains its address.
+
+    NetworkInterface:
+      type: object
+      required: [name, method, state]
+      properties:
+        name:
+          type: string
+          description: Kernel interface name, e.g. `enp1s0`.
+        mac:
+          type: string
+          description: Hardware address, if known.
+        method:
+          $ref: '#/components/schemas/NetworkAddressMethod'
+        address:
+          type: string
+          description: Configured IPv4 or IPv6 address without prefix.
+        prefix:
+          type: integer
+          minimum: 0
+          maximum: 128
+          description: Prefix length for `address`.
+        gateway:
+          type: string
+          description: Default gateway for this interface, if any.
+        dns:
+          type: array
+          items:
+            type: string
+          description: DNS nameservers used with this configuration.
+        state:
+          type: string
+          enum: [up, down]
+          description: Link operational state.
+
+    NetworkPending:
+      type: object
+      required: [interface, expiresAt, remainingSeconds]
+      properties:
+        interface:
+          type: string
+          description: Interface the pending confirm-or-revert applies to.
+        expiresAt:
+          type: string
+          format: date-time
+          description: When the previous configuration is restored if unconfirmed.
+        remainingSeconds:
+          type: integer
+          minimum: 0
+          description: Whole seconds left in the confirm window.
+
+    TLSCertificateKind:
+      type: string
+      enum: [self_signed]
+      description: How the current TLS certificate was issued (Q9).
+
+    TLSCertificateInfo:
+      type: object
+      required: [kind, notAfter, daysRemaining]
+      properties:
+        kind:
+          $ref: '#/components/schemas/TLSCertificateKind'
+        notAfter:
+          type: string
+          format: date-time
+          description: Certificate expiry instant.
+        daysRemaining:
+          type: integer
+          description: Whole days until expiry; negative if already expired.
+
+    NetworkSettings:
+      type: object
+      required: [backend, editable, interfaces, certificate, allowAllSources, listenPort]
+      properties:
+        backend:
+          $ref: '#/components/schemas/NetworkBackend'
+        editable:
+          type: boolean
+          description: True only when the backend is ifupdown (Q75).
+        readOnlyReason:
+          type: string
+          description: Why addressing cannot be edited, when `editable` is false.
+        interfaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/NetworkInterface'
+        pending:
+          $ref: '#/components/schemas/NetworkPending'
+        certificate:
+          $ref: '#/components/schemas/TLSCertificateInfo'
+        allowAllSources:
+          type: boolean
+          description: >-
+            When false (default), the TCP listener accepts only LAN-ish
+            sources (Q10). When true, every source address is accepted.
+        listenPort:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: TCP port the TLS UI/API currently listens on (Q9).
+        listenPortRestartRequired:
+          type: boolean
+          description: True when a persisted listen-port change has not been bound yet.
+
+    ApplyNetworkSettingsRequest:
+      type: object
+      properties:
+        interface:
+          type: string
+          minLength: 1
+          description: >-
+            Interface to reconfigure. Required when any of `method`,
+            `address`, `prefix`, `gateway` or `dns` is set.
+        method:
+          $ref: '#/components/schemas/NetworkAddressMethod'
+          description: >-
+            Required when any of `interface`, `address`, `prefix`,
+            `gateway` or `dns` is set — the managed ifupdown stanza is
+            always rewritten in full.
+        address:
+          type: string
+          description: Static address without prefix. Required when `method` is static.
+        prefix:
+          type: integer
+          minimum: 0
+          maximum: 128
+          description: Prefix length for a static address. Required when `method` is static.
+        gateway:
+          type: string
+          description: Default gateway. Empty string clears a previously set gateway.
+        dns:
+          type: array
+          items:
+            type: string
+          description: DNS nameservers. Empty array clears them.
+        allowAllSources:
+          type: boolean
+          description: Set the Q10 access-scope toggle. Omitted leaves it unchanged.
+        listenPort:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: Persist a new listen port for the next daemon start. Omitted leaves it unchanged.
+
     UpdateChannel:
       type: string
       enum: [stable, beta]
@@ -3010,3 +3439,133 @@ components:
           type: string
           minLength: 12
           maxLength: 256
+
+    ShareName:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]*$'
+      description: >-
+        A share name is a single path segment on every branch and under
+        `/mnt/user` (`pool.ValidateShareName`).
+
+    ShareCacheMode:
+      type: string
+      description: Per-share cache mode (doc 02 §3, Q12).
+      enum: [cache-then-move, cache-only, array-only]
+
+    ShareSMB:
+      type: object
+      required: [enabled, guest, readOnly, browseable, recycle, timeMachine]
+      properties:
+        enabled:
+          type: boolean
+        guest:
+          type: boolean
+        readOnly:
+          type: boolean
+        browseable:
+          type: boolean
+        recycle:
+          type: boolean
+        timeMachine:
+          type: boolean
+        timeMachineMaxSize:
+          type:
+            - string
+            - "null"
+          description: >-
+            Samba `fruit:time machine max size` (Q73), e.g. `500G`.
+            Required when timeMachine is true; omitted otherwise.
+
+    Share:
+      type: object
+      required: [name, path, cacheMode, createPolicy, smb, createdAt, updatedAt]
+      properties:
+        name:
+          $ref: '#/components/schemas/ShareName'
+        path:
+          type: string
+          description: The share's mount path (`/mnt/user/<name>`, D10).
+        cacheMode:
+          $ref: '#/components/schemas/ShareCacheMode'
+        createPolicy:
+          $ref: '#/components/schemas/ArrayCreatePolicy'
+        smb:
+          $ref: '#/components/schemas/ShareSMB'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateShareRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          $ref: '#/components/schemas/ShareName'
+        cacheMode:
+          $ref: '#/components/schemas/ShareCacheMode'
+        createPolicy:
+          $ref: '#/components/schemas/ArrayCreatePolicy'
+        smb:
+          $ref: '#/components/schemas/ShareSMB'
+
+    UpdateShareRequest:
+      type: object
+      properties:
+        cacheMode:
+          $ref: '#/components/schemas/ShareCacheMode'
+        createPolicy:
+          $ref: '#/components/schemas/ArrayCreatePolicy'
+        smb:
+          $ref: '#/components/schemas/ShareSMB'
+
+    ConfirmShareRequest:
+      type: object
+      required: [confirm]
+      properties:
+        confirm:
+          type: boolean
+          description: Must be true — removes the share definition only.
+
+    DeleteShareDataRequest:
+      type: object
+      required: [confirmation]
+      properties:
+        confirmation:
+          type: string
+          description: Must equal the share name (doc 03 §4.2 typed-confirm).
+
+    ShareBrowseEntry:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [file, directory]
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        disk:
+          type: string
+          description: >-
+            Holding disk from mergerfs `user.mergerfs.basepath`. Empty
+            when the xattr is absent.
+
+    ShareBrowseResult:
+      type: object
+      required: [path, entries]
+      properties:
+        path:
+          type: string
+          description: Listed directory, relative to the share root.
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShareBrowseEntry'

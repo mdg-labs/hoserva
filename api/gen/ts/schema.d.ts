@@ -479,6 +479,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/network": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Host network, TLS and access-scope settings
+         * @description Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's expiry, LAN-only access scope (Q10) and the listen port (doc 03 §8.2, Q75). Editing address, DNS or gateway is only possible when the backend is ifupdown; otherwise `editable` is false and `readOnlyReason` says why.
+         */
+        get: operations["getNetworkSettings"];
+        /**
+         * Apply host network, access-scope or listen-port changes
+         * @description Address, DNS and gateway changes are written to one managed ifupdown file under `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert (Q75): unless `confirmNetworkSettings` is called over the new configuration before the window expires (or the daemon dies), the previous file is restored. Access scope and listen port apply without that window — access scope takes effect immediately; a listen-port change is persisted and used on the next daemon start. Addressing fields are refused when the backend is not ifupdown.
+         */
+        put: operations["applyNetworkSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/network/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Keep the pending network configuration
+         * @description Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After the window expires, or if the daemon died before confirm, the previous configuration has already been restored and this returns `network_confirm_expired`.
+         */
+        post: operations["confirmNetworkSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/network/certificate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Regenerate the self-signed TLS certificate
+         * @description Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new cert. Let's Encrypt DNS-01 is not implemented here.
+         */
+        post: operations["regenerateTLSCertificate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/schedules": {
         parameters: {
             query?: never;
@@ -697,6 +761,104 @@ export interface paths {
          * @description Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
          */
         get: operations["getPool"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List shares
+         * @description Every configured share (doc 03 §4.1). Does not walk data disks; size and per-disk distribution are later issues.
+         */
+        get: operations["listShares"];
+        put?: never;
+        /**
+         * Create a share
+         * @description Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1, doc 03 §4).
+         */
+        post: operations["createShare"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shares/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a share
+         * @description One share by name (doc 03 §4.2).
+         */
+        get: operations["getShare"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a share definition
+         * @description Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`.
+         */
+        delete: operations["deleteShare"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a share
+         * @description Updates cache mode, create policy and SMB options, then regenerates the per-share mount and `smb.conf`. Does not relocate existing files (doc 09 §2).
+         */
+        patch: operations["updateShare"];
+        trace?: never;
+    };
+    "/shares/{name}/data/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Delete a share's files
+         * @description Deletes this share's files on the branches that hold it, and nothing else — not other shares, not the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in place. `confirmation` must equal the share name.
+         */
+        post: operations["deleteShareData"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/shares/{name}/browse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List a share directory
+         * @description Lists one directory of the share, including the holding disk per entry from mergerfs `user.mergerfs.basepath` (doc 03 §4.2). This is an explicit call and may wake disks — it is never polled.
+         */
+        get: operations["browseShare"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1356,6 +1518,96 @@ export interface components {
             backupPassphrase?: string;
         };
         /**
+         * @description Detected host network backend (Q75).
+         * @enum {string}
+         */
+        NetworkBackend: "ifupdown" | "networkmanager" | "systemd-networkd" | "unknown";
+        /**
+         * @description How this interface obtains its address.
+         * @enum {string}
+         */
+        NetworkAddressMethod: "dhcp" | "static";
+        NetworkInterface: {
+            /** @description Kernel interface name, e.g. `enp1s0`. */
+            name: string;
+            /** @description Hardware address, if known. */
+            mac?: string;
+            method: components["schemas"]["NetworkAddressMethod"];
+            /** @description Configured IPv4 or IPv6 address without prefix. */
+            address?: string;
+            /** @description Prefix length for `address`. */
+            prefix?: number;
+            /** @description Default gateway for this interface, if any. */
+            gateway?: string;
+            /** @description DNS nameservers used with this configuration. */
+            dns?: string[];
+            /**
+             * @description Link operational state.
+             * @enum {string}
+             */
+            state: "up" | "down";
+        };
+        NetworkPending: {
+            /** @description Interface the pending confirm-or-revert applies to. */
+            interface: string;
+            /**
+             * Format: date-time
+             * @description When the previous configuration is restored if unconfirmed.
+             */
+            expiresAt: string;
+            /** @description Whole seconds left in the confirm window. */
+            remainingSeconds: number;
+        };
+        /**
+         * @description How the current TLS certificate was issued (Q9).
+         * @enum {string}
+         */
+        TLSCertificateKind: "self_signed";
+        TLSCertificateInfo: {
+            kind: components["schemas"]["TLSCertificateKind"];
+            /**
+             * Format: date-time
+             * @description Certificate expiry instant.
+             */
+            notAfter: string;
+            /** @description Whole days until expiry; negative if already expired. */
+            daysRemaining: number;
+        };
+        NetworkSettings: {
+            backend: components["schemas"]["NetworkBackend"];
+            /** @description True only when the backend is ifupdown (Q75). */
+            editable: boolean;
+            /** @description Why addressing cannot be edited, when `editable` is false. */
+            readOnlyReason?: string;
+            interfaces: components["schemas"]["NetworkInterface"][];
+            pending?: components["schemas"]["NetworkPending"];
+            certificate: components["schemas"]["TLSCertificateInfo"];
+            /** @description When false (default), the TCP listener accepts only LAN-ish sources (Q10). When true, every source address is accepted. */
+            allowAllSources: boolean;
+            /** @description TCP port the TLS UI/API currently listens on (Q9). */
+            listenPort: number;
+            /** @description True when a persisted listen-port change has not been bound yet. */
+            listenPortRestartRequired?: boolean;
+        };
+        ApplyNetworkSettingsRequest: {
+            /** @description Interface to reconfigure. Required when any of `method`, `address`, `prefix`, `gateway` or `dns` is set. */
+            interface?: string;
+            /** @description Required when any of `interface`, `address`, `prefix`, `gateway` or `dns` is set — the managed ifupdown stanza is always rewritten in full. */
+            method?: components["schemas"]["NetworkAddressMethod"];
+            /** @description Static address without prefix. Required when `method` is static. */
+            address?: string;
+            /** @description Prefix length for a static address. Required when `method` is static. */
+            prefix?: number;
+            /** @description Default gateway. Empty string clears a previously set gateway. */
+            gateway?: string;
+            /** @description DNS nameservers. Empty array clears them. */
+            dns?: string[];
+            /** @description Set the Q10 access-scope toggle. Omitted leaves it unchanged. */
+            allowAllSources?: boolean;
+            /** @description Persist a new listen port for the next daemon start. Omitted leaves it unchanged. */
+            listenPort?: number;
+        };
+        /**
          * @description Release channel the update check reads from the signed index (Q67).
          * @enum {string}
          */
@@ -1733,6 +1985,68 @@ export interface components {
         ResetUserPasswordRequest: {
             password: string;
         };
+        /** @description A share name is a single path segment on every branch and under `/mnt/user` (`pool.ValidateShareName`). */
+        ShareName: string;
+        /**
+         * @description Per-share cache mode (doc 02 §3, Q12).
+         * @enum {string}
+         */
+        ShareCacheMode: "cache-then-move" | "cache-only" | "array-only";
+        ShareSMB: {
+            enabled: boolean;
+            guest: boolean;
+            readOnly: boolean;
+            browseable: boolean;
+            recycle: boolean;
+            timeMachine: boolean;
+            /** @description Samba `fruit:time machine max size` (Q73), e.g. `500G`. Required when timeMachine is true; omitted otherwise. */
+            timeMachineMaxSize?: string | null;
+        };
+        Share: {
+            name: components["schemas"]["ShareName"];
+            /** @description The share's mount path (`/mnt/user/<name>`, D10). */
+            path: string;
+            cacheMode: components["schemas"]["ShareCacheMode"];
+            createPolicy: components["schemas"]["ArrayCreatePolicy"];
+            smb: components["schemas"]["ShareSMB"];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        CreateShareRequest: {
+            name: components["schemas"]["ShareName"];
+            cacheMode?: components["schemas"]["ShareCacheMode"];
+            createPolicy?: components["schemas"]["ArrayCreatePolicy"];
+            smb?: components["schemas"]["ShareSMB"];
+        };
+        UpdateShareRequest: {
+            cacheMode?: components["schemas"]["ShareCacheMode"];
+            createPolicy?: components["schemas"]["ArrayCreatePolicy"];
+            smb?: components["schemas"]["ShareSMB"];
+        };
+        ConfirmShareRequest: {
+            /** @description Must be true — removes the share definition only. */
+            confirm: boolean;
+        };
+        DeleteShareDataRequest: {
+            /** @description Must equal the share name (doc 03 §4.2 typed-confirm). */
+            confirmation: string;
+        };
+        ShareBrowseEntry: {
+            name: string;
+            /** @enum {string} */
+            type: "file" | "directory";
+            /** Format: int64 */
+            sizeBytes?: number;
+            /** @description Holding disk from mergerfs `user.mergerfs.basepath`. Empty when the xattr is absent. */
+            disk?: string;
+        };
+        ShareBrowseResult: {
+            /** @description Listed directory, relative to the share root. */
+            path: string;
+            entries: components["schemas"]["ShareBrowseEntry"][];
+        };
     };
     responses: {
         /** @description An error response (doc 01 §5). */
@@ -1750,6 +2064,7 @@ export interface components {
         ChannelId: string;
         EventType: components["schemas"]["NotificationEventType"];
         Username: string;
+        ShareName: components["schemas"]["ShareName"];
     };
     requestBodies: never;
     headers: never;
@@ -2389,6 +2704,94 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getNetworkSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current network settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    applyNetworkSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyNetworkSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Settings after the apply, including any pending confirm window. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    confirmNetworkSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settings after confirm; `pending` is omitted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    regenerateTLSCertificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settings including the new certificate expiry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getSchedules: {
         parameters: {
             query?: never;
@@ -2671,6 +3074,180 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PoolStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listShares: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Configured shares, sorted by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        shares: components["schemas"]["Share"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateShareRequest"];
+            };
+        };
+        responses: {
+            /** @description The created share. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Share"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The share. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Share"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmShareRequest"];
+            };
+        };
+        responses: {
+            /** @description Share definition removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateShare: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateShareRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated share. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Share"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteShareData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteShareDataRequest"];
+            };
+        };
+        responses: {
+            /** @description Share data deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    browseShare: {
+        parameters: {
+            query?: {
+                /** @description Directory relative to the share root. Empty is the share root. */
+                path?: string;
+            };
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Directory listing. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareBrowseResult"];
                 };
             };
             default: components["responses"]["Error"];
