@@ -387,7 +387,7 @@ func userCmd() *cobra.Command {
 }
 
 func updateCmd() *cobra.Command {
-	var check bool
+	var check, confirm bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update Hoserva from its signed release index (Q67)",
@@ -404,6 +404,9 @@ func updateCmd() *cobra.Command {
 				emit(out)
 				return nil
 			}
+			if !confirm {
+				return fmt.Errorf("update requires --confirm")
+			}
 			out, err := c.ApplyUpdate(apiCtx(), &apiv1.ConfirmUpdateRequest{Confirm: true})
 			if err != nil {
 				return mapAPIErr(err)
@@ -413,17 +416,26 @@ func updateCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "Check the signed release index without installing")
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm installing the update (required)")
 	return cmd
 }
 
 func rollbackCmd() *cobra.Command {
-	return &cobra.Command{
+	var confirm bool
+	cmd := &cobra.Command{
 		Use:   "rollback",
 		Short: "Install the previous release and restore its database snapshot (Q67)",
-		RunE: runAPI(func(c *apiv1.Client) (any, error) {
-			return c.RollbackUpdate(apiCtx(), &apiv1.ConfirmUpdateRequest{Confirm: true})
-		}),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !confirm {
+				return fmt.Errorf("rollback requires --confirm")
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				return c.RollbackUpdate(apiCtx(), &apiv1.ConfirmUpdateRequest{Confirm: true})
+			})(cmd, args)
+		},
 	}
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm rollback (required)")
+	return cmd
 }
 
 func rebootCmd() *cobra.Command {
