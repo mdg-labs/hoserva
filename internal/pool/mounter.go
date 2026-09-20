@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
 )
@@ -20,6 +21,9 @@ type Mounter struct {
 // ordinary wait-for-exit is enough — no foreground process or PID
 // tracking is needed here.
 func (m Mounter) Mount(ctx context.Context, mnt Mount) error {
+	if err := os.MkdirAll(mnt.Where, 0o755); err != nil {
+		return fmt.Errorf("pool: creating mount point %s: %w", mnt.Where, err)
+	}
 	argv := mnt.Argv()
 	if _, err := m.Runner.Run(ctx, argv[0], argv[1:]...); err != nil {
 		return fmt.Errorf("pool: mounting %s: %w", mnt.Where, err)
