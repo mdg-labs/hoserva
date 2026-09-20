@@ -7,6 +7,7 @@ package storedb
 
 import (
 	"context"
+	"database/sql"
 )
 
 const getScheduleChain = `-- name: GetScheduleChain :one
@@ -20,6 +21,7 @@ SELECT
     sync_enabled,
     scrub_enabled,
     config_backup_enabled,
+    last_run_at,
     updated_at
 FROM schedule_chain
 WHERE id = 1
@@ -39,6 +41,7 @@ func (q *Queries) GetScheduleChain(ctx context.Context) (*ScheduleChain, error) 
 		&i.SyncEnabled,
 		&i.ScrubEnabled,
 		&i.ConfigBackupEnabled,
+		&i.LastRunAt,
 		&i.UpdatedAt,
 	)
 	return &i, err
@@ -96,6 +99,15 @@ func (q *Queries) ListScheduleJobs(ctx context.Context) ([]*ScheduleJob, error) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const setScheduleChainLastRun = `-- name: SetScheduleChainLastRun :exec
+UPDATE schedule_chain SET last_run_at = ? WHERE id = 1
+`
+
+func (q *Queries) SetScheduleChainLastRun(ctx context.Context, lastRunAt sql.NullString) error {
+	_, err := q.db.ExecContext(ctx, setScheduleChainLastRun, lastRunAt)
+	return err
 }
 
 const upsertScheduleChain = `-- name: UpsertScheduleChain :exec

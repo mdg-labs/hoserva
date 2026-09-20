@@ -88,17 +88,25 @@ const maxRequestBodyBytes = 64 * 1024
 const requestReadTimeout = 15 * time.Second
 
 type config struct {
-	stateDir        string
-	socketPath      string
-	tcpAddr         string
-	machineKeyPath  string
-	configRoot      string
-	allowAllSources bool
-	dev             bool
+	stateDir            string
+	socketPath          string
+	tcpAddr             string
+	machineKeyPath      string
+	configRoot          string
+	allowAllSources     bool
+	dev                 bool
+	applyVerifiedUpdate string
 }
 
 func main() {
 	cfg := parseFlags()
+	if cfg.applyVerifiedUpdate != "" {
+		if err := runApplyVerifiedUpdate(cfg); err != nil {
+			fmt.Fprintln(os.Stderr, "hoservad:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "hoservad:", err)
 		os.Exit(1)
@@ -114,6 +122,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.configRoot, "config-root", "/etc", "root for generated config files (doc 01 §2); disk mount units and snapraid.conf are written relative to this")
 	flag.BoolVar(&cfg.allowAllSources, "allow-all-sources", false, "disable the LAN-only source filter (Q10) — WARNING: accepts connections from any address")
 	flag.BoolVar(&cfg.dev, "dev", false, "development convenience: state dir, socket, machine key and TCP address default to a workspace-local path and 127.0.0.1 (git-ignored); an explicitly set flag always wins over this default")
+	flag.StringVar(&cfg.applyVerifiedUpdate, "apply-verified-update", "", "install a verified pending .deb from this directory (transient unit; Q67)")
 	flag.Parse()
 
 	// flag.Visit only visits flags actually given on the command line — so
@@ -227,7 +236,14 @@ func run(cfg config) error {
 	if err != nil {
 		return fmt.Errorf("opening snapraid.conf: %w", err)
 	}
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history}
+	var chainGuard job.DiffGuard
+	if parityEngine != nil {
+		registry.Register(job.TypeSync, false, job.RunSync(parityEngine))
+		registry.Register(job.TypeScrub, false, job.RunScrub(parityEngine))
+		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}
+	}
+	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, arraySeq, notifyService, linuxDisks.Exec)
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine}
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
 	}
@@ -259,6 +275,12 @@ func run(cfg config) error {
 	pruneOnce(ctx, jobStore, logs, authStore, history)
 	go runDailyPrune(ctx, jobStore, logs, authStore, history)
 	go runNotifyDeliveryLoop(ctx, notifyService, notifyDeliveryInterval, notifyDeliveryBatchLimit)
+	go runScheduleLoop(ctx, &scheduleRunner{
+		Schedules: scheduleService,
+		Scheduler: scheduler,
+		Guard:     chainGuard,
+		Notifier:  &scheduleNotifier{svc: notifyService},
+	}, scheduleTickInterval)
 
 	errCh := make(chan error, 2)
 	go func() {

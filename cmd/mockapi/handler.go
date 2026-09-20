@@ -55,6 +55,7 @@ type handler struct {
 	inboxAlerts     []apiv1.NotificationAlert
 	generalSettings apiv1.GeneralSettings
 	schedules       apiv1.Schedules
+	updateStatus    apiv1.UpdateStatus
 
 	// maintenance is Q70's maintenance mode for this mock instance:
 	// StopArray sets it, StartArray clears it, GetStatus reports it.
@@ -89,13 +90,14 @@ func newHandler(scenario string) (*handler, error) {
 	}
 
 	return &handler{
-		scenario:    scenario,
-		jobs:        jobs,
-		channels:    make(map[uuid.UUID]apiv1.NotificationChannel),
-		routing:     defaultNotificationRouting(),
-		quietHours:  apiv1.NotificationQuietHours{Enabled: false, Start: "22:00", End: "07:00", CriticalAlwaysDelivers: true},
-		inboxAlerts: defaultInboxAlerts(scenario),
-		schedules:   defaultMockSchedules(),
+		scenario:     scenario,
+		jobs:         jobs,
+		channels:     make(map[uuid.UUID]apiv1.NotificationChannel),
+		routing:      defaultNotificationRouting(),
+		quietHours:   apiv1.NotificationQuietHours{Enabled: false, Start: "22:00", End: "07:00", CriticalAlwaysDelivers: true},
+		inboxAlerts:  defaultInboxAlerts(scenario),
+		schedules:    defaultMockSchedules(),
+		updateStatus: defaultMockUpdateStatus(),
 	}, nil
 }
 

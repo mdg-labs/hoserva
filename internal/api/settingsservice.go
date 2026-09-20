@@ -139,6 +139,50 @@ func (s *SettingsService) Update(ctx context.Context, input UpdateGeneralSetting
 	return generalSettingsFromRow(row), nil
 }
 
+// UpdateSettings is schema_info's Q67 fields.
+type UpdateSettings struct {
+	Channel         string
+	CheckEnabled    bool
+	PreviousVersion string
+}
+
+func (s *SettingsService) GetUpdateSettings(ctx context.Context) (UpdateSettings, error) {
+	row, err := s.loadRow(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return UpdateSettings{Channel: "stable", CheckEnabled: true}, nil
+		}
+		return UpdateSettings{}, err
+	}
+	channel := row.UpdateChannel
+	if channel == "" {
+		channel = "stable"
+	}
+	prev := ""
+	if row.PreviousVersion.Valid {
+		prev = row.PreviousVersion.String
+	}
+	return UpdateSettings{
+		Channel:         channel,
+		CheckEnabled:    row.UpdateCheckEnabled,
+		PreviousVersion: prev,
+	}, nil
+}
+
+func (s *SettingsService) SetUpdateSettings(ctx context.Context, channel string, checkEnabled bool) error {
+	if _, err := s.ensureRow(ctx); err != nil {
+		return err
+	}
+	return s.Store.UpdateUpdateSettings(ctx, channel, checkEnabled)
+}
+
+func (s *SettingsService) SetPreviousVersion(ctx context.Context, version string) error {
+	if _, err := s.ensureRow(ctx); err != nil {
+		return err
+	}
+	return s.Store.UpdatePreviousVersion(ctx, version)
+}
+
 // BackupPassphrase decrypts the stored backup passphrase for
 // backup.SecretSource (Q28). It never logs the value.
 func (s *SettingsService) BackupPassphrase(ctx context.Context) (string, bool, error) {

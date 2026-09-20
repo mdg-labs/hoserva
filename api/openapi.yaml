@@ -67,7 +67,9 @@ tags:
     description: >-
       General installation settings shared by onboarding and `/settings`
       (doc 03 §1, §8.1). The backup passphrase is write-only (Q28): a
-      response never carries it, only whether one is configured.
+      response never carries it, only whether one is configured. Self-update,
+      rollback and Debian update status live under `/settings/updates`
+      (doc 03 §8.6, Q67, Q68).
 
 # Two transports (doc 01 §5): a Unix socket for the local root/`hoserva`-group
 # CLI, and TLS-only TCP for the web UI and remote/scripted use. Same handlers,
@@ -847,6 +849,159 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Schedules'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/updates:
+    get:
+      operationId: getUpdateStatus
+      summary: Hoserva and Debian update status
+      description: >-
+        Current Hoserva version, any newer release on the configured
+        channel, update-check on/off, pending Debian updates and whether
+        a reboot is required (doc 03 §8.6, Q67, Q68). The update check
+        reads only the signed release index on the project site — never
+        the GitHub API and never a system-wide `apt update` (Q67, Q49).
+        When the check is disabled, `availableVersion` is omitted rather
+        than fetched.
+      tags: [settings]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Current update status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateStatus'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateUpdateSettings
+      summary: Set update channel and check-enabled
+      description: >-
+        Persists the update channel (stable / beta) and whether the
+        outbound update check is enabled (Q49, Q67). Omitted fields are
+        left unchanged.
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUpdateSettingsRequest'
+      responses:
+        "200":
+          description: The updated update status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateStatus'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/updates/check:
+    post:
+      operationId: checkForUpdate
+      summary: Check the signed release index for a newer Hoserva
+      description: >-
+        Fetches the signed release index for the configured channel
+        (Q67). A user-initiated check runs even when the periodic
+        outbound check is disabled. Never calls the GitHub API or
+        `apt update`.
+      tags: [settings]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: Update status after the check.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateStatus'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/updates/apply:
+    post:
+      operationId: applyUpdate
+      summary: Download, verify and install the available Hoserva release
+      description: >-
+        Downloads the `.deb` named by the signed release index, verifies
+        it against the signed SHA256SUMS, runs a config backup, and
+        installs it in a transient systemd unit (Q67, doc 10 §1).
+        Refused while a Parity, Array-write or Topology job is running;
+        the error names that job. A `.deb` whose checksum does not match
+        is never installed, and a notification is raised.
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmUpdateRequest'
+      responses:
+        "200":
+          description: The update has been queued for install.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateStatus'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/updates/rollback:
+    post:
+      operationId: rollbackUpdate
+      summary: Roll back to the previous Hoserva release and its snapshot
+      description: >-
+        Downloads and verifies the previous release's `.deb`, restores
+        that version's pre-migration database snapshot, and installs the
+        previous package (Q67, D16). There are no down migrations —
+        rollback is previous package plus its snapshot. Refused while a
+        Parity, Array-write or Topology job is running; the error names
+        that job.
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmUpdateRequest'
+      responses:
+        "200":
+          description: The rollback has been queued for install.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateStatus'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/updates/reboot:
+    post:
+      operationId: rebootHost
+      summary: Reboot after waiting for storage jobs and a clean shutdown
+      description: >-
+        Waits for any running Parity, Array-write or Topology job, runs
+        the Q70 clean shutdown sequence, then reboots. Hoserva never
+        reboots on its own — this is always the user's action (Q68).
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmUpdateRequest'
+      responses:
+        "200":
+          description: Reboot has been started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateStatus'
         default:
           $ref: '#/components/responses/Error'
 
@@ -2109,6 +2264,107 @@ components:
           description: >-
             Write-only. Sets or replaces the backup passphrase (Q28).
             Omitted leaves any existing passphrase unchanged.
+
+    UpdateChannel:
+      type: string
+      enum: [stable, beta]
+      description: Release channel the update check reads from the signed index (Q67).
+
+    UpdateStatus:
+      type: object
+      required: [currentVersion, channel, checkEnabled, rebootRequired, pendingDebianUpdates, dependencies]
+      properties:
+        currentVersion:
+          type: string
+          description: Installed Hoserva package version.
+        availableVersion:
+          type: string
+          description: Newer version on the configured channel, if any.
+        availableTag:
+          type: string
+          description: Git tag of availableVersion, if any.
+        changelog:
+          type: string
+          description: Release notes for availableVersion, if the index carries them.
+        channel:
+          $ref: '#/components/schemas/UpdateChannel'
+        checkEnabled:
+          type: boolean
+          description: Whether the periodic outbound update check is enabled (Q49).
+        previousVersion:
+          type: string
+          description: Version rollback would restore, if an upgrade has been applied.
+        rebootRequired:
+          type: boolean
+          description: Whether `/run/reboot-required` is present (Q68).
+        pendingDebianUpdates:
+          type: array
+          items:
+            $ref: '#/components/schemas/DebianPackageUpdate'
+        dependencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/PackageDependencyStatus'
+        blockingJob:
+          $ref: '#/components/schemas/BlockingJob'
+          description: >-
+            A running Parity, Array-write or Topology job that would refuse
+            an update, rollback or (until it finishes) a reboot.
+
+    DebianPackageUpdate:
+      type: object
+      required: [name, installedVersion, candidateVersion]
+      properties:
+        name:
+          type: string
+        installedVersion:
+          type: string
+        candidateVersion:
+          type: string
+
+    PackageDependencyStatus:
+      type: object
+      required: [name, installedVersion, testedFloor, inRange]
+      properties:
+        name:
+          type: string
+          description: Debian package name (mergerfs, snapraid).
+        installedVersion:
+          type: string
+        testedFloor:
+          type: string
+          description: Lowest version this Hoserva release was tested against (Q7).
+        inRange:
+          type: boolean
+          description: True when installedVersion is at or above testedFloor.
+
+    BlockingJob:
+      type: object
+      required: [id, type, class]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/JobType'
+        class:
+          $ref: '#/components/schemas/JobClass'
+
+    UpdateUpdateSettingsRequest:
+      type: object
+      properties:
+        channel:
+          $ref: '#/components/schemas/UpdateChannel'
+        checkEnabled:
+          type: boolean
+
+    ConfirmUpdateRequest:
+      type: object
+      required: [confirm]
+      properties:
+        confirm:
+          type: boolean
+          description: Must be true; the UI/CLI confirm dialog is what sets this.
 
     MaintenanceChainStepId:
       type: string

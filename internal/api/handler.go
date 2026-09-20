@@ -24,6 +24,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
+	"github.com/mdg-labs/hoserva/internal/update"
 )
 
 // Handler implements apiv1.Handler against the job system (#19): no
@@ -69,6 +70,9 @@ type Handler struct {
 	// Metrics is metrics.db (Q74). Nil returns empty series rather than an
 	// error — losing graphs must not look like array failure (#186).
 	Metrics *metrics.Store
+	// Updates is self-update, rollback and reboot (Q67, Q68). Nil returns
+	// 501 from those operations.
+	Updates *update.Engine
 }
 
 var _ apiv1.Handler = (*Handler)(nil)

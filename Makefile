@@ -327,6 +327,7 @@ packaging-test:
 	scripts/release/test-lib.sh
 	scripts/release/test-postinst.sh
 	scripts/release/test-postrm-purge.sh
+	packaging/test-unattended-upgrades.sh
 
 lint:
 	@echo "gofmt"

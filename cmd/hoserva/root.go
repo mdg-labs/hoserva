@@ -30,6 +30,9 @@ func rootCmd() *cobra.Command {
 		configCmd(),
 		doctorCmd(),
 		userCmd(),
+		updateCmd(),
+		rollbackCmd(),
+		rebootCmd(),
 	)
 	return cmd
 }

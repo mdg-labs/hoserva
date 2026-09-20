@@ -164,7 +164,9 @@ func OtherJobSchedulePreview(freq Frequency, time string) string {
 	}
 }
 
-// NextChainRun returns the next local instant the maintenance chain starts.
+// NextChainRun returns the next local instant the maintenance chain starts
+// that is strictly after now — the settings page's preview, not a due
+// check. Use ChainIsDue to decide whether today's window should start.
 func NextChainRun(now time.Time, loc *time.Location, startTime string) time.Time {
 	hour, minute, err := ParseClock(startTime)
 	if err != nil {
@@ -176,6 +178,30 @@ func NextChainRun(now time.Time, loc *time.Location, startTime string) time.Time
 		candidate = candidate.AddDate(0, 0, 1)
 	}
 	return candidate.UTC()
+}
+
+// ChainIsDue reports whether today's start time has been reached in loc
+// and this window has not already been claimed. lastRun is nil when the
+// chain has never started. A missed night is not backfilled: only
+// today's window is considered.
+func ChainIsDue(now time.Time, loc *time.Location, startTime string, lastRun *time.Time) bool {
+	if loc == nil {
+		loc = time.UTC
+	}
+	hour, minute, err := ParseClock(startTime)
+	if err != nil {
+		hour, minute, _ = ParseClock(DefaultChainStartTime)
+	}
+	localNow := now.In(loc)
+	year, month, day := localNow.Date()
+	todayStart := time.Date(year, month, day, hour, minute, 0, 0, loc)
+	if localNow.Before(todayStart) {
+		return false
+	}
+	if lastRun != nil && !lastRun.In(loc).Before(todayStart) {
+		return false
+	}
+	return true
 }
 
 // NextOtherJobRun returns the next local instant a separately scheduled job runs.

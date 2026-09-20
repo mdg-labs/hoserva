@@ -353,6 +353,46 @@ func (s *Scheduler) InMaintenance() bool {
 	return s.maintenance
 }
 
+// BlockingStorageJob returns a currently running Parity, Array-write or
+// Topology job, if any. Self-update and rollback refuse while one is
+// running and name it (Q67); reboot waits for it instead (Q68).
+func (s *Scheduler) BlockingStorageJob() *Job {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, rj := range s.running {
+		if IsStorageClass(rj.job.Class) {
+			cp := *rj.job
+			return &cp
+		}
+	}
+	return nil
+}
+
+// WaitForStorageJobs blocks until no Parity, Array-write or Topology job
+// is running, or ctx is done. Reboot uses this before the Q70 sequence
+// (Q68) — it waits rather than refusing.
+func (s *Scheduler) WaitForStorageJobs(ctx context.Context) error {
+	for {
+		s.mu.Lock()
+		var done <-chan struct{}
+		for _, rj := range s.running {
+			if IsStorageClass(rj.job.Class) {
+				done = rj.done
+				break
+			}
+		}
+		s.mu.Unlock()
+		if done == nil {
+			return nil
+		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return fmt.Errorf("job: waiting for storage jobs: %w", ctx.Err())
+		}
+	}
+}
+
 // awaitPollInterval is Await's fallback tick: Hub.Publish drops an update
 // for a subscriber whose buffer is full rather than blocking (Hub's own doc
 // comment), so a slow receiver can miss the exact event that would have
