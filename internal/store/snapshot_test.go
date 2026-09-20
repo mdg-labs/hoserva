@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -627,5 +628,12 @@ func TestLatestSnapshot_PicksNewestFromVersion(t *testing.T) {
 	}
 	if got != newer {
 		t.Fatalf("LatestSnapshot = %q, want %q (not the older %q)", got, newer, older)
+	}
+}
+
+func TestLatestSnapshot_MissingDirIsErrNoSnapshot(t *testing.T) {
+	_, err := LatestSnapshot(filepath.Join(t.TempDir(), "no-such-dir"))
+	if !errors.Is(err, ErrNoSnapshot) {
+		t.Fatalf("LatestSnapshot(missing dir) = %v, want ErrNoSnapshot", err)
 	}
 }

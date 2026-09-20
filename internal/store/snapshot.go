@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -355,7 +357,7 @@ var ErrNoSnapshot = fmt.Errorf("store: no pre-migration snapshot")
 func LatestSnapshot(dir string) (string, error) {
 	all, err := listSnapshots(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return "", ErrNoSnapshot
 		}
 		return "", err
