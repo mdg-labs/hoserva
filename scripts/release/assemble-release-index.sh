@@ -48,6 +48,16 @@ def version_key(tag: str) -> tuple[int, int, int, int]:
     return (int(major), int(minor), int(patch), int(beta) if beta is not None else 0)
 
 
+def debian_version_from_tag(tag: str) -> str:
+    m = TAG_RE.fullmatch(tag)
+    if m is None:
+        fail(f"tag {tag!r} is not a recognised release tag (want vX.Y.Z or vX.Y.Z-beta.N)")
+    version = f"{m.group(1)}.{m.group(2)}.{m.group(3)}"
+    if m.group(4) is not None:
+        version += f"~beta.{m.group(4)}"
+    return version
+
+
 def require_asset(entry: dict, arch: str, path: Path) -> None:
     assets = entry.get("assets")
     if not isinstance(assets, dict) or arch not in assets:
@@ -84,6 +94,10 @@ for path in sorted(p for p in entries_dir.iterdir() if p.suffix == ".json" and p
     expected = "beta" if key[3] else "stable"
     if channel != expected:
         fail(f"{path}: channel {channel!r} does not match tag {tag!r}")
+
+    expected_version = debian_version_from_tag(tag)
+    if entry["version"] != expected_version:
+        fail(f"{path}: version {entry['version']!r} does not match tag {tag!r} (want {expected_version!r})")
 
     if tag in seen_tags:
         fail(f"duplicate tag {tag!r}")
