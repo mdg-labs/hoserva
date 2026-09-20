@@ -15,6 +15,23 @@ func TestRootCmdHasUpdateRollbackAndReboot(t *testing.T) {
 	}
 }
 
+func TestRootCmdHasShare(t *testing.T) {
+	root := rootCmd()
+	share, _, err := root.Find([]string{"share"})
+	if err != nil {
+		t.Fatalf("find share: %v", err)
+	}
+	for _, name := range []string{"list", "get", "create", "rm", "rm-data", "browse"} {
+		if _, _, err := share.Find([]string{name}); err != nil {
+			t.Fatalf("find share %s: %v", name, err)
+		}
+	}
+}
+
+func TestShareRmRequiresConfirm(t *testing.T) {
+	assertRequiresConfirm(t, []string{"share", "rm", "media"})
+}
+
 func TestRootCmdHasArrayStopAndStart(t *testing.T) {
 	root := rootCmd()
 	array, _, err := root.Find([]string{"array"})

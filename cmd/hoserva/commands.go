@@ -68,6 +68,109 @@ func diskCmd() *cobra.Command {
 	return cmd
 }
 
+func shareCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "share", Short: "Share commands"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List shares",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.ListShares(apiCtx()) }),
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "get NAME",
+		Short: "Get a share",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				return c.GetShare(apiCtx(), apiv1.GetShareParams{Name: apiv1.ShareName(args[0])})
+			})(cmd, args)
+		},
+	})
+
+	var cacheMode, createPolicy, tmSize string
+	var smb, guest, readOnly, browseable, recycle, timeMachine bool
+	create := &cobra.Command{
+		Use:   "create NAME",
+		Short: "Create a share",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := &apiv1.CreateShareRequest{Name: apiv1.ShareName(args[0])}
+			if cmd.Flags().Changed("cache-mode") {
+				req.SetCacheMode(apiv1.NewOptShareCacheMode(apiv1.ShareCacheMode(cacheMode)))
+			}
+			if cmd.Flags().Changed("create-policy") {
+				req.SetCreatePolicy(apiv1.NewOptArrayCreatePolicy(apiv1.ArrayCreatePolicy(createPolicy)))
+			}
+			if cmd.Flags().Changed("smb") || cmd.Flags().Changed("guest") || cmd.Flags().Changed("read-only") ||
+				cmd.Flags().Changed("browseable") || cmd.Flags().Changed("recycle") || cmd.Flags().Changed("time-machine") {
+				s := apiv1.ShareSMB{Enabled: smb, Guest: guest, ReadOnly: readOnly, Browseable: browseable, Recycle: recycle, TimeMachine: timeMachine}
+				if timeMachine && tmSize != "" {
+					s.TimeMachineMaxSize = apiv1.NewOptNilString(tmSize)
+				}
+				req.SetSmb(apiv1.NewOptShareSMB(s))
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.CreateShare(apiCtx(), req) })(cmd, args)
+		},
+	}
+	create.Flags().StringVar(&cacheMode, "cache-mode", "cache-then-move", "cache-then-move, cache-only, or array-only")
+	create.Flags().StringVar(&createPolicy, "create-policy", "mspmfs", "mergerfs create policy")
+	create.Flags().BoolVar(&smb, "smb", true, "Export over SMB")
+	create.Flags().BoolVar(&guest, "guest", false, "Allow guest access")
+	create.Flags().BoolVar(&readOnly, "read-only", false, "Read-only")
+	create.Flags().BoolVar(&browseable, "browseable", true, "Browseable")
+	create.Flags().BoolVar(&recycle, "recycle", false, "Recycle bin")
+	create.Flags().BoolVar(&timeMachine, "time-machine", false, "Time Machine")
+	create.Flags().StringVar(&tmSize, "time-machine-max-size", "", "Time Machine max size (Q73), e.g. 500G")
+	cmd.AddCommand(create)
+
+	var confirmDelete bool
+	rm := &cobra.Command{
+		Use:   "rm NAME",
+		Short: "Delete a share definition (files stay on disk)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !confirmDelete {
+				return fmt.Errorf("share rm requires --confirm")
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				return nil, c.DeleteShare(apiCtx(), &apiv1.ConfirmShareRequest{Confirm: true}, apiv1.DeleteShareParams{Name: apiv1.ShareName(args[0])})
+			})(cmd, args)
+		},
+	}
+	rm.Flags().BoolVar(&confirmDelete, "confirm", false, "Confirm removing the share definition (required)")
+	cmd.AddCommand(rm)
+
+	var confirmData string
+	rmData := &cobra.Command{
+		Use:   "rm-data NAME",
+		Short: "Delete a share's files (definition stays)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if confirmData != args[0] {
+				return fmt.Errorf("share rm-data requires --confirm equal to the share name")
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				return nil, c.DeleteShareData(apiCtx(), &apiv1.DeleteShareDataRequest{Confirmation: args[0]}, apiv1.DeleteShareDataParams{Name: apiv1.ShareName(args[0])})
+			})(cmd, args)
+		},
+	}
+	rmData.Flags().StringVar(&confirmData, "confirm", "", "Type the share name to confirm deleting its files")
+	cmd.AddCommand(rmData)
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "browse NAME [PATH]",
+		Short: "List a share directory (may wake disks)",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params := apiv1.BrowseShareParams{Name: apiv1.ShareName(args[0])}
+			if len(args) == 2 {
+				params.Path = apiv1.NewOptString(args[1])
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.BrowseShare(apiCtx(), params) })(cmd, args)
+		},
+	})
+	return cmd
+}
+
 func syncCmd() *cobra.Command {
 	var dryRun, confirm bool
 	cmd := &cobra.Command{

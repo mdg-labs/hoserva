@@ -1,0 +1,29 @@
+{
+  "shares": [
+    {
+      "name": "appdata",
+      "guest": false,
+      "read_only": false,
+      "browseable": false,
+      "recycle": false,
+      "time_machine": false
+    },
+    {
+      "name": "media",
+      "guest": true,
+      "read_only": false,
+      "browseable": true,
+      "recycle": true,
+      "time_machine": false
+    },
+    {
+      "name": "timemachine",
+      "guest": false,
+      "read_only": false,
+      "browseable": false,
+      "recycle": false,
+      "time_machine": true,
+      "time_machine_max_size": "1T"
+    }
+  ]
+}

@@ -23,6 +23,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
 	"github.com/mdg-labs/hoserva/internal/update"
@@ -85,6 +86,8 @@ type Handler struct {
 	// ArrayStore is create-array topology, used to decide whether a Docker
 	// data-root move to cache is even possible (Q62). Nil means no cache.
 	ArrayStore *store.ArrayStore
+	// Shares is the share model (#46). Nil returns 501 from share operations.
+	Shares *share.Service
 }
 
 var _ apiv1.Handler = (*Handler)(nil)

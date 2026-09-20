@@ -60,6 +60,8 @@ type handler struct {
 	// maintenance is Q70's maintenance mode for this mock instance:
 	// StopArray sets it, StartArray clears it, GetStatus reports it.
 	maintenance bool
+
+	shares map[string]apiv1.Share
 }
 
 var _ apiv1.Handler = (*handler)(nil)
@@ -98,6 +100,7 @@ func newHandler(scenario string) (*handler, error) {
 		inboxAlerts:  defaultInboxAlerts(scenario),
 		schedules:    defaultMockSchedules(),
 		updateStatus: defaultMockUpdateStatus(),
+		shares:       make(map[string]apiv1.Share),
 	}, nil
 }
 

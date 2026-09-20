@@ -1,0 +1,12 @@
+{
+  "shares": [
+    {
+      "name": "public",
+      "guest": true,
+      "read_only": false,
+      "browseable": true,
+      "recycle": false,
+      "time_machine": false
+    }
+  ]
+}

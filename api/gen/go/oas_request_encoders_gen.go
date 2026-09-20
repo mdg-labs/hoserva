@@ -99,6 +99,48 @@ func encodeCreateNotificationChannelRequest(
 	return nil
 }
 
+func encodeCreateShareRequest(
+	req *CreateShareRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeDeleteShareRequest(
+	req *ConfirmShareRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeDeleteShareDataRequest(
+	req *DeleteShareDataRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeEnrollTotpRequest(
 	req *TotpEnrollRequest,
 	r *http.Request,
@@ -345,6 +387,20 @@ func encodeUpdateQuietHoursRequest(
 
 func encodeUpdateScheduledJobRequest(
 	req *UpdateScheduledJobRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpdateShareRequest(
+	req *UpdateShareRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

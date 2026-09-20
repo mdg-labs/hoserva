@@ -37,6 +37,17 @@ func (UnimplementedHandler) ApplyUpdate(ctx context.Context, req *ConfirmUpdateR
 	return r, ht.ErrNotImplemented
 }
 
+// BrowseShare implements browseShare operation.
+//
+// Lists one directory of the share, including the holding disk per entry from mergerfs
+// `user.mergerfs.basepath` (doc 03 §4.2). This is an explicit call and may wake disks — it is never
+// polled.
+//
+// GET /shares/{name}/browse
+func (UnimplementedHandler) BrowseShare(ctx context.Context, params BrowseShareParams) (r *ShareBrowseResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // CancelJob implements cancelJob operation.
 //
 // Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be
@@ -102,12 +113,44 @@ func (UnimplementedHandler) CreateNotificationChannel(ctx context.Context, req *
 	return r, ht.ErrNotImplemented
 }
 
+// CreateShare implements createShare operation.
+//
+// Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the
+// per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1,
+// doc 03 §4).
+//
+// POST /shares
+func (UnimplementedHandler) CreateShare(ctx context.Context, req *CreateShareRequest) (r *Share, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // DeleteNotificationChannel implements deleteNotificationChannel operation.
 //
 // Also removes every routing entry that named this channel.
 //
 // DELETE /notifications/channels/{channelId}
 func (UnimplementedHandler) DeleteNotificationChannel(ctx context.Context, params DeleteNotificationChannelParams) error {
+	return ht.ErrNotImplemented
+}
+
+// DeleteShare implements deleteShare operation.
+//
+// Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc
+// 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`.
+//
+// DELETE /shares/{name}
+func (UnimplementedHandler) DeleteShare(ctx context.Context, req *ConfirmShareRequest, params DeleteShareParams) error {
+	return ht.ErrNotImplemented
+}
+
+// DeleteShareData implements deleteShareData operation.
+//
+// Deletes this share's files on the branches that hold it, and nothing else — not other shares, not
+// the parity file, not disks that do not hold this share (doc 03 §4.2). The definition is left in
+// place. `confirmation` must equal the share name.
+//
+// POST /shares/{name}/data/delete
+func (UnimplementedHandler) DeleteShareData(ctx context.Context, req *DeleteShareDataRequest, params DeleteShareDataParams) error {
 	return ht.ErrNotImplemented
 }
 
@@ -266,6 +309,15 @@ func (UnimplementedHandler) GetSetupStatus(ctx context.Context) (r *SetupStatus,
 	return r, ht.ErrNotImplemented
 }
 
+// GetShare implements getShare operation.
+//
+// One share by name (doc 03 §4.2).
+//
+// GET /shares/{name}
+func (UnimplementedHandler) GetShare(ctx context.Context, params GetShareParams) (r *Share, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetStatus implements getStatus operation.
 //
 // One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
@@ -333,6 +385,16 @@ func (UnimplementedHandler) ListNotificationChannels(ctx context.Context) (r *Li
 //
 // GET /notifications
 func (UnimplementedHandler) ListNotifications(ctx context.Context) (r *ListNotificationsOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListShares implements listShares operation.
+//
+// Every configured share (doc 03 §4.1). Does not walk data disks; size and per-disk distribution are
+// later issues.
+//
+// GET /shares
+func (UnimplementedHandler) ListShares(ctx context.Context) (r *ListSharesOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -592,6 +654,16 @@ func (UnimplementedHandler) UpdateQuietHours(ctx context.Context, req *UpdateQui
 //
 // PUT /settings/schedules/jobs/{jobId}
 func (UnimplementedHandler) UpdateScheduledJob(ctx context.Context, req *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (r *Schedules, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateShare implements updateShare operation.
+//
+// Updates cache mode, create policy and SMB options, then regenerates the per-share mount and
+// `smb.conf`. Does not relocate existing files (doc 09 §2).
+//
+// PATCH /shares/{name}
+func (UnimplementedHandler) UpdateShare(ctx context.Context, req *UpdateShareRequest, params UpdateShareParams) (r *Share, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

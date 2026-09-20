@@ -1,0 +1,12 @@
+{
+  "shares": [
+    {
+      "name": "archives",
+      "guest": false,
+      "read_only": true,
+      "browseable": false,
+      "recycle": false,
+      "time_machine": false
+    }
+  ]
+}

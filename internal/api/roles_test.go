@@ -174,6 +174,13 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.ApplyUpdateOperation,
 		apiv1.RollbackUpdateOperation,
 		apiv1.RebootHostOperation,
+		apiv1.ListSharesOperation,
+		apiv1.GetShareOperation,
+		apiv1.BrowseShareOperation,
+		apiv1.CreateShareOperation,
+		apiv1.UpdateShareOperation,
+		apiv1.DeleteShareOperation,
+		apiv1.DeleteShareDataOperation,
 	}
 	sort.Slice(generated, func(i, j int) bool { return generated[i] < generated[j] })
 
