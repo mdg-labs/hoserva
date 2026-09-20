@@ -129,3 +129,14 @@ func TestHandlerApplyUpdateChecksumMismatchInstallsNothing(t *testing.T) {
 		t.Fatalf("failed checksum did not notify: %v", notes.Titles)
 	}
 }
+
+func TestHandlerGetUpdateStatusQueriesHostOnce(t *testing.T) {
+	h, _, _, _ := newUpdateHandler(t, []byte("deb"))
+	host := h.Updates.Host.(*update.FakeHost)
+	if _, err := h.GetUpdateStatus(context.Background()); err != nil {
+		t.Fatalf("GetUpdateStatus: %v", err)
+	}
+	if host.PendingCalls != 1 {
+		t.Fatalf("PendingUpdates calls = %d, want 1", host.PendingCalls)
+	}
+}

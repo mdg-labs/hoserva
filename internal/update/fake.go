@@ -46,14 +46,16 @@ func (f *FakeInstaller) Install(ctx context.Context, pendingDir string) error {
 
 // FakeHost is a scriptable Host.
 type FakeHost struct {
-	Pending     []PendingUpdate
-	NeedReboot  bool
-	Versions    map[string]string
-	RebootCalls int
-	RebootErr   error
+	Pending      []PendingUpdate
+	PendingCalls int
+	NeedReboot   bool
+	Versions     map[string]string
+	RebootCalls  int
+	RebootErr    error
 }
 
 func (h *FakeHost) PendingUpdates(ctx context.Context) ([]PendingUpdate, error) {
+	h.PendingCalls++
 	return h.Pending, nil
 }
 

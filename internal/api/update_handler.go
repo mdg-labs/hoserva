@@ -47,15 +47,13 @@ func (h *Handler) GetUpdateStatus(ctx context.Context) (*apiv1.UpdateStatus, err
 	if err != nil {
 		return nil, err
 	}
-	st, err := eng.Status(ctx, false)
+	row, err := eng.PersistedSettings(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting update status: %w", err)
 	}
-	if st.CheckEnabled {
-		st, err = eng.Status(ctx, true)
-		if err != nil {
-			return nil, fmt.Errorf("getting update status: %w", err)
-		}
+	st, err := eng.Status(ctx, row.CheckEnabled)
+	if err != nil {
+		return nil, fmt.Errorf("getting update status: %w", err)
 	}
 	return updateStatusToAPI(st), nil
 }
