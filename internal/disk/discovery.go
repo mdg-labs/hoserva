@@ -27,19 +27,19 @@ func (l *Lister) udevDataDir() string {
 	return "/run/udev/data"
 }
 
-// discoveryFS returns udev-cached ID_FS_TYPE and ID_FS_LABEL for the
-// whole-disk sysfs name, falling back to its first partition when the
-// whole disk has none — Unraid (and most NAS layouts) put the filesystem
-// on partition 1. Both reads are udev database files, never blkid, so a
-// standby disk is not opened.
-func (l *Lister) discoveryFS(name string) (fsType, label string) {
-	fsType, label = l.udevFS(name)
-	if fsType != "" || label != "" {
-		return fsType, label
+// discoveryFS returns udev-cached ID_FS_TYPE, ID_FS_LABEL and ID_FS_UUID
+// for the whole-disk sysfs name, falling back to its first partition when
+// the whole disk has none — Unraid (and most NAS layouts) put the
+// filesystem on partition 1. Both reads are udev database files, never
+// blkid, so a standby disk is not opened.
+func (l *Lister) discoveryFS(name string) (fsType, label, uuid string) {
+	fsType, label, uuid = l.udevFS(name)
+	if fsType != "" || label != "" || uuid != "" {
+		return fsType, label, uuid
 	}
 	part := l.firstPartition(name)
 	if part == "" {
-		return "", ""
+		return "", "", ""
 	}
 	return l.udevFS(part)
 }
@@ -53,15 +53,15 @@ func (l *Lister) firstPartition(diskName string) string {
 	return ""
 }
 
-func (l *Lister) udevFS(name string) (fsType, label string) {
+func (l *Lister) udevFS(name string) (fsType, label, uuid string) {
 	majmin := readSysString(filepath.Join(l.SysBlockDir, name, "dev"))
 	if majmin == "" {
-		return "", ""
+		return "", "", ""
 	}
 	path := filepath.Join(l.udevDataDir(), "b"+majmin)
 	f, err := os.Open(path)
 	if err != nil {
-		return "", ""
+		return "", "", ""
 	}
 	defer func() { _ = f.Close() }()
 
@@ -80,7 +80,9 @@ func (l *Lister) udevFS(name string) (fsType, label string) {
 			fsType = val
 		case "ID_FS_LABEL":
 			label = val
+		case "ID_FS_UUID":
+			uuid = val
 		}
 	}
-	return fsType, label
+	return fsType, label, uuid
 }

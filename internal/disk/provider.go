@@ -89,12 +89,12 @@ const (
 // ByIDName is the by-id link basename WWN/Serial were resolved from
 // (Identity.ByIDName) — empty exactly when neither is, meaning this disk
 // has no by-id link at all to bind a format or adopt-check call to.
-// Filesystem and Label are udev-cached (ID_FS_TYPE / ID_FS_LABEL), never
-// probed with blkid, so List never opens a device and never wakes a
-// standby disk (doc 02 §1, §4). ContainsData is true when a filesystem
-// type is cached. LooksLikeUnraid is the conservative label heuristic
-// LooksLikeUnraidLabel documents (doc 05) — List never mounts a disk to
-// look for super.dat.
+// Filesystem, Label and FSUUID are udev-cached (ID_FS_TYPE / ID_FS_LABEL /
+// ID_FS_UUID), never probed with blkid, so List never opens a device and
+// never wakes a standby disk (doc 02 §1, §4). ContainsData is true when a
+// filesystem type is cached. LooksLikeUnraid is the conservative label
+// heuristic LooksLikeUnraidLabel documents (doc 05) — List never mounts a
+// disk to look for super.dat.
 type Disk struct {
 	Device          string
 	Size            int64
@@ -107,6 +107,7 @@ type Disk struct {
 	Failed          bool
 	Filesystem      string
 	Label           string
+	FSUUID          string
 	ContainsData    bool
 	LooksLikeUnraid bool
 }

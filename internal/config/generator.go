@@ -65,6 +65,39 @@ func NewGenerator(root string) *Generator {
 	return &Generator{Root: root}
 }
 
+// CanWrite reports whether Write would refuse path without writing it.
+// It returns ErrUnmanaged or ErrExistingHostFile for the same Q76 cases
+// Write does, so a multi-file apply can preflight every target before
+// replacing any of them.
+func (g *Generator) CanWrite(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	full, key, err := g.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	manifest, err := g.loadManifest()
+	if err != nil {
+		return err
+	}
+	return wouldRefuse(manifest, full, key)
+}
+
+func wouldRefuse(manifest map[string]record, full, key string) error {
+	if rec, ok := manifest[key]; ok && rec.Unmanaged {
+		return fmt.Errorf("%w: %s", ErrUnmanaged, key)
+	}
+	if _, ok := manifest[key]; !ok {
+		if _, err := os.Stat(full); err == nil {
+			return fmt.Errorf("%w: %s", ErrExistingHostFile, key)
+		} else if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("config: checking %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
 // Write renders file's doc 01 §2 header plus its body, writes the result
 // atomically (temp file plus rename) under Root, and records its hash for
 // a later Check. It refuses a file KeepUnmanaged took over (ErrUnmanaged)
@@ -83,18 +116,11 @@ func (g *Generator) Write(ctx context.Context, file File, revision int, now time
 	if err != nil {
 		return err
 	}
-	if rec, ok := manifest[key]; ok && rec.Unmanaged {
-		return fmt.Errorf("%w: %s", ErrUnmanaged, key)
+	if err := wouldRefuse(manifest, full, key); err != nil {
+		return err
 	}
-	untracked := false
-	if _, ok := manifest[key]; !ok {
-		untracked = true
-		if _, err := os.Stat(full); err == nil {
-			return fmt.Errorf("%w: %s", ErrExistingHostFile, key)
-		} else if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("config: checking %s: %w", key, err)
-		}
-	}
+	_, tracked := manifest[key]
+	untracked := !tracked
 
 	content := Header(file.Command, revision, now) + string(file.Body)
 	if err := atomicWrite(full, []byte(content), 0o644, untracked); err != nil {

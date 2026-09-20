@@ -401,3 +401,29 @@ CREATE TABLE acme_config (
     last_error TEXT,
     updated_at TEXT NOT NULL
 ) STRICT;
+
+-- Disks outside the array (Q72, doc 02 §4): Ignore-role or a later USB
+-- disk, mounted on request at /mnt/disks/<label>. Never written into
+-- array_disks (that table's role CHECK is parity|data|cache only). The
+-- backup_destination flag is whether this disk's mount is a local
+-- config-backup path (doc 10 §1); the mountpoint is also the stable
+-- bind-mount source for a container path.
+CREATE TABLE external_disks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    label TEXT NOT NULL CHECK (length(label) >= 1),
+    device TEXT NOT NULL,
+    filesystem TEXT NOT NULL,
+    fs_uuid TEXT NOT NULL,
+    wwn TEXT,
+    serial TEXT,
+    by_id_name TEXT,
+    weak_identity INTEGER NOT NULL CHECK (weak_identity IN (0, 1)),
+    mountpoint TEXT NOT NULL CHECK (mountpoint GLOB '/mnt/disks/*'),
+    backup_destination INTEGER NOT NULL CHECK (backup_destination IN (0, 1)),
+    UNIQUE (label),
+    UNIQUE (device),
+    UNIQUE (fs_uuid),
+    UNIQUE (mountpoint)
+) STRICT;
+
+CREATE INDEX external_disks_device_idx ON external_disks (device);
