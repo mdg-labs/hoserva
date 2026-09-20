@@ -21,6 +21,7 @@ import { GeneralSettingsPage } from "@/routes/settings/general";
 import { NotificationsSettingsPage } from "@/routes/settings/notifications";
 import { SchedulesSettingsPage } from "@/routes/settings/schedules";
 import { UpdatesSettingsPage } from "@/routes/settings/updates";
+import { NetworkSettingsPage } from "@/routes/settings/network";
 import { WelcomePage } from "@/routes/welcome";
 
 const STORAGE_NAV = (t: ReturnType<typeof useTranslation>["t"]) => [
@@ -103,7 +104,7 @@ function AuthenticatedRoutes(): React.ReactElement {
 
         <Route element={<SectionLayout items={SETTINGS_NAV(t)} />}>
           <Route path="settings" element={<GeneralSettingsPage />} />
-          <Route path="settings/network" element={<PlaceholderPage titleKey="settingsNav.network" />} />
+          <Route path="settings/network" element={<NetworkSettingsPage />} />
           <Route path="settings/notifications" element={<NotificationsSettingsPage />} />
           <Route path="settings/schedules" element={<SchedulesSettingsPage />} />
           <Route path="settings/backup" element={<PlaceholderPage titleKey="settingsNav.backup" />} />

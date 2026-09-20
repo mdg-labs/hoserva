@@ -7,10 +7,12 @@ type OperationName = string
 
 const (
 	ApplyHostConfigOperation                OperationName = "ApplyHostConfig"
+	ApplyNetworkSettingsOperation           OperationName = "ApplyNetworkSettings"
 	ApplyUpdateOperation                    OperationName = "ApplyUpdate"
 	BrowseShareOperation                    OperationName = "BrowseShare"
 	CancelJobOperation                      OperationName = "CancelJob"
 	CheckForUpdateOperation                 OperationName = "CheckForUpdate"
+	ConfirmNetworkSettingsOperation         OperationName = "ConfirmNetworkSettings"
 	ConfirmTotpOperation                    OperationName = "ConfirmTotp"
 	CreateArrayOperation                    OperationName = "CreateArray"
 	CreateFirstAdminOperation               OperationName = "CreateFirstAdmin"
@@ -27,6 +29,7 @@ const (
 	GetJobOperation                         OperationName = "GetJob"
 	GetJobLogOperation                      OperationName = "GetJobLog"
 	GetMetricsOperation                     OperationName = "GetMetrics"
+	GetNetworkSettingsOperation             OperationName = "GetNetworkSettings"
 	GetNotificationChannelOperation         OperationName = "GetNotificationChannel"
 	GetNotificationRoutingOperation         OperationName = "GetNotificationRouting"
 	GetParityOperation                      OperationName = "GetParity"
@@ -48,6 +51,7 @@ const (
 	LogoutOperation                         OperationName = "Logout"
 	MarkNotificationsReadOperation          OperationName = "MarkNotificationsRead"
 	RebootHostOperation                     OperationName = "RebootHost"
+	RegenerateTLSCertificateOperation       OperationName = "RegenerateTLSCertificate"
 	ResetUserPasswordOperation              OperationName = "ResetUserPassword"
 	ResumeJobOperation                      OperationName = "ResumeJob"
 	RollbackUpdateOperation                 OperationName = "RollbackUpdate"

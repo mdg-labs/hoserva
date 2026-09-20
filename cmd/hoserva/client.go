@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/ogen-go/ogen/ogenerrors"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
@@ -21,7 +22,7 @@ func (unixSecurity) ApiToken(_ context.Context, _ apiv1.OperationName) (apiv1.Ap
 }
 
 func (unixSecurity) SessionCookie(_ context.Context, _ apiv1.OperationName) (apiv1.SessionCookie, error) {
-	return apiv1.SessionCookie{}, fmt.Errorf("unix socket uses peer credentials, not a session cookie")
+	return apiv1.SessionCookie{}, ogenerrors.ErrSkipClientSecurity
 }
 
 func newAPIClient(socketPath string) (*apiv1.Client, error) {

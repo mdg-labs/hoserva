@@ -38,6 +38,17 @@ type Invoker interface {
 	//
 	// POST /doctor/host-config
 	ApplyHostConfig(ctx context.Context, request *ApplyHostConfigRequest) (*ApplyHostConfigResult, error)
+	// ApplyNetworkSettings invokes applyNetworkSettings operation.
+	//
+	// Address, DNS and gateway changes are written to one managed ifupdown file under
+	// `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert (Q75): unless
+	// `confirmNetworkSettings` is called over the new configuration before the window expires (or the
+	// daemon dies), the previous file is restored. Access scope and listen port apply without that window
+	// — access scope takes effect immediately; a listen-port change is persisted and used on the next
+	// daemon start. Addressing fields are refused when the backend is not ifupdown.
+	//
+	// PUT /settings/network
+	ApplyNetworkSettings(ctx context.Context, request *ApplyNetworkSettingsRequest) (*NetworkSettings, error)
 	// ApplyUpdate invokes applyUpdate operation.
 	//
 	// Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
@@ -69,6 +80,15 @@ type Invoker interface {
 	//
 	// POST /settings/updates/check
 	CheckForUpdate(ctx context.Context) (*UpdateStatus, error)
+	// ConfirmNetworkSettings invokes confirmNetworkSettings operation.
+	//
+	// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
+	// ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After
+	// the window expires, or if the daemon died before confirm, the previous configuration has already
+	// been restored and this returns `network_confirm_expired`.
+	//
+	// POST /settings/network/confirm
+	ConfirmNetworkSettings(ctx context.Context) (*NetworkSettings, error)
 	// ConfirmTotp invokes confirmTotp operation.
 	//
 	// Activates the pending secret enrollTotp created, once a code proves the signed-in user actually has
@@ -191,6 +211,15 @@ type Invoker interface {
 	//
 	// GET /metrics
 	GetMetrics(ctx context.Context, params GetMetricsParams) (*MetricSeries, error)
+	// GetNetworkSettings invokes getNetworkSettings operation.
+	//
+	// Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
+	// expiry, LAN-only access scope (Q10) and the listen port (doc 03 §8.2, Q75). Editing address, DNS or
+	// gateway is only possible when the backend is ifupdown; otherwise `editable` is false and
+	// `readOnlyReason` says why.
+	//
+	// GET /settings/network
+	GetNetworkSettings(ctx context.Context) (*NetworkSettings, error)
 	// GetNotificationChannel invokes getNotificationChannel operation.
 	//
 	// A single channel's current configuration, by id, secret excluded.
@@ -348,6 +377,13 @@ type Invoker interface {
 	//
 	// POST /settings/updates/reboot
 	RebootHost(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error)
+	// RegenerateTLSCertificate invokes regenerateTLSCertificate operation.
+	//
+	// Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new
+	// cert. Let's Encrypt DNS-01 is not implemented here.
+	//
+	// POST /settings/network/certificate
+	RegenerateTLSCertificate(ctx context.Context) (*NetworkSettings, error)
 	// ResetUserPassword invokes resetUserPassword operation.
 	//
 	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
@@ -674,6 +710,139 @@ func (c *Client) sendApplyHostConfig(ctx context.Context, request *ApplyHostConf
 
 	stage = "DecodeResponse"
 	result, err := decodeApplyHostConfigResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ApplyNetworkSettings invokes applyNetworkSettings operation.
+//
+// Address, DNS and gateway changes are written to one managed ifupdown file under
+// `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert (Q75): unless
+// `confirmNetworkSettings` is called over the new configuration before the window expires (or the
+// daemon dies), the previous file is restored. Access scope and listen port apply without that window
+// — access scope takes effect immediately; a listen-port change is persisted and used on the next
+// daemon start. Addressing fields are refused when the backend is not ifupdown.
+//
+// PUT /settings/network
+func (c *Client) ApplyNetworkSettings(ctx context.Context, request *ApplyNetworkSettingsRequest) (*NetworkSettings, error) {
+	res, err := c.sendApplyNetworkSettings(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendApplyNetworkSettings(ctx context.Context, request *ApplyNetworkSettingsRequest) (res *NetworkSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("applyNetworkSettings"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/settings/network"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ApplyNetworkSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/network"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeApplyNetworkSettingsRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ApplyNetworkSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ApplyNetworkSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeApplyNetworkSettingsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -1246,6 +1415,134 @@ func (c *Client) sendCheckForUpdate(ctx context.Context) (res *UpdateStatus, err
 
 	stage = "DecodeResponse"
 	result, err := decodeCheckForUpdateResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ConfirmNetworkSettings invokes confirmNetworkSettings operation.
+//
+// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
+// ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After
+// the window expires, or if the daemon died before confirm, the previous configuration has already
+// been restored and this returns `network_confirm_expired`.
+//
+// POST /settings/network/confirm
+func (c *Client) ConfirmNetworkSettings(ctx context.Context) (*NetworkSettings, error) {
+	res, err := c.sendConfirmNetworkSettings(ctx)
+	return res, err
+}
+
+func (c *Client) sendConfirmNetworkSettings(ctx context.Context) (res *NetworkSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("confirmNetworkSettings"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/settings/network/confirm"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ConfirmNetworkSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/network/confirm"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ConfirmNetworkSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ConfirmNetworkSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeConfirmNetworkSettingsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -3431,6 +3728,134 @@ func (c *Client) sendGetMetrics(ctx context.Context, params GetMetricsParams) (r
 
 	stage = "DecodeResponse"
 	result, err := decodeGetMetricsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetNetworkSettings invokes getNetworkSettings operation.
+//
+// Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
+// expiry, LAN-only access scope (Q10) and the listen port (doc 03 §8.2, Q75). Editing address, DNS or
+// gateway is only possible when the backend is ifupdown; otherwise `editable` is false and
+// `readOnlyReason` says why.
+//
+// GET /settings/network
+func (c *Client) GetNetworkSettings(ctx context.Context) (*NetworkSettings, error) {
+	res, err := c.sendGetNetworkSettings(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetNetworkSettings(ctx context.Context) (res *NetworkSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getNetworkSettings"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/settings/network"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetNetworkSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/network"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetNetworkSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetNetworkSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetNetworkSettingsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -6103,6 +6528,132 @@ func (c *Client) sendRebootHost(ctx context.Context, request *ConfirmUpdateReque
 
 	stage = "DecodeResponse"
 	result, err := decodeRebootHostResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RegenerateTLSCertificate invokes regenerateTLSCertificate operation.
+//
+// Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new
+// cert. Let's Encrypt DNS-01 is not implemented here.
+//
+// POST /settings/network/certificate
+func (c *Client) RegenerateTLSCertificate(ctx context.Context) (*NetworkSettings, error) {
+	res, err := c.sendRegenerateTLSCertificate(ctx)
+	return res, err
+}
+
+func (c *Client) sendRegenerateTLSCertificate(ctx context.Context) (res *NetworkSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("regenerateTLSCertificate"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/settings/network/certificate"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RegenerateTLSCertificateOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/network/certificate"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RegenerateTLSCertificateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RegenerateTLSCertificateOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRegenerateTLSCertificateResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

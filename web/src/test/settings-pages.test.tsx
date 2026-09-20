@@ -7,6 +7,7 @@ import { GeneralSettingsPage } from "@/routes/settings/general";
 import { NotificationsSettingsPage } from "@/routes/settings/notifications";
 import { SchedulesSettingsPage } from "@/routes/settings/schedules";
 import { UpdatesSettingsPage } from "@/routes/settings/updates";
+import { NetworkSettingsPage } from "@/routes/settings/network";
 import { MAINTENANCE_CHAIN_STEPS } from "@/lib/maintenance-chain";
 
 const mockGet = vi.fn();
@@ -346,6 +347,62 @@ describe("Settings pages", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Reboot" }));
     await waitFor(() => {
       expect(mockPost).toHaveBeenCalledWith("/settings/updates/reboot", { body: { confirm: true } });
+    });
+  });
+
+  it("loads network interfaces and applies a static address", async () => {
+    const networkPayload = {
+      backend: "ifupdown",
+      editable: true,
+      interfaces: [
+        {
+          name: "enp1s0",
+          mac: "02:00:00:00:00:01",
+          method: "dhcp",
+          address: "10.0.2.15",
+          prefix: 24,
+          gateway: "10.0.2.2",
+          dns: ["1.1.1.1"],
+          state: "up",
+        },
+      ],
+      certificate: {
+        kind: "self_signed",
+        notAfter: "2036-09-20T00:00:00.000Z",
+        daysRemaining: 3650,
+      },
+      allowAllSources: false,
+      listenPort: 8008,
+    };
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/settings/network") {
+        return Promise.resolve({ data: networkPayload, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    mockPut.mockResolvedValue({
+      data: {
+        ...networkPayload,
+        pending: { interface: "enp1s0", expiresAt: "2026-09-20T12:01:00.000Z", remainingSeconds: 60 },
+      },
+      response: { ok: true },
+    });
+
+    renderWithToast(<NetworkSettingsPage />);
+
+    expect(await screen.findByText("enp1s0")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Static"));
+    fireEvent.change(screen.getByLabelText("Address"), { target: { value: "192.0.2.1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      expect(mockPut).toHaveBeenCalledWith("/settings/network", {
+        body: expect.objectContaining({
+          interface: "enp1s0",
+          method: "static",
+          address: "192.0.2.1",
+        }),
+      });
     });
   });
 });

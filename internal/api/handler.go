@@ -88,6 +88,12 @@ type Handler struct {
 	ArrayStore *store.ArrayStore
 	// Shares is the share model (#46). Nil returns 501 from share operations.
 	Shares *share.Service
+	// Network is host ifupdown settings with confirm-or-revert (Q75, #114).
+	// Nil returns 501 from those operations.
+	Network *config.NetworkService
+	// HTTPS is certificate, access-scope and listen-port controls for the
+	// network settings page. Nil omits live values (tests).
+	HTTPS HTTPSControl
 }
 
 var _ apiv1.Handler = (*Handler)(nil)

@@ -171,6 +171,63 @@ func shareCmd() *cobra.Command {
 	return cmd
 }
 
+func networkCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "network",
+		Short: "Host network settings (Q75)",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.GetNetworkSettings(apiCtx()) }),
+	}
+	var iface, method, address, gateway string
+	var prefix int
+	var dns []string
+	var dhcp bool
+	apply := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply addressing with a 60-second confirm-or-revert",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := &apiv1.ApplyNetworkSettingsRequest{}
+			if iface == "" {
+				return fmt.Errorf("network apply requires --interface")
+			}
+			req.SetInterface(apiv1.NewOptString(iface))
+			if dhcp {
+				req.SetMethod(apiv1.NewOptNetworkAddressMethod(apiv1.NetworkAddressMethodDhcp))
+			} else if method != "" {
+				req.SetMethod(apiv1.NewOptNetworkAddressMethod(apiv1.NetworkAddressMethod(method)))
+			} else {
+				req.SetMethod(apiv1.NewOptNetworkAddressMethod(apiv1.NetworkAddressMethodStatic))
+			}
+			if address != "" {
+				req.SetAddress(apiv1.NewOptString(address))
+			}
+			if cmd.Flags().Changed("prefix") {
+				req.SetPrefix(apiv1.NewOptInt(prefix))
+			}
+			if cmd.Flags().Changed("gateway") {
+				req.SetGateway(apiv1.NewOptString(gateway))
+			}
+			if cmd.Flags().Changed("dns") {
+				req.DNS = dns
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.ApplyNetworkSettings(apiCtx(), req) })(cmd, args)
+		},
+	}
+	apply.Flags().StringVar(&iface, "interface", "", "Interface to reconfigure")
+	apply.Flags().BoolVar(&dhcp, "dhcp", false, "Use DHCP")
+	apply.Flags().StringVar(&method, "method", "", "dhcp or static")
+	apply.Flags().StringVar(&address, "address", "", "Static address without prefix")
+	apply.Flags().IntVar(&prefix, "prefix", 24, "Prefix length for a static address")
+	apply.Flags().StringVar(&gateway, "gateway", "", "Default gateway")
+	apply.Flags().StringSliceVar(&dns, "dns", nil, "DNS nameservers")
+	cmd.AddCommand(apply)
+	cmd.AddCommand(&cobra.Command{
+		Use:   "confirm",
+		Short: "Keep the pending network configuration",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.ConfirmNetworkSettings(apiCtx()) }),
+	})
+	return cmd
+}
+
 func syncCmd() *cobra.Command {
 	var dryRun, confirm bool
 	cmd := &cobra.Command{
