@@ -290,6 +290,9 @@ func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Shar
 		if rbErr := s.rollbackFiles(ctx, err); rbErr != nil {
 			return Share{}, fmt.Errorf("%w (restoring previous share: %v)", applyCause(err), rbErr)
 		}
+		if rbErr := s.restoreLiveMounts(ctx, prev); rbErr != nil {
+			return Share{}, fmt.Errorf("%w (restoring previous share: %v)", applyCause(err), rbErr)
+		}
 		return Share{}, applyCause(err)
 	}
 	return existing, nil
@@ -305,10 +308,20 @@ func (s *Service) Delete(ctx context.Context, name string, confirm bool) error {
 	if err != nil {
 		return err
 	}
+	state, _, _, err := s.shareFiles(ctx)
+	if err != nil {
+		return err
+	}
+	if err := s.Gen.CanWriteShareFiles(ctx, state); err != nil {
+		return err
+	}
 	if err := s.unmountShare(ctx, existing); err != nil {
 		return err
 	}
 	if err := s.Shares.Delete(ctx, name); err != nil {
+		if rbErr := s.restoreLiveMounts(ctx, existing); rbErr != nil {
+			return fmt.Errorf("%w (remounting share: %v)", err, rbErr)
+		}
 		return err
 	}
 	if err := s.apply(ctx, Share{}, false, ""); err != nil {
@@ -316,6 +329,9 @@ func (s *Service) Delete(ctx context.Context, name string, confirm bool) error {
 			return fmt.Errorf("%w (restoring deleted share: %v)", applyCause(err), insErr)
 		}
 		if rbErr := s.rollbackFiles(ctx, err); rbErr != nil {
+			return fmt.Errorf("%w (restoring deleted share: %v)", applyCause(err), rbErr)
+		}
+		if rbErr := s.restoreLiveMounts(ctx, existing); rbErr != nil {
 			return fmt.Errorf("%w (restoring deleted share: %v)", applyCause(err), rbErr)
 		}
 		return applyCause(err)
@@ -465,13 +481,6 @@ func applyCause(err error) error {
 	return err
 }
 
-func skipRefused(err error) error {
-	if err == nil || errors.Is(err, config.ErrUnmanaged) || errors.Is(err, config.ErrExistingHostFile) {
-		return nil
-	}
-	return err
-}
-
 func (s *Service) rollbackFiles(ctx context.Context, applyErr error) error {
 	var written *applyWrittenError
 	if !errors.As(applyErr, &written) {
@@ -489,13 +498,24 @@ func (s *Service) restoreGenerated(ctx context.Context) error {
 		return err
 	}
 	now := s.now()
-	if err := skipRefused(s.Gen.WritePoolMounts(ctx, state, applyCommand, 1, now)); err != nil {
+	if err := s.Gen.WritePoolMounts(ctx, state, applyCommand, 1, now); err != nil {
 		return err
 	}
-	if err := skipRefused(s.Gen.WriteSamba(ctx, smb, applyCommand, 1, now)); err != nil {
+	if err := s.Gen.WriteSamba(ctx, smb, applyCommand, 1, now); err != nil {
 		return err
 	}
-	return skipRefused(s.Gen.WriteNFS(ctx, nfs, applyCommand, 1, now))
+	return s.Gen.WriteNFS(ctx, nfs, applyCommand, 1, now)
+}
+
+func (s *Service) restoreLiveMounts(ctx context.Context, sh Share) error {
+	if s.Mounter == nil || sh.Name == "" {
+		return nil
+	}
+	state, _, _, err := s.shareFiles(ctx)
+	if err != nil {
+		return err
+	}
+	return s.syncLiveMounts(ctx, sh, sh.CacheMode == pool.CacheOnly, state)
 }
 
 func (s *Service) shareFiles(ctx context.Context) (config.PoolState, []config.SambaShare, []config.NFSShare, error) {
@@ -564,35 +584,40 @@ func (s *Service) apply(ctx context.Context, latest Share, mountLatest bool, pre
 		return &applyWrittenError{err: err}
 	}
 	if mountLatest && s.Mounter != nil && latest.Name != "" {
-		opts := pool.Options{MinFreeSpace: state.Options.MinFreeSpace}
-		mnt, err := pool.ShareMount(pool.Share{
+		dropMover := latest.CacheMode == pool.CacheOnly && prevMode != "" && prevMode != pool.CacheOnly
+		if err := s.syncLiveMounts(ctx, latest, dropMover, state); err != nil {
+			return &applyWrittenError{err: err}
+		}
+	}
+	return nil
+}
+
+func (s *Service) syncLiveMounts(ctx context.Context, latest Share, dropMover bool, state config.PoolState) error {
+	opts := pool.Options{MinFreeSpace: state.Options.MinFreeSpace}
+	mnt, err := pool.ShareMount(pool.Share{
+		Name:         latest.Name,
+		CacheMode:    latest.CacheMode,
+		CreatePolicy: latest.CreatePolicy,
+	}, state.DataDisks, state.CachePath, opts)
+	if err != nil {
+		return err
+	}
+	if err := s.Mounter.Mount(ctx, mnt); err != nil {
+		return err
+	}
+	if latest.CacheMode != pool.CacheOnly {
+		mover, err := pool.MoverTargetMount(pool.Share{
 			Name:         latest.Name,
 			CacheMode:    latest.CacheMode,
 			CreatePolicy: latest.CreatePolicy,
-		}, state.DataDisks, state.CachePath, opts)
+		}, state.DataDisks, opts)
 		if err != nil {
-			return &applyWrittenError{err: err}
+			return err
 		}
-		if err := s.Mounter.Mount(ctx, mnt); err != nil {
-			return &applyWrittenError{err: err}
-		}
-		if latest.CacheMode != pool.CacheOnly {
-			mover, err := pool.MoverTargetMount(pool.Share{
-				Name:         latest.Name,
-				CacheMode:    latest.CacheMode,
-				CreatePolicy: latest.CreatePolicy,
-			}, state.DataDisks, opts)
-			if err != nil {
-				return &applyWrittenError{err: err}
-			}
-			if err := s.Mounter.Mount(ctx, mover); err != nil {
-				return &applyWrittenError{err: err}
-			}
-		} else if prevMode != "" && prevMode != pool.CacheOnly {
-			if err := s.unmountMoverTarget(ctx, latest.Name); err != nil {
-				return &applyWrittenError{err: err}
-			}
-		}
+		return s.Mounter.Mount(ctx, mover)
+	}
+	if dropMover {
+		return s.unmountMoverTarget(ctx, latest.Name)
 	}
 	return nil
 }
