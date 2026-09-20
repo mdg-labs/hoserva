@@ -526,7 +526,7 @@ func (UnimplementedHandler) RebootHost(ctx context.Context, req *ConfirmUpdateRe
 // Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
 // hot-reloads it so new connections use the new cert. If Let's Encrypt DNS-01 is configured,
 // unattended renewal is disarmed so this self-signed cert is not overwritten without another explicit
-// setup. Let's Encrypt issue and renew are `configureLetsEncrypt`, not this operation.
+// setup. Let's Encrypt issue and renew are handled by `configureLetsEncrypt`, not by this operation.
 //
 // POST /settings/network/certificate
 func (UnimplementedHandler) RegenerateTLSCertificate(ctx context.Context) (r *NetworkSettings, _ error) {

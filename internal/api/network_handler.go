@@ -384,5 +384,8 @@ func letsEncryptStatusToAPI(st acme.Status) apiv1.LetsEncryptStatus {
 }
 
 func mapACMEError(err error) error {
-	return &apiError{code: "network_invalid_input", statusCode: 400, message: err.Error()}
+	if errors.Is(err, acme.ErrInvalidSetup) {
+		return &apiError{code: "network_invalid_input", statusCode: 400, message: err.Error()}
+	}
+	return fmt.Errorf("configuring Let's Encrypt: %w", err)
 }
