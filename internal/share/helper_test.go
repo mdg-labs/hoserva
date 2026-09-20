@@ -3,6 +3,7 @@ package share
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,9 +27,14 @@ type recordingMounter struct {
 	unmounts   []string
 	mountErr   error
 	unmountErr error
+	failMounts int
 }
 
 func (m *recordingMounter) Mount(_ context.Context, mnt pool.Mount) error {
+	if m.failMounts > 0 {
+		m.failMounts--
+		return errors.New("mount failed")
+	}
 	if m.mountErr != nil {
 		return m.mountErr
 	}
@@ -144,4 +150,52 @@ func readFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+func snapshotGenerated(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, rel := range []string{config.PathSamba, config.PathNFS} {
+		p := filepath.Join(root, rel)
+		b, err := os.ReadFile(p)
+		if err == nil {
+			out[rel] = string(b)
+			continue
+		}
+		if !os.IsNotExist(err) {
+			t.Fatalf("reading %s: %v", p, err)
+		}
+	}
+	unitDir := filepath.Join(root, "systemd", "system")
+	entries, err := os.ReadDir(unitDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out
+		}
+		t.Fatalf("reading %s: %v", unitDir, err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		rel := filepath.Join("systemd", "system", e.Name())
+		out[rel] = readFile(t, filepath.Join(root, rel))
+	}
+	return out
+}
+
+func assertGeneratedUnchanged(t *testing.T, before, after map[string]string) {
+	t.Helper()
+	if len(before) != len(after) {
+		t.Fatalf("generated file set changed: before %d files, after %d", len(before), len(after))
+	}
+	for rel, want := range before {
+		got, ok := after[rel]
+		if !ok {
+			t.Fatalf("generated file %s was removed", rel)
+		}
+		if got != want {
+			t.Fatalf("generated file %s changed:\n--- before ---\n%s\n--- after ---\n%s", rel, want, got)
+		}
+	}
 }

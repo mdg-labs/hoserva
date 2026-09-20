@@ -64,6 +64,9 @@ type handler struct {
 	maintenance bool
 
 	shares map[string]apiv1.Share
+
+	externalMu sync.Mutex
+	external   map[string]apiv1.ExternalDisk
 }
 
 var _ apiv1.Handler = (*handler)(nil)
@@ -104,6 +107,7 @@ func newHandler(scenario string) (*handler, error) {
 		updateStatus: defaultMockUpdateStatus(),
 		network:      defaultMockNetwork(),
 		shares:       make(map[string]apiv1.Share),
+		external:     make(map[string]apiv1.ExternalDisk),
 	}, nil
 }
 

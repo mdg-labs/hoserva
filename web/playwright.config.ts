@@ -8,7 +8,10 @@ import { defineConfig } from "@playwright/test";
 // `make mock` are the two ways to stand a target up, and duplicating
 // either one here as a Playwright `webServer` would be a second,
 // divergent copy of logic that already lives in scripts/vm/ and the
-// Makefile.
+// Makefile. The setup project signs in as the L3 admin
+// (HOSERVA_E2E_USERNAME / HOSERVA_E2E_PASSWORD, defaulting to the
+// credentials run-l3-suite.sh posts to POST /setup/admin) and writes
+// storageState for the chromium project.
 const baseURL = process.env.HOSERVA_E2E_BASE_URL ?? "http://127.0.0.1:5173";
 
 export default defineConfig({
@@ -30,8 +33,16 @@ export default defineConfig({
   },
   projects: [
     {
+      name: "setup",
+      testMatch: /auth\.setup\.ts/,
+    },
+    {
       name: "chromium",
-      use: { browserName: "chromium" },
+      dependencies: ["setup"],
+      use: {
+        browserName: "chromium",
+        storageState: "e2e/.auth/user.json",
+      },
     },
   ],
 });

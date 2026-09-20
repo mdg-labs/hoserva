@@ -183,6 +183,20 @@ func encodeEnrollTotpRequest(
 	return nil
 }
 
+func encodeFormatExternalDiskRequest(
+	req *FormatExternalDiskRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeImportConfigRequest(
 	req *ImportConfigReq,
 	r *http.Request,
@@ -247,6 +261,20 @@ func encodeMarkNotificationsReadRequest(
 
 func encodeRebootHostRequest(
 	req *ConfirmUpdateRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeRegisterExternalDiskRequest(
+	req *RegisterExternalDiskRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"
@@ -331,6 +359,20 @@ func encodeStartSyncRequest(
 
 func encodeStopArrayRequest(
 	req *StopArrayRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpdateExternalDiskRequest(
+	req *UpdateExternalDiskRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

@@ -1500,6 +1500,177 @@ func (s ExportConfigOK) Read(p []byte) (n int, err error) {
 	return s.Data.Read(p)
 }
 
+// Ref: #/components/schemas/ExternalDisk
+type ExternalDisk struct {
+	Label  ExternalDiskLabel `json:"label"`
+	Device string            `json:"device"`
+	// /mnt/disks/ — mounted on request, never automatically.
+	MountPoint string `json:"mountPoint"`
+	// The same /mnt/disks/ path, exposed as a stable bind-mount source for a container (Q72, Unraid
+	// Unassigned Devices convention).
+	ContainerPath string `json:"containerPath"`
+	Mounted       bool   `json:"mounted"`
+	// Whether this disk's mount is a local backup destination (doc 10 §1).
+	BackupDestination bool `json:"backupDestination"`
+	// Always false — the boot device is never offered as external.
+	Boot       bool        `json:"boot"`
+	Filesystem OptString   `json:"filesystem"`
+	FsUuid     OptString   `json:"fsUuid"`
+	SizeBytes  OptNilInt64 `json:"sizeBytes"`
+	Model      OptString   `json:"model"`
+	Serial     OptString   `json:"serial"`
+}
+
+// GetLabel returns the value of Label.
+func (s *ExternalDisk) GetLabel() ExternalDiskLabel {
+	return s.Label
+}
+
+// GetDevice returns the value of Device.
+func (s *ExternalDisk) GetDevice() string {
+	return s.Device
+}
+
+// GetMountPoint returns the value of MountPoint.
+func (s *ExternalDisk) GetMountPoint() string {
+	return s.MountPoint
+}
+
+// GetContainerPath returns the value of ContainerPath.
+func (s *ExternalDisk) GetContainerPath() string {
+	return s.ContainerPath
+}
+
+// GetMounted returns the value of Mounted.
+func (s *ExternalDisk) GetMounted() bool {
+	return s.Mounted
+}
+
+// GetBackupDestination returns the value of BackupDestination.
+func (s *ExternalDisk) GetBackupDestination() bool {
+	return s.BackupDestination
+}
+
+// GetBoot returns the value of Boot.
+func (s *ExternalDisk) GetBoot() bool {
+	return s.Boot
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *ExternalDisk) GetFilesystem() OptString {
+	return s.Filesystem
+}
+
+// GetFsUuid returns the value of FsUuid.
+func (s *ExternalDisk) GetFsUuid() OptString {
+	return s.FsUuid
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *ExternalDisk) GetSizeBytes() OptNilInt64 {
+	return s.SizeBytes
+}
+
+// GetModel returns the value of Model.
+func (s *ExternalDisk) GetModel() OptString {
+	return s.Model
+}
+
+// GetSerial returns the value of Serial.
+func (s *ExternalDisk) GetSerial() OptString {
+	return s.Serial
+}
+
+// SetLabel sets the value of Label.
+func (s *ExternalDisk) SetLabel(val ExternalDiskLabel) {
+	s.Label = val
+}
+
+// SetDevice sets the value of Device.
+func (s *ExternalDisk) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetMountPoint sets the value of MountPoint.
+func (s *ExternalDisk) SetMountPoint(val string) {
+	s.MountPoint = val
+}
+
+// SetContainerPath sets the value of ContainerPath.
+func (s *ExternalDisk) SetContainerPath(val string) {
+	s.ContainerPath = val
+}
+
+// SetMounted sets the value of Mounted.
+func (s *ExternalDisk) SetMounted(val bool) {
+	s.Mounted = val
+}
+
+// SetBackupDestination sets the value of BackupDestination.
+func (s *ExternalDisk) SetBackupDestination(val bool) {
+	s.BackupDestination = val
+}
+
+// SetBoot sets the value of Boot.
+func (s *ExternalDisk) SetBoot(val bool) {
+	s.Boot = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *ExternalDisk) SetFilesystem(val OptString) {
+	s.Filesystem = val
+}
+
+// SetFsUuid sets the value of FsUuid.
+func (s *ExternalDisk) SetFsUuid(val OptString) {
+	s.FsUuid = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *ExternalDisk) SetSizeBytes(val OptNilInt64) {
+	s.SizeBytes = val
+}
+
+// SetModel sets the value of Model.
+func (s *ExternalDisk) SetModel(val OptString) {
+	s.Model = val
+}
+
+// SetSerial sets the value of Serial.
+func (s *ExternalDisk) SetSerial(val OptString) {
+	s.Serial = val
+}
+
+type ExternalDiskLabel string
+
+// Ref: #/components/schemas/FormatExternalDiskRequest
+type FormatExternalDiskRequest struct {
+	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
+	// Exact typed confirmation for this disk (`disk.TopologyPlan.Confirmation`): `ERASE /dev/sdX`. A wrong
+	// or missing string is refused and formats nothing.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *FormatExternalDiskRequest) GetFilesystem() OptArrayDiskFilesystem {
+	return s.Filesystem
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *FormatExternalDiskRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *FormatExternalDiskRequest) SetFilesystem(val OptArrayDiskFilesystem) {
+	s.Filesystem = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *FormatExternalDiskRequest) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
 // Ref: #/components/schemas/GeneralSettings
 type GeneralSettings struct {
 	// Configured host name, if any.
@@ -2278,6 +2449,20 @@ func (s *ListDisksOK) GetDisks() []DiskInventoryEntry {
 
 // SetDisks sets the value of Disks.
 func (s *ListDisksOK) SetDisks(val []DiskInventoryEntry) {
+	s.Disks = val
+}
+
+type ListExternalDisksOK struct {
+	Disks []ExternalDisk `json:"disks"`
+}
+
+// GetDisks returns the value of Disks.
+func (s *ListExternalDisksOK) GetDisks() []ExternalDisk {
+	return s.Disks
+}
+
+// SetDisks sets the value of Disks.
+func (s *ListExternalDisksOK) SetDisks(val []ExternalDisk) {
 	s.Disks = val
 }
 
@@ -6176,6 +6361,43 @@ func (s *PoolStatus) SetDisks(val []PoolDiskEntry) {
 	s.Disks = val
 }
 
+// Ref: #/components/schemas/RegisterExternalDiskRequest
+type RegisterExternalDiskRequest struct {
+	Device            string            `json:"device"`
+	Label             ExternalDiskLabel `json:"label"`
+	BackupDestination OptBool           `json:"backupDestination"`
+}
+
+// GetDevice returns the value of Device.
+func (s *RegisterExternalDiskRequest) GetDevice() string {
+	return s.Device
+}
+
+// GetLabel returns the value of Label.
+func (s *RegisterExternalDiskRequest) GetLabel() ExternalDiskLabel {
+	return s.Label
+}
+
+// GetBackupDestination returns the value of BackupDestination.
+func (s *RegisterExternalDiskRequest) GetBackupDestination() OptBool {
+	return s.BackupDestination
+}
+
+// SetDevice sets the value of Device.
+func (s *RegisterExternalDiskRequest) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetLabel sets the value of Label.
+func (s *RegisterExternalDiskRequest) SetLabel(val ExternalDiskLabel) {
+	s.Label = val
+}
+
+// SetBackupDestination sets the value of BackupDestination.
+func (s *RegisterExternalDiskRequest) SetBackupDestination(val OptBool) {
+	s.BackupDestination = val
+}
+
 // ResetUserPasswordNoContent is response for ResetUserPassword operation.
 type ResetUserPasswordNoContent struct{}
 
@@ -7365,6 +7587,21 @@ func (s *UpdateChannel) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/UpdateExternalDiskRequest
+type UpdateExternalDiskRequest struct {
+	BackupDestination OptBool `json:"backupDestination"`
+}
+
+// GetBackupDestination returns the value of BackupDestination.
+func (s *UpdateExternalDiskRequest) GetBackupDestination() OptBool {
+	return s.BackupDestination
+}
+
+// SetBackupDestination sets the value of BackupDestination.
+func (s *UpdateExternalDiskRequest) SetBackupDestination(val OptBool) {
+	s.BackupDestination = val
 }
 
 // Ref: #/components/schemas/UpdateGeneralSettingsRequest

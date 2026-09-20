@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,5 +266,33 @@ func TestWritePoolMounts_ReconciliationPreservesUnmanagedUnits(t *testing.T) {
 	}
 	if status, err := g.Check(ctx, shareUnit); err != nil || status != StatusUnmanaged {
 		t.Fatalf("Check(%s): got (%v, %v), want (StatusUnmanaged, nil)", shareUnit, status, err)
+	}
+}
+
+func TestCanWriteShareFiles_RefusesUnmanagedExports(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	state := PoolState{
+		DataDisks: []string{"/mnt/disk1"},
+		CachePath: "/mnt/cache",
+		Shares: []PoolShare{
+			{Name: "media", CacheMode: pool.ArrayOnly, CreatePolicy: pool.KeepFoldersTogether},
+		},
+	}
+	if err := g.WritePoolMounts(ctx, state, "share", 1, now); err != nil {
+		t.Fatalf("WritePoolMounts: %v", err)
+	}
+	if err := g.WriteSamba(ctx, []SambaShare{{Name: "media"}}, "share", 1, now); err != nil {
+		t.Fatalf("WriteSamba: %v", err)
+	}
+	if err := g.WriteNFS(ctx, nil, "share", 1, now); err != nil {
+		t.Fatalf("WriteNFS: %v", err)
+	}
+	if err := g.KeepUnmanaged(ctx, PathNFS); err != nil {
+		t.Fatalf("KeepUnmanaged: %v", err)
+	}
+	if err := g.CanWriteShareFiles(ctx, state); !errors.Is(err, ErrUnmanaged) {
+		t.Fatalf("CanWriteShareFiles = %v, want ErrUnmanaged", err)
 	}
 }

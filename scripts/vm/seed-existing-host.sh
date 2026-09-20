@@ -37,7 +37,9 @@ vm_ssh 'sudo systemctl enable --now smbd nfs-server'
 
 echo "vm-seed-host[$HOSERVA_LAB_ID]: verifying seeded services before install"
 vm_ssh 'testparm -s --section-name=hoserva-existing >/dev/null'
-vm_ssh 'exportfs | grep -q /export/hoserva-existing'
+# /usr/sbin is not on a non-root guest PATH (Debian 13 cloud image). A
+# missing binary must fail as "No such file", not "command not found".
+vm_ssh '/usr/sbin/exportfs | grep -q /export/hoserva-existing'
 vm_ssh 'findmnt /mnt/hoserva-existing >/dev/null'
 vm_ssh 'grep -qx hello-samba /srv/hoserva-existing/hello.txt'
 vm_ssh 'grep -qx hello-nfs /export/hoserva-existing/hello.txt'

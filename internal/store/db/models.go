@@ -49,6 +49,20 @@ type AuditLog struct {
 	At     string         `json:"at"`
 }
 
+type ExternalDisk struct {
+	ID                int64          `json:"id"`
+	Label             string         `json:"label"`
+	Device            string         `json:"device"`
+	Filesystem        string         `json:"filesystem"`
+	FsUuid            string         `json:"fs_uuid"`
+	Wwn               sql.NullString `json:"wwn"`
+	Serial            sql.NullString `json:"serial"`
+	ByIDName          sql.NullString `json:"by_id_name"`
+	WeakIdentity      int64          `json:"weak_identity"`
+	Mountpoint        string         `json:"mountpoint"`
+	BackupDestination int64          `json:"backup_destination"`
+}
+
 type HostConfig struct {
 	Kind      string `json:"kind"`
 	Decision  string `json:"decision"`

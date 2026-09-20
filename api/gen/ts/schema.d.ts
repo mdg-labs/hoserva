@@ -911,6 +911,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/disks/external": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List external disks
+         * @description Disks outside the array (Q72, doc 02 §4, doc 03 §3.3): Ignore-role or a later USB disk, never a pool or parity member. Registered external disks plus inventory disks that are not the boot device and not in the array. Nothing is mounted by this call.
+         */
+        get: operations["listExternalDisks"];
+        put?: never;
+        /**
+         * Register a disk as external
+         * @description Assigns a non-array, non-boot disk the Ignore/external role (Q72) with a label used as `/mnt/disks/<label>`. Does not mount or format. The boot device is refused.
+         */
+        post: operations["registerExternalDisk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/disks/external/{label}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                label: components["parameters"]["ExternalLabel"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update an external disk
+         * @description Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
+         */
+        patch: operations["updateExternalDisk"];
+        trace?: never;
+    };
+    "/disks/external/{label}/mount": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                label: components["parameters"]["ExternalLabel"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mount an external disk
+         * @description Mounts the disk by filesystem UUID at `/mnt/disks/<label>` (Q21, Q72). Nothing mounts automatically on plug-in. The boot device and array disks are refused.
+         */
+        post: operations["mountExternalDisk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/disks/external/{label}/eject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                label: components["parameters"]["ExternalLabel"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Eject an external disk
+         * @description Unmounts `/mnt/disks/<label>`, then spins the disk down (Q72).
+         */
+        post: operations["ejectExternalDisk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/disks/external/{label}/format": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                label: components["parameters"]["ExternalLabel"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Format an external disk
+         * @description Formats the disk after the same typed confirmation array setup uses (`disk.TopologyPlan.Confirmation`, doc 03 §3.1 step 6). The boot device is never offered. A wrong or missing confirmation is refused with `confirmation_required` and formats nothing.
+         */
+        post: operations["formatExternalDisk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/disks/wake-events": {
         parameters: {
             query?: never;
@@ -1913,6 +2025,41 @@ export interface components {
             /** @description True when the filesystem label matches Unraid's `diskN` / `parity` / `cache` naming (doc 05) — a conservative heuristic that never mounts the disk to look for `super.dat`. */
             looksLikeUnraid?: boolean;
         };
+        /** @description Path segment under `/mnt/disks/` (Q72). */
+        ExternalDiskLabel: string;
+        ExternalDisk: {
+            label: components["schemas"]["ExternalDiskLabel"];
+            device: string;
+            /** @description /mnt/disks/<label> — mounted on request, never automatically. */
+            mountPoint: string;
+            /** @description The same /mnt/disks/<label> path, exposed as a stable bind-mount source for a container (Q72, Unraid Unassigned Devices convention). */
+            containerPath: string;
+            mounted: boolean;
+            /** @description Whether this disk's mount is a local backup destination (doc 10 §1). */
+            backupDestination: boolean;
+            /** @description Always false — the boot device is never offered as external. */
+            boot: boolean;
+            filesystem?: string;
+            fsUuid?: string;
+            /** Format: int64 */
+            sizeBytes?: number | null;
+            model?: string;
+            serial?: string;
+        };
+        RegisterExternalDiskRequest: {
+            device: string;
+            label: components["schemas"]["ExternalDiskLabel"];
+            /** @default false */
+            backupDestination: boolean;
+        };
+        UpdateExternalDiskRequest: {
+            backupDestination?: boolean;
+        };
+        FormatExternalDiskRequest: {
+            filesystem?: components["schemas"]["ArrayDiskFilesystem"];
+            /** @description Exact typed confirmation for this disk (`disk.TopologyPlan.Confirmation`): `ERASE /dev/sdX`. A wrong or missing string is refused and formats nothing. */
+            confirmation: string;
+        };
         /**
          * @description A role the array-setup wizard assigns (doc 03 §3.1 step 2). Ignore is omitted — those disks never appear in the plan.
          * @enum {string}
@@ -2138,6 +2285,7 @@ export interface components {
         EventType: components["schemas"]["NotificationEventType"];
         Username: string;
         ShareName: components["schemas"]["ShareName"];
+        ExternalLabel: components["schemas"]["ExternalDiskLabel"];
     };
     requestBodies: never;
     headers: never;
@@ -3390,6 +3538,154 @@ export interface operations {
                     "application/json": {
                         disks: components["schemas"]["DiskInventoryEntry"][];
                     };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listExternalDisks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description External disks. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        disks: components["schemas"]["ExternalDisk"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    registerExternalDisk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterExternalDiskRequest"];
+            };
+        };
+        responses: {
+            /** @description The registered external disk. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalDisk"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateExternalDisk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                label: components["parameters"]["ExternalLabel"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateExternalDiskRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated external disk. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalDisk"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    mountExternalDisk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                label: components["parameters"]["ExternalLabel"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The mounted external disk. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalDisk"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    ejectExternalDisk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                label: components["parameters"]["ExternalLabel"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ejected external disk. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalDisk"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    formatExternalDisk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                label: components["parameters"]["ExternalLabel"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FormatExternalDiskRequest"];
+            };
+        };
+        responses: {
+            /** @description The formatted external disk. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalDisk"];
                 };
             };
             default: components["responses"]["Error"];

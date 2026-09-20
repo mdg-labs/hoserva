@@ -529,6 +529,166 @@ func decodeDisableUserTotpParams(args [1]string, argsEscaped bool, r *http.Reque
 	return params, nil
 }
 
+// EjectExternalDiskParams is parameters of ejectExternalDisk operation.
+type EjectExternalDiskParams struct {
+	Label ExternalDiskLabel
+}
+
+func unpackEjectExternalDiskParams(packed middleware.Parameters) (params EjectExternalDiskParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "label",
+			In:   "path",
+		}
+		params.Label = packed[key].(ExternalDiskLabel)
+	}
+	return params
+}
+
+func decodeEjectExternalDiskParams(args [1]string, argsEscaped bool, r *http.Request) (params EjectExternalDiskParams, _ error) {
+	// Decode path: label.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "label",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				var paramsDotLabelVal string
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToString(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotLabelVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.Label = ExternalDiskLabel(paramsDotLabelVal)
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := params.Label.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "label",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// FormatExternalDiskParams is parameters of formatExternalDisk operation.
+type FormatExternalDiskParams struct {
+	Label ExternalDiskLabel
+}
+
+func unpackFormatExternalDiskParams(packed middleware.Parameters) (params FormatExternalDiskParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "label",
+			In:   "path",
+		}
+		params.Label = packed[key].(ExternalDiskLabel)
+	}
+	return params
+}
+
+func decodeFormatExternalDiskParams(args [1]string, argsEscaped bool, r *http.Request) (params FormatExternalDiskParams, _ error) {
+	// Decode path: label.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "label",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				var paramsDotLabelVal string
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToString(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotLabelVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.Label = ExternalDiskLabel(paramsDotLabelVal)
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := params.Label.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "label",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // GetJobParams is parameters of getJob operation.
 type GetJobParams struct {
 	JobId uuid.UUID
@@ -1232,6 +1392,86 @@ func decodeListJobsParams(args [0]string, argsEscaped bool, r *http.Request) (pa
 	return params, nil
 }
 
+// MountExternalDiskParams is parameters of mountExternalDisk operation.
+type MountExternalDiskParams struct {
+	Label ExternalDiskLabel
+}
+
+func unpackMountExternalDiskParams(packed middleware.Parameters) (params MountExternalDiskParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "label",
+			In:   "path",
+		}
+		params.Label = packed[key].(ExternalDiskLabel)
+	}
+	return params
+}
+
+func decodeMountExternalDiskParams(args [1]string, argsEscaped bool, r *http.Request) (params MountExternalDiskParams, _ error) {
+	// Decode path: label.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "label",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				var paramsDotLabelVal string
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToString(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotLabelVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.Label = ExternalDiskLabel(paramsDotLabelVal)
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := params.Label.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "label",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // ResetUserPasswordParams is parameters of resetUserPassword operation.
 type ResetUserPasswordParams struct {
 	Username string
@@ -1525,6 +1765,86 @@ func decodeUnlockUserParams(args [1]string, argsEscaped bool, r *http.Request) (
 	}(); err != nil {
 		return params, &ogenerrors.DecodeParamError{
 			Name: "username",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// UpdateExternalDiskParams is parameters of updateExternalDisk operation.
+type UpdateExternalDiskParams struct {
+	Label ExternalDiskLabel
+}
+
+func unpackUpdateExternalDiskParams(packed middleware.Parameters) (params UpdateExternalDiskParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "label",
+			In:   "path",
+		}
+		params.Label = packed[key].(ExternalDiskLabel)
+	}
+	return params
+}
+
+func decodeUpdateExternalDiskParams(args [1]string, argsEscaped bool, r *http.Request) (params UpdateExternalDiskParams, _ error) {
+	// Decode path: label.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "label",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				var paramsDotLabelVal string
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToString(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotLabelVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.Label = ExternalDiskLabel(paramsDotLabelVal)
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := params.Label.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "label",
 			In:   "path",
 			Err:  err,
 		}
