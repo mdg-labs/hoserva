@@ -81,6 +81,13 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.ApplyUpdateOperation:                    RoleAdmin,
 	apiv1.RollbackUpdateOperation:                 RoleAdmin,
 	apiv1.RebootHostOperation:                     RoleAdmin,
+	apiv1.ListSharesOperation:                     RoleViewer,
+	apiv1.GetShareOperation:                       RoleViewer,
+	apiv1.BrowseShareOperation:                    RoleViewer,
+	apiv1.CreateShareOperation:                    RoleAdmin,
+	apiv1.UpdateShareOperation:                    RoleAdmin,
+	apiv1.DeleteShareOperation:                    RoleAdmin,
+	apiv1.DeleteShareDataOperation:                RoleAdmin,
 }
 
 // RoleFor returns operation's required role, and false if the operation

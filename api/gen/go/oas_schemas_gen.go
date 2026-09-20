@@ -330,6 +330,22 @@ func (s *BlockingJob) SetClass(val JobClass) {
 	s.Class = val
 }
 
+// Ref: #/components/schemas/ConfirmShareRequest
+type ConfirmShareRequest struct {
+	// Must be true — removes the share definition only.
+	Confirm bool `json:"confirm"`
+}
+
+// GetConfirm returns the value of Confirm.
+func (s *ConfirmShareRequest) GetConfirm() bool {
+	return s.Confirm
+}
+
+// SetConfirm sets the value of Confirm.
+func (s *ConfirmShareRequest) SetConfirm(val bool) {
+	s.Confirm = val
+}
+
 // ConfirmTotpNoContent is response for ConfirmTotp operation.
 type ConfirmTotpNoContent struct{}
 
@@ -622,6 +638,54 @@ func (s *CreateNotificationChannelRequest) SetWebhookAuthHeaderName(val OptStrin
 	s.WebhookAuthHeaderName = val
 }
 
+// Ref: #/components/schemas/CreateShareRequest
+type CreateShareRequest struct {
+	Name         ShareName            `json:"name"`
+	CacheMode    OptShareCacheMode    `json:"cacheMode"`
+	CreatePolicy OptArrayCreatePolicy `json:"createPolicy"`
+	Smb          OptShareSMB          `json:"smb"`
+}
+
+// GetName returns the value of Name.
+func (s *CreateShareRequest) GetName() ShareName {
+	return s.Name
+}
+
+// GetCacheMode returns the value of CacheMode.
+func (s *CreateShareRequest) GetCacheMode() OptShareCacheMode {
+	return s.CacheMode
+}
+
+// GetCreatePolicy returns the value of CreatePolicy.
+func (s *CreateShareRequest) GetCreatePolicy() OptArrayCreatePolicy {
+	return s.CreatePolicy
+}
+
+// GetSmb returns the value of Smb.
+func (s *CreateShareRequest) GetSmb() OptShareSMB {
+	return s.Smb
+}
+
+// SetName sets the value of Name.
+func (s *CreateShareRequest) SetName(val ShareName) {
+	s.Name = val
+}
+
+// SetCacheMode sets the value of CacheMode.
+func (s *CreateShareRequest) SetCacheMode(val OptShareCacheMode) {
+	s.CacheMode = val
+}
+
+// SetCreatePolicy sets the value of CreatePolicy.
+func (s *CreateShareRequest) SetCreatePolicy(val OptArrayCreatePolicy) {
+	s.CreatePolicy = val
+}
+
+// SetSmb sets the value of Smb.
+func (s *CreateShareRequest) SetSmb(val OptShareSMB) {
+	s.Smb = val
+}
+
 // Ref: #/components/schemas/DailyWakeCount
 type DailyWakeCount struct {
 	Device string `json:"device"`
@@ -699,6 +763,28 @@ func (s *DebianPackageUpdate) SetCandidateVersion(val string) {
 
 // DeleteNotificationChannelNoContent is response for DeleteNotificationChannel operation.
 type DeleteNotificationChannelNoContent struct{}
+
+// DeleteShareDataNoContent is response for DeleteShareData operation.
+type DeleteShareDataNoContent struct{}
+
+// Ref: #/components/schemas/DeleteShareDataRequest
+type DeleteShareDataRequest struct {
+	// Must equal the share name (doc 03 §4.2 typed-confirm).
+	Confirmation string `json:"confirmation"`
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *DeleteShareDataRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *DeleteShareDataRequest) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
+// DeleteShareNoContent is response for DeleteShare operation.
+type DeleteShareNoContent struct{}
 
 // DisableUserTotpNoContent is response for DisableUserTotp operation.
 type DisableUserTotpNoContent struct{}
@@ -1920,6 +2006,20 @@ func (s *ListNotificationsOK) SetGroups(val []NotificationGroup) {
 // SetUnreadCount sets the value of UnreadCount.
 func (s *ListNotificationsOK) SetUnreadCount(val int) {
 	s.UnreadCount = val
+}
+
+type ListSharesOK struct {
+	Shares []Share `json:"shares"`
+}
+
+// GetShares returns the value of Shares.
+func (s *ListSharesOK) GetShares() []Share {
+	return s.Shares
+}
+
+// SetShares sets the value of Shares.
+func (s *ListSharesOK) SetShares(val []Share) {
+	s.Shares = val
 }
 
 // Ref: #/components/schemas/LoginRequest
@@ -3526,6 +3626,52 @@ func (o OptInt32) Or(d int32) int32 {
 	return d
 }
 
+// NewOptInt64 returns new OptInt64 with value set to v.
+func NewOptInt64(v int64) OptInt64 {
+	return OptInt64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptInt64 is optional int64.
+type OptInt64 struct {
+	Value int64
+	Set   bool
+}
+
+// IsSet returns true if OptInt64 was set.
+func (o OptInt64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptInt64) Reset() {
+	var v int64
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptInt64) SetTo(v int64) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptInt64) Get() (v int64, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptInt64) Or(d int64) int64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptJobClass returns new OptJobClass with value set to v.
 func NewOptJobClass(v JobClass) OptJobClass {
 	return OptJobClass{
@@ -4136,6 +4282,98 @@ func (o OptScheduleFrequency) Get() (v ScheduleFrequency, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptScheduleFrequency) Or(d ScheduleFrequency) ScheduleFrequency {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptShareCacheMode returns new OptShareCacheMode with value set to v.
+func NewOptShareCacheMode(v ShareCacheMode) OptShareCacheMode {
+	return OptShareCacheMode{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptShareCacheMode is optional ShareCacheMode.
+type OptShareCacheMode struct {
+	Value ShareCacheMode
+	Set   bool
+}
+
+// IsSet returns true if OptShareCacheMode was set.
+func (o OptShareCacheMode) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptShareCacheMode) Reset() {
+	var v ShareCacheMode
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptShareCacheMode) SetTo(v ShareCacheMode) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptShareCacheMode) Get() (v ShareCacheMode, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptShareCacheMode) Or(d ShareCacheMode) ShareCacheMode {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptShareSMB returns new OptShareSMB with value set to v.
+func NewOptShareSMB(v ShareSMB) OptShareSMB {
+	return OptShareSMB{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptShareSMB is optional ShareSMB.
+type OptShareSMB struct {
+	Value ShareSMB
+	Set   bool
+}
+
+// IsSet returns true if OptShareSMB was set.
+func (o OptShareSMB) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptShareSMB) Reset() {
+	var v ShareSMB
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptShareSMB) SetTo(v ShareSMB) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptShareSMB) Get() (v ShareSMB, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptShareSMB) Or(d ShareSMB) ShareSMB {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -5215,6 +5453,340 @@ func (s *SetupStatus) SetAdminExists(val bool) {
 	s.AdminExists = val
 }
 
+// Ref: #/components/schemas/Share
+type Share struct {
+	Name ShareName `json:"name"`
+	// The share's mount path (`/mnt/user/<name>`, D10).
+	Path         string            `json:"path"`
+	CacheMode    ShareCacheMode    `json:"cacheMode"`
+	CreatePolicy ArrayCreatePolicy `json:"createPolicy"`
+	Smb          ShareSMB          `json:"smb"`
+	CreatedAt    time.Time         `json:"createdAt"`
+	UpdatedAt    time.Time         `json:"updatedAt"`
+}
+
+// GetName returns the value of Name.
+func (s *Share) GetName() ShareName {
+	return s.Name
+}
+
+// GetPath returns the value of Path.
+func (s *Share) GetPath() string {
+	return s.Path
+}
+
+// GetCacheMode returns the value of CacheMode.
+func (s *Share) GetCacheMode() ShareCacheMode {
+	return s.CacheMode
+}
+
+// GetCreatePolicy returns the value of CreatePolicy.
+func (s *Share) GetCreatePolicy() ArrayCreatePolicy {
+	return s.CreatePolicy
+}
+
+// GetSmb returns the value of Smb.
+func (s *Share) GetSmb() ShareSMB {
+	return s.Smb
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *Share) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// GetUpdatedAt returns the value of UpdatedAt.
+func (s *Share) GetUpdatedAt() time.Time {
+	return s.UpdatedAt
+}
+
+// SetName sets the value of Name.
+func (s *Share) SetName(val ShareName) {
+	s.Name = val
+}
+
+// SetPath sets the value of Path.
+func (s *Share) SetPath(val string) {
+	s.Path = val
+}
+
+// SetCacheMode sets the value of CacheMode.
+func (s *Share) SetCacheMode(val ShareCacheMode) {
+	s.CacheMode = val
+}
+
+// SetCreatePolicy sets the value of CreatePolicy.
+func (s *Share) SetCreatePolicy(val ArrayCreatePolicy) {
+	s.CreatePolicy = val
+}
+
+// SetSmb sets the value of Smb.
+func (s *Share) SetSmb(val ShareSMB) {
+	s.Smb = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *Share) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// SetUpdatedAt sets the value of UpdatedAt.
+func (s *Share) SetUpdatedAt(val time.Time) {
+	s.UpdatedAt = val
+}
+
+// Ref: #/components/schemas/ShareBrowseEntry
+type ShareBrowseEntry struct {
+	Name      string               `json:"name"`
+	Type      ShareBrowseEntryType `json:"type"`
+	SizeBytes OptInt64             `json:"sizeBytes"`
+	// Holding disk from mergerfs `user.mergerfs.basepath`. Empty when the xattr is absent.
+	Disk OptString `json:"disk"`
+}
+
+// GetName returns the value of Name.
+func (s *ShareBrowseEntry) GetName() string {
+	return s.Name
+}
+
+// GetType returns the value of Type.
+func (s *ShareBrowseEntry) GetType() ShareBrowseEntryType {
+	return s.Type
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *ShareBrowseEntry) GetSizeBytes() OptInt64 {
+	return s.SizeBytes
+}
+
+// GetDisk returns the value of Disk.
+func (s *ShareBrowseEntry) GetDisk() OptString {
+	return s.Disk
+}
+
+// SetName sets the value of Name.
+func (s *ShareBrowseEntry) SetName(val string) {
+	s.Name = val
+}
+
+// SetType sets the value of Type.
+func (s *ShareBrowseEntry) SetType(val ShareBrowseEntryType) {
+	s.Type = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *ShareBrowseEntry) SetSizeBytes(val OptInt64) {
+	s.SizeBytes = val
+}
+
+// SetDisk sets the value of Disk.
+func (s *ShareBrowseEntry) SetDisk(val OptString) {
+	s.Disk = val
+}
+
+type ShareBrowseEntryType string
+
+const (
+	ShareBrowseEntryTypeFile      ShareBrowseEntryType = "file"
+	ShareBrowseEntryTypeDirectory ShareBrowseEntryType = "directory"
+)
+
+// AllValues returns all ShareBrowseEntryType values.
+func (ShareBrowseEntryType) AllValues() []ShareBrowseEntryType {
+	return []ShareBrowseEntryType{
+		ShareBrowseEntryTypeFile,
+		ShareBrowseEntryTypeDirectory,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ShareBrowseEntryType) MarshalText() ([]byte, error) {
+	switch s {
+	case ShareBrowseEntryTypeFile:
+		return []byte(s), nil
+	case ShareBrowseEntryTypeDirectory:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ShareBrowseEntryType) UnmarshalText(data []byte) error {
+	switch ShareBrowseEntryType(data) {
+	case ShareBrowseEntryTypeFile:
+		*s = ShareBrowseEntryTypeFile
+		return nil
+	case ShareBrowseEntryTypeDirectory:
+		*s = ShareBrowseEntryTypeDirectory
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ShareBrowseResult
+type ShareBrowseResult struct {
+	// Listed directory, relative to the share root.
+	Path    string             `json:"path"`
+	Entries []ShareBrowseEntry `json:"entries"`
+}
+
+// GetPath returns the value of Path.
+func (s *ShareBrowseResult) GetPath() string {
+	return s.Path
+}
+
+// GetEntries returns the value of Entries.
+func (s *ShareBrowseResult) GetEntries() []ShareBrowseEntry {
+	return s.Entries
+}
+
+// SetPath sets the value of Path.
+func (s *ShareBrowseResult) SetPath(val string) {
+	s.Path = val
+}
+
+// SetEntries sets the value of Entries.
+func (s *ShareBrowseResult) SetEntries(val []ShareBrowseEntry) {
+	s.Entries = val
+}
+
+// Per-share cache mode (doc 02 §3, Q12).
+// Ref: #/components/schemas/ShareCacheMode
+type ShareCacheMode string
+
+const (
+	ShareCacheModeCacheThenMove ShareCacheMode = "cache-then-move"
+	ShareCacheModeCacheOnly     ShareCacheMode = "cache-only"
+	ShareCacheModeArrayOnly     ShareCacheMode = "array-only"
+)
+
+// AllValues returns all ShareCacheMode values.
+func (ShareCacheMode) AllValues() []ShareCacheMode {
+	return []ShareCacheMode{
+		ShareCacheModeCacheThenMove,
+		ShareCacheModeCacheOnly,
+		ShareCacheModeArrayOnly,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ShareCacheMode) MarshalText() ([]byte, error) {
+	switch s {
+	case ShareCacheModeCacheThenMove:
+		return []byte(s), nil
+	case ShareCacheModeCacheOnly:
+		return []byte(s), nil
+	case ShareCacheModeArrayOnly:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ShareCacheMode) UnmarshalText(data []byte) error {
+	switch ShareCacheMode(data) {
+	case ShareCacheModeCacheThenMove:
+		*s = ShareCacheModeCacheThenMove
+		return nil
+	case ShareCacheModeCacheOnly:
+		*s = ShareCacheModeCacheOnly
+		return nil
+	case ShareCacheModeArrayOnly:
+		*s = ShareCacheModeArrayOnly
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type ShareName string
+
+// Ref: #/components/schemas/ShareSMB
+type ShareSMB struct {
+	Enabled     bool `json:"enabled"`
+	Guest       bool `json:"guest"`
+	ReadOnly    bool `json:"readOnly"`
+	Browseable  bool `json:"browseable"`
+	Recycle     bool `json:"recycle"`
+	TimeMachine bool `json:"timeMachine"`
+	// Samba `fruit:time machine max size` (Q73), e.g. `500G`. Required when timeMachine is true; omitted
+	// otherwise.
+	TimeMachineMaxSize OptNilString `json:"timeMachineMaxSize"`
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *ShareSMB) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetGuest returns the value of Guest.
+func (s *ShareSMB) GetGuest() bool {
+	return s.Guest
+}
+
+// GetReadOnly returns the value of ReadOnly.
+func (s *ShareSMB) GetReadOnly() bool {
+	return s.ReadOnly
+}
+
+// GetBrowseable returns the value of Browseable.
+func (s *ShareSMB) GetBrowseable() bool {
+	return s.Browseable
+}
+
+// GetRecycle returns the value of Recycle.
+func (s *ShareSMB) GetRecycle() bool {
+	return s.Recycle
+}
+
+// GetTimeMachine returns the value of TimeMachine.
+func (s *ShareSMB) GetTimeMachine() bool {
+	return s.TimeMachine
+}
+
+// GetTimeMachineMaxSize returns the value of TimeMachineMaxSize.
+func (s *ShareSMB) GetTimeMachineMaxSize() OptNilString {
+	return s.TimeMachineMaxSize
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *ShareSMB) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetGuest sets the value of Guest.
+func (s *ShareSMB) SetGuest(val bool) {
+	s.Guest = val
+}
+
+// SetReadOnly sets the value of ReadOnly.
+func (s *ShareSMB) SetReadOnly(val bool) {
+	s.ReadOnly = val
+}
+
+// SetBrowseable sets the value of Browseable.
+func (s *ShareSMB) SetBrowseable(val bool) {
+	s.Browseable = val
+}
+
+// SetRecycle sets the value of Recycle.
+func (s *ShareSMB) SetRecycle(val bool) {
+	s.Recycle = val
+}
+
+// SetTimeMachine sets the value of TimeMachine.
+func (s *ShareSMB) SetTimeMachine(val bool) {
+	s.TimeMachine = val
+}
+
+// SetTimeMachineMaxSize sets the value of TimeMachineMaxSize.
+func (s *ShareSMB) SetTimeMachineMaxSize(val OptNilString) {
+	s.TimeMachineMaxSize = val
+}
+
 // Ref: #/components/schemas/SpinTransition
 type SpinTransition struct {
 	// E.g. `/dev/sdb` — as recorded, never accepted back as input (doc 01 §7).
@@ -6007,6 +6579,43 @@ func (s *UpdateScheduledJobRequest) SetFrequency(val OptScheduleFrequency) {
 // SetTime sets the value of Time.
 func (s *UpdateScheduledJobRequest) SetTime(val OptString) {
 	s.Time = val
+}
+
+// Ref: #/components/schemas/UpdateShareRequest
+type UpdateShareRequest struct {
+	CacheMode    OptShareCacheMode    `json:"cacheMode"`
+	CreatePolicy OptArrayCreatePolicy `json:"createPolicy"`
+	Smb          OptShareSMB          `json:"smb"`
+}
+
+// GetCacheMode returns the value of CacheMode.
+func (s *UpdateShareRequest) GetCacheMode() OptShareCacheMode {
+	return s.CacheMode
+}
+
+// GetCreatePolicy returns the value of CreatePolicy.
+func (s *UpdateShareRequest) GetCreatePolicy() OptArrayCreatePolicy {
+	return s.CreatePolicy
+}
+
+// GetSmb returns the value of Smb.
+func (s *UpdateShareRequest) GetSmb() OptShareSMB {
+	return s.Smb
+}
+
+// SetCacheMode sets the value of CacheMode.
+func (s *UpdateShareRequest) SetCacheMode(val OptShareCacheMode) {
+	s.CacheMode = val
+}
+
+// SetCreatePolicy sets the value of CreatePolicy.
+func (s *UpdateShareRequest) SetCreatePolicy(val OptArrayCreatePolicy) {
+	s.CreatePolicy = val
+}
+
+// SetSmb sets the value of Smb.
+func (s *UpdateShareRequest) SetSmb(val OptShareSMB) {
+	s.Smb = val
 }
 
 // Ref: #/components/schemas/UpdateStatus

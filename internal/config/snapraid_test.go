@@ -25,9 +25,11 @@ func TestRenderSnapraidConf(t *testing.T) {
 		}
 
 		name := c.Name()
+		dir := filepath.Join(testdataDir, name)
+		if _, err := os.Stat(filepath.Join(dir, "snapraid.conf.golden")); err != nil {
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
-			dir := filepath.Join(testdataDir, name)
-
 			raw, err := os.ReadFile(filepath.Join(dir, "state.json"))
 			if err != nil {
 				t.Fatalf("reading state.json: %v", err)

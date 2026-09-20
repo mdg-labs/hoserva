@@ -22,6 +22,7 @@ func rootCmd() *cobra.Command {
 		arrayCmd(),
 		poolCmd(),
 		diskCmd(),
+		shareCmd(),
 		syncCmd(),
 		scrubCmd(),
 		fixCmd(),

@@ -358,3 +358,24 @@ CREATE TABLE host_config (
     facts TEXT NOT NULL,
     applied_at TEXT NOT NULL
 ) STRICT;
+
+-- Shares (#46, D4, doc 02 §1, doc 03 §4): one row per user share. Name is
+-- the primary key and the path segment under every branch and under
+-- /mnt/user (pool.ValidateShareName). Cache mode and create policy drive
+-- the existing per-share mergerfs mount (Q12, Q11); SMB columns drive
+-- generated samba/smb.conf (Q73 for Time Machine max size). NFS and
+-- per-user ACLs belong to later issues. Expand-only (D16).
+CREATE TABLE shares (
+    name TEXT PRIMARY KEY,
+    cache_mode TEXT NOT NULL CHECK (cache_mode IN ('cache-then-move', 'cache-only', 'array-only')),
+    create_policy TEXT NOT NULL CHECK (create_policy IN ('mspmfs', 'mfs', 'lfs', 'ff')),
+    smb_enabled INTEGER NOT NULL CHECK (smb_enabled IN (0, 1)),
+    smb_guest INTEGER NOT NULL CHECK (smb_guest IN (0, 1)),
+    smb_read_only INTEGER NOT NULL CHECK (smb_read_only IN (0, 1)),
+    smb_browseable INTEGER NOT NULL CHECK (smb_browseable IN (0, 1)),
+    smb_recycle INTEGER NOT NULL CHECK (smb_recycle IN (0, 1)),
+    smb_time_machine INTEGER NOT NULL CHECK (smb_time_machine IN (0, 1)),
+    smb_time_machine_max_size TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT;

@@ -1,0 +1,44 @@
+[global]
+   workgroup = WORKGROUP
+   server string = Hoserva
+   security = user
+   map to guest = Bad User
+   min protocol = SMB2
+   ea support = yes
+   vfs objects = catia fruit streams_xattr
+   fruit:metadata = stream
+   fruit:posix_rename = yes
+   fruit:veto_appledouble = no
+   fruit:nfs_aces = no
+   fruit:wipe_intentionally_left_blank_rfork = yes
+   fruit:delete_empty_adfiles = yes
+   load printers = no
+   printing = bsd
+   printcap name = /dev/null
+   disable spoolss = yes
+
+[appdata]
+   path = /mnt/user/appdata
+   browseable = no
+   read only = no
+   guest ok = no
+
+[media]
+   path = /mnt/user/media
+   browseable = yes
+   read only = no
+   guest ok = yes
+   vfs objects = catia fruit streams_xattr recycle
+   recycle:repository = .recycle
+   recycle:keeptree = yes
+   recycle:versions = yes
+
+[timemachine]
+   path = /mnt/user/timemachine
+   browseable = no
+   read only = no
+   guest ok = no
+   fruit:time machine = yes
+   fruit:time machine max size = 1T
+
+include = /etc/hoserva/smb.custom.conf

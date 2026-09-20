@@ -162,6 +162,21 @@ type Session struct {
 	ExpiresAt string `json:"expires_at"`
 }
 
+type Share struct {
+	Name                  string         `json:"name"`
+	CacheMode             string         `json:"cache_mode"`
+	CreatePolicy          string         `json:"create_policy"`
+	SmbEnabled            int64          `json:"smb_enabled"`
+	SmbGuest              int64          `json:"smb_guest"`
+	SmbReadOnly           int64          `json:"smb_read_only"`
+	SmbBrowseable         int64          `json:"smb_browseable"`
+	SmbRecycle            int64          `json:"smb_recycle"`
+	SmbTimeMachine        int64          `json:"smb_time_machine"`
+	SmbTimeMachineMaxSize sql.NullString `json:"smb_time_machine_max_size"`
+	CreatedAt             string         `json:"created_at"`
+	UpdatedAt             string         `json:"updated_at"`
+}
+
 type SpinEvent struct {
 	ID        int64  `json:"id"`
 	Device    string `json:"device"`
