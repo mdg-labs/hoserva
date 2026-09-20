@@ -77,7 +77,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           if [ -z "${HOSERVA_RELEASE_SIGNING_KEY:-}" ]; then
-            echo "release.yml: HOSERVA_RELEASE_SIGNING_KEY secret is not set — see packaging's release documentation for how to generate and set it" >&2
+            echo "release.yml: HOSERVA_RELEASE_SIGNING_KEY secret is not set — see scripts/release/lib.sh for how to generate and set it" >&2
             exit 1
           fi
           key_file="$(mktemp)"

@@ -62,3 +62,17 @@ hoserva_sign_sha256sums() {
   local sums_file="$1" key_file="$2" sig_file="$3"
   openssl pkeyutl -sign -inkey "$key_file" -rawin -in "$sums_file" -out "$sig_file"
 }
+
+# Rotating HOSERVA_RELEASE_SIGNING_KEY (Q66, Q67):
+#   1. Generate a new Ed25519 keypair:
+#        openssl genpkey -algorithm ed25519 -out new-priv.pem
+#   2. Export the public half (keep locally, never commit):
+#        openssl pkey -in new-priv.pem -pubout -out release.pub
+#   3. Update the HOSERVA_RELEASE_SIGNING_KEY GitHub Actions secret with
+#      the contents of new-priv.pem, then delete new-priv.pem from disk.
+#   4. Regenerate EmbeddedPublicKey in internal/update/pubkey.go from
+#      release.pub — the last 32 bytes of the DER SPKI are the raw key:
+#        openssl pkey -in release.pub -pubin -outform DER | tail -c 32 | od -An -tx1
+#   5. Ship a release containing the updated EmbeddedPublicKey before any
+#      release signed with the new private key is published. Daemons with
+#      the old compiled-in key fail closed on signatures from the new key.
