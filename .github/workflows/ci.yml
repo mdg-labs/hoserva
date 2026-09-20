@@ -58,6 +58,26 @@ env:
   NODE_VERSION: "24.21.0"
 
 jobs:
+  release-signing-pubkey:
+    name: Release signing pubkey integrity (Q66, Q67)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compare EmbeddedPublicKey to Actions variable
+        env:
+          HOSERVA_RELEASE_SIGNING_PUBKEY: ${{ vars.HOSERVA_RELEASE_SIGNING_PUBKEY }}
+        run: |
+          if [ -z "${HOSERVA_RELEASE_SIGNING_PUBKEY:-}" ]; then
+            echo "ci.yml: HOSERVA_RELEASE_SIGNING_PUBKEY variable is not set — see scripts/release/lib.sh" >&2
+            exit 1
+          fi
+          pub_file="$(mktemp)"
+          trap 'rm -f "$pub_file"' EXIT
+          printf '%s' "$HOSERVA_RELEASE_SIGNING_PUBKEY" >"$pub_file"
+          result="$(scripts/release/compare-release-pubkey.sh internal/update/pubkey.go "$pub_file")"
+          echo "$result"
+          [ "$result" = match ]
+
   dco:
     name: DCO sign-off (CONTRIBUTING.md)
     runs-on: ubuntu-latest
