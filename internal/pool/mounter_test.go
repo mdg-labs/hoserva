@@ -3,15 +3,46 @@ package pool
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
-func TestMounter_Mount(t *testing.T) {
+func testWhere(t *testing.T) string {
+	return filepath.Join(t.TempDir(), "mnt", "user")
+}
+
+func TestMounter_Mount_CreatesWhere(t *testing.T) {
+	where := testWhere(t)
+	m := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+
 	r := disk.NewFakeRunner()
-	m := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	argv := m.Argv()
+	r.Script(argv[0], argv[1:], nil, nil)
+
+	mounter := Mounter{Runner: r}
+	if _, err := os.Stat(where); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Where= %s should not exist before Mount", where)
+	}
+	if err := mounter.Mount(context.Background(), m); err != nil {
+		t.Fatalf("Mount: %v", err)
+	}
+	info, err := os.Stat(where)
+	if err != nil {
+		t.Fatalf("after Mount, Stat(%s): %v", where, err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("after Mount, %s is not a directory", where)
+	}
+}
+
+func TestMounter_Mount(t *testing.T) {
+	where := testWhere(t)
+	r := disk.NewFakeRunner()
+	m := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
 	argv := m.Argv()
 	r.Script(argv[0], argv[1:], nil, nil)
 
@@ -27,8 +58,9 @@ func TestMounter_Mount(t *testing.T) {
 }
 
 func TestMounter_Mount_PropagatesError(t *testing.T) {
+	where := testWhere(t)
 	r := disk.NewFakeRunner()
-	m := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	m := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
 	argv := m.Argv()
 	wantErr := errors.New("mount failed")
 	r.Script(argv[0], argv[1:], nil, wantErr)
@@ -58,10 +90,11 @@ func TestMounter_Unmount(t *testing.T) {
 // mount the grown Mount — in that order, and both against the real
 // mount point.
 func TestMounter_Remount(t *testing.T) {
+	where := testWhere(t)
 	r := disk.NewFakeRunner()
-	previous := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
-	m := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW:/mnt/disk2=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
-	r.Script("fusermount", []string{"-u", "/mnt/user"}, nil, nil)
+	previous := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	m := Mount{Where: where, What: "/mnt/disk1=RW:/mnt/disk2=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	r.Script("fusermount", []string{"-u", where}, nil, nil)
 	argv := m.Argv()
 	r.Script(argv[0], argv[1:], nil, nil)
 
@@ -97,11 +130,12 @@ func TestMounter_Remount_PropagatesUnmountError(t *testing.T) {
 // mnt.Where unmounted — it re-mounts previous so a malformed branch list
 // degrades to "the expansion didn't take" rather than a storage outage.
 func TestMounter_Remount_RollsBackOnMountFailure(t *testing.T) {
+	where := testWhere(t)
 	r := disk.NewFakeRunner()
-	previous := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
-	grown := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW:/mnt/disk2=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	previous := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	grown := Mount{Where: where, What: "/mnt/disk1=RW:/mnt/disk2=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
 
-	r.Script("fusermount", []string{"-u", "/mnt/user"}, nil, nil)
+	r.Script("fusermount", []string{"-u", where}, nil, nil)
 	wantErr := errors.New("mergerfs: invalid branch")
 	grownArgv := grown.Argv()
 	r.Script(grownArgv[0], grownArgv[1:], nil, wantErr)
@@ -131,11 +165,12 @@ func TestMounter_Remount_RollsBackOnMountFailure(t *testing.T) {
 // hide why Remount stopped short, and losing the rollback failure would
 // hide that mnt.Where is now unmounted.
 func TestMounter_Remount_ReportsRollbackFailureAlongsideTheOriginalError(t *testing.T) {
+	where := testWhere(t)
 	r := disk.NewFakeRunner()
-	previous := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
-	grown := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW:/mnt/disk2=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	previous := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	grown := Mount{Where: where, What: "/mnt/disk1=RW:/mnt/disk2=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
 
-	r.Script("fusermount", []string{"-u", "/mnt/user"}, nil, nil)
+	r.Script("fusermount", []string{"-u", where}, nil, nil)
 	mountErr := errors.New("mergerfs: invalid branch")
 	grownArgv := grown.Argv()
 	r.Script(grownArgv[0], grownArgv[1:], nil, mountErr)
