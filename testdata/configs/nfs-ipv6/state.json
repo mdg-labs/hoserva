@@ -1,0 +1,9 @@
+{
+  "shares": [
+    {
+      "name": "media",
+      "hosts": ["2001:db8::1", "2001:db8:1::/64"],
+      "squash": "root_squash"
+    }
+  ]
+}

@@ -860,14 +860,69 @@ paths:
       operationId: regenerateTLSCertificate
       summary: Regenerate the self-signed TLS certificate
       description: >-
-        Replaces the daemon's self-signed certificate (Q9) and hot-reloads
-        it so new connections use the new cert. Let's Encrypt DNS-01 is
-        not implemented here.
+        Replaces the daemon's TLS certificate with a freshly generated
+        self-signed certificate (Q9) and hot-reloads it so new connections
+        use the new cert. If Let's Encrypt DNS-01 is configured, unattended
+        renewal is disarmed so this self-signed cert is not overwritten
+        without another explicit setup. Let's Encrypt issue and renew are
+        handled by `configureLetsEncrypt`, not by this operation.
       tags: [settings]
       x-hoserva-role: admin
       responses:
         "200":
           description: Settings including the new certificate expiry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/network/lets-encrypt:
+    post:
+      operationId: configureLetsEncrypt
+      summary: Configure Let's Encrypt DNS-01 and issue a certificate
+      description: >-
+        Stores the domain and DNS-01 provider credentials (encrypted at
+        rest, Q28) and queues an `acme_issue` job that talks to the ACME
+        directory over DNS-01 only. Ports 80 and 443 are never claimed
+        (Q9). HTTP-01 and TLS-ALPN-01 are not offered. On success the
+        issued certificate replaces the self-signed cert on `:8008`.
+        Unattended renewal stays armed while `letsEncrypt.enabled` is
+        true. A failed issue or renew keeps serving the existing
+        certificate and notifies; it never silently falls back to a new
+        self-signed cert.
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigureLetsEncryptRequest'
+      responses:
+        "200":
+          description: The queued or running ACME issue job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: disableLetsEncrypt
+      summary: Stop unattended Let's Encrypt renewal
+      description: >-
+        Disarms unattended renewal. The certificate currently served on
+        `:8008` is left in place — this does not generate a self-signed
+        replacement. DNS credentials remain stored until overwritten by
+        a later `configureLetsEncrypt` or cleared by regenerating a
+        self-signed certificate.
+      tags: [settings]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: Settings after renewal is disarmed.
           content:
             application/json:
               schema:
@@ -2002,6 +2057,7 @@ components:
         # Service
         - appdata_backup
         - container_update
+        - acme_issue
         # VM
         - vm_start
         - vm_stop
@@ -2222,6 +2278,7 @@ components:
         - login_failure_burst
         - credential_reset
         - certificate_expiring
+        - certificate_renewal_failed
         - config_backup_failed
         - appdata_backup_failed
         - backup_destination_stale
@@ -2635,7 +2692,7 @@ components:
 
     TLSCertificateKind:
       type: string
-      enum: [self_signed]
+      enum: [self_signed, lets_encrypt]
       description: How the current TLS certificate was issued (Q9).
 
     TLSCertificateInfo:
@@ -2651,10 +2708,74 @@ components:
         daysRemaining:
           type: integer
           description: Whole days until expiry; negative if already expired.
+        domain:
+          type: string
+          description: >-
+            DNS name the Let's Encrypt certificate covers. Absent for a
+            self-signed certificate.
+
+    DNS01Provider:
+      type: string
+      enum: [cloudflare, rfc2136]
+      description: >-
+        DNS-01 providers in v1: Cloudflare's API and generic RFC 2136.
+        HTTP-01 and TLS-ALPN-01 are not offered (Q9).
+
+    LetsEncryptStatus:
+      type: object
+      required: [configured, enabled]
+      properties:
+        configured:
+          type: boolean
+          description: True when DNS-01 credentials are stored.
+        enabled:
+          type: boolean
+          description: True when unattended renewal is armed.
+        domain:
+          type: string
+          description: Hostname configured for DNS-01.
+        provider:
+          $ref: '#/components/schemas/DNS01Provider'
+        hasSecret:
+          type: boolean
+          description: True when a DNS credential is stored (Q28); the secret itself is never returned.
+        lastError:
+          type: string
+          description: Last issue or renewal failure. Omitted after a success.
+
+    ConfigureLetsEncryptRequest:
+      type: object
+      required: [domain, provider]
+      properties:
+        domain:
+          type: string
+          minLength: 1
+          description: Hostname the certificate will cover, challenged via DNS-01.
+        provider:
+          $ref: '#/components/schemas/DNS01Provider'
+        cloudflareAPIToken:
+          type: string
+          description: >-
+            Cloudflare API token with Zone.DNS Edit. Write-only (Q28).
+            Required when `provider` is cloudflare and no token is stored yet.
+        rfc2136Nameserver:
+          type: string
+          description: RFC 2136 nameserver as host:port. Required when `provider` is rfc2136.
+        rfc2136TsigKeyName:
+          type: string
+          description: TSIG key name. Required when `provider` is rfc2136.
+        rfc2136TsigSecret:
+          type: string
+          description: >-
+            TSIG secret. Write-only (Q28). Required when `provider` is
+            rfc2136 and no secret is stored yet.
+        rfc2136TsigAlgorithm:
+          type: string
+          description: TSIG algorithm. Defaults to hmac-sha256.
 
     NetworkSettings:
       type: object
-      required: [backend, editable, interfaces, certificate, allowAllSources, listenPort]
+      required: [backend, editable, interfaces, certificate, allowAllSources, listenPort, letsEncrypt]
       properties:
         backend:
           $ref: '#/components/schemas/NetworkBackend'
@@ -2672,6 +2793,8 @@ components:
           $ref: '#/components/schemas/NetworkPending'
         certificate:
           $ref: '#/components/schemas/TLSCertificateInfo'
+        letsEncrypt:
+          $ref: '#/components/schemas/LetsEncryptStatus'
         allowAllSources:
           type: boolean
           description: >-
@@ -3478,9 +3601,29 @@ components:
             Samba `fruit:time machine max size` (Q73), e.g. `500G`.
             Required when timeMachine is true; omitted otherwise.
 
+    ShareNFS:
+      type: object
+      required: [enabled, hosts, squash]
+      properties:
+        enabled:
+          type: boolean
+        hosts:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 253
+          description: >-
+            Allowed NFS clients: DNS hostnames, IPv4 or IPv6 addresses,
+            or CIDR subnets (doc 03 §4.2). Required when enabled is true.
+        squash:
+          type: string
+          description: NFS squash option (doc 03 §4.2).
+          enum: [root_squash, no_root_squash, all_squash]
+
     Share:
       type: object
-      required: [name, path, cacheMode, createPolicy, smb, createdAt, updatedAt]
+      required: [name, path, cacheMode, createPolicy, smb, nfs, createdAt, updatedAt]
       properties:
         name:
           $ref: '#/components/schemas/ShareName'
@@ -3493,6 +3636,8 @@ components:
           $ref: '#/components/schemas/ArrayCreatePolicy'
         smb:
           $ref: '#/components/schemas/ShareSMB'
+        nfs:
+          $ref: '#/components/schemas/ShareNFS'
         createdAt:
           type: string
           format: date-time
@@ -3512,6 +3657,8 @@ components:
           $ref: '#/components/schemas/ArrayCreatePolicy'
         smb:
           $ref: '#/components/schemas/ShareSMB'
+        nfs:
+          $ref: '#/components/schemas/ShareNFS'
 
     UpdateShareRequest:
       type: object
@@ -3522,6 +3669,8 @@ components:
           $ref: '#/components/schemas/ArrayCreatePolicy'
         smb:
           $ref: '#/components/schemas/ShareSMB'
+        nfs:
+          $ref: '#/components/schemas/ShareNFS'
 
     ConfirmShareRequest:
       type: object

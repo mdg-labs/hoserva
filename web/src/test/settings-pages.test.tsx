@@ -13,12 +13,14 @@ import { MAINTENANCE_CHAIN_STEPS } from "@/lib/maintenance-chain";
 const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockPut = vi.fn();
+const mockDelete = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   hoservaClient: {
     GET: (...args: unknown[]) => mockGet(...args),
     POST: (...args: unknown[]) => mockPost(...args),
     PUT: (...args: unknown[]) => mockPut(...args),
+    DELETE: (...args: unknown[]) => mockDelete(...args),
   },
 }));
 
@@ -36,6 +38,7 @@ describe("Settings pages", () => {
     mockGet.mockReset();
     mockPost.mockReset();
     mockPut.mockReset();
+    mockDelete.mockReset();
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       addEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
@@ -379,6 +382,10 @@ describe("Settings pages", () => {
         notAfter: "2036-09-20T00:00:00.000Z",
         daysRemaining: 3650,
       },
+      letsEncrypt: {
+        configured: false,
+        enabled: false,
+      },
       allowAllSources: false,
       listenPort: 8008,
     };
@@ -414,5 +421,119 @@ describe("Settings pages", () => {
         }),
       });
     });
+  });
+
+  it("opens Let's Encrypt overlay and queues a DNS-01 issue", async () => {
+    const networkPayload = {
+      backend: "ifupdown",
+      editable: true,
+      interfaces: [
+        {
+          name: "enp1s0",
+          method: "dhcp",
+          address: "10.0.2.15",
+          prefix: 24,
+          state: "up",
+        },
+      ],
+      certificate: {
+        kind: "self_signed",
+        notAfter: "2036-09-20T00:00:00.000Z",
+        daysRemaining: 3650,
+      },
+      letsEncrypt: {
+        configured: false,
+        enabled: false,
+      },
+      allowAllSources: false,
+      listenPort: 8008,
+    };
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/settings/network") {
+        return Promise.resolve({ data: networkPayload, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    mockPost.mockResolvedValue({
+      data: {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        type: "acme_issue",
+        class: "service",
+        status: "queued",
+        resumable: false,
+        cancellable: true,
+        createdAt: "2026-09-20T12:00:00.000Z",
+      },
+      response: { ok: true },
+    });
+
+    renderWithToast(<NetworkSettingsPage />);
+
+    expect(await screen.findByText("Valid")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Set up Let's Encrypt" }));
+    fireEvent.change(screen.getByPlaceholderText("nas.example.com"), { target: { value: "nas.example.com" } });
+    fireEvent.change(screen.getByPlaceholderText("Zone.DNS Edit token"), { target: { value: "token" } });
+    fireEvent.click(screen.getByRole("button", { name: "Issue certificate" }));
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith("/settings/network/lets-encrypt", {
+        body: expect.objectContaining({
+          domain: "nas.example.com",
+          provider: "cloudflare",
+          cloudflareAPIToken: "token",
+        }),
+      });
+    });
+  });
+
+  it("shows Let's Encrypt errors inside the overlay", async () => {
+    const networkPayload = {
+      backend: "ifupdown",
+      editable: true,
+      interfaces: [
+        {
+          name: "enp1s0",
+          method: "dhcp",
+          address: "10.0.2.15",
+          prefix: 24,
+          state: "up",
+        },
+      ],
+      certificate: {
+        kind: "self_signed",
+        notAfter: "2036-09-20T00:00:00.000Z",
+        daysRemaining: 3650,
+      },
+      letsEncrypt: {
+        configured: false,
+        enabled: false,
+      },
+      allowAllSources: false,
+      listenPort: 8008,
+    };
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/settings/network") {
+        return Promise.resolve({ data: networkPayload, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    mockPost.mockResolvedValue({
+      error: { message: "acme: a DNS credential is required" },
+      response: { ok: false },
+    });
+
+    renderWithToast(<NetworkSettingsPage />);
+
+    expect(await screen.findByText("Valid")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Set up Let's Encrypt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Issue certificate" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Enter a domain name.")).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByPlaceholderText("nas.example.com"), { target: { value: "nas.example.com" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Issue certificate" }));
+
+    expect(await within(dialog).findByText("acme: a DNS credential is required")).toBeInTheDocument();
   });
 });

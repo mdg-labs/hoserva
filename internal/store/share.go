@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -31,6 +32,9 @@ type Share struct {
 	SMBRecycle            bool
 	SMBTimeMachine        bool
 	SMBTimeMachineMaxSize string
+	NFSEnabled            bool
+	NFSHosts              []string
+	NFSSquash             string
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
 }
@@ -59,6 +63,9 @@ func (s *ShareStore) Insert(ctx context.Context, rec Share) error {
 		SmbRecycle:            boolToInt(rec.SMBRecycle),
 		SmbTimeMachine:        boolToInt(rec.SMBTimeMachine),
 		SmbTimeMachineMaxSize: nullString(rec.SMBTimeMachineMaxSize),
+		NfsEnabled:            boolToInt(rec.NFSEnabled),
+		NfsHosts:              marshalNFSHosts(rec.NFSHosts),
+		NfsSquash:             nfsSquashOrDefault(rec.NFSSquash),
 		CreatedAt:             rec.CreatedAt.UTC().Format(TimeFormat),
 		UpdatedAt:             rec.UpdatedAt.UTC().Format(TimeFormat),
 	})
@@ -113,6 +120,9 @@ func (s *ShareStore) Update(ctx context.Context, rec Share) error {
 		SmbRecycle:            boolToInt(rec.SMBRecycle),
 		SmbTimeMachine:        boolToInt(rec.SMBTimeMachine),
 		SmbTimeMachineMaxSize: nullString(rec.SMBTimeMachineMaxSize),
+		NfsEnabled:            boolToInt(rec.NFSEnabled),
+		NfsHosts:              marshalNFSHosts(rec.NFSHosts),
+		NfsSquash:             nfsSquashOrDefault(rec.NFSSquash),
 		UpdatedAt:             rec.UpdatedAt.UTC().Format(TimeFormat),
 		Name:                  rec.Name,
 	})
@@ -147,6 +157,10 @@ func shareFromRow(row *storedb.Share) (Share, error) {
 	if err != nil {
 		return Share{}, fmt.Errorf("store: parsing share %s updated_at: %w", row.Name, err)
 	}
+	hosts, err := unmarshalNFSHosts(row.NfsHosts)
+	if err != nil {
+		return Share{}, fmt.Errorf("store: parsing share %s nfs_hosts: %w", row.Name, err)
+	}
 	return Share{
 		Name:                  row.Name,
 		CacheMode:             row.CacheMode,
@@ -158,9 +172,44 @@ func shareFromRow(row *storedb.Share) (Share, error) {
 		SMBRecycle:            row.SmbRecycle != 0,
 		SMBTimeMachine:        row.SmbTimeMachine != 0,
 		SMBTimeMachineMaxSize: row.SmbTimeMachineMaxSize.String,
+		NFSEnabled:            row.NfsEnabled != 0,
+		NFSHosts:              hosts,
+		NFSSquash:             nfsSquashOrDefault(row.NfsSquash),
 		CreatedAt:             createdAt,
 		UpdatedAt:             updatedAt,
 	}, nil
+}
+
+func marshalNFSHosts(hosts []string) string {
+	if hosts == nil {
+		hosts = []string{}
+	}
+	b, err := json.Marshal(hosts)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+func unmarshalNFSHosts(raw string) ([]string, error) {
+	if raw == "" {
+		return []string{}, nil
+	}
+	var hosts []string
+	if err := json.Unmarshal([]byte(raw), &hosts); err != nil {
+		return nil, err
+	}
+	if hosts == nil {
+		hosts = []string{}
+	}
+	return hosts, nil
+}
+
+func nfsSquashOrDefault(s string) string {
+	if s == "" {
+		return "root_squash"
+	}
+	return s
 }
 
 func isUniqueConstraint(err error) bool {

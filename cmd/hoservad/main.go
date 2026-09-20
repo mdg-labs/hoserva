@@ -21,8 +21,10 @@ import (
 	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/acme"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
+	"github.com/mdg-labs/hoserva/internal/backup"
 	cfggen "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
@@ -252,6 +254,19 @@ func run(cfg config) error {
 		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}
 	}
 	backupService := newBackupService(ctx, cfg, db, machineKey, settingsService, linuxDisks.Exec)
+	acmeStore := acme.NewStore(db)
+	acmeService := &acme.Service{
+		Store:     acmeStore,
+		Cipher:    machineKey,
+		Client:    &acme.ProductionClient{},
+		Publisher: &acmeNotify{svc: notifyService},
+	}
+	backupService.Secrets = &backup.ServiceSecretSource{
+		BackupPassphraseFn: settingsService.BackupPassphrase,
+		DatabaseSecretsFn: func(reqCtx context.Context) ([]backup.DatabaseSecret, error) {
+			return acmeDatabaseSecrets(reqCtx, acmeStore)
+		},
+	}
 	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, arraySeq, notifyService, linuxDisks.Exec, backupService)
 	networkSvc := &cfggen.NetworkService{
 		Generator: generator,
@@ -263,7 +278,7 @@ func run(cfg config) error {
 	if err := networkSvc.Recover(ctx); err != nil {
 		log.Printf("hoservad: restoring unconfirmed network change: %v", err)
 	}
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine, Generator: generator, HostConfig: store.NewHostConfigStore(db), Docker: cfggen.ExecDocker{}, ArrayStore: arrayStore, Network: networkSvc}
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine, Generator: generator, HostConfig: store.NewHostConfigStore(db), Docker: cfggen.ExecDocker{}, ArrayStore: arrayStore, Network: networkSvc, ACME: acmeService}
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
 	}
@@ -287,6 +302,8 @@ func run(cfg config) error {
 		return fmt.Errorf("starting TCP listener: %w", err)
 	}
 	handler.HTTPS = httpsCtrl
+	acmeService.Installer = httpsCtrl
+	registry.Register(job.TypeACMEIssue, true, job.RunACMEIssue(acmeService.Issue))
 	unixListener, err := setupUnixListener(cfg.socketPath)
 	if err != nil {
 		return fmt.Errorf("starting Unix socket listener: %w", err)
@@ -302,6 +319,8 @@ func run(cfg config) error {
 		Guard:     chainGuard,
 		Backup:    backupService,
 		Notifier:  &scheduleNotifier{svc: notifyService},
+		ACME:      acmeService,
+		Jobs:      jobStore,
 	}, scheduleTickInterval)
 
 	errCh := make(chan error, 2)

@@ -197,10 +197,11 @@ func (s *AuthStore) UpdateTOTPLastStepIfNewer(ctx context.Context, userID string
 }
 
 // HasEncryptedSecrets implements auth.MachineKeyStore: whether any user
-// row already holds a TOTP secret (active or pending), or any
-// notify_channels row already holds a credential (#35, Q28), encrypted
-// under some machine key. Both live behind the same machine key, so
-// either one existing is reason enough to refuse regenerating it.
+// row already holds a TOTP secret (active or pending), any
+// notify_channels row already holds a credential (#35, Q28), ACME
+// account/DNS secrets (#211, Q28), or a backup passphrase, encrypted
+// under some machine key. Any one existing is reason enough to refuse
+// regenerating it.
 func (s *AuthStore) HasEncryptedSecrets(ctx context.Context) (bool, error) {
 	hasTOTP, err := s.q.HasEncryptedTOTPSecrets(ctx)
 	if err != nil {
@@ -214,6 +215,13 @@ func (s *AuthStore) HasEncryptedSecrets(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if hasNotify {
+		return true, nil
+	}
+	hasACME, err := s.q.HasEncryptedACMESecrets(ctx)
+	if err != nil {
+		return false, err
+	}
+	if hasACME {
 		return true, nil
 	}
 	return s.q.HasEncryptedBackupPassphrase(ctx)

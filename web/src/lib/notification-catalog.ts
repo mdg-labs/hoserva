@@ -38,6 +38,7 @@ export const NOTIFICATION_EVENT_TYPES: NotificationEventType[] = [
   "login_failure_burst",
   "credential_reset",
   "certificate_expiring",
+  "certificate_renewal_failed",
   "config_backup_failed",
   "appdata_backup_failed",
   "backup_destination_stale",

@@ -1,0 +1,9 @@
+{
+  "shares": [
+    {
+      "name": "archives",
+      "hosts": ["10.8.0.1"],
+      "squash": "all_squash"
+    }
+  ]
+}

@@ -363,8 +363,9 @@ CREATE TABLE host_config (
 -- the primary key and the path segment under every branch and under
 -- /mnt/user (pool.ValidateShareName). Cache mode and create policy drive
 -- the existing per-share mergerfs mount (Q12, Q11); SMB columns drive
--- generated samba/smb.conf (Q73 for Time Machine max size). NFS and
--- per-user ACLs belong to later issues. Expand-only (D16).
+-- generated samba/smb.conf (Q73 for Time Machine max size); NFS columns
+-- drive generated /etc/exports (doc 03 §4.2). Per-user ACLs belong to a
+-- later issue. Expand-only (D16).
 CREATE TABLE shares (
     name TEXT PRIMARY KEY,
     cache_mode TEXT NOT NULL CHECK (cache_mode IN ('cache-then-move', 'cache-only', 'array-only')),
@@ -376,6 +377,27 @@ CREATE TABLE shares (
     smb_recycle INTEGER NOT NULL CHECK (smb_recycle IN (0, 1)),
     smb_time_machine INTEGER NOT NULL CHECK (smb_time_machine IN (0, 1)),
     smb_time_machine_max_size TEXT,
+    nfs_enabled INTEGER NOT NULL DEFAULT 0 CHECK (nfs_enabled IN (0, 1)),
+    nfs_hosts TEXT NOT NULL DEFAULT '[]',
+    nfs_squash TEXT NOT NULL DEFAULT 'root_squash' CHECK (nfs_squash IN ('root_squash', 'no_root_squash', 'all_squash')),
     created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT;
+
+-- Let's Encrypt DNS-01 (#211, Q9, Q28): one row, id=1, the same singleton
+-- pattern as schema_info. dns_secret and account_key are ciphertext from
+-- internal/auth.MachineKey.Encrypt (nonce||AES-256-GCM) — Cloudflare API
+-- token or RFC 2136 TSIG secret, and the ACME account private key. A
+-- leaked database file alone never yields a usable credential. HTTP-01
+-- is not represented here: ports 80/443 are never claimed (Q9).
+CREATE TABLE acme_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    domain TEXT NOT NULL,
+    provider TEXT NOT NULL CHECK (provider IN ('cloudflare', 'rfc2136')),
+    provider_config TEXT NOT NULL,
+    dns_secret BLOB NOT NULL,
+    account_key BLOB NOT NULL,
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    last_error TEXT,
     updated_at TEXT NOT NULL
 ) STRICT;
