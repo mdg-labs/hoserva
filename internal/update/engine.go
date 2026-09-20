@@ -465,7 +465,7 @@ func (e *Engine) notifyFailed(ctx context.Context, title, message string) {
 	if e.Notify == nil {
 		return
 	}
-	_ = e.Notify.Publish(ctx, notify.EventHoservaUpdateAvailable, title, message)
+	_ = e.Notify.Publish(ctx, notify.EventHoservaUpdateFailed, title, message)
 }
 
 func pathBase(url string) string {

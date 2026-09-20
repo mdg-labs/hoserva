@@ -40,6 +40,45 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: scripts/release/verify-tag-ancestry.sh "$TAG"
+      # Before any build or signing: the secret's public half must match
+      # both EmbeddedPublicKey and the maintainer-set Actions variable.
+      # The private key never enters ci.yml; this job is the only place
+      # that ties secret, variable and compiled-in key together (issue
+      # #205). Logs only match/mismatch — no PEM, hex, or pkey -text.
+      - name: Verify release signing key integrity
+        env:
+          HOSERVA_RELEASE_SIGNING_KEY: ${{ secrets.HOSERVA_RELEASE_SIGNING_KEY }}
+          HOSERVA_RELEASE_SIGNING_PUBKEY: ${{ vars.HOSERVA_RELEASE_SIGNING_PUBKEY }}
+        run: |
+          if [ -z "${HOSERVA_RELEASE_SIGNING_KEY:-}" ]; then
+            echo "release.yml: HOSERVA_RELEASE_SIGNING_KEY secret is not set — see scripts/release/lib.sh" >&2
+            exit 1
+          fi
+          if [ -z "${HOSERVA_RELEASE_SIGNING_PUBKEY:-}" ]; then
+            echo "release.yml: HOSERVA_RELEASE_SIGNING_PUBKEY variable is not set — see scripts/release/lib.sh" >&2
+            exit 1
+          fi
+          key_file="$(mktemp)"
+          pub_var_file="$(mktemp)"
+          derived_pub_file="$(mktemp)"
+          trap 'rm -f "$key_file" "$pub_var_file" "$derived_pub_file"' EXIT
+          printf '%s' "$HOSERVA_RELEASE_SIGNING_KEY" >"$key_file"
+          printf '%s' "$HOSERVA_RELEASE_SIGNING_PUBKEY" >"$pub_var_file"
+          openssl pkey -in "$key_file" -pubout -out "$derived_pub_file" 2>/dev/null || {
+            echo "release.yml: HOSERVA_RELEASE_SIGNING_KEY is not a readable Ed25519 private key" >&2
+            exit 1
+          }
+          for pair in \
+            "EmbeddedPublicKey:internal/update/pubkey.go:$derived_pub_file" \
+            "HOSERVA_RELEASE_SIGNING_PUBKEY:$pub_var_file:$derived_pub_file"; do
+            label="${pair%%:*}"
+            rest="${pair#*:}"
+            left="${rest%%:*}"
+            right="${rest#*:}"
+            result="$(scripts/release/compare-release-pubkey.sh "$left" "$right")"
+            echo "$label: $result"
+            [ "$result" = match ] || exit 1
+          done
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -77,7 +116,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           if [ -z "${HOSERVA_RELEASE_SIGNING_KEY:-}" ]; then
-            echo "release.yml: HOSERVA_RELEASE_SIGNING_KEY secret is not set — see packaging's release documentation for how to generate and set it" >&2
+            echo "release.yml: HOSERVA_RELEASE_SIGNING_KEY secret is not set — see scripts/release/lib.sh for how to generate and set it" >&2
             exit 1
           fi
           key_file="$(mktemp)"

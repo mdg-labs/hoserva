@@ -48,8 +48,16 @@ if vm_domain_exists "$VM_DOMAIN"; then
   "$script_dir/destroy-vm.sh"
 fi
 "$script_dir/create-vm.sh"
+seed_ok=false
+if "$script_dir/seed-existing-host.sh"; then
+  seed_ok=true
+fi
 if DEB="${DEB:-}" TAG="${TAG:-}" "$script_dir/deploy.sh"; then
-  pass "install"
+  if $seed_ok; then
+    pass "install"
+  else
+    fail "install" "deploy succeeded but seed-existing-host.sh failed — guest did not get a Samba share, NFS export and fstab mount before the .deb"
+  fi
 else
   fail "install" "deploy.sh failed — see its own output above (on the dev host this is expected: dpkg-buildpackage/debhelper/fakeroot are deliberately not installed here, per scripts/release/build-deb.sh's own header comment; a hosted CI runner has them)"
 fi
@@ -60,7 +68,12 @@ if vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if [[ "$SETUP_STATUS" == *'"adminExists":false'* ]]; then
     CREATE_RESULT="$(vm_ssh "curl -sk -X POST https://127.0.0.1:8008/api/v1/setup/admin -H 'Content-Type: application/json' -d '{\"username\":\"hoserva-l3\",\"password\":\"hoserva-l3-suite-password\"}'" 2>/dev/null || true)"
     if [[ "$CREATE_RESULT" == *'"username":"hoserva-l3"'* ]]; then
-      pass "onboarding"
+      APPLY_RESULT="$(vm_ssh "sudo hoserva doctor apply-host-config --leave-all" 2>/dev/null || true)"
+      if [[ "$APPLY_RESULT" == *"docker data-root:"* ]] || [[ "$APPLY_RESULT" == *"host_samba"* ]] || [[ "$APPLY_RESULT" == *"leave"* ]]; then
+        pass "onboarding"
+      else
+        fail "onboarding" "apply-host-config --leave-all did not succeed: $APPLY_RESULT"
+      fi
     else
       fail "onboarding" "createFirstAdmin did not return the expected admin: $CREATE_RESULT"
     fi
@@ -146,6 +159,17 @@ fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 10/11 spindown: 30-min flat counters with a running pool ==="
 not_yet "spindown: 30-min flat counters with a running pool" "needs a mergerfs/SnapRAID pool configured through hoservad (no array/pool operation is in api/openapi.yaml yet, the same gap step 3 names) plus a scheduled SMART-poll and change-journal job wired into hoservad (internal/disk's SMART poller and internal/parity's change journal exist as Go packages, issue #24, but cmd/hoservad/main.go calls neither on a timer yet) — the lab's own zero-organic-IO property under realistic idle/appdata/SMB-client load is already confirmed (doc 08 Spike 1, 2026-09-15), but without SMART polling or the change journal actually running; re-check once the pool API and the scheduler land"
+
+echo "vm-suite[$HOSERVA_LAB_ID]: === existing host config (Q76) ==="
+if vm_domain_running "$VM_DOMAIN"; then
+  if "$script_dir/existing-host-config-check.sh"; then
+    pass "existing host config"
+  else
+    fail "existing host config" "Samba share, NFS export or fstab mount did not survive install and onboarding — see existing-host-config-check.sh output above"
+  fi
+else
+  not_yet "existing host config" "no running domain (install step above did not complete — see step 1)"
+fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 11/11 array stop/start sequence: missing disk at boot, service stops before unmount ==="
 if vm_domain_running "$VM_DOMAIN"; then

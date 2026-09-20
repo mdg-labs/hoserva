@@ -166,6 +166,11 @@ func mockDoctorReport(scenario string) *apiv1.DoctorReport {
 		checks = append(checks,
 			warn("mounts", "Pool mount", "The data pool is not mounted yet"),
 			warn("parity_freshness", "Parity freshness", "No parity sync has run yet"),
+			pass("host_samba", "Samba shares", "1 share: media"),
+			pass("host_nfs", "NFS exports", "1 export: /export/media"),
+			pass("host_fstab", "fstab mounts", "1 mount: /mnt/media"),
+			pass("host_docker_containers", "Docker containers", "1 container: jellyfin"),
+			pass("host_docker_images", "Docker images", "1 image: linuxserver/jellyfin:latest"),
 		)
 	case "degraded":
 		checks = append(checks,
@@ -264,6 +269,13 @@ func (h *handler) ListDisks(ctx context.Context) (*apiv1.ListDisksOK, error) {
 
 func (h *handler) RunDoctor(ctx context.Context) (*apiv1.DoctorReport, error) {
 	return mockDoctorReport(h.scenario), nil
+}
+
+func (h *handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfigRequest) (*apiv1.ApplyHostConfigResult, error) {
+	return &apiv1.ApplyHostConfigResult{
+		Files:          req.Files,
+		DockerDataRoot: "/var/lib/docker",
+	}, nil
 }
 
 func (h *handler) StartSync(ctx context.Context, req *apiv1.StartSyncRequest) (*apiv1.Job, error) {

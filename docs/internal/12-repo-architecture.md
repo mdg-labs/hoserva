@@ -251,7 +251,7 @@ GitHub issues on `mdg-labs/hoserva` are the plan and the memory between sessions
 
 Two branches (Q46, revised — see below):
 
-- **`beta`** is the working branch. Every change, agent or human, lands here first. CI runs on every push; `beta` is not required to be releasable at every commit.
+- **`beta`** is the working branch. Every change, agent or human, lands here first. CI runs on every push to `beta`; `beta` is not required to be releasable at every commit.
 - **`main`** is release-only, and stays the GitHub default branch — so `Fixes #n` still closes an issue only once its commit reaches `main`. That is for the maintainer's own visibility ("is this actually on main yet"); agents never wait on it. `main` only moves via a `beta → main` pull request, gated by a required-status-checks branch protection ruleset: every job in `ci.yml` must pass before that PR can merge. No required review — there is one developer.
 
 **Why not land straight on `main`, as Q46 originally decided:** `orchestrate`'s own local verification is not infallible, and shares its environment (and blind spots) with the executor it's checking. Issue #18 needed nine rejected attempts before a schema change passed; the #120 lab-teardown fix cascaded into three more bugs in the same area (#122, #128, #129), one of them a skill bug that told agents to run `losetup` on the host, and another commit in that chain bypassed `orchestrate` entirely. `main` needs a gate an independent, clean environment enforces — GitHub Actions on hosted runners — not only a local verifier's PASS.

@@ -258,7 +258,7 @@ $(error invalid DEB: must not contain '$$' — no Make or shell expansion syntax
 endif
 export DEB
 
-.PHONY: build test test-unit packaging-test lint clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite hooks-install
+.PHONY: build test test-unit test-go packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -314,8 +314,13 @@ test: test-unit packaging-test
 # not to break the build.
 GO_PACKAGES = $$($(GO) list ./... | grep -v /node_modules/)
 
-test-unit:
+# Go-only L1: CI's lint-and-unit job calls this so it does not also run
+# the web job's lint/test. Local `make test` / `make test-unit` still
+# include web-test (doc 06 §10).
+test-go:
 	CGO_ENABLED=0 $(GO) test $(GO_PACKAGES)
+
+test-unit: test-go
 	$(MAKE) web-test
 
 # The .deb's own safety-critical regression tests (issue #42): each script
@@ -329,7 +334,11 @@ packaging-test:
 	scripts/release/test-postrm-purge.sh
 	packaging/test-unattended-upgrades.sh
 
-lint:
+# Go-only lint: CI's lint-and-unit job calls this so it does not also
+# run the web job's lint/typecheck. Local `make lint` still includes
+# web-lint and web-typecheck (doc 06 §10). In CI, missing golangci-lint
+# is a failure (issue #130).
+lint-go:
 	@echo "gofmt"
 	@fmtout="$$(gofmt -l .)"; \
 	if [ -n "$$fmtout" ]; then \
@@ -348,6 +357,8 @@ lint:
 	else \
 		echo "golangci-lint not installed, skipping (gofmt and go vet above still ran)"; \
 	fi
+
+lint: lint-go
 	$(MAKE) web-lint
 	$(MAKE) web-typecheck
 

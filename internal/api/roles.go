@@ -77,6 +77,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.GetUpdateStatusOperation:                RoleViewer,
 	apiv1.UpdateUpdateSettingsOperation:           RoleAdmin,
 	apiv1.CheckForUpdateOperation:                 RoleAdmin,
+	apiv1.ApplyHostConfigOperation:                RoleAdmin,
 	apiv1.ApplyUpdateOperation:                    RoleAdmin,
 	apiv1.RollbackUpdateOperation:                 RoleAdmin,
 	apiv1.RebootHostOperation:                     RoleAdmin,

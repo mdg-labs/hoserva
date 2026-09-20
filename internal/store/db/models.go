@@ -37,6 +37,13 @@ type AuditLog struct {
 	At     string         `json:"at"`
 }
 
+type HostConfig struct {
+	Kind      string `json:"kind"`
+	Decision  string `json:"decision"`
+	Facts     string `json:"facts"`
+	AppliedAt string `json:"applied_at"`
+}
+
 type Job struct {
 	ID           string         `json:"id"`
 	Type         string         `json:"type"`

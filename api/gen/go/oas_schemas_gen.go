@@ -42,6 +42,49 @@ func (s *ApiToken) SetRoles(val []string) {
 	s.Roles = val
 }
 
+// Ref: #/components/schemas/ApplyHostConfigRequest
+type ApplyHostConfigRequest struct {
+	Files []HostConfigChoice `json:"files"`
+}
+
+// GetFiles returns the value of Files.
+func (s *ApplyHostConfigRequest) GetFiles() []HostConfigChoice {
+	return s.Files
+}
+
+// SetFiles sets the value of Files.
+func (s *ApplyHostConfigRequest) SetFiles(val []HostConfigChoice) {
+	s.Files = val
+}
+
+// Ref: #/components/schemas/ApplyHostConfigResult
+type ApplyHostConfigResult struct {
+	Files []HostConfigChoice `json:"files"`
+	// Docker's data-root after this apply (Q62, Q76). Always `/var/lib/docker` when containers or images
+	// exist, when there is no cache disk, or when the caller did not accept a move.
+	DockerDataRoot string `json:"dockerDataRoot"`
+}
+
+// GetFiles returns the value of Files.
+func (s *ApplyHostConfigResult) GetFiles() []HostConfigChoice {
+	return s.Files
+}
+
+// GetDockerDataRoot returns the value of DockerDataRoot.
+func (s *ApplyHostConfigResult) GetDockerDataRoot() string {
+	return s.DockerDataRoot
+}
+
+// SetFiles sets the value of Files.
+func (s *ApplyHostConfigResult) SetFiles(val []HostConfigChoice) {
+	s.Files = val
+}
+
+// SetDockerDataRoot sets the value of DockerDataRoot.
+func (s *ApplyHostConfigResult) SetDockerDataRoot(val string) {
+	s.DockerDataRoot = val
+}
+
 // Default mergerfs create policy for new shares (doc 02 §1, Q11).
 // Ref: #/components/schemas/ArrayCreatePolicy
 type ArrayCreatePolicy string
@@ -1192,6 +1235,140 @@ func (s *GetNotificationRoutingOK) GetRouting() []NotificationRoutingEntry {
 // SetRouting sets the value of Routing.
 func (s *GetNotificationRoutingOK) SetRouting(val []NotificationRoutingEntry) {
 	s.Routing = val
+}
+
+// Ref: #/components/schemas/HostConfigChoice
+type HostConfigChoice struct {
+	ID       HostConfigID       `json:"id"`
+	Decision HostConfigDecision `json:"decision"`
+}
+
+// GetID returns the value of ID.
+func (s *HostConfigChoice) GetID() HostConfigID {
+	return s.ID
+}
+
+// GetDecision returns the value of Decision.
+func (s *HostConfigChoice) GetDecision() HostConfigDecision {
+	return s.Decision
+}
+
+// SetID sets the value of ID.
+func (s *HostConfigChoice) SetID(val HostConfigID) {
+	s.ID = val
+}
+
+// SetDecision sets the value of Decision.
+func (s *HostConfigChoice) SetDecision(val HostConfigDecision) {
+	s.Decision = val
+}
+
+// Import persists parsed facts in SQLite so a later generate may take ownership; leave marks the host
+// file unmanaged so Generator never writes it (doc 01 §2).
+// Ref: #/components/schemas/HostConfigDecision
+type HostConfigDecision string
+
+const (
+	HostConfigDecisionImport HostConfigDecision = "import"
+	HostConfigDecisionLeave  HostConfigDecision = "leave"
+)
+
+// AllValues returns all HostConfigDecision values.
+func (HostConfigDecision) AllValues() []HostConfigDecision {
+	return []HostConfigDecision{
+		HostConfigDecisionImport,
+		HostConfigDecisionLeave,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s HostConfigDecision) MarshalText() ([]byte, error) {
+	switch s {
+	case HostConfigDecisionImport:
+		return []byte(s), nil
+	case HostConfigDecisionLeave:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *HostConfigDecision) UnmarshalText(data []byte) error {
+	switch HostConfigDecision(data) {
+	case HostConfigDecisionImport:
+		*s = HostConfigDecisionImport
+		return nil
+	case HostConfigDecisionLeave:
+		*s = HostConfigDecisionLeave
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Q76 onboarding category, matching DoctorCheck.id.
+// Ref: #/components/schemas/HostConfigID
+type HostConfigID string
+
+const (
+	HostConfigIDHostSamba            HostConfigID = "host_samba"
+	HostConfigIDHostNfs              HostConfigID = "host_nfs"
+	HostConfigIDHostFstab            HostConfigID = "host_fstab"
+	HostConfigIDHostDockerContainers HostConfigID = "host_docker_containers"
+	HostConfigIDHostDockerImages     HostConfigID = "host_docker_images"
+)
+
+// AllValues returns all HostConfigID values.
+func (HostConfigID) AllValues() []HostConfigID {
+	return []HostConfigID{
+		HostConfigIDHostSamba,
+		HostConfigIDHostNfs,
+		HostConfigIDHostFstab,
+		HostConfigIDHostDockerContainers,
+		HostConfigIDHostDockerImages,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s HostConfigID) MarshalText() ([]byte, error) {
+	switch s {
+	case HostConfigIDHostSamba:
+		return []byte(s), nil
+	case HostConfigIDHostNfs:
+		return []byte(s), nil
+	case HostConfigIDHostFstab:
+		return []byte(s), nil
+	case HostConfigIDHostDockerContainers:
+		return []byte(s), nil
+	case HostConfigIDHostDockerImages:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *HostConfigID) UnmarshalText(data []byte) error {
+	switch HostConfigID(data) {
+	case HostConfigIDHostSamba:
+		*s = HostConfigIDHostSamba
+		return nil
+	case HostConfigIDHostNfs:
+		*s = HostConfigIDHostNfs
+		return nil
+	case HostConfigIDHostFstab:
+		*s = HostConfigIDHostFstab
+		return nil
+	case HostConfigIDHostDockerContainers:
+		*s = HostConfigIDHostDockerContainers
+		return nil
+	case HostConfigIDHostDockerImages:
+		*s = HostConfigIDHostDockerImages
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // ImportConfigNoContent is response for ImportConfig operation.
@@ -2533,6 +2710,7 @@ const (
 	NotificationEventTypeContainerUnhealthy       NotificationEventType = "container_unhealthy"
 	NotificationEventTypeContainerUpdateAvailable NotificationEventType = "container_update_available"
 	NotificationEventTypeHoservaUpdateAvailable   NotificationEventType = "hoserva_update_available"
+	NotificationEventTypeHoservaUpdateFailed      NotificationEventType = "hoserva_update_failed"
 	NotificationEventTypeRebootRequired           NotificationEventType = "reboot_required"
 	NotificationEventTypeUpsOnBattery             NotificationEventType = "ups_on_battery"
 	NotificationEventTypeUpsBatteryLow            NotificationEventType = "ups_battery_low"
@@ -2564,6 +2742,7 @@ func (NotificationEventType) AllValues() []NotificationEventType {
 		NotificationEventTypeContainerUnhealthy,
 		NotificationEventTypeContainerUpdateAvailable,
 		NotificationEventTypeHoservaUpdateAvailable,
+		NotificationEventTypeHoservaUpdateFailed,
 		NotificationEventTypeRebootRequired,
 		NotificationEventTypeUpsOnBattery,
 		NotificationEventTypeUpsBatteryLow,
@@ -2611,6 +2790,8 @@ func (s NotificationEventType) MarshalText() ([]byte, error) {
 	case NotificationEventTypeContainerUpdateAvailable:
 		return []byte(s), nil
 	case NotificationEventTypeHoservaUpdateAvailable:
+		return []byte(s), nil
+	case NotificationEventTypeHoservaUpdateFailed:
 		return []byte(s), nil
 	case NotificationEventTypeRebootRequired:
 		return []byte(s), nil
@@ -2687,6 +2868,9 @@ func (s *NotificationEventType) UnmarshalText(data []byte) error {
 		return nil
 	case NotificationEventTypeHoservaUpdateAvailable:
 		*s = NotificationEventTypeHoservaUpdateAvailable
+		return nil
+	case NotificationEventTypeHoservaUpdateFailed:
+		*s = NotificationEventTypeHoservaUpdateFailed
 		return nil
 	case NotificationEventTypeRebootRequired:
 		*s = NotificationEventTypeRebootRequired

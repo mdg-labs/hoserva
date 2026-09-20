@@ -24,7 +24,7 @@ func findDoctorCheck(report *apiv1.DoctorReport, id string) apiv1.DoctorCheck {
 func TestMountStateCheck_Mounted(t *testing.T) {
 	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) {
 		return true, nil
-	})
+	}, nil)
 	check := findDoctorCheck(report, "mount_state")
 	if check.Status != apiv1.DoctorCheckStatusPass {
 		t.Fatalf("mount_state status = %q, want pass", check.Status)
@@ -37,7 +37,7 @@ func TestMountStateCheck_Mounted(t *testing.T) {
 func TestMountStateCheck_NotMounted(t *testing.T) {
 	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) {
 		return false, nil
-	})
+	}, nil)
 	check := findDoctorCheck(report, "mount_state")
 	if check.Status != apiv1.DoctorCheckStatusWarn {
 		t.Fatalf("mount_state status = %q, want warn", check.Status)
@@ -51,7 +51,7 @@ func TestParityFreshnessCheck_Green(t *testing.T) {
 		Freshness:  parity.FreshnessGreen,
 		LastSyncAt: lastSync,
 	})
-	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil })
+	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil)
 	check := findDoctorCheck(report, "parity_freshness")
 	if check.Status != apiv1.DoctorCheckStatusPass {
 		t.Fatalf("parity_freshness status = %q, want pass", check.Status)
@@ -64,7 +64,7 @@ func TestParityFreshnessCheck_Amber(t *testing.T) {
 		Freshness:        parity.FreshnessAmber,
 		ChangedSinceSync: 12,
 	})
-	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil })
+	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil)
 	check := findDoctorCheck(report, "parity_freshness")
 	if check.Status != apiv1.DoctorCheckStatusWarn {
 		t.Fatalf("parity_freshness status = %q, want warn", check.Status)
@@ -74,7 +74,7 @@ func TestParityFreshnessCheck_Amber(t *testing.T) {
 func TestParityFreshnessCheck_Red(t *testing.T) {
 	eng := parity.NewFakeEngine()
 	eng.SetStatus(parity.ParityStatus{Freshness: parity.FreshnessRed})
-	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil })
+	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil)
 	check := findDoctorCheck(report, "parity_freshness")
 	if check.Status != apiv1.DoctorCheckStatusFail {
 		t.Fatalf("parity_freshness status = %q, want fail", check.Status)
@@ -84,7 +84,7 @@ func TestParityFreshnessCheck_Red(t *testing.T) {
 func TestParityFreshnessCheck_Error(t *testing.T) {
 	eng := parity.NewFakeEngine()
 	eng.FailStatus(errors.New("snapraid unavailable"))
-	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil })
+	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil)
 	check := findDoctorCheck(report, "parity_freshness")
 	if check.Status != apiv1.DoctorCheckStatusWarn {
 		t.Fatalf("parity_freshness status = %q, want warn on error", check.Status)
@@ -96,7 +96,7 @@ func TestSmartCheck_Healthy(t *testing.T) {
 	f.AddDisk("/dev/sdb", disk.Disk{Device: "/dev/sdb", Size: disk.TB})
 	f.SetSMART("/dev/sdb", disk.SMARTReport{SpinState: disk.Active})
 
-	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil })
+	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil)
 	check := findDoctorCheck(report, "smart")
 	if check.Status != apiv1.DoctorCheckStatusPass {
 		t.Fatalf("smart status = %q, want pass; message=%q", check.Status, check.Message)
@@ -112,7 +112,7 @@ func TestSmartCheck_ReallocatedWarns(t *testing.T) {
 	f.AddDisk("/dev/sdb", disk.Disk{Device: "/dev/sdb", Size: disk.TB})
 	f.SetSMART("/dev/sdb", disk.SMARTReport{ReallocatedSectors: 4, SpinState: disk.Active})
 
-	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil })
+	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil)
 	check := findDoctorCheck(report, "smart")
 	if check.Status != apiv1.DoctorCheckStatusWarn {
 		t.Fatalf("smart status = %q, want warn; message=%q", check.Status, check.Message)
@@ -124,7 +124,7 @@ func TestSmartCheck_SelfTestFailedFails(t *testing.T) {
 	f.AddDisk("/dev/sdb", disk.Disk{Device: "/dev/sdb", Size: disk.TB})
 	f.SetSMART("/dev/sdb", disk.SMARTReport{SelfTestFailed: true, SpinState: disk.Active})
 
-	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil })
+	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil)
 	check := findDoctorCheck(report, "smart")
 	if check.Status != apiv1.DoctorCheckStatusFail {
 		t.Fatalf("smart status = %q, want fail; message=%q", check.Status, check.Message)
@@ -136,7 +136,7 @@ func TestSmartCheck_StandbySkipped(t *testing.T) {
 	f.AddDisk("/dev/sdb", disk.Disk{Device: "/dev/sdb", Size: disk.TB})
 	f.SetSpinState("/dev/sdb", disk.Standby)
 
-	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil })
+	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil)
 	check := findDoctorCheck(report, "smart")
 	if check.Status != apiv1.DoctorCheckStatusPass {
 		t.Fatalf("smart status = %q, want pass for standby skip; message=%q", check.Status, check.Message)

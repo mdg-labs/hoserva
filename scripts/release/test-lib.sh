@@ -117,6 +117,62 @@ if (cd "$repo" && hoserva_verify_tag_ancestry v9.9.9) >/dev/null 2>&1; then
   fail=1
 fi
 
+write_test_pubkey_go() {
+  local pem_file="$1" go_file="$2"
+  {
+    echo 'package update'
+    echo 'import "crypto/ed25519"'
+    echo 'var EmbeddedPublicKey = ed25519.PublicKey{'
+    openssl pkey -in "$pem_file" -pubin -outform DER | tail -c 32 | od -An -tx1 | tr -s ' \n' ' ' |
+      sed 's/ /, 0x/g' | sed 's/^/0x/' | fold -s -w 72 |
+      sed 's/$/,/' | sed '$ s/,$//'
+    echo '}'
+  } >"$go_file"
+}
+
+match_key_dir="$(mktemp -d)"
+other_key_dir="$(mktemp -d)"
+trap 'cleanup; rm -rf "$git_dir" "$match_key_dir" "$other_key_dir"' EXIT
+
+openssl genpkey -algorithm ed25519 -out "$match_key_dir/priv.pem" >/dev/null 2>&1
+openssl pkey -in "$match_key_dir/priv.pem" -pubout -out "$match_key_dir/pub.pem" >/dev/null 2>&1
+write_test_pubkey_go "$match_key_dir/pub.pem" "$match_key_dir/pubkey.go"
+
+openssl genpkey -algorithm ed25519 -out "$other_key_dir/priv.pem" >/dev/null 2>&1
+openssl pkey -in "$other_key_dir/priv.pem" -pubout -out "$other_key_dir/pub.pem" >/dev/null 2>&1
+write_test_pubkey_go "$other_key_dir/pub.pem" "$other_key_dir/pubkey.go"
+
+if [ "$(hoserva_compare_release_pubkeys "$match_key_dir/pub.pem" "$match_key_dir/pubkey.go")" != match ]; then
+  note "FAIL: matching PEM and pubkey.go should compare as match"
+  fail=1
+fi
+if [ "$(hoserva_compare_release_pubkeys "$match_key_dir/priv.pem" "$match_key_dir/pubkey.go")" != match ]; then
+  note "FAIL: matching private PEM and pubkey.go should compare as match"
+  fail=1
+fi
+if [ "$(hoserva_compare_release_pubkeys "$match_key_dir/pubkey.go" "$other_key_dir/pubkey.go")" = match ]; then
+  note "FAIL: different pubkey.go sources should not compare as match"
+  fail=1
+fi
+if hoserva_compare_release_pubkeys "$match_key_dir/pubkey.go" /no/such/file >/dev/null 2>&1; then
+  note "FAIL: missing input should not compare successfully"
+  fail=1
+fi
+
+# A non-Ed25519 PEM must not be accepted by taking its last 32 DER bytes
+# (X25519 SPKI is the same length as Ed25519; RSA is longer). Either
+# would otherwise let a rotated signing key pass the pubkey comparison.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$match_key_dir/rsa.pem" >/dev/null 2>&1
+if hoserva_ed25519_pubkey_raw_from_pem "$match_key_dir/rsa.pem" "$match_key_dir/rsa.raw" >/dev/null 2>&1; then
+  note "FAIL: RSA PEM should be refused as a release public key"
+  fail=1
+fi
+openssl genpkey -algorithm X25519 -out "$match_key_dir/x25519.pem" >/dev/null 2>&1
+if hoserva_ed25519_pubkey_raw_from_pem "$match_key_dir/x25519.pem" "$match_key_dir/x25519.raw" >/dev/null 2>&1; then
+  note "FAIL: X25519 PEM should be refused as a release public key"
+  fail=1
+fi
+
 if [ "$fail" -eq 0 ]; then
   note "PASS"
 fi

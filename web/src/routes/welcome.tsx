@@ -239,6 +239,31 @@ export function WelcomePage(): React.ReactElement {
     }
   }
 
+  async function handleDoctorNext(): Promise<void> {
+    setError(null);
+    setLoading(true);
+    try {
+      const files = q76Panels
+        .filter((panel) => panel.check)
+        .map((panel) => ({
+          id: panel.id,
+          decision: q76Choices[panel.id] ?? Q76_LEAVE,
+        }));
+      if (files.length > 0) {
+        const { error: applyError } = await hoservaClient.POST("/doctor/host-config", {
+          body: { files },
+        });
+        if (applyError) {
+          setError(applyError.message);
+          return;
+        }
+      }
+      setStep(2);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleBasicsNext(): Promise<void> {
     setError(null);
     setLoading(true);
@@ -306,7 +331,7 @@ export function WelcomePage(): React.ReactElement {
         setError(t("welcome.errors.storageBlocked"));
         return;
       }
-      setStep(2);
+      void handleDoctorNext();
       return;
     }
     if (step === 2) {
