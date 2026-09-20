@@ -155,6 +155,12 @@ if "$script_dir/assemble-release-index.sh" "$bad" "$work/bad-out.json" >/dev/nul
   note "FAIL: channel/tag mismatch should be refused"
   fail=1
 fi
+rm -f "$bad/mismatch.json"
+write_entry "$bad/mismatch.json" "v1.2.3" "9.9.9" "stable"
+if "$script_dir/assemble-release-index.sh" "$bad" "$work/bad-out.json" >/dev/null 2>&1; then
+  note "FAIL: version/tag mismatch should be refused"
+  fail=1
+fi
 
 # fetch-release-index-entries.sh against a fake gh: one recognised tag
 # with the asset, one recognised tag without it, one unrecognised tag.
