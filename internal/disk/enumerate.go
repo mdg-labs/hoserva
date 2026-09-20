@@ -94,7 +94,7 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 		id := ResolveIdentity(byID[name])
 		dev := "/dev/" + name
 
-		fsType, fsLabel := l.discoveryFS(name)
+		fsType, fsLabel, fsUUID := l.discoveryFS(name)
 		disks = append(disks, Disk{
 			Device:          dev,
 			Size:            size * 512, // /sys/class/block/<dev>/size is always in 512-byte sectors
@@ -106,6 +106,7 @@ func (l *Lister) List(ctx context.Context) ([]Disk, error) {
 			Boot:            bootSet[dev],
 			Filesystem:      fsType,
 			Label:           fsLabel,
+			FSUUID:          fsUUID,
 			ContainsData:    fsType != "",
 			LooksLikeUnraid: LooksLikeUnraidLabel(fsLabel),
 		})

@@ -65,6 +65,53 @@ func diskCmd() *cobra.Command {
 		Short: "List disks",
 		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.ListDisks(apiCtx()) }),
 	})
+	cmd.AddCommand(diskExternalCmd())
+	return cmd
+}
+
+func diskExternalCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "external", Short: "Disks outside the array (Q72)"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List external disks",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.ListExternalDisks(apiCtx()) }),
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "mount LABEL",
+		Short: "Mount an external disk by filesystem UUID at /mnt/disks/<label>",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				return c.MountExternalDisk(apiCtx(), apiv1.MountExternalDiskParams{Label: apiv1.ExternalDiskLabel(args[0])})
+			})(cmd, args)
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "eject LABEL",
+		Short: "Unmount an external disk, then spin it down",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				return c.EjectExternalDisk(apiCtx(), apiv1.EjectExternalDiskParams{Label: apiv1.ExternalDiskLabel(args[0])})
+			})(cmd, args)
+		},
+	})
+	var formatConfirm string
+	format := &cobra.Command{
+		Use:   "format LABEL",
+		Short: "Format an external disk after the same typed confirmation as an array disk",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if formatConfirm == "" {
+				return fmt.Errorf("disk external format requires --confirm with the exact ERASE phrase")
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				return c.FormatExternalDisk(apiCtx(), &apiv1.FormatExternalDiskRequest{Confirmation: formatConfirm}, apiv1.FormatExternalDiskParams{Label: apiv1.ExternalDiskLabel(args[0])})
+			})(cmd, args)
+		},
+	}
+	format.Flags().StringVar(&formatConfirm, "confirm", "", "Exact typed confirmation (ERASE /dev/sdX)")
+	cmd.AddCommand(format)
 	return cmd
 }
 

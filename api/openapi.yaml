@@ -1442,6 +1442,155 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /disks/external:
+    get:
+      operationId: listExternalDisks
+      summary: List external disks
+      description: >-
+        Disks outside the array (Q72, doc 02 §4, doc 03 §3.3): Ignore-role
+        or a later USB disk, never a pool or parity member. Registered
+        external disks plus inventory disks that are not the boot device
+        and not in the array. Nothing is mounted by this call.
+      tags: [disks]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: External disks.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [disks]
+                properties:
+                  disks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExternalDisk'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: registerExternalDisk
+      summary: Register a disk as external
+      description: >-
+        Assigns a non-array, non-boot disk the Ignore/external role (Q72)
+        with a label used as `/mnt/disks/<label>`. Does not mount or
+        format. The boot device is refused.
+      tags: [disks]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterExternalDiskRequest'
+      responses:
+        "200":
+          description: The registered external disk.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalDisk'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /disks/external/{label}:
+    parameters:
+      - $ref: '#/components/parameters/ExternalLabel'
+    patch:
+      operationId: updateExternalDisk
+      summary: Update an external disk
+      description: >-
+        Sets whether this disk's `/mnt/disks/<label>` mount is a local
+        backup destination (doc 10 §1).
+      tags: [disks]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateExternalDiskRequest'
+      responses:
+        "200":
+          description: The updated external disk.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalDisk'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /disks/external/{label}/mount:
+    parameters:
+      - $ref: '#/components/parameters/ExternalLabel'
+    post:
+      operationId: mountExternalDisk
+      summary: Mount an external disk
+      description: >-
+        Mounts the disk by filesystem UUID at `/mnt/disks/<label>` (Q21,
+        Q72). Nothing mounts automatically on plug-in. The boot device
+        and array disks are refused.
+      tags: [disks]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The mounted external disk.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalDisk'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /disks/external/{label}/eject:
+    parameters:
+      - $ref: '#/components/parameters/ExternalLabel'
+    post:
+      operationId: ejectExternalDisk
+      summary: Eject an external disk
+      description: >-
+        Unmounts `/mnt/disks/<label>`, then spins the disk down (Q72).
+      tags: [disks]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The ejected external disk.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalDisk'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /disks/external/{label}/format:
+    parameters:
+      - $ref: '#/components/parameters/ExternalLabel'
+    post:
+      operationId: formatExternalDisk
+      summary: Format an external disk
+      description: >-
+        Formats the disk after the same typed confirmation array setup
+        uses (`disk.TopologyPlan.Confirmation`, doc 03 §3.1 step 6). The
+        boot device is never offered. A wrong or missing confirmation is
+        refused with `confirmation_required` and formats nothing.
+      tags: [disks]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FormatExternalDiskRequest'
+      responses:
+        "200":
+          description: The formatted external disk.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalDisk'
+        default:
+          $ref: '#/components/responses/Error'
+
   /disks/wake-events:
     get:
       operationId: listWakeEvents
@@ -1871,6 +2020,13 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/ShareName'
+
+    ExternalLabel:
+      name: label
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ExternalDiskLabel'
 
   responses:
     Error:
@@ -3343,6 +3499,84 @@ components:
             True when the filesystem label matches Unraid's `diskN` /
             `parity` / `cache` naming (doc 05) — a conservative heuristic
             that never mounts the disk to look for `super.dat`.
+
+    ExternalDiskLabel:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]*$'
+      description: Path segment under `/mnt/disks/` (Q72).
+
+    ExternalDisk:
+      type: object
+      required: [label, device, mountPoint, containerPath, mounted, backupDestination, boot]
+      properties:
+        label:
+          $ref: '#/components/schemas/ExternalDiskLabel'
+        device:
+          type: string
+        mountPoint:
+          type: string
+          description: >-
+            /mnt/disks/<label> — mounted on request, never automatically.
+        containerPath:
+          type: string
+          description: >-
+            The same /mnt/disks/<label> path, exposed as a stable
+            bind-mount source for a container (Q72, Unraid Unassigned
+            Devices convention).
+        mounted:
+          type: boolean
+        backupDestination:
+          type: boolean
+          description: Whether this disk's mount is a local backup destination (doc 10 §1).
+        boot:
+          type: boolean
+          description: Always false — the boot device is never offered as external.
+        filesystem:
+          type: string
+        fsUuid:
+          type: string
+        sizeBytes:
+          type:
+            - integer
+            - "null"
+          format: int64
+        model:
+          type: string
+        serial:
+          type: string
+
+    RegisterExternalDiskRequest:
+      type: object
+      required: [device, label]
+      properties:
+        device:
+          type: string
+        label:
+          $ref: '#/components/schemas/ExternalDiskLabel'
+        backupDestination:
+          type: boolean
+          default: false
+
+    UpdateExternalDiskRequest:
+      type: object
+      properties:
+        backupDestination:
+          type: boolean
+
+    FormatExternalDiskRequest:
+      type: object
+      required: [confirmation]
+      properties:
+        filesystem:
+          $ref: '#/components/schemas/ArrayDiskFilesystem'
+        confirmation:
+          type: string
+          description: >-
+            Exact typed confirmation for this disk
+            (`disk.TopologyPlan.Confirmation`): `ERASE /dev/sdX`. A wrong
+            or missing string is refused and formats nothing.
 
     ArrayDiskRole:
       type: string

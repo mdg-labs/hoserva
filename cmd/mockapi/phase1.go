@@ -50,6 +50,7 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 				ContainsData:    apiv1.NewOptBool(false),
 				LooksLikeUnraid: apiv1.NewOptBool(false),
 			},
+			mockUSBDisk(),
 		}
 	}
 
@@ -82,7 +83,7 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 	if scenario == "degraded" {
 		disks[2].Failed = apiv1.NewOptBool(true)
 	}
-	return disks
+	return append(disks, mockUSBDisk())
 }
 
 func mockPoolStatus(scenario string) *apiv1.PoolStatus {
