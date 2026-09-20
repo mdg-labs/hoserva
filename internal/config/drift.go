@@ -76,7 +76,7 @@ func (g *Generator) saveManifest(m map[string]record) error {
 	if err != nil {
 		return fmt.Errorf("config: encoding manifest: %w", err)
 	}
-	return atomicWrite(g.manifestPath(), raw, 0o644)
+	return atomicWrite(g.manifestPath(), raw, 0o644, false)
 }
 
 // Check reports path's current drift Status against Generator's manifest
@@ -210,30 +210,13 @@ func (g *Generator) KeepUnmanaged(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
-	_, key, err := g.resolvePath(path)
-	if err != nil {
-		return err
-	}
 	manifest, err := g.loadManifest()
 	if err != nil {
 		return err
 	}
-	rec, ok := manifest[key]
-	if !ok {
-		full := filepath.Join(g.Root, key)
-		current, err := os.ReadFile(full)
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("config: %s was never generated", key)
-		}
-		if err != nil {
-			return fmt.Errorf("config: reading %s: %w", key, err)
-		}
-		manifest[key] = record{Hash: hashContent(current), Unmanaged: true, GeneratedAt: time.Now().UTC()}
-		return g.saveManifest(manifest)
+	if err := g.setHostFileDecision(manifest, path, DecisionLeave); err != nil {
+		return err
 	}
-	rec.Unmanaged = true
-	manifest[key] = rec
 	return g.saveManifest(manifest)
 }
 
@@ -244,25 +227,93 @@ func (g *Generator) RecordImported(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
-	full, key, err := g.resolvePath(path)
-	if err != nil {
-		return err
-	}
-	current, err := os.ReadFile(full)
-	if err != nil {
-		return fmt.Errorf("config: reading %s: %w", key, err)
-	}
 	manifest, err := g.loadManifest()
 	if err != nil {
 		return err
 	}
-	rec := manifest[key]
-	rec.Hash = hashContent(current)
-	rec.Unmanaged = false
-	rec.GeneratedAt = time.Now().UTC()
-	manifest[key] = rec
+	if err := g.setHostFileDecision(manifest, path, DecisionImport); err != nil {
+		return err
+	}
 	return g.saveManifest(manifest)
+}
+
+// HostFileDecision is one Q76 leave/import applied to a Root-relative path.
+type HostFileDecision struct {
+	Path     string
+	Decision string
+}
+
+// ApplyHostFileDecisions records every leave/import in one manifest write.
+// saveManifest is atomic, so a failure leaves the previous manifest in
+// place. The returned restore rewrites that previous snapshot — ApplyHostConfig
+// calls it if persisting the matching database rows fails afterward.
+func (g *Generator) ApplyHostFileDecisions(ctx context.Context, files []HostFileDecision) (restore func() error, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, nil
+	}
+	previous, err := g.loadManifest()
+	if err != nil {
+		return nil, err
+	}
+	manifest := cloneManifest(previous)
+	for _, file := range files {
+		if err := g.setHostFileDecision(manifest, file.Path, file.Decision); err != nil {
+			return nil, err
+		}
+	}
+	if err := g.saveManifest(manifest); err != nil {
+		return nil, err
+	}
+	return func() error { return g.saveManifest(previous) }, nil
+}
+
+func cloneManifest(m map[string]record) map[string]record {
+	out := make(map[string]record, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func (g *Generator) setHostFileDecision(manifest map[string]record, path, decision string) error {
+	full, key, err := g.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	switch decision {
+	case DecisionLeave:
+		rec, ok := manifest[key]
+		if !ok {
+			current, err := os.ReadFile(full)
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("config: %s was never generated", key)
+			}
+			if err != nil {
+				return fmt.Errorf("config: reading %s: %w", key, err)
+			}
+			manifest[key] = record{Hash: hashContent(current), Unmanaged: true, GeneratedAt: time.Now().UTC()}
+			return nil
+		}
+		rec.Unmanaged = true
+		manifest[key] = rec
+		return nil
+	case DecisionImport:
+		current, err := os.ReadFile(full)
+		if err != nil {
+			return fmt.Errorf("config: reading %s: %w", key, err)
+		}
+		rec := manifest[key]
+		rec.Hash = hashContent(current)
+		rec.Unmanaged = false
+		rec.GeneratedAt = time.Now().UTC()
+		manifest[key] = rec
+		return nil
+	default:
+		return fmt.Errorf("config: host-file decision for %s must be import or leave", key)
+	}
 }
 
 // Manage reverses KeepUnmanaged: it clears path's Unmanaged record so a

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Q76 host-file paths, relative to Generator.Root (which is /etc in
@@ -108,10 +109,17 @@ func (m MemoryDocker) List(context.Context) ([]DockerRef, []DockerRef, error) {
 // not as a probe error.
 type ExecDocker struct{}
 
+// dockerInventoryTimeout bounds ExecDocker.List so a stalled Engine
+// cannot hold RunDoctor or GetStatus open. It matches doctor's probe
+// bound (internal/api.doctorProbeTimeout).
+const dockerInventoryTimeout = 8 * time.Second
+
 func (ExecDocker) List(ctx context.Context) ([]DockerRef, []DockerRef, error) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return nil, nil, errDockerUnavailable
 	}
+	ctx, cancel := context.WithTimeout(ctx, dockerInventoryTimeout)
+	defer cancel()
 	containers, err := dockerList(ctx, []string{"ps", "-a", "--format", "{{.ID}} {{.Names}}"})
 	if err != nil {
 		return nil, nil, err
@@ -217,10 +225,8 @@ func (inv HostInventory) Found(kind string) bool {
 		return inv.NFS.Present || inv.NFS.Err != nil
 	case KindFstab:
 		return inv.Fstab.Present || inv.Fstab.Err != nil
-	case KindDockerContainers:
-		return !inv.DockerUnavailable && (len(inv.DockerContainers) > 0 || inv.DockerErr != nil)
-	case KindDockerImages:
-		return !inv.DockerUnavailable && (len(inv.DockerImages) > 0 || inv.DockerErr != nil)
+	case KindDockerContainers, KindDockerImages:
+		return !inv.DockerUnavailable
 	default:
 		return false
 	}

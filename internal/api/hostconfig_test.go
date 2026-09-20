@@ -20,6 +20,12 @@ import (
 
 func hostConfigTestHandler(t *testing.T) (*api.Handler, *config.Generator) {
 	t.Helper()
+	h, g, _ := hostConfigTestEnv(t)
+	return h, g
+}
+
+func hostConfigTestEnv(t *testing.T) (*api.Handler, *config.Generator, *sql.DB) {
+	t.Helper()
 	migrations, err := store.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +58,7 @@ func hostConfigTestHandler(t *testing.T) (*api.Handler, *config.Generator) {
 			Images:     []config.DockerRef{{ID: "i1", Name: "nginx:latest"}},
 		},
 	}
-	return h, g
+	return h, g, db
 }
 
 func copyHostFixture(t *testing.T, name, dst string) {
@@ -187,13 +193,80 @@ func TestApplyHostConfig_DockerDataRootStaysWithExistingContainers(t *testing.T)
 
 func TestApplyHostConfig_RejectsUndetectedID(t *testing.T) {
 	h, _ := hostConfigTestHandler(t)
-	h.Docker = config.MemoryDocker{}
+	h.Docker = nil
 	_, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
 		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionLeave},
 	}})
 	status := apiError(t, h, err)
 	if status.StatusCode != 400 || status.Response.Code != "invalid_host_config" {
 		t.Fatalf("error = %+v", status)
+	}
+}
+
+func TestApplyHostConfig_RejectsInvalidWithoutPersistingPrefix(t *testing.T) {
+	h, _ := hostConfigTestHandler(t)
+	ctx := context.Background()
+	_, err := h.ApplyHostConfig(ctx, &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostSamba, Decision: apiv1.HostConfigDecisionLeave},
+		{ID: "host_not_a_thing", Decision: apiv1.HostConfigDecisionLeave},
+	}})
+	if err == nil {
+		t.Fatal("invalid later choice did not error")
+	}
+	if _, getErr := h.HostConfig.Get(ctx, config.KindSamba); !errors.Is(getErr, sql.ErrNoRows) {
+		t.Fatalf("samba persisted after a later invalid choice: %v", getErr)
+	}
+}
+
+func TestApplyHostConfig_GeneratorFailureDoesNotPersistPrefix(t *testing.T) {
+	h, g := hostConfigTestHandler(t)
+	ctx := context.Background()
+	nfs := filepath.Join(g.Root, config.PathNFS)
+	if err := os.Chmod(nfs, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(nfs, 0o644) })
+
+	_, err := h.ApplyHostConfig(ctx, &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostSamba, Decision: apiv1.HostConfigDecisionLeave},
+		{ID: apiv1.HostConfigIDHostNfs, Decision: apiv1.HostConfigDecisionLeave},
+	}})
+	if err == nil {
+		t.Fatal("unreadable nfs did not error")
+	}
+	if _, getErr := h.HostConfig.Get(ctx, config.KindSamba); !errors.Is(getErr, sql.ErrNoRows) {
+		t.Fatalf("samba persisted after a later generator failure: %v", getErr)
+	}
+	writeErr := g.Write(ctx, config.File{Path: config.PathSamba, Command: "share create", Body: []byte("[global]\n")}, 1, time.Now())
+	if errors.Is(writeErr, config.ErrUnmanaged) {
+		t.Fatal("samba was marked unmanaged after a later generator failure")
+	}
+}
+
+func TestApplyHostConfig_EmptyDockerCanAcceptCacheMove(t *testing.T) {
+	h, _, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DockerDataRoot != "/mnt/cache/docker" {
+		t.Fatalf("dockerDataRoot = %q, want /mnt/cache/docker", got.DockerDataRoot)
 	}
 }
 

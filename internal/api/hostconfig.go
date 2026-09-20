@@ -24,10 +24,16 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 		return nil, fmt.Errorf("detecting host configuration: %w", err)
 	}
 
-	seen := map[string]struct{}{}
-	applied := make([]apiv1.HostConfigChoice, 0, len(req.Files))
-	importDocker := map[string]bool{}
+	type pendingChoice struct {
+		choice   apiv1.HostConfigChoice
+		kind     string
+		decision string
+		facts    string
+		path     string
+	}
 
+	seen := map[string]struct{}{}
+	pending := make([]pendingChoice, 0, len(req.Files))
 	for _, choice := range req.Files {
 		kind, ok := config.KindFromCheckID(string(choice.ID))
 		if !ok {
@@ -50,29 +56,41 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 		if err != nil {
 			return nil, fmt.Errorf("encoding host-config facts: %w", err)
 		}
-		if err := h.HostConfig.Put(ctx, store.HostConfig{
-			Kind:     kind,
-			Decision: decision,
-			Facts:    string(facts),
-		}); err != nil {
-			return nil, err
-		}
+		pending = append(pending, pendingChoice{
+			choice:   choice,
+			kind:     kind,
+			decision: decision,
+			facts:    string(facts),
+			path:     config.HostFilePath(kind),
+		})
+	}
 
-		if path := config.HostFilePath(kind); path != "" {
-			if decision == config.DecisionLeave {
-				if err := h.Generator.KeepUnmanaged(ctx, path); err != nil {
-					return nil, fmt.Errorf("leaving %s unmanaged: %w", path, err)
-				}
-			} else {
-				if err := h.Generator.RecordImported(ctx, path); err != nil {
-					return nil, fmt.Errorf("recording import of %s: %w", path, err)
-				}
+	files := make([]config.HostFileDecision, 0, len(pending))
+	rows := make([]store.HostConfig, 0, len(pending))
+	applied := make([]apiv1.HostConfigChoice, 0, len(pending))
+	importDocker := map[string]bool{}
+	for _, p := range pending {
+		if p.path != "" {
+			files = append(files, config.HostFileDecision{Path: p.path, Decision: p.decision})
+		}
+		rows = append(rows, store.HostConfig{Kind: p.kind, Decision: p.decision, Facts: p.facts})
+		if p.kind == config.KindDockerContainers || p.kind == config.KindDockerImages {
+			importDocker[p.kind] = p.decision == config.DecisionImport
+		}
+		applied = append(applied, p.choice)
+	}
+
+	restore, err := h.Generator.ApplyHostFileDecisions(ctx, files)
+	if err != nil {
+		return nil, fmt.Errorf("recording host-file decisions: %w", err)
+	}
+	if err := h.HostConfig.PutAll(ctx, rows); err != nil {
+		if restore != nil {
+			if rerr := restore(); rerr != nil {
+				return nil, fmt.Errorf("persisting host-config: %w (manifest restore: %v)", err, rerr)
 			}
 		}
-		if kind == config.KindDockerContainers || kind == config.KindDockerImages {
-			importDocker[kind] = decision == config.DecisionImport
-		}
-		applied = append(applied, choice)
+		return nil, fmt.Errorf("persisting host-config: %w", err)
 	}
 
 	acceptedMove := importDocker[config.KindDockerContainers] && importDocker[config.KindDockerImages]

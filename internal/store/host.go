@@ -22,26 +22,50 @@ type HostConfig struct {
 
 // HostConfigStore persists Q76 apply choices in the central database.
 type HostConfigStore struct {
-	q *storedb.Queries
+	db *sql.DB
+	q  *storedb.Queries
 }
 
 // NewHostConfigStore wraps db for host-config persistence.
 func NewHostConfigStore(db *sql.DB) *HostConfigStore {
-	return &HostConfigStore{q: storedb.New(db)}
+	return &HostConfigStore{db: db, q: storedb.New(db)}
 }
 
 // Put upserts one category's decision and parsed facts.
 func (s *HostConfigStore) Put(ctx context.Context, rec HostConfig) error {
-	if rec.AppliedAt.IsZero() {
-		rec.AppliedAt = time.Now().UTC()
+	return s.PutAll(ctx, []HostConfig{rec})
+}
+
+// PutAll upserts every row in one transaction so ApplyHostConfig either
+// persists the whole request or leaves host_config unchanged.
+func (s *HostConfigStore) PutAll(ctx context.Context, recs []HostConfig) error {
+	if len(recs) == 0 {
+		return nil
 	}
-	if err := s.q.UpsertHostConfig(ctx, storedb.UpsertHostConfigParams{
-		Kind:      rec.Kind,
-		Decision:  rec.Decision,
-		Facts:     rec.Facts,
-		AppliedAt: rec.AppliedAt.UTC().Format(TimeFormat),
-	}); err != nil {
-		return fmt.Errorf("store: upserting host_config %s: %w", rec.Kind, err)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: beginning host_config transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	q := s.q.WithTx(tx)
+	now := time.Now().UTC()
+	for _, rec := range recs {
+		applied := rec.AppliedAt
+		if applied.IsZero() {
+			applied = now
+		}
+		if err := q.UpsertHostConfig(ctx, storedb.UpsertHostConfigParams{
+			Kind:      rec.Kind,
+			Decision:  rec.Decision,
+			Facts:     rec.Facts,
+			AppliedAt: applied.UTC().Format(TimeFormat),
+		}); err != nil {
+			return fmt.Errorf("store: upserting host_config %s: %w", rec.Kind, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: committing host_config: %w", err)
 	}
 	return nil
 }

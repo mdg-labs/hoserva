@@ -92,7 +92,13 @@ hoserva_ed25519_pubkey_raw_from_go() {
 
 hoserva_ed25519_pubkey_raw_from_pem() {
   local pem_file="$1" out_file="$2"
-  local der_file
+  local der_file der_len prefix
+  # RFC 8410 Ed25519 SubjectPublicKeyInfo is exactly 44 bytes:
+  # 30 2a 30 05 06 03 2b 65 70 03 21 00 || 32-byte raw key.
+  # X25519 is also 44 bytes (OID 1.3.101.110), so length alone is not
+  # enough — the prefix must match before we take the trailing 32 bytes.
+  local spki_prefix="302a300506032b6570032100"
+  local spki_len=44
   der_file="$(mktemp)"
   if openssl pkey -in "$pem_file" -pubin -outform DER -out "$der_file" 2>/dev/null; then
     :
@@ -101,6 +107,13 @@ hoserva_ed25519_pubkey_raw_from_pem() {
   else
     rm -f "$der_file"
     echo "hoserva_ed25519_pubkey_raw_from_pem: not a readable Ed25519 PEM: $pem_file" >&2
+    return 1
+  fi
+  der_len="$(wc -c <"$der_file" | tr -d ' ')"
+  prefix="$(xxd -p -l 12 "$der_file" | tr -d ' \n')"
+  if [ "$der_len" -ne "$spki_len" ] || [ "$prefix" != "$spki_prefix" ]; then
+    rm -f "$der_file"
+    echo "hoserva_ed25519_pubkey_raw_from_pem: not an Ed25519 SubjectPublicKeyInfo: $pem_file" >&2
     return 1
   fi
   tail -c 32 "$der_file" >"$out_file"

@@ -125,6 +125,19 @@ func TestDetectDoesNotReadTheHostEtc(t *testing.T) {
 	}
 }
 
+func TestFoundReportsEmptyDockerInventory(t *testing.T) {
+	inv, err := Detect(context.Background(), t.TempDir(), MemoryDocker{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv.DockerUnavailable {
+		t.Fatal("empty MemoryDocker should not be unavailable")
+	}
+	if !inv.Found(KindDockerContainers) || !inv.Found(KindDockerImages) {
+		t.Fatalf("empty docker inventory should still be detected: %+v", inv)
+	}
+}
+
 func TestDockerDataRootStaysWhenContainersExist(t *testing.T) {
 	inv := HostInventory{DockerContainers: []DockerRef{{ID: "a", Name: "x"}}}
 	if got := DockerDataRoot(inv, true, true); got != DockerDataRootDefault {
