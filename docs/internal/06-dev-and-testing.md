@@ -210,7 +210,7 @@ services:
 
 The entrypoint `mknod`s `/dev/loop0..N` inside the container, since the host's udev-created nodes are not visible there. Loop devices are still a host-global resource, which is why the namespacing and the "only loop devices backed by my own image files" guard above are mandatory, not tidiness — and why the host's own desktop can see them too, which the next section deals with.
 
-The image carries `snapraid`, `e2fsprogs` and `btrfs-progs` alongside `mergerfs` and `xfsprogs`, so L2 covers the SnapRAID operations doc 02 §2 drives and the ext4 and single-device btrfs disks Q23 plans, without a per-run install. `make lab-snapraid-check` runs one real `snapraid sync` against the standing array and requires SnapRAID's own `Everything OK`; CI runs it on every push. The trade-off, stated rather than lost: a passing lab run now demonstrates the recipe on Hoserva's own image, not on a near-stock `debian:trixie-slim`.
+The image carries `snapraid`, `e2fsprogs` and `btrfs-progs` alongside `mergerfs` and `xfsprogs`, so L2 covers the SnapRAID operations doc 02 §2 drives and the ext4 and single-device btrfs disks Q23 plans, without a per-run install. `make lab-snapraid-check` runs one real `snapraid sync` against the standing array and requires SnapRAID's own `Everything OK`; CI runs it on every merge-gate lab job (§7). The trade-off, stated rather than lost: a passing lab run now demonstrates the recipe on Hoserva's own image, not on a near-stock `debian:trixie-slim`.
 
 Starting the lab needs access to the Docker daemon, which is root-equivalent on the host; that is the reason labs are only ever started through `make lab-up`, whose recipe is reviewed, never with an ad-hoc `docker run`.
 
@@ -403,13 +403,13 @@ The residual risks above are exercised by volunteers on their own hardware, neve
 
 | Stage | Where | When |
 |---|---|---|
-| Lint, vet, unit tests (L1) | Hosted | Every push and PR |
-| Golden-file config diff | Hosted | Every push and PR |
-| API contract checks — spec lint, generated code up to date, breaking-change diff (D18, Q63) | Hosted | Every push and PR |
-| Frontend build + component tests | Hosted | Every push and PR |
-| Loop-device integration (L2) | Hosted (`sudo`, ephemeral) | Every push and PR |
-| Schema-migration fixture upgrade (D16) | Hosted | Every push and PR |
-| `.deb` build (amd64 + arm64) | Hosted | Every push and PR |
+| Lint, vet, unit tests (L1) | Hosted | Every push to `beta`, and PRs targeting `beta` or `main` |
+| Golden-file config diff | Hosted | Every push to `beta`, and PRs targeting `beta` or `main` |
+| API contract checks — spec lint, generated code up to date, breaking-change diff (D18, Q63) | Hosted | Every push to `beta`, and PRs targeting `beta` or `main` |
+| Frontend build + component tests | Hosted | Every push to `beta`, and PRs targeting `beta` or `main` |
+| Loop-device integration (L2) | Hosted (`sudo`, ephemeral) | Every push to `beta`, and PRs targeting `beta` or `main` |
+| Schema-migration fixture upgrade (D16) | Hosted | Every push to `beta`, and PRs targeting `beta` or `main` |
+| `.deb` build (amd64 + arm64) | Hosted | Every push to `beta`, and PRs targeting `beta` or `main` |
 | VM end-to-end (L3) | Hosted — S9's KVM half confirmed (run 35056076616, doc 08 §9) | Nightly on `main` where hosted; before every release |
 | Hoserva's own VM-management suite (Phase 3.5, nested KVM) | Hosted if S10 allows; otherwise agents on the dev host | Nightly on `main` where hosted; before every release |
 | Migration suite | Hosted — S9's KVM half confirmed (run 35056076616, doc 08 §9) | Nightly on `main` where hosted; before every release |
@@ -417,7 +417,7 @@ The residual risks above are exercised by volunteers on their own hardware, neve
 
 ### Merge gate
 
-L1 + L2 + `.deb` build must pass on every push to `main` and on every external PR. With agent-driven development, work lands as locally verified commits pushed by the maintainer (doc 12 §6), so a red push is fixed forward immediately. L3 is nightly where hosted runners can run it, because a 30-minute VM suite on every push kills iteration speed — but a red nightly, or a missing pre-release agent run, blocks the next release.
+L1 + L2 + `.deb` build must pass on every push to `beta` and on every pull request targeting `beta` or `main`. The `beta` → `main` promotion PR is the required-checks gate for `main` — it runs the full suite on the merge commit, which can differ from `beta` HEAD if `main` has commits `beta` does not. A subsequent push to `main` after merge does not re-run `ci.yml`. Tag pushes (`v*`) go through `release.yml`, not this workflow. With agent-driven development, work lands as locally verified commits pushed by the maintainer (doc 12 §6), so a red push is fixed forward immediately. L3 is nightly where hosted runners can run it, because a 30-minute VM suite on every push kills iteration speed — but a red nightly, or a missing pre-release agent run, blocks the next release.
 
 ### Release checklist, automated where possible
 
