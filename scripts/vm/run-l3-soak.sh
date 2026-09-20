@@ -134,10 +134,9 @@ guest wait-job "$job_id" --timeout 1800 >/dev/null
 echo "vm-soak[$HOSERVA_LAB_ID]: restarting hoservad so it loads snapraid.conf and the array sequence"
 vm_ssh 'sudo systemctl restart hoserva && sudo systemctl is-active hoserva'
 wait_socket
-# mergerfs refuses a missing Where=; systemd .mount units mkdir it, the
-# array-start sequence's direct exec does not (recorded as a finding).
-vm_ssh 'sudo mkdir -p /mnt/user'
 # Array start mounts the catch-all; create-array only mounted physical disks.
+# Mounter.Mount MkdirAlls Where= before exec (#207), so a missing /mnt/user
+# is not a FUSE bad-mount-point any more.
 guest array-start >/dev/null
 vm_ssh 'findmnt /mnt/user >/dev/null'
 vm_ssh 'sudo timedatectl set-ntp false'
@@ -221,7 +220,6 @@ reattach_disk() {
   vm_assert_own_domain "$VM_DOMAIN"
   echo "vm-soak[$HOSERVA_LAB_ID]: reattaching yanked disk"
   virsh -c "$VM_CONNECT" attach-device "$VM_DOMAIN" "$YANK_XML" --live --config >/dev/null
-  vm_ssh 'sudo mkdir -p /mnt/user'
   guest array-start >/dev/null || true
   sleep 2
 }
@@ -235,7 +233,6 @@ power_loss() {
   vm_ssh_wait_ready 180 || die "could not SSH after power loss"
   vm_ssh 'sudo systemctl is-active hoserva'
   wait_socket
-  vm_ssh 'sudo mkdir -p /mnt/user'
   guest array-start >/dev/null || true
 }
 

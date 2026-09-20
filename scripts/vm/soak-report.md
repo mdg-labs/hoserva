@@ -1,6 +1,6 @@
 # L3 soak report (issue #44)
 
-Lab id: `44-a1`
+Lab id: `210-a1`
 Nights: 30
 Guest calendar start: 2026-09-21 (time-compressed; chains ran back to back, Q30)
 Array: 1×2G parity, 5×2G data, 1×512M cache; minfreespace 32M (soak-sized so a full-disk injection can actually fill a disk)
