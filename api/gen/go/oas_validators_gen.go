@@ -321,6 +321,52 @@ func (s *BlockingJob) Validate() error {
 	return nil
 }
 
+func (s *ConfigureLetsEncryptRequest) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := (validate.String{
+			MinLength:     1,
+			MinLengthSet:  true,
+			MaxLength:     0,
+			MaxLengthSet:  false,
+			Email:         false,
+			Hostname:      false,
+			Regex:         nil,
+			MinNumeric:    0,
+			MinNumericSet: false,
+			MaxNumeric:    0,
+			MaxNumericSet: false,
+		}).Validate(string(s.Domain)); err != nil {
+			return errors.Wrap(err, "string")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "domain",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.Provider.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "provider",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
 func (s *CreateArrayRequest) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
@@ -612,6 +658,17 @@ func (s *CreateShareRequest) Validate() error {
 		return &validate.Error{Fields: failures}
 	}
 	return nil
+}
+
+func (s DNS01Provider) Validate() error {
+	switch s {
+	case "cloudflare":
+		return nil
+	case "rfc2136":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
 }
 
 func (s *DailyWakeCount) Validate() error {
@@ -996,6 +1053,8 @@ func (s JobType) Validate() error {
 		return nil
 	case "container_update":
 		return nil
+	case "acme_issue":
+		return nil
 	case "vm_start":
 		return nil
 	case "vm_stop":
@@ -1013,6 +1072,36 @@ func (s JobType) Validate() error {
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
+}
+
+func (s *LetsEncryptStatus) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if value, ok := s.Provider.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "provider",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
 }
 
 func (s *ListDisksOK) Validate() error {
@@ -1748,6 +1837,17 @@ func (s *NetworkSettings) Validate() error {
 		})
 	}
 	if err := func() error {
+		if err := s.LetsEncrypt.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "letsEncrypt",
+			Error: err,
+		})
+	}
+	if err := func() error {
 		if err := (validate.Int{
 			MinSet:        true,
 			Min:           1,
@@ -1964,6 +2064,8 @@ func (s NotificationEventType) Validate() error {
 	case "credential_reset":
 		return nil
 	case "certificate_expiring":
+		return nil
+	case "certificate_renewal_failed":
 		return nil
 	case "config_backup_failed":
 		return nil
@@ -3113,6 +3215,8 @@ func (s *TLSCertificateInfo) Validate() error {
 func (s TLSCertificateKind) Validate() error {
 	switch s {
 	case "self_signed":
+		return nil
+	case "lets_encrypt":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

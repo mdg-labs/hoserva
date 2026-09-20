@@ -432,6 +432,94 @@ func (s *BlockingJob) SetClass(val JobClass) {
 	s.Class = val
 }
 
+// Ref: #/components/schemas/ConfigureLetsEncryptRequest
+type ConfigureLetsEncryptRequest struct {
+	// Hostname the certificate will cover, challenged via DNS-01.
+	Domain   string        `json:"domain"`
+	Provider DNS01Provider `json:"provider"`
+	// Cloudflare API token with Zone.DNS Edit. Write-only (Q28). Required when `provider` is cloudflare
+	// and no token is stored yet.
+	CloudflareAPIToken OptString `json:"cloudflareAPIToken"`
+	// RFC 2136 nameserver as host:port. Required when `provider` is rfc2136.
+	Rfc2136Nameserver OptString `json:"rfc2136Nameserver"`
+	// TSIG key name. Required when `provider` is rfc2136.
+	Rfc2136TsigKeyName OptString `json:"rfc2136TsigKeyName"`
+	// TSIG secret. Write-only (Q28). Required when `provider` is rfc2136 and no secret is stored yet.
+	Rfc2136TsigSecret OptString `json:"rfc2136TsigSecret"`
+	// TSIG algorithm. Defaults to hmac-sha256.
+	Rfc2136TsigAlgorithm OptString `json:"rfc2136TsigAlgorithm"`
+}
+
+// GetDomain returns the value of Domain.
+func (s *ConfigureLetsEncryptRequest) GetDomain() string {
+	return s.Domain
+}
+
+// GetProvider returns the value of Provider.
+func (s *ConfigureLetsEncryptRequest) GetProvider() DNS01Provider {
+	return s.Provider
+}
+
+// GetCloudflareAPIToken returns the value of CloudflareAPIToken.
+func (s *ConfigureLetsEncryptRequest) GetCloudflareAPIToken() OptString {
+	return s.CloudflareAPIToken
+}
+
+// GetRfc2136Nameserver returns the value of Rfc2136Nameserver.
+func (s *ConfigureLetsEncryptRequest) GetRfc2136Nameserver() OptString {
+	return s.Rfc2136Nameserver
+}
+
+// GetRfc2136TsigKeyName returns the value of Rfc2136TsigKeyName.
+func (s *ConfigureLetsEncryptRequest) GetRfc2136TsigKeyName() OptString {
+	return s.Rfc2136TsigKeyName
+}
+
+// GetRfc2136TsigSecret returns the value of Rfc2136TsigSecret.
+func (s *ConfigureLetsEncryptRequest) GetRfc2136TsigSecret() OptString {
+	return s.Rfc2136TsigSecret
+}
+
+// GetRfc2136TsigAlgorithm returns the value of Rfc2136TsigAlgorithm.
+func (s *ConfigureLetsEncryptRequest) GetRfc2136TsigAlgorithm() OptString {
+	return s.Rfc2136TsigAlgorithm
+}
+
+// SetDomain sets the value of Domain.
+func (s *ConfigureLetsEncryptRequest) SetDomain(val string) {
+	s.Domain = val
+}
+
+// SetProvider sets the value of Provider.
+func (s *ConfigureLetsEncryptRequest) SetProvider(val DNS01Provider) {
+	s.Provider = val
+}
+
+// SetCloudflareAPIToken sets the value of CloudflareAPIToken.
+func (s *ConfigureLetsEncryptRequest) SetCloudflareAPIToken(val OptString) {
+	s.CloudflareAPIToken = val
+}
+
+// SetRfc2136Nameserver sets the value of Rfc2136Nameserver.
+func (s *ConfigureLetsEncryptRequest) SetRfc2136Nameserver(val OptString) {
+	s.Rfc2136Nameserver = val
+}
+
+// SetRfc2136TsigKeyName sets the value of Rfc2136TsigKeyName.
+func (s *ConfigureLetsEncryptRequest) SetRfc2136TsigKeyName(val OptString) {
+	s.Rfc2136TsigKeyName = val
+}
+
+// SetRfc2136TsigSecret sets the value of Rfc2136TsigSecret.
+func (s *ConfigureLetsEncryptRequest) SetRfc2136TsigSecret(val OptString) {
+	s.Rfc2136TsigSecret = val
+}
+
+// SetRfc2136TsigAlgorithm sets the value of Rfc2136TsigAlgorithm.
+func (s *ConfigureLetsEncryptRequest) SetRfc2136TsigAlgorithm(val OptString) {
+	s.Rfc2136TsigAlgorithm = val
+}
+
 // Ref: #/components/schemas/ConfirmShareRequest
 type ConfirmShareRequest struct {
 	// Must be true — removes the share definition only.
@@ -797,6 +885,50 @@ func (s *CreateShareRequest) SetSmb(val OptShareSMB) {
 // SetNfs sets the value of Nfs.
 func (s *CreateShareRequest) SetNfs(val OptShareNFS) {
 	s.Nfs = val
+}
+
+// DNS-01 providers in v1: Cloudflare's API and generic RFC 2136. HTTP-01 and TLS-ALPN-01 are not
+// offered (Q9).
+// Ref: #/components/schemas/DNS01Provider
+type DNS01Provider string
+
+const (
+	DNS01ProviderCloudflare DNS01Provider = "cloudflare"
+	DNS01ProviderRfc2136    DNS01Provider = "rfc2136"
+)
+
+// AllValues returns all DNS01Provider values.
+func (DNS01Provider) AllValues() []DNS01Provider {
+	return []DNS01Provider{
+		DNS01ProviderCloudflare,
+		DNS01ProviderRfc2136,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s DNS01Provider) MarshalText() ([]byte, error) {
+	switch s {
+	case DNS01ProviderCloudflare:
+		return []byte(s), nil
+	case DNS01ProviderRfc2136:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *DNS01Provider) UnmarshalText(data []byte) error {
+	switch DNS01Provider(data) {
+	case DNS01ProviderCloudflare:
+		*s = DNS01ProviderCloudflare
+		return nil
+	case DNS01ProviderRfc2136:
+		*s = DNS01ProviderRfc2136
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/DailyWakeCount
@@ -1884,6 +2016,7 @@ const (
 	JobTypePoolRemount       JobType = "pool_remount"
 	JobTypeAppdataBackup     JobType = "appdata_backup"
 	JobTypeContainerUpdate   JobType = "container_update"
+	JobTypeAcmeIssue         JobType = "acme_issue"
 	JobTypeVMStart           JobType = "vm_start"
 	JobTypeVMStop            JobType = "vm_stop"
 	JobTypeVMCreate          JobType = "vm_create"
@@ -1912,6 +2045,7 @@ func (JobType) AllValues() []JobType {
 		JobTypePoolRemount,
 		JobTypeAppdataBackup,
 		JobTypeContainerUpdate,
+		JobTypeAcmeIssue,
 		JobTypeVMStart,
 		JobTypeVMStop,
 		JobTypeVMCreate,
@@ -1956,6 +2090,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeAppdataBackup:
 		return []byte(s), nil
 	case JobTypeContainerUpdate:
+		return []byte(s), nil
+	case JobTypeAcmeIssue:
 		return []byte(s), nil
 	case JobTypeVMStart:
 		return []byte(s), nil
@@ -2027,6 +2163,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
 		return nil
+	case JobTypeAcmeIssue:
+		*s = JobTypeAcmeIssue
+		return nil
 	case JobTypeVMStart:
 		*s = JobTypeVMStart
 		return nil
@@ -2051,6 +2190,81 @@ func (s *JobType) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/LetsEncryptStatus
+type LetsEncryptStatus struct {
+	// True when DNS-01 credentials are stored.
+	Configured bool `json:"configured"`
+	// True when unattended renewal is armed.
+	Enabled bool `json:"enabled"`
+	// Hostname configured for DNS-01.
+	Domain   OptString        `json:"domain"`
+	Provider OptDNS01Provider `json:"provider"`
+	// True when a DNS credential is stored (Q28); the secret itself is never returned.
+	HasSecret OptBool `json:"hasSecret"`
+	// Last issue or renewal failure. Omitted after a success.
+	LastError OptString `json:"lastError"`
+}
+
+// GetConfigured returns the value of Configured.
+func (s *LetsEncryptStatus) GetConfigured() bool {
+	return s.Configured
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *LetsEncryptStatus) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetDomain returns the value of Domain.
+func (s *LetsEncryptStatus) GetDomain() OptString {
+	return s.Domain
+}
+
+// GetProvider returns the value of Provider.
+func (s *LetsEncryptStatus) GetProvider() OptDNS01Provider {
+	return s.Provider
+}
+
+// GetHasSecret returns the value of HasSecret.
+func (s *LetsEncryptStatus) GetHasSecret() OptBool {
+	return s.HasSecret
+}
+
+// GetLastError returns the value of LastError.
+func (s *LetsEncryptStatus) GetLastError() OptString {
+	return s.LastError
+}
+
+// SetConfigured sets the value of Configured.
+func (s *LetsEncryptStatus) SetConfigured(val bool) {
+	s.Configured = val
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *LetsEncryptStatus) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetDomain sets the value of Domain.
+func (s *LetsEncryptStatus) SetDomain(val OptString) {
+	s.Domain = val
+}
+
+// SetProvider sets the value of Provider.
+func (s *LetsEncryptStatus) SetProvider(val OptDNS01Provider) {
+	s.Provider = val
+}
+
+// SetHasSecret sets the value of HasSecret.
+func (s *LetsEncryptStatus) SetHasSecret(val OptBool) {
+	s.HasSecret = val
+}
+
+// SetLastError sets the value of LastError.
+func (s *LetsEncryptStatus) SetLastError(val OptString) {
+	s.LastError = val
 }
 
 type ListDisksOK struct {
@@ -2818,6 +3032,7 @@ type NetworkSettings struct {
 	Interfaces     []NetworkInterface `json:"interfaces"`
 	Pending        OptNetworkPending  `json:"pending"`
 	Certificate    TLSCertificateInfo `json:"certificate"`
+	LetsEncrypt    LetsEncryptStatus  `json:"letsEncrypt"`
 	// When false (default), the TCP listener accepts only LAN-ish sources (Q10). When true, every source
 	// address is accepted.
 	AllowAllSources bool `json:"allowAllSources"`
@@ -2855,6 +3070,11 @@ func (s *NetworkSettings) GetPending() OptNetworkPending {
 // GetCertificate returns the value of Certificate.
 func (s *NetworkSettings) GetCertificate() TLSCertificateInfo {
 	return s.Certificate
+}
+
+// GetLetsEncrypt returns the value of LetsEncrypt.
+func (s *NetworkSettings) GetLetsEncrypt() LetsEncryptStatus {
+	return s.LetsEncrypt
 }
 
 // GetAllowAllSources returns the value of AllowAllSources.
@@ -2900,6 +3120,11 @@ func (s *NetworkSettings) SetPending(val OptNetworkPending) {
 // SetCertificate sets the value of Certificate.
 func (s *NetworkSettings) SetCertificate(val TLSCertificateInfo) {
 	s.Certificate = val
+}
+
+// SetLetsEncrypt sets the value of LetsEncrypt.
+func (s *NetworkSettings) SetLetsEncrypt(val LetsEncryptStatus) {
+	s.LetsEncrypt = val
 }
 
 // SetAllowAllSources sets the value of AllowAllSources.
@@ -3320,6 +3545,7 @@ const (
 	NotificationEventTypeLoginFailureBurst        NotificationEventType = "login_failure_burst"
 	NotificationEventTypeCredentialReset          NotificationEventType = "credential_reset"
 	NotificationEventTypeCertificateExpiring      NotificationEventType = "certificate_expiring"
+	NotificationEventTypeCertificateRenewalFailed NotificationEventType = "certificate_renewal_failed"
 	NotificationEventTypeConfigBackupFailed       NotificationEventType = "config_backup_failed"
 	NotificationEventTypeAppdataBackupFailed      NotificationEventType = "appdata_backup_failed"
 	NotificationEventTypeBackupDestinationStale   NotificationEventType = "backup_destination_stale"
@@ -3352,6 +3578,7 @@ func (NotificationEventType) AllValues() []NotificationEventType {
 		NotificationEventTypeLoginFailureBurst,
 		NotificationEventTypeCredentialReset,
 		NotificationEventTypeCertificateExpiring,
+		NotificationEventTypeCertificateRenewalFailed,
 		NotificationEventTypeConfigBackupFailed,
 		NotificationEventTypeAppdataBackupFailed,
 		NotificationEventTypeBackupDestinationStale,
@@ -3407,6 +3634,8 @@ func (s NotificationEventType) MarshalText() ([]byte, error) {
 	case NotificationEventTypeCredentialReset:
 		return []byte(s), nil
 	case NotificationEventTypeCertificateExpiring:
+		return []byte(s), nil
+	case NotificationEventTypeCertificateRenewalFailed:
 		return []byte(s), nil
 	case NotificationEventTypeConfigBackupFailed:
 		return []byte(s), nil
@@ -3492,6 +3721,9 @@ func (s *NotificationEventType) UnmarshalText(data []byte) error {
 		return nil
 	case NotificationEventTypeCertificateExpiring:
 		*s = NotificationEventTypeCertificateExpiring
+		return nil
+	case NotificationEventTypeCertificateRenewalFailed:
+		*s = NotificationEventTypeCertificateRenewalFailed
 		return nil
 	case NotificationEventTypeConfigBackupFailed:
 		*s = NotificationEventTypeConfigBackupFailed
@@ -3939,6 +4171,52 @@ func (o OptBool) Get() (v bool, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptBool) Or(d bool) bool {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptDNS01Provider returns new OptDNS01Provider with value set to v.
+func NewOptDNS01Provider(v DNS01Provider) OptDNS01Provider {
+	return OptDNS01Provider{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptDNS01Provider is optional DNS01Provider.
+type OptDNS01Provider struct {
+	Value DNS01Provider
+	Set   bool
+}
+
+// IsSet returns true if OptDNS01Provider was set.
+func (o OptDNS01Provider) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptDNS01Provider) Reset() {
+	var v DNS01Provider
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptDNS01Provider) SetTo(v DNS01Provider) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptDNS01Provider) Get() (v DNS01Provider, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptDNS01Provider) Or(d DNS01Provider) DNS01Provider {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -6884,6 +7162,8 @@ type TLSCertificateInfo struct {
 	NotAfter time.Time `json:"notAfter"`
 	// Whole days until expiry; negative if already expired.
 	DaysRemaining int `json:"daysRemaining"`
+	// DNS name the Let's Encrypt certificate covers. Absent for a self-signed certificate.
+	Domain OptString `json:"domain"`
 }
 
 // GetKind returns the value of Kind.
@@ -6901,6 +7181,11 @@ func (s *TLSCertificateInfo) GetDaysRemaining() int {
 	return s.DaysRemaining
 }
 
+// GetDomain returns the value of Domain.
+func (s *TLSCertificateInfo) GetDomain() OptString {
+	return s.Domain
+}
+
 // SetKind sets the value of Kind.
 func (s *TLSCertificateInfo) SetKind(val TLSCertificateKind) {
 	s.Kind = val
@@ -6916,18 +7201,25 @@ func (s *TLSCertificateInfo) SetDaysRemaining(val int) {
 	s.DaysRemaining = val
 }
 
+// SetDomain sets the value of Domain.
+func (s *TLSCertificateInfo) SetDomain(val OptString) {
+	s.Domain = val
+}
+
 // How the current TLS certificate was issued (Q9).
 // Ref: #/components/schemas/TLSCertificateKind
 type TLSCertificateKind string
 
 const (
-	TLSCertificateKindSelfSigned TLSCertificateKind = "self_signed"
+	TLSCertificateKindSelfSigned  TLSCertificateKind = "self_signed"
+	TLSCertificateKindLetsEncrypt TLSCertificateKind = "lets_encrypt"
 )
 
 // AllValues returns all TLSCertificateKind values.
 func (TLSCertificateKind) AllValues() []TLSCertificateKind {
 	return []TLSCertificateKind{
 		TLSCertificateKindSelfSigned,
+		TLSCertificateKindLetsEncrypt,
 	}
 }
 
@@ -6935,6 +7227,8 @@ func (TLSCertificateKind) AllValues() []TLSCertificateKind {
 func (s TLSCertificateKind) MarshalText() ([]byte, error) {
 	switch s {
 	case TLSCertificateKindSelfSigned:
+		return []byte(s), nil
+	case TLSCertificateKindLetsEncrypt:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -6946,6 +7240,9 @@ func (s *TLSCertificateKind) UnmarshalText(data []byte) error {
 	switch TLSCertificateKind(data) {
 	case TLSCertificateKindSelfSigned:
 		*s = TLSCertificateKindSelfSigned
+		return nil
+	case TLSCertificateKindLetsEncrypt:
+		*s = TLSCertificateKindLetsEncrypt
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

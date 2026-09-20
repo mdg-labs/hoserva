@@ -839,6 +839,202 @@ func (s *BlockingJob) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *ConfigureLetsEncryptRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ConfigureLetsEncryptRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("domain")
+		e.Str(s.Domain)
+	}
+	{
+		e.FieldStart("provider")
+		s.Provider.Encode(e)
+	}
+	{
+		if s.CloudflareAPIToken.Set {
+			e.FieldStart("cloudflareAPIToken")
+			s.CloudflareAPIToken.Encode(e)
+		}
+	}
+	{
+		if s.Rfc2136Nameserver.Set {
+			e.FieldStart("rfc2136Nameserver")
+			s.Rfc2136Nameserver.Encode(e)
+		}
+	}
+	{
+		if s.Rfc2136TsigKeyName.Set {
+			e.FieldStart("rfc2136TsigKeyName")
+			s.Rfc2136TsigKeyName.Encode(e)
+		}
+	}
+	{
+		if s.Rfc2136TsigSecret.Set {
+			e.FieldStart("rfc2136TsigSecret")
+			s.Rfc2136TsigSecret.Encode(e)
+		}
+	}
+	{
+		if s.Rfc2136TsigAlgorithm.Set {
+			e.FieldStart("rfc2136TsigAlgorithm")
+			s.Rfc2136TsigAlgorithm.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfConfigureLetsEncryptRequest = [7]string{
+	0: "domain",
+	1: "provider",
+	2: "cloudflareAPIToken",
+	3: "rfc2136Nameserver",
+	4: "rfc2136TsigKeyName",
+	5: "rfc2136TsigSecret",
+	6: "rfc2136TsigAlgorithm",
+}
+
+// Decode decodes ConfigureLetsEncryptRequest from json.
+func (s *ConfigureLetsEncryptRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ConfigureLetsEncryptRequest to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "domain":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Domain = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"domain\"")
+			}
+		case "provider":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Provider.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"provider\"")
+			}
+		case "cloudflareAPIToken":
+			if err := func() error {
+				s.CloudflareAPIToken.Reset()
+				if err := s.CloudflareAPIToken.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"cloudflareAPIToken\"")
+			}
+		case "rfc2136Nameserver":
+			if err := func() error {
+				s.Rfc2136Nameserver.Reset()
+				if err := s.Rfc2136Nameserver.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"rfc2136Nameserver\"")
+			}
+		case "rfc2136TsigKeyName":
+			if err := func() error {
+				s.Rfc2136TsigKeyName.Reset()
+				if err := s.Rfc2136TsigKeyName.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"rfc2136TsigKeyName\"")
+			}
+		case "rfc2136TsigSecret":
+			if err := func() error {
+				s.Rfc2136TsigSecret.Reset()
+				if err := s.Rfc2136TsigSecret.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"rfc2136TsigSecret\"")
+			}
+		case "rfc2136TsigAlgorithm":
+			if err := func() error {
+				s.Rfc2136TsigAlgorithm.Reset()
+				if err := s.Rfc2136TsigAlgorithm.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"rfc2136TsigAlgorithm\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ConfigureLetsEncryptRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfConfigureLetsEncryptRequest) {
+					name = jsonFieldsNameOfConfigureLetsEncryptRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ConfigureLetsEncryptRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ConfigureLetsEncryptRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *ConfirmShareRequest) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -1839,6 +2035,46 @@ func (s *CreateShareRequest) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *CreateShareRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes DNS01Provider as json.
+func (s DNS01Provider) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes DNS01Provider from json.
+func (s *DNS01Provider) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode DNS01Provider to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch DNS01Provider(v) {
+	case DNS01ProviderCloudflare:
+		*s = DNS01ProviderCloudflare
+	case DNS01ProviderRfc2136:
+		*s = DNS01ProviderRfc2136
+	default:
+		*s = DNS01Provider(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s DNS01Provider) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *DNS01Provider) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -3893,6 +4129,8 @@ func (s *JobType) Decode(d *jx.Decoder) error {
 		*s = JobTypeAppdataBackup
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
+	case JobTypeAcmeIssue:
+		*s = JobTypeAcmeIssue
 	case JobTypeVMStart:
 		*s = JobTypeVMStart
 	case JobTypeVMStop:
@@ -3923,6 +4161,187 @@ func (s JobType) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *JobType) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *LetsEncryptStatus) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *LetsEncryptStatus) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("configured")
+		e.Bool(s.Configured)
+	}
+	{
+		e.FieldStart("enabled")
+		e.Bool(s.Enabled)
+	}
+	{
+		if s.Domain.Set {
+			e.FieldStart("domain")
+			s.Domain.Encode(e)
+		}
+	}
+	{
+		if s.Provider.Set {
+			e.FieldStart("provider")
+			s.Provider.Encode(e)
+		}
+	}
+	{
+		if s.HasSecret.Set {
+			e.FieldStart("hasSecret")
+			s.HasSecret.Encode(e)
+		}
+	}
+	{
+		if s.LastError.Set {
+			e.FieldStart("lastError")
+			s.LastError.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfLetsEncryptStatus = [6]string{
+	0: "configured",
+	1: "enabled",
+	2: "domain",
+	3: "provider",
+	4: "hasSecret",
+	5: "lastError",
+}
+
+// Decode decodes LetsEncryptStatus from json.
+func (s *LetsEncryptStatus) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode LetsEncryptStatus to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "configured":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Bool()
+				s.Configured = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"configured\"")
+			}
+		case "enabled":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Bool()
+				s.Enabled = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"enabled\"")
+			}
+		case "domain":
+			if err := func() error {
+				s.Domain.Reset()
+				if err := s.Domain.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"domain\"")
+			}
+		case "provider":
+			if err := func() error {
+				s.Provider.Reset()
+				if err := s.Provider.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"provider\"")
+			}
+		case "hasSecret":
+			if err := func() error {
+				s.HasSecret.Reset()
+				if err := s.HasSecret.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"hasSecret\"")
+			}
+		case "lastError":
+			if err := func() error {
+				s.LastError.Reset()
+				if err := s.LastError.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"lastError\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode LetsEncryptStatus")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfLetsEncryptStatus) {
+					name = jsonFieldsNameOfLetsEncryptStatus[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *LetsEncryptStatus) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *LetsEncryptStatus) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -5986,6 +6405,10 @@ func (s *NetworkSettings) encodeFields(e *jx.Encoder) {
 		s.Certificate.Encode(e)
 	}
 	{
+		e.FieldStart("letsEncrypt")
+		s.LetsEncrypt.Encode(e)
+	}
+	{
 		e.FieldStart("allowAllSources")
 		e.Bool(s.AllowAllSources)
 	}
@@ -6001,16 +6424,17 @@ func (s *NetworkSettings) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfNetworkSettings = [9]string{
+var jsonFieldsNameOfNetworkSettings = [10]string{
 	0: "backend",
 	1: "editable",
 	2: "readOnlyReason",
 	3: "interfaces",
 	4: "pending",
 	5: "certificate",
-	6: "allowAllSources",
-	7: "listenPort",
-	8: "listenPortRestartRequired",
+	6: "letsEncrypt",
+	7: "allowAllSources",
+	8: "listenPort",
+	9: "listenPortRestartRequired",
 }
 
 // Decode decodes NetworkSettings from json.
@@ -6092,8 +6516,18 @@ func (s *NetworkSettings) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"certificate\"")
 			}
-		case "allowAllSources":
+		case "letsEncrypt":
 			requiredBitSet[0] |= 1 << 6
+			if err := func() error {
+				if err := s.LetsEncrypt.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"letsEncrypt\"")
+			}
+		case "allowAllSources":
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				v, err := d.Bool()
 				s.AllowAllSources = bool(v)
@@ -6105,7 +6539,7 @@ func (s *NetworkSettings) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"allowAllSources\"")
 			}
 		case "listenPort":
-			requiredBitSet[0] |= 1 << 7
+			requiredBitSet[1] |= 1 << 0
 			if err := func() error {
 				v, err := d.Int()
 				s.ListenPort = int(v)
@@ -6137,7 +6571,7 @@ func (s *NetworkSettings) Decode(d *jx.Decoder) error {
 	var failures []validate.FieldError
 	for i, mask := range [2]uint8{
 		0b11101011,
-		0b00000000,
+		0b00000001,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -6917,6 +7351,8 @@ func (s *NotificationEventType) Decode(d *jx.Decoder) error {
 		*s = NotificationEventTypeCredentialReset
 	case NotificationEventTypeCertificateExpiring:
 		*s = NotificationEventTypeCertificateExpiring
+	case NotificationEventTypeCertificateRenewalFailed:
+		*s = NotificationEventTypeCertificateRenewalFailed
 	case NotificationEventTypeConfigBackupFailed:
 		*s = NotificationEventTypeConfigBackupFailed
 	case NotificationEventTypeAppdataBackupFailed:
@@ -7734,6 +8170,39 @@ func (s OptBool) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *OptBool) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes DNS01Provider as json.
+func (o OptDNS01Provider) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes DNS01Provider from json.
+func (o *OptDNS01Provider) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptDNS01Provider to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptDNS01Provider) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptDNS01Provider) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -12562,12 +13031,19 @@ func (s *TLSCertificateInfo) encodeFields(e *jx.Encoder) {
 		e.FieldStart("daysRemaining")
 		e.Int(s.DaysRemaining)
 	}
+	{
+		if s.Domain.Set {
+			e.FieldStart("domain")
+			s.Domain.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfTLSCertificateInfo = [3]string{
+var jsonFieldsNameOfTLSCertificateInfo = [4]string{
 	0: "kind",
 	1: "notAfter",
 	2: "daysRemaining",
+	3: "domain",
 }
 
 // Decode decodes TLSCertificateInfo from json.
@@ -12612,6 +13088,16 @@ func (s *TLSCertificateInfo) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"daysRemaining\"")
+			}
+		case "domain":
+			if err := func() error {
+				s.Domain.Reset()
+				if err := s.Domain.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"domain\"")
 			}
 		default:
 			return d.Skip()
@@ -12687,6 +13173,8 @@ func (s *TLSCertificateKind) Decode(d *jx.Decoder) error {
 	switch TLSCertificateKind(v) {
 	case TLSCertificateKindSelfSigned:
 		*s = TLSCertificateKindSelfSigned
+	case TLSCertificateKindLetsEncrypt:
+		*s = TLSCertificateKindLetsEncrypt
 	default:
 		*s = TLSCertificateKind(v)
 	}

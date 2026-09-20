@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/mdg-labs/hoserva/internal/acme"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
@@ -22,6 +23,8 @@ type scheduleRunner struct {
 	Guard     job.DiffGuard
 	Backup    job.ConfigBackup
 	Notifier  job.ChainNotifier
+	ACME      *acme.Service
+	Jobs      *job.Store
 }
 
 func runScheduleLoop(ctx context.Context, r *scheduleRunner, interval time.Duration) {
@@ -40,6 +43,13 @@ func runScheduleLoop(ctx context.Context, r *scheduleRunner, interval time.Durat
 }
 
 func (r *scheduleRunner) tick(ctx context.Context) error {
+	if err := r.tickChain(ctx); err != nil {
+		return err
+	}
+	return r.tickACME(ctx)
+}
+
+func (r *scheduleRunner) tickChain(ctx context.Context) error {
 	if r == nil || r.Schedules == nil || r.Scheduler == nil || r.Guard == nil {
 		return nil
 	}

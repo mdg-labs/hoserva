@@ -383,3 +383,21 @@ CREATE TABLE shares (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 ) STRICT;
+
+-- Let's Encrypt DNS-01 (#211, Q9, Q28): one row, id=1, the same singleton
+-- pattern as schema_info. dns_secret and account_key are ciphertext from
+-- internal/auth.MachineKey.Encrypt (nonce||AES-256-GCM) — Cloudflare API
+-- token or RFC 2136 TSIG secret, and the ACME account private key. A
+-- leaked database file alone never yields a usable credential. HTTP-01
+-- is not represented here: ports 80/443 are never claimed (Q9).
+CREATE TABLE acme_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    domain TEXT NOT NULL,
+    provider TEXT NOT NULL CHECK (provider IN ('cloudflare', 'rfc2136')),
+    provider_config TEXT NOT NULL,
+    dns_secret BLOB NOT NULL,
+    account_key BLOB NOT NULL,
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    last_error TEXT,
+    updated_at TEXT NOT NULL
+) STRICT;

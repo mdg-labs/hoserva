@@ -80,6 +80,17 @@ type Invoker interface {
 	//
 	// POST /settings/updates/check
 	CheckForUpdate(ctx context.Context) (*UpdateStatus, error)
+	// ConfigureLetsEncrypt invokes configureLetsEncrypt operation.
+	//
+	// Stores the domain and DNS-01 provider credentials (encrypted at rest, Q28) and queues an
+	// `acme_issue` job that talks to the ACME directory over DNS-01 only. Ports 80 and 443 are never
+	// claimed (Q9). HTTP-01 and TLS-ALPN-01 are not offered. On success the issued certificate replaces
+	// the self-signed cert on `:8008`. Unattended renewal stays armed while `letsEncrypt.enabled` is true.
+	// A failed issue or renew keeps serving the existing certificate and notifies; it never silently falls
+	// back to a new self-signed cert.
+	//
+	// POST /settings/network/lets-encrypt
+	ConfigureLetsEncrypt(ctx context.Context, request *ConfigureLetsEncryptRequest) (*Job, error)
 	// ConfirmNetworkSettings invokes confirmNetworkSettings operation.
 	//
 	// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
@@ -151,6 +162,14 @@ type Invoker interface {
 	//
 	// POST /shares/{name}/data/delete
 	DeleteShareData(ctx context.Context, request *DeleteShareDataRequest, params DeleteShareDataParams) error
+	// DisableLetsEncrypt invokes disableLetsEncrypt operation.
+	//
+	// Disarms unattended renewal. The certificate currently served on `:8008` is left in place — this
+	// does not generate a self-signed replacement. DNS credentials remain stored until overwritten by a
+	// later `configureLetsEncrypt` or cleared by regenerating a self-signed certificate.
+	//
+	// DELETE /settings/network/lets-encrypt
+	DisableLetsEncrypt(ctx context.Context) (*NetworkSettings, error)
 	// DisableUserTotp invokes disableUserTotp operation.
 	//
 	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically. Audit-logged
@@ -379,8 +398,10 @@ type Invoker interface {
 	RebootHost(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error)
 	// RegenerateTLSCertificate invokes regenerateTLSCertificate operation.
 	//
-	// Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new
-	// cert. Let's Encrypt DNS-01 is not implemented here.
+	// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
+	// hot-reloads it so new connections use the new cert. If Let's Encrypt DNS-01 is configured,
+	// unattended renewal is disarmed so this self-signed cert is not overwritten without another explicit
+	// setup. Let's Encrypt issue and renew are `configureLetsEncrypt`, not this operation.
 	//
 	// POST /settings/network/certificate
 	RegenerateTLSCertificate(ctx context.Context) (*NetworkSettings, error)
@@ -1415,6 +1436,139 @@ func (c *Client) sendCheckForUpdate(ctx context.Context) (res *UpdateStatus, err
 
 	stage = "DecodeResponse"
 	result, err := decodeCheckForUpdateResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ConfigureLetsEncrypt invokes configureLetsEncrypt operation.
+//
+// Stores the domain and DNS-01 provider credentials (encrypted at rest, Q28) and queues an
+// `acme_issue` job that talks to the ACME directory over DNS-01 only. Ports 80 and 443 are never
+// claimed (Q9). HTTP-01 and TLS-ALPN-01 are not offered. On success the issued certificate replaces
+// the self-signed cert on `:8008`. Unattended renewal stays armed while `letsEncrypt.enabled` is true.
+// A failed issue or renew keeps serving the existing certificate and notifies; it never silently falls
+// back to a new self-signed cert.
+//
+// POST /settings/network/lets-encrypt
+func (c *Client) ConfigureLetsEncrypt(ctx context.Context, request *ConfigureLetsEncryptRequest) (*Job, error) {
+	res, err := c.sendConfigureLetsEncrypt(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendConfigureLetsEncrypt(ctx context.Context, request *ConfigureLetsEncryptRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("configureLetsEncrypt"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/settings/network/lets-encrypt"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ConfigureLetsEncryptOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/network/lets-encrypt"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeConfigureLetsEncryptRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ConfigureLetsEncryptOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ConfigureLetsEncryptOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeConfigureLetsEncryptResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -2594,6 +2748,133 @@ func (c *Client) sendDeleteShareData(ctx context.Context, request *DeleteShareDa
 
 	stage = "DecodeResponse"
 	result, err := decodeDeleteShareDataResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// DisableLetsEncrypt invokes disableLetsEncrypt operation.
+//
+// Disarms unattended renewal. The certificate currently served on `:8008` is left in place — this
+// does not generate a self-signed replacement. DNS credentials remain stored until overwritten by a
+// later `configureLetsEncrypt` or cleared by regenerating a self-signed certificate.
+//
+// DELETE /settings/network/lets-encrypt
+func (c *Client) DisableLetsEncrypt(ctx context.Context) (*NetworkSettings, error) {
+	res, err := c.sendDisableLetsEncrypt(ctx)
+	return res, err
+}
+
+func (c *Client) sendDisableLetsEncrypt(ctx context.Context) (res *NetworkSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("disableLetsEncrypt"),
+		semconv.HTTPRequestMethodKey.String("DELETE"),
+		semconv.URLTemplateKey.String("/settings/network/lets-encrypt"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, DisableLetsEncryptOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/network/lets-encrypt"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, DisableLetsEncryptOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, DisableLetsEncryptOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeDisableLetsEncryptResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -6537,8 +6818,10 @@ func (c *Client) sendRebootHost(ctx context.Context, request *ConfirmUpdateReque
 
 // RegenerateTLSCertificate invokes regenerateTLSCertificate operation.
 //
-// Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new
-// cert. Let's Encrypt DNS-01 is not implemented here.
+// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
+// hot-reloads it so new connections use the new cert. If Let's Encrypt DNS-01 is configured,
+// unattended renewal is disarmed so this self-signed cert is not overwritten without another explicit
+// setup. Let's Encrypt issue and renew are `configureLetsEncrypt`, not this operation.
 //
 // POST /settings/network/certificate
 func (c *Client) RegenerateTLSCertificate(ctx context.Context) (*NetworkSettings, error) {

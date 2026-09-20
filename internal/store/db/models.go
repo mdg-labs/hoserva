@@ -8,6 +8,18 @@ import (
 	"database/sql"
 )
 
+type AcmeConfig struct {
+	ID             int64          `json:"id"`
+	Domain         string         `json:"domain"`
+	Provider       string         `json:"provider"`
+	ProviderConfig string         `json:"provider_config"`
+	DnsSecret      []byte         `json:"dns_secret"`
+	AccountKey     []byte         `json:"account_key"`
+	Enabled        int64          `json:"enabled"`
+	LastError      sql.NullString `json:"last_error"`
+	UpdatedAt      string         `json:"updated_at"`
+}
+
 type ArrayDisk struct {
 	ID           int64          `json:"id"`
 	Role         string         `json:"role"`

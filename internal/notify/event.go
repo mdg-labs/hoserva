@@ -41,6 +41,7 @@ const (
 	EventLoginFailureBurst        EventType = "login_failure_burst"
 	EventCredentialReset          EventType = "credential_reset"
 	EventCertificateExpiring      EventType = "certificate_expiring"
+	EventCertificateRenewalFailed EventType = "certificate_renewal_failed"
 	EventConfigBackupFailed       EventType = "config_backup_failed"
 	EventAppdataBackupFailed      EventType = "appdata_backup_failed"
 	EventBackupDestinationStale   EventType = "backup_destination_stale"
@@ -82,6 +83,7 @@ var EventCatalog = []EventType{
 	EventLoginFailureBurst,
 	EventCredentialReset,
 	EventCertificateExpiring,
+	EventCertificateRenewalFailed,
 	EventConfigBackupFailed,
 	EventAppdataBackupFailed,
 	EventBackupDestinationStale,
@@ -119,6 +121,7 @@ var defaultSeverity = map[EventType]Severity{
 	EventLoginFailureBurst:        SeverityCritical,
 	EventCredentialReset:          SeverityCritical,
 	EventCertificateExpiring:      SeverityWarning,
+	EventCertificateRenewalFailed: SeverityError,
 	EventConfigBackupFailed:       SeverityError,
 	EventAppdataBackupFailed:      SeverityError,
 	EventBackupDestinationStale:   SeverityWarning,
