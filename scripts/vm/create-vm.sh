@@ -36,14 +36,21 @@ echo "vm-up[$HOSERVA_LAB_ID]: creating array disks"
 # name:size pairs — the same six-disk-plus-cache topology
 # scripts/devenv/create-array.sh uses for the L2 lab (doc 06 §3), so the
 # two layers describe the same array shape at different fidelity.
+# HOSERVA_VM_{PARITY,DATA,CACHE}_SIZE override the defaults for runs that
+# must actually fill a disk (the L3 soak): a 4T sparse qcow2 still
+# allocates host blocks as soon as the guest writes, so a "full disk"
+# injection cannot use the lab-scale sizes.
+PARITY_SIZE="${HOSERVA_VM_PARITY_SIZE:-8T}"
+DATA_SIZE="${HOSERVA_VM_DATA_SIZE:-4T}"
+CACHE_SIZE="${HOSERVA_VM_CACHE_SIZE:-1T}"
 ARRAY_DISK_SPECS=(
-  "parity1:8T"
-  "disk1:4T"
-  "disk2:4T"
-  "disk3:4T"
-  "disk4:4T"
-  "disk5:4T"
-  "cache:1T"
+  "parity1:$PARITY_SIZE"
+  "disk1:$DATA_SIZE"
+  "disk2:$DATA_SIZE"
+  "disk3:$DATA_SIZE"
+  "disk4:$DATA_SIZE"
+  "disk5:$DATA_SIZE"
+  "cache:$CACHE_SIZE"
 )
 ARRAY_DISKS_XML="$(mktemp)"
 trap 'rm -f -- "$ARRAY_DISKS_XML"' EXIT
