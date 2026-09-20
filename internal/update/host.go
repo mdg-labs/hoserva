@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,33 +19,51 @@ type HTTPFetcher struct {
 	Client *http.Client
 }
 
-func (f HTTPFetcher) Get(ctx context.Context, url string) ([]byte, error) {
-	if strings.Contains(url, "api.github.com") {
-		return nil, fmt.Errorf("%w: %s", ErrIndexURL, url)
+func (f HTTPFetcher) Get(ctx context.Context, raw string) ([]byte, error) {
+	if err := refuseAPIGitHub(raw); err != nil {
+		return nil, err
 	}
 	client := f.Client
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	c := *client
+	parentCheck := c.CheckRedirect
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		var origURL *url.URL
+		if len(via) > 0 {
+			origURL = via[0].URL
+		}
+		if err := allowFetchHop(req.URL, origURL); err != nil {
+			return err
+		}
+		if parentCheck != nil {
+			return parentCheck(req, via)
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Do(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("update: GET %s: %s", url, resp.Status)
+		return nil, fmt.Errorf("update: GET %s: %s", raw, resp.Status)
 	}
 	const max = 256 << 20
 	body, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
 	if err != nil {
-		return nil, fmt.Errorf("update: reading %s: %w", url, err)
+		return nil, fmt.Errorf("update: reading %s: %w", raw, err)
 	}
 	if len(body) > max {
-		return nil, fmt.Errorf("update: GET %s: body too large", url)
+		return nil, fmt.Errorf("update: GET %s: body too large", raw)
 	}
 	return body, nil
 }
