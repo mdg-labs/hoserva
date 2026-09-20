@@ -63,6 +63,74 @@ func mustReadFile(t *testing.T, path string) string {
 	return string(got)
 }
 
+// TestLabMounter_MountCreatesWhere is this issue's central acceptance test
+// (#207): Mounter.Mount must create Where= when it is missing, matching
+// systemd's own .mount unit behaviour, before execing mergerfs.
+func TestLabMounter_MountCreatesWhere(t *testing.T) {
+	lab := labDir(t)
+	ctx := context.Background()
+	mounter := Mounter{Runner: disk.CommandRunner{}}
+
+	dataDisks := []string{
+		filepath.Join(lab, "mnt", "disk1"),
+		filepath.Join(lab, "mnt", "disk2"),
+		filepath.Join(lab, "mnt", "disk3"),
+	}
+	for _, d := range dataDisks {
+		if _, err := os.Stat(d); err != nil {
+			t.Fatalf("data disk %s not present — expected create-array.sh to have mounted it: %v", d, err)
+		}
+	}
+
+	opts := Options{MinFreeSpace: "50M", Responsiveness: Responsive}
+	catchAllWhere := filepath.Join(lab, "mnt", "pool-mkdir-test")
+	// Deliberately do NOT mkdir catchAllWhere — that is what this test proves.
+
+	catchAll, err := CatchAllMount(dataDisks, opts)
+	if err != nil {
+		t.Fatalf("CatchAllMount: %v", err)
+	}
+	catchAll.Where = catchAllWhere
+
+	t.Cleanup(func() {
+		_ = mounter.Unmount(context.Background(), catchAllWhere)
+		_ = os.RemoveAll(catchAllWhere)
+	})
+
+	// A previous run may have left an unmounted directory behind; only a
+	// missing Where= is what this test proves Mounter.Mount creates.
+	_ = mounter.Unmount(context.Background(), catchAllWhere)
+	if err := os.RemoveAll(catchAllWhere); err != nil {
+		t.Fatalf("removing stale %s: %v", catchAllWhere, err)
+	}
+	if _, err := os.Stat(catchAllWhere); err == nil {
+		t.Fatalf("%s still exists after cleanup — want a missing Where=", catchAllWhere)
+	}
+
+	if err := mounter.Mount(ctx, catchAll); err != nil {
+		t.Fatalf("mounting catch-all without a pre-created Where=: %v", err)
+	}
+
+	info, err := os.Stat(catchAllWhere)
+	if err != nil {
+		t.Fatalf("after Mount, %s: %v", catchAllWhere, err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("after Mount, %s is not a directory", catchAllWhere)
+	}
+
+	mustWriteFile(t, filepath.Join(catchAllWhere, "probe.txt"), "mounted through a created Where=")
+	foundOnArray := false
+	for _, d := range dataDisks {
+		if _, err := os.Stat(filepath.Join(d, "probe.txt")); err == nil {
+			foundOnArray = true
+		}
+	}
+	if !foundOnArray {
+		t.Fatal("probe.txt did not land on any data disk — the mount is not serving writes")
+	}
+}
+
 // TestLabPoolTopology_MountsInOrderAndSurvivesRemount is this issue's
 // central lab acceptance test (issue #27): a real catch-all plus a real
 // cache-then-move share plus that share's own mover write target, all

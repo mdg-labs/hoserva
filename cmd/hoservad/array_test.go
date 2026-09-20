@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -110,6 +111,30 @@ func confirmStop() *apiv1.StopArrayRequest {
 	return &apiv1.StopArrayRequest{Confirm: true}
 }
 
+// arrayTestCatchAll is the catch-all half of ArraySequence's Mount fake for
+// hoservad's L1 wiring test: it records fusermount/mergerfs through the
+// injected Runner without os.MkdirAll on pool.CatchAllPath (#207).
+type arrayTestCatchAll struct {
+	where  string
+	argv   []string
+	runner disk.Runner
+}
+
+func (c arrayTestCatchAll) Where() string { return c.where }
+
+func (c arrayTestCatchAll) Mount(ctx context.Context) error {
+	if len(c.argv) == 0 {
+		return fmt.Errorf("arrayTestCatchAll: no argv")
+	}
+	_, err := c.runner.Run(ctx, c.argv[0], c.argv[1:]...)
+	return err
+}
+
+func (c arrayTestCatchAll) Unmount(ctx context.Context) error {
+	_, err := c.runner.Run(ctx, "fusermount", "-u", c.where)
+	return err
+}
+
 // TestNewArraySequence_WiresStopAndStartWhenTopologyExists is the live-array
 // half of #190's data-loss scenario: a persisted topology must leave
 // Handler.Array set to one job.ArraySequence built from the daemon's
@@ -156,6 +181,16 @@ func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
 	}
 	if !gate.Ready() {
 		t.Fatal("gate.Ready() = false with every expected disk present — Evaluate was skipped at construction, so every Start would refuse")
+	}
+
+	realCatchAll, ok := h.Array.CatchAll.(pool.MountController)
+	if !ok {
+		t.Fatalf("CatchAll is %T, want pool.MountController for argv extraction", h.Array.CatchAll)
+	}
+	h.Array.CatchAll = arrayTestCatchAll{
+		where:  pool.CatchAllPath,
+		argv:   realCatchAll.Mnt.Argv(),
+		runner: runner,
 	}
 
 	got, err := h.StopArray(ctx, confirmStop())

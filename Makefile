@@ -258,7 +258,7 @@ $(error invalid DEB: must not contain '$$' — no Make or shell expansion syntax
 endif
 export DEB
 
-.PHONY: build test test-unit test-go packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite hooks-install
+.PHONY: build test test-unit test-go packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -647,3 +647,10 @@ vm-destroy:
 vm-suite:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-suite)" >&2; exit 1; }
 	scripts/vm/run-l3-suite.sh
+
+# Phase 1's L3 soak (doc 06 §6, Q16): 30 nightly chains back to back over
+# seeded churn, with injected failures. Time-compressed; does not wait
+# calendar nights. Requires HOSERVA_LAB_ID. Tears the VM down on exit.
+vm-soak:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-soak)" >&2; exit 1; }
+	scripts/vm/run-l3-soak.sh
