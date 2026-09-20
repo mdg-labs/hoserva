@@ -45,7 +45,7 @@ func (h *handler) CreateShare(ctx context.Context, req *apiv1.CreateShareRequest
 	if _, ok := h.shares[name]; ok {
 		return nil, errShareExists(req.Name)
 	}
-	mode := apiv1.ShareCacheModeArrayOnly
+	mode := apiv1.ShareCacheModeCacheThenMove
 	if v, ok := req.CacheMode.Get(); ok {
 		mode = v
 	}

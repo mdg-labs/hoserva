@@ -2697,6 +2697,10 @@ components:
             `address`, `prefix`, `gateway` or `dns` is set.
         method:
           $ref: '#/components/schemas/NetworkAddressMethod'
+          description: >-
+            Required when any of `interface`, `address`, `prefix`,
+            `gateway` or `dns` is set — the managed ifupdown stanza is
+            always rewritten in full.
         address:
           type: string
           description: Static address without prefix. Required when `method` is static.

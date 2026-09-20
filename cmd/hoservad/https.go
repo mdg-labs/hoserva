@@ -91,12 +91,12 @@ func (h *httpsControl) AllowAllSources() bool {
 	return h.allowAll.Load()
 }
 
-func (h *httpsControl) SetAllowAllSources(v bool) {
+func (h *httpsControl) SetAllowAllSources(v bool) error {
 	h.allowAll.Store(v)
 	if h.filter != nil {
 		h.filter.SetAllowAll(v)
 	}
-	_ = h.persist()
+	return h.persist()
 }
 
 func (h *httpsControl) ListenPort() int {
@@ -124,7 +124,29 @@ func (h *httpsControl) persist() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(h.persistPath(), raw, 0o600)
+	path := h.persistPath()
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".https-settings.json.tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func loadPersistedHTTPS(stateDir string) (persistedHTTPS, bool) {

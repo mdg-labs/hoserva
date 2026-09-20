@@ -22,7 +22,7 @@ type HTTPSControl interface {
 	Certificate() (TLSCertView, error)
 	Regenerate(ctx context.Context) (TLSCertView, error)
 	AllowAllSources() bool
-	SetAllowAllSources(bool)
+	SetAllowAllSources(bool) error
 	ListenPort() int
 	SetListenPort(int) error
 	ListenPortRestartRequired() bool
@@ -64,22 +64,29 @@ func (h *Handler) ApplyNetworkSettings(ctx context.Context, req *apiv1.ApplyNetw
 	if h.Network == nil {
 		return nil, errNetworkNotConfigured()
 	}
-	if err := h.applyHTTPS(req); err != nil {
-		return nil, mapNetworkError(err)
-	}
 	change, addressing, err := networkChangeFromAPI(req)
 	if err != nil {
+		return nil, mapNetworkError(err)
+	}
+	if err := validateHTTPSRequest(h.HTTPS, req); err != nil {
+		return nil, mapNetworkError(err)
+	}
+	snap, haveSnap := snapshotHTTPS(h.HTTPS)
+	if err := h.applyHTTPS(req); err != nil {
+		restoreHTTPS(h.HTTPS, snap, haveSnap)
 		return nil, mapNetworkError(err)
 	}
 	if addressing {
 		st, err := h.Network.Apply(ctx, change)
 		if err != nil {
+			restoreHTTPS(h.HTTPS, snap, haveSnap)
 			return nil, mapNetworkError(err)
 		}
 		return h.networkSettingsToAPI(st)
 	}
 	st, err := h.Network.Status(ctx)
 	if err != nil {
+		restoreHTTPS(h.HTTPS, snap, haveSnap)
 		return nil, fmt.Errorf("getting network settings: %w", err)
 	}
 	return h.networkSettingsToAPI(st)
@@ -113,20 +120,50 @@ func (h *Handler) RegenerateTLSCertificate(ctx context.Context) (*apiv1.NetworkS
 	return h.networkSettingsToAPI(st)
 }
 
-func (h *Handler) applyHTTPS(req *apiv1.ApplyNetworkSettingsRequest) error {
-	if h.HTTPS == nil {
-		if req.AllowAllSources.IsSet() || req.ListenPort.IsSet() {
+func validateHTTPSRequest(https HTTPSControl, req *apiv1.ApplyNetworkSettingsRequest) error {
+	port, portSet := req.ListenPort.Get()
+	if https == nil {
+		if req.AllowAllSources.IsSet() || portSet {
 			return fmt.Errorf("%w: HTTPS settings are not configured", config.ErrNetworkInvalid)
 		}
 		return nil
 	}
+	if portSet && (port < 1 || port > 65535) {
+		return fmt.Errorf("%w: listen port must be between 1 and 65535", config.ErrNetworkInvalid)
+	}
+	return nil
+}
+
+func snapshotHTTPS(https HTTPSControl) (httpsSnapshot, bool) {
+	if https == nil {
+		return httpsSnapshot{}, false
+	}
+	return httpsSnapshot{allowAll: https.AllowAllSources(), port: https.ListenPort()}, true
+}
+
+func restoreHTTPS(https HTTPSControl, snap httpsSnapshot, have bool) {
+	if https == nil || !have {
+		return
+	}
+	_ = https.SetAllowAllSources(snap.allowAll)
+	_ = https.SetListenPort(snap.port)
+}
+
+type httpsSnapshot struct {
+	allowAll bool
+	port     int
+}
+
+func (h *Handler) applyHTTPS(req *apiv1.ApplyNetworkSettingsRequest) error {
+	if h.HTTPS == nil {
+		return nil
+	}
 	if v, ok := req.AllowAllSources.Get(); ok {
-		h.HTTPS.SetAllowAllSources(v)
+		if err := h.HTTPS.SetAllowAllSources(v); err != nil {
+			return err
+		}
 	}
 	if v, ok := req.ListenPort.Get(); ok {
-		if v < 1 || v > 65535 {
-			return fmt.Errorf("%w: listen port must be between 1 and 65535", config.ErrNetworkInvalid)
-		}
 		if err := h.HTTPS.SetListenPort(v); err != nil {
 			return err
 		}
