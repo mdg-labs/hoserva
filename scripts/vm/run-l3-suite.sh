@@ -171,6 +171,17 @@ else
   not_yet "existing host config" "no running domain (install step above did not complete — see step 1)"
 fi
 
+echo "vm-suite[$HOSERVA_LAB_ID]: === NFS export mount (issue #47) ==="
+if vm_domain_running "$VM_DOMAIN"; then
+  if "$script_dir/nfs-export-check.sh"; then
+    pass "NFS export mount"
+  else
+    fail "NFS export mount" "guest loopback NFS mount did not write a file — see nfs-export-check.sh output above"
+  fi
+else
+  not_yet "NFS export mount" "no running domain (install step above did not complete — see step 1)"
+fi
+
 echo "vm-suite[$HOSERVA_LAB_ID]: === 11/11 array stop/start sequence: missing disk at boot, service stops before unmount ==="
 if vm_domain_running "$VM_DOMAIN"; then
   if "$script_dir/array-sequence-check.sh"; then

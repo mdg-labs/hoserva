@@ -1,0 +1,2 @@
+/mnt/user/backup 10.8.0.0/24(rw,sync,no_subtree_check,all_squash) backup.home.arpa(rw,sync,no_subtree_check,all_squash)
+/mnt/user/media 192.168.1.10(rw,sync,no_subtree_check,no_root_squash)

@@ -285,6 +285,26 @@ func TestSubmit_RejectsParamsForTypesThatHaveNone(t *testing.T) {
 	}
 }
 
+func TestSubmit_ACMEIssueAcceptsRenewParam(t *testing.T) {
+	s := newTestScheduler(t)
+	var gotRenew bool
+	s.registry.Register(TypeACMEIssue, true, RunACMEIssue(func(_ context.Context, renew bool) error {
+		gotRenew = renew
+		return nil
+	}))
+	j, err := s.Submit(context.Background(), TypeACMEIssue, []string{"tls"}, mustJSON(t, ACMEIssueParams{Renew: true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusSucceeded {
+		t.Fatalf("status = %s", finished.Status)
+	}
+	if !gotRenew {
+		t.Fatal("expected renew=true")
+	}
+}
+
 func TestSubmit_RejectsFixWithoutConfirm(t *testing.T) {
 	s := newTestScheduler(t)
 	s.registry.Register(TypeFix, false, RunFix(newRecordingEngine()))

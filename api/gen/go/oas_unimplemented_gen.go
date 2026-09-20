@@ -82,6 +82,20 @@ func (UnimplementedHandler) CheckForUpdate(ctx context.Context) (r *UpdateStatus
 	return r, ht.ErrNotImplemented
 }
 
+// ConfigureLetsEncrypt implements configureLetsEncrypt operation.
+//
+// Stores the domain and DNS-01 provider credentials (encrypted at rest, Q28) and queues an
+// `acme_issue` job that talks to the ACME directory over DNS-01 only. Ports 80 and 443 are never
+// claimed (Q9). HTTP-01 and TLS-ALPN-01 are not offered. On success the issued certificate replaces
+// the self-signed cert on `:8008`. Unattended renewal stays armed while `letsEncrypt.enabled` is true.
+// A failed issue or renew keeps serving the existing certificate and notifies; it never silently falls
+// back to a new self-signed cert.
+//
+// POST /settings/network/lets-encrypt
+func (UnimplementedHandler) ConfigureLetsEncrypt(ctx context.Context, req *ConfigureLetsEncryptRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ConfirmNetworkSettings implements confirmNetworkSettings operation.
 //
 // Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
@@ -178,6 +192,17 @@ func (UnimplementedHandler) DeleteShare(ctx context.Context, req *ConfirmShareRe
 // POST /shares/{name}/data/delete
 func (UnimplementedHandler) DeleteShareData(ctx context.Context, req *DeleteShareDataRequest, params DeleteShareDataParams) error {
 	return ht.ErrNotImplemented
+}
+
+// DisableLetsEncrypt implements disableLetsEncrypt operation.
+//
+// Disarms unattended renewal. The certificate currently served on `:8008` is left in place — this
+// does not generate a self-signed replacement. DNS credentials remain stored until overwritten by a
+// later `configureLetsEncrypt` or cleared by regenerating a self-signed certificate.
+//
+// DELETE /settings/network/lets-encrypt
+func (UnimplementedHandler) DisableLetsEncrypt(ctx context.Context) (r *NetworkSettings, _ error) {
+	return r, ht.ErrNotImplemented
 }
 
 // DisableUserTotp implements disableUserTotp operation.
@@ -498,8 +523,10 @@ func (UnimplementedHandler) RebootHost(ctx context.Context, req *ConfirmUpdateRe
 
 // RegenerateTLSCertificate implements regenerateTLSCertificate operation.
 //
-// Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new
-// cert. Let's Encrypt DNS-01 is not implemented here.
+// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
+// hot-reloads it so new connections use the new cert. If Let's Encrypt DNS-01 is configured,
+// unattended renewal is disarmed so this self-signed cert is not overwritten without another explicit
+// setup. Let's Encrypt issue and renew are handled by `configureLetsEncrypt`, not by this operation.
 //
 // POST /settings/network/certificate
 func (UnimplementedHandler) RegenerateTLSCertificate(ctx context.Context) (r *NetworkSettings, _ error) {

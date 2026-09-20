@@ -391,3 +391,101 @@ func TestArrayStopAndStartFlipsMaintenanceMode(t *testing.T) {
 		t.Fatal("GetStatus after StartArray: maintenanceMode is still true")
 	}
 }
+
+func TestCreateShareNFSEncodes(t *testing.T) {
+	client := newTestClient(t, "fresh-install")
+	ctx := context.Background()
+
+	created, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{
+		Name: "media",
+	})
+	if err != nil {
+		t.Fatalf("CreateShare(omit nfs): %v", err)
+	}
+	if created.Nfs.Enabled {
+		t.Fatal("CreateShare(omit nfs): nfs.enabled = true, want false")
+	}
+	if created.Nfs.Squash != apiv1.ShareNFSSquashRootSquash {
+		t.Fatalf("CreateShare(omit nfs): squash = %q, want root_squash", created.Nfs.Squash)
+	}
+	if created.Nfs.Hosts == nil {
+		t.Fatal("CreateShare(omit nfs): nfs.hosts is nil, want empty slice")
+	}
+	if len(created.Nfs.Hosts) != 0 {
+		t.Fatalf("CreateShare(omit nfs): nfs.hosts = %v, want empty", created.Nfs.Hosts)
+	}
+
+	got, err := client.GetShare(ctx, apiv1.GetShareParams{Name: created.Name})
+	if err != nil {
+		t.Fatalf("GetShare: %v", err)
+	}
+	assertShareNFS(t, "GetShare", got.Nfs, created.Nfs)
+
+	listed, err := client.ListShares(ctx)
+	if err != nil {
+		t.Fatalf("ListShares: %v", err)
+	}
+	if len(listed.Shares) != 1 {
+		t.Fatalf("ListShares: len = %d, want 1", len(listed.Shares))
+	}
+	assertShareNFS(t, "ListShares", listed.Shares[0].Nfs, created.Nfs)
+
+	withNFS, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{
+		Name: "backup",
+		Nfs: apiv1.NewOptShareNFS(apiv1.ShareNFS{
+			Enabled: true,
+			Hosts:   []string{"192.168.1.0/24", "10.0.0.5"},
+			Squash:  apiv1.ShareNFSSquashNoRootSquash,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("CreateShare(with nfs): %v", err)
+	}
+	if !withNFS.Nfs.Enabled {
+		t.Fatal("CreateShare(with nfs): nfs.enabled = false, want true")
+	}
+	if withNFS.Nfs.Squash != apiv1.ShareNFSSquashNoRootSquash {
+		t.Fatalf("CreateShare(with nfs): squash = %q, want no_root_squash", withNFS.Nfs.Squash)
+	}
+	if len(withNFS.Nfs.Hosts) != 2 {
+		t.Fatalf("CreateShare(with nfs): hosts = %v, want two entries", withNFS.Nfs.Hosts)
+	}
+
+	updated, err := client.UpdateShare(ctx, &apiv1.UpdateShareRequest{
+		Nfs: apiv1.NewOptShareNFS(apiv1.ShareNFS{
+			Enabled: false,
+			Hosts:   []string{"192.168.2.1"},
+			Squash:  apiv1.ShareNFSSquashAllSquash,
+		}),
+	}, apiv1.UpdateShareParams{Name: withNFS.Name})
+	if err != nil {
+		t.Fatalf("UpdateShare(nfs): %v", err)
+	}
+	if updated.Nfs.Enabled {
+		t.Fatal("UpdateShare(nfs): nfs.enabled = true, want false")
+	}
+	if updated.Nfs.Squash != apiv1.ShareNFSSquashAllSquash {
+		t.Fatalf("UpdateShare(nfs): squash = %q, want all_squash", updated.Nfs.Squash)
+	}
+	if len(updated.Nfs.Hosts) != 1 || updated.Nfs.Hosts[0] != "192.168.2.1" {
+		t.Fatalf("UpdateShare(nfs): hosts = %v, want [192.168.2.1]", updated.Nfs.Hosts)
+	}
+}
+
+func assertShareNFS(t *testing.T, label string, got, want apiv1.ShareNFS) {
+	t.Helper()
+	if got.Enabled != want.Enabled {
+		t.Fatalf("%s: nfs.enabled = %v, want %v", label, got.Enabled, want.Enabled)
+	}
+	if got.Squash != want.Squash {
+		t.Fatalf("%s: nfs.squash = %q, want %q", label, got.Squash, want.Squash)
+	}
+	if len(got.Hosts) != len(want.Hosts) {
+		t.Fatalf("%s: nfs.hosts = %v, want %v", label, got.Hosts, want.Hosts)
+	}
+	for i := range want.Hosts {
+		if got.Hosts[i] != want.Hosts[i] {
+			t.Fatalf("%s: nfs.hosts[%d] = %q, want %q", label, i, got.Hosts[i], want.Hosts[i])
+		}
+	}
+}

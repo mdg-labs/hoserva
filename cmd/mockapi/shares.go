@@ -17,6 +17,30 @@ func errShareExists(name apiv1.ShareName) error {
 	return &mockError{code: "share_exists", statusCode: 409, message: fmt.Sprintf("share %s already exists", name)}
 }
 
+func defaultShareNFS() apiv1.ShareNFS {
+	return apiv1.ShareNFS{
+		Enabled: false,
+		Hosts:   []string{},
+		Squash:  apiv1.ShareNFSSquashRootSquash,
+	}
+}
+
+func normalizeShareNFS(n apiv1.ShareNFS) apiv1.ShareNFS {
+	hosts := n.Hosts
+	if hosts == nil {
+		hosts = []string{}
+	}
+	squash := n.Squash
+	if squash == "" {
+		squash = apiv1.ShareNFSSquashRootSquash
+	}
+	return apiv1.ShareNFS{
+		Enabled: n.Enabled,
+		Hosts:   append([]string(nil), hosts...),
+		Squash:  squash,
+	}
+}
+
 func (h *handler) ListShares(ctx context.Context) (*apiv1.ListSharesOK, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -57,6 +81,10 @@ func (h *handler) CreateShare(ctx context.Context, req *apiv1.CreateShareRequest
 	if v, ok := req.Smb.Get(); ok {
 		smb = v
 	}
+	nfs := defaultShareNFS()
+	if v, ok := req.Nfs.Get(); ok {
+		nfs = normalizeShareNFS(v)
+	}
 	now := time.Now().UTC()
 	s := apiv1.Share{
 		Name:         req.Name,
@@ -64,6 +92,7 @@ func (h *handler) CreateShare(ctx context.Context, req *apiv1.CreateShareRequest
 		CacheMode:    mode,
 		CreatePolicy: policy,
 		Smb:          smb,
+		Nfs:          nfs,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -86,6 +115,9 @@ func (h *handler) UpdateShare(ctx context.Context, req *apiv1.UpdateShareRequest
 	}
 	if v, ok := req.Smb.Get(); ok {
 		s.Smb = v
+	}
+	if v, ok := req.Nfs.Get(); ok {
+		s.Nfs = normalizeShareNFS(v)
 	}
 	s.UpdatedAt = time.Now().UTC()
 	h.shares[string(params.Name)] = s

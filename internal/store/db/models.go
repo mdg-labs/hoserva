@@ -8,6 +8,18 @@ import (
 	"database/sql"
 )
 
+type AcmeConfig struct {
+	ID             int64          `json:"id"`
+	Domain         string         `json:"domain"`
+	Provider       string         `json:"provider"`
+	ProviderConfig string         `json:"provider_config"`
+	DnsSecret      []byte         `json:"dns_secret"`
+	AccountKey     []byte         `json:"account_key"`
+	Enabled        int64          `json:"enabled"`
+	LastError      sql.NullString `json:"last_error"`
+	UpdatedAt      string         `json:"updated_at"`
+}
+
 type ArrayDisk struct {
 	ID           int64          `json:"id"`
 	Role         string         `json:"role"`
@@ -173,6 +185,9 @@ type Share struct {
 	SmbRecycle            int64          `json:"smb_recycle"`
 	SmbTimeMachine        int64          `json:"smb_time_machine"`
 	SmbTimeMachineMaxSize sql.NullString `json:"smb_time_machine_max_size"`
+	NfsEnabled            int64          `json:"nfs_enabled"`
+	NfsHosts              string         `json:"nfs_hosts"`
+	NfsSquash             string         `json:"nfs_squash"`
 	CreatedAt             string         `json:"created_at"`
 	UpdatedAt             string         `json:"updated_at"`
 }

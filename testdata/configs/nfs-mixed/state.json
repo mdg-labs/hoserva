@@ -1,0 +1,14 @@
+{
+  "shares": [
+    {
+      "name": "media",
+      "hosts": ["192.168.1.10"],
+      "squash": "no_root_squash"
+    },
+    {
+      "name": "backup",
+      "hosts": ["10.8.0.0/24", "backup.home.arpa"],
+      "squash": "all_squash"
+    }
+  ]
+}

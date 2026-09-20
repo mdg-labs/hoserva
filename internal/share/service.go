@@ -33,12 +33,20 @@ type SMB struct {
 	TimeMachineMaxSize string
 }
 
+// NFS is a share's NFS export options (doc 03 §4.2).
+type NFS struct {
+	Enabled bool
+	Hosts   []string
+	Squash  string
+}
+
 // Share is the domain record API handlers map to.
 type Share struct {
 	Name         string
 	CacheMode    pool.CacheMode
 	CreatePolicy pool.CreatePolicy
 	SMB          SMB
+	NFS          NFS
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -49,12 +57,13 @@ func (s Share) Path() string {
 }
 
 // CreateInput is createShare's payload. Empty cache mode / create policy
-// / SMB take the documented defaults (Q11, Q12).
+// / SMB / NFS take the documented defaults (Q11, Q12).
 type CreateInput struct {
 	Name         string
 	CacheMode    pool.CacheMode
 	CreatePolicy pool.CreatePolicy
 	SMB          *SMB
+	NFS          *NFS
 }
 
 // UpdateInput is updateShare's payload. Nil pointers keep the stored
@@ -63,6 +72,7 @@ type UpdateInput struct {
 	CacheMode    *pool.CacheMode
 	CreatePolicy *pool.CreatePolicy
 	SMB          *SMB
+	NFS          *NFS
 }
 
 // BrowseEntry is one listing row (doc 03 §4.2).
@@ -130,7 +140,7 @@ func (s *Service) Get(ctx context.Context, name string) (Share, error) {
 
 // Create persists the share, mkdirs its branch directories, writes the
 // per-share mergerfs units through the existing renderer, mounts them,
-// and regenerates smb.conf.
+// and regenerates smb.conf and /etc/exports.
 func (s *Service) Create(ctx context.Context, in CreateInput) (Share, error) {
 	if err := validateName(in.Name); err != nil {
 		return Share{}, err
@@ -159,6 +169,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Share, error) {
 	if err := validateSMB(smb); err != nil {
 		return Share{}, err
 	}
+	nfs := defaultNFS()
+	if in.NFS != nil {
+		nfs = normalizeNFS(*in.NFS)
+	}
+	if err := validateNFS(nfs); err != nil {
+		return Share{}, err
+	}
 
 	_, disks, err := s.array(ctx)
 	if err != nil {
@@ -185,6 +202,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Share, error) {
 		CacheMode:    mode,
 		CreatePolicy: policy,
 		SMB:          smb,
+		NFS:          nfs,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	})
@@ -202,8 +220,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Share, error) {
 	return created, nil
 }
 
-// Update changes cache mode, create policy and SMB options, then
-// regenerates mounts and smb.conf. Existing files are not relocated.
+// Update changes cache mode, create policy, SMB and NFS options, then
+// regenerates mounts, smb.conf and exports. Existing files are not relocated.
 func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Share, error) {
 	existing, err := s.Get(ctx, name)
 	if err != nil {
@@ -231,6 +249,13 @@ func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Shar
 			return Share{}, err
 		}
 		existing.SMB = smb
+	}
+	if in.NFS != nil {
+		nfs := normalizeNFS(*in.NFS)
+		if err := validateNFS(nfs); err != nil {
+			return Share{}, err
+		}
+		existing.NFS = nfs
 	}
 
 	_, disks, err := s.array(ctx)
@@ -264,8 +289,8 @@ func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Shar
 	return existing, nil
 }
 
-// Delete removes the share definition and regenerates mounts and
-// smb.conf. It does not delete files. confirm must be true.
+// Delete removes the share definition and regenerates mounts, smb.conf
+// and /etc/exports. It does not delete files. confirm must be true.
 func (s *Service) Delete(ctx context.Context, name string, confirm bool) error {
 	if !confirm {
 		return fmt.Errorf("%w: delete definition requires confirm=true", ErrConfirmation)
@@ -430,6 +455,7 @@ func (s *Service) apply(ctx context.Context, latest Share, mountLatest bool, pre
 		Options:      pool.Options{MinFreeSpace: settings.MinFreeSpace},
 	}
 	var smb []config.SambaShare
+	var nfs []config.NFSShare
 	for _, row := range rows {
 		sh := shareFromStore(row)
 		state.Shares = append(state.Shares, config.PoolShare{
@@ -448,12 +474,22 @@ func (s *Service) apply(ctx context.Context, latest Share, mountLatest bool, pre
 				TimeMachineMaxSize: sh.SMB.TimeMachineMaxSize,
 			})
 		}
+		if sh.NFS.Enabled {
+			nfs = append(nfs, config.NFSShare{
+				Name:   sh.Name,
+				Hosts:  append([]string(nil), sh.NFS.Hosts...),
+				Squash: sh.NFS.Squash,
+			})
+		}
 	}
 	now := s.now()
 	if err := s.Gen.WritePoolMounts(ctx, state, applyCommand, 1, now); err != nil {
 		return err
 	}
 	if err := s.Gen.WriteSamba(ctx, smb, applyCommand, 1, now); err != nil {
+		return err
+	}
+	if err := s.Gen.WriteNFS(ctx, nfs, applyCommand, 1, now); err != nil {
 		return err
 	}
 	if mountLatest && s.Mounter != nil && latest.Name != "" {
@@ -529,6 +565,11 @@ func shareFromStore(row store.Share) Share {
 			TimeMachine:        row.SMBTimeMachine,
 			TimeMachineMaxSize: row.SMBTimeMachineMaxSize,
 		},
+		NFS: NFS{
+			Enabled: row.NFSEnabled,
+			Hosts:   append([]string(nil), row.NFSHosts...),
+			Squash:  row.NFSSquash,
+		},
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
 	}
@@ -546,7 +587,18 @@ func toStore(s Share) store.Share {
 		SMBRecycle:            s.SMB.Recycle,
 		SMBTimeMachine:        s.SMB.TimeMachine,
 		SMBTimeMachineMaxSize: s.SMB.TimeMachineMaxSize,
+		NFSEnabled:            s.NFS.Enabled,
+		NFSHosts:              append([]string(nil), s.NFS.Hosts...),
+		NFSSquash:             s.NFS.Squash,
 		CreatedAt:             s.CreatedAt,
 		UpdatedAt:             s.UpdatedAt,
 	}
+}
+
+func normalizeNFS(nfs NFS) NFS {
+	nfs.Hosts = append([]string(nil), nfs.Hosts...)
+	if nfs.Squash == "" {
+		nfs.Squash = squashRoot
+	}
+	return nfs
 }

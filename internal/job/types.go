@@ -31,6 +31,7 @@ const (
 	TypePoolRemount       Type = "pool_remount"
 	TypeAppdataBackup     Type = "appdata_backup"
 	TypeContainerUpdate   Type = "container_update"
+	TypeACMEIssue         Type = "acme_issue"
 	TypeVMStart           Type = "vm_start"
 	TypeVMStop            Type = "vm_stop"
 	TypeVMCreate          Type = "vm_create"
@@ -104,6 +105,7 @@ var classOf = map[Type]Class{
 
 	TypeAppdataBackup:   ClassService,
 	TypeContainerUpdate: ClassService,
+	TypeACMEIssue:       ClassService,
 
 	TypeVMStart:           ClassVM,
 	TypeVMStop:            ClassVM,

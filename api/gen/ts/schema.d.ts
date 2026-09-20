@@ -534,10 +534,34 @@ export interface paths {
         put?: never;
         /**
          * Regenerate the self-signed TLS certificate
-         * @description Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new cert. Let's Encrypt DNS-01 is not implemented here.
+         * @description Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and hot-reloads it so new connections use the new cert. If Let's Encrypt DNS-01 is configured, unattended renewal is disarmed so this self-signed cert is not overwritten without another explicit setup. Let's Encrypt issue and renew are handled by `configureLetsEncrypt`, not by this operation.
          */
         post: operations["regenerateTLSCertificate"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/network/lets-encrypt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Configure Let's Encrypt DNS-01 and issue a certificate
+         * @description Stores the domain and DNS-01 provider credentials (encrypted at rest, Q28) and queues an `acme_issue` job that talks to the ACME directory over DNS-01 only. Ports 80 and 443 are never claimed (Q9). HTTP-01 and TLS-ALPN-01 are not offered. On success the issued certificate replaces the self-signed cert on `:8008`. Unattended renewal stays armed while `letsEncrypt.enabled` is true. A failed issue or renew keeps serving the existing certificate and notifies; it never silently falls back to a new self-signed cert.
+         */
+        post: operations["configureLetsEncrypt"];
+        /**
+         * Stop unattended Let's Encrypt renewal
+         * @description Disarms unattended renewal. The certificate currently served on `:8008` is left in place — this does not generate a self-signed replacement. DNS credentials remain stored until overwritten by a later `configureLetsEncrypt` or cleared by regenerating a self-signed certificate.
+         */
+        delete: operations["disableLetsEncrypt"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1271,7 +1295,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "pool_remount" | "appdata_backup" | "container_update" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "pool_remount" | "appdata_backup" | "container_update" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -1370,7 +1394,7 @@ export interface components {
          * @description The fixed event catalog doc 03 §8.3 lists, in that doc's own order. internal/notify assigns every one of these a compiled-in default severity (NotificationLevel); notify_event_severity overrides it per event type.
          * @enum {string}
          */
-        NotificationEventType: "smart_warning" | "smart_failure" | "disk_offline" | "array_degraded" | "sync_succeeded" | "sync_failed" | "sync_blocked_threshold" | "scrub_errors_found" | "pool_above_threshold" | "disk_near_minfreespace" | "cache_above_threshold" | "mover_skipping_files" | "config_drift_detected" | "container_unhealthy" | "container_update_available" | "hoserva_update_available" | "hoserva_update_failed" | "reboot_required" | "ups_on_battery" | "ups_battery_low" | "login_failure_burst" | "credential_reset" | "certificate_expiring" | "config_backup_failed" | "appdata_backup_failed" | "backup_destination_stale" | "restore_drill_failed";
+        NotificationEventType: "smart_warning" | "smart_failure" | "disk_offline" | "array_degraded" | "sync_succeeded" | "sync_failed" | "sync_blocked_threshold" | "scrub_errors_found" | "pool_above_threshold" | "disk_near_minfreespace" | "cache_above_threshold" | "mover_skipping_files" | "config_drift_detected" | "container_unhealthy" | "container_update_available" | "hoserva_update_available" | "hoserva_update_failed" | "reboot_required" | "ups_on_battery" | "ups_battery_low" | "login_failure_burst" | "credential_reset" | "certificate_expiring" | "certificate_renewal_failed" | "config_backup_failed" | "appdata_backup_failed" | "backup_destination_stale" | "restore_drill_failed";
         /** @enum {string} */
         NotificationChannelType: "email" | "gotify" | "ntfy" | "discord" | "webhook";
         /** @enum {string} */
@@ -1562,7 +1586,7 @@ export interface components {
          * @description How the current TLS certificate was issued (Q9).
          * @enum {string}
          */
-        TLSCertificateKind: "self_signed";
+        TLSCertificateKind: "self_signed" | "lets_encrypt";
         TLSCertificateInfo: {
             kind: components["schemas"]["TLSCertificateKind"];
             /**
@@ -1572,6 +1596,41 @@ export interface components {
             notAfter: string;
             /** @description Whole days until expiry; negative if already expired. */
             daysRemaining: number;
+            /** @description DNS name the Let's Encrypt certificate covers. Absent for a self-signed certificate. */
+            domain?: string;
+        };
+        /**
+         * @description DNS-01 providers in v1: Cloudflare's API and generic RFC 2136. HTTP-01 and TLS-ALPN-01 are not offered (Q9).
+         * @enum {string}
+         */
+        DNS01Provider: "cloudflare" | "rfc2136";
+        LetsEncryptStatus: {
+            /** @description True when DNS-01 credentials are stored. */
+            configured: boolean;
+            /** @description True when unattended renewal is armed. */
+            enabled: boolean;
+            /** @description Hostname configured for DNS-01. */
+            domain?: string;
+            provider?: components["schemas"]["DNS01Provider"];
+            /** @description True when a DNS credential is stored (Q28); the secret itself is never returned. */
+            hasSecret?: boolean;
+            /** @description Last issue or renewal failure. Omitted after a success. */
+            lastError?: string;
+        };
+        ConfigureLetsEncryptRequest: {
+            /** @description Hostname the certificate will cover, challenged via DNS-01. */
+            domain: string;
+            provider: components["schemas"]["DNS01Provider"];
+            /** @description Cloudflare API token with Zone.DNS Edit. Write-only (Q28). Required when `provider` is cloudflare and no token is stored yet. */
+            cloudflareAPIToken?: string;
+            /** @description RFC 2136 nameserver as host:port. Required when `provider` is rfc2136. */
+            rfc2136Nameserver?: string;
+            /** @description TSIG key name. Required when `provider` is rfc2136. */
+            rfc2136TsigKeyName?: string;
+            /** @description TSIG secret. Write-only (Q28). Required when `provider` is rfc2136 and no secret is stored yet. */
+            rfc2136TsigSecret?: string;
+            /** @description TSIG algorithm. Defaults to hmac-sha256. */
+            rfc2136TsigAlgorithm?: string;
         };
         NetworkSettings: {
             backend: components["schemas"]["NetworkBackend"];
@@ -1582,6 +1641,7 @@ export interface components {
             interfaces: components["schemas"]["NetworkInterface"][];
             pending?: components["schemas"]["NetworkPending"];
             certificate: components["schemas"]["TLSCertificateInfo"];
+            letsEncrypt: components["schemas"]["LetsEncryptStatus"];
             /** @description When false (default), the TCP listener accepts only LAN-ish sources (Q10). When true, every source address is accepted. */
             allowAllSources: boolean;
             /** @description TCP port the TLS UI/API currently listens on (Q9). */
@@ -2002,6 +2062,16 @@ export interface components {
             /** @description Samba `fruit:time machine max size` (Q73), e.g. `500G`. Required when timeMachine is true; omitted otherwise. */
             timeMachineMaxSize?: string | null;
         };
+        ShareNFS: {
+            enabled: boolean;
+            /** @description Allowed NFS clients: DNS hostnames, IPv4 or IPv6 addresses, or CIDR subnets (doc 03 §4.2). Required when enabled is true. */
+            hosts: string[];
+            /**
+             * @description NFS squash option (doc 03 §4.2).
+             * @enum {string}
+             */
+            squash: "root_squash" | "no_root_squash" | "all_squash";
+        };
         Share: {
             name: components["schemas"]["ShareName"];
             /** @description The share's mount path (`/mnt/user/<name>`, D10). */
@@ -2009,6 +2079,7 @@ export interface components {
             cacheMode: components["schemas"]["ShareCacheMode"];
             createPolicy: components["schemas"]["ArrayCreatePolicy"];
             smb: components["schemas"]["ShareSMB"];
+            nfs: components["schemas"]["ShareNFS"];
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -2019,11 +2090,13 @@ export interface components {
             cacheMode?: components["schemas"]["ShareCacheMode"];
             createPolicy?: components["schemas"]["ArrayCreatePolicy"];
             smb?: components["schemas"]["ShareSMB"];
+            nfs?: components["schemas"]["ShareNFS"];
         };
         UpdateShareRequest: {
             cacheMode?: components["schemas"]["ShareCacheMode"];
             createPolicy?: components["schemas"]["ArrayCreatePolicy"];
             smb?: components["schemas"]["ShareSMB"];
+            nfs?: components["schemas"]["ShareNFS"];
         };
         ConfirmShareRequest: {
             /** @description Must be true — removes the share definition only. */
@@ -2781,6 +2854,52 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Settings including the new certificate expiry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    configureLetsEncrypt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfigureLetsEncryptRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued or running ACME issue job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    disableLetsEncrypt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settings after renewal is disarmed. */
             200: {
                 headers: {
                     [name: string]: unknown;

@@ -5,8 +5,10 @@ import { Banner } from "@/components/patterns/banner";
 import { ConfirmDialog } from "@/components/patterns/confirm";
 import { DataTable, type DataTableColumn } from "@/components/patterns/data-table";
 import { showFeedbackToast } from "@/components/patterns/feedback-toast";
+import { FormOverlay } from "@/components/patterns/form-overlay";
 import { LoadingBlock } from "@/components/patterns/loading";
 import { NumberUnit } from "@/components/patterns/number-unit";
+import { SecretInput } from "@/components/patterns/secret-input";
 import { SegmentedChoice } from "@/components/patterns/segmented-choice";
 import { SettingSwitch } from "@/components/patterns/setting-switch";
 import { StatusBadge } from "@/components/patterns/status-badge";
@@ -18,11 +20,15 @@ import { hoservaClient, type components } from "@/lib/api/client";
 
 type NetworkSettings = components["schemas"]["NetworkSettings"];
 type NetworkInterface = components["schemas"]["NetworkInterface"];
+type DNS01Provider = components["schemas"]["DNS01Provider"];
 
 const METHOD_DHCP = "dhcp";
 const METHOD_STATIC = "static";
 const ADDRESS_METHOD_FIELD = "address-method";
 const INTERFACE_FIELD = "network-interface";
+const DNS01_PROVIDER_FIELD = "dns01-provider";
+const PROVIDER_CLOUDFLARE: DNS01Provider = "cloudflare";
+const PROVIDER_RFC2136: DNS01Provider = "rfc2136";
 
 function dnsToDraft(dns: string[] | undefined): string {
   return (dns ?? []).join(", ");
@@ -59,6 +65,15 @@ export function NetworkSettingsPage(): React.ReactElement {
   const [dns, setDns] = useState("");
   const [port, setPort] = useState(8008);
   const [allowAllOpen, setAllowAllOpen] = useState(false);
+  const [leOpen, setLeOpen] = useState(false);
+  const [leBusy, setLeBusy] = useState(false);
+  const [leDomain, setLeDomain] = useState("");
+  const [leProvider, setLeProvider] = useState<DNS01Provider>(PROVIDER_CLOUDFLARE);
+  const [leToken, setLeToken] = useState("");
+  const [leNameserver, setLeNameserver] = useState("");
+  const [leTsigKey, setLeTsigKey] = useState("");
+  const [leTsigSecret, setLeTsigSecret] = useState("");
+  const [leError, setLeError] = useState<string | null>(null);
   const formSeeded = useRef(false);
 
   const seedForm = (data: NetworkSettings): void => {
@@ -198,6 +213,52 @@ export function NetworkSettingsPage(): React.ReactElement {
       setSettings(data);
       seedForm(data);
       showFeedbackToast({ type: "success", title: t("settings.network.regenDone") });
+    }
+  }
+
+  async function handleLetsEncrypt(): Promise<void> {
+    if (leDomain.trim().length === 0) {
+      setLeError(t("settings.network.leDomainRequired"));
+      return;
+    }
+    setLeError(null);
+    setLeBusy(true);
+    try {
+      const { error: apiError } = await hoservaClient.POST("/settings/network/lets-encrypt", {
+        body: {
+          domain: leDomain.trim(),
+          provider: leProvider,
+          cloudflareAPIToken: leProvider === PROVIDER_CLOUDFLARE ? leToken || undefined : undefined,
+          rfc2136Nameserver: leProvider === PROVIDER_RFC2136 ? leNameserver || undefined : undefined,
+          rfc2136TsigKeyName: leProvider === PROVIDER_RFC2136 ? leTsigKey || undefined : undefined,
+          rfc2136TsigSecret: leProvider === PROVIDER_RFC2136 ? leTsigSecret || undefined : undefined,
+        },
+      });
+      if (apiError) {
+        setLeError(apiError.message);
+        return;
+      }
+      setLeOpen(false);
+      setLeToken("");
+      setLeTsigSecret("");
+      showFeedbackToast({ type: "success", title: t("settings.network.leQueued") });
+      await load();
+    } finally {
+      setLeBusy(false);
+    }
+  }
+
+  async function handleDisableLetsEncrypt(): Promise<void> {
+    setError(null);
+    const { data, error: apiError } = await hoservaClient.DELETE("/settings/network/lets-encrypt", {});
+    if (apiError) {
+      setError(apiError.message);
+      return;
+    }
+    if (data) {
+      setSettings(data);
+      seedForm(data);
+      showFeedbackToast({ type: "success", title: t("settings.network.leDisabled") });
     }
   }
 
@@ -399,8 +460,45 @@ export function NetworkSettingsPage(): React.ReactElement {
             </div>
             <FieldDescription>{t("settings.network.httpsDescription")}</FieldDescription>
           </Field>
+          {settings?.letsEncrypt.lastError ? (
+            <Banner tone="error" title={t("settings.network.leLastError")} description={settings.letsEncrypt.lastError} />
+          ) : null}
+          {settings?.letsEncrypt.configured ? (
+            <Field>
+              <FieldLabel>{t("settings.network.leStatus")}</FieldLabel>
+              <FieldDescription>
+                {t("settings.network.leConfigured", {
+                  domain: settings.letsEncrypt.domain ?? "",
+                  provider:
+                    settings.letsEncrypt.provider === PROVIDER_RFC2136
+                      ? t("settings.network.leProviderRfc2136")
+                      : t("settings.network.leProviderCloudflare"),
+                })}
+                {settings.letsEncrypt.enabled
+                  ? ` ${t("settings.network.leRenewalOn")}`
+                  : ` ${t("settings.network.leRenewalOff")}`}
+              </FieldDescription>
+            </Field>
+          ) : null}
         </CardPanel>
-        <CardFooter className="flex justify-end border-t">
+        <CardFooter className="flex flex-wrap justify-end gap-2 border-t">
+          {settings?.letsEncrypt.enabled ? (
+            <Button type="button" variant="outline" onClick={() => void handleDisableLetsEncrypt()}>
+              {t("settings.network.leDisable")}
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setLeDomain(settings?.letsEncrypt.domain ?? "");
+              setLeProvider(settings?.letsEncrypt.provider === PROVIDER_RFC2136 ? PROVIDER_RFC2136 : PROVIDER_CLOUDFLARE);
+              setLeError(null);
+              setLeOpen(true);
+            }}
+          >
+            {t("settings.network.leSetup")}
+          </Button>
           <Button type="button" variant="outline" onClick={() => void handleRegen()}>
             {t("settings.network.regenCert")}
           </Button>
@@ -454,6 +552,75 @@ export function NetworkSettingsPage(): React.ReactElement {
           void persistAccess(true);
         }}
       />
+
+      <FormOverlay
+        open={leOpen}
+        onOpenChange={(open) => {
+          setLeOpen(open);
+          if (open) {
+            setLeError(null);
+          }
+        }}
+        title={t("settings.network.leSetup")}
+        description={t("settings.network.leDescription")}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setLeOpen(false)}>
+              {t("settings.actions.cancel")}
+            </Button>
+            <Button type="button" loading={leBusy} onClick={() => void handleLetsEncrypt()}>
+              {t("settings.network.leIssue")}
+            </Button>
+          </div>
+        }
+      >
+        {leError ? <Banner tone="error" title={leError} /> : null}
+        <Field>
+          <FieldLabel>{t("settings.network.leDomain")}</FieldLabel>
+          <Input
+            value={leDomain}
+            onChange={(event) => setLeDomain(event.target.value)}
+            placeholder={t("settings.network.leDomainPlaceholder")}
+          />
+        </Field>
+        <Field>
+          <FieldLabel>{t("settings.network.leProvider")}</FieldLabel>
+          <SegmentedChoice
+            name={DNS01_PROVIDER_FIELD}
+            value={leProvider}
+            onChange={(value) => setLeProvider(value as DNS01Provider)}
+            options={[
+              { value: PROVIDER_CLOUDFLARE, label: t("settings.network.leProviderCloudflare") },
+              { value: PROVIDER_RFC2136, label: t("settings.network.leProviderRfc2136") },
+            ]}
+          />
+        </Field>
+        {leProvider === PROVIDER_CLOUDFLARE ? (
+          <Field>
+            <FieldLabel>{t("settings.network.leCloudflareToken")}</FieldLabel>
+            <SecretInput
+              value={leToken}
+              onChange={setLeToken}
+              placeholder={t("settings.network.leCloudflareTokenPlaceholder")}
+            />
+          </Field>
+        ) : (
+          <>
+            <Field>
+              <FieldLabel>{t("settings.network.leNameserver")}</FieldLabel>
+              <Input value={leNameserver} onChange={(event) => setLeNameserver(event.target.value)} />
+            </Field>
+            <Field>
+              <FieldLabel>{t("settings.network.leTsigKey")}</FieldLabel>
+              <Input value={leTsigKey} onChange={(event) => setLeTsigKey(event.target.value)} />
+            </Field>
+            <Field>
+              <FieldLabel>{t("settings.network.leTsigSecret")}</FieldLabel>
+              <SecretInput value={leTsigSecret} onChange={setLeTsigSecret} />
+            </Field>
+          </>
+        )}
+      </FormOverlay>
     </div>
   );
 }

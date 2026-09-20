@@ -27,6 +27,7 @@ SELECT
     name, cache_mode, create_policy,
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
+    nfs_enabled, nfs_hosts, nfs_squash,
     created_at, updated_at
 FROM shares WHERE name = ?
 `
@@ -45,6 +46,9 @@ func (q *Queries) GetShare(ctx context.Context, name string) (*Share, error) {
 		&i.SmbRecycle,
 		&i.SmbTimeMachine,
 		&i.SmbTimeMachineMaxSize,
+		&i.NfsEnabled,
+		&i.NfsHosts,
+		&i.NfsSquash,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -57,10 +61,12 @@ INSERT INTO shares (
     name, cache_mode, create_policy,
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
+    nfs_enabled, nfs_hosts, nfs_squash,
     created_at, updated_at
 ) VALUES (
     ?, ?, ?,
     ?, ?, ?, ?,
+    ?, ?, ?,
     ?, ?, ?,
     ?, ?
 )
@@ -77,6 +83,9 @@ type InsertShareParams struct {
 	SmbRecycle            int64          `json:"smb_recycle"`
 	SmbTimeMachine        int64          `json:"smb_time_machine"`
 	SmbTimeMachineMaxSize sql.NullString `json:"smb_time_machine_max_size"`
+	NfsEnabled            int64          `json:"nfs_enabled"`
+	NfsHosts              string         `json:"nfs_hosts"`
+	NfsSquash             string         `json:"nfs_squash"`
 	CreatedAt             string         `json:"created_at"`
 	UpdatedAt             string         `json:"updated_at"`
 }
@@ -97,6 +106,9 @@ func (q *Queries) InsertShare(ctx context.Context, arg InsertShareParams) error 
 		arg.SmbRecycle,
 		arg.SmbTimeMachine,
 		arg.SmbTimeMachineMaxSize,
+		arg.NfsEnabled,
+		arg.NfsHosts,
+		arg.NfsSquash,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -108,6 +120,7 @@ SELECT
     name, cache_mode, create_policy,
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
+    nfs_enabled, nfs_hosts, nfs_squash,
     created_at, updated_at
 FROM shares
 ORDER BY name ASC
@@ -133,6 +146,9 @@ func (q *Queries) ListShares(ctx context.Context) ([]*Share, error) {
 			&i.SmbRecycle,
 			&i.SmbTimeMachine,
 			&i.SmbTimeMachineMaxSize,
+			&i.NfsEnabled,
+			&i.NfsHosts,
+			&i.NfsSquash,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -154,6 +170,7 @@ UPDATE shares
 SET cache_mode = ?, create_policy = ?,
     smb_enabled = ?, smb_guest = ?, smb_read_only = ?, smb_browseable = ?,
     smb_recycle = ?, smb_time_machine = ?, smb_time_machine_max_size = ?,
+    nfs_enabled = ?, nfs_hosts = ?, nfs_squash = ?,
     updated_at = ?
 WHERE name = ?
 `
@@ -168,6 +185,9 @@ type UpdateShareParams struct {
 	SmbRecycle            int64          `json:"smb_recycle"`
 	SmbTimeMachine        int64          `json:"smb_time_machine"`
 	SmbTimeMachineMaxSize sql.NullString `json:"smb_time_machine_max_size"`
+	NfsEnabled            int64          `json:"nfs_enabled"`
+	NfsHosts              string         `json:"nfs_hosts"`
+	NfsSquash             string         `json:"nfs_squash"`
 	UpdatedAt             string         `json:"updated_at"`
 	Name                  string         `json:"name"`
 }
@@ -183,6 +203,9 @@ func (q *Queries) UpdateShare(ctx context.Context, arg UpdateShareParams) (int64
 		arg.SmbRecycle,
 		arg.SmbTimeMachine,
 		arg.SmbTimeMachineMaxSize,
+		arg.NfsEnabled,
+		arg.NfsHosts,
+		arg.NfsSquash,
 		arg.UpdatedAt,
 		arg.Name,
 	)

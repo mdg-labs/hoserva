@@ -789,6 +789,7 @@ const (
 	JobTypePoolRemount       JobType = "pool_remount"
 	JobTypeAppdataBackup     JobType = "appdata_backup"
 	JobTypeContainerUpdate   JobType = "container_update"
+	JobTypeAcmeIssue         JobType = "acme_issue"
 	JobTypeVMStart           JobType = "vm_start"
 	JobTypeVMStop            JobType = "vm_stop"
 	JobTypeVMCreate          JobType = "vm_create"
@@ -817,6 +818,7 @@ func (JobType) AllValues() []JobType {
 		JobTypePoolRemount,
 		JobTypeAppdataBackup,
 		JobTypeContainerUpdate,
+		JobTypeAcmeIssue,
 		JobTypeVMStart,
 		JobTypeVMStop,
 		JobTypeVMCreate,
@@ -861,6 +863,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeAppdataBackup:
 		return []byte(s), nil
 	case JobTypeContainerUpdate:
+		return []byte(s), nil
+	case JobTypeAcmeIssue:
 		return []byte(s), nil
 	case JobTypeVMStart:
 		return []byte(s), nil
@@ -931,6 +935,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
+		return nil
+	case JobTypeAcmeIssue:
+		*s = JobTypeAcmeIssue
 		return nil
 	case JobTypeVMStart:
 		*s = JobTypeVMStart
@@ -1083,6 +1090,7 @@ const (
 	NotificationEventTypeLoginFailureBurst        NotificationEventType = "login_failure_burst"
 	NotificationEventTypeCredentialReset          NotificationEventType = "credential_reset"
 	NotificationEventTypeCertificateExpiring      NotificationEventType = "certificate_expiring"
+	NotificationEventTypeCertificateRenewalFailed NotificationEventType = "certificate_renewal_failed"
 	NotificationEventTypeConfigBackupFailed       NotificationEventType = "config_backup_failed"
 	NotificationEventTypeAppdataBackupFailed      NotificationEventType = "appdata_backup_failed"
 	NotificationEventTypeBackupDestinationStale   NotificationEventType = "backup_destination_stale"
@@ -1115,6 +1123,7 @@ func (NotificationEventType) AllValues() []NotificationEventType {
 		NotificationEventTypeLoginFailureBurst,
 		NotificationEventTypeCredentialReset,
 		NotificationEventTypeCertificateExpiring,
+		NotificationEventTypeCertificateRenewalFailed,
 		NotificationEventTypeConfigBackupFailed,
 		NotificationEventTypeAppdataBackupFailed,
 		NotificationEventTypeBackupDestinationStale,
@@ -1170,6 +1179,8 @@ func (s NotificationEventType) MarshalText() ([]byte, error) {
 	case NotificationEventTypeCredentialReset:
 		return []byte(s), nil
 	case NotificationEventTypeCertificateExpiring:
+		return []byte(s), nil
+	case NotificationEventTypeCertificateRenewalFailed:
 		return []byte(s), nil
 	case NotificationEventTypeConfigBackupFailed:
 		return []byte(s), nil
@@ -1255,6 +1266,9 @@ func (s *NotificationEventType) UnmarshalText(data []byte) error {
 		return nil
 	case NotificationEventTypeCertificateExpiring:
 		*s = NotificationEventTypeCertificateExpiring
+		return nil
+	case NotificationEventTypeCertificateRenewalFailed:
+		*s = NotificationEventTypeCertificateRenewalFailed
 		return nil
 	case NotificationEventTypeConfigBackupFailed:
 		*s = NotificationEventTypeConfigBackupFailed
@@ -3021,6 +3035,8 @@ func (s *JobType) Decode(d *jx.Decoder) error {
 		*s = JobTypeAppdataBackup
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
+	case JobTypeAcmeIssue:
+		*s = JobTypeAcmeIssue
 	case JobTypeVMStart:
 		*s = JobTypeVMStart
 	case JobTypeVMStop:
@@ -3405,6 +3421,8 @@ func (s *NotificationEventType) Decode(d *jx.Decoder) error {
 		*s = NotificationEventTypeCredentialReset
 	case NotificationEventTypeCertificateExpiring:
 		*s = NotificationEventTypeCertificateExpiring
+	case NotificationEventTypeCertificateRenewalFailed:
+		*s = NotificationEventTypeCertificateRenewalFailed
 	case NotificationEventTypeConfigBackupFailed:
 		*s = NotificationEventTypeConfigBackupFailed
 	case NotificationEventTypeAppdataBackupFailed:
@@ -3981,6 +3999,8 @@ func (s JobType) Validate() error {
 		return nil
 	case "container_update":
 		return nil
+	case "acme_issue":
+		return nil
 	case "vm_start":
 		return nil
 	case "vm_stop":
@@ -4104,6 +4124,8 @@ func (s NotificationEventType) Validate() error {
 	case "credential_reset":
 		return nil
 	case "certificate_expiring":
+		return nil
+	case "certificate_renewal_failed":
 		return nil
 	case "config_backup_failed":
 		return nil

@@ -2,13 +2,19 @@ package api_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/acme"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/store"
+
+	_ "modernc.org/sqlite"
 )
 
 type fakeHTTPS struct {
@@ -16,10 +22,15 @@ type fakeHTTPS struct {
 	port     int
 	restart  bool
 	notAfter time.Time
+	kind     string
 }
 
 func (f *fakeHTTPS) Certificate() (api.TLSCertView, error) {
-	return api.TLSCertView{NotAfter: f.notAfter}, nil
+	kind := f.kind
+	if kind == "" {
+		kind = "self_signed"
+	}
+	return api.TLSCertView{Kind: kind, NotAfter: f.notAfter}, nil
 }
 
 func (f *fakeHTTPS) Regenerate(context.Context) (api.TLSCertView, error) {
@@ -157,6 +168,62 @@ func TestApplyNetworkSettings_ReadOnlyDoesNotKeepHTTPSChange(t *testing.T) {
 	if https.allowAll {
 		t.Fatal("read-only addressing must not leave allowAllSources enabled")
 	}
+}
+
+func TestConfigureLetsEncrypt_InvalidDomainIs400(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	db := newACMEDB(t)
+	h.ACME = &acme.Service{Store: acme.NewStore(db), Cipher: acme.FakeCipher{}}
+	req := &apiv1.ConfigureLetsEncryptRequest{
+		Domain:   "not a host",
+		Provider: apiv1.DNS01ProviderCloudflare,
+	}
+	req.SetCloudflareAPIToken(apiv1.NewOptString("token"))
+	_, err := h.ConfigureLetsEncrypt(context.Background(), req)
+	status := apiError(t, h, err)
+	if status.StatusCode != 400 || status.Response.Code != "network_invalid_input" {
+		t.Fatalf("status = %d %s, want 400 network_invalid_input", status.StatusCode, status.Response.Code)
+	}
+}
+
+func TestConfigureLetsEncrypt_StoreFailureIsOpaque500(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	db := newACMEDB(t)
+	h.ACME = &acme.Service{Store: acme.NewStore(db), Cipher: acme.FakeCipher{}}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := &apiv1.ConfigureLetsEncryptRequest{
+		Domain:   "nas.example.com",
+		Provider: apiv1.DNS01ProviderCloudflare,
+	}
+	req.SetCloudflareAPIToken(apiv1.NewOptString("token"))
+	_, err := h.ConfigureLetsEncrypt(context.Background(), req)
+	status := apiError(t, h, err)
+	if status.StatusCode != 500 || status.Response.Code != "internal" {
+		t.Fatalf("status = %d %s, want 500 internal", status.StatusCode, status.Response.Code)
+	}
+	if status.Response.Message != "an internal error occurred" {
+		t.Fatalf("message = %q, want opaque internal error", status.Response.Message)
+	}
+}
+
+func newACMEDB(t *testing.T) *sql.DB {
+	t.Helper()
+	migrations, err := store.Load()
+	if err != nil {
+		t.Fatalf("loading migrations: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "acme.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	runner := &store.Runner{DB: db, Migrations: migrations, SnapshotDir: t.TempDir()}
+	if _, _, err := runner.Apply(context.Background()); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	return db
 }
 
 func TestConfirmNetworkSettings(t *testing.T) {

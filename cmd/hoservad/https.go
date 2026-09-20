@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/mdg-labs/hoserva/internal/acme"
 	"github.com/mdg-labs/hoserva/internal/api"
 	cfggen "github.com/mdg-labs/hoserva/internal/config"
 )
@@ -67,7 +68,29 @@ func (h *httpsControl) Certificate() (api.TLSCertView, error) {
 	if err != nil {
 		return api.TLSCertView{}, err
 	}
-	return api.TLSCertView{NotAfter: parsed.NotAfter}, nil
+	return tlsCertViewFromParsed(parsed), nil
+}
+
+func (h *httpsControl) Current() (acme.CertView, error) {
+	v, err := h.Certificate()
+	if err != nil {
+		return acme.CertView{}, err
+	}
+	return acme.CertView{Kind: v.Kind, NotAfter: v.NotAfter, Domain: v.Domain}, nil
+}
+
+func (h *httpsControl) Install(certPEM, keyPEM []byte) error {
+	if err := installTLSCertificate(h.certPath, h.keyPath, certPEM, keyPEM); err != nil {
+		return err
+	}
+	cert, err := tls.LoadX509KeyPair(h.certPath, h.keyPath)
+	if err != nil {
+		return fmt.Errorf("loading installed TLS certificate: %w", err)
+	}
+	h.certMu.Lock()
+	h.cert = cert
+	h.certMu.Unlock()
+	return nil
 }
 
 func (h *httpsControl) Regenerate(context.Context) (api.TLSCertView, error) {
