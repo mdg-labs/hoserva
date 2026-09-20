@@ -79,6 +79,10 @@ func (h *Handler) CreateShare(ctx context.Context, req *apiv1.CreateShareRequest
 		smb := smbFromAPI(v)
 		in.SMB = &smb
 	}
+	if v, ok := req.Nfs.Get(); ok {
+		nfs := nfsFromAPI(v)
+		in.NFS = &nfs
+	}
 	s, err := h.Shares.Create(ctx, in)
 	if err != nil {
 		return nil, mapShareError(err)
@@ -103,6 +107,10 @@ func (h *Handler) UpdateShare(ctx context.Context, req *apiv1.UpdateShareRequest
 	if v, ok := req.Smb.Get(); ok {
 		smb := smbFromAPI(v)
 		in.SMB = &smb
+	}
+	if v, ok := req.Nfs.Get(); ok {
+		nfs := nfsFromAPI(v)
+		in.NFS = &nfs
 	}
 	s, err := h.Shares.Update(ctx, string(params.Name), in)
 	if err != nil {
@@ -173,14 +181,27 @@ func shareToAPI(s share.Share) apiv1.Share {
 	if s.SMB.TimeMachineMaxSize != "" {
 		smb.TimeMachineMaxSize = apiv1.NewOptNilString(s.SMB.TimeMachineMaxSize)
 	}
+	hosts := s.NFS.Hosts
+	if hosts == nil {
+		hosts = []string{}
+	}
+	squash := apiv1.ShareNFSSquash(s.NFS.Squash)
+	if squash == "" {
+		squash = apiv1.ShareNFSSquashRootSquash
+	}
 	return apiv1.Share{
 		Name:         apiv1.ShareName(s.Name),
 		Path:         s.Path(),
 		CacheMode:    apiv1.ShareCacheMode(s.CacheMode),
 		CreatePolicy: apiv1.ArrayCreatePolicy(s.CreatePolicy),
 		Smb:          smb,
-		CreatedAt:    s.CreatedAt,
-		UpdatedAt:    s.UpdatedAt,
+		Nfs: apiv1.ShareNFS{
+			Enabled: s.NFS.Enabled,
+			Hosts:   append([]string(nil), hosts...),
+			Squash:  squash,
+		},
+		CreatedAt: s.CreatedAt,
+		UpdatedAt: s.UpdatedAt,
 	}
 }
 
@@ -197,4 +218,12 @@ func smbFromAPI(s apiv1.ShareSMB) share.SMB {
 		out.TimeMachineMaxSize = v
 	}
 	return out
+}
+
+func nfsFromAPI(s apiv1.ShareNFS) share.NFS {
+	return share.NFS{
+		Enabled: s.Enabled,
+		Hosts:   append([]string(nil), s.Hosts...),
+		Squash:  string(s.Squash),
+	}
 }

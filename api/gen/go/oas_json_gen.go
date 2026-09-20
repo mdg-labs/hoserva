@@ -1712,13 +1712,20 @@ func (s *CreateShareRequest) encodeFields(e *jx.Encoder) {
 			s.Smb.Encode(e)
 		}
 	}
+	{
+		if s.Nfs.Set {
+			e.FieldStart("nfs")
+			s.Nfs.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfCreateShareRequest = [4]string{
+var jsonFieldsNameOfCreateShareRequest = [5]string{
 	0: "name",
 	1: "cacheMode",
 	2: "createPolicy",
 	3: "smb",
+	4: "nfs",
 }
 
 // Decode decodes CreateShareRequest from json.
@@ -1769,6 +1776,16 @@ func (s *CreateShareRequest) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"smb\"")
+			}
+		case "nfs":
+			if err := func() error {
+				s.Nfs.Reset()
+				if err := s.Nfs.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"nfs\"")
 			}
 		default:
 			return d.Skip()
@@ -8481,6 +8498,39 @@ func (s *OptShareCacheMode) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes ShareNFS as json.
+func (o OptShareNFS) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	o.Value.Encode(e)
+}
+
+// Decode decodes ShareNFS from json.
+func (o *OptShareNFS) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptShareNFS to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptShareNFS) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptShareNFS) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes ShareSMB as json.
 func (o OptShareSMB) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -10772,6 +10822,10 @@ func (s *Share) encodeFields(e *jx.Encoder) {
 		s.Smb.Encode(e)
 	}
 	{
+		e.FieldStart("nfs")
+		s.Nfs.Encode(e)
+	}
+	{
 		e.FieldStart("createdAt")
 		json.EncodeDateTime(e, s.CreatedAt)
 	}
@@ -10781,14 +10835,15 @@ func (s *Share) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfShare = [7]string{
+var jsonFieldsNameOfShare = [8]string{
 	0: "name",
 	1: "path",
 	2: "cacheMode",
 	3: "createPolicy",
 	4: "smb",
-	5: "createdAt",
-	6: "updatedAt",
+	5: "nfs",
+	6: "createdAt",
+	7: "updatedAt",
 }
 
 // Decode decodes Share from json.
@@ -10852,8 +10907,18 @@ func (s *Share) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"smb\"")
 			}
-		case "createdAt":
+		case "nfs":
 			requiredBitSet[0] |= 1 << 5
+			if err := func() error {
+				if err := s.Nfs.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"nfs\"")
+			}
+		case "createdAt":
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				v, err := json.DecodeDateTime(d)
 				s.CreatedAt = v
@@ -10865,7 +10930,7 @@ func (s *Share) Decode(d *jx.Decoder) error {
 				return errors.Wrap(err, "decode field \"createdAt\"")
 			}
 		case "updatedAt":
-			requiredBitSet[0] |= 1 << 6
+			requiredBitSet[0] |= 1 << 7
 			if err := func() error {
 				v, err := json.DecodeDateTime(d)
 				s.UpdatedAt = v
@@ -10886,7 +10951,7 @@ func (s *Share) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b01111111,
+		0b11111111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -11278,6 +11343,188 @@ func (s ShareCacheMode) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *ShareCacheMode) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *ShareNFS) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *ShareNFS) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("enabled")
+		e.Bool(s.Enabled)
+	}
+	{
+		e.FieldStart("hosts")
+		e.ArrStart()
+		for _, elem := range s.Hosts {
+			e.Str(elem)
+		}
+		e.ArrEnd()
+	}
+	{
+		e.FieldStart("squash")
+		s.Squash.Encode(e)
+	}
+}
+
+var jsonFieldsNameOfShareNFS = [3]string{
+	0: "enabled",
+	1: "hosts",
+	2: "squash",
+}
+
+// Decode decodes ShareNFS from json.
+func (s *ShareNFS) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ShareNFS to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "enabled":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Bool()
+				s.Enabled = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"enabled\"")
+			}
+		case "hosts":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				s.Hosts = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Hosts = append(s.Hosts, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"hosts\"")
+			}
+		case "squash":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				if err := s.Squash.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"squash\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode ShareNFS")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000111,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfShareNFS) {
+					name = jsonFieldsNameOfShareNFS[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *ShareNFS) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ShareNFS) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes ShareNFSSquash as json.
+func (s ShareNFSSquash) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ShareNFSSquash from json.
+func (s *ShareNFSSquash) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ShareNFSSquash to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ShareNFSSquash(v) {
+	case ShareNFSSquashRootSquash:
+		*s = ShareNFSSquashRootSquash
+	case ShareNFSSquashNoRootSquash:
+		*s = ShareNFSSquashNoRootSquash
+	case ShareNFSSquashAllSquash:
+		*s = ShareNFSSquashAllSquash
+	default:
+		*s = ShareNFSSquash(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ShareNFSSquash) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ShareNFSSquash) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -13752,12 +13999,19 @@ func (s *UpdateShareRequest) encodeFields(e *jx.Encoder) {
 			s.Smb.Encode(e)
 		}
 	}
+	{
+		if s.Nfs.Set {
+			e.FieldStart("nfs")
+			s.Nfs.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfUpdateShareRequest = [3]string{
+var jsonFieldsNameOfUpdateShareRequest = [4]string{
 	0: "cacheMode",
 	1: "createPolicy",
 	2: "smb",
+	3: "nfs",
 }
 
 // Decode decodes UpdateShareRequest from json.
@@ -13797,6 +14051,16 @@ func (s *UpdateShareRequest) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"smb\"")
+			}
+		case "nfs":
+			if err := func() error {
+				s.Nfs.Reset()
+				if err := s.Nfs.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"nfs\"")
 			}
 		default:
 			return d.Skip()

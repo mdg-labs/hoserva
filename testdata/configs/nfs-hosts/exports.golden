@@ -1,0 +1,1 @@
+/mnt/user/media 10.0.0.5(rw,sync,no_subtree_check,root_squash) 192.168.1.0/24(rw,sync,no_subtree_check,root_squash)

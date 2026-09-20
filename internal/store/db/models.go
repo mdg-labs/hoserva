@@ -173,6 +173,9 @@ type Share struct {
 	SmbRecycle            int64          `json:"smb_recycle"`
 	SmbTimeMachine        int64          `json:"smb_time_machine"`
 	SmbTimeMachineMaxSize sql.NullString `json:"smb_time_machine_max_size"`
+	NfsEnabled            int64          `json:"nfs_enabled"`
+	NfsHosts              string         `json:"nfs_hosts"`
+	NfsSquash             string         `json:"nfs_squash"`
 	CreatedAt             string         `json:"created_at"`
 	UpdatedAt             string         `json:"updated_at"`
 }

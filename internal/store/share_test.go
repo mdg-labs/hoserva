@@ -59,6 +59,9 @@ func TestShareStore_InsertGetListUpdateDelete(t *testing.T) {
 	if got.Name != "media" || got.CacheMode != "cache-then-move" || got.SMBTimeMachineMaxSize != "500G" || !got.SMBEnabled {
 		t.Fatalf("Get = %+v", got)
 	}
+	if got.NFSEnabled || got.NFSSquash != "root_squash" || len(got.NFSHosts) != 0 {
+		t.Fatalf("Get NFS defaults = %+v", got)
+	}
 
 	listed, err := st.List(ctx)
 	if err != nil {
@@ -69,6 +72,9 @@ func TestShareStore_InsertGetListUpdateDelete(t *testing.T) {
 	}
 
 	got.SMBGuest = true
+	got.NFSEnabled = true
+	got.NFSHosts = []string{"192.168.1.0/24", "client.home.arpa"}
+	got.NFSSquash = "all_squash"
 	got.UpdatedAt = now.Add(time.Hour)
 	if err := st.Update(ctx, got); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -79,6 +85,9 @@ func TestShareStore_InsertGetListUpdateDelete(t *testing.T) {
 	}
 	if !got.SMBGuest {
 		t.Fatal("Update did not persist smb_guest")
+	}
+	if !got.NFSEnabled || got.NFSSquash != "all_squash" || len(got.NFSHosts) != 2 || got.NFSHosts[0] != "192.168.1.0/24" {
+		t.Fatalf("Update did not persist NFS: %+v", got)
 	}
 
 	if err := st.Delete(ctx, "media"); err != nil {

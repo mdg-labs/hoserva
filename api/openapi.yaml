@@ -3478,9 +3478,29 @@ components:
             Samba `fruit:time machine max size` (Q73), e.g. `500G`.
             Required when timeMachine is true; omitted otherwise.
 
+    ShareNFS:
+      type: object
+      required: [enabled, hosts, squash]
+      properties:
+        enabled:
+          type: boolean
+        hosts:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 253
+          description: >-
+            Allowed NFS clients: DNS hostnames, IPv4 or IPv6 addresses,
+            or CIDR subnets (doc 03 §4.2). Required when enabled is true.
+        squash:
+          type: string
+          description: NFS squash option (doc 03 §4.2).
+          enum: [root_squash, no_root_squash, all_squash]
+
     Share:
       type: object
-      required: [name, path, cacheMode, createPolicy, smb, createdAt, updatedAt]
+      required: [name, path, cacheMode, createPolicy, smb, nfs, createdAt, updatedAt]
       properties:
         name:
           $ref: '#/components/schemas/ShareName'
@@ -3493,6 +3513,8 @@ components:
           $ref: '#/components/schemas/ArrayCreatePolicy'
         smb:
           $ref: '#/components/schemas/ShareSMB'
+        nfs:
+          $ref: '#/components/schemas/ShareNFS'
         createdAt:
           type: string
           format: date-time
@@ -3512,6 +3534,8 @@ components:
           $ref: '#/components/schemas/ArrayCreatePolicy'
         smb:
           $ref: '#/components/schemas/ShareSMB'
+        nfs:
+          $ref: '#/components/schemas/ShareNFS'
 
     UpdateShareRequest:
       type: object
@@ -3522,6 +3546,8 @@ components:
           $ref: '#/components/schemas/ArrayCreatePolicy'
         smb:
           $ref: '#/components/schemas/ShareSMB'
+        nfs:
+          $ref: '#/components/schemas/ShareNFS'
 
     ConfirmShareRequest:
       type: object

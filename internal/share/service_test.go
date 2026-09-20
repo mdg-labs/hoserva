@@ -60,6 +60,15 @@ func TestCreate_MakesBranchDirsAndMounts(t *testing.T) {
 	if !strings.HasSuffix(strings.TrimSpace(string(body)), "include = /etc/hoserva/smb.custom.conf") {
 		t.Fatalf("smb.conf must end with the user include:\n%s", body)
 	}
+
+	exportsPath := filepath.Join(svc.Gen.Root, "exports")
+	exports, err := os.ReadFile(exportsPath)
+	if err != nil {
+		t.Fatalf("reading generated exports: %v", err)
+	}
+	if strings.Contains(string(exports), "/mnt/user/media") {
+		t.Fatalf("NFS-disabled share must not appear in exports:\n%s", exports)
+	}
 }
 
 func TestCreate_CacheOnlyHasNoMoverMount(t *testing.T) {
@@ -240,5 +249,58 @@ func TestCreate_TimeMachineRequiresMaxSize(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("Time Machine without max size must fail (Q73)")
+	}
+}
+
+func TestCreate_NFSWritesExports(t *testing.T) {
+	ctx, svc, _, _ := testService(t)
+	got, err := svc.Create(ctx, CreateInput{
+		Name:      "media",
+		CacheMode: pool.ArrayOnly,
+		NFS: &NFS{
+			Enabled: true,
+			Hosts:   []string{"192.168.1.0/24", "10.0.0.5"},
+			Squash:  "root_squash",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !got.NFS.Enabled || len(got.NFS.Hosts) != 2 {
+		t.Fatalf("NFS = %+v", got.NFS)
+	}
+	body, err := os.ReadFile(filepath.Join(svc.Gen.Root, "exports"))
+	if err != nil {
+		t.Fatalf("reading generated exports: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "/mnt/user/media") || !strings.Contains(text, "192.168.1.0/24(rw,sync,no_subtree_check,root_squash)") {
+		t.Fatalf("exports missing share line:\n%s", text)
+	}
+}
+
+func TestCreate_InvalidNFSHost(t *testing.T) {
+	ctx, svc, _, _ := testService(t)
+	for _, host := range []string{"*", "not a host", "192.168.1.0/99", "$(reboot)", "-bad.example"} {
+		_, err := svc.Create(ctx, CreateInput{
+			Name:      "media",
+			CacheMode: pool.ArrayOnly,
+			NFS:       &NFS{Enabled: true, Hosts: []string{host}, Squash: "root_squash"},
+		})
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("host %q: err = %v, want ErrInvalidInput", host, err)
+		}
+	}
+}
+
+func TestCreate_NFSEnabledRequiresHost(t *testing.T) {
+	ctx, svc, _, _ := testService(t)
+	_, err := svc.Create(ctx, CreateInput{
+		Name:      "media",
+		CacheMode: pool.ArrayOnly,
+		NFS:       &NFS{Enabled: true, Squash: "root_squash"},
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("enabled NFS without hosts = %v, want ErrInvalidInput", err)
 	}
 }

@@ -746,6 +746,7 @@ type CreateShareRequest struct {
 	CacheMode    OptShareCacheMode    `json:"cacheMode"`
 	CreatePolicy OptArrayCreatePolicy `json:"createPolicy"`
 	Smb          OptShareSMB          `json:"smb"`
+	Nfs          OptShareNFS          `json:"nfs"`
 }
 
 // GetName returns the value of Name.
@@ -768,6 +769,11 @@ func (s *CreateShareRequest) GetSmb() OptShareSMB {
 	return s.Smb
 }
 
+// GetNfs returns the value of Nfs.
+func (s *CreateShareRequest) GetNfs() OptShareNFS {
+	return s.Nfs
+}
+
 // SetName sets the value of Name.
 func (s *CreateShareRequest) SetName(val ShareName) {
 	s.Name = val
@@ -786,6 +792,11 @@ func (s *CreateShareRequest) SetCreatePolicy(val OptArrayCreatePolicy) {
 // SetSmb sets the value of Smb.
 func (s *CreateShareRequest) SetSmb(val OptShareSMB) {
 	s.Smb = val
+}
+
+// SetNfs sets the value of Nfs.
+func (s *CreateShareRequest) SetNfs(val OptShareNFS) {
+	s.Nfs = val
 }
 
 // Ref: #/components/schemas/DailyWakeCount
@@ -4964,6 +4975,52 @@ func (o OptShareCacheMode) Or(d ShareCacheMode) ShareCacheMode {
 	return d
 }
 
+// NewOptShareNFS returns new OptShareNFS with value set to v.
+func NewOptShareNFS(v ShareNFS) OptShareNFS {
+	return OptShareNFS{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptShareNFS is optional ShareNFS.
+type OptShareNFS struct {
+	Value ShareNFS
+	Set   bool
+}
+
+// IsSet returns true if OptShareNFS was set.
+func (o OptShareNFS) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptShareNFS) Reset() {
+	var v ShareNFS
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptShareNFS) SetTo(v ShareNFS) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptShareNFS) Get() (v ShareNFS, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptShareNFS) Or(d ShareNFS) ShareNFS {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptShareSMB returns new OptShareSMB with value set to v.
 func NewOptShareSMB(v ShareSMB) OptShareSMB {
 	return OptShareSMB{
@@ -6091,6 +6148,7 @@ type Share struct {
 	CacheMode    ShareCacheMode    `json:"cacheMode"`
 	CreatePolicy ArrayCreatePolicy `json:"createPolicy"`
 	Smb          ShareSMB          `json:"smb"`
+	Nfs          ShareNFS          `json:"nfs"`
 	CreatedAt    time.Time         `json:"createdAt"`
 	UpdatedAt    time.Time         `json:"updatedAt"`
 }
@@ -6118,6 +6176,11 @@ func (s *Share) GetCreatePolicy() ArrayCreatePolicy {
 // GetSmb returns the value of Smb.
 func (s *Share) GetSmb() ShareSMB {
 	return s.Smb
+}
+
+// GetNfs returns the value of Nfs.
+func (s *Share) GetNfs() ShareNFS {
+	return s.Nfs
 }
 
 // GetCreatedAt returns the value of CreatedAt.
@@ -6153,6 +6216,11 @@ func (s *Share) SetCreatePolicy(val ArrayCreatePolicy) {
 // SetSmb sets the value of Smb.
 func (s *Share) SetSmb(val ShareSMB) {
 	s.Smb = val
+}
+
+// SetNfs sets the value of Nfs.
+func (s *Share) SetNfs(val ShareNFS) {
+	s.Nfs = val
 }
 
 // SetCreatedAt sets the value of CreatedAt.
@@ -6326,6 +6394,95 @@ func (s *ShareCacheMode) UnmarshalText(data []byte) error {
 		return nil
 	case ShareCacheModeArrayOnly:
 		*s = ShareCacheModeArrayOnly
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ShareNFS
+type ShareNFS struct {
+	Enabled bool `json:"enabled"`
+	// Allowed NFS clients: DNS hostnames, IPv4 or IPv6 addresses, or CIDR subnets (doc 03 §4.2). Required
+	// when enabled is true.
+	Hosts []string `json:"hosts"`
+	// NFS squash option (doc 03 §4.2).
+	Squash ShareNFSSquash `json:"squash"`
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *ShareNFS) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetHosts returns the value of Hosts.
+func (s *ShareNFS) GetHosts() []string {
+	return s.Hosts
+}
+
+// GetSquash returns the value of Squash.
+func (s *ShareNFS) GetSquash() ShareNFSSquash {
+	return s.Squash
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *ShareNFS) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetHosts sets the value of Hosts.
+func (s *ShareNFS) SetHosts(val []string) {
+	s.Hosts = val
+}
+
+// SetSquash sets the value of Squash.
+func (s *ShareNFS) SetSquash(val ShareNFSSquash) {
+	s.Squash = val
+}
+
+// NFS squash option (doc 03 §4.2).
+type ShareNFSSquash string
+
+const (
+	ShareNFSSquashRootSquash   ShareNFSSquash = "root_squash"
+	ShareNFSSquashNoRootSquash ShareNFSSquash = "no_root_squash"
+	ShareNFSSquashAllSquash    ShareNFSSquash = "all_squash"
+)
+
+// AllValues returns all ShareNFSSquash values.
+func (ShareNFSSquash) AllValues() []ShareNFSSquash {
+	return []ShareNFSSquash{
+		ShareNFSSquashRootSquash,
+		ShareNFSSquashNoRootSquash,
+		ShareNFSSquashAllSquash,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ShareNFSSquash) MarshalText() ([]byte, error) {
+	switch s {
+	case ShareNFSSquashRootSquash:
+		return []byte(s), nil
+	case ShareNFSSquashNoRootSquash:
+		return []byte(s), nil
+	case ShareNFSSquashAllSquash:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ShareNFSSquash) UnmarshalText(data []byte) error {
+	switch ShareNFSSquash(data) {
+	case ShareNFSSquashRootSquash:
+		*s = ShareNFSSquashRootSquash
+		return nil
+	case ShareNFSSquashNoRootSquash:
+		*s = ShareNFSSquashNoRootSquash
+		return nil
+	case ShareNFSSquashAllSquash:
+		*s = ShareNFSSquashAllSquash
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -7291,6 +7448,7 @@ type UpdateShareRequest struct {
 	CacheMode    OptShareCacheMode    `json:"cacheMode"`
 	CreatePolicy OptArrayCreatePolicy `json:"createPolicy"`
 	Smb          OptShareSMB          `json:"smb"`
+	Nfs          OptShareNFS          `json:"nfs"`
 }
 
 // GetCacheMode returns the value of CacheMode.
@@ -7308,6 +7466,11 @@ func (s *UpdateShareRequest) GetSmb() OptShareSMB {
 	return s.Smb
 }
 
+// GetNfs returns the value of Nfs.
+func (s *UpdateShareRequest) GetNfs() OptShareNFS {
+	return s.Nfs
+}
+
 // SetCacheMode sets the value of CacheMode.
 func (s *UpdateShareRequest) SetCacheMode(val OptShareCacheMode) {
 	s.CacheMode = val
@@ -7321,6 +7484,11 @@ func (s *UpdateShareRequest) SetCreatePolicy(val OptArrayCreatePolicy) {
 // SetSmb sets the value of Smb.
 func (s *UpdateShareRequest) SetSmb(val OptShareSMB) {
 	s.Smb = val
+}
+
+// SetNfs sets the value of Nfs.
+func (s *UpdateShareRequest) SetNfs(val OptShareNFS) {
+	s.Nfs = val
 }
 
 // Ref: #/components/schemas/UpdateStatus
