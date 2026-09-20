@@ -27,9 +27,12 @@ func (f *fakeHTTPS) Regenerate(context.Context) (api.TLSCertView, error) {
 	return f.Certificate()
 }
 
-func (f *fakeHTTPS) AllowAllSources() bool     { return f.allowAll }
-func (f *fakeHTTPS) SetAllowAllSources(v bool) { f.allowAll = v }
-func (f *fakeHTTPS) ListenPort() int           { return f.port }
+func (f *fakeHTTPS) AllowAllSources() bool { return f.allowAll }
+func (f *fakeHTTPS) SetAllowAllSources(v bool) error {
+	f.allowAll = v
+	return nil
+}
+func (f *fakeHTTPS) ListenPort() int { return f.port }
 func (f *fakeHTTPS) SetListenPort(port int) error {
 	f.port = port
 	f.restart = port != 8008
@@ -120,6 +123,39 @@ func TestApplyAllowAllSources(t *testing.T) {
 	}
 	if !got.AllowAllSources || !https.allowAll {
 		t.Fatal("allowAllSources should be true")
+	}
+}
+
+func TestApplyNetworkSettings_RejectsAddressingWithoutMutatingHTTPS(t *testing.T) {
+	h, _, https := newNetworkHandler(t)
+	req := &apiv1.ApplyNetworkSettingsRequest{}
+	req.SetAllowAllSources(apiv1.NewOptBool(true))
+	req.SetInterface(apiv1.NewOptString("eth0"))
+	req.SetMethod(apiv1.NewOptNetworkAddressMethod(apiv1.NetworkAddressMethodStatic))
+	req.SetAddress(apiv1.NewOptString("not-an-ip"))
+	req.SetPrefix(apiv1.NewOptInt(24))
+	if _, err := h.ApplyNetworkSettings(context.Background(), req); err == nil {
+		t.Fatal("expected invalid addressing to fail")
+	}
+	if https.allowAll {
+		t.Fatal("rejected addressing must not leave allowAllSources enabled")
+	}
+}
+
+func TestApplyNetworkSettings_ReadOnlyDoesNotKeepHTTPSChange(t *testing.T) {
+	svc, _ := newNetworkServiceForAPI(t)
+	svc.Detector = config.MemoryDetector{Backend: config.BackendNetworkManager, Reason: "NetworkManager"}
+	https := &fakeHTTPS{port: 8008, notAfter: time.Now().Add(time.Hour)}
+	h := &api.Handler{Network: svc, HTTPS: https}
+	req := &apiv1.ApplyNetworkSettingsRequest{}
+	req.SetAllowAllSources(apiv1.NewOptBool(true))
+	req.SetInterface(apiv1.NewOptString("eth0"))
+	req.SetMethod(apiv1.NewOptNetworkAddressMethod(apiv1.NetworkAddressMethodDhcp))
+	if _, err := h.ApplyNetworkSettings(context.Background(), req); err == nil {
+		t.Fatal("expected read-only error")
+	}
+	if https.allowAll {
+		t.Fatal("read-only addressing must not leave allowAllSources enabled")
 	}
 }
 

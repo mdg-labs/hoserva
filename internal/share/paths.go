@@ -3,6 +3,7 @@ package share
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -74,10 +75,51 @@ func confineSharePath(root, rel string) (string, error) {
 	}
 	joined := filepath.Join(root, clean)
 	relToRoot, err := filepath.Rel(root, joined)
-	if err != nil || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
+	if err != nil || !pathInside(relToRoot) {
 		return "", fmt.Errorf("%w: %q", ErrPathEscapes, rel)
 	}
 	return joined, nil
+}
+
+// confineSharePathOnFS is confineSharePath plus a symlink-aware check:
+// the resolved target must stay under the resolved share root. A
+// dangling symlink is refused the same way as an escape — ReadDir
+// would otherwise follow it.
+func confineSharePathOnFS(fs FS, root, rel string) (string, error) {
+	joined, err := confineSharePath(root, rel)
+	if err != nil {
+		return "", err
+	}
+	resolvedRoot, err := fs.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("share: resolving share root %s: %w", root, err)
+	}
+	resolved, err := fs.EvalSymlinks(joined)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("share: resolving %s: %w", joined, err)
+		}
+		info, lerr := fs.Lstat(joined)
+		if lerr != nil {
+			if os.IsNotExist(lerr) {
+				return joined, nil
+			}
+			return "", lerr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("%w: %q", ErrPathEscapes, rel)
+		}
+		return joined, nil
+	}
+	relToRoot, err := filepath.Rel(resolvedRoot, resolved)
+	if err != nil || !pathInside(relToRoot) {
+		return "", fmt.Errorf("%w: %q", ErrPathEscapes, rel)
+	}
+	return resolved, nil
+}
+
+func pathInside(relToRoot string) bool {
+	return relToRoot != ".." && !strings.HasPrefix(relToRoot, ".."+string(filepath.Separator))
 }
 
 // allowedSharePath reports whether path is exactly one of the allowed

@@ -146,6 +146,83 @@ func TestBrowse_ReturnsHoldingDisk(t *testing.T) {
 	}
 }
 
+func TestBrowse_RefusesSymlinkEscape(t *testing.T) {
+	ctx, svc, layout, _ := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	shareRoot := filepath.Join(layout.catchAll, "media")
+	if err := os.MkdirAll(shareRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("no"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(shareRoot, "external")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.Browse(ctx, "media", "external"); !errors.Is(err, ErrPathEscapes) {
+		t.Fatalf("browse through symlink = %v, want ErrPathEscapes", err)
+	}
+}
+
+func TestCreate_ApplyFailureRollsBackRow(t *testing.T) {
+	ctx, svc, _, mounter := testService(t)
+	mounter.mountErr = errors.New("mount failed")
+	if _, err := svc.Create(ctx, CreateInput{Name: "media", CacheMode: pool.ArrayOnly}); err == nil {
+		t.Fatal("Create must fail when apply fails")
+	}
+	if _, err := svc.Get(ctx, "media"); !errors.Is(err, store.ErrShareNotFound) {
+		t.Fatalf("Get after failed create = %v, want not found", err)
+	}
+}
+
+func TestUpdate_ApplyFailureRestoresPreviousRow(t *testing.T) {
+	ctx, svc, _, mounter := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	mounter.mountErr = errors.New("mount failed")
+	mode := pool.CacheThenMove
+	if _, err := svc.Update(ctx, "media", UpdateInput{CacheMode: &mode}); err == nil {
+		t.Fatal("Update must fail when apply fails")
+	}
+	got, err := svc.Get(ctx, "media")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CacheMode != pool.ArrayOnly {
+		t.Fatalf("cache mode after failed update = %q, want array-only", got.CacheMode)
+	}
+}
+
+func TestUpdate_CacheOnlyUnmountsMoverTarget(t *testing.T) {
+	ctx, svc, _, mounter := testService(t)
+	createTestShare(t, svc, "media", pool.CacheThenMove)
+	mode := pool.CacheOnly
+	if _, err := svc.Update(ctx, "media", UpdateInput{CacheMode: &mode}); err != nil {
+		t.Fatalf("Update to cache-only: %v", err)
+	}
+	found := false
+	for _, w := range mounter.unmounts {
+		if w == pool.MoverTargetPath("media") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("unmounts = %v, want mover target", mounter.unmounts)
+	}
+}
+
+func TestDelete_UnmountFailureLeavesDefinition(t *testing.T) {
+	ctx, svc, _, mounter := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	mounter.unmountErr = errors.New("target is busy")
+	if err := svc.Delete(ctx, "media", true); err == nil {
+		t.Fatal("Delete must fail when unmount fails")
+	}
+	if _, err := svc.Get(ctx, "media"); err != nil {
+		t.Fatalf("definition should remain after unmount failure: %v", err)
+	}
+}
+
 func TestCreate_DuplicateName(t *testing.T) {
 	ctx, svc, _, _ := testService(t)
 	createTestShare(t, svc, "media", pool.ArrayOnly)

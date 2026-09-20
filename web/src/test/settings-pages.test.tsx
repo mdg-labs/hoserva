@@ -365,6 +365,14 @@ describe("Settings pages", () => {
           dns: ["1.1.1.1"],
           state: "up",
         },
+        {
+          name: "enp2s0",
+          mac: "02:00:00:00:00:02",
+          method: "dhcp",
+          address: "10.0.3.15",
+          prefix: 24,
+          state: "up",
+        },
       ],
       certificate: {
         kind: "self_signed",
@@ -390,7 +398,9 @@ describe("Settings pages", () => {
 
     renderWithToast(<NetworkSettingsPage />);
 
-    expect(await screen.findByText("enp1s0")).toBeInTheDocument();
+    expect((await screen.findAllByText("enp2s0")).length).toBeGreaterThan(0);
+    const ifaceLabels = screen.getAllByText("enp2s0");
+    fireEvent.click(ifaceLabels[ifaceLabels.length - 1]);
     fireEvent.click(screen.getByText("Static"));
     fireEvent.change(screen.getByLabelText("Address"), { target: { value: "192.0.2.1" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
@@ -398,7 +408,7 @@ describe("Settings pages", () => {
     await waitFor(() => {
       expect(mockPut).toHaveBeenCalledWith("/settings/network", {
         body: expect.objectContaining({
-          interface: "enp1s0",
+          interface: "enp2s0",
           method: "static",
           address: "192.0.2.1",
         }),

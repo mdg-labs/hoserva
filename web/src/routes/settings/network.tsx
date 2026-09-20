@@ -310,7 +310,21 @@ export function NetworkSettingsPage(): React.ReactElement {
         <CardPanel className="flex flex-col gap-4">
           <Field>
             <FieldLabel>{t("settings.network.selectInterface")}</FieldLabel>
-            <Input value={selected} readOnly />
+            <SegmentedChoice
+              name="network-interface"
+              value={selected}
+              onChange={(name) => {
+                const next = (settings?.interfaces ?? []).find((iface) => iface.name === name);
+                if (next) {
+                  selectIface(next);
+                }
+              }}
+              disabled={!editable}
+              options={(settings?.interfaces ?? []).map((iface) => ({
+                value: iface.name,
+                label: iface.name,
+              }))}
+            />
           </Field>
           <Field>
             <FieldLabel>{t("settings.network.method")}</FieldLabel>

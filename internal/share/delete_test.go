@@ -1,6 +1,7 @@
 package share
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -69,6 +70,31 @@ func TestConfineSharePath_RefusesDotDot(t *testing.T) {
 	}
 	if got != filepath.Join(root, "movies") {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestConfineSharePathOnFS_RefusesSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("no"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "external")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := confineSharePathOnFS(OSFS{}, root, "external"); !errors.Is(err, ErrPathEscapes) {
+		t.Fatalf("symlink escape = %v, want ErrPathEscapes", err)
+	}
+	got, err := confineSharePathOnFS(OSFS{}, root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != resolved {
+		t.Fatalf("root listing = %q, want %q", got, resolved)
 	}
 }
 

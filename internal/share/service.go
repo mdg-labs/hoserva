@@ -193,7 +193,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Share, error) {
 	}
 
 	created := shareFromStore(rec)
-	if err := s.apply(ctx, created, true); err != nil {
+	if err := s.apply(ctx, created, true, ""); err != nil {
+		if rbErr := s.rollbackCreate(ctx, in.Name); rbErr != nil {
+			return Share{}, fmt.Errorf("%w (rolling back create: %v)", err, rbErr)
+		}
 		return Share{}, err
 	}
 	return created, nil
@@ -206,6 +209,7 @@ func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Shar
 	if err != nil {
 		return Share{}, err
 	}
+	prev := existing
 	if in.CacheMode != nil {
 		if err := validateCacheMode(*in.CacheMode); err != nil {
 			return Share{}, err
@@ -251,7 +255,10 @@ func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Shar
 	if err := s.Shares.Update(ctx, toStore(existing)); err != nil {
 		return Share{}, err
 	}
-	if err := s.apply(ctx, existing, true); err != nil {
+	if err := s.apply(ctx, existing, true, prev.CacheMode); err != nil {
+		if rbErr := s.Shares.Update(ctx, toStore(prev)); rbErr != nil {
+			return Share{}, fmt.Errorf("%w (restoring previous share: %v)", err, rbErr)
+		}
 		return Share{}, err
 	}
 	return existing, nil
@@ -267,16 +274,19 @@ func (s *Service) Delete(ctx context.Context, name string, confirm bool) error {
 	if err != nil {
 		return err
 	}
-	if s.Mounter != nil {
-		_ = s.Mounter.Unmount(ctx, pool.SharePath(existing.Name))
-		if existing.CacheMode != pool.CacheOnly {
-			_ = s.Mounter.Unmount(ctx, pool.MoverTargetPath(existing.Name))
-		}
+	if err := s.unmountShare(ctx, existing); err != nil {
+		return err
 	}
 	if err := s.Shares.Delete(ctx, name); err != nil {
 		return err
 	}
-	return s.apply(ctx, Share{}, false)
+	if err := s.apply(ctx, Share{}, false, ""); err != nil {
+		if insErr := s.Shares.Insert(ctx, toStore(existing)); insErr != nil {
+			return fmt.Errorf("%w (restoring deleted share: %v)", err, insErr)
+		}
+		return err
+	}
+	return nil
 }
 
 // DeleteData deletes this share's files on the branches that hold it.
@@ -337,7 +347,7 @@ func (s *Service) Browse(ctx context.Context, name, rel string) (string, []Brows
 		return "", nil, err
 	}
 	root := filepath.Join(s.catchAll(), name)
-	dir, err := confineSharePath(root, rel)
+	dir, err := confineSharePathOnFS(s.FS, root, rel)
 	if err != nil {
 		return "", nil, err
 	}
@@ -372,7 +382,38 @@ func (s *Service) Browse(ctx context.Context, name, rel string) (string, []Brows
 	return listed, out, nil
 }
 
-func (s *Service) apply(ctx context.Context, latest Share, mountLatest bool) error {
+func (s *Service) unmountShare(ctx context.Context, sh Share) error {
+	if s.Mounter == nil {
+		return nil
+	}
+	if err := s.Mounter.Unmount(ctx, pool.SharePath(sh.Name)); err != nil {
+		return fmt.Errorf("share: unmounting %s: %w", pool.SharePath(sh.Name), err)
+	}
+	if sh.CacheMode != pool.CacheOnly {
+		return s.unmountMoverTarget(ctx, sh.Name)
+	}
+	return nil
+}
+
+func (s *Service) unmountMoverTarget(ctx context.Context, name string) error {
+	if s.Mounter == nil {
+		return nil
+	}
+	if err := s.Mounter.Unmount(ctx, pool.MoverTargetPath(name)); err != nil {
+		return fmt.Errorf("share: unmounting mover target %s: %w", name, err)
+	}
+	return nil
+}
+
+func (s *Service) rollbackCreate(ctx context.Context, name string) error {
+	if s.Mounter != nil {
+		_ = s.Mounter.Unmount(ctx, pool.SharePath(name))
+		_ = s.Mounter.Unmount(ctx, pool.MoverTargetPath(name))
+	}
+	return s.Shares.Delete(ctx, name)
+}
+
+func (s *Service) apply(ctx context.Context, latest Share, mountLatest bool, prevMode pool.CacheMode) error {
 	settings, disks, err := s.array(ctx)
 	if err != nil {
 		return err
@@ -438,6 +479,10 @@ func (s *Service) apply(ctx context.Context, latest Share, mountLatest bool) err
 				return err
 			}
 			if err := s.Mounter.Mount(ctx, mover); err != nil {
+				return err
+			}
+		} else if prevMode != "" && prevMode != pool.CacheOnly {
+			if err := s.unmountMoverTarget(ctx, latest.Name); err != nil {
 				return err
 			}
 		}

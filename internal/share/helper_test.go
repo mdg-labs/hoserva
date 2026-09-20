@@ -22,16 +22,24 @@ type testLayout struct {
 }
 
 type recordingMounter struct {
-	mounts   []string
-	unmounts []string
+	mounts     []string
+	unmounts   []string
+	mountErr   error
+	unmountErr error
 }
 
 func (m *recordingMounter) Mount(_ context.Context, mnt pool.Mount) error {
+	if m.mountErr != nil {
+		return m.mountErr
+	}
 	m.mounts = append(m.mounts, mnt.Where)
 	return nil
 }
 
 func (m *recordingMounter) Unmount(_ context.Context, where string) error {
+	if m.unmountErr != nil {
+		return m.unmountErr
+	}
 	m.unmounts = append(m.unmounts, where)
 	return nil
 }

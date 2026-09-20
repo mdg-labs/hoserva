@@ -2,6 +2,7 @@ package share
 
 import (
 	"os"
+	"path/filepath"
 )
 
 // FS is the filesystem share operations touch: branch directories, the
@@ -13,6 +14,7 @@ type FS interface {
 	RemoveAll(path string) error
 	ReadDir(path string) ([]os.DirEntry, error)
 	Lstat(path string) (os.FileInfo, error)
+	EvalSymlinks(path string) (string, error)
 	GetXattr(path, attr string) ([]byte, error)
 }
 
@@ -33,6 +35,10 @@ func (OSFS) ReadDir(path string) ([]os.DirEntry, error) {
 
 func (OSFS) Lstat(path string) (os.FileInfo, error) {
 	return os.Lstat(path)
+}
+
+func (OSFS) EvalSymlinks(path string) (string, error) {
+	return filepath.EvalSymlinks(path)
 }
 
 func (OSFS) GetXattr(path, attr string) ([]byte, error) {
