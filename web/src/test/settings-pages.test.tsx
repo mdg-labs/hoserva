@@ -300,14 +300,36 @@ describe("Settings pages", () => {
   });
 
   it("routes Update, Rollback and Reboot through confirm", async () => {
+    const updateStatus = {
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      channel: "stable",
+      checkEnabled: true,
+      previousVersion: "0.0.1",
+      rebootRequired: false,
+      pendingDebianUpdates: [{ name: "openssl", installedVersion: "3.0.13", candidateVersion: "3.0.14" }],
+      dependencies: [{ name: "mergerfs", installedVersion: "2.40.2", testedFloor: "2.40.2", inRange: true }],
+    };
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/settings/updates") {
+        return Promise.resolve({ data: updateStatus, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    mockPut.mockResolvedValue({ data: updateStatus, response: { ok: true } });
+    mockPost.mockResolvedValue({ data: updateStatus, response: { ok: true } });
+
     renderWithToast(<UpdatesSettingsPage />);
+
+    expect(await screen.findByText("0.1.0")).toBeInTheDocument();
+    expect(screen.getByText("openssl 3.0.13 → 3.0.14")).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "Update Hoserva" }));
     let dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Update Hoserva?")).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Update Hoserva" }));
     await waitFor(() => {
-      expect(screen.queryByText("Update Hoserva?")).not.toBeInTheDocument();
+      expect(mockPost).toHaveBeenCalledWith("/settings/updates/apply", { body: { confirm: true } });
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Rollback" }));
@@ -315,7 +337,7 @@ describe("Settings pages", () => {
     expect(within(dialog).getByText("Rollback Hoserva?")).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Rollback" }));
     await waitFor(() => {
-      expect(screen.queryByText("Rollback Hoserva?")).not.toBeInTheDocument();
+      expect(mockPost).toHaveBeenCalledWith("/settings/updates/rollback", { body: { confirm: true } });
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Reboot" }));
@@ -323,7 +345,7 @@ describe("Settings pages", () => {
     expect(within(dialog).getByText("Reboot the server?")).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Reboot" }));
     await waitFor(() => {
-      expect(screen.queryByText("Reboot the server?")).not.toBeInTheDocument();
+      expect(mockPost).toHaveBeenCalledWith("/settings/updates/reboot", { body: { confirm: true } });
     });
   });
 });

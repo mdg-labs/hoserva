@@ -12,7 +12,7 @@ import (
 
 const getSchemaMeta = `-- name: GetSchemaMeta :one
 
-SELECT id, installation_id, created_at, hostname, timezone, backup_passphrase
+SELECT id, installation_id, created_at, hostname, timezone, backup_passphrase, update_channel, update_check_enabled, previous_version
 FROM schema_info WHERE id = 1
 `
 
@@ -28,6 +28,9 @@ func (q *Queries) GetSchemaMeta(ctx context.Context) (*SchemaInfo, error) {
 		&i.Hostname,
 		&i.Timezone,
 		&i.BackupPassphrase,
+		&i.UpdateChannel,
+		&i.UpdateCheckEnabled,
+		&i.PreviousVersion,
 	)
 	return &i, err
 }
@@ -73,5 +76,32 @@ type UpdateGeneralSettingsParams struct {
 
 func (q *Queries) UpdateGeneralSettings(ctx context.Context, arg UpdateGeneralSettingsParams) error {
 	_, err := q.db.ExecContext(ctx, updateGeneralSettings, arg.Hostname, arg.Timezone, arg.BackupPassphrase)
+	return err
+}
+
+const updatePreviousVersion = `-- name: UpdatePreviousVersion :exec
+UPDATE schema_info
+SET previous_version = ?
+WHERE id = 1
+`
+
+func (q *Queries) UpdatePreviousVersion(ctx context.Context, previousVersion sql.NullString) error {
+	_, err := q.db.ExecContext(ctx, updatePreviousVersion, previousVersion)
+	return err
+}
+
+const updateUpdateSettings = `-- name: UpdateUpdateSettings :exec
+UPDATE schema_info
+SET update_channel = ?, update_check_enabled = ?
+WHERE id = 1
+`
+
+type UpdateUpdateSettingsParams struct {
+	UpdateChannel      string `json:"update_channel"`
+	UpdateCheckEnabled int64  `json:"update_check_enabled"`
+}
+
+func (q *Queries) UpdateUpdateSettings(ctx context.Context, arg UpdateUpdateSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, updateUpdateSettings, arg.UpdateChannel, arg.UpdateCheckEnabled)
 	return err
 }

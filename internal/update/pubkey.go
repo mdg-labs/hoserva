@@ -1,0 +1,15 @@
+package update
+
+import "crypto/ed25519"
+
+// EmbeddedPublicKey is the project's release-signing Ed25519 public key
+// (Q65/Q66 posture: compiled in, never fetched). Tests inject a different
+// key on Engine.PublicKey. Replace this with the public half of the
+// HOSERVA_RELEASE_SIGNING_KEY CI secret before the first signed release
+// is consumed by a running daemon.
+var EmbeddedPublicKey = ed25519.PublicKey{
+	0x7b, 0x1a, 0x4e, 0x9c, 0x22, 0xd8, 0x6f, 0x11,
+	0xa3, 0x50, 0xbe, 0x04, 0x88, 0x6d, 0xf7, 0x2c,
+	0x19, 0xe0, 0x5a, 0x33, 0x91, 0x4b, 0xc6, 0x0d,
+	0x72, 0xfe, 0x18, 0xa7, 0x44, 0x3b, 0x85, 0x60,
+}

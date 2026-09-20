@@ -2,7 +2,11 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -118,6 +122,70 @@ func Snapshot(ctx context.Context, db sqlExecer, dir string, fromVersion string)
 		return "", fmt.Errorf("syncing snapshot directory %q: %w", dir, err)
 	}
 	return finalPath, nil
+}
+
+// rollbackTargetName is the sidecar Apply writes so Rollback restores
+// the live database from that upgrade, not LatestSnapshot (Q67, D16).
+const rollbackTargetName = "rollback-target"
+
+// SnapshotLive copies the live database at dbPath into dir via Snapshot,
+// using the database's current schema version in the filename so
+// RestoreSnapshot will accept the result. Callers record the returned
+// path with WriteRollbackTarget; LatestSnapshot is not that target.
+func SnapshotLive(ctx context.Context, dbPath, dir string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	db, err := sql.Open("sqlite", DSN(dbPath))
+	if err != nil {
+		return "", fmt.Errorf("opening live database %q: %w", dbPath, err)
+	}
+	defer closeQuietly(db)
+	version, err := currentVersionWith(ctx, db)
+	if err != nil {
+		return "", fmt.Errorf("reading schema version: %w", err)
+	}
+	return Snapshot(ctx, db, dir, version)
+}
+
+// WriteRollbackTarget records snapshotPath as the file Rollback must
+// restore. snapshotPath must be a file Snapshot created so RestoreSnapshot
+// will accept it.
+func WriteRollbackTarget(dir, snapshotPath string) error {
+	if snapshotPattern.FindStringSubmatch(filepath.Base(snapshotPath)) == nil {
+		return fmt.Errorf("store: refusing to record %q — not a hoserva pre-migration snapshot", snapshotPath)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating snapshot directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("restricting snapshot directory permissions: %w", err)
+	}
+	path := filepath.Join(dir, rollbackTargetName)
+	if err := os.WriteFile(path, []byte(snapshotPath+"\n"), 0o600); err != nil {
+		return fmt.Errorf("writing rollback target: %w", err)
+	}
+	return nil
+}
+
+// ReadRollbackTarget returns the snapshot path WriteRollbackTarget stored
+// in dir. Missing or empty is ErrNoSnapshot.
+func ReadRollbackTarget(dir string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, rollbackTargetName))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", ErrNoSnapshot
+		}
+		return "", fmt.Errorf("reading rollback target: %w", err)
+	}
+	path := strings.TrimSpace(string(raw))
+	if path == "" {
+		return "", ErrNoSnapshot
+	}
+	if snapshotPattern.FindStringSubmatch(filepath.Base(path)) == nil {
+		return "", fmt.Errorf("store: recorded rollback target %q is not a hoserva snapshot", path)
+	}
+	return path, nil
 }
 
 // removeStaleTemp removes every leftover "*.db.tmp" this package's own
@@ -262,6 +330,9 @@ func PruneSnapshots(dir string, keep int, justWritten string) error {
 		}
 		keepNames[representative[v]] = true
 	}
+	if target, err := ReadRollbackTarget(dir); err == nil {
+		keepNames[filepath.Base(target)] = true
+	}
 
 	for _, s := range all {
 		if keepNames[s.name] {
@@ -270,6 +341,93 @@ func PruneSnapshots(dir string, keep int, justWritten string) error {
 		if err := os.Remove(filepath.Join(dir, s.name)); err != nil {
 			return fmt.Errorf("removing old snapshot %q: %w", s.name, err)
 		}
+	}
+	return nil
+}
+
+// ErrNoSnapshot is returned by LatestSnapshot and ReadRollbackTarget when
+// dir holds no file this package can restore.
+var ErrNoSnapshot = fmt.Errorf("store: no pre-migration snapshot")
+
+// LatestSnapshot returns the path of the newest pre-migration snapshot in
+// dir — highest fromVersion, then lexicographically last name. That is
+// not the previous package's database: a no-migration upgrade never
+// writes one of these, so this file can predate that package's lifetime.
+// Rollback restores the path WriteRollbackTarget recorded at Apply.
+func LatestSnapshot(dir string) (string, error) {
+	all, err := listSnapshots(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", ErrNoSnapshot
+		}
+		return "", err
+	}
+	if len(all) == 0 {
+		return "", ErrNoSnapshot
+	}
+	best := all[0]
+	for _, s := range all[1:] {
+		if s.fromVersion > best.fromVersion || (s.fromVersion == best.fromVersion && s.name > best.name) {
+			best = s
+		}
+	}
+	return filepath.Join(dir, best.name), nil
+}
+
+// RestoreSnapshot replaces liveDB with a copy of snapshotPath.
+// snapshotPath must be a file this package created (snapshotPattern);
+// anything else is refused so a typo cannot clobber the live database
+// with an unrelated file. The snapshot itself is never deleted.
+//
+// A snapshot is already a consistent SQLite file (VACUUM INTO, never a
+// live-database copy), so restoring it is a file copy, not another
+// VACUUM. The copy is written to a temporary name, fsynced, then renamed
+// over liveDB and the parent directory fsynced — the same crash-safe
+// publish Snapshot itself uses. Callers must close every connection to
+// liveDB first: a rename onto a file that still has writers is how a
+// rollback would lose the restored rows.
+func RestoreSnapshot(ctx context.Context, liveDB, snapshotPath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if snapshotPattern.FindStringSubmatch(filepath.Base(snapshotPath)) == nil {
+		return fmt.Errorf("store: refusing to restore %q — not a hoserva pre-migration snapshot", snapshotPath)
+	}
+	src, err := os.Open(snapshotPath)
+	if err != nil {
+		return fmt.Errorf("opening snapshot %q: %w", snapshotPath, err)
+	}
+	defer closeQuietly(src)
+
+	if err := os.MkdirAll(filepath.Dir(liveDB), 0o700); err != nil {
+		return fmt.Errorf("creating database directory: %w", err)
+	}
+	tmpPath := liveDB + ".restore-tmp"
+	_ = os.Remove(tmpPath)
+	dst, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("creating restore temp file %q: %w", tmpPath, err)
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("copying snapshot to %q: %w", tmpPath, err)
+	}
+	if err := dst.Sync(); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("syncing restore %q: %w", tmpPath, err)
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("closing restore %q: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, liveDB); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("publishing restored database %q: %w", liveDB, err)
+	}
+	if err := fsyncPath(filepath.Dir(liveDB)); err != nil {
+		return fmt.Errorf("syncing database directory after restore: %w", err)
 	}
 	return nil
 }

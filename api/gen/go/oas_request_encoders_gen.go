@@ -15,6 +15,20 @@ import (
 	"github.com/ogen-go/ogen/uri"
 )
 
+func encodeApplyUpdateRequest(
+	req *ConfirmUpdateRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeConfirmTotpRequest(
 	req *TotpConfirmRequest,
 	r *http.Request,
@@ -147,8 +161,36 @@ func encodeMarkNotificationsReadRequest(
 	return nil
 }
 
+func encodeRebootHostRequest(
+	req *ConfirmUpdateRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeResetUserPasswordRequest(
 	req *ResetUserPasswordRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeRollbackUpdateRequest(
+	req *ConfirmUpdateRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"
@@ -289,6 +331,20 @@ func encodeUpdateQuietHoursRequest(
 
 func encodeUpdateScheduledJobRequest(
 	req *UpdateScheduledJobRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpdateUpdateSettingsRequest(
+	req *UpdateUpdateSettingsRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

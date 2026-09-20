@@ -177,14 +177,60 @@ func (s *ScheduleService) UpdateOtherJob(ctx context.Context, jobID string, inpu
 	return s.getLocked(ctx)
 }
 
-func (s *ScheduleService) loadChain(ctx context.Context) (job.ChainSettings, error) {
+// ClaimedChain is one nightly window that ClaimDueChain has already
+// persisted last-run for, so a restart inside the same window cannot
+// start a second overlapping chain.
+type ClaimedChain struct {
+	Settings job.ChainSettings
+	Location *time.Location
+	At       time.Time
+}
+
+// ClaimDueChain returns a claimed window when today's start time has
+// been reached and this night has not already been claimed. A nil result
+// means the chain is not due. Last-run is recorded before the caller
+// constructs MaintenanceChain.Run, not after it succeeds.
+func (s *ScheduleService) ClaimDueChain(ctx context.Context) (*ClaimedChain, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	if err := s.Schedules.EnsureDefaults(ctx, now.UTC().Format(timeFormat)); err != nil {
+		return nil, err
+	}
+	chain, lastRun, err := s.loadChainWithLastRun(ctx)
+	if err != nil {
+		return nil, err
+	}
+	loc := s.timezone(ctx)
+	if !job.ChainIsDue(now, loc, chain.StartTime, lastRun) {
+		return nil, nil
+	}
+	if err := s.Schedules.SetChainLastRun(ctx, now.UTC().Format(timeFormat)); err != nil {
+		return nil, fmt.Errorf("schedule: claiming chain run: %w", err)
+	}
+	return &ClaimedChain{Settings: chain, Location: loc, At: now}, nil
+}
+
+func (s *ScheduleService) loadChainWithLastRun(ctx context.Context) (job.ChainSettings, *time.Time, error) {
 	row, err := s.Schedules.GetChain(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return job.DefaultChainSettings(), nil
+			return job.DefaultChainSettings(), nil, nil
 		}
-		return job.ChainSettings{}, fmt.Errorf("schedule: loading chain: %w", err)
+		return job.ChainSettings{}, nil, fmt.Errorf("schedule: loading chain: %w", err)
 	}
+	chain := chainFromRow(row)
+	if row.LastRunAt == "" {
+		return chain, nil, nil
+	}
+	t, err := time.Parse(timeFormat, row.LastRunAt)
+	if err != nil {
+		return job.ChainSettings{}, nil, fmt.Errorf("schedule: parsing chain last_run_at: %w", err)
+	}
+	return chain, &t, nil
+}
+
+func chainFromRow(row *ScheduleChainRow) job.ChainSettings {
 	enabled := job.DefaultChainSettings().Enabled
 	enabled[job.StepMover] = row.MoverEnabled
 	enabled[job.StepDiffGuard] = row.DiffGuardEnabled
@@ -195,7 +241,18 @@ func (s *ScheduleService) loadChain(ctx context.Context) (job.ChainSettings, err
 		StartTime:      row.StartTime,
 		WeeklyScrubDay: row.WeeklyScrubDay,
 		Enabled:        enabled,
-	}, nil
+	}
+}
+
+func (s *ScheduleService) loadChain(ctx context.Context) (job.ChainSettings, error) {
+	row, err := s.Schedules.GetChain(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return job.DefaultChainSettings(), nil
+		}
+		return job.ChainSettings{}, fmt.Errorf("schedule: loading chain: %w", err)
+	}
+	return chainFromRow(row), nil
 }
 
 func (s *ScheduleService) persistChain(ctx context.Context, chain job.ChainSettings) error {

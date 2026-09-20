@@ -8,6 +8,15 @@ import (
 
 // Handler handles operations described by OpenAPI v3 specification.
 type Handler interface {
+	// ApplyUpdate implements applyUpdate operation.
+	//
+	// Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
+	// runs a config backup, and installs it in a transient systemd unit (Q67, doc 10 §1). Refused while a
+	// Parity, Array-write or Topology job is running; the error names that job. A `.deb` whose checksum
+	// does not match is never installed, and a notification is raised.
+	//
+	// POST /settings/updates/apply
+	ApplyUpdate(ctx context.Context, req *ConfirmUpdateRequest) (*UpdateStatus, error)
 	// CancelJob implements cancelJob operation.
 	//
 	// Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be
@@ -15,6 +24,13 @@ type Handler interface {
 	//
 	// POST /jobs/{jobId}/cancel
 	CancelJob(ctx context.Context, params CancelJobParams) (*Job, error)
+	// CheckForUpdate implements checkForUpdate operation.
+	//
+	// Fetches the signed release index for the configured channel (Q67). A user-initiated check runs even
+	// when the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
+	//
+	// POST /settings/updates/check
+	CheckForUpdate(ctx context.Context) (*UpdateStatus, error)
 	// ConfirmTotp implements confirmTotp operation.
 	//
 	// Activates the pending secret enrollTotp created, once a code proves the signed-in user actually has
@@ -170,6 +186,16 @@ type Handler interface {
 	//
 	// GET /status
 	GetStatus(ctx context.Context) (*SystemStatus, error)
+	// GetUpdateStatus implements getUpdateStatus operation.
+	//
+	// Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
+	// Debian updates and whether a reboot is required (doc 03 §8.6, Q67, Q68). The update check reads
+	// only the signed release index on the project site — never the GitHub API and never a system-wide
+	// `apt update` (Q67, Q49). When the check is disabled, `availableVersion` is omitted rather than
+	// fetched.
+	//
+	// GET /settings/updates
+	GetUpdateStatus(ctx context.Context) (*UpdateStatus, error)
 	// ImportConfig implements importConfig operation.
 	//
 	// Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
@@ -241,6 +267,13 @@ type Handler interface {
 	//
 	// POST /notifications/read
 	MarkNotificationsRead(ctx context.Context, req *MarkNotificationsReadRequest) (*MarkNotificationsReadOK, error)
+	// RebootHost implements rebootHost operation.
+	//
+	// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
+	// then reboots. Hoserva never reboots on its own — this is always the user's action (Q68).
+	//
+	// POST /settings/updates/reboot
+	RebootHost(ctx context.Context, req *ConfirmUpdateRequest) (*UpdateStatus, error)
 	// ResetUserPassword implements resetUserPassword operation.
 	//
 	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
@@ -256,6 +289,15 @@ type Handler interface {
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
+	// RollbackUpdate implements rollbackUpdate operation.
+	//
+	// Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database
+	// snapshot, and installs the previous package (Q67, D16). There are no down migrations — rollback is
+	// previous package plus its snapshot. Refused while a Parity, Array-write or Topology job is running;
+	// the error names that job.
+	//
+	// POST /settings/updates/rollback
+	RollbackUpdate(ctx context.Context, req *ConfirmUpdateRequest) (*UpdateStatus, error)
 	// RunDoctor implements runDoctor operation.
 	//
 	// Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity
@@ -376,6 +418,13 @@ type Handler interface {
 	//
 	// PUT /settings/schedules/jobs/{jobId}
 	UpdateScheduledJob(ctx context.Context, req *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (*Schedules, error)
+	// UpdateUpdateSettings implements updateUpdateSettings operation.
+	//
+	// Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49,
+	// Q67). Omitted fields are left unchanged.
+	//
+	// PUT /settings/updates
+	UpdateUpdateSettings(ctx context.Context, req *UpdateUpdateSettingsRequest) (*UpdateStatus, error)
 	// NewError creates *ErrorStatusCode from error returned by handler.
 	//
 	// Used for common default response.

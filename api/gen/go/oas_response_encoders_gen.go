@@ -15,7 +15,33 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+func encodeApplyUpdateResponse(response *UpdateStatus, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeCancelJobResponse(response *Job, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeCheckForUpdateResponse(response *UpdateStatus, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 
@@ -304,6 +330,19 @@ func encodeGetStatusResponse(response *SystemStatus, w http.ResponseWriter, span
 	return nil
 }
 
+func encodeGetUpdateStatusResponse(response *UpdateStatus, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeImportConfigResponse(response *ImportConfigNoContent, w http.ResponseWriter, span trace.Span) error {
 	w.WriteHeader(204)
 
@@ -447,6 +486,19 @@ func encodeMarkNotificationsReadResponse(response *MarkNotificationsReadOK, w ht
 	return nil
 }
 
+func encodeRebootHostResponse(response *UpdateStatus, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeResetUserPasswordResponse(response *ResetUserPasswordNoContent, w http.ResponseWriter, span trace.Span) error {
 	w.WriteHeader(204)
 
@@ -454,6 +506,19 @@ func encodeResetUserPasswordResponse(response *ResetUserPasswordNoContent, w htt
 }
 
 func encodeResumeJobResponse(response *Job, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeRollbackUpdateResponse(response *UpdateStatus, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 
@@ -642,6 +707,19 @@ func encodeUpdateQuietHoursResponse(response *NotificationQuietHours, w http.Res
 }
 
 func encodeUpdateScheduledJobResponse(response *Schedules, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeUpdateUpdateSettingsResponse(response *UpdateStatus, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 

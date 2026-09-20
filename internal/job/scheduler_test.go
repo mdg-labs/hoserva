@@ -891,3 +891,62 @@ func TestScheduler_EvictedTerminalSnapshotMarkersAreBounded(t *testing.T) {
 		t.Fatalf("oldest eviction marker for %s was not dropped", oldest)
 	}
 }
+
+func TestBlockingStorageJob_NamesRunningParityJob(t *testing.T) {
+	s := newTestScheduler(t)
+	started, release := registerBlocking(s, TypeSync, false)
+	defer close(release)
+
+	j, err := s.Submit(context.Background(), TypeSync, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	<-started
+
+	got := s.BlockingStorageJob()
+	if got == nil {
+		t.Fatal("BlockingStorageJob = nil while a sync is running")
+	}
+	if got.ID != j.ID || got.Class != ClassParity {
+		t.Fatalf("BlockingStorageJob = %+v, want id %s class %s", got, j.ID, ClassParity)
+	}
+}
+
+func TestBlockingStorageJob_IgnoresServiceJobs(t *testing.T) {
+	s := newTestScheduler(t)
+	started, release := registerBlocking(s, TypeAppdataBackup, false)
+	defer close(release)
+
+	if _, err := s.Submit(context.Background(), TypeAppdataBackup, nil, nil); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	<-started
+
+	if got := s.BlockingStorageJob(); got != nil {
+		t.Fatalf("BlockingStorageJob = %+v, want nil for a service job", got)
+	}
+}
+
+func TestWaitForStorageJobs_WaitsThenReturns(t *testing.T) {
+	s := newTestScheduler(t)
+	started, release := registerBlocking(s, TypeSync, false)
+
+	j, err := s.Submit(context.Background(), TypeSync, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	<-started
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	waitErr := s.WaitForStorageJobs(ctx)
+	cancel()
+	if waitErr == nil {
+		t.Fatal("WaitForStorageJobs returned while a sync was still running")
+	}
+
+	close(release)
+	waitSucceeded(t, s, j.ID)
+	if err := s.WaitForStorageJobs(context.Background()); err != nil {
+		t.Fatalf("WaitForStorageJobs after sync finished: %v", err)
+	}
+}

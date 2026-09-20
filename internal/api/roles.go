@@ -74,6 +74,12 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.UpdateNotificationChannelOperation:      RoleAdmin,
 	apiv1.UpdateNotificationRouteOperation:        RoleAdmin,
 	apiv1.UpdateQuietHoursOperation:               RoleAdmin,
+	apiv1.GetUpdateStatusOperation:                RoleViewer,
+	apiv1.UpdateUpdateSettingsOperation:           RoleAdmin,
+	apiv1.CheckForUpdateOperation:                 RoleAdmin,
+	apiv1.ApplyUpdateOperation:                    RoleAdmin,
+	apiv1.RollbackUpdateOperation:                 RoleAdmin,
+	apiv1.RebootHostOperation:                     RoleAdmin,
 }
 
 // RoleFor returns operation's required role, and false if the operation

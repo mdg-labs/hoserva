@@ -38,7 +38,9 @@ func findAuthorization(h http.Header, prefix string) (string, bool) {
 
 // operationRolesApiToken is a private map storing roles per operation.
 var operationRolesApiToken = map[string][]string{
+	ApplyUpdateOperation:                    []string{},
 	CancelJobOperation:                      []string{},
+	CheckForUpdateOperation:                 []string{},
 	ConfirmTotpOperation:                    []string{},
 	CreateArrayOperation:                    []string{},
 	CreateNotificationChannelOperation:      []string{},
@@ -58,6 +60,7 @@ var operationRolesApiToken = map[string][]string{
 	GetQuietHoursOperation:                  []string{},
 	GetSchedulesOperation:                   []string{},
 	GetStatusOperation:                      []string{},
+	GetUpdateStatusOperation:                []string{},
 	ImportConfigOperation:                   []string{},
 	ListDisksOperation:                      []string{},
 	ListJobsOperation:                       []string{},
@@ -66,8 +69,10 @@ var operationRolesApiToken = map[string][]string{
 	ListWakeEventsOperation:                 []string{},
 	LogoutOperation:                         []string{},
 	MarkNotificationsReadOperation:          []string{},
+	RebootHostOperation:                     []string{},
 	ResetUserPasswordOperation:              []string{},
 	ResumeJobOperation:                      []string{},
+	RollbackUpdateOperation:                 []string{},
 	RunDoctorOperation:                      []string{},
 	RunParityDiffOperation:                  []string{},
 	SendTestNotificationOperation:           []string{},
@@ -83,6 +88,7 @@ var operationRolesApiToken = map[string][]string{
 	UpdateNotificationRouteOperation:        []string{},
 	UpdateQuietHoursOperation:               []string{},
 	UpdateScheduledJobOperation:             []string{},
+	UpdateUpdateSettingsOperation:           []string{},
 }
 
 // GetRolesForApiToken returns the required roles for the given operation.
@@ -108,7 +114,9 @@ func GetRolesForApiToken(operation string) []string {
 
 // operationRolesSessionCookie is a private map storing roles per operation.
 var operationRolesSessionCookie = map[string][]string{
+	ApplyUpdateOperation:                    []string{},
 	CancelJobOperation:                      []string{},
+	CheckForUpdateOperation:                 []string{},
 	ConfirmTotpOperation:                    []string{},
 	CreateArrayOperation:                    []string{},
 	CreateNotificationChannelOperation:      []string{},
@@ -128,6 +136,7 @@ var operationRolesSessionCookie = map[string][]string{
 	GetQuietHoursOperation:                  []string{},
 	GetSchedulesOperation:                   []string{},
 	GetStatusOperation:                      []string{},
+	GetUpdateStatusOperation:                []string{},
 	ImportConfigOperation:                   []string{},
 	ListDisksOperation:                      []string{},
 	ListJobsOperation:                       []string{},
@@ -136,8 +145,10 @@ var operationRolesSessionCookie = map[string][]string{
 	ListWakeEventsOperation:                 []string{},
 	LogoutOperation:                         []string{},
 	MarkNotificationsReadOperation:          []string{},
+	RebootHostOperation:                     []string{},
 	ResetUserPasswordOperation:              []string{},
 	ResumeJobOperation:                      []string{},
+	RollbackUpdateOperation:                 []string{},
 	RunDoctorOperation:                      []string{},
 	RunParityDiffOperation:                  []string{},
 	SendTestNotificationOperation:           []string{},
@@ -153,6 +164,7 @@ var operationRolesSessionCookie = map[string][]string{
 	UpdateNotificationRouteOperation:        []string{},
 	UpdateQuietHoursOperation:               []string{},
 	UpdateScheduledJobOperation:             []string{},
+	UpdateUpdateSettingsOperation:           []string{},
 }
 
 // GetRolesForSessionCookie returns the required roles for the given operation.

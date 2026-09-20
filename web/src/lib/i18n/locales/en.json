@@ -801,11 +801,13 @@
       }
     },
     "updates": {
-      "apiNote": "Self-update, rollback and Debian update status require backend operations tracked in issue #112. Buttons below use the confirm pattern but do not call a missing API.",
+      "apiNote": "Security updates install unattended. Hoserva never reboots on its own — reboot is always your action (Q68).",
       "versionTitle": "Hoserva version",
       "currentVersion": "Installed version",
       "versionUnknown": "Unknown",
       "noUpdate": "Up to date",
+      "available": "{{version}} available",
+      "rebootRequired": "Reboot required",
       "changelog": "Changelog",
       "changelogEmpty": "No changelog available yet.",
       "channel": "Update channel",
@@ -816,7 +818,9 @@
       "updateCheck": "Check for updates",
       "updateCheckDescription": "Read the signed release index for the selected channel (Q67).",
       "dependenciesTitle": "Storage engine packages",
-      "dependenciesEmpty": "Installed mergerfs and SnapRAID versions appear here once the update backend is available.",
+      "dependenciesEmpty": "Installed mergerfs and SnapRAID versions are not reported yet.",
+      "dependencyInRange": "At or above {{floor}}",
+      "dependencyOutOfRange": "Below tested {{floor}}",
       "columns": {
         "package": "Package",
         "installed": "Installed",
@@ -825,13 +829,18 @@
       },
       "systemTitle": "System updates and reboot",
       "systemDescription": "Security updates install unattended (Q68). Reboot is always your action.",
+      "pendingDebianEmpty": "No pending Debian security updates in the apt cache.",
       "actions": {
         "update": "Update Hoserva",
         "rollback": "Rollback",
         "reboot": "Reboot"
       },
-      "actionUnavailable": "Update backend not available",
-      "actionUnavailableDescription": "Self-update, rollback and reboot require the update API from issue #112.",
+      "actionFailed": "Update action failed",
+      "queued": {
+        "update": "Update queued",
+        "rollback": "Rollback queued",
+        "reboot": "Reboot started"
+      },
       "confirm": {
         "update": {
           "title": "Update Hoserva?",

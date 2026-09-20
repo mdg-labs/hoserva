@@ -6,7 +6,9 @@ package apiv1
 type OperationName = string
 
 const (
+	ApplyUpdateOperation                    OperationName = "ApplyUpdate"
 	CancelJobOperation                      OperationName = "CancelJob"
+	CheckForUpdateOperation                 OperationName = "CheckForUpdate"
 	ConfirmTotpOperation                    OperationName = "ConfirmTotp"
 	CreateArrayOperation                    OperationName = "CreateArray"
 	CreateFirstAdminOperation               OperationName = "CreateFirstAdmin"
@@ -28,6 +30,7 @@ const (
 	GetSchedulesOperation                   OperationName = "GetSchedules"
 	GetSetupStatusOperation                 OperationName = "GetSetupStatus"
 	GetStatusOperation                      OperationName = "GetStatus"
+	GetUpdateStatusOperation                OperationName = "GetUpdateStatus"
 	ImportConfigOperation                   OperationName = "ImportConfig"
 	ListDisksOperation                      OperationName = "ListDisks"
 	ListJobsOperation                       OperationName = "ListJobs"
@@ -37,8 +40,10 @@ const (
 	LoginOperation                          OperationName = "Login"
 	LogoutOperation                         OperationName = "Logout"
 	MarkNotificationsReadOperation          OperationName = "MarkNotificationsRead"
+	RebootHostOperation                     OperationName = "RebootHost"
 	ResetUserPasswordOperation              OperationName = "ResetUserPassword"
 	ResumeJobOperation                      OperationName = "ResumeJob"
+	RollbackUpdateOperation                 OperationName = "RollbackUpdate"
 	RunDoctorOperation                      OperationName = "RunDoctor"
 	RunParityDiffOperation                  OperationName = "RunParityDiff"
 	SendTestNotificationOperation           OperationName = "SendTestNotification"
@@ -54,4 +59,5 @@ const (
 	UpdateNotificationRouteOperation        OperationName = "UpdateNotificationRoute"
 	UpdateQuietHoursOperation               OperationName = "UpdateQuietHours"
 	UpdateScheduledJobOperation             OperationName = "UpdateScheduledJob"
+	UpdateUpdateSettingsOperation           OperationName = "UpdateUpdateSettings"
 )

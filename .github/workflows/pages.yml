@@ -1,0 +1,78 @@
+name: Pages
+
+# One GitHub Pages site at hoserva.dev (Q66, Q3, Q65, Q67): docs (or a
+# placeholder until site/ exists) at the root, the catalog under
+# /catalog/, and the release index under /releases/. Apt does not join
+# this origin (#118). HTTPS on the already-connected custom domain is a
+# repository setting, not something this workflow flips.
+#
+# Permanent URLs — compiled into hoservad, never change:
+#   https://hoserva.dev/releases/index.json
+#   https://hoserva.dev/catalog/
+#
+# A v* tag push runs release.yml, which attaches
+# release-index-entry.json to the GitHub Release. This workflow does
+# *not* start from that tag push: it starts from `release` published,
+# after the asset exists, so the assembled index cannot miss the tag
+# that woke it. Pushes to beta/main rebuild the docs/placeholder
+# without racing a still-running Release job.
+
+on:
+  push:
+    branches: [beta, main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Assemble site
+    if: github.repository == 'mdg-labs/hoserva'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # A published release's GITHUB_SHA is the tag commit. Checking
+          # that out would rebuild Pages from whatever docs that tag
+          # carried — including an older tag that does not have these
+          # assembly scripts. Release events assemble the current site
+          # from the default branch; push events keep the triggering SHA.
+          ref: ${{ github.event_name == 'release' && github.event.repository.default_branch || github.sha }}
+      - name: Fetch release-index-entry.json from every GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release/fetch-release-index-entries.sh "${{ runner.temp }}/entries"
+      # assemble-pages-site.sh refuses to finish (so this job never
+      # uploads or deploys) when the tree would exceed 900 MiB.
+      - name: Assemble Pages artifact
+        env:
+          ENTRIES: ${{ runner.temp }}/entries
+          SITE: ${{ runner.temp }}/site
+        run: scripts/release/assemble-pages-site.sh "$SITE" "$ENTRIES"
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+          include-hidden-files: true
+
+  deploy:
+    name: Deploy
+    if: github.repository == 'mdg-labs/hoserva'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

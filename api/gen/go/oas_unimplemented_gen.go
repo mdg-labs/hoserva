@@ -13,6 +13,18 @@ type UnimplementedHandler struct{}
 
 var _ Handler = UnimplementedHandler{}
 
+// ApplyUpdate implements applyUpdate operation.
+//
+// Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
+// runs a config backup, and installs it in a transient systemd unit (Q67, doc 10 §1). Refused while a
+// Parity, Array-write or Topology job is running; the error names that job. A `.deb` whose checksum
+// does not match is never installed, and a notification is raised.
+//
+// POST /settings/updates/apply
+func (UnimplementedHandler) ApplyUpdate(ctx context.Context, req *ConfirmUpdateRequest) (r *UpdateStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // CancelJob implements cancelJob operation.
 //
 // Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be
@@ -20,6 +32,16 @@ var _ Handler = UnimplementedHandler{}
 //
 // POST /jobs/{jobId}/cancel
 func (UnimplementedHandler) CancelJob(ctx context.Context, params CancelJobParams) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// CheckForUpdate implements checkForUpdate operation.
+//
+// Fetches the signed release index for the configured channel (Q67). A user-initiated check runs even
+// when the periodic outbound check is disabled. Never calls the GitHub API or `apt update`.
+//
+// POST /settings/updates/check
+func (UnimplementedHandler) CheckForUpdate(ctx context.Context) (r *UpdateStatus, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -241,6 +263,19 @@ func (UnimplementedHandler) GetStatus(ctx context.Context) (r *SystemStatus, _ e
 	return r, ht.ErrNotImplemented
 }
 
+// GetUpdateStatus implements getUpdateStatus operation.
+//
+// Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
+// Debian updates and whether a reboot is required (doc 03 §8.6, Q67, Q68). The update check reads
+// only the signed release index on the project site — never the GitHub API and never a system-wide
+// `apt update` (Q67, Q49). When the check is disabled, `availableVersion` is omitted rather than
+// fetched.
+//
+// GET /settings/updates
+func (UnimplementedHandler) GetUpdateStatus(ctx context.Context) (r *UpdateStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ImportConfig implements importConfig operation.
 //
 // Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
@@ -339,6 +374,16 @@ func (UnimplementedHandler) MarkNotificationsRead(ctx context.Context, req *Mark
 	return r, ht.ErrNotImplemented
 }
 
+// RebootHost implements rebootHost operation.
+//
+// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
+// then reboots. Hoserva never reboots on its own — this is always the user's action (Q68).
+//
+// POST /settings/updates/reboot
+func (UnimplementedHandler) RebootHost(ctx context.Context, req *ConfirmUpdateRequest) (r *UpdateStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ResetUserPassword implements resetUserPassword operation.
 //
 // Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
@@ -357,6 +402,18 @@ func (UnimplementedHandler) ResetUserPassword(ctx context.Context, req *ResetUse
 //
 // POST /jobs/{jobId}/resume
 func (UnimplementedHandler) ResumeJob(ctx context.Context, params ResumeJobParams) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// RollbackUpdate implements rollbackUpdate operation.
+//
+// Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database
+// snapshot, and installs the previous package (Q67, D16). There are no down migrations — rollback is
+// previous package plus its snapshot. Refused while a Parity, Array-write or Topology job is running;
+// the error names that job.
+//
+// POST /settings/updates/rollback
+func (UnimplementedHandler) RollbackUpdate(ctx context.Context, req *ConfirmUpdateRequest) (r *UpdateStatus, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -522,6 +579,16 @@ func (UnimplementedHandler) UpdateQuietHours(ctx context.Context, req *UpdateQui
 //
 // PUT /settings/schedules/jobs/{jobId}
 func (UnimplementedHandler) UpdateScheduledJob(ctx context.Context, req *UpdateScheduledJobRequest, params UpdateScheduledJobParams) (r *Schedules, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateUpdateSettings implements updateUpdateSettings operation.
+//
+// Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49,
+// Q67). Omitted fields are left unchanged.
+//
+// PUT /settings/updates
+func (UnimplementedHandler) UpdateUpdateSettings(ctx context.Context, req *UpdateUpdateSettingsRequest) (r *UpdateStatus, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
