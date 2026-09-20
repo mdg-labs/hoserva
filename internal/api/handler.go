@@ -18,6 +18,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
@@ -73,6 +74,17 @@ type Handler struct {
 	// Updates is self-update, rollback and reboot (Q67, Q68). Nil returns
 	// 501 from those operations.
 	Updates *update.Engine
+	// Generator writes managed files under a caller-supplied root (Q76).
+	// Nil skips host-config doctor checks and returns 501 from apply.
+	Generator *config.Generator
+	// HostConfig persists Q76 import/leave choices. Nil returns 501 from apply.
+	HostConfig *store.HostConfigStore
+	// Docker lists Engine containers and images for Q76. Nil means Docker
+	// is treated as not installed for host-config checks.
+	Docker config.DockerInventory
+	// ArrayStore is create-array topology, used to decide whether a Docker
+	// data-root move to cache is even possible (Q62). Nil means no cache.
+	ArrayStore *store.ArrayStore
 }
 
 var _ apiv1.Handler = (*Handler)(nil)

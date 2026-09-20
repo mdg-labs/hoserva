@@ -38,6 +38,7 @@ func findAuthorization(h http.Header, prefix string) (string, bool) {
 
 // operationRolesApiToken is a private map storing roles per operation.
 var operationRolesApiToken = map[string][]string{
+	ApplyHostConfigOperation:                []string{},
 	ApplyUpdateOperation:                    []string{},
 	CancelJobOperation:                      []string{},
 	CheckForUpdateOperation:                 []string{},
@@ -114,6 +115,7 @@ func GetRolesForApiToken(operation string) []string {
 
 // operationRolesSessionCookie is a private map storing roles per operation.
 var operationRolesSessionCookie = map[string][]string{
+	ApplyHostConfigOperation:                []string{},
 	ApplyUpdateOperation:                    []string{},
 	CancelJobOperation:                      []string{},
 	CheckForUpdateOperation:                 []string{},

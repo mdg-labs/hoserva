@@ -128,6 +128,39 @@ func TestCheckAndDiffAndKeepUnmanagedRejectEscapingPaths(t *testing.T) {
 	}
 }
 
+func TestWriteRefusesAnExistingHostFileUntilImported(t *testing.T) {
+	root := t.TempDir()
+	g := NewGenerator(root)
+	ctx := context.Background()
+	full := filepath.Join(root, "samba", "smb.conf")
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "[media]\npath = /srv/media\n"
+	if err := os.WriteFile(full, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	file := File{Path: PathSamba, Command: "share create", Body: []byte("[global]\n")}
+	if err := g.Write(ctx, file, 1, time.Now()); !errors.Is(err, ErrExistingHostFile) {
+		t.Fatalf("Write on an existing host file = %v, want ErrExistingHostFile", err)
+	}
+	got, err := os.ReadFile(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("Write changed the existing host file:\n%s", got)
+	}
+
+	if err := g.RecordImported(ctx, PathSamba); err != nil {
+		t.Fatalf("RecordImported: %v", err)
+	}
+	if err := g.Write(ctx, file, 1, time.Now()); err != nil {
+		t.Fatalf("Write after import: %v", err)
+	}
+}
+
 func TestWriteRefusesAnUnmanagedFile(t *testing.T) {
 	g := NewGenerator(t.TempDir())
 	ctx := context.Background()

@@ -221,9 +221,46 @@ func (g *Generator) KeepUnmanaged(ctx context.Context, path string) error {
 	}
 	rec, ok := manifest[key]
 	if !ok {
-		return fmt.Errorf("config: %s was never generated", key)
+		full := filepath.Join(g.Root, key)
+		current, err := os.ReadFile(full)
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("config: %s was never generated", key)
+		}
+		if err != nil {
+			return fmt.Errorf("config: reading %s: %w", key, err)
+		}
+		manifest[key] = record{Hash: hashContent(current), Unmanaged: true, GeneratedAt: time.Now().UTC()}
+		return g.saveManifest(manifest)
 	}
 	rec.Unmanaged = true
+	manifest[key] = rec
+	return g.saveManifest(manifest)
+}
+
+// RecordImported records an existing host file as imported (Q76) without
+// writing it: a later Write is allowed to generate over it because the
+// user chose import. The file on disk is left untouched.
+func (g *Generator) RecordImported(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	full, key, err := g.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	current, err := os.ReadFile(full)
+	if err != nil {
+		return fmt.Errorf("config: reading %s: %w", key, err)
+	}
+	manifest, err := g.loadManifest()
+	if err != nil {
+		return err
+	}
+	rec := manifest[key]
+	rec.Hash = hashContent(current)
+	rec.Unmanaged = false
+	rec.GeneratedAt = time.Now().UTC()
 	manifest[key] = rec
 	return g.saveManifest(manifest)
 }

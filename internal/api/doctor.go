@@ -11,6 +11,7 @@ import (
 	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/parity"
@@ -30,7 +31,7 @@ type DiskLister interface {
 
 type mountProbe func(path string) (bool, error)
 
-func runDoctorChecks(ctx context.Context, disks disk.Provider, parityEng parity.Engine, probe mountProbe) *apiv1.DoctorReport {
+func runDoctorChecks(ctx context.Context, disks disk.Provider, parityEng parity.Engine, probe mountProbe, host *config.HostInventory) *apiv1.DoctorReport {
 	if probe == nil {
 		probe = pathIsMountpoint
 	}
@@ -46,6 +47,7 @@ func runDoctorChecks(ctx context.Context, disks disk.Provider, parityEng parity.
 		checks = append(checks, diskInventoryCheck(ctx, disks))
 		checks = append(checks, smartCheck(ctx, disks))
 	}
+	checks = append(checks, hostConfigChecks(host)...)
 	overall := apiv1.DoctorCheckStatusPass
 	for _, c := range checks {
 		if c.Status == apiv1.DoctorCheckStatusFail {
@@ -421,12 +423,23 @@ func pathDeviceID(path string) (uint64, error) {
 	return uint64(st.Dev), nil
 }
 
+func (h *Handler) detectHost(ctx context.Context) *config.HostInventory {
+	if h.Generator == nil {
+		return nil
+	}
+	inv, err := config.Detect(ctx, h.Generator.Root, h.Docker)
+	if err != nil {
+		return nil
+	}
+	return &inv
+}
+
 func (h *Handler) RunDoctor(ctx context.Context) (*apiv1.DoctorReport, error) {
-	return runDoctorChecks(ctx, h.Disks, h.Parity, nil), nil
+	return runDoctorChecks(ctx, h.Disks, h.Parity, nil, h.detectHost(ctx)), nil
 }
 
 func (h *Handler) GetStatus(ctx context.Context) (*apiv1.SystemStatus, error) {
-	report := runDoctorChecks(ctx, h.Disks, h.Parity, nil)
+	report := runDoctorChecks(ctx, h.Disks, h.Parity, nil, h.detectHost(ctx))
 	healthy := report.Overall != apiv1.DoctorCheckStatusFail
 	summary := "All checks passed"
 	if !healthy {
