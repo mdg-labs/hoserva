@@ -196,3 +196,63 @@ func TestWriteRefusesAnUnmanagedFile(t *testing.T) {
 		t.Fatalf("Write on an unmanaged file = %v, want ErrUnmanaged", err)
 	}
 }
+
+func TestCanWriteMatchesWriteRefusal(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+
+	t.Run("unmanaged", func(t *testing.T) {
+		g := NewGenerator(t.TempDir())
+		file := testFile()
+		if err := g.Write(ctx, file, 1, now); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := g.KeepUnmanaged(ctx, file.Path); err != nil {
+			t.Fatalf("KeepUnmanaged: %v", err)
+		}
+		before, err := os.ReadFile(filepath.Join(g.Root, file.Path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := g.CanWrite(ctx, file.Path); !errors.Is(err, ErrUnmanaged) {
+			t.Fatalf("CanWrite = %v, want ErrUnmanaged", err)
+		}
+		after, err := os.ReadFile(filepath.Join(g.Root, file.Path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(before) {
+			t.Fatal("CanWrite must not change the file")
+		}
+	})
+
+	t.Run("existing host file", func(t *testing.T) {
+		root := t.TempDir()
+		g := NewGenerator(root)
+		full := filepath.Join(root, PathNFS)
+		original := "/export/media *(ro)\n"
+		if err := os.WriteFile(full, []byte(original), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.CanWrite(ctx, PathNFS); !errors.Is(err, ErrExistingHostFile) {
+			t.Fatalf("CanWrite = %v, want ErrExistingHostFile", err)
+		}
+		got, err := os.ReadFile(full)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != original {
+			t.Fatalf("CanWrite changed the host file:\n%s", got)
+		}
+	})
+
+	t.Run("missing path is writable", func(t *testing.T) {
+		g := NewGenerator(t.TempDir())
+		if err := g.CanWrite(ctx, PathSamba); err != nil {
+			t.Fatalf("CanWrite on missing path = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(g.Root, PathSamba)); !os.IsNotExist(err) {
+			t.Fatal("CanWrite must not create the file")
+		}
+	})
+}

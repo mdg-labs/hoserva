@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
@@ -185,6 +186,53 @@ func TestCreate_ApplyFailureRollsBackRow(t *testing.T) {
 	}
 }
 
+func TestCreate_ApplyFailureRestoresGeneratedFiles(t *testing.T) {
+	ctx, svc, _, mounter := testService(t)
+	createTestShare(t, svc, "existing", pool.ArrayOnly)
+	before := snapshotGenerated(t, svc.Gen.Root)
+	mounter.mountErr = errors.New("mount failed")
+	if _, err := svc.Create(ctx, CreateInput{Name: "media", CacheMode: pool.ArrayOnly}); err == nil {
+		t.Fatal("Create must fail when apply fails")
+	}
+	if _, err := svc.Get(ctx, "media"); !errors.Is(err, store.ErrShareNotFound) {
+		t.Fatalf("Get after failed create = %v, want not found", err)
+	}
+	after := snapshotGenerated(t, svc.Gen.Root)
+	assertGeneratedUnchanged(t, before, after)
+}
+
+func TestCreate_ExistingHostExportsDoesNotWriteSiblings(t *testing.T) {
+	ctx, svc, _, _ := testService(t)
+	exportsPath := filepath.Join(svc.Gen.Root, config.PathNFS)
+	original := "/export/media *(ro,sync,no_subtree_check)\n"
+	if err := os.MkdirAll(svc.Gen.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exportsPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.Create(ctx, CreateInput{Name: "media", CacheMode: pool.ArrayOnly})
+	if !errors.Is(err, config.ErrExistingHostFile) {
+		t.Fatalf("Create = %v, want ErrExistingHostFile", err)
+	}
+	if _, err := svc.Get(ctx, "media"); !errors.Is(err, store.ErrShareNotFound) {
+		t.Fatalf("Get after refused create = %v, want not found", err)
+	}
+	if _, err := os.Stat(filepath.Join(svc.Gen.Root, config.PathSamba)); !os.IsNotExist(err) {
+		t.Fatal("smb.conf must not be written when exports is unimported")
+	}
+	if _, err := os.Stat(filepath.Join(svc.Gen.Root, "systemd", "system")); !os.IsNotExist(err) {
+		t.Fatal("pool mount units must not be written when exports is unimported")
+	}
+	got, err := os.ReadFile(exportsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("unimported exports changed:\n%s", got)
+	}
+}
+
 func TestUpdate_ApplyFailureRestoresPreviousRow(t *testing.T) {
 	ctx, svc, _, mounter := testService(t)
 	createTestShare(t, svc, "media", pool.ArrayOnly)
@@ -200,6 +248,86 @@ func TestUpdate_ApplyFailureRestoresPreviousRow(t *testing.T) {
 	if got.CacheMode != pool.ArrayOnly {
 		t.Fatalf("cache mode after failed update = %q, want array-only", got.CacheMode)
 	}
+}
+
+func TestUpdate_UnmanagedExportsLeavesSMBAndMountsUnchanged(t *testing.T) {
+	ctx, svc, _, _ := testService(t)
+	created, err := svc.Create(ctx, CreateInput{
+		Name:      "media",
+		CacheMode: pool.ArrayOnly,
+		SMB:       &SMB{Enabled: true, Browseable: true, Guest: false},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if created.SMB.Guest {
+		t.Fatal("fixture share must start with guest disabled")
+	}
+	if err := svc.Gen.KeepUnmanaged(ctx, config.PathNFS); err != nil {
+		t.Fatalf("KeepUnmanaged exports: %v", err)
+	}
+
+	before := snapshotGenerated(t, svc.Gen.Root)
+	if _, ok := before[config.PathSamba]; !ok {
+		t.Fatal("expected smb.conf after create")
+	}
+	if strings.Contains(before[config.PathSamba], "guest ok = yes") {
+		t.Fatalf("pre-update smb.conf already has guest ok:\n%s", before[config.PathSamba])
+	}
+
+	guest := SMB{Enabled: true, Browseable: true, Guest: true}
+	_, err = svc.Update(ctx, "media", UpdateInput{SMB: &guest})
+	if !errors.Is(err, config.ErrUnmanaged) && !errors.Is(err, config.ErrExistingHostFile) {
+		t.Fatalf("Update = %v, want ErrUnmanaged or ErrExistingHostFile", err)
+	}
+
+	got, err := svc.Get(ctx, "media")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SMB.Guest {
+		t.Fatal("share row must stay at the previous SMB settings")
+	}
+
+	after := snapshotGenerated(t, svc.Gen.Root)
+	assertGeneratedUnchanged(t, before, after)
+}
+
+func TestUpdate_ApplyFailureRestoresGeneratedFiles(t *testing.T) {
+	ctx, svc, _, mounter := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	before := snapshotGenerated(t, svc.Gen.Root)
+	mounter.mountErr = errors.New("mount failed")
+	mode := pool.CacheThenMove
+	if _, err := svc.Update(ctx, "media", UpdateInput{CacheMode: &mode}); err == nil {
+		t.Fatal("Update must fail when apply fails")
+	}
+	got, err := svc.Get(ctx, "media")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CacheMode != pool.ArrayOnly {
+		t.Fatalf("cache mode after failed update = %q, want array-only", got.CacheMode)
+	}
+	after := snapshotGenerated(t, svc.Gen.Root)
+	assertGeneratedUnchanged(t, before, after)
+}
+
+func TestDelete_UnmanagedExportsRestoresRowAndFiles(t *testing.T) {
+	ctx, svc, _, _ := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	if err := svc.Gen.KeepUnmanaged(ctx, config.PathNFS); err != nil {
+		t.Fatalf("KeepUnmanaged exports: %v", err)
+	}
+	before := snapshotGenerated(t, svc.Gen.Root)
+	if err := svc.Delete(ctx, "media", true); !errors.Is(err, config.ErrUnmanaged) && !errors.Is(err, config.ErrExistingHostFile) {
+		t.Fatalf("Delete = %v, want ErrUnmanaged or ErrExistingHostFile", err)
+	}
+	if _, err := svc.Get(ctx, "media"); err != nil {
+		t.Fatalf("definition should remain after refused delete: %v", err)
+	}
+	after := snapshotGenerated(t, svc.Gen.Root)
+	assertGeneratedUnchanged(t, before, after)
 }
 
 func TestUpdate_CacheOnlyUnmountsMoverTarget(t *testing.T) {

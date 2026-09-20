@@ -97,6 +97,53 @@ func mountUnitPath(where string) string {
 	return poolMountUnitDir + unitFileName(where)
 }
 
+func poolMounts(state PoolState) ([]pool.Mount, error) {
+	catchAll, err := pool.CatchAllMount(state.DataDisks, state.Options)
+	if err != nil {
+		return nil, fmt.Errorf("config: building catch-all pool mount: %w", err)
+	}
+	if state.CreatePolicy != "" {
+		catchAll.CreatePolicy = state.CreatePolicy
+	}
+	mounts := []pool.Mount{catchAll}
+	for _, s := range state.Shares {
+		share := pool.Share{Name: s.Name, CacheMode: s.CacheMode, CreatePolicy: s.CreatePolicy}
+		shareMount, err := pool.ShareMount(share, state.DataDisks, state.CachePath, state.Options)
+		if err != nil {
+			return nil, fmt.Errorf("config: building share mount for %q: %w", s.Name, err)
+		}
+		mounts = append(mounts, shareMount)
+		if s.CacheMode == pool.CacheOnly {
+			continue
+		}
+		moverMount, err := pool.MoverTargetMount(share, state.DataDisks, state.Options)
+		if err != nil {
+			return nil, fmt.Errorf("config: building mover target mount for %q: %w", s.Name, err)
+		}
+		mounts = append(mounts, moverMount)
+	}
+	return mounts, nil
+}
+
+// CanWriteShareFiles preflights every path a share apply writes: pool
+// mount units, smb.conf, and exports. One unmanaged or unimported file
+// refuses the whole set so sibling files are not replaced first (Q76).
+func (g *Generator) CanWriteShareFiles(ctx context.Context, state PoolState) error {
+	mounts, err := poolMounts(state)
+	if err != nil {
+		return err
+	}
+	for _, m := range mounts {
+		if err := g.CanWrite(ctx, mountUnitPath(m.Where)); err != nil {
+			return err
+		}
+	}
+	if err := g.CanWrite(ctx, PathSamba); err != nil {
+		return err
+	}
+	return g.CanWrite(ctx, PathNFS)
+}
+
 // WritePoolMounts builds every mergerfs mount unit doc 02 §1's topology
 // describes from state — the catch-all, one per-share mount in the shape
 // its own cache mode calls for, and each non-cache-only share's own mover
@@ -108,46 +155,16 @@ func mountUnitPath(where string) string {
 // names the `hoserva <command>` a user runs to regenerate this state
 // instead of hand-editing the unit files, per the doc 01 §2 header.
 func (g *Generator) WritePoolMounts(ctx context.Context, state PoolState, command string, revision int, now time.Time) error {
-	desired := make(map[string]bool)
-
-	catchAll, err := pool.CatchAllMount(state.DataDisks, state.Options)
+	mounts, err := poolMounts(state)
 	if err != nil {
-		return fmt.Errorf("config: building catch-all pool mount: %w", err)
-	}
-	if state.CreatePolicy != "" {
-		catchAll.CreatePolicy = state.CreatePolicy
-	}
-	if err := g.writeMount(ctx, catchAll, command, revision, now, desired); err != nil {
 		return err
 	}
-
-	for _, s := range state.Shares {
-		share := pool.Share{Name: s.Name, CacheMode: s.CacheMode, CreatePolicy: s.CreatePolicy}
-
-		shareMount, err := pool.ShareMount(share, state.DataDisks, state.CachePath, state.Options)
-		if err != nil {
-			return fmt.Errorf("config: building share mount for %q: %w", s.Name, err)
-		}
-		if err := g.writeMount(ctx, shareMount, command, revision, now, desired); err != nil {
-			return err
-		}
-
-		if s.CacheMode == pool.CacheOnly {
-			// CacheOnly data lives on cache permanently and is never
-			// moved (pool/share.go) — no mover write-target mount
-			// exists for it.
-			continue
-		}
-
-		moverMount, err := pool.MoverTargetMount(share, state.DataDisks, state.Options)
-		if err != nil {
-			return fmt.Errorf("config: building mover target mount for %q: %w", s.Name, err)
-		}
-		if err := g.writeMount(ctx, moverMount, command, revision, now, desired); err != nil {
+	desired := make(map[string]bool)
+	for _, m := range mounts {
+		if err := g.writeMount(ctx, m, command, revision, now, desired); err != nil {
 			return err
 		}
 	}
-
 	return g.reconcilePoolMounts(ctx, desired)
 }
 
