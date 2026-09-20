@@ -17,23 +17,32 @@ import { expect, test } from "@playwright/test";
 // wired to the real app and fails loudly and specifically, naming the
 // missing surface, until the mover/threshold-guard UI lands.
 //
-// test.fail() below is load-bearing, not decoration: the single
-// assertion this test currently has is "the placeholder is gone", which
-// would also pass the moment /shares renders *any* non-placeholder
-// content — even a page with no deletion, diff or sync-block UI at all —
-// reporting a false PASS for the guard's own journey. test.fail() makes
-// Playwright report THIS test as a failure the day that assertion starts
-// passing, forcing steps 1-5 below to actually be filled in (and this
-// marker removed) before the suite can call the journey done.
+// The authenticated /shares URL check is a harness assertion: it runs
+// before test.fail() so a redirect to /login or /welcome fails the suite
+// for real. test.fail() is load-bearing for the placeholder check, not
+// decoration: that assertion is "the placeholder is gone", which would
+// also pass the moment /shares renders *any* non-placeholder content —
+// even a page with no deletion, diff or sync-block UI at all — reporting
+// a false PASS for the guard's own journey. test.fail() makes Playwright
+// report THIS test as a failure the day that assertion starts passing,
+// forcing steps 1-5 below to actually be filled in (and this marker
+// removed) before the suite can call the journey done.
 test("mass deletion blocks the sync", async ({ page }) => {
+  await page.goto("/shares");
+  // Must stay on /shares while signed in. test.fail() is not called yet:
+  // a redirect to /login or /welcome is a harness failure, not an
+  // expected miss of the mover/threshold-guard UI.
+  await expect(
+    page,
+    "expected an authenticated /shares page — a redirect to /login or /welcome means Playwright did not sign in as the L3 admin",
+  ).toHaveURL(/\/shares(?:\/|$|\?)/);
+
   test.fail(
     true,
     "expected to keep failing until the mover/threshold-guard UI (doc 02 §2, doc 09) " +
       "lands and steps 1-5 below are implemented — an unexpected pass here means only " +
       "that the placeholder is gone, not that the sync guard actually works",
   );
-
-  await page.goto("/shares");
 
   const placeholder = page.getByText("This section is a placeholder", { exact: false });
   await expect(

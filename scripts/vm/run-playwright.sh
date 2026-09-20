@@ -15,4 +15,10 @@ repo_root="$(cd "$script_dir/../.." && pwd)"
 cd "$repo_root/web"
 npm ci --no-audit --no-fund
 npx playwright install chromium
-HOSERVA_E2E_BASE_URL="$HOSERVA_E2E_BASE_URL" npx playwright test
+mkdir -p "$repo_root/web/e2e/.auth"
+export HOSERVA_E2E_USERNAME="${HOSERVA_E2E_USERNAME:-hoserva-l3}"
+export HOSERVA_E2E_PASSWORD="${HOSERVA_E2E_PASSWORD:-hoserva-l3-suite-password}"
+HOSERVA_E2E_BASE_URL="$HOSERVA_E2E_BASE_URL" \
+  HOSERVA_E2E_USERNAME="$HOSERVA_E2E_USERNAME" \
+  HOSERVA_E2E_PASSWORD="$HOSERVA_E2E_PASSWORD" \
+  npx playwright test
