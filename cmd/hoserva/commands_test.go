@@ -29,39 +29,48 @@ func TestRootCmdHasArrayStopAndStart(t *testing.T) {
 }
 
 func TestRebootRequiresConfirm(t *testing.T) {
-	root := rootCmd()
-	reboot, _, err := root.Find([]string{"reboot"})
-	if err != nil {
-		t.Fatalf("find reboot: %v", err)
-	}
-	if reboot.Flags().Lookup("confirm") == nil {
-		t.Fatal("reboot has no --confirm flag")
-	}
-
-	var errBuf bytes.Buffer
-	root.SetArgs([]string{"reboot"})
-	root.SetOut(&errBuf)
-	root.SetErr(&errBuf)
-	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "--confirm") {
-		t.Fatalf("reboot without --confirm: %v", err)
-	}
+	assertRequiresConfirm(t, []string{"reboot"})
 }
 
 func TestArrayStopRequiresConfirm(t *testing.T) {
+	assertRequiresConfirm(t, []string{"array", "stop"})
+}
+
+func TestUpdateRequiresConfirm(t *testing.T) {
+	assertRequiresConfirm(t, []string{"update"})
+}
+
+func TestRollbackRequiresConfirm(t *testing.T) {
+	assertRequiresConfirm(t, []string{"rollback"})
+}
+
+func TestUpdateCheckDoesNotRequireConfirm(t *testing.T) {
 	root := rootCmd()
-	stop, _, err := root.Find([]string{"array", "stop"})
+	update, _, err := root.Find([]string{"update"})
 	if err != nil {
-		t.Fatalf("find array stop: %v", err)
+		t.Fatalf("find update: %v", err)
 	}
-	if stop.Flags().Lookup("confirm") == nil {
-		t.Fatal("array stop has no --confirm flag")
+	if update.Flags().Lookup("check") == nil {
+		t.Fatal("update has no --check flag")
+	}
+}
+
+func assertRequiresConfirm(t *testing.T, args []string) {
+	t.Helper()
+	root := rootCmd()
+	cmd, _, err := root.Find(args)
+	if err != nil {
+		t.Fatalf("find %s: %v", strings.Join(args, " "), err)
+	}
+	if cmd.Flags().Lookup("confirm") == nil {
+		t.Fatalf("%s has no --confirm flag", strings.Join(args, " "))
 	}
 
 	var errBuf bytes.Buffer
-	root.SetArgs([]string{"array", "stop"})
+	root.SetArgs(args)
 	root.SetOut(&errBuf)
 	root.SetErr(&errBuf)
 	if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "--confirm") {
-		t.Fatalf("array stop without --confirm: %v", err)
+		t.Fatalf("%s without --confirm: %v", strings.Join(args, " "), err)
 	}
 }
