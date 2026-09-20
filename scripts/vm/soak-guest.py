@@ -94,17 +94,30 @@ def cmd_wait_job(args: argparse.Namespace) -> None:
 
 def cmd_wait_idle(args: argparse.Namespace) -> None:
     deadline = time.monotonic() + args.timeout
+    last_error = None
+    saw_jobs = False
     while time.monotonic() < deadline:
         busy = False
+        failed = False
         for st in ("queued", "running"):
             status, body = api("GET", f"/jobs?status={st}&limit=50", timeout=30)
-            if status == 200 and isinstance(body, dict) and body.get("jobs"):
-                busy = True
+            if status != 200 or not isinstance(body, dict):
+                last_error = (status, body)
+                failed = True
                 break
+            if body.get("jobs"):
+                busy = True
+                saw_jobs = True
+                break
+        if failed:
+            time.sleep(1)
+            continue
         if not busy:
             print(json.dumps({"idle": True}))
             return
         time.sleep(1)
+    if last_error is not None and not saw_jobs:
+        die(f"jobs query failed while waiting for idle after {args.timeout}s", last_error[0], last_error[1])
     die(f"jobs still running after {args.timeout}s")
 
 
