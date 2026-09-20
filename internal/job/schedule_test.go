@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -50,6 +51,47 @@ func TestMaintenanceChain_SkipsUnregisteredMover(t *testing.T) {
 	}
 	if !result.Steps[0].Skipped {
 		t.Error("mover step should be reported Skipped when TypeMover is unregistered")
+	}
+}
+
+func TestMaintenanceChain_UnregisteredSyncFails(t *testing.T) {
+	s := newTestScheduler(t)
+	rec := &stepRecorder{}
+	registerRecording(s, TypeMover, rec, "mover")
+
+	chain := &MaintenanceChain{
+		Scheduler: s,
+		Guard:     &fakeGuard{},
+		Weekly:    false,
+	}
+
+	_, err := chain.Run(context.Background())
+	if err == nil {
+		t.Fatal("Run succeeded with TypeSync unregistered; the chain must fail rather than skip parity")
+	}
+	if !errors.Is(err, ErrJobTypeNotRegistered) {
+		t.Fatalf("Run = %v, want ErrJobTypeNotRegistered", err)
+	}
+}
+
+func TestMaintenanceChain_UnregisteredScrubFailsOnWeeklyRun(t *testing.T) {
+	s := newTestScheduler(t)
+	rec := &stepRecorder{}
+	registerRecording(s, TypeMover, rec, "mover")
+	registerRecording(s, TypeSync, rec, "sync")
+
+	chain := &MaintenanceChain{
+		Scheduler: s,
+		Guard:     &fakeGuard{},
+		Weekly:    true,
+	}
+
+	_, err := chain.Run(context.Background())
+	if err == nil {
+		t.Fatal("weekly Run succeeded with TypeScrub unregistered; the chain must fail rather than skip scrub")
+	}
+	if !errors.Is(err, ErrJobTypeNotRegistered) {
+		t.Fatalf("Run = %v, want ErrJobTypeNotRegistered", err)
 	}
 }
 
