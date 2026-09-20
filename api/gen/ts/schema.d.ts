@@ -2002,6 +2002,16 @@ export interface components {
             /** @description Samba `fruit:time machine max size` (Q73), e.g. `500G`. Required when timeMachine is true; omitted otherwise. */
             timeMachineMaxSize?: string | null;
         };
+        ShareNFS: {
+            enabled: boolean;
+            /** @description Allowed NFS clients: DNS hostnames, IPv4 or IPv6 addresses, or CIDR subnets (doc 03 §4.2). Required when enabled is true. */
+            hosts: string[];
+            /**
+             * @description NFS squash option (doc 03 §4.2).
+             * @enum {string}
+             */
+            squash: "root_squash" | "no_root_squash" | "all_squash";
+        };
         Share: {
             name: components["schemas"]["ShareName"];
             /** @description The share's mount path (`/mnt/user/<name>`, D10). */
@@ -2009,6 +2019,7 @@ export interface components {
             cacheMode: components["schemas"]["ShareCacheMode"];
             createPolicy: components["schemas"]["ArrayCreatePolicy"];
             smb: components["schemas"]["ShareSMB"];
+            nfs: components["schemas"]["ShareNFS"];
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -2019,11 +2030,13 @@ export interface components {
             cacheMode?: components["schemas"]["ShareCacheMode"];
             createPolicy?: components["schemas"]["ArrayCreatePolicy"];
             smb?: components["schemas"]["ShareSMB"];
+            nfs?: components["schemas"]["ShareNFS"];
         };
         UpdateShareRequest: {
             cacheMode?: components["schemas"]["ShareCacheMode"];
             createPolicy?: components["schemas"]["ArrayCreatePolicy"];
             smb?: components["schemas"]["ShareSMB"];
+            nfs?: components["schemas"]["ShareNFS"];
         };
         ConfirmShareRequest: {
             /** @description Must be true — removes the share definition only. */

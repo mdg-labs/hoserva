@@ -8,10 +8,12 @@ INSERT INTO shares (
     name, cache_mode, create_policy,
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
+    nfs_enabled, nfs_hosts, nfs_squash,
     created_at, updated_at
 ) VALUES (
     ?, ?, ?,
     ?, ?, ?, ?,
+    ?, ?, ?,
     ?, ?, ?,
     ?, ?
 );
@@ -21,6 +23,7 @@ SELECT
     name, cache_mode, create_policy,
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
+    nfs_enabled, nfs_hosts, nfs_squash,
     created_at, updated_at
 FROM shares WHERE name = ?;
 
@@ -29,6 +32,7 @@ SELECT
     name, cache_mode, create_policy,
     smb_enabled, smb_guest, smb_read_only, smb_browseable,
     smb_recycle, smb_time_machine, smb_time_machine_max_size,
+    nfs_enabled, nfs_hosts, nfs_squash,
     created_at, updated_at
 FROM shares
 ORDER BY name ASC;
@@ -38,6 +42,7 @@ UPDATE shares
 SET cache_mode = ?, create_policy = ?,
     smb_enabled = ?, smb_guest = ?, smb_read_only = ?, smb_browseable = ?,
     smb_recycle = ?, smb_time_machine = ?, smb_time_machine_max_size = ?,
+    nfs_enabled = ?, nfs_hosts = ?, nfs_squash = ?,
     updated_at = ?
 WHERE name = ?;
 

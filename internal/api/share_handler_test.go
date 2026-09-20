@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,5 +140,46 @@ func TestHandler_SharesNilIs501(t *testing.T) {
 	_, err := h.ListShares(context.Background())
 	if err == nil {
 		t.Fatal("expected not_configured")
+	}
+}
+
+func TestHandler_CreateShareNFS(t *testing.T) {
+	ctx := context.Background()
+	h := newShareTestHandler(t)
+	created, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{
+		Name:      "media",
+		CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly),
+		Nfs: apiv1.NewOptShareNFS(apiv1.ShareNFS{
+			Enabled: true,
+			Hosts:   []string{"192.168.1.0/24", "10.0.0.5"},
+			Squash:  apiv1.ShareNFSSquashRootSquash,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("CreateShare: %v", err)
+	}
+	if !created.Nfs.Enabled || created.Nfs.Squash != apiv1.ShareNFSSquashRootSquash || len(created.Nfs.Hosts) != 2 {
+		t.Fatalf("created NFS = %+v", created.Nfs)
+	}
+}
+
+func TestHandler_InvalidNFSHostIs400(t *testing.T) {
+	ctx := context.Background()
+	h := newShareTestHandler(t)
+	_, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{
+		Name:      "media",
+		CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly),
+		Nfs: apiv1.NewOptShareNFS(apiv1.ShareNFS{
+			Enabled: true,
+			Hosts:   []string{"not a host"},
+			Squash:  apiv1.ShareNFSSquashRootSquash,
+		}),
+	})
+	status := h.NewError(ctx, err)
+	if status.StatusCode != 400 || status.Response.Code != "share_invalid_input" {
+		t.Fatalf("status = %d %s (%s), want 400 share_invalid_input", status.StatusCode, status.Response.Code, status.Response.Message)
+	}
+	if status.Response.Message == "" || !strings.Contains(status.Response.Message, "not a host") {
+		t.Fatalf("message = %q, want it to name the invalid host", status.Response.Message)
 	}
 }
