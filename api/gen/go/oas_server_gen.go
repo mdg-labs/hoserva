@@ -8,6 +8,15 @@ import (
 
 // Handler handles operations described by OpenAPI v3 specification.
 type Handler interface {
+	// ApplyHostConfig implements applyHostConfig operation.
+	//
+	// Q76: each detected Samba file, NFS exports file, fstab, Docker containers list and images list is
+	// imported into the database or left unmanaged under the drift model (doc 01 §2). Existing host files
+	// are never overwritten unless the caller chose import. Docker's data-root stays at `/var/lib/docker`
+	// when containers or images exist, or when there is no cache disk (Q62).
+	//
+	// POST /doctor/host-config
+	ApplyHostConfig(ctx context.Context, req *ApplyHostConfigRequest) (*ApplyHostConfigResult, error)
 	// ApplyUpdate implements applyUpdate operation.
 	//
 	// Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
@@ -301,7 +310,8 @@ type Handler interface {
 	// RunDoctor implements runDoctor operation.
 	//
 	// Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity
-	// (`hoserva doctor`, doc 01 §3).
+	// (`hoserva doctor`, doc 01 §3), plus existing host configuration (Samba shares, NFS exports, fstab
+	// mounts, Docker containers and images) for onboarding (Q76).
 	//
 	// GET /doctor
 	RunDoctor(ctx context.Context) (*DoctorReport, error)

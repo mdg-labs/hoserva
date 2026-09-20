@@ -205,11 +205,12 @@ func run(cfg config) error {
 	if configRoot == "" {
 		configRoot = "/etc"
 	}
+	generator := cfggen.NewGenerator(configRoot)
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
 		Provider:  disks,
 		Runner:    linuxDisks.Exec,
 		Store:     arrayStore,
-		Generator: cfggen.NewGenerator(configRoot),
+		Generator: generator,
 		Mounter:   disk.SystemdMounter{Runner: linuxDisks.Exec},
 	}))
 	scheduler := job.NewScheduler(jobStore, logs, hub, registry)
@@ -243,7 +244,7 @@ func run(cfg config) error {
 		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}
 	}
 	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, arraySeq, notifyService, linuxDisks.Exec)
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine}
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine, Generator: generator, HostConfig: store.NewHostConfigStore(db), Docker: cfggen.ExecDocker{}, ArrayStore: arrayStore}
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
 	}

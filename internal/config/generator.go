@@ -86,6 +86,13 @@ func (g *Generator) Write(ctx context.Context, file File, revision int, now time
 	if rec, ok := manifest[key]; ok && rec.Unmanaged {
 		return fmt.Errorf("%w: %s", ErrUnmanaged, key)
 	}
+	if _, ok := manifest[key]; !ok {
+		if _, err := os.Stat(full); err == nil {
+			return fmt.Errorf("%w: %s", ErrExistingHostFile, key)
+		} else if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("config: checking %s: %w", key, err)
+		}
+	}
 
 	content := Header(file.Command, revision, now) + string(file.Body)
 	if err := atomicWrite(full, []byte(content), 0o644); err != nil {

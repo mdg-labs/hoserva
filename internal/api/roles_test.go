@@ -119,6 +119,7 @@ func TestOperationRolesMatchesSpec(t *testing.T) {
 // spec parse above.
 func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 	generated := []apiv1.OperationName{
+		apiv1.ApplyHostConfigOperation,
 		apiv1.CancelJobOperation,
 		apiv1.ConfirmTotpOperation,
 		apiv1.CreateArrayOperation,

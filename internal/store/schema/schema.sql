@@ -346,3 +346,15 @@ CREATE TABLE schedule_jobs (
     start_time TEXT NOT NULL,
     updated_at TEXT NOT NULL
 ) STRICT;
+
+-- Q76 host-config onboarding: one row per detected category the user
+-- chose to import or leave unmanaged. facts is JSON of the parsed Samba
+-- shares, NFS exports, fstab mounts, or Docker inventory — enough for a
+-- later generate to take ownership, not a Shares product. leave records
+-- the choice so config.Generator never writes that host file (doc 01 §2).
+CREATE TABLE host_config (
+    kind TEXT PRIMARY KEY CHECK (kind IN ('samba', 'nfs', 'fstab', 'docker_containers', 'docker_images')),
+    decision TEXT NOT NULL CHECK (decision IN ('import', 'leave')),
+    facts TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+) STRICT;
