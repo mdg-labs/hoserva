@@ -69,7 +69,9 @@ tags:
       (doc 03 §1, §8.1). The backup passphrase is write-only (Q28): a
       response never carries it, only whether one is configured. Self-update,
       rollback and Debian update status live under `/settings/updates`
-      (doc 03 §8.6, Q67, Q68).
+      (doc 03 §8.6, Q67, Q68). Host networking, TLS certificate expiry,
+      LAN-only access scope (Q10) and the listen port live under
+      `/settings/network` (doc 03 §8.2, Q75).
   - name: shares
     description: >-
       User shares as first-class SQLite state (D4, doc 03 §4): each share
@@ -775,6 +777,101 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GeneralSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/network:
+    get:
+      operationId: getNetworkSettings
+      summary: Host network, TLS and access-scope settings
+      description: >-
+        Current network backend, interfaces, any in-flight confirm-or-revert
+        window, the TLS certificate's expiry, LAN-only access scope (Q10)
+        and the listen port (doc 03 §8.2, Q75). Editing address, DNS or
+        gateway is only possible when the backend is ifupdown; otherwise
+        `editable` is false and `readOnlyReason` says why.
+      tags: [settings]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Current network settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkSettings'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: applyNetworkSettings
+      summary: Apply host network, access-scope or listen-port changes
+      description: >-
+        Address, DNS and gateway changes are written to one managed
+        ifupdown file under `/etc/network/interfaces.d/` and applied with
+        a 60-second confirm-or-revert (Q75): unless `confirmNetworkSettings`
+        is called over the new configuration before the window expires
+        (or the daemon dies), the previous file is restored. Access scope
+        and listen port apply without that window — access scope takes
+        effect immediately; a listen-port change is persisted and used on
+        the next daemon start. Addressing fields are refused when the
+        backend is not ifupdown.
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplyNetworkSettingsRequest'
+      responses:
+        "200":
+          description: Settings after the apply, including any pending confirm window.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/network/confirm:
+    post:
+      operationId: confirmNetworkSettings
+      summary: Keep the pending network configuration
+      description: >-
+        Called over the new configuration during the confirm-or-revert
+        window (Q75). Keeps the managed ifupdown file. An unreachable
+        address cannot be confirmed because this request never arrives.
+        After the window expires, or if the daemon died before confirm,
+        the previous configuration has already been restored and this
+        returns `network_confirm_expired`.
+      tags: [settings]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: Settings after confirm; `pending` is omitted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/network/certificate:
+    post:
+      operationId: regenerateTLSCertificate
+      summary: Regenerate the self-signed TLS certificate
+      description: >-
+        Replaces the daemon's self-signed certificate (Q9) and hot-reloads
+        it so new connections use the new cert. Let's Encrypt DNS-01 is
+        not implemented here.
+      tags: [settings]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: Settings including the new certificate expiry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkSettings'
         default:
           $ref: '#/components/responses/Error'
 
@@ -2476,6 +2573,154 @@ components:
           description: >-
             Write-only. Sets or replaces the backup passphrase (Q28).
             Omitted leaves any existing passphrase unchanged.
+
+    NetworkBackend:
+      type: string
+      enum: [ifupdown, networkmanager, systemd-networkd, unknown]
+      description: Detected host network backend (Q75).
+
+    NetworkAddressMethod:
+      type: string
+      enum: [dhcp, static]
+      description: How this interface obtains its address.
+
+    NetworkInterface:
+      type: object
+      required: [name, method, state]
+      properties:
+        name:
+          type: string
+          description: Kernel interface name, e.g. `enp1s0`.
+        mac:
+          type: string
+          description: Hardware address, if known.
+        method:
+          $ref: '#/components/schemas/NetworkAddressMethod'
+        address:
+          type: string
+          description: Configured IPv4 or IPv6 address without prefix.
+        prefix:
+          type: integer
+          minimum: 0
+          maximum: 128
+          description: Prefix length for `address`.
+        gateway:
+          type: string
+          description: Default gateway for this interface, if any.
+        dns:
+          type: array
+          items:
+            type: string
+          description: DNS nameservers used with this configuration.
+        state:
+          type: string
+          enum: [up, down]
+          description: Link operational state.
+
+    NetworkPending:
+      type: object
+      required: [interface, expiresAt, remainingSeconds]
+      properties:
+        interface:
+          type: string
+          description: Interface the pending confirm-or-revert applies to.
+        expiresAt:
+          type: string
+          format: date-time
+          description: When the previous configuration is restored if unconfirmed.
+        remainingSeconds:
+          type: integer
+          minimum: 0
+          description: Whole seconds left in the confirm window.
+
+    TLSCertificateKind:
+      type: string
+      enum: [self_signed]
+      description: How the current TLS certificate was issued (Q9).
+
+    TLSCertificateInfo:
+      type: object
+      required: [kind, notAfter, daysRemaining]
+      properties:
+        kind:
+          $ref: '#/components/schemas/TLSCertificateKind'
+        notAfter:
+          type: string
+          format: date-time
+          description: Certificate expiry instant.
+        daysRemaining:
+          type: integer
+          description: Whole days until expiry; negative if already expired.
+
+    NetworkSettings:
+      type: object
+      required: [backend, editable, interfaces, certificate, allowAllSources, listenPort]
+      properties:
+        backend:
+          $ref: '#/components/schemas/NetworkBackend'
+        editable:
+          type: boolean
+          description: True only when the backend is ifupdown (Q75).
+        readOnlyReason:
+          type: string
+          description: Why addressing cannot be edited, when `editable` is false.
+        interfaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/NetworkInterface'
+        pending:
+          $ref: '#/components/schemas/NetworkPending'
+        certificate:
+          $ref: '#/components/schemas/TLSCertificateInfo'
+        allowAllSources:
+          type: boolean
+          description: >-
+            When false (default), the TCP listener accepts only LAN-ish
+            sources (Q10). When true, every source address is accepted.
+        listenPort:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: TCP port the TLS UI/API currently listens on (Q9).
+        listenPortRestartRequired:
+          type: boolean
+          description: True when a persisted listen-port change has not been bound yet.
+
+    ApplyNetworkSettingsRequest:
+      type: object
+      properties:
+        interface:
+          type: string
+          minLength: 1
+          description: >-
+            Interface to reconfigure. Required when any of `method`,
+            `address`, `prefix`, `gateway` or `dns` is set.
+        method:
+          $ref: '#/components/schemas/NetworkAddressMethod'
+        address:
+          type: string
+          description: Static address without prefix. Required when `method` is static.
+        prefix:
+          type: integer
+          minimum: 0
+          maximum: 128
+          description: Prefix length for a static address. Required when `method` is static.
+        gateway:
+          type: string
+          description: Default gateway. Empty string clears a previously set gateway.
+        dns:
+          type: array
+          items:
+            type: string
+          description: DNS nameservers. Empty array clears them.
+        allowAllSources:
+          type: boolean
+          description: Set the Q10 access-scope toggle. Omitted leaves it unchanged.
+        listenPort:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: Persist a new listen port for the next daemon start. Omitted leaves it unchanged.
 
     UpdateChannel:
       type: string

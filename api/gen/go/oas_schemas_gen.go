@@ -85,6 +85,106 @@ func (s *ApplyHostConfigResult) SetDockerDataRoot(val string) {
 	s.DockerDataRoot = val
 }
 
+// Ref: #/components/schemas/ApplyNetworkSettingsRequest
+type ApplyNetworkSettingsRequest struct {
+	// Interface to reconfigure. Required when any of `method`, `address`, `prefix`, `gateway` or `dns` is
+	// set.
+	Interface OptString               `json:"interface"`
+	Method    OptNetworkAddressMethod `json:"method"`
+	// Static address without prefix. Required when `method` is static.
+	Address OptString `json:"address"`
+	// Prefix length for a static address. Required when `method` is static.
+	Prefix OptInt `json:"prefix"`
+	// Default gateway. Empty string clears a previously set gateway.
+	Gateway OptString `json:"gateway"`
+	// DNS nameservers. Empty array clears them.
+	DNS []string `json:"dns"`
+	// Set the Q10 access-scope toggle. Omitted leaves it unchanged.
+	AllowAllSources OptBool `json:"allowAllSources"`
+	// Persist a new listen port for the next daemon start. Omitted leaves it unchanged.
+	ListenPort OptInt `json:"listenPort"`
+}
+
+// GetInterface returns the value of Interface.
+func (s *ApplyNetworkSettingsRequest) GetInterface() OptString {
+	return s.Interface
+}
+
+// GetMethod returns the value of Method.
+func (s *ApplyNetworkSettingsRequest) GetMethod() OptNetworkAddressMethod {
+	return s.Method
+}
+
+// GetAddress returns the value of Address.
+func (s *ApplyNetworkSettingsRequest) GetAddress() OptString {
+	return s.Address
+}
+
+// GetPrefix returns the value of Prefix.
+func (s *ApplyNetworkSettingsRequest) GetPrefix() OptInt {
+	return s.Prefix
+}
+
+// GetGateway returns the value of Gateway.
+func (s *ApplyNetworkSettingsRequest) GetGateway() OptString {
+	return s.Gateway
+}
+
+// GetDNS returns the value of DNS.
+func (s *ApplyNetworkSettingsRequest) GetDNS() []string {
+	return s.DNS
+}
+
+// GetAllowAllSources returns the value of AllowAllSources.
+func (s *ApplyNetworkSettingsRequest) GetAllowAllSources() OptBool {
+	return s.AllowAllSources
+}
+
+// GetListenPort returns the value of ListenPort.
+func (s *ApplyNetworkSettingsRequest) GetListenPort() OptInt {
+	return s.ListenPort
+}
+
+// SetInterface sets the value of Interface.
+func (s *ApplyNetworkSettingsRequest) SetInterface(val OptString) {
+	s.Interface = val
+}
+
+// SetMethod sets the value of Method.
+func (s *ApplyNetworkSettingsRequest) SetMethod(val OptNetworkAddressMethod) {
+	s.Method = val
+}
+
+// SetAddress sets the value of Address.
+func (s *ApplyNetworkSettingsRequest) SetAddress(val OptString) {
+	s.Address = val
+}
+
+// SetPrefix sets the value of Prefix.
+func (s *ApplyNetworkSettingsRequest) SetPrefix(val OptInt) {
+	s.Prefix = val
+}
+
+// SetGateway sets the value of Gateway.
+func (s *ApplyNetworkSettingsRequest) SetGateway(val OptString) {
+	s.Gateway = val
+}
+
+// SetDNS sets the value of DNS.
+func (s *ApplyNetworkSettingsRequest) SetDNS(val []string) {
+	s.DNS = val
+}
+
+// SetAllowAllSources sets the value of AllowAllSources.
+func (s *ApplyNetworkSettingsRequest) SetAllowAllSources(val OptBool) {
+	s.AllowAllSources = val
+}
+
+// SetListenPort sets the value of ListenPort.
+func (s *ApplyNetworkSettingsRequest) SetListenPort(val OptInt) {
+	s.ListenPort = val
+}
+
 // Default mergerfs create policy for new shares (doc 02 §1, Q11).
 // Ref: #/components/schemas/ArrayCreatePolicy
 type ArrayCreatePolicy string
@@ -2414,6 +2514,396 @@ func (s *MetricSeries) SetPoints(val []MetricPoint) {
 	s.Points = val
 }
 
+// How this interface obtains its address.
+// Ref: #/components/schemas/NetworkAddressMethod
+type NetworkAddressMethod string
+
+const (
+	NetworkAddressMethodDhcp   NetworkAddressMethod = "dhcp"
+	NetworkAddressMethodStatic NetworkAddressMethod = "static"
+)
+
+// AllValues returns all NetworkAddressMethod values.
+func (NetworkAddressMethod) AllValues() []NetworkAddressMethod {
+	return []NetworkAddressMethod{
+		NetworkAddressMethodDhcp,
+		NetworkAddressMethodStatic,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s NetworkAddressMethod) MarshalText() ([]byte, error) {
+	switch s {
+	case NetworkAddressMethodDhcp:
+		return []byte(s), nil
+	case NetworkAddressMethodStatic:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *NetworkAddressMethod) UnmarshalText(data []byte) error {
+	switch NetworkAddressMethod(data) {
+	case NetworkAddressMethodDhcp:
+		*s = NetworkAddressMethodDhcp
+		return nil
+	case NetworkAddressMethodStatic:
+		*s = NetworkAddressMethodStatic
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Detected host network backend (Q75).
+// Ref: #/components/schemas/NetworkBackend
+type NetworkBackend string
+
+const (
+	NetworkBackendIfupdown        NetworkBackend = "ifupdown"
+	NetworkBackendNetworkmanager  NetworkBackend = "networkmanager"
+	NetworkBackendSystemdNetworkd NetworkBackend = "systemd-networkd"
+	NetworkBackendUnknown         NetworkBackend = "unknown"
+)
+
+// AllValues returns all NetworkBackend values.
+func (NetworkBackend) AllValues() []NetworkBackend {
+	return []NetworkBackend{
+		NetworkBackendIfupdown,
+		NetworkBackendNetworkmanager,
+		NetworkBackendSystemdNetworkd,
+		NetworkBackendUnknown,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s NetworkBackend) MarshalText() ([]byte, error) {
+	switch s {
+	case NetworkBackendIfupdown:
+		return []byte(s), nil
+	case NetworkBackendNetworkmanager:
+		return []byte(s), nil
+	case NetworkBackendSystemdNetworkd:
+		return []byte(s), nil
+	case NetworkBackendUnknown:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *NetworkBackend) UnmarshalText(data []byte) error {
+	switch NetworkBackend(data) {
+	case NetworkBackendIfupdown:
+		*s = NetworkBackendIfupdown
+		return nil
+	case NetworkBackendNetworkmanager:
+		*s = NetworkBackendNetworkmanager
+		return nil
+	case NetworkBackendSystemdNetworkd:
+		*s = NetworkBackendSystemdNetworkd
+		return nil
+	case NetworkBackendUnknown:
+		*s = NetworkBackendUnknown
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/NetworkInterface
+type NetworkInterface struct {
+	// Kernel interface name, e.g. `enp1s0`.
+	Name string `json:"name"`
+	// Hardware address, if known.
+	MAC    OptString            `json:"mac"`
+	Method NetworkAddressMethod `json:"method"`
+	// Configured IPv4 or IPv6 address without prefix.
+	Address OptString `json:"address"`
+	// Prefix length for `address`.
+	Prefix OptInt `json:"prefix"`
+	// Default gateway for this interface, if any.
+	Gateway OptString `json:"gateway"`
+	// DNS nameservers used with this configuration.
+	DNS []string `json:"dns"`
+	// Link operational state.
+	State NetworkInterfaceState `json:"state"`
+}
+
+// GetName returns the value of Name.
+func (s *NetworkInterface) GetName() string {
+	return s.Name
+}
+
+// GetMAC returns the value of MAC.
+func (s *NetworkInterface) GetMAC() OptString {
+	return s.MAC
+}
+
+// GetMethod returns the value of Method.
+func (s *NetworkInterface) GetMethod() NetworkAddressMethod {
+	return s.Method
+}
+
+// GetAddress returns the value of Address.
+func (s *NetworkInterface) GetAddress() OptString {
+	return s.Address
+}
+
+// GetPrefix returns the value of Prefix.
+func (s *NetworkInterface) GetPrefix() OptInt {
+	return s.Prefix
+}
+
+// GetGateway returns the value of Gateway.
+func (s *NetworkInterface) GetGateway() OptString {
+	return s.Gateway
+}
+
+// GetDNS returns the value of DNS.
+func (s *NetworkInterface) GetDNS() []string {
+	return s.DNS
+}
+
+// GetState returns the value of State.
+func (s *NetworkInterface) GetState() NetworkInterfaceState {
+	return s.State
+}
+
+// SetName sets the value of Name.
+func (s *NetworkInterface) SetName(val string) {
+	s.Name = val
+}
+
+// SetMAC sets the value of MAC.
+func (s *NetworkInterface) SetMAC(val OptString) {
+	s.MAC = val
+}
+
+// SetMethod sets the value of Method.
+func (s *NetworkInterface) SetMethod(val NetworkAddressMethod) {
+	s.Method = val
+}
+
+// SetAddress sets the value of Address.
+func (s *NetworkInterface) SetAddress(val OptString) {
+	s.Address = val
+}
+
+// SetPrefix sets the value of Prefix.
+func (s *NetworkInterface) SetPrefix(val OptInt) {
+	s.Prefix = val
+}
+
+// SetGateway sets the value of Gateway.
+func (s *NetworkInterface) SetGateway(val OptString) {
+	s.Gateway = val
+}
+
+// SetDNS sets the value of DNS.
+func (s *NetworkInterface) SetDNS(val []string) {
+	s.DNS = val
+}
+
+// SetState sets the value of State.
+func (s *NetworkInterface) SetState(val NetworkInterfaceState) {
+	s.State = val
+}
+
+// Link operational state.
+type NetworkInterfaceState string
+
+const (
+	NetworkInterfaceStateUp   NetworkInterfaceState = "up"
+	NetworkInterfaceStateDown NetworkInterfaceState = "down"
+)
+
+// AllValues returns all NetworkInterfaceState values.
+func (NetworkInterfaceState) AllValues() []NetworkInterfaceState {
+	return []NetworkInterfaceState{
+		NetworkInterfaceStateUp,
+		NetworkInterfaceStateDown,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s NetworkInterfaceState) MarshalText() ([]byte, error) {
+	switch s {
+	case NetworkInterfaceStateUp:
+		return []byte(s), nil
+	case NetworkInterfaceStateDown:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *NetworkInterfaceState) UnmarshalText(data []byte) error {
+	switch NetworkInterfaceState(data) {
+	case NetworkInterfaceStateUp:
+		*s = NetworkInterfaceStateUp
+		return nil
+	case NetworkInterfaceStateDown:
+		*s = NetworkInterfaceStateDown
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/NetworkPending
+type NetworkPending struct {
+	// Interface the pending confirm-or-revert applies to.
+	Interface string `json:"interface"`
+	// When the previous configuration is restored if unconfirmed.
+	ExpiresAt time.Time `json:"expiresAt"`
+	// Whole seconds left in the confirm window.
+	RemainingSeconds int `json:"remainingSeconds"`
+}
+
+// GetInterface returns the value of Interface.
+func (s *NetworkPending) GetInterface() string {
+	return s.Interface
+}
+
+// GetExpiresAt returns the value of ExpiresAt.
+func (s *NetworkPending) GetExpiresAt() time.Time {
+	return s.ExpiresAt
+}
+
+// GetRemainingSeconds returns the value of RemainingSeconds.
+func (s *NetworkPending) GetRemainingSeconds() int {
+	return s.RemainingSeconds
+}
+
+// SetInterface sets the value of Interface.
+func (s *NetworkPending) SetInterface(val string) {
+	s.Interface = val
+}
+
+// SetExpiresAt sets the value of ExpiresAt.
+func (s *NetworkPending) SetExpiresAt(val time.Time) {
+	s.ExpiresAt = val
+}
+
+// SetRemainingSeconds sets the value of RemainingSeconds.
+func (s *NetworkPending) SetRemainingSeconds(val int) {
+	s.RemainingSeconds = val
+}
+
+// Ref: #/components/schemas/NetworkSettings
+type NetworkSettings struct {
+	Backend NetworkBackend `json:"backend"`
+	// True only when the backend is ifupdown (Q75).
+	Editable bool `json:"editable"`
+	// Why addressing cannot be edited, when `editable` is false.
+	ReadOnlyReason OptString          `json:"readOnlyReason"`
+	Interfaces     []NetworkInterface `json:"interfaces"`
+	Pending        OptNetworkPending  `json:"pending"`
+	Certificate    TLSCertificateInfo `json:"certificate"`
+	// When false (default), the TCP listener accepts only LAN-ish sources (Q10). When true, every source
+	// address is accepted.
+	AllowAllSources bool `json:"allowAllSources"`
+	// TCP port the TLS UI/API currently listens on (Q9).
+	ListenPort int `json:"listenPort"`
+	// True when a persisted listen-port change has not been bound yet.
+	ListenPortRestartRequired OptBool `json:"listenPortRestartRequired"`
+}
+
+// GetBackend returns the value of Backend.
+func (s *NetworkSettings) GetBackend() NetworkBackend {
+	return s.Backend
+}
+
+// GetEditable returns the value of Editable.
+func (s *NetworkSettings) GetEditable() bool {
+	return s.Editable
+}
+
+// GetReadOnlyReason returns the value of ReadOnlyReason.
+func (s *NetworkSettings) GetReadOnlyReason() OptString {
+	return s.ReadOnlyReason
+}
+
+// GetInterfaces returns the value of Interfaces.
+func (s *NetworkSettings) GetInterfaces() []NetworkInterface {
+	return s.Interfaces
+}
+
+// GetPending returns the value of Pending.
+func (s *NetworkSettings) GetPending() OptNetworkPending {
+	return s.Pending
+}
+
+// GetCertificate returns the value of Certificate.
+func (s *NetworkSettings) GetCertificate() TLSCertificateInfo {
+	return s.Certificate
+}
+
+// GetAllowAllSources returns the value of AllowAllSources.
+func (s *NetworkSettings) GetAllowAllSources() bool {
+	return s.AllowAllSources
+}
+
+// GetListenPort returns the value of ListenPort.
+func (s *NetworkSettings) GetListenPort() int {
+	return s.ListenPort
+}
+
+// GetListenPortRestartRequired returns the value of ListenPortRestartRequired.
+func (s *NetworkSettings) GetListenPortRestartRequired() OptBool {
+	return s.ListenPortRestartRequired
+}
+
+// SetBackend sets the value of Backend.
+func (s *NetworkSettings) SetBackend(val NetworkBackend) {
+	s.Backend = val
+}
+
+// SetEditable sets the value of Editable.
+func (s *NetworkSettings) SetEditable(val bool) {
+	s.Editable = val
+}
+
+// SetReadOnlyReason sets the value of ReadOnlyReason.
+func (s *NetworkSettings) SetReadOnlyReason(val OptString) {
+	s.ReadOnlyReason = val
+}
+
+// SetInterfaces sets the value of Interfaces.
+func (s *NetworkSettings) SetInterfaces(val []NetworkInterface) {
+	s.Interfaces = val
+}
+
+// SetPending sets the value of Pending.
+func (s *NetworkSettings) SetPending(val OptNetworkPending) {
+	s.Pending = val
+}
+
+// SetCertificate sets the value of Certificate.
+func (s *NetworkSettings) SetCertificate(val TLSCertificateInfo) {
+	s.Certificate = val
+}
+
+// SetAllowAllSources sets the value of AllowAllSources.
+func (s *NetworkSettings) SetAllowAllSources(val bool) {
+	s.AllowAllSources = val
+}
+
+// SetListenPort sets the value of ListenPort.
+func (s *NetworkSettings) SetListenPort(val int) {
+	s.ListenPort = val
+}
+
+// SetListenPortRestartRequired sets the value of ListenPortRestartRequired.
+func (s *NetworkSettings) SetListenPortRestartRequired(val OptBool) {
+	s.ListenPortRestartRequired = val
+}
+
 // Ref: #/components/schemas/NotificationAlert
 type NotificationAlert struct {
 	ID        string                `json:"id"`
@@ -3580,6 +4070,52 @@ func (o OptFloat32) Or(d float32) float32 {
 	return d
 }
 
+// NewOptInt returns new OptInt with value set to v.
+func NewOptInt(v int) OptInt {
+	return OptInt{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptInt is optional int.
+type OptInt struct {
+	Value int
+	Set   bool
+}
+
+// IsSet returns true if OptInt was set.
+func (o OptInt) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptInt) Reset() {
+	var v int
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptInt) SetTo(v int) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptInt) Get() (v int, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptInt) Or(d int) int {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptInt32 returns new OptInt32 with value set to v.
 func NewOptInt32(v int32) OptInt32 {
 	return OptInt32{
@@ -3758,6 +4294,98 @@ func (o OptJobStatus) Get() (v JobStatus, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptJobStatus) Or(d JobStatus) JobStatus {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNetworkAddressMethod returns new OptNetworkAddressMethod with value set to v.
+func NewOptNetworkAddressMethod(v NetworkAddressMethod) OptNetworkAddressMethod {
+	return OptNetworkAddressMethod{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNetworkAddressMethod is optional NetworkAddressMethod.
+type OptNetworkAddressMethod struct {
+	Value NetworkAddressMethod
+	Set   bool
+}
+
+// IsSet returns true if OptNetworkAddressMethod was set.
+func (o OptNetworkAddressMethod) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNetworkAddressMethod) Reset() {
+	var v NetworkAddressMethod
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptNetworkAddressMethod) SetTo(v NetworkAddressMethod) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNetworkAddressMethod) Get() (v NetworkAddressMethod, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNetworkAddressMethod) Or(d NetworkAddressMethod) NetworkAddressMethod {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNetworkPending returns new OptNetworkPending with value set to v.
+func NewOptNetworkPending(v NetworkPending) OptNetworkPending {
+	return OptNetworkPending{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNetworkPending is optional NetworkPending.
+type OptNetworkPending struct {
+	Value NetworkPending
+	Set   bool
+}
+
+// IsSet returns true if OptNetworkPending was set.
+func (o OptNetworkPending) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNetworkPending) Reset() {
+	var v NetworkPending
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptNetworkPending) SetTo(v NetworkPending) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNetworkPending) Get() (v NetworkPending, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNetworkPending) Or(d NetworkPending) NetworkPending {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -6088,6 +6716,81 @@ func (s *SystemStatus) SetParityBlocked(val OptBool) {
 // SetActiveJobs sets the value of ActiveJobs.
 func (s *SystemStatus) SetActiveJobs(val OptInt32) {
 	s.ActiveJobs = val
+}
+
+// Ref: #/components/schemas/TLSCertificateInfo
+type TLSCertificateInfo struct {
+	Kind TLSCertificateKind `json:"kind"`
+	// Certificate expiry instant.
+	NotAfter time.Time `json:"notAfter"`
+	// Whole days until expiry; negative if already expired.
+	DaysRemaining int `json:"daysRemaining"`
+}
+
+// GetKind returns the value of Kind.
+func (s *TLSCertificateInfo) GetKind() TLSCertificateKind {
+	return s.Kind
+}
+
+// GetNotAfter returns the value of NotAfter.
+func (s *TLSCertificateInfo) GetNotAfter() time.Time {
+	return s.NotAfter
+}
+
+// GetDaysRemaining returns the value of DaysRemaining.
+func (s *TLSCertificateInfo) GetDaysRemaining() int {
+	return s.DaysRemaining
+}
+
+// SetKind sets the value of Kind.
+func (s *TLSCertificateInfo) SetKind(val TLSCertificateKind) {
+	s.Kind = val
+}
+
+// SetNotAfter sets the value of NotAfter.
+func (s *TLSCertificateInfo) SetNotAfter(val time.Time) {
+	s.NotAfter = val
+}
+
+// SetDaysRemaining sets the value of DaysRemaining.
+func (s *TLSCertificateInfo) SetDaysRemaining(val int) {
+	s.DaysRemaining = val
+}
+
+// How the current TLS certificate was issued (Q9).
+// Ref: #/components/schemas/TLSCertificateKind
+type TLSCertificateKind string
+
+const (
+	TLSCertificateKindSelfSigned TLSCertificateKind = "self_signed"
+)
+
+// AllValues returns all TLSCertificateKind values.
+func (TLSCertificateKind) AllValues() []TLSCertificateKind {
+	return []TLSCertificateKind{
+		TLSCertificateKindSelfSigned,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TLSCertificateKind) MarshalText() ([]byte, error) {
+	switch s {
+	case TLSCertificateKindSelfSigned:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TLSCertificateKind) UnmarshalText(data []byte) error {
+	switch TLSCertificateKind(data) {
+	case TLSCertificateKindSelfSigned:
+		*s = TLSCertificateKindSelfSigned
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/TotpConfirmRequest

@@ -181,6 +181,10 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.UpdateShareOperation,
 		apiv1.DeleteShareOperation,
 		apiv1.DeleteShareDataOperation,
+		apiv1.GetNetworkSettingsOperation,
+		apiv1.ApplyNetworkSettingsOperation,
+		apiv1.ConfirmNetworkSettingsOperation,
+		apiv1.RegenerateTLSCertificateOperation,
 	}
 	sort.Slice(generated, func(i, j int) bool { return generated[i] < generated[j] })
 

@@ -17,6 +17,17 @@ type Handler interface {
 	//
 	// POST /doctor/host-config
 	ApplyHostConfig(ctx context.Context, req *ApplyHostConfigRequest) (*ApplyHostConfigResult, error)
+	// ApplyNetworkSettings implements applyNetworkSettings operation.
+	//
+	// Address, DNS and gateway changes are written to one managed ifupdown file under
+	// `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert (Q75): unless
+	// `confirmNetworkSettings` is called over the new configuration before the window expires (or the
+	// daemon dies), the previous file is restored. Access scope and listen port apply without that window
+	// — access scope takes effect immediately; a listen-port change is persisted and used on the next
+	// daemon start. Addressing fields are refused when the backend is not ifupdown.
+	//
+	// PUT /settings/network
+	ApplyNetworkSettings(ctx context.Context, req *ApplyNetworkSettingsRequest) (*NetworkSettings, error)
 	// ApplyUpdate implements applyUpdate operation.
 	//
 	// Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
@@ -48,6 +59,15 @@ type Handler interface {
 	//
 	// POST /settings/updates/check
 	CheckForUpdate(ctx context.Context) (*UpdateStatus, error)
+	// ConfirmNetworkSettings implements confirmNetworkSettings operation.
+	//
+	// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
+	// ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After
+	// the window expires, or if the daemon died before confirm, the previous configuration has already
+	// been restored and this returns `network_confirm_expired`.
+	//
+	// POST /settings/network/confirm
+	ConfirmNetworkSettings(ctx context.Context) (*NetworkSettings, error)
 	// ConfirmTotp implements confirmTotp operation.
 	//
 	// Activates the pending secret enrollTotp created, once a code proves the signed-in user actually has
@@ -170,6 +190,15 @@ type Handler interface {
 	//
 	// GET /metrics
 	GetMetrics(ctx context.Context, params GetMetricsParams) (*MetricSeries, error)
+	// GetNetworkSettings implements getNetworkSettings operation.
+	//
+	// Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
+	// expiry, LAN-only access scope (Q10) and the listen port (doc 03 §8.2, Q75). Editing address, DNS or
+	// gateway is only possible when the backend is ifupdown; otherwise `editable` is false and
+	// `readOnlyReason` says why.
+	//
+	// GET /settings/network
+	GetNetworkSettings(ctx context.Context) (*NetworkSettings, error)
 	// GetNotificationChannel implements getNotificationChannel operation.
 	//
 	// A single channel's current configuration, by id, secret excluded.
@@ -327,6 +356,13 @@ type Handler interface {
 	//
 	// POST /settings/updates/reboot
 	RebootHost(ctx context.Context, req *ConfirmUpdateRequest) (*UpdateStatus, error)
+	// RegenerateTLSCertificate implements regenerateTLSCertificate operation.
+	//
+	// Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new
+	// cert. Let's Encrypt DNS-01 is not implemented here.
+	//
+	// POST /settings/network/certificate
+	RegenerateTLSCertificate(ctx context.Context) (*NetworkSettings, error)
 	// ResetUserPassword implements resetUserPassword operation.
 	//
 	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the

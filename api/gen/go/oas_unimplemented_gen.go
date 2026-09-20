@@ -25,6 +25,20 @@ func (UnimplementedHandler) ApplyHostConfig(ctx context.Context, req *ApplyHostC
 	return r, ht.ErrNotImplemented
 }
 
+// ApplyNetworkSettings implements applyNetworkSettings operation.
+//
+// Address, DNS and gateway changes are written to one managed ifupdown file under
+// `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert (Q75): unless
+// `confirmNetworkSettings` is called over the new configuration before the window expires (or the
+// daemon dies), the previous file is restored. Access scope and listen port apply without that window
+// — access scope takes effect immediately; a listen-port change is persisted and used on the next
+// daemon start. Addressing fields are refused when the backend is not ifupdown.
+//
+// PUT /settings/network
+func (UnimplementedHandler) ApplyNetworkSettings(ctx context.Context, req *ApplyNetworkSettingsRequest) (r *NetworkSettings, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ApplyUpdate implements applyUpdate operation.
 //
 // Downloads the `.deb` named by the signed release index, verifies it against the signed SHA256SUMS,
@@ -65,6 +79,18 @@ func (UnimplementedHandler) CancelJob(ctx context.Context, params CancelJobParam
 //
 // POST /settings/updates/check
 func (UnimplementedHandler) CheckForUpdate(ctx context.Context) (r *UpdateStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ConfirmNetworkSettings implements confirmNetworkSettings operation.
+//
+// Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed
+// ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After
+// the window expires, or if the daemon died before confirm, the previous configuration has already
+// been restored and this returns `network_confirm_expired`.
+//
+// POST /settings/network/confirm
+func (UnimplementedHandler) ConfirmNetworkSettings(ctx context.Context) (r *NetworkSettings, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -235,6 +261,18 @@ func (UnimplementedHandler) GetJobLog(ctx context.Context, params GetJobLogParam
 //
 // GET /metrics
 func (UnimplementedHandler) GetMetrics(ctx context.Context, params GetMetricsParams) (r *MetricSeries, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetNetworkSettings implements getNetworkSettings operation.
+//
+// Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's
+// expiry, LAN-only access scope (Q10) and the listen port (doc 03 §8.2, Q75). Editing address, DNS or
+// gateway is only possible when the backend is ifupdown; otherwise `editable` is false and
+// `readOnlyReason` says why.
+//
+// GET /settings/network
+func (UnimplementedHandler) GetNetworkSettings(ctx context.Context) (r *NetworkSettings, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -455,6 +493,16 @@ func (UnimplementedHandler) MarkNotificationsRead(ctx context.Context, req *Mark
 //
 // POST /settings/updates/reboot
 func (UnimplementedHandler) RebootHost(ctx context.Context, req *ConfirmUpdateRequest) (r *UpdateStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// RegenerateTLSCertificate implements regenerateTLSCertificate operation.
+//
+// Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new
+// cert. Let's Encrypt DNS-01 is not implemented here.
+//
+// POST /settings/network/certificate
+func (UnimplementedHandler) RegenerateTLSCertificate(ctx context.Context) (r *NetworkSettings, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

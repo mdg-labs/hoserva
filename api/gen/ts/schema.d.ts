@@ -479,6 +479,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/network": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Host network, TLS and access-scope settings
+         * @description Current network backend, interfaces, any in-flight confirm-or-revert window, the TLS certificate's expiry, LAN-only access scope (Q10) and the listen port (doc 03 §8.2, Q75). Editing address, DNS or gateway is only possible when the backend is ifupdown; otherwise `editable` is false and `readOnlyReason` says why.
+         */
+        get: operations["getNetworkSettings"];
+        /**
+         * Apply host network, access-scope or listen-port changes
+         * @description Address, DNS and gateway changes are written to one managed ifupdown file under `/etc/network/interfaces.d/` and applied with a 60-second confirm-or-revert (Q75): unless `confirmNetworkSettings` is called over the new configuration before the window expires (or the daemon dies), the previous file is restored. Access scope and listen port apply without that window — access scope takes effect immediately; a listen-port change is persisted and used on the next daemon start. Addressing fields are refused when the backend is not ifupdown.
+         */
+        put: operations["applyNetworkSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/network/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Keep the pending network configuration
+         * @description Called over the new configuration during the confirm-or-revert window (Q75). Keeps the managed ifupdown file. An unreachable address cannot be confirmed because this request never arrives. After the window expires, or if the daemon died before confirm, the previous configuration has already been restored and this returns `network_confirm_expired`.
+         */
+        post: operations["confirmNetworkSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/network/certificate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Regenerate the self-signed TLS certificate
+         * @description Replaces the daemon's self-signed certificate (Q9) and hot-reloads it so new connections use the new cert. Let's Encrypt DNS-01 is not implemented here.
+         */
+        post: operations["regenerateTLSCertificate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/schedules": {
         parameters: {
             query?: never;
@@ -1452,6 +1516,95 @@ export interface components {
             timezone?: string;
             /** @description Write-only. Sets or replaces the backup passphrase (Q28). Omitted leaves any existing passphrase unchanged. */
             backupPassphrase?: string;
+        };
+        /**
+         * @description Detected host network backend (Q75).
+         * @enum {string}
+         */
+        NetworkBackend: "ifupdown" | "networkmanager" | "systemd-networkd" | "unknown";
+        /**
+         * @description How this interface obtains its address.
+         * @enum {string}
+         */
+        NetworkAddressMethod: "dhcp" | "static";
+        NetworkInterface: {
+            /** @description Kernel interface name, e.g. `enp1s0`. */
+            name: string;
+            /** @description Hardware address, if known. */
+            mac?: string;
+            method: components["schemas"]["NetworkAddressMethod"];
+            /** @description Configured IPv4 or IPv6 address without prefix. */
+            address?: string;
+            /** @description Prefix length for `address`. */
+            prefix?: number;
+            /** @description Default gateway for this interface, if any. */
+            gateway?: string;
+            /** @description DNS nameservers used with this configuration. */
+            dns?: string[];
+            /**
+             * @description Link operational state.
+             * @enum {string}
+             */
+            state: "up" | "down";
+        };
+        NetworkPending: {
+            /** @description Interface the pending confirm-or-revert applies to. */
+            interface: string;
+            /**
+             * Format: date-time
+             * @description When the previous configuration is restored if unconfirmed.
+             */
+            expiresAt: string;
+            /** @description Whole seconds left in the confirm window. */
+            remainingSeconds: number;
+        };
+        /**
+         * @description How the current TLS certificate was issued (Q9).
+         * @enum {string}
+         */
+        TLSCertificateKind: "self_signed";
+        TLSCertificateInfo: {
+            kind: components["schemas"]["TLSCertificateKind"];
+            /**
+             * Format: date-time
+             * @description Certificate expiry instant.
+             */
+            notAfter: string;
+            /** @description Whole days until expiry; negative if already expired. */
+            daysRemaining: number;
+        };
+        NetworkSettings: {
+            backend: components["schemas"]["NetworkBackend"];
+            /** @description True only when the backend is ifupdown (Q75). */
+            editable: boolean;
+            /** @description Why addressing cannot be edited, when `editable` is false. */
+            readOnlyReason?: string;
+            interfaces: components["schemas"]["NetworkInterface"][];
+            pending?: components["schemas"]["NetworkPending"];
+            certificate: components["schemas"]["TLSCertificateInfo"];
+            /** @description When false (default), the TCP listener accepts only LAN-ish sources (Q10). When true, every source address is accepted. */
+            allowAllSources: boolean;
+            /** @description TCP port the TLS UI/API currently listens on (Q9). */
+            listenPort: number;
+            /** @description True when a persisted listen-port change has not been bound yet. */
+            listenPortRestartRequired?: boolean;
+        };
+        ApplyNetworkSettingsRequest: {
+            /** @description Interface to reconfigure. Required when any of `method`, `address`, `prefix`, `gateway` or `dns` is set. */
+            interface?: string;
+            method?: components["schemas"]["NetworkAddressMethod"];
+            /** @description Static address without prefix. Required when `method` is static. */
+            address?: string;
+            /** @description Prefix length for a static address. Required when `method` is static. */
+            prefix?: number;
+            /** @description Default gateway. Empty string clears a previously set gateway. */
+            gateway?: string;
+            /** @description DNS nameservers. Empty array clears them. */
+            dns?: string[];
+            /** @description Set the Q10 access-scope toggle. Omitted leaves it unchanged. */
+            allowAllSources?: boolean;
+            /** @description Persist a new listen port for the next daemon start. Omitted leaves it unchanged. */
+            listenPort?: number;
         };
         /**
          * @description Release channel the update check reads from the signed index (Q67).
@@ -2545,6 +2698,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GeneralSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getNetworkSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current network settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    applyNetworkSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyNetworkSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Settings after the apply, including any pending confirm window. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    confirmNetworkSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settings after confirm; `pending` is omitted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    regenerateTLSCertificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settings including the new certificate expiry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NetworkSettings"];
                 };
             };
             default: components["responses"]["Error"];

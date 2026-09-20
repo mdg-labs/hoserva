@@ -29,6 +29,20 @@ func encodeApplyHostConfigRequest(
 	return nil
 }
 
+func encodeApplyNetworkSettingsRequest(
+	req *ApplyNetworkSettingsRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeApplyUpdateRequest(
 	req *ConfirmUpdateRequest,
 	r *http.Request,
