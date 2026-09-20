@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -252,4 +253,86 @@ func TestFormatExternalDisk_RefusesBootEvenIfRegisteredSomehow(t *testing.T) {
 		t.Fatal("formatted the boot device")
 	}
 	_ = runner
+}
+
+func TestFormatExternalDisk_RejectedConfirmationDoesNotRegister(t *testing.T) {
+	h, p, _, _ := newExternalHandler(t)
+	ctx := context.Background()
+	_, err := h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: "yes"}, apiv1.FormatExternalDiskParams{Label: "backup"})
+	if err == nil {
+		t.Fatal("FormatExternalDisk(wrong confirm): expected an error")
+	}
+	if ae := apiError(t, h, err); ae.Response.Code != "confirmation_required" {
+		t.Fatalf("code = %q, want confirmation_required", ae.Response.Code)
+	}
+	if _, ok := p.FormattedAs("/dev/sde"); ok {
+		t.Fatal("wrong confirmation formatted the disk")
+	}
+	if _, getErr := h.ArrayStore.External().GetExternalDisk(ctx, "backup"); !errors.Is(getErr, store.ErrExternalNotFound) {
+		t.Fatalf("rejected format persisted registration: %v", getErr)
+	}
+}
+
+func TestFormatExternalDisk_EmptyConfirmationDoesNotRegister(t *testing.T) {
+	h, p, _, _ := newExternalHandler(t)
+	ctx := context.Background()
+	_, err := h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{}, apiv1.FormatExternalDiskParams{Label: "backup"})
+	if err == nil {
+		t.Fatal("FormatExternalDisk(empty confirm): expected an error")
+	}
+	if ae := apiError(t, h, err); ae.Response.Code != "confirmation_required" {
+		t.Fatalf("code = %q, want confirmation_required", ae.Response.Code)
+	}
+	if _, ok := p.FormattedAs("/dev/sde"); ok {
+		t.Fatal("empty confirmation formatted the disk")
+	}
+	if _, getErr := h.ArrayStore.External().GetExternalDisk(ctx, "backup"); !errors.Is(getErr, store.ErrExternalNotFound) {
+		t.Fatalf("rejected format persisted registration: %v", getErr)
+	}
+}
+
+func TestFormatExternalDisk_MatchingConfirmationRegisters(t *testing.T) {
+	h, p, _, _ := newExternalHandler(t)
+	ctx := context.Background()
+	plan := disk.ExternalFormatPlan(disk.AssignedDisk{Device: "/dev/sde", Filesystem: disk.XFS})
+	got, err := h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: plan.Confirmation()}, apiv1.FormatExternalDiskParams{Label: "backup"})
+	if err != nil {
+		t.Fatalf("FormatExternalDisk: %v", err)
+	}
+	if fs, ok := p.FormattedAs("/dev/sde"); !ok || fs != disk.XFS {
+		t.Fatalf("FormattedAs: got (%v, %v)", fs, ok)
+	}
+	if v, ok := got.FsUuid.Get(); !ok || v != "uuid-ext" {
+		t.Fatalf("fsUuid after format = %v", got.FsUuid)
+	}
+	if _, getErr := h.ArrayStore.External().GetExternalDisk(ctx, "backup"); getErr != nil {
+		t.Fatalf("successful format must persist registration: %v", getErr)
+	}
+}
+
+func TestFormatExternalDisk_UUIDProbeFailurePersistsPendingUUID(t *testing.T) {
+	h, p, _, runner := newExternalHandler(t)
+	ctx := context.Background()
+	if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{Device: "/dev/sde", Label: "backup"}); err != nil {
+		t.Fatalf("RegisterExternalDisk: %v", err)
+	}
+	runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sde"}, nil, errors.New("blkid failed"))
+	plan := disk.ExternalFormatPlan(disk.AssignedDisk{Device: "/dev/sde", Filesystem: disk.XFS})
+	_, err := h.FormatExternalDisk(ctx, &apiv1.FormatExternalDiskRequest{Confirmation: plan.Confirmation()}, apiv1.FormatExternalDiskParams{Label: "backup"})
+	if err == nil {
+		t.Fatal("FormatExternalDisk: expected UUID probe error")
+	}
+	if _, ok := p.FormattedAs("/dev/sde"); !ok {
+		t.Fatal("format did not run before the UUID probe failed")
+	}
+	row, getErr := h.ArrayStore.External().GetExternalDisk(ctx, "backup")
+	if getErr != nil {
+		t.Fatalf("GetExternalDisk: %v", getErr)
+	}
+	if !strings.HasPrefix(row.FSUUID, "pending:") {
+		t.Fatalf("FSUUID = %q, want pending prefix so mount cannot use the pre-format UUID", row.FSUUID)
+	}
+	if _, mountErr := h.MountExternalDisk(ctx, apiv1.MountExternalDiskParams{Label: "backup"}); mountErr == nil {
+		t.Fatal("MountExternalDisk must refuse a pending UUID after a failed probe")
+	}
 }

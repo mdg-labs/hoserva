@@ -248,7 +248,8 @@ func (h *Handler) EjectExternalDisk(ctx context.Context, params apiv1.EjectExter
 }
 
 func (h *Handler) FormatExternalDisk(ctx context.Context, req *apiv1.FormatExternalDiskRequest, params apiv1.FormatExternalDiskParams) (*apiv1.ExternalDisk, error) {
-	row, inv, err := h.externalRow(ctx, string(params.Label))
+	label := string(params.Label)
+	row, inv, registered, err := h.resolveExternal(ctx, label, false)
 	if err != nil {
 		return nil, err
 	}
@@ -298,9 +299,22 @@ func (h *Handler) FormatExternalDisk(ctx context.Context, req *apiv1.FormatExter
 		return nil, err
 	}
 
+	if !registered {
+		if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{
+			Device: row.Device,
+			Label:  apiv1.ExternalDiskLabel(label),
+		}); err != nil {
+			return nil, err
+		}
+		row, inv, _, err = h.resolveExternal(ctx, label, false)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	uuid, err := disk.FilesystemUUID(ctx, h.diskRunner(), formatTarget(assigned))
 	if err != nil {
-		return nil, err
+		return nil, h.persistPendingUUID(ctx, row, fs, err)
 	}
 	row.Filesystem = string(fs)
 	row.FSUUID = uuid
@@ -311,6 +325,15 @@ func (h *Handler) FormatExternalDisk(ctx context.Context, req *apiv1.FormatExter
 	return &apiDisk, nil
 }
 
+func (h *Handler) persistPendingUUID(ctx context.Context, row store.ExternalDisk, fs disk.FilesystemType, probeErr error) error {
+	row.Filesystem = string(fs)
+	row.FSUUID = pendingExternalUUID(row.Label)
+	if err := h.externalStore().UpdateExternalDisk(ctx, row); err != nil {
+		return fmt.Errorf("%w (persisting pending UUID: %v)", probeErr, err)
+	}
+	return probeErr
+}
+
 func formatTarget(d disk.AssignedDisk) string {
 	if p := (disk.Identity{ByIDName: d.ByIDName}).IdentityPath(); p != "" {
 		return p
@@ -319,52 +342,64 @@ func formatTarget(d disk.AssignedDisk) string {
 }
 
 func (h *Handler) externalRow(ctx context.Context, label string) (store.ExternalDisk, disk.Disk, error) {
+	row, inv, _, err := h.resolveExternal(ctx, label, true)
+	return row, inv, err
+}
+
+func (h *Handler) resolveExternal(ctx context.Context, label string, persist bool) (store.ExternalDisk, disk.Disk, bool, error) {
 	ext := h.externalStore()
 	if ext == nil || h.Disks == nil {
-		return store.ExternalDisk{}, disk.Disk{}, errExternalNotConfigured()
+		return store.ExternalDisk{}, disk.Disk{}, false, errExternalNotConfigured()
 	}
 	if err := disk.ValidateExternalLabel(label); err != nil {
-		return store.ExternalDisk{}, disk.Disk{}, errInvalidPlan(err)
+		return store.ExternalDisk{}, disk.Disk{}, false, errInvalidPlan(err)
 	}
 	row, err := ext.GetExternalDisk(ctx, label)
 	if err != nil && !errors.Is(err, store.ErrExternalNotFound) {
-		return store.ExternalDisk{}, disk.Disk{}, err
+		return store.ExternalDisk{}, disk.Disk{}, false, err
 	}
+	registered := err == nil
 	if errors.Is(err, store.ErrExternalNotFound) {
-		row, err = h.registerFromInventory(ctx, ext, label)
-		if err != nil {
-			return store.ExternalDisk{}, disk.Disk{}, err
+		if persist {
+			row, err = h.registerFromInventory(ctx, ext, label)
+			if err != nil {
+				return store.ExternalDisk{}, disk.Disk{}, false, err
+			}
+			registered = true
+		} else {
+			row, err = h.rowFromInventory(ctx, label)
+			if err != nil {
+				return store.ExternalDisk{}, disk.Disk{}, false, err
+			}
 		}
 	}
 	arrayDevs, err := h.arrayDevices(ctx)
 	if err != nil {
-		return store.ExternalDisk{}, disk.Disk{}, err
+		return store.ExternalDisk{}, disk.Disk{}, registered, err
 	}
 	if _, inArray := arrayDevs[row.Device]; inArray {
-		return store.ExternalDisk{}, disk.Disk{}, errInvalidPlan(fmt.Errorf("%w: %s", disk.ErrExternalInArray, row.Device))
+		return store.ExternalDisk{}, disk.Disk{}, registered, errInvalidPlan(fmt.Errorf("%w: %s", disk.ErrExternalInArray, row.Device))
 	}
 	listed, err := h.Disks.List(ctx)
 	if err != nil {
-		return store.ExternalDisk{}, disk.Disk{}, fmt.Errorf("listing disks: %w", err)
+		return store.ExternalDisk{}, disk.Disk{}, registered, fmt.Errorf("listing disks: %w", err)
 	}
 	inv, lookupErr := disk.LookupDisk(listed, row.Device)
 	if lookupErr != nil {
 		inv = disk.Disk{Device: row.Device, Size: 0}
 	}
-	return row, inv, nil
+	return row, inv, registered, nil
 }
 
-func (h *Handler) registerFromInventory(ctx context.Context, ext *store.ExternalStore, label string) (store.ExternalDisk, error) {
+func (h *Handler) inventoryDisk(ctx context.Context, label string) (disk.Disk, error) {
 	listed, err := h.Disks.List(ctx)
 	if err != nil {
-		return store.ExternalDisk{}, fmt.Errorf("listing disks: %w", err)
+		return disk.Disk{}, fmt.Errorf("listing disks: %w", err)
 	}
 	arrayDevs, err := h.arrayDevices(ctx)
 	if err != nil {
-		return store.ExternalDisk{}, err
+		return disk.Disk{}, err
 	}
-	var match disk.Disk
-	found := false
 	for _, d := range listed {
 		if d.Boot {
 			continue
@@ -373,13 +408,46 @@ func (h *Handler) registerFromInventory(ctx context.Context, ext *store.External
 			continue
 		}
 		if d.Label == label {
-			match = d
-			found = true
-			break
+			return d, nil
 		}
 	}
-	if !found {
-		return store.ExternalDisk{}, errExternalNotFound(label)
+	return disk.Disk{}, errExternalNotFound(label)
+}
+
+func (h *Handler) rowFromInventory(ctx context.Context, label string) (store.ExternalDisk, error) {
+	match, err := h.inventoryDisk(ctx, label)
+	if err != nil {
+		return store.ExternalDisk{}, err
+	}
+	fsUUID := pendingExternalUUID(label)
+	if match.FSUUID != "" {
+		fsUUID = match.FSUUID
+	} else if match.Filesystem != "" {
+		if uuid, uuidErr := disk.FilesystemUUID(ctx, h.diskRunner(), match.Device); uuidErr == nil {
+			fsUUID = uuid
+		}
+	}
+	mountpoint, err := disk.ExternalMountPoint(label)
+	if err != nil {
+		return store.ExternalDisk{}, errInvalidPlan(err)
+	}
+	return store.ExternalDisk{
+		Label:        label,
+		Device:       match.Device,
+		Filesystem:   match.Filesystem,
+		FSUUID:       fsUUID,
+		WWN:          match.WWN,
+		Serial:       match.Serial,
+		ByIDName:     match.ByIDName,
+		WeakIdentity: match.WeakIdentity,
+		Mountpoint:   mountpoint,
+	}, nil
+}
+
+func (h *Handler) registerFromInventory(ctx context.Context, ext *store.ExternalStore, label string) (store.ExternalDisk, error) {
+	match, err := h.inventoryDisk(ctx, label)
+	if err != nil {
+		return store.ExternalDisk{}, err
 	}
 	req := &apiv1.RegisterExternalDiskRequest{Device: match.Device, Label: apiv1.ExternalDiskLabel(label)}
 	if _, err := h.RegisterExternalDisk(ctx, req); err != nil {
