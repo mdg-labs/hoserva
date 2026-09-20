@@ -273,6 +273,29 @@ func TestKeepUnmanagedRecordsAnExistingNeverGeneratedFile(t *testing.T) {
 	}
 }
 
+func TestApplyHostFileDecisionsDoesNotPartialCommit(t *testing.T) {
+	root := t.TempDir()
+	g := NewGenerator(root)
+	ctx := context.Background()
+	if err := os.WriteFile(filepath.Join(root, PathNFS), []byte("/export/media *(ro)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := g.ApplyHostFileDecisions(ctx, []HostFileDecision{
+		{Path: PathNFS, Decision: DecisionLeave},
+		{Path: PathSamba, Decision: DecisionLeave},
+	}); err == nil {
+		t.Fatal("missing samba should fail the whole batch")
+	}
+	status, err := g.Check(ctx, PathNFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != StatusUnknown {
+		t.Fatalf("Check(nfs) = %v, want StatusUnknown after a later file failed", status)
+	}
+}
+
 func TestManageReversesKeepUnmanaged(t *testing.T) {
 	g := NewGenerator(t.TempDir())
 	ctx := context.Background()

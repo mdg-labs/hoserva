@@ -161,6 +161,25 @@ func TestWriteRefusesAnExistingHostFileUntilImported(t *testing.T) {
 	}
 }
 
+func TestAtomicWriteExclusiveRefusesExistingDestination(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "smb.conf")
+	original := "[media]\npath = /srv/media\n"
+	if err := os.WriteFile(dest, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(dest, []byte("[global]\n"), 0o644, true); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("exclusive atomicWrite = %v, want os.ErrExist", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("exclusive write changed the destination:\n%s", got)
+	}
+}
+
 func TestWriteRefusesAnUnmanagedFile(t *testing.T) {
 	g := NewGenerator(t.TempDir())
 	ctx := context.Background()

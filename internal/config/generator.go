@@ -86,7 +86,9 @@ func (g *Generator) Write(ctx context.Context, file File, revision int, now time
 	if rec, ok := manifest[key]; ok && rec.Unmanaged {
 		return fmt.Errorf("%w: %s", ErrUnmanaged, key)
 	}
+	untracked := false
 	if _, ok := manifest[key]; !ok {
+		untracked = true
 		if _, err := os.Stat(full); err == nil {
 			return fmt.Errorf("%w: %s", ErrExistingHostFile, key)
 		} else if err != nil && !os.IsNotExist(err) {
@@ -95,7 +97,10 @@ func (g *Generator) Write(ctx context.Context, file File, revision int, now time
 	}
 
 	content := Header(file.Command, revision, now) + string(file.Body)
-	if err := atomicWrite(full, []byte(content), 0o644); err != nil {
+	if err := atomicWrite(full, []byte(content), 0o644, untracked); err != nil {
+		if untracked && errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("%w: %s", ErrExistingHostFile, key)
+		}
 		return err
 	}
 
@@ -115,13 +120,15 @@ func hashContent(b []byte) string {
 // atomicWrite writes data to path by creating a temp file in path's own
 // directory, syncing and closing it, then renaming it over path — so a
 // reader never observes a partially written file, and a crash mid-write
-// leaves the previous file (or none) rather than a truncated one. It also
+// leaves the previous file (or none) rather than a truncated one. exclusive
+// uses renameat2(RENAME_NOREPLACE) so the first create of an untracked host
+// file cannot replace a destination that appeared after Stat. It also
 // fsyncs the destination directory after the rename: tmp.Sync() below
 // only persists the temp file's own content, not the renamed directory
 // entry — without this, a crash right after a successful Rename can still
 // lose the new file (or leave the old one) despite Write having returned
 // nil.
-func atomicWrite(path string, data []byte, perm os.FileMode) error {
+func atomicWrite(path string, data []byte, perm os.FileMode, exclusive bool) error {
 	dir := filepath.Dir(path)
 	if err := ensureDirSynced(dir); err != nil {
 		return err
@@ -148,7 +155,14 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	if err := os.Chmod(tmpPath, perm); err != nil {
 		return fmt.Errorf("config: setting permissions on %s: %w", tmpPath, err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if exclusive {
+		if err := renameNoReplace(tmpPath, path); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				return err
+			}
+			return fmt.Errorf("config: renaming %s to %s: %w", tmpPath, path, err)
+		}
+	} else if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("config: renaming %s to %s: %w", tmpPath, path, err)
 	}
 	return fsyncDir(dir)

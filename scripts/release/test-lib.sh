@@ -159,6 +159,20 @@ if hoserva_compare_release_pubkeys "$match_key_dir/pubkey.go" /no/such/file >/de
   fail=1
 fi
 
+# A non-Ed25519 PEM must not be accepted by taking its last 32 DER bytes
+# (X25519 SPKI is the same length as Ed25519; RSA is longer). Either
+# would otherwise let a rotated signing key pass the pubkey comparison.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$match_key_dir/rsa.pem" >/dev/null 2>&1
+if hoserva_ed25519_pubkey_raw_from_pem "$match_key_dir/rsa.pem" "$match_key_dir/rsa.raw" >/dev/null 2>&1; then
+  note "FAIL: RSA PEM should be refused as a release public key"
+  fail=1
+fi
+openssl genpkey -algorithm X25519 -out "$match_key_dir/x25519.pem" >/dev/null 2>&1
+if hoserva_ed25519_pubkey_raw_from_pem "$match_key_dir/x25519.pem" "$match_key_dir/x25519.raw" >/dev/null 2>&1; then
+  note "FAIL: X25519 PEM should be refused as a release public key"
+  fail=1
+fi
+
 if [ "$fail" -eq 0 ]; then
   note "PASS"
 fi
