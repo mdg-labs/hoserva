@@ -34,6 +34,18 @@ type SambaState struct {
 // Share sections are sorted by name. The user-owned include is always
 // last. vfs objects on a share that uses the recycle bin include fruit
 // as well, because a per-share vfs list replaces the global one.
+//
+// Every share carries the Q26 ownership masks: `create mask = 0664` with
+// `force create mode = 0664`, `directory mask = 2775` with `force
+// directory mode = 2775` (setgid, so new subdirectories keep the shared
+// group), and `force group = users`. The masks alone only ever remove
+// bits from a client-requested mode; without the matching `force …
+// mode`, an SMB client that requests 0644 (or a directory without the
+// setgid bit) keeps that narrower mode, breaking the shared-group
+// ownership model for later filesystem writes. `force group` takes a
+// name, not a GID: Debian's base-passwd already defines a system group
+// named `users` at GID 100 — the same value Unraid uses — so it needs no
+// creation here.
 func RenderSambaConf(shares []SambaShare) string {
 	ordered := append([]SambaShare(nil), shares...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
@@ -64,6 +76,11 @@ func RenderSambaConf(shares []SambaShare) string {
 		fmt.Fprintf(&b, "   browseable = %s\n", sambaYesNo(s.Browseable))
 		fmt.Fprintf(&b, "   read only = %s\n", sambaYesNo(s.ReadOnly))
 		fmt.Fprintf(&b, "   guest ok = %s\n", sambaYesNo(s.Guest))
+		b.WriteString("   create mask = 0664\n")
+		b.WriteString("   force create mode = 0664\n")
+		b.WriteString("   directory mask = 2775\n")
+		b.WriteString("   force directory mode = 2775\n")
+		b.WriteString("   force group = users\n")
 		if s.Recycle {
 			b.WriteString("   vfs objects = catia fruit streams_xattr recycle\n")
 			b.WriteString("   recycle:repository = .recycle\n")

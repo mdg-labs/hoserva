@@ -164,6 +164,28 @@ func (UnimplementedHandler) CreateShare(ctx context.Context, req *CreateShareReq
 	return r, ht.ErrNotImplemented
 }
 
+// CreateUser implements createUser operation.
+//
+// Defaults to the share-only role when omitted (Q27): a new account has no UI login until an admin
+// promotes it. No password is set by this call — setUserPassword provisions the UI credential and
+// the Samba account together, in a separate action. Never creates an admin account
+// (users_one_admin_idx allows exactly one, created only by createFirstAdmin).
+//
+// POST /users
+func (UnimplementedHandler) CreateUser(ctx context.Context, req *CreateUserRequest) (r *UserSummary, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// CreateUserGroup implements createUserGroup operation.
+//
+// A named collection of accounts, purely for bulk share-permission assignment (Q27, doc 03 §7) —
+// distinct from the fixed `users` system group (GID 100, Q26) that every share's files belong to.
+//
+// POST /user-groups
+func (UnimplementedHandler) CreateUserGroup(ctx context.Context, req *CreateUserGroupRequest) (r *UserGroup, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // DeleteNotificationChannel implements deleteNotificationChannel operation.
 //
 // Also removes every routing entry that named this channel.
@@ -191,6 +213,25 @@ func (UnimplementedHandler) DeleteShare(ctx context.Context, req *ConfirmShareRe
 //
 // POST /shares/{name}/data/delete
 func (UnimplementedHandler) DeleteShareData(ctx context.Context, req *DeleteShareDataRequest, params DeleteShareDataParams) error {
+	return ht.ErrNotImplemented
+}
+
+// DeleteUser implements deleteUser operation.
+//
+// Removes the account, its sessions, its group memberships and its per-share permissions. Refuses the
+// sole admin account.
+//
+// DELETE /users/{userId}
+func (UnimplementedHandler) DeleteUser(ctx context.Context, params DeleteUserParams) error {
+	return ht.ErrNotImplemented
+}
+
+// DeleteUserGroup implements deleteUserGroup operation.
+//
+// Also removes its memberships and its per-share permissions.
+//
+// DELETE /user-groups/{groupId}
+func (UnimplementedHandler) DeleteUserGroup(ctx context.Context, params DeleteUserGroupParams) error {
 	return ht.ErrNotImplemented
 }
 
@@ -401,6 +442,16 @@ func (UnimplementedHandler) GetShare(ctx context.Context, params GetShareParams)
 	return r, ht.ErrNotImplemented
 }
 
+// GetSharePermissions implements getSharePermissions operation.
+//
+// Every user and every user group with an explicit access level on this share (Q27, doc 03 §7). A
+// user or group with no row here is not represented.
+//
+// GET /shares/{name}/permissions
+func (UnimplementedHandler) GetSharePermissions(ctx context.Context, params GetSharePermissionsParams) (r *SharePermissionsResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetStatus implements getStatus operation.
 //
 // One-screen health summary for the dashboard and `hoserva status` (doc 01 §3, §5).
@@ -420,6 +471,16 @@ func (UnimplementedHandler) GetStatus(ctx context.Context) (r *SystemStatus, _ e
 //
 // GET /settings/updates
 func (UnimplementedHandler) GetUpdateStatus(ctx context.Context) (r *UpdateStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetUserSharePermissions implements getUserSharePermissions operation.
+//
+// Every share this account has an explicit access level for (Q27, doc 03 §7). A share with no row
+// here is not represented — none of the three levels is assumed.
+//
+// GET /users/{userId}/permissions
+func (UnimplementedHandler) GetUserSharePermissions(ctx context.Context, params GetUserSharePermissionsParams) (r *UserSharePermissionsResult, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -482,6 +543,15 @@ func (UnimplementedHandler) ListNotifications(ctx context.Context) (r *ListNotif
 	return r, ht.ErrNotImplemented
 }
 
+// ListSessions implements listSessions operation.
+//
+// Every session across every account, with revoke (doc 03 §7).
+//
+// GET /sessions
+func (UnimplementedHandler) ListSessions(ctx context.Context) (r *ListSessionsOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ListShares implements listShares operation.
 //
 // Every configured share (doc 03 §4.1). Does not walk data disks; size and per-disk distribution are
@@ -489,6 +559,24 @@ func (UnimplementedHandler) ListNotifications(ctx context.Context) (r *ListNotif
 //
 // GET /shares
 func (UnimplementedHandler) ListShares(ctx context.Context) (r *ListSharesOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListUserGroups implements listUserGroups operation.
+//
+// Every user group, sorted by name (Q27, doc 03 §7).
+//
+// GET /user-groups
+func (UnimplementedHandler) ListUserGroups(ctx context.Context) (r *ListUserGroupsOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListUsers implements listUsers operation.
+//
+// Every account, sorted by username (Q27, doc 03 §7).
+//
+// GET /users
+func (UnimplementedHandler) ListUsers(ctx context.Context) (r *ListUsersOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -605,6 +693,16 @@ func (UnimplementedHandler) ResumeJob(ctx context.Context, params ResumeJobParam
 	return r, ht.ErrNotImplemented
 }
 
+// RevokeSession implements revokeSession operation.
+//
+// Ends this session immediately, server-side — the same effect as that session's own logout, forced
+// by an admin.
+//
+// DELETE /sessions/{sessionId}
+func (UnimplementedHandler) RevokeSession(ctx context.Context, params RevokeSessionParams) error {
+	return ht.ErrNotImplemented
+}
+
 // RollbackUpdate implements rollbackUpdate operation.
 //
 // Downloads and verifies the previous release's `.deb`, restores that version's pre-migration database
@@ -649,6 +747,28 @@ func (UnimplementedHandler) RunParityDiff(ctx context.Context) (r *ParityDiffRes
 // POST /notifications/channels/{channelId}/test
 func (UnimplementedHandler) SendTestNotification(ctx context.Context, params SendTestNotificationParams) (r *NotificationTestResult, _ error) {
 	return r, ht.ErrNotImplemented
+}
+
+// SetUserGroupMembers implements setUserGroupMembers operation.
+//
+// A full replace of the group's member list.
+//
+// PUT /user-groups/{groupId}/members
+func (UnimplementedHandler) SetUserGroupMembers(ctx context.Context, req *SetUserGroupMembersRequest, params SetUserGroupMembersParams) (r *UserGroup, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// SetUserPassword implements setUserPassword operation.
+//
+// Writes the UI credential hash and the Samba passdb entry together (Q27, doc 03 §7): if the Samba
+// write fails, the UI credential is rolled back to its previous value, and nothing is left updated on
+// only one side. This is the ordinary admin-driven password action on `/users` — distinct from
+// resetUserPassword (Q78), which is root-only recovery for a locked-out account over the Unix socket
+// and never touches the Samba passdb.
+//
+// POST /users/{userId}/password
+func (UnimplementedHandler) SetUserPassword(ctx context.Context, req *SetUserPasswordRequest, params SetUserPasswordParams) error {
+	return ht.ErrNotImplemented
 }
 
 // StartArray implements startArray operation.
@@ -802,6 +922,17 @@ func (UnimplementedHandler) UpdateShare(ctx context.Context, req *UpdateShareReq
 	return r, ht.ErrNotImplemented
 }
 
+// UpdateSharePermissions implements updateSharePermissions operation.
+//
+// A full replace: this share's access is set to exactly the users and groups listed, and every user or
+// group previously granted an explicit level but missing from the request loses its row entirely (doc
+// 03 §7: "editable from either side" — this is the share-side editor).
+//
+// PUT /shares/{name}/permissions
+func (UnimplementedHandler) UpdateSharePermissions(ctx context.Context, req *UpdateSharePermissionsRequest, params UpdateSharePermissionsParams) (r *SharePermissionsResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // UpdateUpdateSettings implements updateUpdateSettings operation.
 //
 // Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49,
@@ -809,6 +940,27 @@ func (UnimplementedHandler) UpdateShare(ctx context.Context, req *UpdateShareReq
 //
 // PUT /settings/updates
 func (UnimplementedHandler) UpdateUpdateSettings(ctx context.Context, req *UpdateUpdateSettingsRequest) (r *UpdateStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateUser implements updateUser operation.
+//
+// Viewer or share-only only (Q27) — the sole admin account is never reachable through this
+// operation.
+//
+// PATCH /users/{userId}
+func (UnimplementedHandler) UpdateUser(ctx context.Context, req *UpdateUserRequest, params UpdateUserParams) (r *UserSummary, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateUserSharePermissions implements updateUserSharePermissions operation.
+//
+// A full replace: the account's access is set to exactly the shares and levels listed, and every share
+// this account previously had an explicit level for but that is missing from the request loses its row
+// entirely (doc 03 §7: "editable from either side" — this is the user-side editor).
+//
+// PUT /users/{userId}/permissions
+func (UnimplementedHandler) UpdateUserSharePermissions(ctx context.Context, req *UpdateUserSharePermissionsRequest, params UpdateUserSharePermissionsParams) (r *UserSharePermissionsResult, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

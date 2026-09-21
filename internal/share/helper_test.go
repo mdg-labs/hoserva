@@ -55,6 +55,30 @@ type xattrFS struct {
 	xattr map[string]string
 }
 
+// ownerRecordingFS runs every FS call for real except Chown: hoservad
+// itself runs as root (doc 01 §7) and can chown a directory to any GID,
+// but the unprivileged process running `go test` cannot chown to GID
+// 100 ("users") unless it happens to be a member of that group, so this
+// records the call instead of making the real syscall. Chmod needs no
+// such privilege (setting the setgid bit only requires membership in
+// the file's current group, which the test process already has as the
+// directory's creator) and still runs for real, so tests can assert on
+// the resulting mode with a plain os.Stat.
+type ownerRecordingFS struct {
+	OSFS
+	chowns []chownCall
+}
+
+type chownCall struct {
+	path     string
+	uid, gid int
+}
+
+func (f *ownerRecordingFS) Chown(path string, uid, gid int) error {
+	f.chowns = append(f.chowns, chownCall{path: path, uid: uid, gid: gid})
+	return nil
+}
+
 func (f xattrFS) GetXattr(path, attr string) ([]byte, error) {
 	if attr != MergerFSBasepath {
 		return nil, nil
@@ -100,7 +124,7 @@ func testService(t *testing.T) (context.Context, *Service, testLayout, *recordin
 		Shares:   shareStore,
 		Array:    arrayStore,
 		Gen:      config.NewGenerator(filepath.Join(root, "etc")),
-		FS:       OSFS{},
+		FS:       &ownerRecordingFS{},
 		Mounter:  mounter,
 		Now:      func() time.Time { return time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC) },
 		CatchAll: layout.catchAll,

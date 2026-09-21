@@ -67,6 +67,17 @@ type handler struct {
 
 	externalMu sync.Mutex
 	external   map[string]apiv1.ExternalDisk
+
+	// usersMu guards #49's in-memory accounts, groups, sessions and
+	// share-permission state — separate from mu (jobs) and the other
+	// per-domain mutexes above, for the same reason they're separate from
+	// each other.
+	usersMu              sync.Mutex
+	users                map[uuid.UUID]apiv1.UserSummary
+	userGroups           map[uuid.UUID]apiv1.UserGroup
+	sessions             map[string]apiv1.Session
+	sharePermissions     map[apiv1.ShareName]apiv1.SharePermissionsResult
+	userSharePermissions map[uuid.UUID]apiv1.UserSharePermissionsResult
 }
 
 var _ apiv1.Handler = (*handler)(nil)
@@ -108,6 +119,12 @@ func newHandler(scenario string) (*handler, error) {
 		network:      defaultMockNetwork(),
 		shares:       make(map[string]apiv1.Share),
 		external:     make(map[string]apiv1.ExternalDisk),
+
+		users:                map[uuid.UUID]apiv1.UserSummary{mockAdminID: mockUserSummary()},
+		userGroups:           make(map[uuid.UUID]apiv1.UserGroup),
+		sessions:             make(map[string]apiv1.Session),
+		sharePermissions:     make(map[apiv1.ShareName]apiv1.SharePermissionsResult),
+		userSharePermissions: make(map[uuid.UUID]apiv1.UserSharePermissionsResult),
 	}, nil
 }
 

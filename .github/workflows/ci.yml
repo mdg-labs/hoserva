@@ -235,6 +235,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # test-integration's gen-smb-conf step (issue #219) runs on this
+      # runner, not inside the lab container — the lab image itself carries
+      # no Go toolchain.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
       # Every lab is namespaced by HOSERVA_LAB_ID (Q45); this run's id and
       # attempt number make it unique across concurrent workflow runs on
       # this same runner pool.
@@ -259,6 +265,13 @@ jobs:
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
         run: make lab-snapraid-check
+      # The lab image carries samba and smbclient (issue #219), so CI
+      # exercises a real smbd against a Hoserva-generated smb.conf rather
+      # than only ever running this by hand.
+      - name: test-integration
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make test-integration
       # Always tears down, even if a step above failed — an ephemeral
       # hosted runner is destroyed after the job anyway, but leaving this
       # conditional would mean a failed run never proves teardown works.

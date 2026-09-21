@@ -6,16 +6,16 @@
 # (packaging/debian/control) alongside the smartctl/hdparm binaries
 # internal/disk/linux_provider.go execs directly.
 #
-# Every command postinst can call (getent, addgroup, deb-systemd-helper,
-# deb-systemd-invoke) is stubbed out in a throwaway bin/ directory
-# prepended to PATH, and HOSERVA_TEST_ROOT points postinst's own file
-# writes (the durable systemd drop-in) at a throwaway tree instead of
-# real /etc, so the real postinst script runs end to end without ever
-# touching this host's real system group table or systemd state — same
-# reasoning as scripts/release/test-postrm-purge.sh running its subject
-# for real against a throwaway root, and the same reason
-# scripts/release/test-postinst.sh gives for *not* doing so itself
-# (getent/addgroup would otherwise touch a real system group).
+# Every command postinst can call (getent, addgroup, adduser,
+# deb-systemd-helper, deb-systemd-invoke) is stubbed out in a throwaway
+# bin/ directory prepended to PATH, and HOSERVA_TEST_ROOT points
+# postinst's own file writes (the durable systemd drop-in) at a
+# throwaway tree instead of real /etc, so the real postinst script runs
+# end to end without ever touching this host's real system group table
+# or systemd state — same reasoning as scripts/release/test-postrm-purge.sh
+# running its subject for real against a throwaway root, and the same
+# reason scripts/release/test-postinst.sh gives for *not* doing so
+# itself (getent/addgroup would otherwise touch a real system group).
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,6 +46,14 @@ EOF
 cat >"$stub_bin/addgroup" <<'EOF'
 #!/bin/sh
 echo "addgroup $*" >>"$HOSERVA_TEST_LOG"
+exit 0
+EOF
+# getent reports every passwd lookup (hoserva-apps, UID 99) as absent
+# too, exercising postinst's hoserva-apps creation branch (issue #48)
+# exactly as it would run on a fresh install.
+cat >"$stub_bin/adduser" <<'EOF'
+#!/bin/sh
+echo "adduser $*" >>"$HOSERVA_TEST_LOG"
 exit 0
 EOF
 cat >"$stub_bin/deb-systemd-helper" <<'EOF'

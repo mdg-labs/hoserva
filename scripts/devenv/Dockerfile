@@ -10,6 +10,12 @@ FROM debian:trixie-slim
 # inside its own container — and CI's lab job, which uses this image as-is,
 # never exercised SnapRAID at all.
 #
+# samba and smbclient are here for the same reason (issue #219): doc 06 §3's
+# L2 harness had no way to run smbd against a Hoserva-generated smb.conf, so
+# #48's own Samba ownership/mask work had nothing to verify against in the
+# lab. samba pulls in samba-common-bin (smbpasswd, pdbedit) as a dependency;
+# smbclient is the client side scripts/devenv/smb-check.sh drives against it.
+#
 # The trade-off, stated so it isn't lost: a passing lab run now demonstrates
 # the recipe on Hoserva's own image, not on a near-stock debian:trixie-slim.
 # Versions still come from Debian 13 (Q7), never pinned here.
@@ -21,6 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         mergerfs \
         snapraid \
         fuse3 \
+        samba \
+        smbclient \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

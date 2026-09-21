@@ -125,7 +125,11 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.CreateArrayOperation,
 		apiv1.CreateFirstAdminOperation,
 		apiv1.CreateNotificationChannelOperation,
+		apiv1.CreateUserOperation,
+		apiv1.CreateUserGroupOperation,
 		apiv1.DeleteNotificationChannelOperation,
+		apiv1.DeleteUserOperation,
+		apiv1.DeleteUserGroupOperation,
 		apiv1.DisableUserTotpOperation,
 		apiv1.EnrollTotpOperation,
 		apiv1.ExportConfigOperation,
@@ -142,11 +146,16 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.GetSetupStatusOperation,
 		apiv1.GetStatusOperation,
 		apiv1.GetMetricsOperation,
+		apiv1.GetSharePermissionsOperation,
+		apiv1.GetUserSharePermissionsOperation,
 		apiv1.ImportConfigOperation,
 		apiv1.EjectExternalDiskOperation,
 		apiv1.FormatExternalDiskOperation,
 		apiv1.ListDisksOperation,
 		apiv1.ListExternalDisksOperation,
+		apiv1.ListSessionsOperation,
+		apiv1.ListUserGroupsOperation,
+		apiv1.ListUsersOperation,
 		apiv1.ListWakeEventsOperation,
 		apiv1.MountExternalDiskOperation,
 		apiv1.RegisterExternalDiskOperation,
@@ -159,9 +168,12 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.LogoutOperation,
 		apiv1.ResetUserPasswordOperation,
 		apiv1.ResumeJobOperation,
+		apiv1.RevokeSessionOperation,
 		apiv1.RunDoctorOperation,
 		apiv1.RunParityDiffOperation,
 		apiv1.SendTestNotificationOperation,
+		apiv1.SetUserGroupMembersOperation,
+		apiv1.SetUserPasswordOperation,
 		apiv1.StartArrayOperation,
 		apiv1.StartFixOperation,
 		apiv1.StartScrubOperation,
@@ -169,6 +181,9 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.StopArrayOperation,
 		apiv1.UnlockUserOperation,
 		apiv1.UpdateGeneralSettingsOperation,
+		apiv1.UpdateSharePermissionsOperation,
+		apiv1.UpdateUserOperation,
+		apiv1.UpdateUserSharePermissionsOperation,
 		apiv1.UpdateMaintenanceChainScheduleOperation,
 		apiv1.UpdateScheduledJobOperation,
 		apiv1.UpdateNotificationChannelOperation,
@@ -203,6 +218,24 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 	}
 	if len(operationRoles) != len(generated) {
 		t.Errorf("operationRoles has %d entries, want exactly %d (one per generated operation)", len(operationRoles), len(generated))
+	}
+}
+
+// TestViewerNeverSatisfiesAdminRoute is #49's "Viewer role cannot reach
+// any mutating endpoint — tested per route": every operation
+// operationRoles declares admin for (which is every mutating operation in
+// the spec — reads are viewer or public) is checked individually, not
+// only through Role.Satisfies' own generic property test below, so a
+// future admin-role addition is covered by this same loop without anyone
+// having to remember to add a case for it.
+func TestViewerNeverSatisfiesAdminRoute(t *testing.T) {
+	for op, required := range operationRoles {
+		if required != RoleAdmin {
+			continue
+		}
+		if err := enforceRole(op, RoleViewer); err == nil {
+			t.Errorf("operation %s requires admin, but enforceRole let a viewer through", op)
+		}
 	}
 }
 
