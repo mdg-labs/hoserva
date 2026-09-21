@@ -14,12 +14,13 @@ name: Pages
 # release-index-entry.json to the GitHub Release. This workflow does
 # *not* start from that tag push: it starts from `release` published,
 # after the asset exists, so the assembled index cannot miss the tag
-# that woke it. Pushes to dev/main rebuild the docs/placeholder
-# without racing a still-running Release job.
+# that woke it. A push to main rebuilds the docs/placeholder without
+# racing a still-running Release job. dev pushes don't deploy the
+# live site — CI (ci.yml) still runs on every dev push regardless.
 
 on:
   push:
-    branches: [dev, main]
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
