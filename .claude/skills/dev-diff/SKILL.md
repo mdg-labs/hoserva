@@ -37,9 +37,14 @@ leaves the maintainer on a different branch than the one they started on.
      `git fetch origin main:main`. If that's rejected as a non-fast-forward
      (local `main` diverged from `origin/main`), stop and report the
      divergence instead of forcing it.
-4. Check whether local `dev` matches `origin/dev`
-   (`git rev-parse dev` vs `git rev-parse origin/dev`); note any gap so
-   the report is honest about what it's comparing.
+4. Check whether a local `dev` branch exists (`git rev-parse --verify
+   dev`). A fresh clone can have `origin/dev` without a local `dev` — if
+   it's missing, report that and stop here; skip step 5 entirely rather
+   than substituting `origin/dev` for it (that's a different comparison,
+   not a stand-in, and step 5's commands are hardcoded to bare `dev`).
+   If local `dev` exists, also check whether it matches `origin/dev`
+   (`git rev-parse dev` vs `git rev-parse origin/dev`) so the report is
+   honest about what it's comparing.
 5. Compute the diff between the now-updated local `main` and `dev`:
    - `git rev-list --left-right --count main...dev` — commits each side is
      ahead of their merge base.
