@@ -1,6 +1,6 @@
 ---
-name: release-pr
-description: Opens (or updates) the dev→main promotion pull request with a conventional title and a description generated from the commits and issues on dev since main last moved. Use when the maintainer says "open a PR to main", "promote dev", "release dev to main", or similar. Never touches main directly and never merges — it only prepares and files the dev→main PR.
+name: open-pr
+description: Opens (or updates) the dev→main promotion pull request, titled for what actually changed (never "release"/"promote" framing — this project doesn't cut a release here, it's a branch promotion), with a description generated from the commits and issues on dev since main last moved. Use when the maintainer says "open a PR to main", "promote dev", "release dev to main", or similar. Never touches main directly and never merges — it only prepares and files the dev→main PR.
 argument-hint: (no arguments — always operates on origin/dev → origin/main)
 allowed-tools:
   - Read
@@ -22,7 +22,7 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-# release-pr
+# open-pr
 
 Opens the **dev → main** promotion pull request — per `CLAUDE.md` (Q46) and
 the `orchestrate` skill, that PR is the *only* way `main` ever moves. This
@@ -70,9 +70,19 @@ checks and is the maintainer's call.
      for that SHA, or it isn't green, say so plainly — don't fall back to
      an older or unrelated run to make the PR look ready.
 6. Draft:
-   - **Title** (Conventional Commits shape): `chore(release): promote dev to main`,
-     optionally with a parenthetical dominant-area note, e.g.
-     `chore(release): promote dev to main (storage engine)`.
+   - **Title** describes what changed, never that a promotion is happening —
+     GitHub already shows this is a dev→main PR, and this project has no
+     "release" event at this step (that's the separate, later, tag-triggered
+     release.yml). Never `chore(release): promote dev to main` or any
+     "release"/"promote" framing.
+     - One commit clearly dominates (e.g. the only `safety-critical` one,
+       or the only non-chore one): reuse its own Conventional Commits
+       subject line verbatim, e.g. `fix(shares): close TOCTOU race in
+       DeleteFile`.
+     - Several commits are comparably significant: pick the single most
+       consequential one as the base subject and note the rest are
+       included in the body, not the title — don't try to cram every
+       commit into one title.
    - **Body** (write to a scratchpad temp file for `--body-file`):
      - `## Summary` — one or two sentences on what this promotion contains.
      - `## Issues closed` — bulleted `Fixes #n — <title>` list.
