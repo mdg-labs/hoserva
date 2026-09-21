@@ -887,6 +887,90 @@ func (s *CreateShareRequest) SetNfs(val OptShareNFS) {
 	s.Nfs = val
 }
 
+// Ref: #/components/schemas/CreateUserGroupRequest
+type CreateUserGroupRequest struct {
+	Name string `json:"name"`
+}
+
+// GetName returns the value of Name.
+func (s *CreateUserGroupRequest) GetName() string {
+	return s.Name
+}
+
+// SetName sets the value of Name.
+func (s *CreateUserGroupRequest) SetName(val string) {
+	s.Name = val
+}
+
+// Ref: #/components/schemas/CreateUserRequest
+type CreateUserRequest struct {
+	Username string `json:"username"`
+	// Defaults to share-only when omitted (Q27).
+	Role OptCreateUserRequestRole `json:"role"`
+}
+
+// GetUsername returns the value of Username.
+func (s *CreateUserRequest) GetUsername() string {
+	return s.Username
+}
+
+// GetRole returns the value of Role.
+func (s *CreateUserRequest) GetRole() OptCreateUserRequestRole {
+	return s.Role
+}
+
+// SetUsername sets the value of Username.
+func (s *CreateUserRequest) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetRole sets the value of Role.
+func (s *CreateUserRequest) SetRole(val OptCreateUserRequestRole) {
+	s.Role = val
+}
+
+// Defaults to share-only when omitted (Q27).
+type CreateUserRequestRole string
+
+const (
+	CreateUserRequestRoleViewer    CreateUserRequestRole = "viewer"
+	CreateUserRequestRoleShareOnly CreateUserRequestRole = "share-only"
+)
+
+// AllValues returns all CreateUserRequestRole values.
+func (CreateUserRequestRole) AllValues() []CreateUserRequestRole {
+	return []CreateUserRequestRole{
+		CreateUserRequestRoleViewer,
+		CreateUserRequestRoleShareOnly,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CreateUserRequestRole) MarshalText() ([]byte, error) {
+	switch s {
+	case CreateUserRequestRoleViewer:
+		return []byte(s), nil
+	case CreateUserRequestRoleShareOnly:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CreateUserRequestRole) UnmarshalText(data []byte) error {
+	switch CreateUserRequestRole(data) {
+	case CreateUserRequestRoleViewer:
+		*s = CreateUserRequestRoleViewer
+		return nil
+	case CreateUserRequestRoleShareOnly:
+		*s = CreateUserRequestRoleShareOnly
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // DNS-01 providers in v1: Cloudflare's API and generic RFC 2136. HTTP-01 and TLS-ALPN-01 are not
 // offered (Q9).
 // Ref: #/components/schemas/DNS01Provider
@@ -1030,6 +1114,12 @@ func (s *DeleteShareDataRequest) SetConfirmation(val string) {
 
 // DeleteShareNoContent is response for DeleteShare operation.
 type DeleteShareNoContent struct{}
+
+// DeleteUserGroupNoContent is response for DeleteUserGroup operation.
+type DeleteUserGroupNoContent struct{}
+
+// DeleteUserNoContent is response for DeleteUser operation.
+type DeleteUserNoContent struct{}
 
 // DisableUserTotpNoContent is response for DisableUserTotp operation.
 type DisableUserTotpNoContent struct{}
@@ -1737,6 +1827,43 @@ func (s *GetNotificationRoutingOK) GetRouting() []NotificationRoutingEntry {
 // SetRouting sets the value of Routing.
 func (s *GetNotificationRoutingOK) SetRouting(val []NotificationRoutingEntry) {
 	s.Routing = val
+}
+
+// Ref: #/components/schemas/GroupPermissionEntry
+type GroupPermissionEntry struct {
+	GroupId uuid.UUID        `json:"groupId"`
+	Name    string           `json:"name"`
+	Access  ShareAccessLevel `json:"access"`
+}
+
+// GetGroupId returns the value of GroupId.
+func (s *GroupPermissionEntry) GetGroupId() uuid.UUID {
+	return s.GroupId
+}
+
+// GetName returns the value of Name.
+func (s *GroupPermissionEntry) GetName() string {
+	return s.Name
+}
+
+// GetAccess returns the value of Access.
+func (s *GroupPermissionEntry) GetAccess() ShareAccessLevel {
+	return s.Access
+}
+
+// SetGroupId sets the value of GroupId.
+func (s *GroupPermissionEntry) SetGroupId(val uuid.UUID) {
+	s.GroupId = val
+}
+
+// SetName sets the value of Name.
+func (s *GroupPermissionEntry) SetName(val string) {
+	s.Name = val
+}
+
+// SetAccess sets the value of Access.
+func (s *GroupPermissionEntry) SetAccess(val ShareAccessLevel) {
+	s.Access = val
 }
 
 // Ref: #/components/schemas/HostConfigChoice
@@ -2520,6 +2647,20 @@ func (s *ListNotificationsOK) SetUnreadCount(val int) {
 	s.UnreadCount = val
 }
 
+type ListSessionsOK struct {
+	Sessions []Session `json:"sessions"`
+}
+
+// GetSessions returns the value of Sessions.
+func (s *ListSessionsOK) GetSessions() []Session {
+	return s.Sessions
+}
+
+// SetSessions sets the value of Sessions.
+func (s *ListSessionsOK) SetSessions(val []Session) {
+	s.Sessions = val
+}
+
 type ListSharesOK struct {
 	Shares []Share `json:"shares"`
 }
@@ -2532,6 +2673,34 @@ func (s *ListSharesOK) GetShares() []Share {
 // SetShares sets the value of Shares.
 func (s *ListSharesOK) SetShares(val []Share) {
 	s.Shares = val
+}
+
+type ListUserGroupsOK struct {
+	Groups []UserGroup `json:"groups"`
+}
+
+// GetGroups returns the value of Groups.
+func (s *ListUserGroupsOK) GetGroups() []UserGroup {
+	return s.Groups
+}
+
+// SetGroups sets the value of Groups.
+func (s *ListUserGroupsOK) SetGroups(val []UserGroup) {
+	s.Groups = val
+}
+
+type ListUsersOK struct {
+	Users []UserSummary `json:"users"`
+}
+
+// GetUsers returns the value of Users.
+func (s *ListUsersOK) GetUsers() []UserSummary {
+	return s.Users
+}
+
+// SetUsers sets the value of Users.
+func (s *ListUsersOK) SetUsers(val []UserSummary) {
+	s.Users = val
 }
 
 // Ref: #/components/schemas/LoginRequest
@@ -4356,6 +4525,52 @@ func (o OptBool) Get() (v bool, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptBool) Or(d bool) bool {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptCreateUserRequestRole returns new OptCreateUserRequestRole with value set to v.
+func NewOptCreateUserRequestRole(v CreateUserRequestRole) OptCreateUserRequestRole {
+	return OptCreateUserRequestRole{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCreateUserRequestRole is optional CreateUserRequestRole.
+type OptCreateUserRequestRole struct {
+	Value CreateUserRequestRole
+	Set   bool
+}
+
+// IsSet returns true if OptCreateUserRequestRole was set.
+func (o OptCreateUserRequestRole) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCreateUserRequestRole) Reset() {
+	var v CreateUserRequestRole
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCreateUserRequestRole) SetTo(v CreateUserRequestRole) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCreateUserRequestRole) Get() (v CreateUserRequestRole, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCreateUserRequestRole) Or(d CreateUserRequestRole) CreateUserRequestRole {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -6416,6 +6631,9 @@ func (s *ResetUserPasswordRequest) SetPassword(val string) {
 	s.Password = val
 }
 
+// RevokeSessionNoContent is response for RevokeSession operation.
+type RevokeSessionNoContent struct{}
+
 // Ref: #/components/schemas/ScheduleConflict
 type ScheduleConflict struct {
 	// Identifier of the first colliding schedule — `maintenance_chain` or an OtherScheduleJobId value.
@@ -6600,6 +6818,66 @@ func (s *Schedules) SetConflicts(val []ScheduleConflict) {
 	s.Conflicts = val
 }
 
+// Ref: #/components/schemas/Session
+type Session struct {
+	// The session's token hash — never the raw session token.
+	ID        string    `json:"id"`
+	UserId    uuid.UUID `json:"userId"`
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"createdAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// GetID returns the value of ID.
+func (s *Session) GetID() string {
+	return s.ID
+}
+
+// GetUserId returns the value of UserId.
+func (s *Session) GetUserId() uuid.UUID {
+	return s.UserId
+}
+
+// GetUsername returns the value of Username.
+func (s *Session) GetUsername() string {
+	return s.Username
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *Session) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// GetExpiresAt returns the value of ExpiresAt.
+func (s *Session) GetExpiresAt() time.Time {
+	return s.ExpiresAt
+}
+
+// SetID sets the value of ID.
+func (s *Session) SetID(val string) {
+	s.ID = val
+}
+
+// SetUserId sets the value of UserId.
+func (s *Session) SetUserId(val uuid.UUID) {
+	s.UserId = val
+}
+
+// SetUsername sets the value of Username.
+func (s *Session) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *Session) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// SetExpiresAt sets the value of ExpiresAt.
+func (s *Session) SetExpiresAt(val time.Time) {
+	s.ExpiresAt = val
+}
+
 type SessionCookie struct {
 	APIKey string
 	Roles  []string
@@ -6623,6 +6901,41 @@ func (s *SessionCookie) SetAPIKey(val string) {
 // SetRoles sets the value of Roles.
 func (s *SessionCookie) SetRoles(val []string) {
 	s.Roles = val
+}
+
+// Ref: #/components/schemas/SetUserGroupMembersRequest
+type SetUserGroupMembersRequest struct {
+	UserIds []uuid.UUID `json:"userIds"`
+}
+
+// GetUserIds returns the value of UserIds.
+func (s *SetUserGroupMembersRequest) GetUserIds() []uuid.UUID {
+	return s.UserIds
+}
+
+// SetUserIds sets the value of UserIds.
+func (s *SetUserGroupMembersRequest) SetUserIds(val []uuid.UUID) {
+	s.UserIds = val
+}
+
+// SetUserPasswordNoContent is response for SetUserPassword operation.
+type SetUserPasswordNoContent struct{}
+
+// Ref: #/components/schemas/SetUserPasswordRequest
+type SetUserPasswordRequest struct {
+	// Capped at 127 characters, not LoginRequest's 1024: this password is also written to the Samba passdb
+	// entry, and smbpasswd/pdbedit's own NTLM hash has never supported more.
+	Password string `json:"password"`
+}
+
+// GetPassword returns the value of Password.
+func (s *SetUserPasswordRequest) GetPassword() string {
+	return s.Password
+}
+
+// SetPassword sets the value of Password.
+func (s *SetUserPasswordRequest) SetPassword(val string) {
+	s.Password = val
 }
 
 // Ref: #/components/schemas/SetupStatus
@@ -6731,6 +7044,56 @@ func (s *Share) SetCreatedAt(val time.Time) {
 // SetUpdatedAt sets the value of UpdatedAt.
 func (s *Share) SetUpdatedAt(val time.Time) {
 	s.UpdatedAt = val
+}
+
+// Q27, doc 03 §7 — a user or group's access to one share.
+// Ref: #/components/schemas/ShareAccessLevel
+type ShareAccessLevel string
+
+const (
+	ShareAccessLevelNone      ShareAccessLevel = "none"
+	ShareAccessLevelReadOnly  ShareAccessLevel = "read-only"
+	ShareAccessLevelReadWrite ShareAccessLevel = "read-write"
+)
+
+// AllValues returns all ShareAccessLevel values.
+func (ShareAccessLevel) AllValues() []ShareAccessLevel {
+	return []ShareAccessLevel{
+		ShareAccessLevelNone,
+		ShareAccessLevelReadOnly,
+		ShareAccessLevelReadWrite,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ShareAccessLevel) MarshalText() ([]byte, error) {
+	switch s {
+	case ShareAccessLevelNone:
+		return []byte(s), nil
+	case ShareAccessLevelReadOnly:
+		return []byte(s), nil
+	case ShareAccessLevelReadWrite:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ShareAccessLevel) UnmarshalText(data []byte) error {
+	switch ShareAccessLevel(data) {
+	case ShareAccessLevelNone:
+		*s = ShareAccessLevelNone
+		return nil
+	case ShareAccessLevelReadOnly:
+		*s = ShareAccessLevelReadOnly
+		return nil
+	case ShareAccessLevelReadWrite:
+		*s = ShareAccessLevelReadWrite
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/ShareBrowseEntry
@@ -6990,6 +7353,32 @@ func (s *ShareNFSSquash) UnmarshalText(data []byte) error {
 }
 
 type ShareName string
+
+// Ref: #/components/schemas/SharePermissionsResult
+type SharePermissionsResult struct {
+	Users  []UserPermissionEntry  `json:"users"`
+	Groups []GroupPermissionEntry `json:"groups"`
+}
+
+// GetUsers returns the value of Users.
+func (s *SharePermissionsResult) GetUsers() []UserPermissionEntry {
+	return s.Users
+}
+
+// GetGroups returns the value of Groups.
+func (s *SharePermissionsResult) GetGroups() []GroupPermissionEntry {
+	return s.Groups
+}
+
+// SetUsers sets the value of Users.
+func (s *SharePermissionsResult) SetUsers(val []UserPermissionEntry) {
+	s.Users = val
+}
+
+// SetGroups sets the value of Groups.
+func (s *SharePermissionsResult) SetGroups(val []GroupPermissionEntry) {
+	s.Groups = val
+}
 
 // Ref: #/components/schemas/ShareSMB
 type ShareSMB struct {
@@ -7977,6 +8366,82 @@ func (s *UpdateScheduledJobRequest) SetTime(val OptString) {
 	s.Time = val
 }
 
+// Ref: #/components/schemas/UpdateSharePermissionsRequest
+type UpdateSharePermissionsRequest struct {
+	Users  []UpdateSharePermissionsRequestUsersItem  `json:"users"`
+	Groups []UpdateSharePermissionsRequestGroupsItem `json:"groups"`
+}
+
+// GetUsers returns the value of Users.
+func (s *UpdateSharePermissionsRequest) GetUsers() []UpdateSharePermissionsRequestUsersItem {
+	return s.Users
+}
+
+// GetGroups returns the value of Groups.
+func (s *UpdateSharePermissionsRequest) GetGroups() []UpdateSharePermissionsRequestGroupsItem {
+	return s.Groups
+}
+
+// SetUsers sets the value of Users.
+func (s *UpdateSharePermissionsRequest) SetUsers(val []UpdateSharePermissionsRequestUsersItem) {
+	s.Users = val
+}
+
+// SetGroups sets the value of Groups.
+func (s *UpdateSharePermissionsRequest) SetGroups(val []UpdateSharePermissionsRequestGroupsItem) {
+	s.Groups = val
+}
+
+type UpdateSharePermissionsRequestGroupsItem struct {
+	GroupId uuid.UUID        `json:"groupId"`
+	Access  ShareAccessLevel `json:"access"`
+}
+
+// GetGroupId returns the value of GroupId.
+func (s *UpdateSharePermissionsRequestGroupsItem) GetGroupId() uuid.UUID {
+	return s.GroupId
+}
+
+// GetAccess returns the value of Access.
+func (s *UpdateSharePermissionsRequestGroupsItem) GetAccess() ShareAccessLevel {
+	return s.Access
+}
+
+// SetGroupId sets the value of GroupId.
+func (s *UpdateSharePermissionsRequestGroupsItem) SetGroupId(val uuid.UUID) {
+	s.GroupId = val
+}
+
+// SetAccess sets the value of Access.
+func (s *UpdateSharePermissionsRequestGroupsItem) SetAccess(val ShareAccessLevel) {
+	s.Access = val
+}
+
+type UpdateSharePermissionsRequestUsersItem struct {
+	UserId uuid.UUID        `json:"userId"`
+	Access ShareAccessLevel `json:"access"`
+}
+
+// GetUserId returns the value of UserId.
+func (s *UpdateSharePermissionsRequestUsersItem) GetUserId() uuid.UUID {
+	return s.UserId
+}
+
+// GetAccess returns the value of Access.
+func (s *UpdateSharePermissionsRequestUsersItem) GetAccess() ShareAccessLevel {
+	return s.Access
+}
+
+// SetUserId sets the value of UserId.
+func (s *UpdateSharePermissionsRequestUsersItem) SetUserId(val uuid.UUID) {
+	s.UserId = val
+}
+
+// SetAccess sets the value of Access.
+func (s *UpdateSharePermissionsRequestUsersItem) SetAccess(val ShareAccessLevel) {
+	s.Access = val
+}
+
 // Ref: #/components/schemas/UpdateShareRequest
 type UpdateShareRequest struct {
 	CacheMode    OptShareCacheMode    `json:"cacheMode"`
@@ -8185,6 +8650,77 @@ func (s *UpdateUpdateSettingsRequest) SetCheckEnabled(val OptBool) {
 	s.CheckEnabled = val
 }
 
+// Ref: #/components/schemas/UpdateUserRequest
+type UpdateUserRequest struct {
+	Role UpdateUserRequestRole `json:"role"`
+}
+
+// GetRole returns the value of Role.
+func (s *UpdateUserRequest) GetRole() UpdateUserRequestRole {
+	return s.Role
+}
+
+// SetRole sets the value of Role.
+func (s *UpdateUserRequest) SetRole(val UpdateUserRequestRole) {
+	s.Role = val
+}
+
+type UpdateUserRequestRole string
+
+const (
+	UpdateUserRequestRoleViewer    UpdateUserRequestRole = "viewer"
+	UpdateUserRequestRoleShareOnly UpdateUserRequestRole = "share-only"
+)
+
+// AllValues returns all UpdateUserRequestRole values.
+func (UpdateUserRequestRole) AllValues() []UpdateUserRequestRole {
+	return []UpdateUserRequestRole{
+		UpdateUserRequestRoleViewer,
+		UpdateUserRequestRoleShareOnly,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s UpdateUserRequestRole) MarshalText() ([]byte, error) {
+	switch s {
+	case UpdateUserRequestRoleViewer:
+		return []byte(s), nil
+	case UpdateUserRequestRoleShareOnly:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *UpdateUserRequestRole) UnmarshalText(data []byte) error {
+	switch UpdateUserRequestRole(data) {
+	case UpdateUserRequestRoleViewer:
+		*s = UpdateUserRequestRoleViewer
+		return nil
+	case UpdateUserRequestRoleShareOnly:
+		*s = UpdateUserRequestRoleShareOnly
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/UpdateUserSharePermissionsRequest
+type UpdateUserSharePermissionsRequest struct {
+	Permissions []UserSharePermission `json:"permissions"`
+}
+
+// GetPermissions returns the value of Permissions.
+func (s *UpdateUserSharePermissionsRequest) GetPermissions() []UserSharePermission {
+	return s.Permissions
+}
+
+// SetPermissions sets the value of Permissions.
+func (s *UpdateUserSharePermissionsRequest) SetPermissions(val []UserSharePermission) {
+	s.Permissions = val
+}
+
 // Ref: #/components/schemas/User
 type User struct {
 	ID       uuid.UUID `json:"id"`
@@ -8234,6 +8770,43 @@ func (s *User) SetTotpEnrolled(val bool) {
 	s.TotpEnrolled = val
 }
 
+// Ref: #/components/schemas/UserGroup
+type UserGroup struct {
+	ID            uuid.UUID   `json:"id"`
+	Name          string      `json:"name"`
+	MemberUserIds []uuid.UUID `json:"memberUserIds"`
+}
+
+// GetID returns the value of ID.
+func (s *UserGroup) GetID() uuid.UUID {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *UserGroup) GetName() string {
+	return s.Name
+}
+
+// GetMemberUserIds returns the value of MemberUserIds.
+func (s *UserGroup) GetMemberUserIds() []uuid.UUID {
+	return s.MemberUserIds
+}
+
+// SetID sets the value of ID.
+func (s *UserGroup) SetID(val uuid.UUID) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *UserGroup) SetName(val string) {
+	s.Name = val
+}
+
+// SetMemberUserIds sets the value of MemberUserIds.
+func (s *UserGroup) SetMemberUserIds(val []uuid.UUID) {
+	s.MemberUserIds = val
+}
+
 // UserHeaders wraps User with response headers.
 type UserHeaders struct {
 	SetCookie OptString
@@ -8260,13 +8833,54 @@ func (s *UserHeaders) SetResponse(val User) {
 	s.Response = val
 }
 
-// Q27 — share-only users have no API access and are not represented here.
+// Ref: #/components/schemas/UserPermissionEntry
+type UserPermissionEntry struct {
+	UserId   uuid.UUID        `json:"userId"`
+	Username string           `json:"username"`
+	Access   ShareAccessLevel `json:"access"`
+}
+
+// GetUserId returns the value of UserId.
+func (s *UserPermissionEntry) GetUserId() uuid.UUID {
+	return s.UserId
+}
+
+// GetUsername returns the value of Username.
+func (s *UserPermissionEntry) GetUsername() string {
+	return s.Username
+}
+
+// GetAccess returns the value of Access.
+func (s *UserPermissionEntry) GetAccess() ShareAccessLevel {
+	return s.Access
+}
+
+// SetUserId sets the value of UserId.
+func (s *UserPermissionEntry) SetUserId(val uuid.UUID) {
+	s.UserId = val
+}
+
+// SetUsername sets the value of Username.
+func (s *UserPermissionEntry) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetAccess sets the value of Access.
+func (s *UserPermissionEntry) SetAccess(val ShareAccessLevel) {
+	s.Access = val
+}
+
+// Q27: admin (full UI), viewer (read-only UI), or share-only (SMB/NFS only, no UI login at all — the
+// default for a new account). A share-only account can still sign in with this role on a session that
+// predates a role change; every operation but the public ones refuses it (RoleViewer/RoleAdmin never
+// satisfy it), and login itself refuses a share-only account outright.
 // Ref: #/components/schemas/UserRole
 type UserRole string
 
 const (
-	UserRoleAdmin  UserRole = "admin"
-	UserRoleViewer UserRole = "viewer"
+	UserRoleAdmin     UserRole = "admin"
+	UserRoleViewer    UserRole = "viewer"
+	UserRoleShareOnly UserRole = "share-only"
 )
 
 // AllValues returns all UserRole values.
@@ -8274,6 +8888,7 @@ func (UserRole) AllValues() []UserRole {
 	return []UserRole{
 		UserRoleAdmin,
 		UserRoleViewer,
+		UserRoleShareOnly,
 	}
 }
 
@@ -8283,6 +8898,8 @@ func (s UserRole) MarshalText() ([]byte, error) {
 	case UserRoleAdmin:
 		return []byte(s), nil
 	case UserRoleViewer:
+		return []byte(s), nil
+	case UserRoleShareOnly:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -8298,9 +8915,113 @@ func (s *UserRole) UnmarshalText(data []byte) error {
 	case UserRoleViewer:
 		*s = UserRoleViewer
 		return nil
+	case UserRoleShareOnly:
+		*s = UserRoleShareOnly
+		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/UserSharePermission
+type UserSharePermission struct {
+	ShareName ShareName        `json:"shareName"`
+	Access    ShareAccessLevel `json:"access"`
+}
+
+// GetShareName returns the value of ShareName.
+func (s *UserSharePermission) GetShareName() ShareName {
+	return s.ShareName
+}
+
+// GetAccess returns the value of Access.
+func (s *UserSharePermission) GetAccess() ShareAccessLevel {
+	return s.Access
+}
+
+// SetShareName sets the value of ShareName.
+func (s *UserSharePermission) SetShareName(val ShareName) {
+	s.ShareName = val
+}
+
+// SetAccess sets the value of Access.
+func (s *UserSharePermission) SetAccess(val ShareAccessLevel) {
+	s.Access = val
+}
+
+// Ref: #/components/schemas/UserSharePermissionsResult
+type UserSharePermissionsResult struct {
+	Permissions []UserSharePermission `json:"permissions"`
+}
+
+// GetPermissions returns the value of Permissions.
+func (s *UserSharePermissionsResult) GetPermissions() []UserSharePermission {
+	return s.Permissions
+}
+
+// SetPermissions sets the value of Permissions.
+func (s *UserSharePermissionsResult) SetPermissions(val []UserSharePermission) {
+	s.Permissions = val
+}
+
+// Ref: #/components/schemas/UserSummary
+type UserSummary struct {
+	ID       uuid.UUID `json:"id"`
+	Username string    `json:"username"`
+	Role     UserRole  `json:"role"`
+	// Whether TOTP is confirmed and active on this account.
+	TotpEnrolled bool      `json:"totpEnrolled"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// GetID returns the value of ID.
+func (s *UserSummary) GetID() uuid.UUID {
+	return s.ID
+}
+
+// GetUsername returns the value of Username.
+func (s *UserSummary) GetUsername() string {
+	return s.Username
+}
+
+// GetRole returns the value of Role.
+func (s *UserSummary) GetRole() UserRole {
+	return s.Role
+}
+
+// GetTotpEnrolled returns the value of TotpEnrolled.
+func (s *UserSummary) GetTotpEnrolled() bool {
+	return s.TotpEnrolled
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *UserSummary) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// SetID sets the value of ID.
+func (s *UserSummary) SetID(val uuid.UUID) {
+	s.ID = val
+}
+
+// SetUsername sets the value of Username.
+func (s *UserSummary) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetRole sets the value of Role.
+func (s *UserSummary) SetRole(val UserRole) {
+	s.Role = val
+}
+
+// SetTotpEnrolled sets the value of TotpEnrolled.
+func (s *UserSummary) SetTotpEnrolled(val bool) {
+	s.TotpEnrolled = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *UserSummary) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
 }
 
 // Ref: #/components/schemas/WakeEventsResponse

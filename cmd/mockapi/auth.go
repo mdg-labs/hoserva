@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -19,6 +20,19 @@ func mockUser() apiv1.User {
 		Username:     "admin",
 		Role:         apiv1.UserRoleAdmin,
 		TotpEnrolled: false,
+	}
+}
+
+// mockUserSummary is the #49 /users list-shape twin of mockUser — the
+// mock's single canned admin account, as it appears in ListUsers rather
+// than in a login response.
+func mockUserSummary() apiv1.UserSummary {
+	return apiv1.UserSummary{
+		ID:           mockAdminID,
+		Username:     "admin",
+		Role:         apiv1.UserRoleAdmin,
+		TotpEnrolled: false,
+		CreatedAt:    time.Unix(0, 0).UTC(),
 	}
 }
 

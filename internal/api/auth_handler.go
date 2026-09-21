@@ -11,6 +11,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/auth"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // mapAuthError classifies every sentinel AuthService, SessionSecurityHandler
@@ -43,6 +44,34 @@ func mapAuthError(err error) error {
 		// request itself is what's wrong, by supplying two guesses where
 		// exactly one is accepted.
 		return &apiError{code: "totp_reverify_ambiguous", statusCode: 400, message: "supply exactly one of password or code when re-enrolling an active TOTP credential, not both"}
+	case errors.Is(err, ErrShareOnlyNoLogin):
+		return &apiError{code: "share_only_no_login", statusCode: 403, message: "this account has SMB/NFS access only — it has no UI login"}
+	case errors.Is(err, ErrUserExists):
+		return &apiError{code: "user_exists", statusCode: 409, message: err.Error()}
+	case errors.Is(err, ErrUserNotFound):
+		return &apiError{code: "user_not_found", statusCode: 404, message: err.Error()}
+	case errors.Is(err, ErrInvalidRole):
+		return &apiError{code: "invalid_role", statusCode: 400, message: err.Error()}
+	case errors.Is(err, ErrCannotModifyAdmin):
+		return &apiError{code: "cannot_modify_admin", statusCode: 403, message: err.Error()}
+	case errors.Is(err, ErrGroupExists):
+		return &apiError{code: "group_exists", statusCode: 409, message: err.Error()}
+	case errors.Is(err, ErrGroupNotFound):
+		return &apiError{code: "group_not_found", statusCode: 404, message: err.Error()}
+	case errors.Is(err, ErrSessionNotFound):
+		return &apiError{code: "session_not_found", statusCode: 404, message: err.Error()}
+	case errors.Is(err, ErrSambaPasswordFailed):
+		return &apiError{code: "samba_password_failed", statusCode: 502, message: err.Error()}
+	case errors.Is(err, ErrSambaDeleteFailed):
+		return &apiError{code: "samba_delete_failed", statusCode: 502, message: err.Error()}
+	case errors.Is(err, ErrInvalidAccessLevel):
+		return &apiError{code: "invalid_access_level", statusCode: 400, message: err.Error()}
+	case errors.Is(err, store.ErrShareNotFound):
+		// Same code and status share_handler.go's own mapShareError uses
+		// for the same sentinel — the permission endpoints reach this
+		// through AuthService rather than internal/share.Service, but a
+		// bad share name should read identically either way.
+		return &apiError{code: "share_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, ErrSessionInvalid):
 		return &apiError{code: "unauthorized", statusCode: 401, message: "invalid or expired session"}
 	case errors.Is(err, errAPITokensNotImplemented):

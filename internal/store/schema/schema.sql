@@ -67,11 +67,13 @@ CREATE TABLE jobs (
 CREATE INDEX jobs_status_idx ON jobs ("status");
 CREATE INDEX jobs_class_idx ON jobs (class);
 
--- Users and sessions (#22, doc 01 §7, Q27, Q28, Q44). No default
+-- Users and sessions (#22, #49, doc 01 §7, Q27, Q28, Q44). No default
 -- credential ever exists (doc 01 §7): the first row is written by the
 -- first-run setup flow, atomically, and only while this table is empty.
--- Only admin/viewer accounts are represented — share-only users (Q27) have
--- no API access and never get a row here. totp_secret and
+-- role's 'share-only' value (#49) is a real, admin-manageable row with no
+-- UI login at all — Login refuses it outright, and every operation but
+-- the public ones fails closed against it since it satisfies neither
+-- RoleViewer nor RoleAdmin. totp_secret and
 -- totp_pending_secret are both encrypted with the machine key (Q28)
 -- before either reaches this table, so a leaked database file alone
 -- never yields a usable TOTP secret. totp_secret is the *active*,
@@ -95,7 +97,7 @@ CREATE TABLE users (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('admin', 'viewer')),
+    role TEXT NOT NULL CHECK (role IN ('admin', 'viewer', 'share-only')),
     totp_secret BLOB,
     totp_confirmed_at TEXT,
     totp_last_step INTEGER NOT NULL,
@@ -427,3 +429,54 @@ CREATE TABLE external_disks (
 ) STRICT;
 
 CREATE INDEX external_disks_device_idx ON external_disks (device);
+
+-- User groups (#49, Q27, doc 03 §7): a named collection of accounts, kept
+-- purely for bulk share-permission assignment ("per-group share access,
+-- editable from either side") — distinct from the fixed `users` system
+-- group (GID 100, Q26) every share's files belong to on disk, which this
+-- table has no bearing on.
+CREATE TABLE user_groups (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+) STRICT;
+
+-- Group membership (#49). Deletes are issued explicitly by application
+-- code, not by this FK's ON DELETE CASCADE alone: store.DSN's runtime
+-- connections don't run with "PRAGMA foreign_keys = ON" (see
+-- internal/notify/store.go's DeleteChannel for the same reasoning), so the
+-- cascade here documents intent and backs PRAGMA foreign_key_check during
+-- a migration, but a user or group row is still cleaned up in application
+-- code before it is deleted.
+CREATE TABLE user_group_members (
+    group_id TEXT NOT NULL REFERENCES user_groups (id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    PRIMARY KEY (group_id, user_id)
+) STRICT;
+
+CREATE INDEX user_group_members_user_id_idx ON user_group_members (user_id);
+
+-- Per-user share access (#49, Q27, doc 03 §7): none/read-only/read-write,
+-- editable from the user or the share. A user with no row for a share is
+-- not represented — none of the three levels is assumed. Enforcing this
+-- in generated Samba/mergerfs config, and the file ownership/mode a grant
+-- implies, is a later issue; this table is the stored grant itself.
+CREATE TABLE share_user_permissions (
+    share_name TEXT NOT NULL REFERENCES shares (name) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    access TEXT NOT NULL CHECK (access IN ('none', 'read-only', 'read-write')),
+    PRIMARY KEY (share_name, user_id)
+) STRICT;
+
+CREATE INDEX share_user_permissions_user_id_idx ON share_user_permissions (user_id);
+
+-- Per-group share access (#49, Q27, doc 03 §7) — the group-side twin of
+-- share_user_permissions above, same caveats.
+CREATE TABLE share_group_permissions (
+    share_name TEXT NOT NULL REFERENCES shares (name) ON DELETE CASCADE,
+    group_id TEXT NOT NULL REFERENCES user_groups (id) ON DELETE CASCADE,
+    access TEXT NOT NULL CHECK (access IN ('none', 'read-only', 'read-write')),
+    PRIMARY KEY (share_name, group_id)
+) STRICT;
+
+CREATE INDEX share_group_permissions_group_id_idx ON share_group_permissions (group_id);
