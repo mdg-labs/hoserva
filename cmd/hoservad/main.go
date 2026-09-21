@@ -29,6 +29,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
+	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
 	"github.com/mdg-labs/hoserva/web"
@@ -257,6 +258,7 @@ func run(cfg config) error {
 	}
 	var chainGuard job.DiffGuard
 	if parityEngine != nil {
+		parityEngine.Usage = parity.NewUsageStore(db)
 		registry.Register(job.TypeSync, false, job.RunSync(parityEngine))
 		registry.Register(job.TypeScrub, false, job.RunScrub(parityEngine))
 		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}
