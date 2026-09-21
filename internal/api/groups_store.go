@@ -172,7 +172,12 @@ func (s *AuthStore) SetGroupMembers(ctx context.Context, groupID string, userIDs
 		return fmt.Errorf("checking group: %w", err)
 	}
 
+	seen := make(map[string]struct{}, len(userIDs))
 	for _, userID := range userIDs {
+		if _, dup := seen[userID]; dup {
+			return fmt.Errorf("%w: %s", ErrDuplicateGrant, userID)
+		}
+		seen[userID] = struct{}{}
 		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id = ?`, userID).Scan(&exists); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("%w: %s", ErrUserNotFound, userID)

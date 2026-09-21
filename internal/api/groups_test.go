@@ -43,6 +43,31 @@ func TestSetGroupMembersRefusesUnknownUser(t *testing.T) {
 	}
 }
 
+func TestSetGroupMembersRefusesDuplicateUser(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+	g, err := svc.CreateGroup(ctx, "family")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	u, err := svc.CreateUser(ctx, "alice", "viewer")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	if _, err := svc.SetGroupMembers(ctx, g.ID, []string{u.ID, u.ID}); !errors.Is(err, api.ErrDuplicateGrant) {
+		t.Errorf("SetGroupMembers(duplicate user) = %v, want ErrDuplicateGrant", err)
+	}
+
+	unchanged, err := svc.ListGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListGroups: %v", err)
+	}
+	if len(unchanged) != 1 || len(unchanged[0].MemberIDs) != 0 {
+		t.Errorf("groups after a refused SetGroupMembers = %+v, want the group still empty", unchanged)
+	}
+}
+
 func TestSetGroupMembersReplacesMembership(t *testing.T) {
 	svc, _ := newAuthTestService(t)
 	ctx := context.Background()

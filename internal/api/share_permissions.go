@@ -13,6 +13,12 @@ import (
 // none, read-only or read-write.
 var ErrInvalidAccessLevel = errors.New("access must be none, read-only or read-write")
 
+// ErrDuplicateGrant is a full-replace permission write naming the same
+// subject id more than once — a caller mistake, not a 500: an unrejected
+// duplicate would insert the same composite-primary-key row twice inside
+// the same transaction and surface as an unclassified error instead.
+var ErrDuplicateGrant = errors.New("the same id appears more than once in this request")
+
 func validateAccessLevel(access string) error {
 	switch access {
 	case "none", "read-only", "read-write":
@@ -143,6 +149,12 @@ func (s *AuthStore) SetSharePermissions(ctx context.Context, shareName string, u
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := rejectDuplicateGrants(users); err != nil {
+		return err
+	}
+	if err := rejectDuplicateGrants(groups); err != nil {
+		return err
+	}
 	for _, g := range users {
 		if err := validateAccessLevel(g.Access); err != nil {
 			return err
@@ -236,6 +248,9 @@ func (s *AuthStore) SetUserSharePermissions(ctx context.Context, userID string, 
 	if err := existsInTx(ctx, tx, "users", userID); err != nil {
 		return err
 	}
+	if err := rejectDuplicateShareNames(entries); err != nil {
+		return err
+	}
 	for _, e := range entries {
 		if err := validateAccessLevel(e.Access); err != nil {
 			return err
@@ -258,6 +273,34 @@ func (s *AuthStore) SetUserSharePermissions(ctx context.Context, userID string, 
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing set user share permissions transaction: %w", err)
+	}
+	return nil
+}
+
+// rejectDuplicateGrants reports ErrDuplicateGrant when the same subject id
+// appears more than once in grants — inserting it twice would violate the
+// permission tables' composite primary key.
+func rejectDuplicateGrants(grants []PermissionGrant) error {
+	seen := make(map[string]struct{}, len(grants))
+	for _, g := range grants {
+		if _, dup := seen[g.ID]; dup {
+			return fmt.Errorf("%w: %s", ErrDuplicateGrant, g.ID)
+		}
+		seen[g.ID] = struct{}{}
+	}
+	return nil
+}
+
+// rejectDuplicateShareNames reports ErrDuplicateGrant when the same share
+// name appears more than once in entries — inserting it twice would
+// violate share_user_permissions' composite primary key.
+func rejectDuplicateShareNames(entries []UserSharePermission) error {
+	seen := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		if _, dup := seen[e.ShareName]; dup {
+			return fmt.Errorf("%w: %s", ErrDuplicateGrant, e.ShareName)
+		}
+		seen[e.ShareName] = struct{}{}
 	}
 	return nil
 }
