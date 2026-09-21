@@ -28,6 +28,7 @@ const (
 var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.CancelJobOperation:                      RoleAdmin,
 	apiv1.ConfirmTotpOperation:                    RoleViewer,
+	apiv1.CreateApiTokenOperation:                 RoleAdmin,
 	apiv1.CreateArrayOperation:                    RoleAdmin,
 	apiv1.CreateFirstAdminOperation:               RolePublic,
 	apiv1.CreateNotificationChannelOperation:      RoleAdmin,
@@ -57,6 +58,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.ImportConfigOperation:                   RoleAdmin,
 	apiv1.EjectExternalDiskOperation:              RoleAdmin,
 	apiv1.FormatExternalDiskOperation:             RoleAdmin,
+	apiv1.ListApiTokensOperation:                  RoleViewer,
 	apiv1.ListDisksOperation:                      RoleViewer,
 	apiv1.ListExternalDisksOperation:              RoleViewer,
 	apiv1.MountExternalDiskOperation:              RoleAdmin,
@@ -74,6 +76,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.LogoutOperation:                         RoleViewer,
 	apiv1.ResetUserPasswordOperation:              RoleAdmin,
 	apiv1.ResumeJobOperation:                      RoleAdmin,
+	apiv1.RevokeApiTokenOperation:                 RoleAdmin,
 	apiv1.RevokeSessionOperation:                  RoleAdmin,
 	apiv1.RunDoctorOperation:                      RoleViewer,
 	apiv1.RunParityDiffOperation:                  RoleAdmin,
@@ -138,4 +141,26 @@ func (r Role) Satisfies(required Role) bool {
 		return true
 	}
 	return r == required
+}
+
+// effectiveTokenRole caps a personal API token's own declared scope
+// (Q43, always admin or viewer — CreateAPIToken's validateTokenRole) to
+// its owning account's *current* role, so an account demoted after a
+// token was issued can never keep using that token at its old privilege
+// level — mirroring how a session's role is always read fresh from the
+// account (HandleSessionCookie) rather than cached from login time, and
+// needing no separate revocation step of its own. accountRole is the
+// users.role column's own value (admin/viewer/share-only, Q27); there is
+// no special case for share-only below, because Role("share-only") never
+// equals RoleAdmin and never satisfies RoleViewer or RoleAdmin, so it
+// falls out of Satisfies the same way a share-only session would if
+// Login ever let one through (it refuses outright instead,
+// ErrShareOnlyNoLogin).
+func effectiveTokenRole(accountRole, tokenRole string) Role {
+	account := Role(accountRole)
+	token := Role(tokenRole)
+	if account.Satisfies(token) {
+		return token
+	}
+	return account
 }

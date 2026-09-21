@@ -76,8 +76,16 @@ func mapAuthError(err error) error {
 		return &apiError{code: "share_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, ErrSessionInvalid):
 		return &apiError{code: "unauthorized", statusCode: 401, message: "invalid or expired session"}
-	case errors.Is(err, errAPITokensNotImplemented):
-		return &apiError{code: "unauthorized", statusCode: 401, message: "personal API tokens are not implemented yet"}
+	case errors.Is(err, ErrAPITokenInvalid):
+		return &apiError{code: "unauthorized", statusCode: 401, message: "invalid or revoked api token"}
+	case errors.Is(err, ErrAPITokenNotFound):
+		return &apiError{code: "api_token_not_found", statusCode: 404, message: err.Error()}
+	case errors.Is(err, ErrShareOnlyNoAPIToken):
+		return &apiError{code: "share_only_no_api_token", statusCode: 403, message: err.Error()}
+	case errors.Is(err, ErrInvalidTokenRole):
+		return &apiError{code: "invalid_token_role", statusCode: 400, message: err.Error()}
+	case errors.Is(err, ErrTokenRoleExceedsAccount):
+		return &apiError{code: "token_role_exceeds_account", statusCode: 403, message: err.Error()}
 	case errors.Is(err, ogenerrors.ErrSecurityRequirementIsNotSatisfied):
 		return &apiError{code: "unauthorized", statusCode: 401, message: "this request requires a credential"}
 	case errors.Is(err, auth.ErrPasswordWorkBusy), errors.Is(err, context.DeadlineExceeded):

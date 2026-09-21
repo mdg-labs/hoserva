@@ -78,6 +78,10 @@ type handler struct {
 	sessions             map[string]apiv1.Session
 	sharePermissions     map[apiv1.ShareName]apiv1.SharePermissionsResult
 	userSharePermissions map[uuid.UUID]apiv1.UserSharePermissionsResult
+	// apiTokens is #50's personal API token store, keyed by the mock's own
+	// synthetic id (never a real hash) — the same usersMu guards it, since
+	// it's part of the same per-account state as users/sessions above.
+	apiTokens map[string]apiv1.ApiTokenSummary
 }
 
 var _ apiv1.Handler = (*handler)(nil)
@@ -125,6 +129,7 @@ func newHandler(scenario string) (*handler, error) {
 		sessions:             make(map[string]apiv1.Session),
 		sharePermissions:     make(map[apiv1.ShareName]apiv1.SharePermissionsResult),
 		userSharePermissions: make(map[uuid.UUID]apiv1.UserSharePermissionsResult),
+		apiTokens:            make(map[string]apiv1.ApiTokenSummary),
 	}, nil
 }
 

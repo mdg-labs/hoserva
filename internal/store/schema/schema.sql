@@ -129,6 +129,28 @@ CREATE TABLE sessions (
 CREATE INDEX sessions_user_id_idx ON sessions (user_id);
 CREATE INDEX sessions_expires_at_idx ON sessions (expires_at);
 
+-- Personal API tokens (#50, Q43, doc 01 §5, §7): scoped to admin or
+-- viewer, for scripting and the remote CLI over TCP. token_hash is the
+-- SHA-256 of the random 256-bit raw token, exactly like sessions above —
+-- the raw value is shown once, at creation, and never stored. role can
+-- never exceed the owning account's own role at creation time
+-- (AuthService.CreateAPIToken), and is capped to the account's *current*
+-- role on every use (effectiveTokenRole) rather than only at creation, so
+-- a token issued while its account was admin is never usable at more
+-- than viewer the moment that account is demoted, with no separate
+-- revocation step needed. name is a caller-chosen label so an account
+-- with more than one token can tell them apart in the /users page's
+-- data-table (doc 03 §7).
+CREATE TABLE api_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('admin', 'viewer')),
+    created_at TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX api_tokens_user_id_idx ON api_tokens (user_id);
+
 -- Spin-state events (#110, Q32, Q74): every observed standby/active
 -- transition, persisted so the wake-events view (doc 03 §3.3a) survives a
 -- daemon restart — internal/disk's SpinEventLog is the in-process record a

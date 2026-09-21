@@ -107,6 +107,17 @@ type Invoker interface {
 	//
 	// POST /auth/totp/confirm
 	ConfirmTotp(ctx context.Context, request *TotpConfirmRequest) error
+	// CreateApiToken invokes createApiToken operation.
+	//
+	// A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP.
+	// The raw token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring
+	// how a session cookie is handled (doc 01 §7). Refused for a share-only account (share-only has no
+	// API access at all, Q27), and refused when role exceeds the account's own role: a token can narrow an
+	// account's access (an admin can hand out a viewer-scoped token to reduce a script's own blast
+	// radius), never widen it.
+	//
+	// POST /users/{username}/tokens
+	CreateApiToken(ctx context.Context, request *CreateApiTokenRequest, params CreateApiTokenParams) (*ApiTokenCreated, error)
 	// CreateArray invokes createArray operation.
 	//
 	// Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4).
@@ -375,6 +386,12 @@ type Invoker interface {
 	//
 	// POST /config/import
 	ImportConfig(ctx context.Context, request *ImportConfigReq) error
+	// ListApiTokens invokes listApiTokens operation.
+	//
+	// Every account's tokens, most recently created first (doc 03 §7).
+	//
+	// GET /api-tokens
+	ListApiTokens(ctx context.Context) (*ListApiTokensOK, error)
 	// ListDisks invokes listDisks operation.
 	//
 	// Every block device Hoserva knows about (doc 02 §4).
@@ -517,6 +534,13 @@ type Invoker interface {
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
+	// RevokeApiToken invokes revokeApiToken operation.
+	//
+	// Ends this token immediately — the request it would have authenticated next is refused the moment
+	// this returns, since every request looks the token up fresh (no caching).
+	//
+	// DELETE /api-tokens/{tokenId}
+	RevokeApiToken(ctx context.Context, params RevokeApiTokenParams) error
 	// RevokeSession invokes revokeSession operation.
 	//
 	// Ends this session immediately, server-side — the same effect as that session's own logout, forced
@@ -1975,6 +1999,158 @@ func (c *Client) sendConfirmTotp(ctx context.Context, request *TotpConfirmReques
 
 	stage = "DecodeResponse"
 	result, err := decodeConfirmTotpResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// CreateApiToken invokes createApiToken operation.
+//
+// A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP.
+// The raw token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring
+// how a session cookie is handled (doc 01 §7). Refused for a share-only account (share-only has no
+// API access at all, Q27), and refused when role exceeds the account's own role: a token can narrow an
+// account's access (an admin can hand out a viewer-scoped token to reduce a script's own blast
+// radius), never widen it.
+//
+// POST /users/{username}/tokens
+func (c *Client) CreateApiToken(ctx context.Context, request *CreateApiTokenRequest, params CreateApiTokenParams) (*ApiTokenCreated, error) {
+	res, err := c.sendCreateApiToken(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendCreateApiToken(ctx context.Context, request *CreateApiTokenRequest, params CreateApiTokenParams) (res *ApiTokenCreated, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("createApiToken"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/users/{username}/tokens"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, CreateApiTokenOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/users/"
+	{
+		// Encode "username" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "username",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Username))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/tokens"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeCreateApiTokenRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, CreateApiTokenOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, CreateApiTokenOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeCreateApiTokenResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -6817,6 +6993,131 @@ func (c *Client) sendImportConfig(ctx context.Context, request *ImportConfigReq)
 	return result, nil
 }
 
+// ListApiTokens invokes listApiTokens operation.
+//
+// Every account's tokens, most recently created first (doc 03 §7).
+//
+// GET /api-tokens
+func (c *Client) ListApiTokens(ctx context.Context) (*ListApiTokensOK, error) {
+	res, err := c.sendListApiTokens(ctx)
+	return res, err
+}
+
+func (c *Client) sendListApiTokens(ctx context.Context) (res *ListApiTokensOK, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listApiTokens"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/api-tokens"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListApiTokensOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/api-tokens"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListApiTokensOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListApiTokensOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListApiTokensResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ListDisks invokes listDisks operation.
 //
 // Every block device Hoserva knows about (doc 02 §4).
@@ -9298,6 +9599,150 @@ func (c *Client) sendResumeJob(ctx context.Context, params ResumeJobParams) (res
 
 	stage = "DecodeResponse"
 	result, err := decodeResumeJobResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RevokeApiToken invokes revokeApiToken operation.
+//
+// Ends this token immediately — the request it would have authenticated next is refused the moment
+// this returns, since every request looks the token up fresh (no caching).
+//
+// DELETE /api-tokens/{tokenId}
+func (c *Client) RevokeApiToken(ctx context.Context, params RevokeApiTokenParams) error {
+	_, err := c.sendRevokeApiToken(ctx, params)
+	return err
+}
+
+func (c *Client) sendRevokeApiToken(ctx context.Context, params RevokeApiTokenParams) (res *RevokeApiTokenNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("revokeApiToken"),
+		semconv.HTTPRequestMethodKey.String("DELETE"),
+		semconv.URLTemplateKey.String("/api-tokens/{tokenId}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RevokeApiTokenOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/api-tokens/"
+	{
+		// Encode "tokenId" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "tokenId",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.TokenId))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RevokeApiTokenOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RevokeApiTokenOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRevokeApiTokenResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

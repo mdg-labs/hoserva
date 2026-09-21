@@ -52,16 +52,15 @@ tags:
       Accounts, roles and Samba credentials (Q27, doc 03 §7): the admin,
       viewer and share-only roles, per-account passwords (which write the
       UI credential and the Samba passdb entry together), user groups and
-      session list/revoke. Account recovery over the Unix socket (Q78) is
-      also under this tag.
+      session list/revoke. Account recovery over the Unix socket (Q78) and
+      personal API tokens (Q43) are also under this tag.
   - name: auth
     description: >-
       First-run setup, sessions and TOTP over TCP (doc 01 §5, §7, Q9, Q10,
       Q28, Q44, doc 03 §1). The Unix socket needs none of this — it is
       peer-credential trusted (Q44) — but these operations still run on
       it, unauthenticated, exactly as they do on TCP, since the same
-      handlers serve both transports (doc 01 §5). Personal API tokens
-      (Q43) are Phase 2 and have no operations here yet.
+      handlers serve both transports (doc 01 §5).
   - name: notifications
     description: >-
       Alerting channels (email, Gotify, ntfy, Discord webhook, generic
@@ -2266,6 +2265,81 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /users/{username}/tokens:
+    parameters:
+      - $ref: '#/components/parameters/Username'
+    post:
+      operationId: createApiToken
+      summary: Create a personal API token
+      description: >-
+        A personal API token (Q43), scoped to admin or viewer, for
+        scripting and the remote CLI over TCP. The raw token is returned
+        only here, once — only its SHA-256 is ever stored afterward,
+        mirroring how a session cookie is handled (doc 01 §7). Refused
+        for a share-only account (share-only has no API access at all,
+        Q27), and refused when role exceeds the account's own role: a
+        token can narrow an account's access (an admin can hand out a
+        viewer-scoped token to reduce a script's own blast radius), never
+        widen it.
+      tags: [users]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiTokenRequest'
+      responses:
+        "201":
+          description: The new token, with its raw value shown once.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiTokenCreated'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api-tokens:
+    get:
+      operationId: listApiTokens
+      summary: List personal API tokens
+      description: Every account's tokens, most recently created first (doc 03 §7).
+      tags: [users]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Every personal API token.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokens]
+                properties:
+                  tokens:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApiTokenSummary'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api-tokens/{tokenId}:
+    parameters:
+      - $ref: '#/components/parameters/ApiTokenId'
+    delete:
+      operationId: revokeApiToken
+      summary: Revoke a personal API token
+      description: >-
+        Ends this token immediately — the request it would have
+        authenticated next is refused the moment this returns, since
+        every request looks the token up fresh (no caching).
+      tags: [users]
+      x-hoserva-role: admin
+      responses:
+        "204":
+          description: Token revoked.
+        default:
+          $ref: '#/components/responses/Error'
+
   /users/{username}/reset-password:
     parameters:
       - $ref: '#/components/parameters/Username'
@@ -2381,6 +2455,14 @@ components:
 
     SessionId:
       name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
+    ApiTokenId:
+      name: tokenId
       in: path
       required: true
       schema:
@@ -4532,3 +4614,68 @@ components:
         expiresAt:
           type: string
           format: date-time
+
+    ApiTokenRole:
+      type: string
+      description: >-
+        Q43: a token's own scope, always admin or viewer — never
+        share-only, since a share-only account has no API access to
+        scope (Q27).
+      enum: [admin, viewer]
+
+    CreateApiTokenRequest:
+      type: object
+      required: [name, role]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: A caller-chosen label distinguishing this token from an account's others.
+        role:
+          $ref: '#/components/schemas/ApiTokenRole'
+
+    ApiTokenSummary:
+      type: object
+      required: [id, userId, username, name, role, createdAt]
+      properties:
+        id:
+          type: string
+          description: The token's own hash — never the raw token value.
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/ApiTokenRole'
+        createdAt:
+          type: string
+          format: date-time
+
+    ApiTokenCreated:
+      type: object
+      required: [id, userId, username, name, role, createdAt, token]
+      properties:
+        id:
+          type: string
+          description: The token's own hash — never the raw token value.
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/ApiTokenRole'
+        createdAt:
+          type: string
+          format: date-time
+        token:
+          type: string
+          description: >-
+            The raw bearer value — shown once, on creation, and never
+            retrievable again (doc 01 §7).
