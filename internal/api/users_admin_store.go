@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// beforeCommitTimeout bounds DeleteUser's beforeCommit hook (the Samba
+// account removal). The transaction's write lock is held for the hook's
+// whole duration (its rollback guarantee needs that ordering — see
+// DeleteUser below), so a hung smbpasswd process must not be able to hold
+// it indefinitely.
+const beforeCommitTimeout = 10 * time.Second
+
 // ListUsers returns every account, sorted by username. It reads the
 // users table directly (not through sqlc's generated single-row queries)
 // since this is the only caller that ever needs every row at once.
@@ -49,10 +56,8 @@ FROM users ORDER BY username`)
 }
 
 // UpdateUserRole sets userID's role. It refuses (ErrCannotModifyAdmin) an
-// admin-role target, and reports ErrUserNotFound for an unknown id — the
-// WHERE clause excludes admin rows so the two cases are told apart by one
-// extra lookup, not by a write that could otherwise silently demote the
-// sole admin.
+// admin-role target, and reports ErrUserNotFound for an unknown id. The
+// preceding lookup protects the sole admin from a role update.
 func (s *AuthStore) UpdateUserRole(ctx context.Context, userID, role string) error {
 	u, err := s.GetUserByID(ctx, userID)
 	if err != nil {
@@ -80,7 +85,8 @@ func (s *AuthStore) UpdateUserRole(ctx context.Context, userID, role string) err
 // removal: if it returns an error, the transaction is rolled back and no
 // row is removed at all, so a failed Samba delete never leaves a
 // half-deleted user — DB row gone, Samba account orphaned — or vice
-// versa.
+// versa. It runs under beforeCommitTimeout, since the write transaction
+// (and the SQLite write lock with it) stays open for its entire duration.
 func (s *AuthStore) DeleteUser(ctx context.Context, userID string, beforeCommit func(ctx context.Context, username string) error) error {
 	u, err := s.GetUserByID(ctx, userID)
 	if err != nil {
@@ -123,7 +129,10 @@ func (s *AuthStore) DeleteUser(ctx context.Context, userID string, beforeCommit 
 	}
 
 	if beforeCommit != nil {
-		if err := beforeCommit(ctx, u.Username); err != nil {
+		bcCtx, cancel := context.WithTimeout(ctx, beforeCommitTimeout)
+		err := beforeCommit(bcCtx, u.Username)
+		cancel()
+		if err != nil {
 			return err
 		}
 	}
