@@ -59,15 +59,16 @@ checks and is the maintainer's call.
 5. Gather the promotion's contents:
    - `git log --oneline origin/main..origin/beta` for the commit list.
    - `git log origin/main..origin/beta --format=%B` to pull every
-     `Fixes #n` trailer, then `gh issue view <n> --json title` for each to
-     get titles.
+     `Fixes #n` trailer, then `gh issue view <n> --json title,labels` for
+     each to get titles and check for `safety-critical`.
    - `git diff --stat origin/main...origin/beta` for files/areas touched.
    - Cross-check touched issues/paths against CLAUDE.md's area→paths table
      and its `safety-critical` label — call out any safety-critical content
      explicitly, never bury it.
-   - `gh run list --repo mdg-labs/hoserva --branch beta --limit 1 --json status,conclusion,workflowName`
-     for the latest CI result on `beta`. If it isn't green, say so plainly —
-     don't omit it to make the PR look ready.
+   - `gh run list --repo mdg-labs/hoserva --branch beta --workflow CI --commit $(git rev-parse origin/beta) --limit 1 --json status,conclusion,workflowName,headSha`
+     for the CI result on the exact commit being promoted. If none exists
+     for that SHA, or it isn't green, say so plainly — don't fall back to
+     an older or unrelated run to make the PR look ready.
 6. Draft:
    - **Title** (Conventional Commits shape): `chore(release): promote beta to main`,
      optionally with a parenthetical dominant-area note, e.g.
