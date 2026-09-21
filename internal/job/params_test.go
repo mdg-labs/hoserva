@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,15 @@ type recordingEngine struct {
 	lastScrubPct int
 	lastScrubAge int
 	lastFix      parity.FixOpts
+
+	// relocationManifest, relocationRemovingDisks and relocationErr script
+	// CurrentRelocationManifest — RunSync's own relocationManifestSource
+	// type-assertion always finds this method on recordingEngine, so every
+	// existing test above keeps its pre-#194 nil-manifest behaviour by
+	// simply never scripting it.
+	relocationManifest      []parity.ManifestEntry
+	relocationRemovingDisks map[string]bool
+	relocationErr           error
 }
 
 func newRecordingEngine() *recordingEngine {
@@ -64,6 +74,21 @@ func (r *recordingEngine) snapshot() (parity.SyncOpts, bool, int, parity.FixOpts
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.lastSync, r.wroteParity, r.lastScrubPct, r.lastFix
+}
+
+// ScriptRelocationManifest scripts CurrentRelocationManifest's next result.
+func (r *recordingEngine) ScriptRelocationManifest(manifest []parity.ManifestEntry, removingDisks map[string]bool, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.relocationManifest = manifest
+	r.relocationRemovingDisks = removingDisks
+	r.relocationErr = err
+}
+
+func (r *recordingEngine) CurrentRelocationManifest(ctx context.Context) ([]parity.ManifestEntry, map[string]bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.relocationManifest, r.relocationRemovingDisks, r.relocationErr
 }
 
 func intPtr(n int) *int { return &n }
@@ -329,6 +354,70 @@ func TestValidateParams_RejectsTrailingJSON(t *testing.T) {
 		if err := ValidateParams(TypeSync, params); err == nil {
 			t.Fatalf("ValidateParams(%q) = nil, want trailing-token rejection", params)
 		}
+	}
+}
+
+// TestRunSync_LoadsRelocationManifestAndRemovingDisksFromEngine confirms
+// RunSync's production wiring boundary (#194): when eng implements
+// relocationManifestSource, whatever it currently has persisted reaches
+// SyncOpts.Manifest/RemovingDisks — the exact fields the real
+// SnapraidEngine.Sync's own guard evaluation (Q15) reads.
+func TestRunSync_LoadsRelocationManifestAndRemovingDisksFromEngine(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	eng := newRecordingEngine()
+	manifest := []parity.ManifestEntry{{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"}}
+	removingDisks := map[string]bool{"/mnt/disk3": true}
+	eng.ScriptRelocationManifest(manifest, removingDisks, nil)
+	eng.ScriptSync([]parity.Progress{{Phase: "syncing", Percent: 100}}, nil)
+	s.registry.Register(TypeSync, false, RunSync(eng))
+
+	j, err := s.Submit(ctx, TypeSync, nil, mustJSON(t, SyncParams{}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+	lastSync, _, _, _ := eng.snapshot()
+	if len(lastSync.Manifest) != 1 || lastSync.Manifest[0].RelPath != "movies/a.mkv" {
+		t.Fatalf("SyncOpts.Manifest = %+v, want the engine's persisted manifest", lastSync.Manifest)
+	}
+	if !lastSync.RemovingDisks["/mnt/disk3"] {
+		t.Fatalf("SyncOpts.RemovingDisks = %+v, want /mnt/disk3", lastSync.RemovingDisks)
+	}
+}
+
+// TestRunSync_RelocationManifestLoadErrorFailsClosed is the data-loss
+// scenario this issue is safety-critical against: a transient failure
+// reading the persisted manifest must never fall back to silently syncing
+// with an incomplete picture of what the guard should account for —
+// RunSync must fail the job before ever calling eng.Sync at all, so
+// nothing writes parity on a guard evaluation this run could not actually
+// trust.
+func TestRunSync_RelocationManifestLoadErrorFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	eng := newRecordingEngine()
+	eng.ScriptRelocationManifest(nil, nil, errors.New("relocation manifest store: boom"))
+	eng.ScriptSync([]parity.Progress{{Phase: "syncing", Percent: 100}}, nil)
+	s.registry.Register(TypeSync, false, RunSync(eng))
+
+	j, err := s.Submit(ctx, TypeSync, nil, mustJSON(t, SyncParams{}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("status = %s, want failed", finished.Status)
+	}
+	if !strings.Contains(finished.ErrorMessage, "boom") {
+		t.Fatalf("ErrorMessage = %q, want it to surface the relocation manifest load failure", finished.ErrorMessage)
+	}
+	_, wrote, _, _ := eng.snapshot()
+	if wrote {
+		t.Fatal("sync proceeded even though the relocation manifest could not be loaded — parity would have been written with an unknown accounting state")
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -45,7 +46,12 @@ func newTestHandler(t *testing.T) (*api.Handler, *job.Scheduler, *job.Registry) 
 	registry := job.NewRegistry()
 	scheduler := job.NewScheduler(jobStore, logs, job.NewHub(), registry)
 
-	h := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs}
+	h := &api.Handler{
+		Scheduler:          scheduler,
+		Store:              jobStore,
+		Logs:               logs,
+		RelocationManifest: parity.NewRelocationManifestStore(db),
+	}
 	return h, scheduler, registry
 }
 

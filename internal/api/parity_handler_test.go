@@ -153,6 +153,83 @@ func TestHandler_RunParityDiff_CachesGuardAnnotatedDiff(t *testing.T) {
 	}
 }
 
+// TestHandler_RunParityDiff_AccountsForPersistedRelocationManifest is
+// Q15's own worked example at the API preview boundary (#194): a
+// relocation manifest persisted through Handler.RelocationManifest before
+// run-diff is called must be matched against the fresh diff exactly like
+// a production sync would — the removal it accounts for is excluded from
+// RemovedCount and shown under moved-by-Hoserva, and the guard does not
+// block on that accounted removal alone.
+func TestHandler_RunParityDiff_AccountsForPersistedRelocationManifest(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+	if err := h.RelocationManifest.Replace(ctx, []parity.ManifestEntry{
+		{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"},
+	}, nil); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+
+	rec := parity.NewFakeEngine()
+	rec.SetDiff(parity.DiffReport{
+		Removed: 2,
+		RemovedFiles: []parity.DiffFile{
+			{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"},
+			{Disk: "/mnt/disk2", RelPath: "tv/b.mkv"},
+		},
+		AddedFiles: []parity.DiffFile{
+			{Disk: "/mnt/disk2", RelPath: "movies/a.mkv"},
+		},
+	})
+	h.Parity = rec
+
+	got, err := h.RunParityDiff(ctx)
+	if err != nil {
+		t.Fatalf("RunParityDiff: %v", err)
+	}
+	if got.Groups[0].Count != 1 {
+		t.Fatalf("removed count = %d, want 1 (movies/a.mkv accounted for by the manifest)", got.Groups[0].Count)
+	}
+	if got.Groups[5].Category != apiv1.ParityDiffCategoryMovedByHoserva || got.Groups[5].Count != 1 {
+		t.Fatalf("moved-by-hoserva = %+v, want count 1", got.Groups[5])
+	}
+	if got.Guard.WouldBlock {
+		t.Fatalf("guard = %+v, want not blocked — the only removal is accounted for", got.Guard)
+	}
+}
+
+// TestHandler_RunParityDiff_RemovingDiskExemptFromZeroFilesTrigger is
+// doc 09 §4's evacuation exemption (Q15) at the same preview boundary: a
+// disk persisted in RelocationManifest's removing-disks set must not trip
+// the zero-files trigger, while an otherwise-identical disk that is not
+// in that set still does.
+func TestHandler_RunParityDiff_RemovingDiskExemptFromZeroFilesTrigger(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+	if err := h.RelocationManifest.Replace(ctx, nil, map[string]bool{"/mnt/disk1": true}); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+
+	rec := parity.NewFakeEngine()
+	rec.SetDiff(parity.DiffReport{
+		PerDisk: map[string]parity.DiskDiff{
+			"/mnt/disk1": {FilesBefore: 10, FilesAfter: 0},
+			"/mnt/disk2": {FilesBefore: 10, FilesAfter: 0},
+		},
+	})
+	h.Parity = rec
+
+	got, err := h.RunParityDiff(ctx)
+	if err != nil {
+		t.Fatalf("RunParityDiff: %v", err)
+	}
+	if !got.Guard.WouldBlock {
+		t.Fatal("guard.wouldBlock = false, want true — disk2 emptied and is not in the removing set")
+	}
+	if len(got.Guard.ZeroFilesDisks) != 1 || got.Guard.ZeroFilesDisks[0].Disk != "/mnt/disk2" {
+		t.Fatalf("zeroFilesDisks = %+v, want only /mnt/disk2 — /mnt/disk1 is exempt (removing)", got.Guard.ZeroFilesDisks)
+	}
+}
+
 func TestHandler_RunParityDiff_TrippedGuardWithoutSync(t *testing.T) {
 	ctx := context.Background()
 	h, _, _ := newTestHandler(t)

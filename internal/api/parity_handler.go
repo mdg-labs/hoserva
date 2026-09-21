@@ -57,7 +57,15 @@ func (h *Handler) RunParityDiff(ctx context.Context) (*apiv1.ParityDiffResult, e
 	if err != nil {
 		return nil, fmt.Errorf("parity diff: %w", err)
 	}
-	guard := h.ParityGuard.Evaluate(diff, nil, nil)
+	var manifest []parity.ManifestEntry
+	var removingDisks map[string]bool
+	if h.RelocationManifest != nil {
+		manifest, removingDisks, err = h.RelocationManifest.Current(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("parity diff: loading relocation manifest: %w", err)
+		}
+	}
+	guard := h.ParityGuard.Evaluate(diff, manifest, removingDisks)
 	annotated := guard.Diff
 	store := h.parityStore()
 	store.mu.Lock()

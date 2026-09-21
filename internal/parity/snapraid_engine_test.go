@@ -528,3 +528,44 @@ func TestSnapraidEngine_Sync_AccountedRemovalsAllowSync(t *testing.T) {
 		t.Fatalf("got %d snapraid calls, want 3: %v", len(r.calls), r.calls)
 	}
 }
+
+// TestSnapraidEngine_CurrentRelocationManifest_UnwiredReturnsNil confirms
+// a SnapraidEngine with no Relocation store (the zero value, exactly what
+// every engine built before #194 has) reports no manifest — RunSync's own
+// type-assertion still finds the method, and it must report "nothing to
+// load" rather than panic on a nil Relocation.
+func TestSnapraidEngine_CurrentRelocationManifest_UnwiredReturnsNil(t *testing.T) {
+	e := &SnapraidEngine{}
+	manifest, removingDisks, err := e.CurrentRelocationManifest(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentRelocationManifest: %v", err)
+	}
+	if manifest != nil || removingDisks != nil {
+		t.Fatalf("CurrentRelocationManifest = (%v, %v), want (nil, nil) with no Relocation store wired", manifest, removingDisks)
+	}
+}
+
+// TestSnapraidEngine_CurrentRelocationManifest_ReadsWiredStore confirms
+// CurrentRelocationManifest is a straight passthrough to Relocation.Current
+// once a store is wired — the shape RunSync's own relocationManifestSource
+// type-assertion depends on.
+func TestSnapraidEngine_CurrentRelocationManifest_ReadsWiredStore(t *testing.T) {
+	ctx := context.Background()
+	relocationStore := NewRelocationManifestStore(newTestDB(t))
+	entries := []ManifestEntry{{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"}}
+	if err := relocationStore.Replace(ctx, entries, map[string]bool{"/mnt/disk3": true}); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+
+	e := &SnapraidEngine{Relocation: relocationStore}
+	manifest, removingDisks, err := e.CurrentRelocationManifest(ctx)
+	if err != nil {
+		t.Fatalf("CurrentRelocationManifest: %v", err)
+	}
+	if len(manifest) != 1 || manifest[0].RelPath != "movies/a.mkv" {
+		t.Fatalf("manifest = %+v, want the persisted entry", manifest)
+	}
+	if !removingDisks["/mnt/disk3"] {
+		t.Fatalf("removingDisks = %+v, want /mnt/disk3", removingDisks)
+	}
+}
