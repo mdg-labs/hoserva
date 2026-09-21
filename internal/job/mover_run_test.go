@@ -1,9 +1,12 @@
 package job
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +94,55 @@ func TestRunMover_SharesErrorFailsTheJob(t *testing.T) {
 	}
 	if finished.Status != StatusFailed {
 		t.Fatalf("job status = %s, want %s", finished.Status, StatusFailed)
+	}
+}
+
+// TestRunMover_LogsPartialReportOnError proves a mid-run error —
+// SaveCheckpoint failing after at least one file has already been
+// decided — still logs cache.Run's partial report (doc 09 §2's "honest
+// reporting") instead of silently discarding it: RunMover used to return
+// the bare error and never call report.Summary() at all.
+func TestRunMover_LogsPartialReportOnError(t *testing.T) {
+	share := newTestMoverShare(t)
+	// A second file so the checkpoint failure below can interrupt the
+	// run after the first file was already decided, not only right at
+	// the very start.
+	second := filepath.Join(share.CachePath, "second.mkv")
+	if err := os.WriteFile(second, []byte("second bytes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(second, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	fn := RunMover(MoverDeps{
+		Shares: func(ctx context.Context) ([]cache.Share, error) {
+			return []cache.Share{share}, nil
+		},
+	})
+
+	var out bytes.Buffer
+	boom := errors.New("boom")
+	rc := &RunContext{
+		ctx:            context.Background(),
+		out:            &out,
+		stopRequested:  make(chan struct{}),
+		saveCheckpoint: func(data []byte) error { return boom },
+		setProgress:    func(int) {},
+	}
+
+	err := fn(context.Background(), rc)
+	if !errors.Is(err, boom) {
+		t.Fatalf("RunMover error = %v, want it to wrap %v", err, boom)
+	}
+	// "duration" only ever appears in Report.Summary()'s own line — the
+	// per-file hooks.logf lines never contain it — so this specifically
+	// proves Summary() was logged, not merely that some per-file line
+	// was (which the pre-fix code also produced, since that logging
+	// happens inside cache.Run itself, before the checkpoint error).
+	if !strings.Contains(out.String(), "duration") {
+		t.Fatalf("job output = %q, want the partial report's Summary() logged despite the error", out.String())
 	}
 }
 

@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -616,6 +617,35 @@ func TestRun_ChecksumVerification(t *testing.T) {
 	}
 	if len(report.Moved()) != 1 {
 		t.Fatalf("expected the file to move, got %+v", report.Entries)
+	}
+}
+
+// TestRun_FinalizesReportOnCheckpointError proves Run leaves FinishedAt
+// set even on a post-start error return — here SaveCheckpoint failing
+// after the first file is already decided. RunMover logs report.Summary()
+// on the error path too (doc 09 §2's "honest reporting"), and Summary's
+// duration is FinishedAt.Sub(StartedAt) — meaningless, and wildly
+// negative, against a zero FinishedAt.
+func TestRun_FinalizesReportOnCheckpointError(t *testing.T) {
+	s := newShare(t, "media")
+	mustWrite(t, filepath.Join(s.CachePath, "a.bin"), "aaa")
+	mustWrite(t, filepath.Join(s.CachePath, "b.bin"), "bbb")
+
+	boom := errors.New("boom")
+	hooks := RunHooks{SaveCheckpoint: func(data []byte) error { return boom }}
+
+	report, err := Run(context.Background(), []Share{s}, Config{}, testDeps(NewFakeOpenChecker()), hooks, nil)
+	if !errors.Is(err, boom) {
+		t.Fatalf("Run error = %v, want it to wrap %v", err, boom)
+	}
+	if len(report.Entries) != 1 {
+		t.Fatalf("expected the first file to have been decided before the checkpoint error, got %+v", report.Entries)
+	}
+	if report.FinishedAt.IsZero() {
+		t.Fatal("FinishedAt is zero on an error return — Summary()'s duration would be meaningless")
+	}
+	if report.FinishedAt.Before(report.StartedAt) {
+		t.Fatalf("FinishedAt %v is before StartedAt %v", report.FinishedAt, report.StartedAt)
 	}
 }
 

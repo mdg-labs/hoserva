@@ -37,10 +37,12 @@ func RunMover(d MoverDeps) RunFunc {
 			},
 		}
 		report, err := cache.Run(ctx, shares, d.Config, cache.Deps{}, hooks, rc.InitialCheckpoint())
+		if !report.StartedAt.IsZero() {
+			_, _ = fmt.Fprintln(rc.Output(), report.Summary())
+		}
 		if err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintln(rc.Output(), report.Summary())
 		return nil
 	}
 }

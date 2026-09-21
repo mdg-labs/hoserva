@@ -161,7 +161,7 @@ func (h RunHooks) stopRequested() bool {
 // whatever was decided about a file before the stop is real and already
 // checkpointed, matching "the scheduler marks the job interrupted once
 // RunFunc returns, whatever it returns".
-func Run(ctx context.Context, shares []Share, cfg Config, deps Deps, hooks RunHooks, initialCheckpoint []byte) (Report, error) {
+func Run(ctx context.Context, shares []Share, cfg Config, deps Deps, hooks RunHooks, initialCheckpoint []byte) (report Report, err error) {
 	deps = deps.withDefaults()
 	grace := cfg.GracePeriod
 	if grace <= 0 {
@@ -175,7 +175,16 @@ func Run(ctx context.Context, shares []Share, cfg Config, deps Deps, hooks RunHo
 		}
 	}
 
-	report := Report{StartedAt: deps.Now()}
+	report = Report{StartedAt: deps.Now()}
+	// Every post-start return — including every early error return below
+	// — must leave FinishedAt set: RunMover logs report.Summary() on an
+	// error too (doc 09 §2's "honest reporting"), and Summary's duration
+	// is FinishedAt.Sub(StartedAt), meaningless against a zero time.
+	defer func() {
+		if report.FinishedAt.IsZero() {
+			report.FinishedAt = deps.Now()
+		}
+	}()
 
 	plan := make([][]string, len(shares))
 	total := 0
