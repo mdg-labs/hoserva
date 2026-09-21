@@ -25,7 +25,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | Gate | Questions |
 |---|---|
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
-| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84, Q85 |
+| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84, Q85, Q86 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
 | **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
@@ -698,3 +698,10 @@ A home server that phones home by default undermines the trust an open project d
 **Status:** External · **Gate:** before public 1.0 announcement · **Affects:** doc 00 §6
 
 **Default: search EUIPO/TMview and secure `.io`/`.com` if cheap, before the 1.0 announcement rather than before development.** The name is settled; the check exists so the announcement doesn't have to be reversed.
+
+### Q86 — mergerfs never accepts `RENAME_NOREPLACE` through its FUSE mount
+**Status:** Default · **Gate:** Before Phase 1 · **Affects:** doc 09 §2, `internal/cache/rename_linux.go`
+
+**Confirmed (#243): not a lab-only gap, and not a version or mount-option gap — a genuine, permanent FUSE limitation.** mergerfs's FUSE-facing rename handler (`FUSE::rename`, `src/fuse_rename.cpp` upstream) takes no flags parameter at all; checked against mergerfs's current upstream `master` source, not just the lab's Debian 13 2.40.2 package (Q7), so a version bump changes nothing, and `mergerfs -h`'s full mount-option list has no rename-flags/rename2 option to enable. Reproduced directly in the lab with a `renameat2(..., RENAME_NOREPLACE)` probe: the same call succeeds against a branch's own XFS filesystem but fails against the mergerfs union mount above it. The failure mode is more specific than "always EINVAL", and this matters for anyone else touching this path: the kernel's own dentry-existence check still catches an *existing* target and returns `EEXIST` without ever asking mergerfs (a generic VFS-level check, independent of the filesystem's flag support) — so **conflict detection through mergerfs already worked correctly before this issue**. Only the non-conflicting case fails: once the kernel confirms no target exists, completing the rename itself needs flag support mergerfs's FUSE handler doesn't have, and the syscall fails outright with `EINVAL`, leaving both paths untouched (no partial rename, no data loss — a clean failure of what should have been a successful move). That is what the three named lab tests were hitting, since a mover run practically always has more non-conflicting moves than conflicting ones.
+
+`renameNoReplace` (`internal/cache/rename_linux.go`) now falls back, on `EINVAL`, to `link(2)`-then-`unlink(2)`: `link(2)` is itself an atomic create-if-absent primitive, so it fails closed into `ResultConflict` for a target that exists (`renameNoReplaceFallback`, unit-tested directly) without ever opening the TOCTOU window a separate `Lstat`-then-`rename(2)` would — `oldpath` is only removed once `link(2)` has already claimed `newpath`. This is the same pattern Q28 already documents for a synced temp file published atomically without a replace-capable rename. copyMoveFile's tmp file and its destination are always same-directory siblings, so this `EINVAL` can only mean "the destination filesystem can't carry the flag through" here, never rename(2)'s unrelated "directory into its own subdirectory" `EINVAL` case — the fallback is safe to take unconditionally on `EINVAL` at this call site. Anyone adding a new call through a mergerfs mount that needs an atomic no-replace rename hits the same gap and needs the same fallback, not a different one.
