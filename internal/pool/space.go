@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -121,6 +122,9 @@ func ParseMinFreeSpace(s string) (int64, error) {
 	if n < 0 {
 		return 0, fmt.Errorf("pool: minfreespace %q must not be negative", s)
 	}
+	if n > math.MaxInt64/unit {
+		return 0, fmt.Errorf("pool: minfreespace %q is too large", s)
+	}
 	return n * unit, nil
 }
 
@@ -145,14 +149,29 @@ type RebalanceSuggestion struct {
 // than failing outright, so this is a proactive nudge toward rebalancing
 // the constrained disk, not a claim that the next write will fail.
 func DetectRebalanceSuggestion(policy CreatePolicy, space PoolSpace) (RebalanceSuggestion, bool) {
-	if policy != KeepFoldersTogether {
+	if policy != KeepFoldersTogether || space.LargestDiskFreeBytes <= 0 {
+		return RebalanceSuggestion{}, false
+	}
+	// LargestDiskFreeBytes > 0 alone does not prove LargestDiskPath can
+	// actually accept placement: it is picked by free-byte count, so if
+	// that disk is itself at or below minfreespace, every disk is — a
+	// pool-wide shortage, not this policy's sharp edge, and there is
+	// nowhere to suggest rebalancing toward.
+	var largestHasRoom bool
+	for _, d := range space.Disks {
+		if d.Path == space.LargestDiskPath {
+			largestHasRoom = !d.NearMinFreeSpace
+			break
+		}
+	}
+	if !largestHasRoom {
 		return RebalanceSuggestion{}, false
 	}
 	for _, d := range space.Disks {
 		if !d.NearMinFreeSpace {
 			continue
 		}
-		if space.LargestDiskFreeBytes > 0 && d.Path != space.LargestDiskPath {
+		if d.Path != space.LargestDiskPath {
 			return RebalanceSuggestion{
 				ConstrainedDiskPath: d.Path,
 				Reason: fmt.Sprintf(

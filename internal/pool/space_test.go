@@ -53,6 +53,21 @@ func TestParseMinFreeSpace_Invalid(t *testing.T) {
 	}
 }
 
+// TestParseMinFreeSpace_RejectsInt64Overflow proves a value whose
+// numeric part times its unit would wrap the int64 result is rejected
+// rather than silently turned into a negative threshold: "8388608T" is
+// exactly 8388608*(1<<40), one past math.MaxInt64, and a negative
+// minFreeBytes would make ComputePoolSpace treat every disk as having
+// room, however little is actually free.
+func TestParseMinFreeSpace_RejectsInt64Overflow(t *testing.T) {
+	for _, in := range []string{"8388608T", "9223372036854775807T"} {
+		got, err := ParseMinFreeSpace(in)
+		if err == nil {
+			t.Fatalf("ParseMinFreeSpace(%q) = %d, want an overflow error", in, got)
+		}
+	}
+}
+
 func TestComputePoolSpace_PoolFreeAndLargestDisk(t *testing.T) {
 	ctx := context.Background()
 	statter := fakeSpaceStatter{stats: map[string]SpaceStat{
@@ -159,6 +174,25 @@ func TestDetectRebalanceSuggestion_NoneForBalanceAcrossDisks(t *testing.T) {
 	// already-full disk — does not apply to it.
 	if _, ok := DetectRebalanceSuggestion(BalanceAcrossDisks, space); ok {
 		t.Fatal("DetectRebalanceSuggestion: want no suggestion for a non-path-preserving policy")
+	}
+}
+
+// TestDetectRebalanceSuggestion_NoneWhenEveryDiskIsConstrained proves
+// picking LargestDiskPath by free-byte count alone isn't enough: when
+// the largest disk is itself at or below minfreespace, every disk is —
+// a pool-wide shortage with nowhere to rebalance toward, not the
+// path-preserving-policy sharp edge this detects.
+func TestDetectRebalanceSuggestion_NoneWhenEveryDiskIsConstrained(t *testing.T) {
+	space := PoolSpace{
+		Disks: []DiskSpace{
+			{Path: "/mnt/disk1", FreeBytes: 1 * (1 << 30), NearMinFreeSpace: true},
+			{Path: "/mnt/disk2", FreeBytes: 2 * (1 << 30), NearMinFreeSpace: true},
+		},
+		LargestDiskPath:      "/mnt/disk2",
+		LargestDiskFreeBytes: 2 * (1 << 30),
+	}
+	if _, ok := DetectRebalanceSuggestion(KeepFoldersTogether, space); ok {
+		t.Fatal("DetectRebalanceSuggestion: want no suggestion when the largest disk is itself constrained")
 	}
 }
 
