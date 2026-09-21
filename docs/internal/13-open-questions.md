@@ -25,7 +25,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | Gate | Questions |
 |---|---|
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
-| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84 |
+| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84, Q85 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
 | **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
@@ -454,6 +454,13 @@ mergerfs has no quota across branches, and per-disk XFS project quotas can't exp
 
 **Default: no iSCSI target in v1, and not a planned post-1.0 feature either — revisit only if real demand shows up.**
 A recurring complaint about Unraid is the lack of iSCSI without a plugin, most often for a datastore backing a separate hypervisor host. Hoserva's own VM manager (doc 14) already covers that case with local qcow2 vdisks, so there is no gap to fill for Hoserva users specifically. Running an iSCSI target (LIO/`targetcli`) is its own security surface — raw block devices exposed over the network — and its own orchestration surface, for a narrow slice of the target user (doc 00 §3). Chasing feature parity with general-purpose NAS platforms before the core is solid is a named failure mode (doc 07 §4); this is exactly that temptation, stated and declined rather than left open by omission. If it does get built later, it is scoped the way containers were (D6): a handful of guided cases, not a general SAN feature set.
+
+---
+
+### Q85 — Periodic statfs(2) polling and spindown safety
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 09 §5, `CLAUDE.md`
+
+**Default: a per-disk `statfs(2)` call on the existing minute schedule-tick cadence does not violate "nothing on a timer walks a data disk."** `statfs(2)` reads a mounted filesystem's own cached VFS/superblock free-space counters — the same call `df` issues — never a directory walk or a data read, so it needs no I/O to a spun-down disk's platters to answer. Doc 09 §5 already treats how often this is recomputed as a caching tunable (`cache.statfs`) rather than a spindown hazard, and `internal/pool.ComputePoolSpace` already read every data disk this way for `GetPool`'s on-demand path (#57) before the periodic disk-near-minfreespace/rebalance-suggested check (#237) added a second, ticking caller. This is confirmed from `statfs(2)`'s own semantics and doc 09 §5's existing framing, not from an instrumented lab measurement — doc 08's existing spike runs did not specifically instrument `statfs` wake behaviour, so a follow-up measurement stays open if that assumption ever needs harder evidence.
 
 ---
 

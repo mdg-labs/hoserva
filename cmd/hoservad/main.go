@@ -330,6 +330,11 @@ func run(cfg config) error {
 		Array:     arrayStore,
 		Statter:   pool.StatfsSpaceStatter{},
 	}, moverThresholdInterval)
+	go runSpaceAlertLoop(ctx, &spaceAlertRunner{
+		Array:    arrayStore,
+		Statter:  pool.StatfsSpaceStatter{},
+		Notifier: notifyService,
+	}, spaceAlertInterval)
 	go runScheduleLoop(ctx, &scheduleRunner{
 		Schedules: scheduleService,
 		Scheduler: scheduler,
