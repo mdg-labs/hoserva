@@ -20,7 +20,7 @@ var (
 	rn101AllowedHeaders = map[string]string{
 		"POST": "Authorization",
 	}
-	rn108AllowedHeaders = map[string]string{
+	rn110AllowedHeaders = map[string]string{
 		"POST": "Authorization,Content-Type",
 	}
 	rn78AllowedHeaders = map[string]string{
@@ -93,6 +93,9 @@ var (
 	rn53AllowedHeaders = map[string]string{
 		"GET": "Authorization",
 	}
+	rn105AllowedHeaders = map[string]string{
+		"POST": "Authorization",
+	}
 	rn74AllowedHeaders = map[string]string{
 		"GET": "Authorization",
 	}
@@ -118,7 +121,7 @@ var (
 	rn55AllowedHeaders = map[string]string{
 		"GET": "Authorization",
 	}
-	rn112AllowedHeaders = map[string]string{
+	rn114AllowedHeaders = map[string]string{
 		"PUT": "Authorization,Content-Type",
 	}
 	rn56AllowedHeaders = map[string]string{
@@ -130,10 +133,10 @@ var (
 	rn103AllowedHeaders = map[string]string{
 		"POST": "Authorization,Content-Type",
 	}
-	rn104AllowedHeaders = map[string]string{
+	rn106AllowedHeaders = map[string]string{
 		"POST": "Authorization,Content-Type",
 	}
-	rn106AllowedHeaders = map[string]string{
+	rn108AllowedHeaders = map[string]string{
 		"POST": "Authorization,Content-Type",
 	}
 	rn58AllowedHeaders = map[string]string{
@@ -166,10 +169,10 @@ var (
 	rn60AllowedHeaders = map[string]string{
 		"GET": "Authorization",
 	}
-	rn110AllowedHeaders = map[string]string{
+	rn112AllowedHeaders = map[string]string{
 		"PUT": "Authorization,Content-Type",
 	}
-	rn115AllowedHeaders = map[string]string{
+	rn117AllowedHeaders = map[string]string{
 		"PUT": "Authorization,Content-Type",
 	}
 	rn65AllowedHeaders = map[string]string{
@@ -248,7 +251,7 @@ var (
 	rn21AllowedHeaders = map[string]string{
 		"POST": "Authorization,Content-Type",
 	}
-	rn109AllowedHeaders = map[string]string{
+	rn111AllowedHeaders = map[string]string{
 		"POST": "Authorization",
 	}
 )
@@ -431,7 +434,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							default:
 								s.notAllowed(w, r, notAllowedParams{
 									allowedMethods: "POST",
-									allowedHeaders: rn108AllowedHeaders,
+									allowedHeaders: rn110AllowedHeaders,
 									acceptPost:     "application/json",
 									acceptPatch:    "",
 								})
@@ -1148,29 +1151,68 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 				}
 
-			case 'm': // Prefix: "metrics"
+			case 'm': // Prefix: "m"
 
-				if l := len("metrics"); len(elem) >= l && elem[0:l] == "metrics" {
+				if l := len("m"); len(elem) >= l && elem[0:l] == "m" {
 					elem = elem[l:]
 				} else {
 					break
 				}
 
 				if len(elem) == 0 {
-					// Leaf node.
-					switch r.Method {
-					case "GET":
-						s.handleGetMetricsRequest([0]string{}, elemIsEscaped, w, r)
-					default:
-						s.notAllowed(w, r, notAllowedParams{
-							allowedMethods: "GET",
-							allowedHeaders: rn53AllowedHeaders,
-							acceptPost:     "",
-							acceptPatch:    "",
-						})
+					break
+				}
+				switch elem[0] {
+				case 'e': // Prefix: "etrics"
+
+					if l := len("etrics"); len(elem) >= l && elem[0:l] == "etrics" {
+						elem = elem[l:]
+					} else {
+						break
 					}
 
-					return
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "GET":
+							s.handleGetMetricsRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "GET",
+								allowedHeaders: rn53AllowedHeaders,
+								acceptPost:     "",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
+				case 'o': // Prefix: "over/run"
+
+					if l := len("over/run"); len(elem) >= l && elem[0:l] == "over/run" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch r.Method {
+						case "POST":
+							s.handleStartMoverRequest([0]string{}, elemIsEscaped, w, r)
+						default:
+							s.notAllowed(w, r, notAllowedParams{
+								allowedMethods: "POST",
+								allowedHeaders: rn105AllowedHeaders,
+								acceptPost:     "",
+								acceptPatch:    "",
+							})
+						}
+
+						return
+					}
+
 				}
 
 			case 'n': // Prefix: "notifications"
@@ -1424,7 +1466,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 									default:
 										s.notAllowed(w, r, notAllowedParams{
 											allowedMethods: "PUT",
-											allowedHeaders: rn112AllowedHeaders,
+											allowedHeaders: rn114AllowedHeaders,
 											acceptPost:     "",
 											acceptPatch:    "",
 										})
@@ -1567,7 +1609,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 									default:
 										s.notAllowed(w, r, notAllowedParams{
 											allowedMethods: "POST",
-											allowedHeaders: rn104AllowedHeaders,
+											allowedHeaders: rn106AllowedHeaders,
 											acceptPost:     "application/json",
 											acceptPatch:    "",
 										})
@@ -1592,7 +1634,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 									default:
 										s.notAllowed(w, r, notAllowedParams{
 											allowedMethods: "POST",
-											allowedHeaders: rn106AllowedHeaders,
+											allowedHeaders: rn108AllowedHeaders,
 											acceptPost:     "application/json",
 											acceptPatch:    "",
 										})
@@ -1956,7 +1998,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 											default:
 												s.notAllowed(w, r, notAllowedParams{
 													allowedMethods: "PUT",
-													allowedHeaders: rn110AllowedHeaders,
+													allowedHeaders: rn112AllowedHeaders,
 													acceptPost:     "",
 													acceptPatch:    "",
 												})
@@ -1992,7 +2034,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 											default:
 												s.notAllowed(w, r, notAllowedParams{
 													allowedMethods: "PUT",
-													allowedHeaders: rn115AllowedHeaders,
+													allowedHeaders: rn117AllowedHeaders,
 													acceptPost:     "",
 													acceptPatch:    "",
 												})
@@ -2786,7 +2828,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 									default:
 										s.notAllowed(w, r, notAllowedParams{
 											allowedMethods: "POST",
-											allowedHeaders: rn109AllowedHeaders,
+											allowedHeaders: rn111AllowedHeaders,
 											acceptPost:     "",
 											acceptPatch:    "",
 										})
@@ -3736,29 +3778,68 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 
 				}
 
-			case 'm': // Prefix: "metrics"
+			case 'm': // Prefix: "m"
 
-				if l := len("metrics"); len(elem) >= l && elem[0:l] == "metrics" {
+				if l := len("m"); len(elem) >= l && elem[0:l] == "m" {
 					elem = elem[l:]
 				} else {
 					break
 				}
 
 				if len(elem) == 0 {
-					// Leaf node.
-					switch method {
-					case "GET":
-						r.name = GetMetricsOperation
-						r.summary = "Metric time series"
-						r.operationID = "getMetrics"
-						r.operationGroup = ""
-						r.pathPattern = "/metrics"
-						r.args = args
-						r.count = 0
-						return r, true
-					default:
-						return
+					break
+				}
+				switch elem[0] {
+				case 'e': // Prefix: "etrics"
+
+					if l := len("etrics"); len(elem) >= l && elem[0:l] == "etrics" {
+						elem = elem[l:]
+					} else {
+						break
 					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "GET":
+							r.name = GetMetricsOperation
+							r.summary = "Metric time series"
+							r.operationID = "getMetrics"
+							r.operationGroup = ""
+							r.pathPattern = "/metrics"
+							r.args = args
+							r.count = 0
+							return r, true
+						default:
+							return
+						}
+					}
+
+				case 'o': // Prefix: "over/run"
+
+					if l := len("over/run"); len(elem) >= l && elem[0:l] == "over/run" {
+						elem = elem[l:]
+					} else {
+						break
+					}
+
+					if len(elem) == 0 {
+						// Leaf node.
+						switch method {
+						case "POST":
+							r.name = StartMoverOperation
+							r.summary = "Start a manual mover run"
+							r.operationID = "startMover"
+							r.operationGroup = ""
+							r.pathPattern = "/mover/run"
+							r.args = args
+							r.count = 0
+							return r, true
+						default:
+							return
+						}
+					}
+
 				}
 
 			case 'n': // Prefix: "notifications"

@@ -180,6 +180,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.SetUserPasswordOperation,
 		apiv1.StartArrayOperation,
 		apiv1.StartFixOperation,
+		apiv1.StartMoverOperation,
 		apiv1.StartScrubOperation,
 		apiv1.StartSyncOperation,
 		apiv1.StopArrayOperation,

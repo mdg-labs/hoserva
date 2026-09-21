@@ -30,6 +30,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
+	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
 	"github.com/mdg-labs/hoserva/web"
@@ -323,6 +324,12 @@ func run(cfg config) error {
 	pruneOnce(ctx, jobStore, logs, authStore, history)
 	go runDailyPrune(ctx, jobStore, logs, authStore, history)
 	go runNotifyDeliveryLoop(ctx, notifyService, notifyDeliveryInterval, notifyDeliveryBatchLimit)
+	go runMoverThresholdLoop(ctx, &moverThresholdRunner{
+		Scheduler: scheduler,
+		Jobs:      jobStore,
+		Array:     arrayStore,
+		Statter:   pool.StatfsSpaceStatter{},
+	}, moverThresholdInterval)
 	go runScheduleLoop(ctx, &scheduleRunner{
 		Schedules: scheduleService,
 		Scheduler: scheduler,

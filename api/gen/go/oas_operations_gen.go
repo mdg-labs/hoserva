@@ -83,6 +83,7 @@ const (
 	SetUserPasswordOperation                OperationName = "SetUserPassword"
 	StartArrayOperation                     OperationName = "StartArray"
 	StartFixOperation                       OperationName = "StartFix"
+	StartMoverOperation                     OperationName = "StartMover"
 	StartScrubOperation                     OperationName = "StartScrub"
 	StartSyncOperation                      OperationName = "StartSync"
 	StopArrayOperation                      OperationName = "StopArray"

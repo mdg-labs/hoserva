@@ -261,6 +261,21 @@ func (h *Handler) StartFix(ctx context.Context, req *apiv1.StartFixRequest) (*ap
 	return jobToAPI(j)
 }
 
+// StartMover is `hoserva mover run`'s manual trigger (doc 09 §2) — it
+// submits the same TypeMover job the threshold poll and the nightly chain
+// do (job.RunMover, registered once in cmd/hoservad), so there is no
+// second mover-invocation path.
+func (h *Handler) StartMover(ctx context.Context) (*apiv1.Job, error) {
+	if h.Scheduler == nil {
+		return nil, fmt.Errorf("job scheduler not configured")
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeMover, nil, nil)
+	if err != nil {
+		return nil, mapSchedulerError(uuid.Nil, err)
+	}
+	return jobToAPI(j)
+}
+
 func (h *Handler) ExportConfig(ctx context.Context) (apiv1.ExportConfigOK, error) {
 	if h.Backup == nil {
 		return apiv1.ExportConfigOK{}, &apiError{code: "not_configured", statusCode: 501, message: "config export is not configured on this daemon"}

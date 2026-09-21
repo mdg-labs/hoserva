@@ -300,6 +300,27 @@ func (h *handler) StartFix(ctx context.Context, req *apiv1.StartFixRequest) (*ap
 	return h.submitParityJob(apiv1.JobTypeFix, true)
 }
 
+// StartMover is `hoserva mover run`'s manual trigger (doc 09 §2) — the
+// same TypeMover job the threshold poll and the nightly chain submit in
+// the real daemon; this mock has no scheduler of its own, so it just
+// records the queued job like submitParityJob does for sync/scrub/fix.
+func (h *handler) StartMover(ctx context.Context) (*apiv1.Job, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := time.Now().UTC()
+	job := apiv1.Job{
+		ID:          uuid.New(),
+		Type:        apiv1.JobTypeMover,
+		Class:       apiv1.JobClassArrayWrite,
+		Status:      apiv1.JobStatusQueued,
+		Resumable:   true,
+		Cancellable: true,
+		CreatedAt:   now,
+	}
+	h.jobs[job.ID] = job
+	return &job, nil
+}
+
 func (h *handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest) (*apiv1.Job, error) {
 	plan, err := mockTopologyPlan(req)
 	if err != nil {

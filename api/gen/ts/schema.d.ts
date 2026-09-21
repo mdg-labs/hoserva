@@ -1233,6 +1233,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mover/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a manual mover run
+         * @description Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job the threshold poll and the nightly chain submit; there is no second mover-invocation path.
+         */
+        post: operations["startMover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/config/export": {
         parameters: {
             query?: never;
@@ -4445,6 +4465,27 @@ export interface operations {
         };
         responses: {
             /** @description The queued or running fix job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startMover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued or running mover job. */
             200: {
                 headers: {
                     [name: string]: unknown;

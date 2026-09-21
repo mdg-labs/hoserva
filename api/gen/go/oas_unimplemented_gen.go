@@ -837,6 +837,16 @@ func (UnimplementedHandler) StartFix(ctx context.Context, req *StartFixRequest) 
 	return r, ht.ErrNotImplemented
 }
 
+// StartMover implements startMover operation.
+//
+// Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
+// the threshold poll and the nightly chain submit; there is no second mover-invocation path.
+//
+// POST /mover/run
+func (UnimplementedHandler) StartMover(ctx context.Context) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // StartScrub implements startScrub operation.
 //
 // Queues a scrub job (`hoserva scrub`, doc 01 §3).

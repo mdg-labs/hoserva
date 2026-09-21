@@ -85,6 +85,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.SetUserPasswordOperation:                RoleAdmin,
 	apiv1.StartArrayOperation:                     RoleAdmin,
 	apiv1.StartFixOperation:                       RoleAdmin,
+	apiv1.StartMoverOperation:                     RoleAdmin,
 	apiv1.StartScrubOperation:                     RoleAdmin,
 	apiv1.StartSyncOperation:                      RoleAdmin,
 	apiv1.StopArrayOperation:                      RoleAdmin,

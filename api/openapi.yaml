@@ -43,6 +43,12 @@ tags:
     description: Array start and stop / maintenance mode (Q70, `hoserva array stop|start`).
   - name: parity
     description: SnapRAID sync, scrub and fix through the threshold guard (doc 02 §2).
+  - name: mover
+    description: >-
+      The write cache's mover (doc 09 §2, `hoserva mover run`) — moves a
+      cache-then-move share's files onto the array. Reachable on a schedule
+      (the nightly chain), a cache-usage threshold, or this manual trigger;
+      never continuous.
   - name: config
     description: Config archive export and import (doc 10 §1).
   - name: doctor
@@ -1896,6 +1902,26 @@ paths:
       responses:
         "200":
           description: The queued or running fix job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /mover/run:
+    post:
+      operationId: startMover
+      summary: Start a manual mover run
+      description: >-
+        Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger)
+        — the same `TypeMover` job the threshold poll and the nightly chain
+        submit; there is no second mover-invocation path.
+      tags: [mover]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The queued or running mover job.
           content:
             application/json:
               schema:

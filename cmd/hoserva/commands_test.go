@@ -58,6 +58,17 @@ func TestRootCmdHasArrayStopAndStart(t *testing.T) {
 	}
 }
 
+func TestRootCmdHasMoverRun(t *testing.T) {
+	root := rootCmd()
+	mover, _, err := root.Find([]string{"mover"})
+	if err != nil {
+		t.Fatalf("find mover: %v", err)
+	}
+	if _, _, err := mover.Find([]string{"run"}); err != nil {
+		t.Fatalf("find mover run: %v", err)
+	}
+}
+
 func TestRebootRequiresConfirm(t *testing.T) {
 	assertRequiresConfirm(t, []string{"reboot"})
 }

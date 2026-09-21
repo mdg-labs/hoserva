@@ -364,6 +364,16 @@ func fixCmd() *cobra.Command {
 	return cmd
 }
 
+func moverCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "mover", Short: "Mover commands"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "run",
+		Short: "Start a manual mover run (doc 09 §2)",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.StartMover(apiCtx()) }),
+	})
+	return cmd
+}
+
 func jobsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "jobs",
