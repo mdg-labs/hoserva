@@ -308,8 +308,13 @@ type Error struct {
 	// validates), `forbidden` (403 — a valid credential whose role doesn't satisfy the operation),
 	// `no_session` (404 — the Unix socket's peer-credential-trusted local access has no signed-in user
 	// for an operation that needs one), `request_too_large` (413 — the request body exceeded the
-	// server's size limit), `bad_request` (400 — the request body could not be decoded) and `not_found`
-	// (404 — no such API route).
+	// server's size limit), `bad_request` (400 — the request body could not be decoded), `not_found`
+	// (404 — no such API route), `api_token_not_found` (404, revokeApiToken — no token with that id),
+	// `invalid_token_role` (400, createApiToken — the requested role is neither admin nor viewer;
+	// share-only is never a valid token role), `share_only_no_api_token` (403, createApiToken — the
+	// target account has SMB/NFS access only and no API access at all, Q27) and
+	// `token_role_exceeds_account` (403, createApiToken — the requested role is wider than the target
+	// account's own role; a token can only narrow an account's access, never widen it).
 	Code string `json:"code"`
 	// A human-readable explanation, safe to show in the UI or CLI.
 	Message string `json:"message"`
