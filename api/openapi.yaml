@@ -48,7 +48,12 @@ tags:
   - name: doctor
     description: Prerequisite and sanity checks (`hoserva doctor`, doc 01 §3).
   - name: users
-    description: Account recovery over the Unix socket (Q78).
+    description: >-
+      Accounts, roles and Samba credentials (Q27, doc 03 §7): the admin,
+      viewer and share-only roles, per-account passwords (which write the
+      UI credential and the Samba passdb entry together), user groups and
+      session list/revoke. Account recovery over the Unix socket (Q78) is
+      also under this tag.
   - name: auth
     description: >-
       First-run setup, sessions and TOTP over TCP (doc 01 §5, §7, Q9, Q10,
@@ -76,7 +81,10 @@ tags:
     description: >-
       User shares as first-class SQLite state (D4, doc 03 §4): each share
       has its own mergerfs mount (doc 02 §1, Q12) and Samba is generated
-      from the same rows. NFS exports and per-user ACLs are later issues.
+      from the same rows. Per-user and per-group share access (Q27, doc
+      03 §7) is stored here too, editable from either the share or the
+      user/group; enforcing it in generated Samba/mergerfs config is a
+      later issue.
 
 # Two transports (doc 01 §5): a Unix socket for the local root/`hoserva`-group
 # CLI, and TLS-only TCP for the web UI and remote/scripted use. Same handlers,
@@ -1419,6 +1427,54 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /shares/{name}/permissions:
+    parameters:
+      - $ref: '#/components/parameters/ShareName'
+    get:
+      operationId: getSharePermissions
+      summary: Get a share's per-user and per-group access
+      description: >-
+        Every user and every user group with an explicit access level on
+        this share (Q27, doc 03 §7). A user or group with no row here is
+        not represented.
+      tags: [shares]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: This share's per-user and per-group access.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SharePermissionsResult'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateSharePermissions
+      summary: Replace a share's per-user and per-group access
+      description: >-
+        A full replace: this share's access is set to exactly the users
+        and groups listed, and every user or group previously granted an
+        explicit level but missing from the request loses its row
+        entirely (doc 03 §7: "editable from either side" — this is the
+        share-side editor).
+      tags: [shares]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSharePermissionsRequest'
+      responses:
+        "200":
+          description: This share's updated per-user and per-group access.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SharePermissionsResult'
+        default:
+          $ref: '#/components/responses/Error'
+
   /disks:
     get:
       operationId: listDisks
@@ -1917,6 +1973,299 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /users:
+    get:
+      operationId: listUsers
+      summary: List accounts
+      description: Every account, sorted by username (Q27, doc 03 §7).
+      tags: [users]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Every account.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserSummary'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createUser
+      summary: Create an account
+      description: >-
+        Defaults to the share-only role when omitted (Q27): a new account
+        has no UI login until an admin promotes it. No password is set by
+        this call — setUserPassword provisions the UI credential and the
+        Samba account together, in a separate action. Never creates an
+        admin account (users_one_admin_idx allows exactly one, created only
+        by createFirstAdmin).
+      tags: [users]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        "201":
+          description: The new account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSummary'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /users/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    patch:
+      operationId: updateUser
+      summary: Change an account's role
+      description: >-
+        Viewer or share-only only (Q27) — the sole admin account is never
+        reachable through this operation.
+      tags: [users]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        "200":
+          description: The updated account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSummary'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: deleteUser
+      summary: Delete an account
+      description: >-
+        Removes the account, its sessions, its group memberships and its
+        per-share permissions. Refuses the sole admin account.
+      tags: [users]
+      x-hoserva-role: admin
+      responses:
+        "204":
+          description: Account deleted.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /users/{userId}/password:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    post:
+      operationId: setUserPassword
+      summary: Set an account's password
+      description: >-
+        Writes the UI credential hash and the Samba passdb entry together
+        (Q27, doc 03 §7): if the Samba write fails, the UI credential is
+        rolled back to its previous value, and nothing is left updated on
+        only one side. This is the ordinary admin-driven password action
+        on `/users` — distinct from resetUserPassword (Q78), which is
+        root-only recovery for a locked-out account over the Unix socket
+        and never touches the Samba passdb.
+      tags: [users]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetUserPasswordRequest'
+      responses:
+        "204":
+          description: Password set on both the UI credential and the Samba account.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /users/{userId}/permissions:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      operationId: getUserSharePermissions
+      summary: Get one account's per-share access
+      description: >-
+        Every share this account has an explicit access level for (Q27,
+        doc 03 §7). A share with no row here is not represented — none
+        of the three levels is assumed.
+      tags: [users]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: This account's per-share access.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSharePermissionsResult'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateUserSharePermissions
+      summary: Replace one account's per-share access
+      description: >-
+        A full replace: the account's access is set to exactly the shares
+        and levels listed, and every share this account previously had an
+        explicit level for but that is missing from the request loses its
+        row entirely (doc 03 §7: "editable from either side" — this is the
+        user-side editor).
+      tags: [users]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserSharePermissionsRequest'
+      responses:
+        "200":
+          description: This account's updated per-share access.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSharePermissionsResult'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /user-groups:
+    get:
+      operationId: listUserGroups
+      summary: List user groups
+      description: Every user group, sorted by name (Q27, doc 03 §7).
+      tags: [users]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Every user group.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [groups]
+                properties:
+                  groups:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserGroup'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createUserGroup
+      summary: Create a user group
+      description: >-
+        A named collection of accounts, purely for bulk share-permission
+        assignment (Q27, doc 03 §7) — distinct from the fixed `users`
+        system group (GID 100, Q26) that every share's files belong to.
+      tags: [users]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserGroupRequest'
+      responses:
+        "201":
+          description: The new group.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserGroup'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /user-groups/{groupId}:
+    parameters:
+      - $ref: '#/components/parameters/UserGroupId'
+    delete:
+      operationId: deleteUserGroup
+      summary: Delete a user group
+      description: Also removes its memberships and its per-share permissions.
+      tags: [users]
+      x-hoserva-role: admin
+      responses:
+        "204":
+          description: Group deleted.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /user-groups/{groupId}/members:
+    parameters:
+      - $ref: '#/components/parameters/UserGroupId'
+    put:
+      operationId: setUserGroupMembers
+      summary: Replace a user group's membership
+      description: A full replace of the group's member list.
+      tags: [users]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetUserGroupMembersRequest'
+      responses:
+        "200":
+          description: The updated group.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserGroup'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sessions:
+    get:
+      operationId: listSessions
+      summary: List active sessions
+      description: Every session across every account, with revoke (doc 03 §7).
+      tags: [users]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Every active session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Session'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /sessions/{sessionId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    delete:
+      operationId: revokeSession
+      summary: Revoke a session
+      description: >-
+        Ends this session immediately, server-side — the same effect as
+        that session's own logout, forced by an admin.
+      tags: [users]
+      x-hoserva-role: admin
+      responses:
+        "204":
+          description: Session revoked.
+        default:
+          $ref: '#/components/responses/Error'
+
   /users/{username}/reset-password:
     parameters:
       - $ref: '#/components/parameters/Username'
@@ -2014,6 +2363,30 @@ components:
         minLength: 1
         maxLength: 64
 
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    UserGroupId:
+      name: groupId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
     ShareName:
       name: name
       in: path
@@ -2101,8 +2474,14 @@ components:
 
     UserRole:
       type: string
-      description: Q27 — share-only users have no API access and are not represented here.
-      enum: [admin, viewer]
+      description: >-
+        Q27: admin (full UI), viewer (read-only UI), or share-only
+        (SMB/NFS only, no UI login at all — the default for a new
+        account). A share-only account can still sign in with this role
+        on a session that predates a role change; every operation but the
+        public ones refuses it (RoleViewer/RoleAdmin never satisfy it),
+        and login itself refuses a share-only account outright.
+      enum: [admin, viewer, share-only]
 
     User:
       type: object
@@ -3952,3 +4331,204 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ShareBrowseEntry'
+
+    UserSummary:
+      type: object
+      required: [id, username, role, totpEnrolled, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          $ref: '#/components/schemas/UserRole'
+        totpEnrolled:
+          type: boolean
+          description: Whether TOTP is confirmed and active on this account.
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateUserRequest:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+        role:
+          type: string
+          description: Defaults to share-only when omitted (Q27).
+          enum: [viewer, share-only]
+
+    UpdateUserRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [viewer, share-only]
+
+    SetUserPasswordRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          minLength: 8
+          maxLength: 127
+          description: >-
+            Capped at 127 characters, not LoginRequest's 1024: this
+            password is also written to the Samba passdb entry, and
+            smbpasswd/pdbedit's own NTLM hash has never supported more.
+
+    ShareAccessLevel:
+      type: string
+      description: Q27, doc 03 §7 — a user or group's access to one share.
+      enum: [none, read-only, read-write]
+
+    UserSharePermission:
+      type: object
+      required: [shareName, access]
+      properties:
+        shareName:
+          $ref: '#/components/schemas/ShareName'
+        access:
+          $ref: '#/components/schemas/ShareAccessLevel'
+
+    UserSharePermissionsResult:
+      type: object
+      required: [permissions]
+      properties:
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserSharePermission'
+
+    UpdateUserSharePermissionsRequest:
+      type: object
+      required: [permissions]
+      properties:
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserSharePermission'
+
+    UserPermissionEntry:
+      type: object
+      required: [userId, username, access]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        access:
+          $ref: '#/components/schemas/ShareAccessLevel'
+
+    GroupPermissionEntry:
+      type: object
+      required: [groupId, name, access]
+      properties:
+        groupId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        access:
+          $ref: '#/components/schemas/ShareAccessLevel'
+
+    SharePermissionsResult:
+      type: object
+      required: [users, groups]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserPermissionEntry'
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/GroupPermissionEntry'
+
+    UpdateSharePermissionsRequest:
+      type: object
+      required: [users, groups]
+      properties:
+        users:
+          type: array
+          items:
+            type: object
+            required: [userId, access]
+            properties:
+              userId:
+                type: string
+                format: uuid
+              access:
+                $ref: '#/components/schemas/ShareAccessLevel'
+        groups:
+          type: array
+          items:
+            type: object
+            required: [groupId, access]
+            properties:
+              groupId:
+                type: string
+                format: uuid
+              access:
+                $ref: '#/components/schemas/ShareAccessLevel'
+
+    UserGroup:
+      type: object
+      required: [id, name, memberUserIds]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        memberUserIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    CreateUserGroupRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+
+    SetUserGroupMembersRequest:
+      type: object
+      required: [userIds]
+      properties:
+        userIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    Session:
+      type: object
+      required: [id, userId, username, createdAt, expiresAt]
+      properties:
+        id:
+          type: string
+          description: The session's token hash — never the raw session token.
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time

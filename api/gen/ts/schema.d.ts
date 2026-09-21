@@ -891,6 +891,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/shares/{name}/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a share's per-user and per-group access
+         * @description Every user and every user group with an explicit access level on this share (Q27, doc 03 §7). A user or group with no row here is not represented.
+         */
+        get: operations["getSharePermissions"];
+        /**
+         * Replace a share's per-user and per-group access
+         * @description A full replace: this share's access is set to exactly the users and groups listed, and every user or group previously granted an explicit level but missing from the request loses its row entirely (doc 03 §7: "editable from either side" — this is the share-side editor).
+         */
+        put: operations["updateSharePermissions"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/disks": {
         parameters: {
             query?: never;
@@ -1283,6 +1309,214 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List accounts
+         * @description Every account, sorted by username (Q27, doc 03 §7).
+         */
+        get: operations["listUsers"];
+        put?: never;
+        /**
+         * Create an account
+         * @description Defaults to the share-only role when omitted (Q27): a new account has no UI login until an admin promotes it. No password is set by this call — setUserPassword provisions the UI credential and the Samba account together, in a separate action. Never creates an admin account (users_one_admin_idx allows exactly one, created only by createFirstAdmin).
+         */
+        post: operations["createUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete an account
+         * @description Removes the account, its sessions, its group memberships and its per-share permissions. Refuses the sole admin account.
+         */
+        delete: operations["deleteUser"];
+        options?: never;
+        head?: never;
+        /**
+         * Change an account's role
+         * @description Viewer or share-only only (Q27) — the sole admin account is never reachable through this operation.
+         */
+        patch: operations["updateUser"];
+        trace?: never;
+    };
+    "/users/{userId}/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set an account's password
+         * @description Writes the UI credential hash and the Samba passdb entry together (Q27, doc 03 §7): if the Samba write fails, the UI credential is rolled back to its previous value, and nothing is left updated on only one side. This is the ordinary admin-driven password action on `/users` — distinct from resetUserPassword (Q78), which is root-only recovery for a locked-out account over the Unix socket and never touches the Samba passdb.
+         */
+        post: operations["setUserPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{userId}/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get one account's per-share access
+         * @description Every share this account has an explicit access level for (Q27, doc 03 §7). A share with no row here is not represented — none of the three levels is assumed.
+         */
+        get: operations["getUserSharePermissions"];
+        /**
+         * Replace one account's per-share access
+         * @description A full replace: the account's access is set to exactly the shares and levels listed, and every share this account previously had an explicit level for but that is missing from the request loses its row entirely (doc 03 §7: "editable from either side" — this is the user-side editor).
+         */
+        put: operations["updateUserSharePermissions"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/user-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List user groups
+         * @description Every user group, sorted by name (Q27, doc 03 §7).
+         */
+        get: operations["listUserGroups"];
+        put?: never;
+        /**
+         * Create a user group
+         * @description A named collection of accounts, purely for bulk share-permission assignment (Q27, doc 03 §7) — distinct from the fixed `users` system group (GID 100, Q26) that every share's files belong to.
+         */
+        post: operations["createUserGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/user-groups/{groupId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["UserGroupId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a user group
+         * @description Also removes its memberships and its per-share permissions.
+         */
+        delete: operations["deleteUserGroup"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/user-groups/{groupId}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["UserGroupId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace a user group's membership
+         * @description A full replace of the group's member list.
+         */
+        put: operations["setUserGroupMembers"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List active sessions
+         * @description Every session across every account, with revoke (doc 03 §7).
+         */
+        get: operations["listSessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{sessionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a session
+         * @description Ends this session immediately, server-side — the same effect as that session's own logout, forced by an admin.
+         */
+        delete: operations["revokeSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users/{username}/reset-password": {
         parameters: {
             query?: never;
@@ -1364,10 +1598,10 @@ export interface components {
             };
         };
         /**
-         * @description Q27 — share-only users have no API access and are not represented here.
+         * @description Q27: admin (full UI), viewer (read-only UI), or share-only (SMB/NFS only, no UI login at all — the default for a new account). A share-only account can still sign in with this role on a session that predates a role change; every operation but the public ones refuses it (RoleViewer/RoleAdmin never satisfy it), and login itself refuses a share-only account outright.
          * @enum {string}
          */
-        UserRole: "admin" | "viewer";
+        UserRole: "admin" | "viewer" | "share-only";
         User: {
             /** Format: uuid */
             id: string;
@@ -2267,6 +2501,98 @@ export interface components {
             path: string;
             entries: components["schemas"]["ShareBrowseEntry"][];
         };
+        UserSummary: {
+            /** Format: uuid */
+            id: string;
+            username: string;
+            role: components["schemas"]["UserRole"];
+            /** @description Whether TOTP is confirmed and active on this account. */
+            totpEnrolled: boolean;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        CreateUserRequest: {
+            username: string;
+            /**
+             * @description Defaults to share-only when omitted (Q27).
+             * @enum {string}
+             */
+            role?: "viewer" | "share-only";
+        };
+        UpdateUserRequest: {
+            /** @enum {string} */
+            role: "viewer" | "share-only";
+        };
+        SetUserPasswordRequest: {
+            /** @description Capped at 127 characters, not LoginRequest's 1024: this password is also written to the Samba passdb entry, and smbpasswd/pdbedit's own NTLM hash has never supported more. */
+            password: string;
+        };
+        /**
+         * @description Q27, doc 03 §7 — a user or group's access to one share.
+         * @enum {string}
+         */
+        ShareAccessLevel: "none" | "read-only" | "read-write";
+        UserSharePermission: {
+            shareName: components["schemas"]["ShareName"];
+            access: components["schemas"]["ShareAccessLevel"];
+        };
+        UserSharePermissionsResult: {
+            permissions: components["schemas"]["UserSharePermission"][];
+        };
+        UpdateUserSharePermissionsRequest: {
+            permissions: components["schemas"]["UserSharePermission"][];
+        };
+        UserPermissionEntry: {
+            /** Format: uuid */
+            userId: string;
+            username: string;
+            access: components["schemas"]["ShareAccessLevel"];
+        };
+        GroupPermissionEntry: {
+            /** Format: uuid */
+            groupId: string;
+            name: string;
+            access: components["schemas"]["ShareAccessLevel"];
+        };
+        SharePermissionsResult: {
+            users: components["schemas"]["UserPermissionEntry"][];
+            groups: components["schemas"]["GroupPermissionEntry"][];
+        };
+        UpdateSharePermissionsRequest: {
+            users: {
+                /** Format: uuid */
+                userId: string;
+                access: components["schemas"]["ShareAccessLevel"];
+            }[];
+            groups: {
+                /** Format: uuid */
+                groupId: string;
+                access: components["schemas"]["ShareAccessLevel"];
+            }[];
+        };
+        UserGroup: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            memberUserIds: string[];
+        };
+        CreateUserGroupRequest: {
+            name: string;
+        };
+        SetUserGroupMembersRequest: {
+            userIds: string[];
+        };
+        Session: {
+            /** @description The session's token hash — never the raw session token. */
+            id: string;
+            /** Format: uuid */
+            userId: string;
+            username: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
     };
     responses: {
         /** @description An error response (doc 01 §5). */
@@ -2284,6 +2610,9 @@ export interface components {
         ChannelId: string;
         EventType: components["schemas"]["NotificationEventType"];
         Username: string;
+        UserId: string;
+        UserGroupId: string;
+        SessionId: string;
         ShareName: components["schemas"]["ShareName"];
         ExternalLabel: components["schemas"]["ExternalDiskLabel"];
     };
@@ -3520,6 +3849,56 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getSharePermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description This share's per-user and per-group access. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharePermissionsResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateSharePermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSharePermissionsRequest"];
+            };
+        };
+        responses: {
+            /** @description This share's updated per-user and per-group access. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SharePermissionsResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listDisks: {
         parameters: {
             query?: never;
@@ -3991,6 +4370,317 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ApplyHostConfigResult"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listUsers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every account. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        users: components["schemas"]["UserSummary"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description The new account. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserSummary"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Account deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUserRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated account. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserSummary"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setUserPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetUserPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Password set on both the UI credential and the Samba account. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getUserSharePermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description This account's per-share access. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserSharePermissionsResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateUserSharePermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUserSharePermissionsRequest"];
+            };
+        };
+        responses: {
+            /** @description This account's updated per-share access. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserSharePermissionsResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listUserGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every user group. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        groups: components["schemas"]["UserGroup"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createUserGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUserGroupRequest"];
+            };
+        };
+        responses: {
+            /** @description The new group. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserGroup"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteUserGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["UserGroupId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Group deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setUserGroupMembers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                groupId: components["parameters"]["UserGroupId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetUserGroupMembersRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated group. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserGroup"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every active session. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sessions: components["schemas"]["Session"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session revoked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };
