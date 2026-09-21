@@ -869,6 +869,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/shares/{name}/relocate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Relocate a share between cache and array
+         * @description Queues a `share_relocation` job moving name's files between its cache path and the array (doc 09 §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a mover run limited to this share, ignoring the grace period; array to cache follows the two-phase copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through. There is no second relocation-invocation path.
+         */
+        post: operations["startShareRelocation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/shares/{name}/browse": {
         parameters: {
             query?: never;
@@ -2526,6 +2548,13 @@ export interface components {
              */
             disk?: number;
         };
+        StartShareRelocationRequest: {
+            /**
+             * @description Relocation direction (doc 09 §2, `hoserva share relocate <share> --to cache|array`).
+             * @enum {string}
+             */
+            to: "cache" | "array";
+        };
         StopArrayRequest: {
             /** @description Must be true after reviewing the Q70 stop list the `/storage` confirm dialog already shows: refuse new jobs and interrupt non-resumable jobs, shut down running VMs, stop containers, stop Samba and NFS, then unmount share paths, the catch-all and data disks. */
             confirm: boolean;
@@ -3988,6 +4017,33 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startShareRelocation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartShareRelocationRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued or running share relocation job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
             };
             default: components["responses"]["Error"];
         };

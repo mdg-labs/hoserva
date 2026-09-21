@@ -8140,6 +8140,64 @@ func (s *StartScrubRequest) SetPercent(val OptInt32) {
 	s.Percent = val
 }
 
+// Ref: #/components/schemas/StartShareRelocationRequest
+type StartShareRelocationRequest struct {
+	// Relocation direction (doc 09 §2, `hoserva share relocate <share> --to cache|array`).
+	To StartShareRelocationRequestTo `json:"to"`
+}
+
+// GetTo returns the value of To.
+func (s *StartShareRelocationRequest) GetTo() StartShareRelocationRequestTo {
+	return s.To
+}
+
+// SetTo sets the value of To.
+func (s *StartShareRelocationRequest) SetTo(val StartShareRelocationRequestTo) {
+	s.To = val
+}
+
+// Relocation direction (doc 09 §2, `hoserva share relocate <share> --to cache|array`).
+type StartShareRelocationRequestTo string
+
+const (
+	StartShareRelocationRequestToCache StartShareRelocationRequestTo = "cache"
+	StartShareRelocationRequestToArray StartShareRelocationRequestTo = "array"
+)
+
+// AllValues returns all StartShareRelocationRequestTo values.
+func (StartShareRelocationRequestTo) AllValues() []StartShareRelocationRequestTo {
+	return []StartShareRelocationRequestTo{
+		StartShareRelocationRequestToCache,
+		StartShareRelocationRequestToArray,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s StartShareRelocationRequestTo) MarshalText() ([]byte, error) {
+	switch s {
+	case StartShareRelocationRequestToCache:
+		return []byte(s), nil
+	case StartShareRelocationRequestToArray:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *StartShareRelocationRequestTo) UnmarshalText(data []byte) error {
+	switch StartShareRelocationRequestTo(data) {
+	case StartShareRelocationRequestToCache:
+		*s = StartShareRelocationRequestToCache
+		return nil
+	case StartShareRelocationRequestToArray:
+		*s = StartShareRelocationRequestToArray
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/StartSyncRequest
 type StartSyncRequest struct {
 	DryRun OptBool `json:"dryRun"`

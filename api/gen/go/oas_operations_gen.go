@@ -85,6 +85,7 @@ const (
 	StartFixOperation                       OperationName = "StartFix"
 	StartMoverOperation                     OperationName = "StartMover"
 	StartScrubOperation                     OperationName = "StartScrub"
+	StartShareRelocationOperation           OperationName = "StartShareRelocation"
 	StartSyncOperation                      OperationName = "StartSync"
 	StopArrayOperation                      OperationName = "StopArray"
 	UnlockUserOperation                     OperationName = "UnlockUser"

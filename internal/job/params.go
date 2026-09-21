@@ -35,6 +35,22 @@ type FixParams struct {
 	Disk    *int `json:"disk,omitempty"`
 }
 
+// shareRelocationToArray and shareRelocationToCache are
+// ShareRelocationParams.To's only valid values, matching
+// api/openapi.yaml's StartShareRelocationRequest `to` enum and doc 09
+// §2's `hoserva share relocate <share> --to cache|array`.
+const (
+	shareRelocationToArray = "array"
+	shareRelocationToCache = "cache"
+)
+
+// ShareRelocationParams is startShareRelocation's persisted request
+// payload: the share to relocate and the direction (doc 09 §2, #239).
+type ShareRelocationParams struct {
+	Share string `json:"share"`
+	To    string `json:"to"`
+}
+
 // DiskFormatParams is createArray's persisted Topology-job payload: the
 // wizard's plan, sizes from the same Provider.List call that populated
 // inventory, and the typed confirmation FormatPlan checks again at run
@@ -67,6 +83,9 @@ func ValidateParams(t Type, params []byte) error {
 		if t == TypeDiskFormat {
 			return fmt.Errorf("job: disk_format params require confirmation")
 		}
+		if t == TypeShareRelocation {
+			return fmt.Errorf("job: share_relocation params require share and to")
+		}
 		return nil
 	}
 	switch t {
@@ -81,6 +100,9 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeDiskFormat:
 		_, err := decodeDiskFormatParams(params)
+		return err
+	case TypeShareRelocation:
+		_, err := decodeShareRelocationParams(params)
 		return err
 	case TypeACMEIssue:
 		_, err := decodeACMEIssueParams(params)
@@ -183,6 +205,23 @@ func decodeDiskFormatParams(params []byte) (DiskFormatParams, error) {
 	}
 	if len(p.Parity) == 0 && len(p.Data) == 0 && p.Cache == nil {
 		return DiskFormatParams{}, fmt.Errorf("job: disk_format params require a plan")
+	}
+	return p, nil
+}
+
+func decodeShareRelocationParams(params []byte) (ShareRelocationParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return ShareRelocationParams{}, fmt.Errorf("job: share_relocation params require share and to")
+	}
+	var p ShareRelocationParams
+	if err := decodeJSON(params, &p); err != nil {
+		return ShareRelocationParams{}, err
+	}
+	if p.Share == "" {
+		return ShareRelocationParams{}, fmt.Errorf("job: share_relocation params require share")
+	}
+	if p.To != shareRelocationToArray && p.To != shareRelocationToCache {
+		return ShareRelocationParams{}, fmt.Errorf("job: share_relocation params require to to be %q or %q", shareRelocationToCache, shareRelocationToArray)
 	}
 	return p, nil
 }

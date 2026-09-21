@@ -207,6 +207,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.UpdateShareOperation,
 		apiv1.DeleteShareOperation,
 		apiv1.DeleteShareDataOperation,
+		apiv1.StartShareRelocationOperation,
 		apiv1.GetNetworkSettingsOperation,
 		apiv1.ApplyNetworkSettingsOperation,
 		apiv1.ConfirmNetworkSettingsOperation,

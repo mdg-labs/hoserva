@@ -856,6 +856,19 @@ func (UnimplementedHandler) StartScrub(ctx context.Context, req *StartScrubReque
 	return r, ht.ErrNotImplemented
 }
 
+// StartShareRelocation implements startShareRelocation operation.
+//
+// Queues a `share_relocation` job moving name's files between its cache path and the array (doc 09
+// §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a
+// mover run limited to this share, ignoring the grace period; array to cache follows the two-phase
+// copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through.
+// There is no second relocation-invocation path.
+//
+// POST /shares/{name}/relocate
+func (UnimplementedHandler) StartShareRelocation(ctx context.Context, req *StartShareRelocationRequest, params StartShareRelocationParams) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // StartSync implements startSync operation.
 //
 // Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
