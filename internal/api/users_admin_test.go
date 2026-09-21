@@ -358,3 +358,29 @@ func TestDeleteUserFailsWhollyWhenSambaDeleteFails(t *testing.T) {
 		t.Error("Samba account for bob is gone even though the delete failed and should have rolled back")
 	}
 }
+
+// TestDeleteUserBoundsBeforeCommit guards the fix for CodeRabbit's finding
+// that beforeCommit (the Samba account removal) held the write transaction
+// open for as long as smbpasswd ran, with nothing to stop a hung process
+// from holding the SQLite write lock indefinitely.
+func TestDeleteUserBoundsBeforeCommit(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+
+	u, err := svc.CreateUser(ctx, "bob", "share-only")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	var sawDeadline bool
+	err = svc.Store.DeleteUser(ctx, u.ID, func(bcCtx context.Context, username string) error {
+		_, sawDeadline = bcCtx.Deadline()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	if !sawDeadline {
+		t.Error("beforeCommit's context has no deadline — a hung external process could hold the write lock indefinitely")
+	}
+}
