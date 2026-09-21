@@ -15,6 +15,21 @@ import (
 
 const applyCommand = "share"
 
+// ShareDirMode is the mode every share's top-level branch directory
+// gets: rwxrwsr-x, setgid so files and directories created under it
+// inherit the shared group (Q26). os.FileMode's setuid/setgid/sticky
+// bits are not the raw unix 0o2000/0o4000/0o1000 bits (os.Chmod's
+// syscallMode remaps os.ModeSetgid onto the real S_ISGID bit), so this
+// is built from os.ModeSetgid rather than a literal 0o2775.
+var ShareDirMode = os.FileMode(0o775) | os.ModeSetgid
+
+const (
+	// ShareGID is the numeric GID of the shared data group `users`
+	// (Q26) — GID 100 on Debian's own base-passwd group table, the same
+	// value Unraid uses, so migrated data needs no ownership rewrite.
+	ShareGID = 100
+)
+
 // Mounter brings a share's mergerfs mount up or down. pool.Mounter
 // satisfies it; tests inject a recorder that never touches /mnt.
 type Mounter interface {
@@ -194,6 +209,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Share, error) {
 		if err := s.FS.MkdirAll(dir, 0o755); err != nil {
 			return Share{}, fmt.Errorf("share: creating branch directory %s: %w", dir, err)
 		}
+		if err := s.ensureShareDirOwnership(dir); err != nil {
+			return Share{}, err
+		}
 	}
 
 	now := s.now().UTC()
@@ -277,6 +295,9 @@ func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Shar
 		if err := s.FS.MkdirAll(dir, 0o755); err != nil {
 			return Share{}, fmt.Errorf("share: creating branch directory %s: %w", dir, err)
 		}
+		if err := s.ensureShareDirOwnership(dir); err != nil {
+			return Share{}, err
+		}
 	}
 
 	existing.UpdatedAt = s.now().UTC()
@@ -296,6 +317,20 @@ func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Shar
 		return Share{}, applyCause(err)
 	}
 	return existing, nil
+}
+
+// ensureShareDirOwnership brings a share's top-level branch directory to
+// the setgid mode and shared group Q26 requires. It touches only dir
+// itself, never recursively, so pre-existing file ownership under an
+// adopted or migrated share directory is never rewritten (AC3).
+func (s *Service) ensureShareDirOwnership(dir string) error {
+	if err := s.FS.Chmod(dir, ShareDirMode); err != nil {
+		return fmt.Errorf("share: setting mode on %s: %w", dir, err)
+	}
+	if err := s.FS.Chown(dir, -1, ShareGID); err != nil {
+		return fmt.Errorf("share: setting group on %s: %w", dir, err)
+	}
+	return nil
 }
 
 // Delete removes the share definition and regenerates mounts, smb.conf

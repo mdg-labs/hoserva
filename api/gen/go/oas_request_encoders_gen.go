@@ -141,6 +141,34 @@ func encodeCreateShareRequest(
 	return nil
 }
 
+func encodeCreateUserRequest(
+	req *CreateUserRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeCreateUserGroupRequest(
+	req *CreateUserGroupRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeDeleteShareRequest(
 	req *ConfirmShareRequest,
 	r *http.Request,
@@ -303,6 +331,34 @@ func encodeResetUserPasswordRequest(
 
 func encodeRollbackUpdateRequest(
 	req *ConfirmUpdateRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeSetUserGroupMembersRequest(
+	req *SetUserGroupMembersRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeSetUserPasswordRequest(
+	req *SetUserPasswordRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"
@@ -483,8 +539,50 @@ func encodeUpdateShareRequest(
 	return nil
 }
 
+func encodeUpdateSharePermissionsRequest(
+	req *UpdateSharePermissionsRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeUpdateUpdateSettingsRequest(
 	req *UpdateUpdateSettingsRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpdateUserRequest(
+	req *UpdateUserRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpdateUserSharePermissionsRequest(
+	req *UpdateUserSharePermissionsRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

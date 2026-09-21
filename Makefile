@@ -258,7 +258,7 @@ $(error invalid DEB: must not contain '$$' — no Make or shell expansion syntax
 endif
 export DEB
 
-.PHONY: build test test-unit test-go packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite vm-soak hooks-install
+.PHONY: build test test-unit test-go test-integration packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -333,6 +333,10 @@ packaging-test:
 	scripts/release/test-postinst.sh
 	scripts/release/test-postrm-purge.sh
 	packaging/test-unattended-upgrades.sh
+	packaging/test-preinst-smartd-dropin.sh
+	packaging/test-postinst-smartd-mask.sh
+	packaging/test-postinst-smartd-survives-upgrade.sh
+	packaging/test-postinst-hoserva-apps.sh
 
 # Go-only lint: CI's lint-and-unit job calls this so it does not also
 # run the web job's lint/typecheck. Local `make lint` still includes
@@ -567,6 +571,16 @@ lab-verify-refusal: lab-require-id
 
 lab-snapraid-check: lab-require-id
 	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/snapraid-check.sh
+
+# doc 12 §3's planned integration target (issue #219): a Hoserva-generated
+# smb.conf, exercised against a real smbd, inside the lab. gen-smb-conf runs
+# on the host, into this lab's own bind-mounted directory, because the lab
+# image carries no Go toolchain (unlike snapraid/mergerfs, which are native
+# packages) — smb-check.sh, run inside the container next, does everything
+# Samba-related itself.
+test-integration: lab-require-id
+	$(GO) run ./scripts/devenv/gen-smb-conf > ".lab/$$HOSERVA_LAB_ID/smb.conf.rendered"
+	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/smb-check.sh
 
 # destroy-array.sh runs as root inside the container and fails loudly (exit
 # non-zero) if a mount cannot be freed, rather than silently continuing to a

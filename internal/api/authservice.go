@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mdg-labs/hoserva/internal/auth"
+	"github.com/mdg-labs/hoserva/internal/share"
 )
 
 // sessionTTL is how long a session cookie stays valid without the user
@@ -47,6 +48,23 @@ var (
 	// Limiter.Reserve this issue's own rate limiting is built on — the
 	// caller must supply exactly one, never both.
 	ErrTOTPReverifyAmbiguous = errors.New("re-enrolling an active TOTP credential accepts the current password or a current TOTP code, not both")
+	// ErrShareOnlyNoLogin is Login's refusal of an otherwise-correct
+	// credential once the account's role is share-only (Q27): "no UI
+	// login" is enforced here, at the point credentials would otherwise
+	// succeed, not only left to fall out of every later operation's own
+	// role check.
+	ErrShareOnlyNoLogin = errors.New("this account has SMB/NFS access only — it has no UI login")
+)
+
+// Account roles (Q27, doc 03 §7). These are the users.role column's own
+// values, distinct from Role (roles.go), which is an operation's required
+// *capability level* — share-only is never a capability level (it never
+// satisfies any operation's declared role, public ones excepted), only an
+// account's own row can hold it.
+const (
+	roleAdmin     = "admin"
+	roleViewer    = "viewer"
+	roleShareOnly = "share-only"
 )
 
 // normalizeUsername folds username to the one form every account row,
@@ -130,17 +148,25 @@ type AuthService struct {
 	// Issuer is the TOTP issuer name shown in an authenticator app
 	// (doc 03 §1).
 	Issuer string
+	// SambaAccounts writes and removes Samba passdb entries (#49, Q27) —
+	// the system-touching half of SetUserPassword and DeleteUser.
+	// Defaulted to the real, smbpasswd-exec'ing implementation by
+	// NewAuthService; tests replace it with share.NewFakeSambaAccounts()
+	// so nothing here ever execs a real binary the host doesn't have
+	// installed.
+	SambaAccounts share.SambaAccounts
 }
 
 // NewAuthService wires an AuthService with the real clock and a fresh
 // rate limiter.
 func NewAuthService(store *AuthStore, key *auth.MachineKey) *AuthService {
 	return &AuthService{
-		Store:      store,
-		MachineKey: key,
-		Limiter:    auth.NewLimiter(nil),
-		Now:        time.Now,
-		Issuer:     "Hoserva",
+		Store:         store,
+		MachineKey:    key,
+		Limiter:       auth.NewLimiter(nil),
+		Now:           time.Now,
+		Issuer:        "Hoserva",
+		SambaAccounts: share.NewSmbpasswdAccounts(),
 	}
 }
 
@@ -310,6 +336,15 @@ func (s *AuthService) Login(ctx context.Context, username, password, totpCode, s
 	}
 
 	release()
+
+	// The role check runs after the credential is fully verified, not
+	// before: these are real, correct credentials, not a guess, so the
+	// rate limiter's reservation is released exactly as it would be for
+	// any other successful login — what's refused here is policy
+	// (share-only has no UI login, Q27), not authentication.
+	if u.Role == roleShareOnly {
+		return nil, "", ErrShareOnlyNoLogin
+	}
 
 	token, err := s.createSession(ctx, u.ID)
 	if err != nil {
