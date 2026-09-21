@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/mdg-labs/hoserva/internal/pool"
@@ -279,6 +280,220 @@ func TestDeleteFile_MissingFileIsRefused(t *testing.T) {
 
 	if err := svc.DeleteFile(ctx, "media", "nope.mkv", true); !errors.Is(err, ErrFileNotFound) {
 		t.Fatalf("DeleteFile missing file = %v, want ErrFileNotFound", err)
+	}
+}
+
+// swapParentAfterValidateFS embeds OSFS and, the first time EvalSymlinks is
+// asked to resolve trigger, swaps victim for a symlink pointing at swapTo —
+// simulating a concurrent writer replacing an in-share parent directory
+// with a symlink at the exact moment between DeleteFile's path validation
+// and its removal step.
+type swapParentAfterValidateFS struct {
+	OSFS
+	trigger string
+	victim  string
+	swapTo  string
+	swapped bool
+}
+
+func (f *swapParentAfterValidateFS) EvalSymlinks(path string) (string, error) {
+	resolved, err := f.OSFS.EvalSymlinks(path)
+	if !f.swapped && path == f.trigger {
+		f.swapped = true
+		if rmErr := os.RemoveAll(f.victim); rmErr != nil {
+			return resolved, rmErr
+		}
+		if lnErr := os.Symlink(f.swapTo, f.victim); lnErr != nil {
+			return resolved, lnErr
+		}
+	}
+	return resolved, err
+}
+
+// RemoveConfined is overridden (rather than inherited from the embedded
+// OSFS) so removeConfined's own path resolution dispatches back through
+// this fake's EvalSymlinks — and so hits the swap — instead of a fresh,
+// unswapped OSFS{}.
+func (f *swapParentAfterValidateFS) RemoveConfined(root, rel string) error {
+	return removeConfined(f, root, rel)
+}
+
+// TestDeleteFile_RefusesParentSwappedForSymlinkMidRace reproduces the
+// CWE-367 TOCTOU race CodeRabbit flagged on PR #228: a directory holding
+// the delete target is replaced with a symlink pointing outside the share
+// after path validation but before the file is actually removed. Against
+// the pre-fix implementation (separate confineSharePathOnFS, FS.Lstat,
+// FS.Remove calls, each re-resolving the pathname), this swap causes the
+// final os.Remove to walk through the new symlink and delete a file
+// outside the share entirely. RemoveConfined must instead refuse the
+// operation, never touching anything outside the share.
+func TestDeleteFile_RefusesParentSwappedForSymlinkMidRace(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("RemoveConfined's race protection is Linux-only (RESOLVE_IN_ROOT); production only runs on Debian (D2)")
+	}
+	ctx, svc, layout, _ := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	shareRoot := filepath.Join(layout.catchAll, "media")
+	writeFile(t, filepath.Join(shareRoot, "sub", "file.txt"), "inside")
+
+	outside := t.TempDir()
+	writeFile(t, filepath.Join(outside, "file.txt"), "outside-secret")
+
+	svc.FS = &swapParentAfterValidateFS{
+		trigger: filepath.Join(shareRoot, "sub", "file.txt"),
+		victim:  filepath.Join(shareRoot, "sub"),
+		swapTo:  outside,
+	}
+
+	if err := svc.DeleteFile(ctx, "media", "sub/file.txt", true); err == nil {
+		t.Fatal("DeleteFile must refuse a target whose parent directory was swapped for a symlink mid-race")
+	}
+	if got := readFile(t, filepath.Join(outside, "file.txt")); got != "outside-secret" {
+		t.Fatalf("file outside the share was affected by the race: got %q, want untouched", got)
+	}
+}
+
+// TestDeleteFile_RefusesParentSwappedForInShareSymlinkMidRace is the same
+// race with swapTo pointing at a different, legitimate directory inside
+// the share rather than outside it. RESOLVE_IN_ROOT alone follows this
+// without error, since the reopen never leaves root — it is
+// unlinkConfined's identity check against the directory validation
+// resolved that must refuse it, since otherwise the removal would delete
+// a file in a directory the caller never named.
+func TestDeleteFile_RefusesParentSwappedForInShareSymlinkMidRace(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("RemoveConfined's race protection is Linux-only (RESOLVE_IN_ROOT); production only runs on Debian (D2)")
+	}
+	ctx, svc, layout, _ := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	shareRoot := filepath.Join(layout.catchAll, "media")
+	writeFile(t, filepath.Join(shareRoot, "sub", "file.txt"), "inside")
+	writeFile(t, filepath.Join(shareRoot, "other", "file.txt"), "other-data")
+
+	svc.FS = &swapParentAfterValidateFS{
+		trigger: filepath.Join(shareRoot, "sub", "file.txt"),
+		victim:  filepath.Join(shareRoot, "sub"),
+		// A relative target, not the host-absolute shareRoot/other: an
+		// absolute swapTo is reinterpreted by RESOLVE_IN_ROOT as rooted at
+		// the share (like the outside-the-share case above), so it would
+		// not reach another in-share directory at all and this test would
+		// pass for the wrong reason.
+		swapTo: "../other",
+	}
+
+	if err := svc.DeleteFile(ctx, "media", "sub/file.txt", true); err == nil {
+		t.Fatal("DeleteFile must refuse a target whose parent directory was swapped for a symlink to another in-share directory mid-race")
+	}
+	if got := readFile(t, filepath.Join(shareRoot, "other", "file.txt")); got != "other-data" {
+		t.Fatalf("file in a different in-share directory was affected by the race: got %q, want untouched", got)
+	}
+}
+
+// TestDeleteFile_RefusesGrandparentSwappedForSymlinkMidRace is the same
+// race again, but two levels up: the target's grandparent (not its
+// immediate parent) is swapped for a symlink to a different in-share
+// directory. RESOLVE_IN_ROOT alone follows this without error, and so
+// does a check that only compares the immediate parent's identity against
+// a fresh re-resolution of the same pathname, since both walks race the
+// same swap identically and land on the same (wrong) directory. Only
+// refusing to traverse a symlink at any depth (RESOLVE_NO_SYMLINKS) closes
+// this: the reopen must fail outright, regardless of how deep the swapped
+// component is.
+func TestDeleteFile_RefusesGrandparentSwappedForSymlinkMidRace(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("RemoveConfined's race protection is Linux-only (RESOLVE_IN_ROOT); production only runs on Debian (D2)")
+	}
+	ctx, svc, layout, _ := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	shareRoot := filepath.Join(layout.catchAll, "media")
+	writeFile(t, filepath.Join(shareRoot, "a", "b", "file.txt"), "inside")
+	writeFile(t, filepath.Join(shareRoot, "other", "b", "file.txt"), "other-data")
+
+	svc.FS = &swapParentAfterValidateFS{
+		trigger: filepath.Join(shareRoot, "a", "b", "file.txt"),
+		victim:  filepath.Join(shareRoot, "a"),
+		// Relative, resolved from victim's own containing directory
+		// (shareRoot itself, since victim is shareRoot/a), so this reaches
+		// shareRoot/other — a different, legitimate in-share directory —
+		// without an outer ".." that a chroot-like confined resolution and
+		// an ordinary absolute-path resolution would disagree about.
+		swapTo: "other",
+	}
+
+	if err := svc.DeleteFile(ctx, "media", "a/b/file.txt", true); err == nil {
+		t.Fatal("DeleteFile must refuse a target whose grandparent directory was swapped for a symlink mid-race")
+	}
+	if got := readFile(t, filepath.Join(shareRoot, "other", "b", "file.txt")); got != "other-data" {
+		t.Fatalf("file under a different in-share directory was affected by the race: got %q, want untouched", got)
+	}
+}
+
+// swapLeafAfterValidateFS embeds OSFS and, the first time Lstat is asked to
+// stat trigger, runs swap. removeConfined's own Lstat on the just-resolved
+// target is the first (and, for an existing target, only) Lstat call it
+// makes, so this fires at exactly the point where the leaf's identity is
+// captured for later comparison — simulating a concurrent writer replacing
+// the delete target itself, in an otherwise untouched parent directory,
+// in the race window between that capture and unlinkConfined's removal.
+type swapLeafAfterValidateFS struct {
+	OSFS
+	trigger string
+	swap    func() error
+	swapped bool
+}
+
+func (f *swapLeafAfterValidateFS) Lstat(path string) (os.FileInfo, error) {
+	info, err := f.OSFS.Lstat(path)
+	if !f.swapped && path == f.trigger {
+		f.swapped = true
+		if serr := f.swap(); serr != nil {
+			return info, serr
+		}
+	}
+	return info, err
+}
+
+// RemoveConfined is overridden (rather than inherited from the embedded
+// OSFS) so removeConfined's own path resolution dispatches back through
+// this fake's Lstat — and so hits the swap — instead of a fresh, unswapped
+// OSFS{}.
+func (f *swapLeafAfterValidateFS) RemoveConfined(root, rel string) error {
+	return removeConfined(f, root, rel)
+}
+
+// TestDeleteFile_RefusesLeafSwappedForDifferentFileMidRace covers the gap
+// neither RESOLVE_IN_ROOT nor RESOLVE_NO_SYMLINKS closes: the parent
+// directory is never touched, but the target itself — a file an attacker
+// has legitimate write access to, in a directory it also has legitimate
+// write access to — is deleted and replaced with a different file of the
+// same name between validation and removal. Nothing about the directory
+// chain changes, so only a check of the leaf's own identity, captured
+// before the swap, can refuse this.
+func TestDeleteFile_RefusesLeafSwappedForDifferentFileMidRace(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("RemoveConfined's race protection is Linux-only (RESOLVE_IN_ROOT); production only runs on Debian (D2)")
+	}
+	ctx, svc, layout, _ := testService(t)
+	createTestShare(t, svc, "media", pool.ArrayOnly)
+	shareRoot := filepath.Join(layout.catchAll, "media")
+	target := filepath.Join(shareRoot, "sub", "file.txt")
+	writeFile(t, target, "original")
+
+	svc.FS = &swapLeafAfterValidateFS{
+		trigger: target,
+		swap: func() error {
+			if err := os.Remove(target); err != nil {
+				return err
+			}
+			return os.WriteFile(target, []byte("swapped-in"), 0o644)
+		},
+	}
+
+	if err := svc.DeleteFile(ctx, "media", "sub/file.txt", true); err == nil {
+		t.Fatal("DeleteFile must refuse a target whose leaf was swapped for a different file mid-race")
+	}
+	if got := readFile(t, target); got != "swapped-in" {
+		t.Fatalf("swapped-in file was affected by the refused delete: got %q, want untouched", got)
 	}
 }
 

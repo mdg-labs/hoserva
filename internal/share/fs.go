@@ -15,7 +15,19 @@ type FS interface {
 	Chmod(path string, mode os.FileMode) error
 	Chown(path string, uid, gid int) error
 	RemoveAll(path string) error
-	Remove(path string) error
+	// RemoveConfined removes the file or empty directory that rel resolves
+	// to within root, following the same symlink-resolution rules as
+	// confineSharePathOnFS. On Linux, removal is refused unless (a) no
+	// ancestor directory in the resolved path is currently a symlink —
+	// enforced by reopening it with RESOLVE_IN_ROOT|RESOLVE_NO_SYMLINKS —
+	// and (b) the object actually removed has the same device and inode
+	// as the one resolution found, checked against an identity captured
+	// at resolution time rather than a second re-resolution of the same
+	// path. Together these mean a parent directory swapped for a symlink
+	// after resolution, at any depth, or the target itself swapped for a
+	// different object of the same name, cannot cause removal of anything
+	// other than what resolution found (CWE-367).
+	RemoveConfined(root, rel string) error
 	ReadDir(path string) ([]os.DirEntry, error)
 	Lstat(path string) (os.FileInfo, error)
 	EvalSymlinks(path string) (string, error)
@@ -54,12 +66,12 @@ func (OSFS) RemoveAll(path string) error {
 	return os.RemoveAll(path)
 }
 
-// Remove removes a single file or empty directory. Unlike RemoveAll, it
-// fails rather than recursing into a non-empty directory (doc 03 §4.2:
-// browse delete is a single file or empty directory, never a full
-// subtree).
-func (OSFS) Remove(path string) error {
-	return os.Remove(path)
+// RemoveConfined removes a single file or empty directory. Unlike
+// RemoveAll, it fails rather than recursing into a non-empty directory
+// (doc 03 §4.2: browse delete is a single file or empty directory, never a
+// full subtree).
+func (OSFS) RemoveConfined(root, rel string) error {
+	return removeConfined(OSFS{}, root, rel)
 }
 
 func (OSFS) ReadDir(path string) ([]os.DirEntry, error) {
