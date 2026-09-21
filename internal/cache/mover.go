@@ -227,6 +227,11 @@ shareLoop:
 			return report, fmt.Errorf("cache: clean up interrupted copies for share %q: %w", s.Name, err)
 		}
 
+		preCopyOpen, err := shareOpenChecker(ctx, deps.Open)
+		if err != nil {
+			return report, fmt.Errorf("cache: snapshot open files for share %q: %w", s.Name, err)
+		}
+
 		resumeAfter := ""
 		if i == cp.ShareIndex {
 			resumeAfter = cp.LastPath
@@ -246,7 +251,7 @@ shareLoop:
 				break shareLoop
 			}
 
-			entry := processFile(ctx, s, rel, grace, cfg, deps)
+			entry := processFile(ctx, s, rel, grace, cfg, deps, preCopyOpen)
 			report.add(entry)
 			hooks.logf("mover: %s %s/%s%s", entry.Result, s.Name, rel, entry.reasonSuffix())
 
@@ -267,11 +272,35 @@ shareLoop:
 	return report, nil
 }
 
+// shareOpenChecker returns the OpenChecker processFile's pre-copy check
+// uses for one share's pass: a snapshot taken once, right here, when open
+// implements Snapshotter (ProcOpenChecker does in production), so a pass
+// over N files costs one /proc walk rather than N (#238). A checker that
+// does not implement Snapshotter — including FakeOpenChecker, every
+// existing test's double — is returned unchanged, so it is still called
+// once per file exactly as before. The pre-unlink re-check in
+// finishPendingDelete never goes through this: it always calls deps.Open
+// directly, so it is guaranteed fresh against current process state.
+func shareOpenChecker(ctx context.Context, open OpenChecker) (OpenChecker, error) {
+	snapshotter, ok := open.(Snapshotter)
+	if !ok {
+		return open, nil
+	}
+	snap, err := snapshotter.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return snapshotChecker{snap}, nil
+}
+
 // processFile decides and, when eligible, executes one file's relocation
 // (doc 09 §2's algorithm). It never returns an error itself — every
 // outcome, including a real failure, is reported as an Entry so one bad
-// file cannot abort an entire run.
-func processFile(ctx context.Context, s Share, rel string, grace time.Duration, cfg Config, deps Deps) Entry {
+// file cannot abort an entire run. preCopyOpen answers the pre-copy open
+// check, possibly from a snapshot taken once for the whole share
+// (shareOpenChecker); the pre-unlink re-check inside finishPendingDelete
+// always uses deps.Open directly instead, never preCopyOpen.
+func processFile(ctx context.Context, s Share, rel string, grace time.Duration, cfg Config, deps Deps, preCopyOpen OpenChecker) Entry {
 	src := filepath.Join(s.CachePath, rel)
 	dst := filepath.Join(s.ArrayPath, rel)
 
@@ -316,7 +345,7 @@ func processFile(ctx context.Context, s Share, rel string, grace time.Duration, 
 		return Entry{Share: s.Name, Path: rel, Result: ResultFailed, Err: err.Error()}
 	}
 
-	open, err := deps.Open.IsOpen(ctx, src)
+	open, err := preCopyOpen.IsOpen(ctx, src)
 	if err != nil {
 		return Entry{Share: s.Name, Path: rel, Result: ResultFailed, Err: err.Error()}
 	}
