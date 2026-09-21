@@ -23,14 +23,14 @@ name: CI
 # ! `dco` job below only reports pass/fail on the commit — making it a
 # ! *required* check (Settings -> Rules -> Rulesets) is a manual pick, and
 # ! only once GitHub has seen it report at least once, so it can't be
-# ! added until after this job first runs. Require it on the `beta`
-# ! ruleset, not just `main`'s: contributor pull requests target `beta`
-# ! (CONTRIBUTING.md), so `beta` is where an unsigned commit must actually
+# ! added until after this job first runs. Require it on the `dev`
+# ! ruleset, not just `main`'s: contributor pull requests target `dev`
+# ! (CONTRIBUTING.md), so `dev` is where an unsigned commit must actually
 # ! be blocked. Keep it required on `main` too if direct changes there
-# ! ever bypass the beta -> main promotion PR.
+# ! ever bypass the dev -> main promotion PR.
 #
 # ! Dropping the former Cross-compile (amd64) / Cross-compile (arm64)
-# ! jobs means those names must be removed from the `main` (and `beta`,
+# ! jobs means those names must be removed from the `main` (and `dev`,
 # ! if present) required-checks ruleset, or the promotion PR cannot
 # ! merge. The amd64/arm64 compile-and-package gate is the `deb` matrix;
 # ! mockapi compiles in `lint-and-unit`. Same class of hand setting as
@@ -38,9 +38,9 @@ name: CI
 
 on:
   push:
-    branches: [beta]
+    branches: [dev]
   pull_request:
-    branches: [beta, main]
+    branches: [dev, main]
 
 permissions:
   contents: read
@@ -93,7 +93,7 @@ jobs:
       # a real Signed-off-by trailer. Run the base branch's copy instead —
       # untouchable by the PR — falling back to the checked-out copy only
       # when the base doesn't have the script yet (a same-repo, non-fork
-      # promotion PR, e.g. beta -> main before this check first lands).
+      # promotion PR, e.g. dev -> main before this check first lands).
       - name: Resolve a trusted copy of check-dco.sh
         run: |
           base="${{ github.event.pull_request.base.sha || github.sha }}"
@@ -107,7 +107,7 @@ jobs:
       # (refs/pull/N/merge), not anything a contributor actually signed —
       # check the PR's real head/base instead. Falls back to the push
       # event's before/after range otherwise (covers orchestrate's direct
-      # pushes to beta, not just contributor PRs).
+      # pushes to dev, not just contributor PRs).
       - run: >-
           /tmp/check-dco.sh
           "${{ github.event.pull_request.base.sha || github.event.before }}"

@@ -25,7 +25,7 @@ DCO is enough to establish provenance without it.
 
 ### Before opening a pull request
 
-- Base your branch on `beta`, and open the pull request against `beta` —
+- Base your branch on `dev`, and open the pull request against `dev` —
   not `main`. `main` is release-only and only moves through the
   maintainer's own promotion (`docs/internal/12-repo-architecture.md §6`).
 - Read `CLAUDE.md` and the design doc relevant to the area you're changing

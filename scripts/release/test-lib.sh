@@ -90,30 +90,30 @@ git -C "$repo" commit --quiet -m one
 git -C "$repo" tag v0.1.0
 git -C "$repo" push --quiet origin main --tags
 
-git -C "$repo" checkout --quiet -b beta
+git -C "$repo" checkout --quiet -b dev
 echo two >>"$repo/f"
 git -C "$repo" add f
 git -C "$repo" commit --quiet -m two
 git -C "$repo" tag v0.1.0-beta.1
-git -C "$repo" push --quiet origin beta --tags
+git -C "$repo" push --quiet origin dev --tags
 
-# a stable tag cut from beta's extra commit must be refused: it is not
+# a stable tag cut from dev's extra commit must be refused: it is not
 # an ancestor of origin/main even though it matches the stable pattern.
 git -C "$repo" tag v9.9.9
 git -C "$repo" push --quiet origin --tags
 
-git -C "$repo" fetch --quiet origin main beta
+git -C "$repo" fetch --quiet origin main dev
 
 if ! (cd "$repo" && hoserva_verify_tag_ancestry v0.1.0) >/dev/null 2>&1; then
   note "FAIL: v0.1.0 should be an ancestor of origin/main"
   fail=1
 fi
 if ! (cd "$repo" && hoserva_verify_tag_ancestry v0.1.0-beta.1) >/dev/null 2>&1; then
-  note "FAIL: v0.1.0-beta.1 should be an ancestor of origin/beta"
+  note "FAIL: v0.1.0-beta.1 should be an ancestor of origin/dev"
   fail=1
 fi
 if (cd "$repo" && hoserva_verify_tag_ancestry v9.9.9) >/dev/null 2>&1; then
-  note "FAIL: v9.9.9 (only on beta) should not be accepted as a stable tag from main"
+  note "FAIL: v9.9.9 (only on dev) should not be accepted as a stable tag from main"
   fail=1
 fi
 
