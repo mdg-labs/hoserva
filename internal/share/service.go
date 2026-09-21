@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
@@ -37,6 +38,29 @@ type Mounter interface {
 	Unmount(ctx context.Context, where string) error
 }
 
+// UsageReader reads persisted per-share bytes-used and per-disk
+// distribution as of the last sync (doc 02 §1 line 78, doc 03 §4.1-4.2,
+// #223). *parity.UsageStore satisfies it; Service only ever reads what it
+// returns — the sync job (internal/job/parity_run.go, via
+// parity.SnapraidEngine.ComputeShareUsage) is the only writer.
+type UsageReader interface {
+	Get(ctx context.Context, share string) (parity.UsageSnapshot, bool, error)
+	ListAll(ctx context.Context) (computedAt time.Time, byShare map[string]map[string]int64, ok bool, err error)
+}
+
+// Usage is a share's bytes-used and per-disk distribution as of the last
+// sync (doc 03 §4.1, §4.2). Synced is false when this share has never
+// been through that computation — never synced at all, or created after
+// the last time it ran — in which case TotalBytes, Disks and AsOf are
+// meaningless and must not be rendered as real data (doc 03 §4.2's
+// "not yet synced").
+type Usage struct {
+	Synced     bool
+	TotalBytes int64
+	Disks      map[string]int64 // mount point -> bytes.
+	AsOf       time.Time
+}
+
 // SMB is a share's Samba options (doc 03 §4.2, Q73).
 type SMB struct {
 	Enabled            bool
@@ -62,6 +86,7 @@ type Share struct {
 	CreatePolicy pool.CreatePolicy
 	SMB          SMB
 	NFS          NFS
+	Usage        Usage
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -107,7 +132,12 @@ type Service struct {
 	Gen     *config.Generator
 	FS      FS
 	Mounter Mounter
-	Now     func() time.Time
+	// Usages reads persisted share-usage figures (doc 02 §1 line 78,
+	// #223). Nil leaves every Share's Usage honestly unsynced — this
+	// service never computes usage itself, only reads what the sync job
+	// already persisted.
+	Usages UsageReader
+	Now    func() time.Time
 	// CatchAll is the directory browse lists under. Empty uses
 	// pool.CatchAllPath. Tests point it at a temp dir so listing never
 	// walks the host's /mnt/user.
@@ -128,20 +158,32 @@ func (s *Service) catchAll() string {
 	return pool.CatchAllPath
 }
 
-// List returns every share, sorted by name.
+// List returns every share, sorted by name, with its Usage attached
+// (doc 03 §4.1) from one batch read rather than one query per share.
 func (s *Service) List(ctx context.Context) ([]Share, error) {
 	rows, err := s.Shares.List(ctx)
 	if err != nil {
 		return nil, err
 	}
+	var computedAt time.Time
+	var byShare map[string]map[string]int64
+	var computed bool
+	if s.Usages != nil {
+		computedAt, byShare, computed, err = s.Usages.ListAll(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
 	out := make([]Share, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, shareFromStore(row))
+		sh := shareFromStore(row)
+		sh.Usage = usageFromBatch(computed, computedAt, byShare[sh.Name], sh.CreatedAt)
+		out = append(out, sh)
 	}
 	return out, nil
 }
 
-// Get returns one share by name.
+// Get returns one share by name, with its Usage attached (doc 03 §4.2).
 func (s *Service) Get(ctx context.Context, name string) (Share, error) {
 	if err := validateName(name); err != nil {
 		return Share{}, err
@@ -150,7 +192,47 @@ func (s *Service) Get(ctx context.Context, name string) (Share, error) {
 	if err != nil {
 		return Share{}, err
 	}
-	return shareFromStore(row), nil
+	sh := shareFromStore(row)
+	usage, err := s.usageFor(ctx, sh.Name, sh.CreatedAt)
+	if err != nil {
+		return Share{}, err
+	}
+	sh.Usage = usage
+	return sh, nil
+}
+
+// usageFor reads one share's persisted usage. A nil Usages (not wired
+// yet) is the same honest "not yet synced" result as a real store that
+// has never computed anything.
+func (s *Service) usageFor(ctx context.Context, name string, createdAt time.Time) (Usage, error) {
+	if s.Usages == nil {
+		return Usage{}, nil
+	}
+	snap, ok, err := s.Usages.Get(ctx, name)
+	if err != nil {
+		return Usage{}, err
+	}
+	if !ok {
+		return Usage{}, nil
+	}
+	return usageFromBatch(true, snap.ComputedAt, snap.Disks, createdAt), nil
+}
+
+// usageFromBatch builds a Usage from a computation snapshot. computed
+// false, or a computedAt that predates the share's own createdAt, means
+// this share has never been through the sync-time computation — the
+// "not yet synced" state (doc 03 §4.2) — distinct from disks being nil or
+// empty, which is a share that has been synced and genuinely holds zero
+// bytes.
+func usageFromBatch(computed bool, computedAt time.Time, disks map[string]int64, createdAt time.Time) Usage {
+	if !computed || computedAt.Before(createdAt) {
+		return Usage{}
+	}
+	total := int64(0)
+	for _, b := range disks {
+		total += b
+	}
+	return Usage{Synced: true, TotalBytes: total, Disks: disks, AsOf: computedAt}
 }
 
 // Create persists the share, mkdirs its branch directories, writes the

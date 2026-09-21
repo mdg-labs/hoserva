@@ -1,0 +1,41 @@
+version:none
+unixtime:1790006721
+time:2026-09-21 16:05:21
+command:list
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/223-a2/snapraid.conf
+argv:3:-l
+argv:4:/lab/223-a2/list3.log
+argv:5:list
+conf:file:/lab/223-a2/snapraid.conf
+blocksize:262144
+data:disk1:/lab/223-a2/mnt/disk1/
+data:disk2:/lab/223-a2/mnt/disk2/
+data:disk3:/lab/223-a2/mnt/disk3/
+mode:par1
+parity:0:/lab/223-a2/mnt/parity1/snapraid.parity
+filter:exclude *.content*
+filter:exclude /mnt/user/
+content:/lab/223-a2/mnt/parity1/snapraid.content
+msg:progress: Loading state from /lab/223-a2/mnt/parity1/snapraid.content...
+msg:verbose:        6 files
+msg:verbose:        1 hardlinks
+msg:verbose:        1 symlinks
+msg:verbose:        1 empty dirs
+msg:progress: Listing...
+file:disk1:movies/a.mkv:102400:1790006330:712259445:132
+file:disk1:photos/p1.jpg:10240:1790006330:714259420:524417
+file:disk1:root-note.txt:23:1790006718:967855763:134
+link_symlink:disk1:movies/link.mkv:a.mkv
+link_hardlink:disk1:photos/p1-hardlink.jpg:photos/p1.jpg
+file:disk2:movies/b.mkv:204800:1790006330:713259432:132
+file:disk2:movies/c.mkv:30720:1790006718:968288454:134
+file:disk3:backups/dump.tar:51200:1790006330:715259407:132
+msg:status: 
+msg:status:        6 files, for 0 GB
+msg:status:        2 links
+summary:file_count:6
+summary:file_size:399383
+summary:link_count:2
+summary:exit:ok

@@ -43,7 +43,7 @@ function mockMatchMedia(): void {
   })) as unknown as typeof window.matchMedia;
 }
 
-function share() {
+function share(overrides: { usage?: { totalBytes: number; perDisk: { disk: string; bytes: number }[]; asOf: string } | null } = {}) {
   return {
     name: "media",
     path: "/mnt/user/media",
@@ -51,6 +51,7 @@ function share() {
     createPolicy: "mspmfs" as const,
     smb: { enabled: true, guest: false, readOnly: false, browseable: true, recycle: false, timeMachine: false },
     nfs: { enabled: false, hosts: [], squash: "root_squash" as const },
+    usage: overrides.usage ?? null,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
   };
@@ -101,6 +102,59 @@ describe("SharesPage", () => {
 
     expect(await screen.findByText("media")).toBeInTheDocument();
     expect(screen.getByText("Cache then move")).toBeInTheDocument();
+  });
+
+  it("shows an honest not-yet-synced state instead of a placeholder size", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/shares") {
+        return Promise.resolve({ data: { shares: [share()] }, response: { ok: true } });
+      }
+      if (path === "/shares/{name}/permissions") {
+        return Promise.resolve({ data: { users: [], groups: [] }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <SharesPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Not yet synced")).toBeInTheDocument();
+  });
+
+  it("renders a synced share's real size used", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/shares") {
+        return Promise.resolve({
+          data: {
+            shares: [
+              share({
+                usage: {
+                  totalBytes: 1_048_576,
+                  perDisk: [{ disk: "/mnt/disk1", bytes: 1_048_576 }],
+                  asOf: "2026-01-02T00:00:00Z",
+                },
+              }),
+            ],
+          },
+          response: { ok: true },
+        });
+      }
+      if (path === "/shares/{name}/permissions") {
+        return Promise.resolve({ data: { users: [], groups: [] }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <SharesPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("1.00 MiB")).toBeInTheDocument();
   });
 });
 
@@ -178,6 +232,79 @@ describe("ShareDetailPage danger zone", () => {
     expect(
       mockGet.mock.calls.some((call) => call[0] === "/shares/{name}/browse"),
     ).toBe(false);
+  });
+});
+
+describe("ShareDetailPage general tab", () => {
+  beforeEach(() => {
+    cleanup();
+    mockMatchMedia();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockPatch.mockReset();
+    mockPut.mockReset();
+    mockDelete.mockReset();
+  });
+
+  function mockShareDetail(data: ReturnType<typeof share>): void {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/shares/{name}") {
+        return Promise.resolve({ data, response: { ok: true } });
+      }
+      if (path === "/users") {
+        return Promise.resolve({ data: { users: [] }, response: { ok: true } });
+      }
+      if (path === "/user-groups") {
+        return Promise.resolve({ data: { groups: [] }, response: { ok: true } });
+      }
+      if (path === "/shares/{name}/permissions") {
+        return Promise.resolve({ data: { users: [], groups: [] }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+  }
+
+  it("reports an honest not-yet-synced state rather than a guessed size", async () => {
+    mockShareDetail(share());
+
+    render(
+      <MemoryRouter initialEntries={["/shares/media"]}>
+        <Routes>
+          <Route path="/shares/:name" element={<ShareDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Not yet synced")).toBeInTheDocument();
+  });
+
+  it("renders the real size and per-disk distribution as of the last sync", async () => {
+    mockShareDetail(
+      share({
+        usage: {
+          totalBytes: 300,
+          perDisk: [
+            { disk: "/mnt/disk1", bytes: 100 },
+            { disk: "/mnt/disk2", bytes: 200 },
+          ],
+          asOf: "2026-01-02T00:00:00Z",
+        },
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/shares/media"]}>
+        <Routes>
+          <Route path="/shares/:name" element={<ShareDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // The rendered "as of" text embeds a locale/timezone-formatted
+    // timestamp, so only the size and the "as of" framing are pinned here.
+    expect(await screen.findByText(/^Size used: 300 B \(as of .+\)$/)).toBeInTheDocument();
+    expect(screen.getByText("/mnt/disk1")).toBeInTheDocument();
+    expect(screen.getByText("/mnt/disk2")).toBeInTheDocument();
   });
 });
 

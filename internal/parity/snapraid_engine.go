@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 )
 
 // SnapraidEngine is the real Engine (doc 01 §4): it drives a real
@@ -32,6 +33,15 @@ type SnapraidEngine struct {
 	// default thresholds (Q16) — there is no way to construct a
 	// SnapraidEngine whose Sync skips this evaluation.
 	Guard Guard
+	// Usage persists the per-share, per-disk byte breakdown Sync computes
+	// after every successful real sync (doc 02 §1 line 78, #223). A nil
+	// Usage — the zero value — leaves that computation unwired: Sync still
+	// runs and reports success, it simply has nowhere to persist the
+	// figures yet.
+	Usage *UsageStore
+	// Now returns the current time, recorded as share usage's own "as of"
+	// timestamp (doc 03 §4.2). Defaults to time.Now; tests override it.
+	Now func() time.Time
 }
 
 func (e *SnapraidEngine) binary() string {
@@ -39,6 +49,13 @@ func (e *SnapraidEngine) binary() string {
 		return e.Binary
 	}
 	return "snapraid"
+}
+
+func (e *SnapraidEngine) now() time.Time {
+	if e.Now != nil {
+		return e.Now()
+	}
+	return time.Now()
 }
 
 func (e *SnapraidEngine) runner() Runner {
@@ -129,6 +146,48 @@ func (e *SnapraidEngine) Status(ctx context.Context) (ParityStatus, error) {
 		return ParityStatus{}, err
 	}
 	return r.ToParityStatus(), nil
+}
+
+// List runs a real `snapraid list` to completion and parses it: every
+// file the content file just written by a sync currently tracks, with its
+// owning disk and size (doc 02 §1 line 78, #223) — reads that tracked
+// state only, never a live directory walk.
+func (e *SnapraidEngine) List(ctx context.Context) (ListReport, error) {
+	logPath, cleanup, err := e.newLog("list")
+	if err != nil {
+		return ListReport{}, err
+	}
+	defer cleanup()
+
+	if err := e.runToCompletion(ctx, logPath, listArgv()); err != nil {
+		return ListReport{}, fmt.Errorf("parity: snapraid list: %w", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return ListReport{}, fmt.Errorf("parity: reading list log: %w", err)
+	}
+	return ParseList(data)
+}
+
+// ComputeShareUsage runs List and persists the per-share, per-disk
+// aggregate it produces through Usage, timestamped now() (doc 03 §4.2's
+// "as of the last sync"). RunSync (internal/job/parity_run.go) calls this
+// once, after every successful non-dry-run Sync — never on a timer, never
+// from a request. A nil Usage makes this a no-op: the computation is
+// simply not wired up yet, not an error.
+func (e *SnapraidEngine) ComputeShareUsage(ctx context.Context) error {
+	if e.Usage == nil {
+		return nil
+	}
+	list, err := e.List(ctx)
+	if err != nil {
+		return fmt.Errorf("parity: computing share usage: %w", err)
+	}
+	rows := AggregateShareUsage(list)
+	if err := e.Usage.Replace(ctx, rows, e.now()); err != nil {
+		return fmt.Errorf("parity: persisting share usage: %w", err)
+	}
+	return nil
 }
 
 // Diff runs `snapraid status` (for the before-counts BuildDiffReport

@@ -47,6 +47,7 @@ type ShareCacheMode = components["schemas"]["ShareCacheMode"];
 type ArrayCreatePolicy = components["schemas"]["ArrayCreatePolicy"];
 type ShareAccessLevel = components["schemas"]["ShareAccessLevel"];
 type ShareBrowseEntry = components["schemas"]["ShareBrowseEntry"];
+type ShareDiskUsage = components["schemas"]["ShareDiskUsage"];
 
 const CREATE_POLICIES: ArrayCreatePolicy[] = ["mspmfs", "mfs", "lfs", "ff"];
 const CACHE_MODES: ShareCacheMode[] = ["cache-then-move", "cache-only", "array-only"];
@@ -59,6 +60,8 @@ const BROWSE_COLUMN_NAME = "name";
 const BROWSE_COLUMN_SIZE = "size";
 const BROWSE_COLUMN_DISK = "disk";
 const BROWSE_COLUMN_ACTIONS = "actions";
+const USAGE_COLUMN_DISK = "disk";
+const USAGE_COLUMN_BYTES = "bytes";
 const DANGER_ACTION_REMOVE = "remove";
 const DANGER_ACTION_DELETE_DATA = "delete-data";
 
@@ -373,6 +376,19 @@ export function ShareDetailPage(): React.ReactElement {
   const nfsLine = buildNfsExportLine(share.path, nfsDraft ?? share.nfs);
   const browseSegments = browsePath.split("/").filter((segment) => segment.length > 0);
 
+  const usageColumns: DataTableColumn<ShareDiskUsage>[] = [
+    {
+      id: USAGE_COLUMN_DISK,
+      header: t("shares.detail.general.perDisk.columns.disk"),
+      cell: (row) => row.disk,
+    },
+    {
+      id: USAGE_COLUMN_BYTES,
+      header: t("shares.detail.general.perDisk.columns.bytes"),
+      cell: (row) => formatBytes(row.bytes),
+    },
+  ];
+
   const browseColumns: DataTableColumn<ShareBrowseEntry>[] = [
     {
       id: BROWSE_COLUMN_NAME,
@@ -460,7 +476,14 @@ export function ShareDetailPage(): React.ReactElement {
                 <CardPanel className="grid gap-3 text-sm sm:grid-cols-2">
                   <p>{t("shares.detail.general.name", { name: share.name })}</p>
                   <p>{t("shares.detail.general.path", { path: share.path })}</p>
-                  <p>{t("shares.detail.general.sizeUsed", { size: "—" })}</p>
+                  <p>
+                    {share.usage
+                      ? t("shares.detail.general.sizeUsed", {
+                          size: formatBytes(share.usage.totalBytes),
+                          date: new Date(share.usage.asOf).toLocaleString(),
+                        })
+                      : t("shares.detail.general.notYetSyncedTitle")}
+                  </p>
                   <p className="flex items-center gap-2">
                     {t("shares.detail.general.includedInParity")}
                     <StatusBadge tone={includedInParity ? "success" : "outline"}>
@@ -468,7 +491,18 @@ export function ShareDetailPage(): React.ReactElement {
                     </StatusBadge>
                   </p>
                   <div className="sm:col-span-2">
-                    <InlineNote description={t("shares.detail.general.perDiskUnavailable")} />
+                    {share.usage ? (
+                      share.usage.perDisk.length > 0 ? (
+                        <div className="flex flex-col gap-2">
+                          <h3 className="text-sm font-medium">{t("shares.detail.general.perDiskTitle")}</h3>
+                          <DataTable columns={usageColumns} rows={share.usage.perDisk} getRowKey={(row) => row.disk} />
+                        </div>
+                      ) : (
+                        <InlineNote description={t("shares.detail.general.perDiskEmpty")} />
+                      )
+                    ) : (
+                      <InlineNote description={t("shares.detail.general.notYetSyncedDescription")} />
+                    )}
                   </div>
                 </CardPanel>
               </Card>

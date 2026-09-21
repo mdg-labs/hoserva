@@ -1010,6 +1010,7 @@
       "actionsMenu": "Actions for {{name}}",
       "noExplicitAccess": "No explicit access",
       "accessCount": "{{count}} with access",
+      "notYetSynced": "Not yet synced",
       "columns": {
         "name": "Name",
         "path": "Path",
@@ -1050,9 +1051,18 @@
         "title": "General",
         "name": "Name: {{name}}",
         "path": "Path: {{path}}",
-        "sizeUsed": "Size used: {{size}}",
+        "sizeUsed": "Size used: {{size}} (as of {{date}})",
+        "notYetSyncedTitle": "Not yet synced",
+        "notYetSyncedDescription": "This share hasn't been through a parity sync since it was created, so size and per-disk distribution aren't available yet.",
         "includedInParity": "Included in parity:",
-        "perDiskUnavailable": "Per-disk distribution is not available from the API yet — it is not shown here rather than guessed."
+        "perDiskTitle": "Per-disk distribution",
+        "perDiskEmpty": "This share has no files on any disk yet.",
+        "perDisk": {
+          "columns": {
+            "disk": "Disk",
+            "bytes": "Size"
+          }
+        }
       },
       "allocation": {
         "title": "Allocation",

@@ -220,6 +220,17 @@ type ShareGroupPermission struct {
 	Access    string `json:"access"`
 }
 
+type ShareUsage struct {
+	ShareName      string `json:"share_name"`
+	DiskMountpoint string `json:"disk_mountpoint"`
+	Bytes          int64  `json:"bytes"`
+}
+
+type ShareUsageComputedAt struct {
+	ID         int64  `json:"id"`
+	ComputedAt string `json:"computed_at"`
+}
+
 type ShareUserPermission struct {
 	ShareName string `json:"share_name"`
 	UserID    string `json:"user_id"`

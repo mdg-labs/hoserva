@@ -2540,6 +2540,24 @@ export interface components {
              */
             squash: "root_squash" | "no_root_squash" | "all_squash";
         };
+        ShareDiskUsage: {
+            /** @description Data disk mount point currently holding files for this share. */
+            disk: string;
+            /** Format: int64 */
+            bytes: number;
+        };
+        /** @description Bytes used and per-disk distribution as of the last sync (doc 02 §1 line 78, doc 03 §4.1-4.2, #223) — computed once as a step of the sync job, from SnapRAID's own tracked state, never a live directory walk. */
+        ShareUsage: {
+            /** Format: int64 */
+            totalBytes: number;
+            /** @description Which disks currently hold this share's files, and how much (doc 03 §4.2). A disk this share does not currently occupy is simply absent, not a zero entry. */
+            perDisk: components["schemas"]["ShareDiskUsage"][];
+            /**
+             * Format: date-time
+             * @description When the sync that produced these figures completed.
+             */
+            asOf: string;
+        };
         Share: {
             name: components["schemas"]["ShareName"];
             /** @description The share's mount path (`/mnt/user/<name>`, D10). */
@@ -2548,6 +2566,8 @@ export interface components {
             createPolicy: components["schemas"]["ArrayCreatePolicy"];
             smb: components["schemas"]["ShareSMB"];
             nfs: components["schemas"]["ShareNFS"];
+            /** @description Null when this share has not been through a sync since it was created — an honest "not yet synced" state (doc 03 §4.1-4.2), never a zero or placeholder that looks like real data. */
+            usage: components["schemas"]["ShareUsage"] | null;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */

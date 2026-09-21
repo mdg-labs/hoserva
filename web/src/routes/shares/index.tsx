@@ -17,6 +17,7 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { SHARE_TAB_BROWSE } from "@/hooks/share-detail-tabs";
 import { shareDetailPath } from "@/hooks/paths";
 import { hoservaClient, type components } from "@/lib/api/client";
+import { formatBytes } from "@/routes/storage-setup/config-preview";
 
 type Share = components["schemas"]["Share"];
 type SharePermissionsResult = components["schemas"]["SharePermissionsResult"];
@@ -147,7 +148,7 @@ export function SharesPage(): React.ReactElement {
     {
       id: "sizeUsed",
       header: t("shares.list.columns.sizeUsed"),
-      cell: () => "—",
+      cell: (share) => (share.usage ? formatBytes(share.usage.totalBytes) : t("shares.list.notYetSynced")),
     },
     {
       id: "cacheMode",

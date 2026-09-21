@@ -3788,6 +3788,51 @@ func (o NilDateTime) Or(d time.Time) time.Time {
 	return d
 }
 
+// NewNilShareUsage returns new NilShareUsage with value set to v.
+func NewNilShareUsage(v ShareUsage) NilShareUsage {
+	return NilShareUsage{
+		Value: v,
+	}
+}
+
+// NilShareUsage is nullable ShareUsage.
+type NilShareUsage struct {
+	Value ShareUsage
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilShareUsage) SetTo(v ShareUsage) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilShareUsage) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilShareUsage) SetToNull() {
+	o.Null = true
+	var v ShareUsage
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilShareUsage) Get() (v ShareUsage, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilShareUsage) Or(d ShareUsage) ShareUsage {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // Ref: #/components/schemas/NotificationAlert
 type NotificationAlert struct {
 	ID        string                `json:"id"`
@@ -7323,8 +7368,11 @@ type Share struct {
 	CreatePolicy ArrayCreatePolicy `json:"createPolicy"`
 	Smb          ShareSMB          `json:"smb"`
 	Nfs          ShareNFS          `json:"nfs"`
-	CreatedAt    time.Time         `json:"createdAt"`
-	UpdatedAt    time.Time         `json:"updatedAt"`
+	// Null when this share has not been through a sync since it was created — an honest "not yet synced"
+	// state (doc 03 §4.1-4.2), never a zero or placeholder that looks like real data.
+	Usage     NilShareUsage `json:"usage"`
+	CreatedAt time.Time     `json:"createdAt"`
+	UpdatedAt time.Time     `json:"updatedAt"`
 }
 
 // GetName returns the value of Name.
@@ -7355,6 +7403,11 @@ func (s *Share) GetSmb() ShareSMB {
 // GetNfs returns the value of Nfs.
 func (s *Share) GetNfs() ShareNFS {
 	return s.Nfs
+}
+
+// GetUsage returns the value of Usage.
+func (s *Share) GetUsage() NilShareUsage {
+	return s.Usage
 }
 
 // GetCreatedAt returns the value of CreatedAt.
@@ -7395,6 +7448,11 @@ func (s *Share) SetSmb(val ShareSMB) {
 // SetNfs sets the value of Nfs.
 func (s *Share) SetNfs(val ShareNFS) {
 	s.Nfs = val
+}
+
+// SetUsage sets the value of Usage.
+func (s *Share) SetUsage(val NilShareUsage) {
+	s.Usage = val
 }
 
 // SetCreatedAt sets the value of CreatedAt.
@@ -7624,6 +7682,33 @@ func (s *ShareCacheMode) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/ShareDiskUsage
+type ShareDiskUsage struct {
+	// Data disk mount point currently holding files for this share.
+	Disk  string `json:"disk"`
+	Bytes int64  `json:"bytes"`
+}
+
+// GetDisk returns the value of Disk.
+func (s *ShareDiskUsage) GetDisk() string {
+	return s.Disk
+}
+
+// GetBytes returns the value of Bytes.
+func (s *ShareDiskUsage) GetBytes() int64 {
+	return s.Bytes
+}
+
+// SetDisk sets the value of Disk.
+func (s *ShareDiskUsage) SetDisk(val string) {
+	s.Disk = val
+}
+
+// SetBytes sets the value of Bytes.
+func (s *ShareDiskUsage) SetBytes(val int64) {
+	s.Bytes = val
+}
+
 // Ref: #/components/schemas/ShareNFS
 type ShareNFS struct {
 	Enabled bool `json:"enabled"`
@@ -7822,6 +7907,49 @@ func (s *ShareSMB) SetTimeMachine(val bool) {
 // SetTimeMachineMaxSize sets the value of TimeMachineMaxSize.
 func (s *ShareSMB) SetTimeMachineMaxSize(val OptNilString) {
 	s.TimeMachineMaxSize = val
+}
+
+// Bytes used and per-disk distribution as of the last sync (doc 02 §1 line 78, doc 03 §4.1-4.2,
+// #223) — computed once as a step of the sync job, from SnapRAID's own tracked state, never a live
+// directory walk.
+// Ref: #/components/schemas/ShareUsage
+type ShareUsage struct {
+	TotalBytes int64 `json:"totalBytes"`
+	// Which disks currently hold this share's files, and how much (doc 03 §4.2). A disk this share does
+	// not currently occupy is simply absent, not a zero entry.
+	PerDisk []ShareDiskUsage `json:"perDisk"`
+	// When the sync that produced these figures completed.
+	AsOf time.Time `json:"asOf"`
+}
+
+// GetTotalBytes returns the value of TotalBytes.
+func (s *ShareUsage) GetTotalBytes() int64 {
+	return s.TotalBytes
+}
+
+// GetPerDisk returns the value of PerDisk.
+func (s *ShareUsage) GetPerDisk() []ShareDiskUsage {
+	return s.PerDisk
+}
+
+// GetAsOf returns the value of AsOf.
+func (s *ShareUsage) GetAsOf() time.Time {
+	return s.AsOf
+}
+
+// SetTotalBytes sets the value of TotalBytes.
+func (s *ShareUsage) SetTotalBytes(val int64) {
+	s.TotalBytes = val
+}
+
+// SetPerDisk sets the value of PerDisk.
+func (s *ShareUsage) SetPerDisk(val []ShareDiskUsage) {
+	s.PerDisk = val
+}
+
+// SetAsOf sets the value of AsOf.
+func (s *ShareUsage) SetAsOf(val time.Time) {
+	s.AsOf = val
 }
 
 // Ref: #/components/schemas/SpinTransition
