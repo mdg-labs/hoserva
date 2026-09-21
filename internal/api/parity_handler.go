@@ -32,7 +32,7 @@ func (h *Handler) parityStore() *paritySnapshotStore {
 }
 
 func (h *Handler) GetParity(ctx context.Context) (*apiv1.ParitySnapshot, error) {
-	if h.Parity == nil {
+	if engineUnavailable(h.Parity) {
 		return nil, &apiError{code: "not_configured", statusCode: 501, message: "parity status is not available on this daemon"}
 	}
 	status, err := h.Parity.Status(ctx)
@@ -50,7 +50,7 @@ func (h *Handler) GetParity(ctx context.Context) (*apiv1.ParitySnapshot, error) 
 }
 
 func (h *Handler) RunParityDiff(ctx context.Context) (*apiv1.ParityDiffResult, error) {
-	if h.Parity == nil {
+	if engineUnavailable(h.Parity) {
 		return nil, &apiError{code: "not_configured", statusCode: 501, message: "parity diff is not available on this daemon"}
 	}
 	diff, err := h.Parity.Diff(ctx)
