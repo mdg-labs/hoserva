@@ -374,9 +374,10 @@ func TestDeleteFile_RefusesParentSwappedForSymlinkMidRace(t *testing.T) {
 // race with swapTo pointing at a different, legitimate directory inside
 // the share rather than outside it. RESOLVE_IN_ROOT alone follows this
 // without error, since the reopen never leaves root — it is
-// unlinkConfined's identity check against the directory validation
-// resolved that must refuse it, since otherwise the removal would delete
-// a file in a directory the caller never named.
+// RESOLVE_NO_SYMLINKS that must refuse it, since the swapped parent is now
+// a symlink and the reopen fails outright rather than following it into a
+// directory the caller never named. (unlinkConfined's identity check runs
+// only against the leaf, once the reopen has already succeeded.)
 func TestDeleteFile_RefusesParentSwappedForInShareSymlinkMidRace(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("RemoveConfined's race protection is Linux-only (RESOLVE_IN_ROOT); production only runs on Debian (D2)")
@@ -394,8 +395,11 @@ func TestDeleteFile_RefusesParentSwappedForInShareSymlinkMidRace(t *testing.T) {
 		// absolute swapTo is reinterpreted by RESOLVE_IN_ROOT as rooted at
 		// the share (like the outside-the-share case above), so it would
 		// not reach another in-share directory at all and this test would
-		// pass for the wrong reason.
-		swapTo: "../other",
+		// pass for the wrong reason. The symlink is created at
+		// shareRoot/sub, so it resolves relative to shareRoot itself —
+		// "other" reaches shareRoot/other, the directory the assertion
+		// below checks.
+		swapTo: "other",
 	}
 
 	if err := svc.DeleteFile(ctx, "media", "sub/file.txt", true); err == nil {
