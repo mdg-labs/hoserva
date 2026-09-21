@@ -134,6 +134,10 @@ func (m *failOnceMounter) Mount(ctx context.Context, unit disk.MountUnit) error 
 	return m.inner.Mount(ctx, unit)
 }
 
+func (m *failOnceMounter) Unmount(ctx context.Context, unit disk.MountUnit) error {
+	return m.inner.Unmount(ctx, unit)
+}
+
 func unmountIfMounted(r disk.Runner, where string) {
 	_, _ = r.Run(context.Background(), "umount", where)
 }
