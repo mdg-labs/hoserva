@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -299,5 +299,87 @@ describe("UsersPage", () => {
     expect(uiLoginSwitch).toHaveAttribute("aria-disabled", "true");
     expect(smbSwitch).toHaveAttribute("aria-disabled", "true");
     expect(within(panel).getByRole("checkbox", { name: "Set or change SMB password" })).toBeInTheDocument();
+  });
+
+  // #228 CodeRabbit finding: openEditPanel's permissions GET is unguarded,
+  // so a slow response for a panel the admin has since closed and reopened
+  // for a different user could overwrite that other user's draft. This
+  // test fails against a version of openEditPanel that applies whichever
+  // permissions response lands last, regardless of which user it was for.
+  it("does not let a slow permissions response for one user overwrite another user's already-open edit panel", async () => {
+    let resolveAlicePermissions: (value: { data: unknown; response: { ok: boolean } }) => void = () => {};
+    const alicePermissionsPromise = new Promise<{ data: unknown; response: { ok: boolean } }>((resolve) => {
+      resolveAlicePermissions = resolve;
+    });
+
+    mockGet.mockImplementation((path: string, options?: { params?: { path?: { userId?: string } } }) => {
+      if (path === "/users") {
+        return Promise.resolve({
+          data: {
+            users: [
+              { id: "u1", username: "alice", role: "viewer", totpEnrolled: false, createdAt: "2026-01-01T00:00:00Z" },
+              { id: "u2", username: "bob", role: "viewer", totpEnrolled: false, createdAt: "2026-01-01T00:00:00Z" },
+            ],
+          },
+          response: { ok: true },
+        });
+      }
+      if (path === "/user-groups") {
+        return Promise.resolve({ data: { groups: [] }, response: { ok: true } });
+      }
+      if (path === "/sessions") {
+        return Promise.resolve({ data: { sessions: [] }, response: { ok: true } });
+      }
+      if (path === "/api-tokens") {
+        return Promise.resolve({ data: { tokens: [] }, response: { ok: true } });
+      }
+      if (path === "/shares") {
+        return Promise.resolve({ data: { shares: [share()] }, response: { ok: true } });
+      }
+      if (path === "/users/{userId}/permissions") {
+        const userId = options?.params?.path?.userId;
+        if (userId === "u1") return alicePermissionsPromise;
+        if (userId === "u2") {
+          return Promise.resolve({
+            data: { permissions: [{ shareName: "media", access: "read-write" }] },
+            response: { ok: true },
+          });
+        }
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <UsersPage />
+      </MemoryRouter>,
+    );
+
+    // Open alice's edit panel: her permissions GET fires and stays pending.
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for alice" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+    await screen.findByRole("dialog");
+
+    // Close it and open bob's instead: his permissions GET resolves right away.
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for bob" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+    const panel = await screen.findByRole("dialog");
+
+    await waitFor(() => {
+      expect(within(panel).getByRole("radio", { name: "Read-write" })).toHaveAttribute("aria-checked", "true");
+    });
+
+    // Alice's stale response lands now. It must not overwrite bob's panel —
+    // give React a full flush (a real macrotask, not just a microtask) so a
+    // buggy, unconditional setSharePermissionsDraft call has every chance
+    // to apply before the assertion below checks it didn't.
+    await act(async () => {
+      resolveAlicePermissions({ data: { permissions: [{ shareName: "media", access: "read-only" }] }, response: { ok: true } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(within(panel).getByRole("radio", { name: "Read-write" })).toHaveAttribute("aria-checked", "true");
+    expect(within(panel).getByRole("radio", { name: "Read-only" })).toHaveAttribute("aria-checked", "false");
   });
 });
