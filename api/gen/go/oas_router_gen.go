@@ -201,7 +201,8 @@ var (
 		"PATCH":  "Authorization,Content-Type",
 	}
 	rn9AllowedHeaders = map[string]string{
-		"GET": "Authorization",
+		"DELETE": "Authorization,Content-Type",
+		"GET":    "Authorization",
 	}
 	rn34AllowedHeaders = map[string]string{
 		"POST": "Authorization,Content-Type",
@@ -2322,13 +2323,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 								if len(elem) == 0 {
 									// Leaf node.
 									switch r.Method {
+									case "DELETE":
+										s.handleDeleteShareFileRequest([1]string{
+											args[0],
+										}, elemIsEscaped, w, r)
 									case "GET":
 										s.handleBrowseShareRequest([1]string{
 											args[0],
 										}, elemIsEscaped, w, r)
 									default:
 										s.notAllowed(w, r, notAllowedParams{
-											allowedMethods: "GET",
+											allowedMethods: "DELETE,GET",
 											allowedHeaders: rn9AllowedHeaders,
 											acceptPost:     "",
 											acceptPatch:    "",
@@ -4963,6 +4968,15 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 								if len(elem) == 0 {
 									// Leaf node.
 									switch method {
+									case "DELETE":
+										r.name = DeleteShareFileOperation
+										r.summary = "Delete a file or empty directory from the share"
+										r.operationID = "deleteShareFile"
+										r.operationGroup = ""
+										r.pathPattern = "/shares/{name}/browse"
+										r.args = args
+										r.count = 1
+										return r, true
 									case "GET":
 										r.name = BrowseShareOperation
 										r.summary = "List a share directory"

@@ -108,6 +108,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.ListSharesOperation:                     RoleViewer,
 	apiv1.GetShareOperation:                       RoleViewer,
 	apiv1.BrowseShareOperation:                    RoleViewer,
+	apiv1.DeleteShareFileOperation:                RoleAdmin,
 	apiv1.CreateShareOperation:                    RoleAdmin,
 	apiv1.UpdateShareOperation:                    RoleAdmin,
 	apiv1.DeleteShareOperation:                    RoleAdmin,

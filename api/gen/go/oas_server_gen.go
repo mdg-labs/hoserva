@@ -168,6 +168,14 @@ type Handler interface {
 	//
 	// POST /shares/{name}/data/delete
 	DeleteShareData(ctx context.Context, req *DeleteShareDataRequest, params DeleteShareDataParams) error
+	// DeleteShareFile implements deleteShareFile operation.
+	//
+	// Deletes one file or empty directory within the share, given a path relative to the share root (doc
+	// 03 §4.2 Browse tab). Refuses the share root itself and any path that would resolve outside the
+	// share's root, including through a symlink. `confirm: true` is required.
+	//
+	// DELETE /shares/{name}/browse
+	DeleteShareFile(ctx context.Context, req *ConfirmShareRequest, params DeleteShareFileParams) error
 	// DeleteUser implements deleteUser operation.
 	//
 	// Removes the account, its sessions, its group memberships and its per-share permissions. Refuses the

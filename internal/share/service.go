@@ -467,6 +467,41 @@ func (s *Service) Browse(ctx context.Context, name, rel string) (string, []Brows
 	return listed, out, nil
 }
 
+// DeleteFile deletes a single file or empty directory within the share,
+// given a path relative to the share root (doc 03 §4.2 Browse tab).
+// confirm must be true. The share root itself, and any path that would
+// resolve outside the share's root — including through a symlink — is
+// refused, confined the same way Browse confines a listed directory.
+func (s *Service) DeleteFile(ctx context.Context, name, rel string, confirm bool) error {
+	if !confirm {
+		return fmt.Errorf("%w: delete requires confirm=true", ErrConfirmation)
+	}
+	if err := validateName(name); err != nil {
+		return err
+	}
+	if _, err := s.Shares.Get(ctx, name); err != nil {
+		return err
+	}
+	if rel == "" || filepath.Clean(rel) == "." {
+		return fmt.Errorf("%w: cannot delete the share root", ErrPathEscapes)
+	}
+	root := filepath.Join(s.catchAll(), name)
+	target, err := confineSharePathOnFS(s.FS, root, rel)
+	if err != nil {
+		return err
+	}
+	if _, err := s.FS.Lstat(target); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", ErrFileNotFound, rel)
+		}
+		return err
+	}
+	if err := s.FS.Remove(target); err != nil {
+		return fmt.Errorf("share: deleting %s: %w", target, err)
+	}
+	return nil
+}
+
 func (s *Service) unmountShare(ctx context.Context, sh Share) error {
 	if s.Mounter == nil {
 		return nil

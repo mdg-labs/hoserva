@@ -21,6 +21,8 @@ var (
 	// ErrWrongSharePath is delete-data asked to remove a path that is
 	// not one of this share's own branch directories.
 	ErrWrongSharePath = errors.New("share: path is not this share's data")
+	// ErrFileNotFound is a browse-delete path that does not exist.
+	ErrFileNotFound = errors.New("share: no such file or directory")
 )
 
 // shareDataRoots are the directories delete-data may remove and create

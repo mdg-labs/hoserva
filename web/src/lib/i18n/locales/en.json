@@ -1125,8 +1125,12 @@
         "columns": {
           "name": "Name",
           "size": "Size",
-          "disk": "Disk"
-        }
+          "disk": "Disk",
+          "actions": "Actions"
+        },
+        "deleteAction": "Delete {{name}}",
+        "deleteConfirmTitle": "Delete this item?",
+        "deleteConfirmDescription": "This permanently deletes \"{{path}}\" from the share. This cannot be undone."
       },
       "danger": {
         "removeTitle": "Remove share definition",

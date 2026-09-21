@@ -1425,6 +1425,35 @@ paths:
                 $ref: '#/components/schemas/ShareBrowseResult'
         default:
           $ref: '#/components/responses/Error'
+    delete:
+      operationId: deleteShareFile
+      summary: Delete a file or empty directory from the share
+      description: >-
+        Deletes one file or empty directory within the share, given a
+        path relative to the share root (doc 03 §4.2 Browse tab). Refuses
+        the share root itself and any path that would resolve outside the
+        share's root, including through a symlink. `confirm: true` is
+        required.
+      tags: [shares]
+      x-hoserva-role: admin
+      parameters:
+        - name: path
+          in: query
+          required: true
+          description: File or empty directory to delete, relative to the share root.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmShareRequest'
+      responses:
+        "204":
+          description: File or directory deleted.
+        default:
+          $ref: '#/components/responses/Error'
 
   /shares/{name}/permissions:
     parameters:

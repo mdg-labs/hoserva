@@ -129,6 +129,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.CreateUserOperation,
 		apiv1.CreateUserGroupOperation,
 		apiv1.DeleteNotificationChannelOperation,
+		apiv1.DeleteShareFileOperation,
 		apiv1.DeleteUserOperation,
 		apiv1.DeleteUserGroupOperation,
 		apiv1.DisableUserTotpOperation,

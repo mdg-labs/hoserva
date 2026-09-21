@@ -254,6 +254,12 @@ func encodeDeleteShareDataResponse(response *DeleteShareDataNoContent, w http.Re
 	return nil
 }
 
+func encodeDeleteShareFileResponse(response *DeleteShareFileNoContent, w http.ResponseWriter, span trace.Span) error {
+	w.WriteHeader(204)
+
+	return nil
+}
+
 func encodeDeleteUserResponse(response *DeleteUserNoContent, w http.ResponseWriter, span trace.Span) error {
 	w.WriteHeader(204)
 

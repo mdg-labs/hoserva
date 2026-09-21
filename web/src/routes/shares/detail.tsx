@@ -1,4 +1,4 @@
-import { Home } from "lucide-react";
+import { Home, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -58,6 +58,7 @@ const UNKNOWN_VALUE = "—";
 const BROWSE_COLUMN_NAME = "name";
 const BROWSE_COLUMN_SIZE = "size";
 const BROWSE_COLUMN_DISK = "disk";
+const BROWSE_COLUMN_ACTIONS = "actions";
 const DANGER_ACTION_REMOVE = "remove";
 const DANGER_ACTION_DELETE_DATA = "delete-data";
 
@@ -100,6 +101,8 @@ export function ShareDetailPage(): React.ReactElement {
   const [browseEntries, setBrowseEntries] = useState<ShareBrowseEntry[] | null>(null);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
+  const [deleteFileTarget, setDeleteFileTarget] = useState<string | null>(null);
+  const [deleteFileBusy, setDeleteFileBusy] = useState(false);
 
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removeBusy, setRemoveBusy] = useState(false);
@@ -260,6 +263,25 @@ export function ShareDetailPage(): React.ReactElement {
     }
   }
 
+  async function handleDeleteFile(): Promise<void> {
+    if (deleteFileTarget === null) return;
+    setDeleteFileBusy(true);
+    try {
+      const { error: apiError } = await hoservaClient.DELETE("/shares/{name}/browse", {
+        params: { path: { name }, query: { path: deleteFileTarget } },
+        body: { confirm: true },
+      });
+      if (apiError) {
+        setBrowseError(apiError.message);
+        return;
+      }
+      setDeleteFileTarget(null);
+      await loadBrowse(browsePath);
+    } finally {
+      setDeleteFileBusy(false);
+    }
+  }
+
   async function handleRemoveDefinition(): Promise<void> {
     setRemoveBusy(true);
     try {
@@ -377,6 +399,20 @@ export function ShareDetailPage(): React.ReactElement {
       id: BROWSE_COLUMN_DISK,
       header: t("shares.detail.browse.columns.disk"),
       cell: (entry) => entry.disk || UNKNOWN_VALUE,
+    },
+    {
+      id: BROWSE_COLUMN_ACTIONS,
+      header: t("shares.detail.browse.columns.actions"),
+      cell: (entry) => (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t("shares.detail.browse.deleteAction", { name: entry.name })}
+          onClick={() => setDeleteFileTarget(browsePath ? `${browsePath}/${entry.name}` : entry.name)}
+        >
+          <Trash2 aria-hidden="true" />
+        </Button>
+      ),
     },
   ];
 
@@ -718,6 +754,22 @@ export function ShareDetailPage(): React.ReactElement {
         description={t("shares.detail.cache.confirmDescription")}
         loading={savingCache}
         onConfirm={() => void handleConfirmCacheMode()}
+      />
+
+      <ConfirmDialog
+        open={deleteFileTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteFileTarget(null);
+        }}
+        title={t("shares.detail.browse.deleteConfirmTitle")}
+        description={
+          deleteFileTarget !== null
+            ? t("shares.detail.browse.deleteConfirmDescription", { path: deleteFileTarget })
+            : undefined
+        }
+        destructive
+        loading={deleteFileBusy}
+        onConfirm={() => void handleDeleteFile()}
       />
 
       <ConfirmDialog

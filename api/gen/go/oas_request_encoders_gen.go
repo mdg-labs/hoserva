@@ -211,6 +211,20 @@ func encodeDeleteShareDataRequest(
 	return nil
 }
 
+func encodeDeleteShareFileRequest(
+	req *ConfirmShareRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeEnrollTotpRequest(
 	req *TotpEnrollRequest,
 	r *http.Request,

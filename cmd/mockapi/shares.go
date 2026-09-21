@@ -149,6 +149,18 @@ func (h *handler) DeleteShareData(ctx context.Context, req *apiv1.DeleteShareDat
 	return nil
 }
 
+func (h *handler) DeleteShareFile(ctx context.Context, req *apiv1.ConfirmShareRequest, params apiv1.DeleteShareFileParams) error {
+	if !req.Confirm {
+		return errConfirmRequired()
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.shares[string(params.Name)]; !ok {
+		return errShareNotFound(params.Name)
+	}
+	return nil
+}
+
 func (h *handler) BrowseShare(ctx context.Context, params apiv1.BrowseShareParams) (*apiv1.ShareBrowseResult, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
