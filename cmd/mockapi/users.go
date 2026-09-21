@@ -35,6 +35,19 @@ func errUserNotFoundByUsername(username string) error {
 	return &mockError{code: "user_not_found", statusCode: 404, message: fmt.Sprintf("no user %q", username)}
 }
 
+// errShareOnlyNoAPIToken mirrors internal/api's ErrShareOnlyNoAPIToken
+// (Q27, doc 01 §5): a share-only account has no API access at all.
+func errShareOnlyNoAPIToken() error {
+	return &mockError{code: "share_only_no_api_token", statusCode: 403, message: "this account has SMB/NFS access only — it has no API access"}
+}
+
+// errTokenRoleExceedsAccount mirrors internal/api's
+// ErrTokenRoleExceedsAccount: a token can only narrow an account's own
+// access, never widen it.
+func errTokenRoleExceedsAccount() error {
+	return &mockError{code: "token_role_exceeds_account", statusCode: 403, message: "a token's role cannot exceed its account's own role"}
+}
+
 // findUserByUsername is #50's own lookup: createApiToken is keyed by
 // username in the path (like the root-only recovery operations), not by
 // id, so the mock needs the reverse of the uuid-keyed h.users map.
@@ -208,6 +221,15 @@ func (h *handler) CreateApiToken(ctx context.Context, req *apiv1.CreateApiTokenR
 	u, ok := h.findUserByUsername(params.Username)
 	if !ok {
 		return nil, errUserNotFoundByUsername(params.Username)
+	}
+	if u.Role == apiv1.UserRoleShareOnly {
+		return nil, errShareOnlyNoAPIToken()
+	}
+	// A token's role can only narrow an account's own role, never widen
+	// it: an admin account can be issued a viewer-scoped token, a viewer
+	// account can never be issued an admin-scoped one (Q43).
+	if req.Role == apiv1.ApiTokenRoleAdmin && u.Role != apiv1.UserRoleAdmin {
+		return nil, errTokenRoleExceedsAccount()
 	}
 	id := uuid.NewString()
 	summary := apiv1.ApiTokenSummary{
