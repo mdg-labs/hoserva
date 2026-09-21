@@ -419,7 +419,7 @@ The residual risks above are exercised by volunteers on their own hardware, neve
 
 ### Merge gate
 
-L1 + L2 + `.deb` build must pass on every push to `dev` and on every pull request targeting `dev` or `main`. The `dev` → `main` promotion PR is the required-checks gate for `main` — it runs the full suite on the merge commit, which can differ from `dev` HEAD if `main` has commits `dev` does not. A subsequent push to `main` after merge does not re-run `ci.yml`. Tag pushes (`v*`) go through `release.yml`, not this workflow. With agent-driven development, work lands as locally verified commits pushed by the maintainer (doc 12 §6), so a red push is fixed forward immediately. L3 is nightly where hosted runners can run it, because a 30-minute VM suite on every push kills iteration speed — but a red nightly, or a missing pre-release agent run, blocks the next release.
+L1 + L2 + `.deb` build must pass on every push to `dev` and on every pull request targeting `dev` or `main`. The `dev` → `main` promotion PR is the required-checks gate for `main` — it runs the full suite on the merge commit, which can differ from `dev` HEAD if `main` has commits `dev` does not. A subsequent push to `main` after merge does not re-run `ci.yml`. Tag pushes (`v*`) go through `release.yml`, not this workflow. With agent-driven development, `orchestrate` lands locally verified commits on `dev` and pushes each one immediately (doc 12 §6), so a red push is fixed forward immediately. L3 is nightly where hosted runners can run it, because a 30-minute VM suite on every push kills iteration speed — but a red nightly, or a missing pre-release agent run, blocks the next release.
 
 ### Release checklist, automated where possible
 

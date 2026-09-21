@@ -241,7 +241,7 @@ That ordering feels slow for the first week and pays back continuously afterward
 GitHub issues on `mdg-labs/hoserva` are the plan and the memory between sessions, with the same skill set proven on the maintainer's other projects:
 
 - **`github-triage`** (`.claude/skills/github-triage/`) turns a rough report into a structured issue, or enriches an existing one — grounded in these design docs, every open question landed on a recommended default (the doc 13 rule), epics and dependencies wired as native GitHub relationships.
-- **`orchestrate`** (`.claude/skills/orchestrate/`) takes an issue or an epic and lands verified commits: `task-executor` agents implement in isolated scratch clones, parallel where file scopes are disjoint; an independent `task-verifier` reviews each commit; only a PASS is landed on local `main`. Nothing is pushed automatically.
+- **`orchestrate`** (`.claude/skills/orchestrate/`) takes an issue or an epic and lands verified commits: `task-executor` agents implement in isolated scratch clones, parallel where file scopes are disjoint; an independent `task-verifier` reviews each commit; only a PASS is landed on local `dev`, pushed to `origin/dev` immediately (§6).
 - **Status labels** (`status:new` → `ready` → `in-progress` → `in-review` → `implemented` → `closed`) are machine-managed: `.github/workflows/issue-status.yml` owns the ends, `scripts/issue-status.sh` everything in between — exactly one `status:*` label per issue, always.
 - `CLAUDE.md` carries the full rules; `scripts/bootstrap-labels.sh` creates the label set.
 
