@@ -41,6 +41,15 @@ expected shape with `gh pr view <n> --repo mdg-labs/hoserva --json number,title,
 this skill assumes `head` is `beta` (per `release-pr`); if it isn't, stop
 and ask before proceeding, since fixes below land on `beta` directly.
 
+That check only confirms what's on GitHub. Before the first `Edit` or
+`git commit`, also verify the *local* checkout: `git status` must show
+branch `beta` with a clean working tree, and `git rev-parse beta` must
+equal `git rev-parse origin/beta` (fetch first if needed). If the local
+checkout is on a different branch, dirty, or stale against
+`origin/beta`, stop and ask rather than editing or committing — a fix
+built on the wrong branch or an old commit can leave the PR unchanged
+while this skill reports success.
+
 ## Collect every CodeRabbit finding
 
 CodeRabbit posts in three shapes — collect all of them, filtering to its
