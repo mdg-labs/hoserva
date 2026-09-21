@@ -10,6 +10,33 @@ import (
 	"github.com/mdg-labs/hoserva/internal/parity"
 )
 
+// TestHandler_GetParity_NilConcreteEngine and
+// TestHandler_RunParityDiff_NilConcreteEngine reproduce #226: a nil
+// *parity.SnapraidEngine wrapped in the parity.Engine interface (exactly
+// how cmd/hoservad wires Handler.Parity when no snapraid.conf exists yet)
+// does not compare equal to a bare nil, so `h.Parity == nil` used to miss
+// it and calling eng.Status/eng.Diff on it panicked — the same pattern
+// #222 fixed for /doctor.
+func TestHandler_GetParity_NilConcreteEngine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	h.Parity = (*parity.FakeEngine)(nil)
+
+	_, err := h.GetParity(context.Background())
+	if ae := apiError(t, h, err); ae.Response.Code != "not_configured" || ae.StatusCode != 501 {
+		t.Fatalf("error = %+v, want not_configured/501", ae)
+	}
+}
+
+func TestHandler_RunParityDiff_NilConcreteEngine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	h.Parity = (*parity.FakeEngine)(nil)
+
+	_, err := h.RunParityDiff(context.Background())
+	if ae := apiError(t, h, err); ae.Response.Code != "not_configured" || ae.StatusCode != 501 {
+		t.Fatalf("error = %+v, want not_configured/501", ae)
+	}
+}
+
 type parityMethodRecorder struct {
 	parity.FakeEngine
 
