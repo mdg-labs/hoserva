@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Given a GitHub issue number (a single item, or an epic with sub-issues), autonomously implement and verify the work — sonnet execution agents in isolated scratch clones (one per item, or one per bundle of small, correlated items), one independent verifier per attempt, landing on local beta only after a PASS and pushing it there immediately, including safety-critical commits, unless it's blocked by a fresh follow-up. Parallelizes items with disjoint file scope, serializes overlapping ones. Never touches main — that's a separate, maintainer-run beta-to-main promotion. Use when asked to "work on issue #n", "implement epic #n", "run the orchestrator", or "orchestrate #n".
+description: Given a GitHub issue number (a single item, or an epic with sub-issues), autonomously implement and verify the work — sonnet execution agents in isolated scratch clones (one per item, or one per bundle of small, correlated items), one independent verifier per attempt, landing on local dev only after a PASS and pushing it there immediately, including safety-critical commits, unless it's blocked by a fresh follow-up. Parallelizes items with disjoint file scope, serializes overlapping ones. Never touches main — that's a separate, maintainer-run dev-to-main promotion. Use when asked to "work on issue #n", "implement epic #n", "run the orchestrator", or "orchestrate #n".
 argument-hint: <issue-number>
 allowed-tools:
   - Read
@@ -14,17 +14,17 @@ allowed-tools:
 # orchestrate
 
 Turns one GitHub issue on `mdg-labs/hoserva` — a single item, or an epic
-with sub-issues — into landed, verified commits on local `beta`, with no
+with sub-issues — into landed, verified commits on local `dev`, with no
 human in the loop except at a genuine blocker (a `needs-sudo` step, a
 repeated verification failure, or an external unmet dependency).
-**Every landed commit is pushed to `beta` as soon as it lands, including
-`safety-critical` ones** — `beta` is a working branch, not a release
+**Every landed commit is pushed to `dev` as soon as it lands, including
+`safety-critical` ones** — `dev` is a working branch, not a release
 branch, so the gate that matters is the independent verifier's PASS before
 landing, not a manual pre-push read — one push per issue, unless the issue
 itself carries an open `blockedBy` added during this run, which waits for
 the maintainer to read and push instead: a fresh dependency limits trust in
 the fix, regardless of the issue's own labels. `main` is out of scope for
-this skill entirely: it only moves via a `beta → main` pull request the
+this skill entirely: it only moves via a `dev → main` pull request the
 maintainer opens by hand, gated by GitHub's required status checks (doc 12
 §6).
 
@@ -136,7 +136,7 @@ For each `d` in `blockedBy`, check its **labels**, not its open/closed
 state — `main` is release-only (Q46) and stays open on GitHub long after
 the fix has actually landed:
 - `d` carries `status:implemented` or `status:closed` → satisfied: the fix
-  has landed on local `beta` — pushed already unless it was itself held
+  has landed on local `dev` — pushed already unless it was itself held
   back by a fresh `blockedBy` — which is enough for a scratch clone made
   from the real repo's current state to build on.
 - Otherwise, and `d` is in T → an intra-run ordering edge.
@@ -268,7 +268,7 @@ the executor runs after claiming a sub-issue and the verifier after each
 verdict. Pass the epic as `{{EPIC_NUMBER}}`; omit that block for an issue
 with no epic.
 
-- **You never set `status:closed`.** The trailer only closes the issue once its commit reaches `main` — for most work that's the later `beta → main` promotion, not this run's push to `beta`; the workflow labels it when it happens.
+- **You never set `status:closed`.** The trailer only closes the issue once its commit reaches `main` — for most work that's the later `dev → main` promotion, not this run's push to `dev`; the workflow labels it when it happens.
 - **You own the abandonment transitions:** an issue leaving your hands still open (executor `blocked`, or escalated after three FAILs) goes back to `status:ready`.
 
 ## 6. Dispatch `task-executor`
@@ -404,11 +404,11 @@ git cherry-pick -n FETCH_HEAD
 
   **Push, unless this issue now carries an open `blockedBy`** (a follow-up
   step 11 filed against it during this run, limiting trust in the fix —
-  `safety-critical` alone is no longer a reason to hold a push back: `beta`
+  `safety-critical` alone is no longer a reason to hold a push back: `dev`
   is a working branch, not `main`, and the independent verifier's PASS is
   the gate that matters):
   ```
-  git push origin beta
+  git push origin dev
   ```
   **Before pushing, confirm no unpushed ancestor is itself held back.**
   `git push` moves the remote to your current local tip, carrying every
@@ -417,7 +417,7 @@ git cherry-pick -n FETCH_HEAD
   you're about to land, pushing now would push that held-back commit too
   and silence the reason it was held. Check first:
   ```
-  git log origin/beta..beta --oneline
+  git log origin/dev..dev --oneline
   ```
   If that list contains anything besides the commit you just landed, stop
   and look at what it is before pushing — if any of it is a commit this run
@@ -429,9 +429,9 @@ git cherry-pick -n FETCH_HEAD
   A commit held back by a fresh `blockedBy` stays local — list it in the
   report (step 12) for the maintainer to read and push by hand. Everything
   else pushes immediately, one push per landed issue: that is what gives
-  the maintainer a live CI status on `beta` as the run progresses, instead
+  the maintainer a live CI status on `dev` as the run progresses, instead
   of one batched push at the end. If the push is rejected (someone else
-  moved `beta` meanwhile), don't force it — report it and stop touching
+  moved `dev` meanwhile), don't force it — report it and stop touching
   that remote for the rest of this run.
 
   Once **every** issue in the unit is resolved: confirm its lab is gone
@@ -444,7 +444,7 @@ git cherry-pick -n FETCH_HEAD
 - **Cherry-pick conflicts** (a wrong scope prediction): `git cherry-pick
   --abort`. A mechanical rebase problem, not a rejected implementation —
   doesn't spend a fix attempt. Destroy the unit's lab, delete the clone,
-  re-clone fresh from current `beta`, redispatch the same issue with a
+  re-clone fresh from current `dev`, redispatch the same issue with a
   one-line "rebase re-run" note. Cap at 2 rebase retries, then escalate as
   in step 9.
 
@@ -455,8 +455,8 @@ git cherry-pick -n FETCH_HEAD
 - **After a single-issue attempt:** a fresh `task-executor` in the **same
   clone**, template branch `FIX_ROUND_SAME_WORKSPACE`, with the rejected SHA
   and the **blocking** findings verbatim (never the notes). It amends; the workspace stays one commit ahead
-  of `beta`.
-- **After a bundled attempt:** re-clone fresh from current `beta` (its
+  of `dev`.
+- **After a bundled attempt:** re-clone fresh from current `dev` (its
   passing siblings have landed), template branch `FIX_ROUND_FRESH_CLONE`,
   with `PRIOR_ATTEMPT_PATH`/`PRIOR_COMMIT_PATH` pointing at the old bundle
   workspace, read-only. A normal new commit.
@@ -528,11 +528,11 @@ gets its own issue and its own commit.
 ## 12. Compose the report
 
 - What landed (issue → commit SHA → one line), and whether it reached
-  `origin/beta`
+  `origin/dev`
 - **Safety-critical commits landed this run** — their own list, even if
   empty ("none this run"), noting they were pushed like everything else;
   worth naming separately so the maintainer knows which ones deserve a
-  closer read even though they're already on `origin/beta`
+  closer read even though they're already on `origin/dev`
 - **Commits held back by a fresh `blockedBy`** — landed locally, not pushed, because step 11 filed a follow-up against them during this run (their own list, even if empty: "none this run")
 - What's blocked and why (`needs-sudo` prepared, external dependency, lab not yet available, escalated after 3 FAILs)
 - Bundles and why
@@ -543,8 +543,8 @@ gets its own issue and its own commit.
 - **What's still local, for the maintainer to read and push**: the
   `blockedBy`-held list above (and, in the rare stacking case step 8
   describes, anything sitting underneath a held commit that therefore
-  couldn't be pushed either). `git push origin beta` once satisfied —
-  everything else already reached `origin/beta` during the run.
+  couldn't be pushed either). `git push origin dev` once satisfied —
+  everything else already reached `origin/dev` during the run.
 
 Don't send it to the user yet — step 13 first.
 
@@ -564,7 +564,7 @@ report as your final message.
 
 ## Non-negotiables
 
-- **Commits land on local `beta` and are pushed to `origin/beta` immediately after landing, including `safety-critical` ones.** Only a commit held back by a fresh `blockedBy` added during this run is never pushed by you — the maintainer reads and pushes that. Before any push, confirm no held-back commit sits unpushed underneath the one you're landing (step 8) — pushing would carry it along too. `main` is never touched by this skill at all; it only moves via a maintainer-run `beta → main` promotion. A scratch clone's own branch is internal and disposable.
+- **Commits land on local `dev` and are pushed to `origin/dev` immediately after landing, including `safety-critical` ones.** Only a commit held back by a fresh `blockedBy` added during this run is never pushed by you — the maintainer reads and pushes that. Before any push, confirm no held-back commit sits unpushed underneath the one you're landing (step 8) — pushing would carry it along too. `main` is never touched by this skill at all; it only moves via a maintainer-run `dev → main` promotion. A scratch clone's own branch is internal and disposable.
 - **No agent ever runs `gh issue close`.** Closing happens via a pushed commit's trailer.
 - **No agent ever touches a real block device, a real mount, or runs `sudo`** — storage runs only in its own namespaced lab; `needs-sudo` issues never reach an agent.
 - **Every lab is destroyed** before its clone is deleted, and no lane ever uses another lane's lab id.

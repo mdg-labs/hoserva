@@ -1,7 +1,7 @@
 name: Release
 
 # Publishes a tagged release (Q66, doc 12 §6): every `v*` tag — cut from
-# `main` for a stable release, or directly from `beta` for a beta
+# `main` for a stable release, or directly from `dev` for a beta
 # pre-release (doc 12 §6) — builds the amd64 and arm64 .deb and attaches
 # them to a GitHub Release, stable as a release and beta as a
 # pre-release, with a signed SHA256SUMS. Runs only on GitHub-hosted
@@ -35,7 +35,7 @@ jobs:
       # A `v*` tag is valid on any commit. Refuse before any build or
       # signing step runs unless it's actually on the branch its channel
       # (Q66) publishes from — a stable tag from main, a beta tag from
-      # beta.
+      # dev.
       - name: Verify tag ancestry
         env:
           TAG: ${{ github.ref_name }}

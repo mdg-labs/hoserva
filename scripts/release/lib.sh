@@ -33,9 +33,9 @@ hoserva_debian_version_from_tag() {
 
 # hoserva_verify_tag_ancestry fails unless $1 (a release tag) is an
 # ancestor of the branch its channel publishes from: origin/main for a
-# stable tag, origin/beta for a beta tag (Q66, doc 12 §6). Without this,
+# stable tag, origin/dev for a beta tag (Q66, doc 12 §6). Without this,
 # a `v*` tag pushed to any other commit would still build and sign a
-# release — the caller must have fetched origin/main and origin/beta
+# release — the caller must have fetched origin/main and origin/dev
 # first.
 hoserva_verify_tag_ancestry() {
   local tag="$1"
@@ -43,7 +43,7 @@ hoserva_verify_tag_ancestry() {
   channel="$(hoserva_channel_from_tag "$tag")" || return 1
   case "$channel" in
     stable) branch="main" ;;
-    beta) branch="beta" ;;
+    beta) branch="dev" ;;
   esac
   if ! git merge-base --is-ancestor "$tag" "origin/$branch" 2>/dev/null; then
     echo "hoserva_verify_tag_ancestry: '$tag' (channel: $channel) is not an ancestor of origin/$branch — refusing to build or sign a release from it" >&2

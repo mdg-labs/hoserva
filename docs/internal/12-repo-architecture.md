@@ -233,7 +233,7 @@ That ordering feels slow for the first week and pays back continuously afterward
 
 - **Pre-commit hooks** running lint and unit tests, so broken code doesn't accumulate
 - **CI as the arbiter**, not local runs — doc 06 §7's pipeline
-- **Safety-critical paths**: the threshold guard, the mover/relocation delete path, the migration import, schema migrations and data transforms (D16), anything in `packaging/`, or PCI/USB passthrough's VFIO/bootloader changes (doc 14 §3). Issues touching them carry the `safety-critical` label; the verifier applies an extra data-safety review to them, and every orchestrate report lists their commits separately so the maintainer knows which ones deserve a closer read even though they've already reached `beta` (Q46)
+- **Safety-critical paths**: the threshold guard, the mover/relocation delete path, the migration import, schema migrations and data transforms (D16), anything in `packaging/`, or PCI/USB passthrough's VFIO/bootloader changes (doc 14 §3). Issues touching them carry the `safety-critical` label; the verifier applies an extra data-safety review to them, and every orchestrate report lists their commits separately so the maintainer knows which ones deserve a closer read even though they've already reached `dev` (Q46)
 - **Never point the agent at real hardware.** Doc 06 §5's hard rule applies with more force when an agent is driving: the lab container and agent-started VMs are the only environments, and no agent connects to the maintainer's own machines (D20). The lab container exposes loop devices and FUSE only, so a mistyped device path cannot reach a real disk (doc 06 §3, Q45)
 
 ### Issue-driven workflow
@@ -241,7 +241,7 @@ That ordering feels slow for the first week and pays back continuously afterward
 GitHub issues on `mdg-labs/hoserva` are the plan and the memory between sessions, with the same skill set proven on the maintainer's other projects:
 
 - **`github-triage`** (`.claude/skills/github-triage/`) turns a rough report into a structured issue, or enriches an existing one — grounded in these design docs, every open question landed on a recommended default (the doc 13 rule), epics and dependencies wired as native GitHub relationships.
-- **`orchestrate`** (`.claude/skills/orchestrate/`) takes an issue or an epic and lands verified commits: `task-executor` agents implement in isolated scratch clones, parallel where file scopes are disjoint; an independent `task-verifier` reviews each commit; only a PASS is landed on local `main`. Nothing is pushed automatically.
+- **`orchestrate`** (`.claude/skills/orchestrate/`) takes an issue or an epic and lands verified commits: `task-executor` agents implement in isolated scratch clones, parallel where file scopes are disjoint; an independent `task-verifier` reviews each commit; only a PASS is landed on local `dev`, pushed to `origin/dev` immediately (§6).
 - **Status labels** (`status:new` → `ready` → `in-progress` → `in-review` → `implemented` → `closed`) are machine-managed: `.github/workflows/issue-status.yml` owns the ends, `scripts/issue-status.sh` everything in between — exactly one `status:*` label per issue, always.
 - `CLAUDE.md` carries the full rules; `scripts/bootstrap-labels.sh` creates the label set.
 
@@ -251,25 +251,25 @@ GitHub issues on `mdg-labs/hoserva` are the plan and the memory between sessions
 
 Two branches (Q46, revised — see below):
 
-- **`beta`** is the working branch. Every change, agent or human, lands here first. CI runs on every push to `beta`; `beta` is not required to be releasable at every commit.
-- **`main`** is release-only, and stays the GitHub default branch — so `Fixes #n` still closes an issue only once its commit reaches `main`. That is for the maintainer's own visibility ("is this actually on main yet"); agents never wait on it. `main` only moves via a `beta → main` pull request, gated by a required-status-checks branch protection ruleset: every job in `ci.yml` must pass before that PR can merge. No required review — there is one developer.
+- **`dev`** is the working branch. Every change, agent or human, lands here first. CI runs on every push to `dev`; `dev` is not required to be releasable at every commit.
+- **`main`** is release-only, and stays the GitHub default branch — so `Fixes #n` still closes an issue only once its commit reaches `main`. That is for the maintainer's own visibility ("is this actually on main yet"); agents never wait on it. `main` only moves via a `dev → main` pull request, gated by a required-status-checks branch protection ruleset: every job in `ci.yml` must pass before that PR can merge. No required review — there is one developer.
 
 **Why not land straight on `main`, as Q46 originally decided:** `orchestrate`'s own local verification is not infallible, and shares its environment (and blind spots) with the executor it's checking. Issue #18 needed nine rejected attempts before a schema change passed; the #120 lab-teardown fix cascaded into three more bugs in the same area (#122, #128, #129), one of them a skill bug that told agents to run `losetup` on the host, and another commit in that chain bypassed `orchestrate` entirely. `main` needs a gate an independent, clean environment enforces — GitHub Actions on hosted runners — not only a local verifier's PASS.
 
 **Agent work:**
-- `orchestrate` lands verified commits on local `beta` — one commit per issue, `Fixes #n` trailer.
-- **Every landed commit pushes to `beta` immediately after landing, `safety-critical` ones included** — `beta` is a working branch, not `main`, so the gate that matters is the independent verifier's PASS before landing, not a manual pre-push read. A commit is held back from pushing only when the issue itself carries an open `blockedBy` added during the same run (a follow-up filed because it limits trust in the fix) — that one waits for the maintainer.
+- `orchestrate` lands verified commits on local `dev` — one commit per issue, `Fixes #n` trailer.
+- **Every landed commit pushes to `dev` immediately after landing, `safety-critical` ones included** — `dev` is a working branch, not `main`, so the gate that matters is the independent verifier's PASS before landing, not a manual pre-push read. A commit is held back from pushing only when the issue itself carries an open `blockedBy` added during the same run (a follow-up filed because it limits trust in the fix) — that one waits for the maintainer.
 - `safety-critical` commits are still listed on their own in every orchestrate report, even though they're already pushed, so the maintainer knows which ones deserve a closer read.
 - Downstream agent work treats an issue as unblocking once it carries `status:implemented` or `status:closed` — never its GitHub open/closed state, which only reflects whether it has reached `main`. A scratch clone is made from the real repo's current local state, which already has the fix regardless of what's been pushed or promoted.
 
-**Promoting to a release:** when `beta` is ready, the maintainer opens a `beta → main` pull request by hand. CI must pass; the maintainer merges it — no separate review step, since there's nobody else to review it.
+**Promoting to a release:** when `dev` is ready, the maintainer opens a `dev → main` pull request by hand. CI must pass; the maintainer merges it — no separate review step, since there's nobody else to review it.
 
-**External contributors** fork the whole repository, branch from `beta`, and PR back into `beta` — not `main` — squash-merged, with CI on hosted runners only (doc 06 §7). Once contributors exist, `beta` gets its own protection too: required CI, plus the maintainer's review on external PRs, with an admin bypass so the maintainer's own merges stay unblocked by that review requirement.
+**External contributors** fork the whole repository, branch from `dev`, and PR back into `dev` — not `main` — squash-merged, with CI on hosted runners only (doc 06 §7). Once contributors exist, `dev` gets its own protection too: required CI, plus the maintainer's review on external PRs, with an admin bypass so the maintainer's own merges stay unblocked by that review requirement.
 
 - Tags on `main` drive releases; CI builds the `.deb` for amd64 and arm64, attaches it with signed checksums to a GitHub Release, and updates the signed release index on the project site. GitHub keeps every version, so a rollback always has somewhere to go. From 1.0 the same workflow also publishes to the signed apt repository (Q66, Q67)
 - Conventional commits (`feat(parity): …`), since the changelog generates from them and the agent will write most of them
 
-**Release channels:** `stable` and `beta` — GitHub releases and pre-releases until 1.0, then channels in the apt repository. A beta pre-release can be cut directly from the `beta` branch; a stable release only after promotion to `main`. Beta exists for the opt-in public beta (doc 06 §6) and for anything touching the mover, parity, or migration — the three areas where a bad release costs someone their data.
+**Release channels:** `stable` and `beta` — GitHub releases and pre-releases until 1.0, then channels in the apt repository. These channel names are derived from the tag string (`vX.Y.Z` vs. `vX.Y.Z-beta.N`), not from which branch the tag sits on, so they are unaffected by the `dev` rename below. A beta pre-release can be cut directly from the `dev` branch; a stable release only after promotion to `main`. Beta exists for the opt-in public beta (doc 06 §6) and for anything touching the mover, parity, or migration — the three areas where a bad release costs someone their data.
 
 ---
 

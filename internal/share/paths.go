@@ -120,6 +120,65 @@ func confineSharePathOnFS(fs FS, root, rel string) (string, error) {
 	return resolved, nil
 }
 
+// removeConfined resolves rel the same way confineSharePathOnFS does —
+// following symlinks and refusing anything that lands outside root — then
+// removes the resulting file or empty directory. Resolution and removal
+// are still two separate pathname walks (the EvalSymlinks-based one here,
+// then unlinkConfined's own openat2 reopen), so this captures the leaf's
+// identity (an Lstat on the just-resolved target) right after validation,
+// before handing dirRel and that captured identity to unlinkConfined.
+// unlinkConfined refuses the removal unless (a) its own reopen of dirRel
+// finds no symlink anywhere along the way — an ancestor swapped for a
+// symlink between validation and removal, at any depth, makes that reopen
+// fail outright — and (b) the object actually named base at removal time
+// has the same device and inode as the one Lstat found here. Both checks
+// compare against something captured before the race window opened, not
+// against a second, independent re-resolution of the same pathname, so
+// neither an ancestor-symlink swap nor a same-directory leaf swap can
+// cause something other than what validation saw to be unlinked
+// (CWE-367).
+func removeConfined(fs FS, root, rel string) error {
+	target, err := confineSharePathOnFS(fs, root, rel)
+	if err != nil {
+		return err
+	}
+	resolvedRoot, err := fs.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("share: resolving share root %s: %w", root, err)
+	}
+	if target == resolvedRoot {
+		return fmt.Errorf("%w: %q", ErrPathEscapes, rel)
+	}
+	dirTarget := filepath.Dir(target)
+	dirRel, err := filepath.Rel(resolvedRoot, dirTarget)
+	if err != nil || !pathInside(dirRel) {
+		// confineSharePathOnFS returns target unresolved (built from the
+		// raw root, not resolvedRoot) when the leaf doesn't exist, so a
+		// symlinked root makes the resolvedRoot-relative check above fail
+		// even though target is still confined to root by construction
+		// (confineSharePath already refused any rel that escapes it).
+		// Retrying against root recovers that case without weakening the
+		// check: it only ever succeeds here because dirTarget was built by
+		// joining exactly this root, and unlinkConfined's own
+		// RESOLVE_IN_ROOT|RESOLVE_NO_SYMLINKS reopen still guards removal.
+		dirRel, err = filepath.Rel(filepath.Clean(root), dirTarget)
+	}
+	if err != nil || !pathInside(dirRel) {
+		return fmt.Errorf("%w: %q", ErrPathEscapes, rel)
+	}
+	leaf, err := fs.Lstat(target)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := unlinkConfined(resolvedRoot, dirRel, filepath.Base(target), leaf); err != nil {
+		if errors.Is(err, ErrFileNotFound) {
+			return fmt.Errorf("%w: %s", ErrFileNotFound, rel)
+		}
+		return err
+	}
+	return nil
+}
+
 func pathInside(relToRoot string) bool {
 	return relToRoot != ".." && !strings.HasPrefix(relToRoot, ".."+string(filepath.Separator))
 }

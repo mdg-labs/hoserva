@@ -471,7 +471,13 @@ func (s *Service) Browse(ctx context.Context, name, rel string) (string, []Brows
 // given a path relative to the share root (doc 03 §4.2 Browse tab).
 // confirm must be true. The share root itself, and any path that would
 // resolve outside the share's root — including through a symlink — is
-// refused, confined the same way Browse confines a listed directory.
+// refused. RemoveConfined re-resolves rel confined to root and, on Linux,
+// refuses the removal unless no ancestor directory along the way is
+// currently a symlink and the object actually removed matches the
+// identity resolution captured, so neither a parent directory swapped for
+// a symlink (at any depth) nor the target itself swapped for a different
+// object of the same name, between resolution and removal, can cause
+// something other than what was resolved to be removed (CWE-367).
 func (s *Service) DeleteFile(ctx context.Context, name, rel string, confirm bool) error {
 	if !confirm {
 		return fmt.Errorf("%w: delete requires confirm=true", ErrConfirmation)
@@ -486,20 +492,7 @@ func (s *Service) DeleteFile(ctx context.Context, name, rel string, confirm bool
 		return fmt.Errorf("%w: cannot delete the share root", ErrPathEscapes)
 	}
 	root := filepath.Join(s.catchAll(), name)
-	target, err := confineSharePathOnFS(s.FS, root, rel)
-	if err != nil {
-		return err
-	}
-	if _, err := s.FS.Lstat(target); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("%w: %s", ErrFileNotFound, rel)
-		}
-		return err
-	}
-	if err := s.FS.Remove(target); err != nil {
-		return fmt.Errorf("share: deleting %s: %w", target, err)
-	}
-	return nil
+	return s.FS.RemoveConfined(root, rel)
 }
 
 func (s *Service) unmountShare(ctx context.Context, sh Share) error {

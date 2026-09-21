@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Refuses a release tag that isn't on the branch its channel publishes
 # from (Q66, doc 12 §6). Run only from release.yml, before any build or
-# signing step, against a checkout with origin/main and origin/beta
+# signing step, against a checkout with origin/main and origin/dev
 # fetched.
 set -euo pipefail
 
@@ -17,5 +17,5 @@ usage() {
 [ $# -eq 1 ] || usage
 tag="$1"
 
-git fetch --quiet origin main beta
+git fetch --quiet origin main dev
 hoserva_verify_tag_ancestry "$tag"
