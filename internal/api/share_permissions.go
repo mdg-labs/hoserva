@@ -189,8 +189,16 @@ func (s *AuthStore) SetSharePermissions(ctx context.Context, shareName string, u
 }
 
 // GetUserSharePermissions returns userID's explicit per-share access,
-// sorted by share name.
+// sorted by share name. Reports ErrUserNotFound for an unknown userID
+// rather than an empty list, matching the mock's behaviour.
 func (s *AuthStore) GetUserSharePermissions(ctx context.Context, userID string) ([]UserSharePermission, error) {
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id = ?`, userID).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: %s", ErrUserNotFound, userID)
+		}
+		return nil, fmt.Errorf("checking user %s: %w", userID, err)
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT share_name, access FROM share_user_permissions WHERE user_id = ? ORDER BY share_name`, userID)
 	if err != nil {
@@ -212,8 +220,8 @@ func (s *AuthStore) GetUserSharePermissions(ctx context.Context, userID string) 
 }
 
 // SetUserSharePermissions replaces userID's rows in share_user_permissions
-// with exactly entries, inside one transaction. Every share name and
-// access level is validated before anything is written.
+// with exactly entries, inside one transaction. userID, every share name
+// and every access level is validated before anything is written.
 func (s *AuthStore) SetUserSharePermissions(ctx context.Context, userID string, entries []UserSharePermission) error {
 	sqlDB, ok := s.db.(*sql.DB)
 	if !ok {
@@ -225,6 +233,9 @@ func (s *AuthStore) SetUserSharePermissions(ctx context.Context, userID string, 
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := existsInTx(ctx, tx, "users", userID); err != nil {
+		return err
+	}
 	for _, e := range entries {
 		if err := validateAccessLevel(e.Access); err != nil {
 			return err
