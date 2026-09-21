@@ -688,6 +688,17 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 		status = StatusSucceeded
 	}
 
+	// Drop the job from s.running as soon as its run has actually
+	// finished, ahead of the store write below — not after it. The store
+	// is the source of truth (D4): once it shows a terminal status, an
+	// external caller (Cancel, in particular) must never still find the
+	// job in s.running and misreport it as merely non-cancellable instead
+	// of not-running. This only touches the bookkeeping map; rj.job's own
+	// fields are still mutated at their original point, below.
+	s.mu.Lock()
+	delete(s.running, rj.job.ID)
+	s.mu.Unlock()
+
 	storeErr := s.store.UpdateStatus(context.Background(), rj.job.ID, status, rj.job.Progress, errCode, errMessage, rj.job.StartedAt, &now)
 	for attempt := 1; storeErr != nil && attempt < finalStatusWriteRetries; attempt++ {
 		time.Sleep(finalStatusWriteRetryDelay)
@@ -703,7 +714,6 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 	rj.job.ErrorMessage = errMessage
 	rj.job.FinishedAt = &now
 	finished := *rj.job
-	delete(s.running, rj.job.ID)
 	s.mu.Unlock()
 
 	if storeErr != nil {
