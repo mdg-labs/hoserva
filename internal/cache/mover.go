@@ -63,6 +63,13 @@ type Config struct {
 	// on top of the always-on size check (doc 09 §2: "verify (size
 	// always; checksum optionally)").
 	VerifyChecksum bool
+	// SkipGracePeriod makes Run treat every file as eligible regardless
+	// of how recently it was modified — doc 09 §2's own "[cache to array
+	// relocation] behaves as a mover run limited to one share, without
+	// the grace period" (#54, RelocateToArray). It is never set by a
+	// scheduled or threshold-triggered mover pass, only by an explicit,
+	// single-share relocation the user asked for.
+	SkipGracePeriod bool
 }
 
 // Deps are Run's system-touching dependencies (CLAUDE.md: "every
@@ -75,6 +82,15 @@ type Deps struct {
 	Now      func() time.Time
 	UUID     func() string
 	FsyncDir func(dir string) error
+	// Sync is RelocateToCache's own dependency (#54): a caller-supplied
+	// adapter onto parity.Engine.Sync, kept out of this package's own
+	// imports the same way RunHooks avoids importing internal/job (see
+	// doc.go) — the wiring that converts a []parity.ManifestEntry into a
+	// real, threshold-guarded parity.SyncOpts.Manifest call belongs with
+	// the rest of that wiring in internal/job, alongside RunMover. Run
+	// and RelocateToArray never call it; it has no default and is
+	// required by RelocateToCache.
+	Sync SyncFunc
 }
 
 func (d Deps) withDefaults() Deps {
@@ -164,7 +180,10 @@ func (h RunHooks) stopRequested() bool {
 func Run(ctx context.Context, shares []Share, cfg Config, deps Deps, hooks RunHooks, initialCheckpoint []byte) (report Report, err error) {
 	deps = deps.withDefaults()
 	grace := cfg.GracePeriod
-	if grace <= 0 {
+	switch {
+	case cfg.SkipGracePeriod:
+		grace = 0
+	case grace <= 0:
 		grace = DefaultGracePeriod
 	}
 
