@@ -86,6 +86,17 @@ type Handler interface {
 	//
 	// POST /auth/totp/confirm
 	ConfirmTotp(ctx context.Context, req *TotpConfirmRequest) error
+	// CreateApiToken implements createApiToken operation.
+	//
+	// A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP.
+	// The raw token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring
+	// how a session cookie is handled (doc 01 §7). Refused for a share-only account (share-only has no
+	// API access at all, Q27), and refused when role exceeds the account's own role: a token can narrow an
+	// account's access (an admin can hand out a viewer-scoped token to reduce a script's own blast
+	// radius), never widen it.
+	//
+	// POST /users/{username}/tokens
+	CreateApiToken(ctx context.Context, req *CreateApiTokenRequest, params CreateApiTokenParams) (*ApiTokenCreated, error)
 	// CreateArray implements createArray operation.
 	//
 	// Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4).
@@ -157,6 +168,14 @@ type Handler interface {
 	//
 	// POST /shares/{name}/data/delete
 	DeleteShareData(ctx context.Context, req *DeleteShareDataRequest, params DeleteShareDataParams) error
+	// DeleteShareFile implements deleteShareFile operation.
+	//
+	// Deletes one file or empty directory within the share, given a path relative to the share root (doc
+	// 03 §4.2 Browse tab). Refuses the share root itself and any path that would resolve outside the
+	// share's root, including through a symlink. `confirm: true` is required.
+	//
+	// DELETE /shares/{name}/browse
+	DeleteShareFile(ctx context.Context, req *ConfirmShareRequest, params DeleteShareFileParams) error
 	// DeleteUser implements deleteUser operation.
 	//
 	// Removes the account, its sessions, its group memberships and its per-share permissions. Refuses the
@@ -354,6 +373,12 @@ type Handler interface {
 	//
 	// POST /config/import
 	ImportConfig(ctx context.Context, req *ImportConfigReq) error
+	// ListApiTokens implements listApiTokens operation.
+	//
+	// Every account's tokens, most recently created first (doc 03 §7).
+	//
+	// GET /api-tokens
+	ListApiTokens(ctx context.Context) (*ListApiTokensOK, error)
 	// ListDisks implements listDisks operation.
 	//
 	// Every block device Hoserva knows about (doc 02 §4).
@@ -496,6 +521,13 @@ type Handler interface {
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
+	// RevokeApiToken implements revokeApiToken operation.
+	//
+	// Ends this token immediately — the request it would have authenticated next is refused the moment
+	// this returns, since every request looks the token up fresh (no caching).
+	//
+	// DELETE /api-tokens/{tokenId}
+	RevokeApiToken(ctx context.Context, params RevokeApiTokenParams) error
 	// RevokeSession implements revokeSession operation.
 	//
 	// Ends this session immediately, server-side — the same effect as that session's own logout, forced

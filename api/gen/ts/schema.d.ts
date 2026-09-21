@@ -885,7 +885,11 @@ export interface paths {
         get: operations["browseShare"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a file or empty directory from the share
+         * @description Deletes one file or empty directory within the share, given a path relative to the share root (doc 03 §4.2 Browse tab). Refuses the share root itself and any path that would resolve outside the share's root, including through a symlink. `confirm: true` is required.
+         */
+        delete: operations["deleteShareFile"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1517,6 +1521,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/{username}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["parameters"]["Username"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a personal API token
+         * @description A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP. The raw token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring how a session cookie is handled (doc 01 §7). Refused for a share-only account (share-only has no API access at all, Q27), and refused when role exceeds the account's own role: a token can narrow an account's access (an admin can hand out a viewer-scoped token to reduce a script's own blast radius), never widen it.
+         */
+        post: operations["createApiToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List personal API tokens
+         * @description Every account's tokens, most recently created first (doc 03 §7).
+         */
+        get: operations["listApiTokens"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api-tokens/{tokenId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tokenId: components["parameters"]["ApiTokenId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a personal API token
+         * @description Ends this token immediately — the request it would have authenticated next is refused the moment this returns, since every request looks the token up fresh (no caching).
+         */
+        delete: operations["revokeApiToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users/{username}/reset-password": {
         parameters: {
             query?: never;
@@ -1588,7 +1656,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         Error: {
-            /** @description A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation (#22) can also return one of: `setup_required` (409 — no admin account exists yet; every operation but getSetupStatus/createFirstAdmin refuses with this while it's true), `setup_complete` (409, createFirstAdmin — an admin account already exists), `rate_limited` (429 — the account or source address is currently locked out after repeated failures; `message` gives a retry-after), `too_busy` (503 — the bounded password-hashing worker pool is saturated; safe to retry shortly), `invalid_credentials` (401, login — an unknown username or wrong password, deliberately indistinguishable), `totp_required` (401, login — the account has TOTP enrolled and no code was supplied), `totp_invalid` (401, login and confirmTotp — a code was supplied but is wrong, expired or already used; a missing login code is `totp_required` instead, never this), `totp_reverify_required` (403, enrollTotp — TOTP is already active and the caller didn't prove they still hold the account: no password or code was supplied, or the one supplied was wrong; 403 rather than 401 since the session itself is valid, only the reverification is missing or failed), `totp_reverify_ambiguous` (400, enrollTotp — TOTP is already active and *both* the current password and a current TOTP code were supplied; supply exactly one), `totp_not_pending` (409, confirmTotp — no pending secret to confirm), `unauthorized` (401 — no credential, or one that no longer validates), `forbidden` (403 — a valid credential whose role doesn't satisfy the operation), `no_session` (404 — the Unix socket's peer-credential-trusted local access has no signed-in user for an operation that needs one), `request_too_large` (413 — the request body exceeded the server's size limit), `bad_request` (400 — the request body could not be decoded) and `not_found` (404 — no such API route). */
+            /** @description A stable, machine-readable identifier, e.g. `job_not_found`. Every auth-related operation (#22) can also return one of: `setup_required` (409 — no admin account exists yet; every operation but getSetupStatus/createFirstAdmin refuses with this while it's true), `setup_complete` (409, createFirstAdmin — an admin account already exists), `rate_limited` (429 — the account or source address is currently locked out after repeated failures; `message` gives a retry-after), `too_busy` (503 — the bounded password-hashing worker pool is saturated; safe to retry shortly), `invalid_credentials` (401, login — an unknown username or wrong password, deliberately indistinguishable), `totp_required` (401, login — the account has TOTP enrolled and no code was supplied), `totp_invalid` (401, login and confirmTotp — a code was supplied but is wrong, expired or already used; a missing login code is `totp_required` instead, never this), `totp_reverify_required` (403, enrollTotp — TOTP is already active and the caller didn't prove they still hold the account: no password or code was supplied, or the one supplied was wrong; 403 rather than 401 since the session itself is valid, only the reverification is missing or failed), `totp_reverify_ambiguous` (400, enrollTotp — TOTP is already active and *both* the current password and a current TOTP code were supplied; supply exactly one), `totp_not_pending` (409, confirmTotp — no pending secret to confirm), `unauthorized` (401 — no credential, or one that no longer validates), `forbidden` (403 — a valid credential whose role doesn't satisfy the operation), `no_session` (404 — the Unix socket's peer-credential-trusted local access has no signed-in user for an operation that needs one), `request_too_large` (413 — the request body exceeded the server's size limit), `bad_request` (400 — the request body could not be decoded), `not_found` (404 — no such API route), `api_token_not_found` (404, revokeApiToken — no token with that id), `invalid_token_role` (400, createApiToken — the requested role is neither admin nor viewer; share-only is never a valid token role), `share_only_no_api_token` (403, createApiToken — the target account has SMB/NFS access only and no API access at all, Q27) and `token_role_exceeds_account` (403, createApiToken — the requested role is wider than the target account's own role; a token can only narrow an account's access, never widen it). */
             code: string;
             /** @description A human-readable explanation, safe to show in the UI or CLI. */
             message: string;
@@ -2508,6 +2576,13 @@ export interface components {
             role: components["schemas"]["UserRole"];
             /** @description Whether TOTP is confirmed and active on this account. */
             totpEnrolled: boolean;
+            /** @description Whether a Samba/password credential (SMB access) is currently provisioned for this account (doc 03 §7). Set the first time setUserPassword succeeds for it; there is no separate action that clears it short of deleting the account. */
+            hasCredential: boolean;
+            /**
+             * Format: date-time
+             * @description When this account last completed sign-in, tracked at authentication time — never derived from whether a session is still live (doc 03 §7). Null when it has never signed in.
+             */
+            lastLogin: string | null;
             /** Format: date-time */
             createdAt: string;
         };
@@ -2593,6 +2668,40 @@ export interface components {
             /** Format: date-time */
             expiresAt: string;
         };
+        /**
+         * @description Q43: a token's own scope, always admin or viewer — never share-only, since a share-only account has no API access to scope (Q27).
+         * @enum {string}
+         */
+        ApiTokenRole: "admin" | "viewer";
+        CreateApiTokenRequest: {
+            /** @description A caller-chosen label distinguishing this token from an account's others. */
+            name: string;
+            role: components["schemas"]["ApiTokenRole"];
+        };
+        ApiTokenSummary: {
+            /** @description The token's own hash — never the raw token value. */
+            id: string;
+            /** Format: uuid */
+            userId: string;
+            username: string;
+            name: string;
+            role: components["schemas"]["ApiTokenRole"];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ApiTokenCreated: {
+            /** @description The token's own hash — never the raw token value. */
+            id: string;
+            /** Format: uuid */
+            userId: string;
+            username: string;
+            name: string;
+            role: components["schemas"]["ApiTokenRole"];
+            /** Format: date-time */
+            createdAt: string;
+            /** @description The raw bearer value — shown once, on creation, and never retrievable again (doc 01 §7). */
+            token: string;
+        };
     };
     responses: {
         /** @description An error response (doc 01 §5). */
@@ -2613,6 +2722,7 @@ export interface components {
         UserId: string;
         UserGroupId: string;
         SessionId: string;
+        ApiTokenId: string;
         ShareName: components["schemas"]["ShareName"];
         ExternalLabel: components["schemas"]["ExternalDiskLabel"];
     };
@@ -3849,6 +3959,34 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    deleteShareFile: {
+        parameters: {
+            query: {
+                /** @description File or empty directory to delete, relative to the share root. */
+                path: string;
+            };
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmShareRequest"];
+            };
+        };
+        responses: {
+            /** @description File or directory deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getSharePermissions: {
         parameters: {
             query?: never;
@@ -4676,6 +4814,77 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Session revoked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createApiToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["parameters"]["Username"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateApiTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description The new token, with its raw value shown once. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiTokenCreated"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listApiTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every personal API token. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tokens: components["schemas"]["ApiTokenSummary"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeApiToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tokenId: components["parameters"]["ApiTokenId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Token revoked. */
             204: {
                 headers: {
                     [name: string]: unknown;

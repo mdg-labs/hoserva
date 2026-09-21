@@ -27,6 +27,39 @@ func errSessionNotFound(id string) error {
 	return &mockError{code: "session_not_found", statusCode: 404, message: fmt.Sprintf("no session with id %s", id)}
 }
 
+func errApiTokenNotFound(id string) error {
+	return &mockError{code: "api_token_not_found", statusCode: 404, message: fmt.Sprintf("no api token with id %s", id)}
+}
+
+func errUserNotFoundByUsername(username string) error {
+	return &mockError{code: "user_not_found", statusCode: 404, message: fmt.Sprintf("no user %q", username)}
+}
+
+// errShareOnlyNoAPIToken mirrors internal/api's ErrShareOnlyNoAPIToken
+// (Q27, doc 01 §5): a share-only account has no API access at all.
+func errShareOnlyNoAPIToken() error {
+	return &mockError{code: "share_only_no_api_token", statusCode: 403, message: "this account has SMB/NFS access only — it has no API access"}
+}
+
+// errTokenRoleExceedsAccount mirrors internal/api's
+// ErrTokenRoleExceedsAccount: a token can only narrow an account's own
+// access, never widen it.
+func errTokenRoleExceedsAccount() error {
+	return &mockError{code: "token_role_exceeds_account", statusCode: 403, message: "a token's role cannot exceed its account's own role"}
+}
+
+// findUserByUsername is #50's own lookup: createApiToken is keyed by
+// username in the path (like the root-only recovery operations), not by
+// id, so the mock needs the reverse of the uuid-keyed h.users map.
+func (h *handler) findUserByUsername(username string) (apiv1.UserSummary, bool) {
+	for _, u := range h.users {
+		if u.Username == username {
+			return u, true
+		}
+	}
+	return apiv1.UserSummary{}, false
+}
+
 func (h *handler) ListUsers(ctx context.Context) (*apiv1.ListUsersOK, error) {
 	h.usersMu.Lock()
 	defer h.usersMu.Unlock()
@@ -179,6 +212,64 @@ func (h *handler) RevokeSession(ctx context.Context, params apiv1.RevokeSessionP
 		return errSessionNotFound(params.SessionId)
 	}
 	delete(h.sessions, params.SessionId)
+	return nil
+}
+
+func (h *handler) CreateApiToken(ctx context.Context, req *apiv1.CreateApiTokenRequest, params apiv1.CreateApiTokenParams) (*apiv1.ApiTokenCreated, error) {
+	h.usersMu.Lock()
+	defer h.usersMu.Unlock()
+	u, ok := h.findUserByUsername(params.Username)
+	if !ok {
+		return nil, errUserNotFoundByUsername(params.Username)
+	}
+	if u.Role == apiv1.UserRoleShareOnly {
+		return nil, errShareOnlyNoAPIToken()
+	}
+	// A token's role can only narrow an account's own role, never widen
+	// it: an admin account can be issued a viewer-scoped token, a viewer
+	// account can never be issued an admin-scoped one (Q43).
+	if req.Role == apiv1.ApiTokenRoleAdmin && u.Role != apiv1.UserRoleAdmin {
+		return nil, errTokenRoleExceedsAccount()
+	}
+	id := uuid.NewString()
+	summary := apiv1.ApiTokenSummary{
+		ID:        id,
+		UserId:    u.ID,
+		Username:  u.Username,
+		Name:      req.Name,
+		Role:      req.Role,
+		CreatedAt: time.Now().UTC(),
+	}
+	h.apiTokens[id] = summary
+	return &apiv1.ApiTokenCreated{
+		ID:        summary.ID,
+		UserId:    summary.UserId,
+		Username:  summary.Username,
+		Name:      summary.Name,
+		Role:      summary.Role,
+		CreatedAt: summary.CreatedAt,
+		Token:     "hspat_mock_" + id,
+	}, nil
+}
+
+func (h *handler) ListApiTokens(ctx context.Context) (*apiv1.ListApiTokensOK, error) {
+	h.usersMu.Lock()
+	defer h.usersMu.Unlock()
+	out := make([]apiv1.ApiTokenSummary, 0, len(h.apiTokens))
+	for _, t := range h.apiTokens {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return &apiv1.ListApiTokensOK{Tokens: out}, nil
+}
+
+func (h *handler) RevokeApiToken(ctx context.Context, params apiv1.RevokeApiTokenParams) error {
+	h.usersMu.Lock()
+	defer h.usersMu.Unlock()
+	if _, ok := h.apiTokens[params.TokenId]; !ok {
+		return errApiTokenNotFound(params.TokenId)
+	}
+	delete(h.apiTokens, params.TokenId)
 	return nil
 }
 

@@ -977,5 +977,283 @@
       "totpInvalid": "That authenticator code is not valid. Try again.",
       "rateLimited": "Too many failed attempts. {{message}}"
     }
+  },
+  "listInput": {
+    "add": "Add",
+    "remove": "Remove {{value}}"
+  },
+  "multiPick": {
+    "empty": "No matches",
+    "remove": "Remove {{value}}"
+  },
+  "shares": {
+    "cacheModes": {
+      "cache-then-move": {
+        "label": "Cache then move",
+        "description": "New files land on cache and move to the array later. Protected by parity once moved."
+      },
+      "cache-only": {
+        "label": "Cache only",
+        "description": "Files stay on cache and never touch the array — not covered by parity (doc 02 §1)."
+      },
+      "array-only": {
+        "label": "Array only",
+        "description": "Files write straight to the array and are covered by parity from the next sync."
+      }
+    },
+    "list": {
+      "description": "Every configured share, with cache mode, SMB and NFS status.",
+      "create": "Create share",
+      "edit": "Edit",
+      "browse": "Browse",
+      "delete": "Delete",
+      "actionsMenu": "Actions for {{name}}",
+      "noExplicitAccess": "No explicit access",
+      "accessCount": "{{count}} with access",
+      "columns": {
+        "name": "Name",
+        "path": "Path",
+        "sizeUsed": "Size used",
+        "cacheMode": "Cache mode",
+        "smb": "SMB",
+        "nfs": "NFS",
+        "access": "Access",
+        "actions": "Actions"
+      },
+      "empty": {
+        "title": "No shares yet",
+        "description": "A share is a named folder in the pool with its own cache mode, SMB and NFS settings. Create one to start storing files."
+      },
+      "deleteTitle": "Delete share",
+      "deleteDescription": "This removes the share definition. Files already written to this share are not deleted.",
+      "deleteConfirmTitle": "Remove this share definition?",
+      "deleteConfirmDescription": "The share's files stay on disk. Deleting data is a separate action on the share's danger zone.",
+      "deleteItem": "Remove the share definition for {{name}}"
+    },
+    "create": {
+      "description": "New shares use the default cache mode and create policy. Adjust them from the share's detail page.",
+      "name": "Share name"
+    },
+    "detail": {
+      "save": "Save changes",
+      "notFound": "Share {{name}} was not found.",
+      "tabs": {
+        "general": "General",
+        "allocation": "Allocation",
+        "cache": "Cache",
+        "smb": "SMB",
+        "nfs": "NFS",
+        "browse": "Browse",
+        "danger": "Danger zone"
+      },
+      "general": {
+        "title": "General",
+        "name": "Name: {{name}}",
+        "path": "Path: {{path}}",
+        "sizeUsed": "Size used: {{size}}",
+        "includedInParity": "Included in parity:",
+        "perDiskUnavailable": "Per-disk distribution is not available from the API yet — it is not shown here rather than guessed."
+      },
+      "allocation": {
+        "title": "Allocation",
+        "policies": {
+          "mspmfs": {
+            "label": "Keep folders together",
+            "description": "Prefers a disk that already holds this directory; if none has room, retries with the parent directory, then its parent."
+          },
+          "mfs": {
+            "label": "Balance across disks",
+            "description": "New file goes to the disk with the most free space."
+          },
+          "lfs": {
+            "label": "Quiet disks",
+            "description": "Least free space that still fits — fills one disk at a time, maximises spindown."
+          },
+          "ff": {
+            "label": "Fill disks in order",
+            "description": "First disk with room, in branch order."
+          }
+        }
+      },
+      "cache": {
+        "title": "Cache mode",
+        "confirmTitle": "Change cache mode?",
+        "confirmDescription": "This changes where new files are placed. Existing files are not moved — a relocation job to move them is not available from this page yet."
+      },
+      "smb": {
+        "title": "SMB",
+        "enabled": "Enable SMB",
+        "guest": "Guest access",
+        "readOnly": "Read-only",
+        "browseable": "Browseable",
+        "recycle": "Recycle bin",
+        "timeMachine": "Time Machine support",
+        "timeMachineUnit": "GB",
+        "exportPreview": "Export preview",
+        "access": {
+          "none": "No access",
+          "readOnly": "Read-only",
+          "readWrite": "Read-write"
+        },
+        "permissions": {
+          "title": "Per-user and per-group access",
+          "user": "User",
+          "group": "Group",
+          "columns": {
+            "name": "Name",
+            "access": "Access"
+          }
+        }
+      },
+      "nfs": {
+        "title": "NFS",
+        "enabled": "Enable NFS",
+        "hosts": "Allowed hosts",
+        "hostsPlaceholder": "host, IP or CIDR",
+        "squash": "Squash",
+        "squashOptions": {
+          "root_squash": "Root squash",
+          "no_root_squash": "No root squash",
+          "all_squash": "All squash"
+        },
+        "exportPreview": "Export line preview"
+      },
+      "browse": {
+        "wakeWarningTitle": "Browsing may wake disks",
+        "wakeWarningDescription": "Listing this share's files reads directly from the disks that hold them. This is an explicit action — nothing on this page runs automatically.",
+        "start": "Browse files",
+        "columns": {
+          "name": "Name",
+          "size": "Size",
+          "disk": "Disk",
+          "actions": "Actions"
+        },
+        "deleteAction": "Delete {{name}}",
+        "deleteConfirmTitle": "Delete this item?",
+        "deleteConfirmDescription": "This permanently deletes \"{{path}}\" from the share. This cannot be undone."
+      },
+      "danger": {
+        "removeTitle": "Remove share definition",
+        "removeDescription": "Removes the share definition and stops SMB/NFS for it. The share's files stay on disk.",
+        "removeAction": "Remove definition",
+        "removeConfirmTitle": "Remove this share definition?",
+        "removeConfirmDescription": "The share's files are not deleted. This only removes the share definition and its SMB/NFS configuration.",
+        "deleteDataTitle": "Delete share data",
+        "deleteDataDescription": "Permanently deletes every file this share holds on every disk it uses. The share definition is left in place.",
+        "deleteDataAction": "Delete data",
+        "deleteDataConfirmTitle": "This will permanently delete this share's files",
+        "deleteDataConfirmDescription": "Every file this share holds is deleted from every disk it uses. This cannot be undone. Type the share name to confirm.",
+        "deleteDataItem": "Delete every file in {{name}}"
+      }
+    }
+  },
+  "users": {
+    "description": "Accounts, groups, sessions and API tokens for this Hoserva server.",
+    "create": "Create account",
+    "edit": "Edit",
+    "delete": "Delete",
+    "actionsMenu": "Actions for {{username}}",
+    "neverLoggedIn": "Never logged in",
+    "roles": {
+      "admin": "Admin",
+      "viewer": "Viewer",
+      "share-only": "Share-only"
+    },
+    "columns": {
+      "username": "Username",
+      "role": "Role",
+      "uiLogin": "UI login",
+      "totp": "TOTP",
+      "lastLogin": "Last login",
+      "actions": "Actions"
+    },
+    "empty": {
+      "title": "No accounts yet",
+      "description": "Create an account to give someone UI access, SMB/NFS access, or both."
+    },
+    "errors": {
+      "usernameRequired": "Enter a username."
+    },
+    "panel": {
+      "createTitle": "Create account",
+      "editTitle": "Edit {{username}}",
+      "username": "Username",
+      "role": "Role",
+      "adminRoleLocked": "The sole admin account's role cannot be changed here.",
+      "roleDescriptions": {
+        "viewer": "Read-only UI access. UI login: yes.",
+        "share-only": "SMB/NFS access only, no UI login. This is the default for new accounts."
+      },
+      "uiLoginAccess": "UI login",
+      "uiLoginAccessDescription": "Whether this account can currently sign in to this UI — a viewer or admin role with a credential provisioned.",
+      "smbAccess": "SMB access",
+      "smbAccessDescription": "Setting a password provisions the Samba account together with the UI credential (Q27). A user account can carry both UI login and SMB access.",
+      "smbAccessSetAction": "Set or change SMB password",
+      "smbAccessSetActionDescription": "Provisions or updates the Samba account. This does not remove existing SMB access, and leaving it unchecked does not change it either.",
+      "password": "Password",
+      "groups": "Groups",
+      "groupsPlaceholder": "Add a group",
+      "permissions": {
+        "title": "Share permissions",
+        "empty": "No shares are configured yet.",
+        "columns": {
+          "share": "Share",
+          "access": "Access"
+        }
+      }
+    },
+    "groups": {
+      "title": "Groups",
+      "create": "Create group",
+      "delete": "Delete",
+      "empty": "No groups yet. Groups are a named collection of accounts for bulk share-permission assignment.",
+      "name": "Group name",
+      "memberCount": "{{count}} members",
+      "columns": {
+        "name": "Name",
+        "members": "Members",
+        "actions": "Actions"
+      }
+    },
+    "sessions": {
+      "title": "Sessions",
+      "revoke": "Revoke",
+      "empty": "No active sessions.",
+      "columns": {
+        "username": "Account",
+        "created": "Signed in",
+        "expires": "Expires",
+        "actions": "Actions"
+      }
+    },
+    "tokens": {
+      "title": "Personal API tokens",
+      "create": "Create token",
+      "revoke": "Revoke",
+      "empty": "No API tokens yet.",
+      "account": "Account",
+      "accountPlaceholder": "Choose an account",
+      "name": "Token name",
+      "role": "Scope",
+      "createdTitle": "Token created",
+      "createdDescription": "This value is shown once. Copy it now — Hoserva only stores its hash from here on.",
+      "columns": {
+        "username": "Account",
+        "name": "Name",
+        "role": "Scope",
+        "created": "Created",
+        "actions": "Actions"
+      }
+    },
+    "oidc": {
+      "title": "Single sign-on (OIDC)",
+      "description": "OIDC configuration is on the roadmap and not available yet."
+    },
+    "revokeTitles": {
+      "session": "Revoke this session?",
+      "token": "Revoke the token \"{{label}}\"?",
+      "user": "Delete the account \"{{label}}\"?",
+      "group": "Delete the group \"{{label}}\"?"
+    }
   }
 }

@@ -14,13 +14,20 @@ func errAuthNotConfigured() error {
 }
 
 func userSummaryToAPI(u *User) apiv1.UserSummary {
-	return apiv1.UserSummary{
-		ID:           uuid.MustParse(u.ID),
-		Username:     u.Username,
-		Role:         apiv1.UserRole(u.Role),
-		TotpEnrolled: u.TOTPEnrolled(),
-		CreatedAt:    u.CreatedAt,
+	out := apiv1.UserSummary{
+		ID:            uuid.MustParse(u.ID),
+		Username:      u.Username,
+		Role:          apiv1.UserRole(u.Role),
+		TotpEnrolled:  u.TOTPEnrolled(),
+		HasCredential: u.HasSMBCredential(),
+		CreatedAt:     u.CreatedAt,
 	}
+	if u.LastLoginAt != nil {
+		out.LastLogin = apiv1.NewNilDateTime(*u.LastLoginAt)
+	} else {
+		out.LastLogin.SetToNull()
+	}
+	return out
 }
 
 func groupToAPI(g *Group) apiv1.UserGroup {
@@ -213,6 +220,61 @@ func (h *Handler) RevokeSession(ctx context.Context, params apiv1.RevokeSessionP
 		return errAuthNotConfigured()
 	}
 	if err := h.Auth.RevokeSession(ctx, params.SessionId); err != nil {
+		return mapAuthError(err)
+	}
+	return nil
+}
+
+func apiTokenSummaryToAPI(t APITokenWithUser) apiv1.ApiTokenSummary {
+	return apiv1.ApiTokenSummary{
+		ID:        t.TokenHash,
+		UserId:    uuid.MustParse(t.UserID),
+		Username:  t.Username,
+		Name:      t.Name,
+		Role:      apiv1.ApiTokenRole(t.Role),
+		CreatedAt: t.CreatedAt,
+	}
+}
+
+func (h *Handler) CreateApiToken(ctx context.Context, req *apiv1.CreateApiTokenRequest, params apiv1.CreateApiTokenParams) (*apiv1.ApiTokenCreated, error) {
+	if h.Auth == nil {
+		return nil, errAuthNotConfigured()
+	}
+	t, u, raw, err := h.Auth.CreateAPIToken(ctx, params.Username, req.Name, string(req.Role))
+	if err != nil {
+		return nil, mapAuthError(err)
+	}
+	return &apiv1.ApiTokenCreated{
+		ID:        t.TokenHash,
+		UserId:    uuid.MustParse(t.UserID),
+		Username:  u.Username,
+		Name:      t.Name,
+		Role:      apiv1.ApiTokenRole(t.Role),
+		CreatedAt: t.CreatedAt,
+		Token:     raw,
+	}, nil
+}
+
+func (h *Handler) ListApiTokens(ctx context.Context) (*apiv1.ListApiTokensOK, error) {
+	if h.Auth == nil {
+		return nil, errAuthNotConfigured()
+	}
+	tokens, err := h.Auth.ListAPITokens(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing api tokens: %w", err)
+	}
+	out := make([]apiv1.ApiTokenSummary, 0, len(tokens))
+	for _, t := range tokens {
+		out = append(out, apiTokenSummaryToAPI(t))
+	}
+	return &apiv1.ListApiTokensOK{Tokens: out}, nil
+}
+
+func (h *Handler) RevokeApiToken(ctx context.Context, params apiv1.RevokeApiTokenParams) error {
+	if h.Auth == nil {
+		return errAuthNotConfigured()
+	}
+	if err := h.Auth.RevokeAPIToken(ctx, params.TokenId); err != nil {
 		return mapAuthError(err)
 	}
 	return nil

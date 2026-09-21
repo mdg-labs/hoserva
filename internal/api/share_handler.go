@@ -28,6 +28,8 @@ func mapShareError(err error) error {
 		return errConfirmRequired
 	case errors.Is(err, share.ErrWrongSharePath):
 		return &apiError{code: "share_wrong_path", statusCode: 400, message: err.Error()}
+	case errors.Is(err, share.ErrFileNotFound):
+		return &apiError{code: "share_file_not_found", statusCode: 404, message: err.Error()}
 	case errors.Is(err, share.ErrNoArray), errors.Is(err, store.ErrNoArray):
 		return &apiError{code: "no_array", statusCode: 409, message: err.Error()}
 	case errors.Is(err, config.ErrUnmanaged), errors.Is(err, config.ErrExistingHostFile):
@@ -167,6 +169,16 @@ func (h *Handler) BrowseShare(ctx context.Context, params apiv1.BrowseShareParam
 		out = append(out, item)
 	}
 	return &apiv1.ShareBrowseResult{Path: listed, Entries: out}, nil
+}
+
+func (h *Handler) DeleteShareFile(ctx context.Context, req *apiv1.ConfirmShareRequest, params apiv1.DeleteShareFileParams) error {
+	if h.Shares == nil {
+		return errSharesNotConfigured()
+	}
+	if err := h.Shares.DeleteFile(ctx, string(params.Name), params.Path, req.Confirm); err != nil {
+		return mapShareError(err)
+	}
+	return nil
 }
 
 func shareToAPI(s share.Share) apiv1.Share {

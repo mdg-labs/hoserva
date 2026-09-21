@@ -52,16 +52,15 @@ tags:
       Accounts, roles and Samba credentials (Q27, doc 03 §7): the admin,
       viewer and share-only roles, per-account passwords (which write the
       UI credential and the Samba passdb entry together), user groups and
-      session list/revoke. Account recovery over the Unix socket (Q78) is
-      also under this tag.
+      session list/revoke. Account recovery over the Unix socket (Q78) and
+      personal API tokens (Q43) are also under this tag.
   - name: auth
     description: >-
       First-run setup, sessions and TOTP over TCP (doc 01 §5, §7, Q9, Q10,
       Q28, Q44, doc 03 §1). The Unix socket needs none of this — it is
       peer-credential trusted (Q44) — but these operations still run on
       it, unauthenticated, exactly as they do on TCP, since the same
-      handlers serve both transports (doc 01 §5). Personal API tokens
-      (Q43) are Phase 2 and have no operations here yet.
+      handlers serve both transports (doc 01 §5).
   - name: notifications
     description: >-
       Alerting channels (email, Gotify, ntfy, Discord webhook, generic
@@ -1426,6 +1425,35 @@ paths:
                 $ref: '#/components/schemas/ShareBrowseResult'
         default:
           $ref: '#/components/responses/Error'
+    delete:
+      operationId: deleteShareFile
+      summary: Delete a file or empty directory from the share
+      description: >-
+        Deletes one file or empty directory within the share, given a
+        path relative to the share root (doc 03 §4.2 Browse tab). Refuses
+        the share root itself and any path that would resolve outside the
+        share's root, including through a symlink. `confirm: true` is
+        required.
+      tags: [shares]
+      x-hoserva-role: admin
+      parameters:
+        - name: path
+          in: query
+          required: true
+          description: File or empty directory to delete, relative to the share root.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmShareRequest'
+      responses:
+        "204":
+          description: File or directory deleted.
+        default:
+          $ref: '#/components/responses/Error'
 
   /shares/{name}/permissions:
     parameters:
@@ -2266,6 +2294,81 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /users/{username}/tokens:
+    parameters:
+      - $ref: '#/components/parameters/Username'
+    post:
+      operationId: createApiToken
+      summary: Create a personal API token
+      description: >-
+        A personal API token (Q43), scoped to admin or viewer, for
+        scripting and the remote CLI over TCP. The raw token is returned
+        only here, once — only its SHA-256 is ever stored afterward,
+        mirroring how a session cookie is handled (doc 01 §7). Refused
+        for a share-only account (share-only has no API access at all,
+        Q27), and refused when role exceeds the account's own role: a
+        token can narrow an account's access (an admin can hand out a
+        viewer-scoped token to reduce a script's own blast radius), never
+        widen it.
+      tags: [users]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiTokenRequest'
+      responses:
+        "201":
+          description: The new token, with its raw value shown once.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiTokenCreated'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api-tokens:
+    get:
+      operationId: listApiTokens
+      summary: List personal API tokens
+      description: Every account's tokens, most recently created first (doc 03 §7).
+      tags: [users]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Every personal API token.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokens]
+                properties:
+                  tokens:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApiTokenSummary'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api-tokens/{tokenId}:
+    parameters:
+      - $ref: '#/components/parameters/ApiTokenId'
+    delete:
+      operationId: revokeApiToken
+      summary: Revoke a personal API token
+      description: >-
+        Ends this token immediately — the request it would have
+        authenticated next is refused the moment this returns, since
+        every request looks the token up fresh (no caching).
+      tags: [users]
+      x-hoserva-role: admin
+      responses:
+        "204":
+          description: Token revoked.
+        default:
+          $ref: '#/components/responses/Error'
+
   /users/{username}/reset-password:
     parameters:
       - $ref: '#/components/parameters/Username'
@@ -2387,6 +2490,14 @@ components:
         type: string
         minLength: 1
 
+    ApiTokenId:
+      name: tokenId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
     ShareName:
       name: name
       in: path
@@ -2462,8 +2573,16 @@ components:
             peer-credential-trusted local access has no signed-in user for
             an operation that needs one), `request_too_large` (413 — the
             request body exceeded the server's size limit), `bad_request`
-            (400 — the request body could not be decoded) and `not_found`
-            (404 — no such API route).
+            (400 — the request body could not be decoded), `not_found`
+            (404 — no such API route), `api_token_not_found` (404,
+            revokeApiToken — no token with that id), `invalid_token_role`
+            (400, createApiToken — the requested role is neither admin nor
+            viewer; share-only is never a valid token role),
+            `share_only_no_api_token` (403, createApiToken — the target
+            account has SMB/NFS access only and no API access at all, Q27)
+            and `token_role_exceeds_account` (403, createApiToken — the
+            requested role is wider than the target account's own role; a
+            token can only narrow an account's access, never widen it).
         message:
           type: string
           description: A human-readable explanation, safe to show in the UI or CLI.
@@ -4334,7 +4453,7 @@ components:
 
     UserSummary:
       type: object
-      required: [id, username, role, totpEnrolled, createdAt]
+      required: [id, username, role, totpEnrolled, hasCredential, lastLogin, createdAt]
       properties:
         id:
           type: string
@@ -4346,6 +4465,21 @@ components:
         totpEnrolled:
           type: boolean
           description: Whether TOTP is confirmed and active on this account.
+        hasCredential:
+          type: boolean
+          description: >-
+            Whether a Samba/password credential (SMB access) is currently
+            provisioned for this account (doc 03 §7). Set the first time
+            setUserPassword succeeds for it; there is no separate action
+            that clears it short of deleting the account.
+        lastLogin:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this account last completed sign-in, tracked at
+            authentication time — never derived from whether a session is
+            still live (doc 03 §7). Null when it has never signed in.
         createdAt:
           type: string
           format: date-time
@@ -4532,3 +4666,68 @@ components:
         expiresAt:
           type: string
           format: date-time
+
+    ApiTokenRole:
+      type: string
+      description: >-
+        Q43: a token's own scope, always admin or viewer — never
+        share-only, since a share-only account has no API access to
+        scope (Q27).
+      enum: [admin, viewer]
+
+    CreateApiTokenRequest:
+      type: object
+      required: [name, role]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: A caller-chosen label distinguishing this token from an account's others.
+        role:
+          $ref: '#/components/schemas/ApiTokenRole'
+
+    ApiTokenSummary:
+      type: object
+      required: [id, userId, username, name, role, createdAt]
+      properties:
+        id:
+          type: string
+          description: The token's own hash — never the raw token value.
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/ApiTokenRole'
+        createdAt:
+          type: string
+          format: date-time
+
+    ApiTokenCreated:
+      type: object
+      required: [id, userId, username, name, role, createdAt, token]
+      properties:
+        id:
+          type: string
+          description: The token's own hash — never the raw token value.
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        name:
+          type: string
+        role:
+          $ref: '#/components/schemas/ApiTokenRole'
+        createdAt:
+          type: string
+          format: date-time
+        token:
+          type: string
+          description: >-
+            The raw bearer value — shown once, on creation, and never
+            retrievable again (doc 01 §7).

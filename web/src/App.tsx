@@ -11,6 +11,8 @@ import { JobsPage } from "@/routes/jobs/index";
 import { LoginPage } from "@/routes/login";
 import { PlaceholderPage } from "@/routes/placeholder-page";
 import { SectionLayout } from "@/routes/section-layout";
+import { ShareDetailPage } from "@/routes/shares/detail";
+import { SharesPage } from "@/routes/shares/index";
 import { DiskDetailPage } from "@/routes/storage/disk-detail";
 import { DisksPage } from "@/routes/storage/disks";
 import { ParityPage } from "@/routes/storage/parity";
@@ -22,6 +24,7 @@ import { NotificationsSettingsPage } from "@/routes/settings/notifications";
 import { SchedulesSettingsPage } from "@/routes/settings/schedules";
 import { UpdatesSettingsPage } from "@/routes/settings/updates";
 import { NetworkSettingsPage } from "@/routes/settings/network";
+import { UsersPage } from "@/routes/users";
 import { WelcomePage } from "@/routes/welcome";
 
 const STORAGE_NAV = (t: ReturnType<typeof useTranslation>["t"]) => [
@@ -78,8 +81,8 @@ function AuthenticatedRoutes(): React.ReactElement {
         </Route>
         <Route path="storage/disks/:diskId" element={<DiskDetailPage />} />
 
-        <Route path="shares" element={<PlaceholderPage titleKey="nav.shares" />} />
-        <Route path="shares/:name" element={<PlaceholderPage titleKey="nav.shares" />} />
+        <Route path="shares" element={<SharesPage />} />
+        <Route path="shares/:name" element={<ShareDetailPage />} />
 
         <Route element={<SectionLayout items={APPS_NAV(t)} />}>
           <Route path="apps" element={<PlaceholderPage titleKey="appsNav.installed" />} />
@@ -100,7 +103,7 @@ function AuthenticatedRoutes(): React.ReactElement {
         <Route path="jobs" element={<JobsPage />} />
         <Route path="jobs/:jobId" element={<JobDetailPage />} />
 
-        <Route path="users" element={<PlaceholderPage titleKey="nav.users" />} />
+        <Route path="users" element={<UsersPage />} />
 
         <Route element={<SectionLayout items={SETTINGS_NAV(t)} />}>
           <Route path="settings" element={<GeneralSettingsPage />} />

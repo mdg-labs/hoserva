@@ -125,6 +125,19 @@ func encodeConfirmTotpResponse(response *ConfirmTotpNoContent, w http.ResponseWr
 	return nil
 }
 
+func encodeCreateApiTokenResponse(response *ApiTokenCreated, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(201)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeCreateArrayResponse(response *Job, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -236,6 +249,12 @@ func encodeDeleteShareResponse(response *DeleteShareNoContent, w http.ResponseWr
 }
 
 func encodeDeleteShareDataResponse(response *DeleteShareDataNoContent, w http.ResponseWriter, span trace.Span) error {
+	w.WriteHeader(204)
+
+	return nil
+}
+
+func encodeDeleteShareFileResponse(response *DeleteShareFileNoContent, w http.ResponseWriter, span trace.Span) error {
 	w.WriteHeader(204)
 
 	return nil
@@ -568,6 +587,19 @@ func encodeImportConfigResponse(response *ImportConfigNoContent, w http.Response
 	return nil
 }
 
+func encodeListApiTokensResponse(response *ListApiTokensOK, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeListDisksResponse(response *ListDisksOK, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -837,6 +869,12 @@ func encodeResumeJobResponse(response *Job, w http.ResponseWriter, span trace.Sp
 	if _, err := e.WriteTo(w); err != nil {
 		return errors.Wrap(err, "write")
 	}
+
+	return nil
+}
+
+func encodeRevokeApiTokenResponse(response *RevokeApiTokenNoContent, w http.ResponseWriter, span trace.Span) error {
+	w.WriteHeader(204)
 
 	return nil
 }

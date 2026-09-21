@@ -210,6 +210,99 @@ func TestLoginSuccess(t *testing.T) {
 	}
 }
 
+// TestLoginRecordsLastLoginAtAuthenticationTime is #225's acceptance
+// criterion: last-login is set by a completed Login, not derived from
+// whether a session happens to still be live.
+func TestLoginRecordsLastLoginAtAuthenticationTime(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+	if _, _, err := svc.CreateFirstAdmin(ctx, "admin", "correct horse battery staple"); err != nil {
+		t.Fatalf("CreateFirstAdmin: %v", err)
+	}
+
+	before, err := svc.Store.GetUserByUsername(ctx, "admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if before.LastLoginAt != nil {
+		t.Fatalf("LastLoginAt = %v before any Login call, want nil", before.LastLoginAt)
+	}
+
+	u, token, err := svc.Login(ctx, "admin", "correct horse battery staple", "", "203.0.113.5")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if u.LastLoginAt == nil {
+		t.Fatal("Login did not set LastLoginAt on the returned user")
+	}
+
+	after, err := svc.Store.GetUserByUsername(ctx, "admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if after.LastLoginAt == nil {
+		t.Fatal("LastLoginAt was not persisted")
+	}
+
+	if err := svc.Logout(ctx, token); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	stillThere, err := svc.Store.GetUserByUsername(ctx, "admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if stillThere.LastLoginAt == nil {
+		t.Fatal("LastLoginAt must survive session revocation, not be derived from session liveness")
+	}
+}
+
+// TestRecordLoginAndCreateSessionIsAtomic proves last_login_at and the new
+// session are committed or rolled back together: a session-creation
+// failure (forced here by a token_hash collision, since sessions.token_hash
+// is the primary key) must not leave last_login_at reporting a completed
+// sign-in with no session behind it.
+func TestRecordLoginAndCreateSessionIsAtomic(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+	admin, _, err := svc.CreateFirstAdmin(ctx, "admin", "correct horse battery staple")
+	if err != nil {
+		t.Fatalf("CreateFirstAdmin: %v", err)
+	}
+
+	firstLoginAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	firstSession := &api.Session{
+		TokenHash: "collision-hash",
+		UserID:    admin.ID,
+		CreatedAt: firstLoginAt,
+		ExpiresAt: firstLoginAt.Add(24 * time.Hour),
+	}
+	if err := svc.Store.RecordLoginAndCreateSession(ctx, admin.ID, firstLoginAt, firstSession); err != nil {
+		t.Fatalf("first RecordLoginAndCreateSession: %v", err)
+	}
+
+	// Same token_hash: the session INSERT must fail its PRIMARY KEY
+	// constraint, and the whole transaction — including this call's
+	// last_login_at UPDATE — must roll back with it.
+	secondLoginAt := firstLoginAt.Add(time.Hour)
+	secondSession := &api.Session{
+		TokenHash: "collision-hash",
+		UserID:    admin.ID,
+		CreatedAt: secondLoginAt,
+		ExpiresAt: secondLoginAt.Add(24 * time.Hour),
+	}
+	if err := svc.Store.RecordLoginAndCreateSession(ctx, admin.ID, secondLoginAt, secondSession); err == nil {
+		t.Fatal("second RecordLoginAndCreateSession with a colliding token_hash succeeded, want an error")
+	}
+
+	after, err := svc.Store.GetUserByUsername(ctx, "admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if after.LastLoginAt == nil || !after.LastLoginAt.Equal(firstLoginAt) {
+		t.Fatalf("LastLoginAt = %v after the failed second call, want it to stay at %v (the failed session insert must not leave a partial commit)", after.LastLoginAt, firstLoginAt)
+	}
+}
+
 func TestLoginWrongPasswordAndUnknownUserSameError(t *testing.T) {
 	svc, _ := newAuthTestService(t)
 	ctx := context.Background()

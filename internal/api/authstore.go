@@ -33,11 +33,24 @@ type User struct {
 	TOTPConfirmedAt   *time.Time
 	TOTPLastStep      int64
 	CreatedAt         time.Time
+	// LastLoginAt is set only by a successful Login (#225, doc 03 §7) —
+	// never derived from session liveness — and nil until the first one.
+	LastLoginAt *time.Time
+	// SMBCredentialSetAt is set the first time SetUserPassword's Samba
+	// write succeeds for this account (#225, doc 03 §7) and never cleared
+	// again: there is no operation that revokes SMB access short of
+	// deleting the whole account, so "ever set" is exactly "currently
+	// provisioned".
+	SMBCredentialSetAt *time.Time
 }
 
 // TOTPEnrolled reports whether TOTP is confirmed and active — a pending,
 // unconfirmed secret (TOTPSecret set, TOTPConfirmedAt nil) never counts.
 func (u *User) TOTPEnrolled() bool { return u.TOTPConfirmedAt != nil }
+
+// HasSMBCredential reports whether a Samba/password credential is
+// currently provisioned for this account.
+func (u *User) HasSMBCredential() bool { return u.SMBCredentialSetAt != nil }
 
 // Session is a sessions table row.
 type Session struct {
@@ -339,6 +352,86 @@ func (s *AuthStore) UpdatePasswordHash(ctx context.Context, userID, hash string)
 	return nil
 }
 
+// UpdatePasswordHashAndMarkSMBCredential sets password_hash to hash and
+// smb_credential_set_at to setAt in one transaction, so the two writes
+// SetUserPassword makes before its Samba call can never separate — a
+// marker-write failure can no longer leave a changed password hash with
+// HasSMBCredential still false (#225 CodeRabbit finding on PR #228).
+func (s *AuthStore) UpdatePasswordHashAndMarkSMBCredential(ctx context.Context, userID, hash string, setAt time.Time) error {
+	return s.updatePasswordHashAndSMBCredentialMarker(ctx, userID, hash, sql.NullString{String: setAt.UTC().Format(timeFormat), Valid: true})
+}
+
+// RestorePasswordHashAndClearSMBCredential sets password_hash back to hash
+// and clears smb_credential_set_at to NULL, in one transaction —
+// SetUserPassword's compensation when the Samba write that followed a
+// first-time UpdatePasswordHashAndMarkSMBCredential call fails.
+func (s *AuthStore) RestorePasswordHashAndClearSMBCredential(ctx context.Context, userID, hash string) error {
+	return s.updatePasswordHashAndSMBCredentialMarker(ctx, userID, hash, sql.NullString{})
+}
+
+func (s *AuthStore) updatePasswordHashAndSMBCredentialMarker(ctx context.Context, userID, hash string, smbCredentialSetAt sql.NullString) error {
+	sqlDB, ok := s.db.(*sql.DB)
+	if !ok {
+		return fmt.Errorf("auth store: password transaction requires *sql.DB")
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning password transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, "UPDATE users SET password_hash = ? WHERE id = ?", hash, userID); err != nil {
+		return fmt.Errorf("updating password: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE users SET smb_credential_set_at = ? WHERE id = ?", smbCredentialSetAt, userID); err != nil {
+		return fmt.Errorf("recording smb credential: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing password transaction: %w", err)
+	}
+	return nil
+}
+
+// RecordLogin sets userID's last_login_at to at (#225, doc 03 §7) — called
+// only from a completed Login, never from anything that merely checks
+// whether a session is still live.
+func (s *AuthStore) RecordLogin(ctx context.Context, userID string, at time.Time) error {
+	if err := s.q.RecordUserLogin(ctx, storedb.RecordUserLoginParams{
+		LastLoginAt: sql.NullString{String: at.UTC().Format(timeFormat), Valid: true},
+		ID:          userID,
+	}); err != nil {
+		return fmt.Errorf("recording login: %w", err)
+	}
+	return nil
+}
+
+// RecordLoginAndCreateSession sets userID's last_login_at and inserts sess
+// in one transaction, so a session-creation failure can never leave
+// last_login_at reporting a completed sign-in with no session behind it.
+func (s *AuthStore) RecordLoginAndCreateSession(ctx context.Context, userID string, at time.Time, sess *Session) error {
+	sqlDB, ok := s.db.(*sql.DB)
+	if !ok {
+		return fmt.Errorf("auth store: login transaction requires *sql.DB")
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning login transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	txStore := s.WithTx(tx)
+	if err := txStore.RecordLogin(ctx, userID, at); err != nil {
+		return err
+	}
+	if err := txStore.CreateSession(ctx, sess); err != nil {
+		return fmt.Errorf("creating session: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing login transaction: %w", err)
+	}
+	return nil
+}
+
 // ClearUserTOTP removes every TOTP credential from userID.
 func (s *AuthStore) ClearUserTOTP(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx, `
@@ -408,6 +501,20 @@ func userFromRow(row *storedb.User) (*User, error) {
 			return nil, fmt.Errorf("parsing user %s totp_confirmed_at: %w", row.ID, err)
 		}
 		u.TOTPConfirmedAt = &t
+	}
+	if row.LastLoginAt.Valid {
+		t, err := time.Parse(timeFormat, row.LastLoginAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("parsing user %s last_login_at: %w", row.ID, err)
+		}
+		u.LastLoginAt = &t
+	}
+	if row.SmbCredentialSetAt.Valid {
+		t, err := time.Parse(timeFormat, row.SmbCredentialSetAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("parsing user %s smb_credential_set_at: %w", row.ID, err)
+		}
+		u.SMBCredentialSetAt = &t
 	}
 	return u, nil
 }

@@ -18,12 +18,15 @@ INSERT INTO users (
 );
 
 -- name: GetUserByUsername :one
-SELECT id, username, password_hash, role, totp_secret, totp_confirmed_at, totp_last_step, created_at, totp_pending_secret
+SELECT id, username, password_hash, role, totp_secret, totp_confirmed_at, totp_last_step, created_at, totp_pending_secret, last_login_at, smb_credential_set_at
 FROM users WHERE username = ?;
 
 -- name: GetUserByID :one
-SELECT id, username, password_hash, role, totp_secret, totp_confirmed_at, totp_last_step, created_at, totp_pending_secret
+SELECT id, username, password_hash, role, totp_secret, totp_confirmed_at, totp_last_step, created_at, totp_pending_secret, last_login_at, smb_credential_set_at
 FROM users WHERE id = ?;
+
+-- name: RecordUserLogin :exec
+UPDATE users SET last_login_at = sqlc.arg('last_login_at') WHERE id = sqlc.arg('id');
 
 -- name: CountAdmins :one
 SELECT COUNT(*) FROM users WHERE role = 'admin';

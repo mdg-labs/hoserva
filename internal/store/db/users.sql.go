@@ -98,7 +98,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, password_hash, role, totp_secret, totp_confirmed_at, totp_last_step, created_at, totp_pending_secret
+SELECT id, username, password_hash, role, totp_secret, totp_confirmed_at, totp_last_step, created_at, totp_pending_secret, last_login_at, smb_credential_set_at
 FROM users WHERE id = ?
 `
 
@@ -115,12 +115,14 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (*User, error) {
 		&i.TotpLastStep,
 		&i.CreatedAt,
 		&i.TotpPendingSecret,
+		&i.LastLoginAt,
+		&i.SmbCredentialSetAt,
 	)
 	return &i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, password_hash, role, totp_secret, totp_confirmed_at, totp_last_step, created_at, totp_pending_secret
+SELECT id, username, password_hash, role, totp_secret, totp_confirmed_at, totp_last_step, created_at, totp_pending_secret, last_login_at, smb_credential_set_at
 FROM users WHERE username = ?
 `
 
@@ -137,6 +139,8 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (*User
 		&i.TotpLastStep,
 		&i.CreatedAt,
 		&i.TotpPendingSecret,
+		&i.LastLoginAt,
+		&i.SmbCredentialSetAt,
 	)
 	return &i, err
 }
@@ -150,6 +154,20 @@ func (q *Queries) HasEncryptedTOTPSecrets(ctx context.Context) (bool, error) {
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const recordUserLogin = `-- name: RecordUserLogin :exec
+UPDATE users SET last_login_at = ?1 WHERE id = ?2
+`
+
+type RecordUserLoginParams struct {
+	LastLoginAt sql.NullString `json:"last_login_at"`
+	ID          string         `json:"id"`
+}
+
+func (q *Queries) RecordUserLogin(ctx context.Context, arg RecordUserLoginParams) error {
+	_, err := q.db.ExecContext(ctx, recordUserLogin, arg.LastLoginAt, arg.ID)
+	return err
 }
 
 const setUserPendingTOTPSecret = `-- name: SetUserPendingTOTPSecret :exec

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -249,7 +250,7 @@ func mountStateCheck(probe mountProbe, path string) apiv1.DoctorCheck {
 }
 
 func parityFreshnessCheck(ctx context.Context, eng parity.Engine) apiv1.DoctorCheck {
-	if eng == nil {
+	if engineUnavailable(eng) {
 		return apiv1.DoctorCheck{
 			ID:      "parity_freshness",
 			Name:    "Parity freshness",
@@ -300,6 +301,22 @@ func parityFreshnessCheck(ctx context.Context, eng parity.Engine) apiv1.DoctorCh
 			Message: msg,
 		}
 	}
+}
+
+// engineUnavailable reports whether eng is unusable: either a plain nil
+// interface, or a nil concrete pointer wrapped in a non-nil parity.Engine
+// (cmd/hoservad wires Handler.Parity from a *SnapraidEngine that is nil
+// when no snapraid.conf exists yet — a fresh install before the array is
+// configured, exactly onboarding's own situation). A typed nil does not
+// compare equal to the bare nil above, so calling a method on it reaches
+// SnapraidEngine's nil receiver and panics; this check catches it before
+// eng.Status is ever called (#222).
+func engineUnavailable(eng parity.Engine) bool {
+	if eng == nil {
+		return true
+	}
+	v := reflect.ValueOf(eng)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 func smartCheck(ctx context.Context, provider disk.Provider) apiv1.DoctorCheck {

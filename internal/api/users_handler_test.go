@@ -91,8 +91,27 @@ func TestHandlerSetUserPasswordAndSessions(t *testing.T) {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
+	list, err := h.ListUsers(ctx)
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if list.Users[0].HasCredential || !list.Users[0].LastLogin.IsNull() {
+		t.Errorf("kid = %+v, want no credential and no last login before SetUserPassword/Login", list.Users[0])
+	}
+
 	if err := h.SetUserPassword(ctx, &apiv1.SetUserPasswordRequest{Password: "correct horse battery staple"}, apiv1.SetUserPasswordParams{UserId: created.ID}); err != nil {
 		t.Fatalf("SetUserPassword: %v", err)
+	}
+
+	list, err = h.ListUsers(ctx)
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if !list.Users[0].HasCredential {
+		t.Error("HasCredential must be true once SetUserPassword succeeds")
+	}
+	if !list.Users[0].LastLogin.IsNull() {
+		t.Error("LastLogin must still be null — setting a password is not signing in")
 	}
 
 	_, token, err := authSvc.Login(ctx, "kid", "correct horse battery staple", "", "")
@@ -101,6 +120,14 @@ func TestHandlerSetUserPasswordAndSessions(t *testing.T) {
 	}
 	if token == "" {
 		t.Fatal("expected a session token")
+	}
+
+	list, err = h.ListUsers(ctx)
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if list.Users[0].LastLogin.IsNull() {
+		t.Error("LastLogin must be set after a successful Login")
 	}
 
 	sessions, err := h.ListSessions(ctx)
@@ -156,5 +183,79 @@ func TestHandlerUserGroupsLifecycle(t *testing.T) {
 	}
 	if len(list.Groups) != 0 {
 		t.Errorf("ListUserGroups after delete = %d, want 0", len(list.Groups))
+	}
+}
+
+func TestHandlerCreateListAndRevokeApiToken(t *testing.T) {
+	ctx := context.Background()
+	h, authSvc := newAuthTestHandler(t)
+	if _, _, err := authSvc.CreateFirstAdmin(ctx, "admin", "correct horse battery staple"); err != nil {
+		t.Fatalf("CreateFirstAdmin: %v", err)
+	}
+
+	created, err := h.CreateApiToken(ctx,
+		&apiv1.CreateApiTokenRequest{Name: "ci-script", Role: apiv1.ApiTokenRoleViewer},
+		apiv1.CreateApiTokenParams{Username: "admin"})
+	if err != nil {
+		t.Fatalf("CreateApiToken: %v", err)
+	}
+	if created.Token == "" {
+		t.Fatal("expected a non-empty raw token, shown once")
+	}
+	if created.Username != "admin" || created.Role != apiv1.ApiTokenRoleViewer {
+		t.Errorf("created = %+v, want username=admin role=viewer", created)
+	}
+
+	list, err := h.ListApiTokens(ctx)
+	if err != nil {
+		t.Fatalf("ListApiTokens: %v", err)
+	}
+	if len(list.Tokens) != 1 || list.Tokens[0].ID != created.ID {
+		t.Fatalf("ListApiTokens = %+v, want exactly the token just created", list.Tokens)
+	}
+	// The list response never carries the raw token itself, only enough
+	// to identify and revoke it (ApiTokenSummary has no token field at
+	// all — this is a compile-time guarantee, not something this
+	// assertion could fail to catch at runtime, but the point is worth a
+	// comment: the raw value is only ever seen once, on creation).
+
+	if err := h.RevokeApiToken(ctx, apiv1.RevokeApiTokenParams{TokenId: created.ID}); err != nil {
+		t.Fatalf("RevokeApiToken: %v", err)
+	}
+	list, err = h.ListApiTokens(ctx)
+	if err != nil {
+		t.Fatalf("ListApiTokens after revoke: %v", err)
+	}
+	if len(list.Tokens) != 0 {
+		t.Errorf("ListApiTokens after revoke = %d, want 0", len(list.Tokens))
+	}
+}
+
+func TestHandlerRevokeApiTokenNotFound(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newAuthTestHandler(t)
+	err := h.RevokeApiToken(ctx, apiv1.RevokeApiTokenParams{TokenId: "no-such-token"})
+	status := apiError(t, h, err)
+	if status.StatusCode != 404 || status.Response.Code != "api_token_not_found" {
+		t.Errorf("RevokeApiToken(unknown) error = %+v, want 404 api_token_not_found", status)
+	}
+}
+
+func TestHandlerCreateApiTokenRefusesShareOnly(t *testing.T) {
+	ctx := context.Background()
+	h, authSvc := newAuthTestHandler(t)
+	if _, _, err := authSvc.CreateFirstAdmin(ctx, "admin", "correct horse battery staple"); err != nil {
+		t.Fatalf("CreateFirstAdmin: %v", err)
+	}
+	if _, err := h.CreateUser(ctx, &apiv1.CreateUserRequest{Username: "kid"}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	_, err := h.CreateApiToken(ctx,
+		&apiv1.CreateApiTokenRequest{Name: "kid-script", Role: apiv1.ApiTokenRoleViewer},
+		apiv1.CreateApiTokenParams{Username: "kid"})
+	status := apiError(t, h, err)
+	if status.StatusCode != 403 || status.Response.Code != "share_only_no_api_token" {
+		t.Errorf("CreateApiToken for a share-only account error = %+v, want 403 share_only_no_api_token", status)
 	}
 }

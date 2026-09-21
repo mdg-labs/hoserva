@@ -225,6 +225,48 @@ func TestSetUserPasswordWritesBothCredentialsTogether(t *testing.T) {
 	}
 }
 
+// TestSetUserPasswordMarksSMBCredentialProvisioned is #225's acceptance
+// criterion: the account's provisioned state is exposed through the User
+// model once setUserPassword's Samba write actually succeeds, and stays
+// set on a later password change rather than being newly recomputed.
+func TestSetUserPasswordMarksSMBCredentialProvisioned(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+	fake := share.NewFakeSambaAccounts()
+	svc.SambaAccounts = fake
+
+	u, err := svc.CreateUser(ctx, "kid", "")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if u.HasSMBCredential() {
+		t.Fatal("a freshly created account must not already show a provisioned credential")
+	}
+
+	if _, err := svc.SetUserPassword(ctx, u.ID, "correct horse battery staple"); err != nil {
+		t.Fatalf("SetUserPassword: %v", err)
+	}
+	stored, err := svc.Store.GetUserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if !stored.HasSMBCredential() {
+		t.Fatal("HasSMBCredential must be true once SetUserPassword's Samba write succeeds")
+	}
+	firstSetAt := stored.SMBCredentialSetAt
+
+	if _, err := svc.SetUserPassword(ctx, u.ID, "a different password"); err != nil {
+		t.Fatalf("SetUserPassword (second time): %v", err)
+	}
+	stored, err = svc.Store.GetUserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if !stored.HasSMBCredential() || !stored.SMBCredentialSetAt.Equal(*firstSetAt) {
+		t.Errorf("SMBCredentialSetAt = %v after a second password change, want unchanged from %v", stored.SMBCredentialSetAt, firstSetAt)
+	}
+}
+
 // TestSetUserPasswordRollsBackUICredentialOnSambaFailure is the
 // safety-critical scenario this issue's acceptance criteria name
 // directly: "rolled back together on failure" — if the Samba passdb
@@ -268,6 +310,55 @@ func TestSetUserPasswordRollsBackUICredentialOnSambaFailure(t *testing.T) {
 	// "some" hash.
 	if auth.VerifyPassword(stored.PasswordHash, "correct horse battery staple") {
 		t.Error("the new password verifies against the stored hash — the rollback did not actually happen")
+	}
+}
+
+// TestSetUserPasswordRollbackClearsSMBCredentialMarkerOnSambaFailure covers
+// the failure path of writing password_hash and smb_credential_set_at
+// together (#225 CodeRabbit finding on PR #228): when this is the
+// account's first SetUserPassword call and the Samba write fails, the
+// smb_credential_set_at marker set in the same transaction as the (now
+// rolled back) password hash must be cleared with it, not left set for a
+// password that was never actually accepted by Samba.
+func TestSetUserPasswordRollbackClearsSMBCredentialMarkerOnSambaFailure(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+	fake := share.NewFakeSambaAccounts()
+	svc.SambaAccounts = fake
+
+	u, err := svc.CreateUser(ctx, "kid", "")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if u.HasSMBCredential() {
+		t.Fatal("a freshly created account must not already show a provisioned credential")
+	}
+
+	fake.FailSetPassword(errors.New("smbpasswd: simulated failure"))
+	if _, err := svc.SetUserPassword(ctx, u.ID, "correct horse battery staple"); !errors.Is(err, api.ErrSambaPasswordFailed) {
+		t.Fatalf("SetUserPassword with a failing Samba write = %v, want ErrSambaPasswordFailed", err)
+	}
+
+	stored, err := svc.Store.GetUserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if stored.HasSMBCredential() {
+		t.Error("smb_credential_set_at was left set even though the Samba write it was written alongside failed")
+	}
+
+	// Recovery: a later, successful SetUserPassword call must still be
+	// able to mark the credential provisioned for the first time.
+	fake.FailSetPassword(nil)
+	if _, err := svc.SetUserPassword(ctx, u.ID, "a working password"); err != nil {
+		t.Fatalf("SetUserPassword after clearing the simulated failure: %v", err)
+	}
+	stored, err = svc.Store.GetUserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if !stored.HasSMBCredential() {
+		t.Error("HasSMBCredential must become true once a subsequent SetUserPassword call actually succeeds")
 	}
 }
 
