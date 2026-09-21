@@ -262,6 +262,7 @@ func run(cfg config) error {
 		parityEngine.Usage = parity.NewUsageStore(db)
 		registry.Register(job.TypeSync, false, job.RunSync(parityEngine))
 		registry.Register(job.TypeScrub, false, job.RunScrub(parityEngine))
+		registry.Register(job.TypeFix, false, job.RunFix(parityEngine))
 		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}
 	}
 	backupService := newBackupService(ctx, cfg, db, machineKey, settingsService, linuxDisks.Exec)
