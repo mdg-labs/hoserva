@@ -539,6 +539,69 @@ func TestRun_ConflictNeverAutoResolved(t *testing.T) {
 	}
 }
 
+// racyOpenChecker is a scripted OpenChecker whose IsOpen has a side
+// effect: it plants dst before reporting "not open". processFile's own
+// Lstat(dst) conflict check has already run and found nothing by the
+// time IsOpen is consulted, so this stands in for a client writing
+// through the array mount during the multi-minute copy that follows —
+// the exact window TestRun_RejectsTargetThatAppearsDuringCopy proves is
+// closed.
+type racyOpenChecker struct {
+	dst     string
+	content string
+}
+
+func (r racyOpenChecker) IsOpen(_ context.Context, _ string) (bool, error) {
+	if err := os.MkdirAll(filepath.Dir(r.dst), 0o755); err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(r.dst, []byte(r.content), 0o640); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+// TestRun_RejectsTargetThatAppearsDuringCopy proves the copy-to-rename
+// window is closed: a target created after processFile's own Lstat(dst)
+// check (here simulated via IsOpen, called immediately before the copy)
+// must not be silently overwritten by the final rename. The rename has
+// to fail closed into ResultConflict, and both the source and the
+// appeared target must survive untouched (doc 09 §2: a conflict is never
+// auto-resolved).
+func TestRun_RejectsTargetThatAppearsDuringCopy(t *testing.T) {
+	s := newShare(t, "media")
+	src := filepath.Join(s.CachePath, "file.bin")
+	mustWrite(t, src, "cache-side content")
+	dst := filepath.Join(s.ArrayPath, "file.bin")
+
+	deps := testDeps(NewFakeOpenChecker())
+	deps.Open = racyOpenChecker{dst: dst, content: "written through the array mount mid-copy"}
+
+	report, err := Run(context.Background(), []Share{s}, Config{}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(report.Entries) != 1 || report.Entries[0].Result != ResultConflict {
+		t.Fatalf("expected one conflict entry, got %+v", report.Entries)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("source must survive a conflict discovered mid-copy: %v", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil || string(got) != "written through the array mount mid-copy" {
+		t.Fatalf("target written during the copy must survive unmodified, got %q, %v", got, err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(dst))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != filepath.Base(dst) {
+			t.Fatalf("stray temp file left behind: %s", e.Name())
+		}
+	}
+}
+
 // TestRun_ChecksumVerification proves VerifyChecksum actually reads the
 // target back from disk and compares it, rather than trusting the bytes
 // that passed through memory during the copy.

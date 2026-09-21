@@ -29,6 +29,13 @@ const tempSuffix = ".hoserva-moving-"
 // recently than this is still probably being written to.
 const DefaultGracePeriod = 5 * time.Minute
 
+// errTargetAppeared is copyMoveFile's rename hitting a dst that did not
+// exist at processFile's Lstat check but does now — something else wrote
+// it through the array mount during the copy. processFile maps this to
+// ResultConflict rather than ResultFailed, since it is the same
+// never-auto-resolved conflict the earlier check exists to catch.
+var errTargetAppeared = errors.New("cache: array target appeared during copy")
+
 // Share is what one mover pass needs about a single cache-then-move
 // share. ArrayPath is the share's own array-only mergerfs mount (doc 02
 // §1, pool.MoverTargetPath) — the mover writes only through it, so
@@ -294,6 +301,9 @@ func processFile(ctx context.Context, s Share, rel string, grace time.Duration, 
 	}
 
 	if err := copyMoveFile(src, dst, srcInfo, cfg, deps); err != nil {
+		if errors.Is(err, errTargetAppeared) {
+			return Entry{Share: s.Name, Path: rel, Result: ResultConflict}
+		}
 		return Entry{Share: s.Name, Path: rel, Result: ResultFailed, Err: err.Error()}
 	}
 
@@ -459,7 +469,10 @@ func copyMoveFile(src, dst string, srcInfo os.FileInfo, cfg Config, deps Deps) e
 		return fmt.Errorf("preserve timestamps: %w", err)
 	}
 
-	if err := os.Rename(tmp, dst); err != nil {
+	if err := renameNoReplace(tmp, dst); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return errTargetAppeared
+		}
 		return fmt.Errorf("rename into place: %w", err)
 	}
 	cleanTemp = false
