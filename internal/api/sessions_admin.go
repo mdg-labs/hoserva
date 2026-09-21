@@ -23,7 +23,7 @@ type SessionWithUser struct {
 // ListSessions returns every active session across every account, most
 // recently created first.
 func (s *AuthService) ListSessions(ctx context.Context) ([]SessionWithUser, error) {
-	return s.Store.ListSessionsWithUsernames(ctx)
+	return s.Store.ListSessionsWithUsernames(ctx, s.Now())
 }
 
 // RevokeSession ends one session immediately, server-side.
@@ -32,13 +32,16 @@ func (s *AuthService) RevokeSession(ctx context.Context, id string) error {
 }
 
 // ListSessionsWithUsernames joins sessions with users for the admin
-// session list.
-func (s *AuthStore) ListSessionsWithUsernames(ctx context.Context) ([]SessionWithUser, error) {
+// session list, excluding any session whose expiry is at or before now —
+// an expired row not yet swept by DeleteExpiredSessions can no longer
+// authenticate, so it isn't "active".
+func (s *AuthStore) ListSessionsWithUsernames(ctx context.Context, now time.Time) ([]SessionWithUser, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT s.token_hash, s.user_id, u.username, s.created_at, s.expires_at
 FROM sessions s
 JOIN users u ON u.id = s.user_id
-ORDER BY s.created_at DESC`)
+WHERE s.expires_at > ?
+ORDER BY s.created_at DESC`, now.UTC().Format(timeFormat))
 	if err != nil {
 		return nil, fmt.Errorf("listing sessions: %w", err)
 	}
