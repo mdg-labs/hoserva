@@ -1,5 +1,5 @@
 import { MoreHorizontal, Plus, Users as UsersIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
@@ -75,6 +75,11 @@ export function UsersPage(): React.ReactElement {
   const [passwordDraft, setPasswordDraft] = useState("");
   const [groupIdsDraft, setGroupIdsDraft] = useState<string[]>([]);
   const [sharePermissionsDraft, setSharePermissionsDraft] = useState<Record<string, ShareAccessLevel>>({});
+  // The user id openEditPanel's own permissions fetch is for — checked when
+  // that fetch resolves so a slow response for a panel the user has since
+  // closed or reopened for someone else can never overwrite that other
+  // user's draft (#228 CodeRabbit finding).
+  const editingPermissionsForRef = useRef<string | null>(null);
   const [panelBusy, setPanelBusy] = useState(false);
 
   const [groupFormOpen, setGroupFormOpen] = useState(false);
@@ -128,6 +133,7 @@ export function UsersPage(): React.ReactElement {
     setGroupIdsDraft([]);
     setSharePermissionsDraft({});
     setPanelOpen(true);
+    editingPermissionsForRef.current = null;
   }
 
   function openEditPanel(user: UserSummary): void {
@@ -139,9 +145,11 @@ export function UsersPage(): React.ReactElement {
     setGroupIdsDraft((groups ?? []).filter((group) => group.memberUserIds.includes(user.id)).map((group) => group.id));
     setSharePermissionsDraft({});
     setPanelOpen(true);
+    editingPermissionsForRef.current = user.id;
     void hoservaClient
       .GET("/users/{userId}/permissions", { params: { path: { userId: user.id } } })
       .then(({ data }) => {
+        if (editingPermissionsForRef.current !== user.id) return;
         const draft: Record<string, ShareAccessLevel> = {};
         for (const entry of data?.permissions ?? []) {
           draft[entry.shareName] = entry.access;
