@@ -97,6 +97,36 @@ func TestSetSharePermissionsRefusesUnknownUser(t *testing.T) {
 	}
 }
 
+func TestSetUserSharePermissionsRefusesUnknownUser(t *testing.T) {
+	svc, db := newAuthTestService(t)
+	ctx := context.Background()
+	seedShare(t, db, "media")
+
+	err := svc.SetUserSharePermissions(ctx, "no-such-user", []api.UserSharePermission{{ShareName: "media", Access: "read-only"}})
+	if !errors.Is(err, api.ErrUserNotFound) {
+		t.Errorf("SetUserSharePermissions(unknown user) = %v, want ErrUserNotFound", err)
+	}
+
+	// Nothing should have been written for the share at all.
+	users, _, err := svc.GetSharePermissions(ctx, "media")
+	if err != nil {
+		t.Fatalf("GetSharePermissions: %v", err)
+	}
+	if len(users) != 0 {
+		t.Errorf("share permissions after a refused write = %v, want none", users)
+	}
+}
+
+func TestGetUserSharePermissionsRefusesUnknownUser(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+
+	_, err := svc.GetUserSharePermissions(ctx, "no-such-user")
+	if !errors.Is(err, api.ErrUserNotFound) {
+		t.Errorf("GetUserSharePermissions(unknown user) = %v, want ErrUserNotFound", err)
+	}
+}
+
 func TestSetSharePermissionsReplacesExistingRows(t *testing.T) {
 	svc, db := newAuthTestService(t)
 	ctx := context.Background()
