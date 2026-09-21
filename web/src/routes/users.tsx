@@ -103,19 +103,25 @@ export function UsersPage(): React.ReactElement {
       hoservaClient.GET("/sessions", { signal }),
       hoservaClient.GET("/api-tokens", { signal }),
       hoservaClient.GET("/shares", { signal }),
-    ]).then(([usersResult, groupsResult, sessionsResult, tokensResult, sharesResult]) => {
-      if (signal?.aborted) return;
-      if (usersResult.error) {
-        setError(usersResult.error.message);
-        return;
-      }
-      setError(null);
-      setUsers(usersResult.data?.users ?? []);
-      setGroups(groupsResult.data?.groups ?? []);
-      setSessions(sessionsResult.data?.sessions ?? []);
-      setTokens(tokensResult.data?.tokens ?? []);
-      setShares(sharesResult.data?.shares ?? []);
-    });
+    ])
+      .then(([usersResult, groupsResult, sessionsResult, tokensResult, sharesResult]) => {
+        if (signal?.aborted) return;
+        if (usersResult.error) {
+          setError(usersResult.error.message);
+          return;
+        }
+        setError(null);
+        setUsers(usersResult.data?.users ?? []);
+        setGroups(groupsResult.data?.groups ?? []);
+        setSessions(sessionsResult.data?.sessions ?? []);
+        setTokens(tokensResult.data?.tokens ?? []);
+        setShares(sharesResult.data?.shares ?? []);
+      })
+      .catch((err: unknown) => {
+        if (!signal?.aborted) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      });
   }
 
   useEffect(() => {
