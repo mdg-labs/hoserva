@@ -54,6 +54,14 @@ func TestNewRemoteAPIClientBuildsHTTPSURL(t *testing.T) {
 // clear error at the command level, not just from newRemoteAPIClient in
 // isolation.
 func TestRootCmdHostRequiresToken(t *testing.T) {
+	oldSocketPath, oldHost := socketPath, remoteHost
+	oldPort, oldToken := remotePort, remoteToken
+	oldInsecure := insecureSkipTLSVerify
+	t.Cleanup(func() {
+		socketPath, remoteHost = oldSocketPath, oldHost
+		remotePort, remoteToken = oldPort, oldToken
+		insecureSkipTLSVerify = oldInsecure
+	})
 	t.Setenv("HOSERVA_TOKEN", "")
 	root := rootCmd()
 	root.SetArgs([]string{"--host", "hoserva.example", "status"})
