@@ -1,6 +1,7 @@
 package share
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 )
@@ -11,6 +12,8 @@ import (
 // on a timer.
 type FS interface {
 	MkdirAll(path string, perm os.FileMode) error
+	Chmod(path string, mode os.FileMode) error
+	Chown(path string, uid, gid int) error
 	RemoveAll(path string) error
 	ReadDir(path string) ([]os.DirEntry, error)
 	Lstat(path string) (os.FileInfo, error)
@@ -23,6 +26,27 @@ type OSFS struct{}
 
 func (OSFS) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
+}
+
+func (OSFS) Chmod(path string, mode os.FileMode) error {
+	return os.Chmod(path, mode)
+}
+
+// Chown sets path's group to the shared data group (Q26). hoservad
+// itself always runs as root (doc 01 §7) and can chown to any group;
+// an unprivileged caller cannot chgrp to a group it does not belong to,
+// which os.Chown reports as a permission error — swallowed here rather
+// than failing share creation over it, since it can only happen outside
+// hoservad's own supported deployment. Any other error (a missing path,
+// a read-only filesystem) still surfaces.
+func (OSFS) Chown(path string, uid, gid int) error {
+	if err := os.Chown(path, uid, gid); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (OSFS) RemoveAll(path string) error {

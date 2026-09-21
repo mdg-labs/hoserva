@@ -22,6 +22,9 @@
    browseable = yes
    read only = no
    guest ok = no
+   create mask = 0664
+   directory mask = 2775
+   force group = users
    vfs objects = catia fruit streams_xattr recycle
    recycle:repository = .recycle
    recycle:keeptree = yes

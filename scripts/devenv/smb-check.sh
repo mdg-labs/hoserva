@@ -8,10 +8,13 @@
 # The smb.conf under test is scripts/devenv/gen-smb-conf's own call into
 # internal/config.RenderSambaConf, rendered on the host by
 # `make test-integration` into $LAB/smb.conf.rendered (this container has no
-# Go toolchain) — never a hand-written fixture. RenderSambaConf sets no
-# create/directory mask or force-user/force-group line today (that is #48's
-# own scope, not this one's), so the assertions below check whatever smbd's
-# own built-in defaults actually produce, not a value #48 will add later.
+# Go toolchain) — never a hand-written fixture. RenderSambaConf now emits
+# #48's own Q26 masks on every share (`create mask = 0664`, `directory
+# mask = 2775`, `force group = users`); the assertions below still only
+# check uid:gid ownership and content, which those masks do not change
+# for this share (TEST_GID is already 100, and 0664/2775 keep both
+# owner and group read/write) — so they hold against the new output
+# without needing a value change of their own.
 #
 # Run only inside the lab container, via `make test-integration`.
 set -euo pipefail

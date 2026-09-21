@@ -1,8 +1,9 @@
 #!/bin/sh
 # postinst (doc 01 §7 Security, doc 04 §2, Q44). Creates the `hoserva`
 # group — empty, root-equivalent by design, exactly like the `docker`
-# group (Q44) — and nothing else of its own: no data disk under /mnt is
-# ever touched here, and the machine key at /etc/hoserva/secret.key is
+# group (Q44) — and the `hoserva-apps` system user pinned to UID 99
+# (Q26) — and nothing else of its own: no data disk under /mnt is ever
+# touched here, and the machine key at /etc/hoserva/secret.key is
 # deliberately NOT created here. It is generated once, atomically, by
 # hoservad's own first start (internal/auth.LoadOrGenerateMachineKey),
 # which also records a check value against the database — a database
@@ -23,6 +24,26 @@ case "$1" in
   configure)
     if ! getent group hoserva >/dev/null 2>&1; then
       addgroup --quiet --system hoserva
+    fi
+
+    # hoserva-apps (Q26): a system user pinned to UID 99, so migrated
+    # Unraid data (conventionally owned nobody:users, 99:100) and
+    # converted templates that pass PUID=99 PGID=100 (doc 04 §5) keep
+    # working with no ownership rewrite. Created only when UID 99 is
+    # free on this host; a UID already taken by a different account is
+    # reported, never overridden, and an existing hoserva-apps account
+    # (an earlier install or reconfigure) is left alone. `users` (GID
+    # 100) is Debian's own base-passwd system group — already present
+    # on every install — so it needs no creation here.
+    if getent passwd hoserva-apps >/dev/null 2>&1; then
+      : # already created by an earlier install or reconfigure
+    elif getent passwd 99 >/dev/null 2>&1; then
+      echo "hoserva: UID 99 is already used by another account; hoserva-apps was not created. Templates and migrated data that assume UID 99 (Unraid's PUID=99/nobody) may need remapping on this host." >&2
+    else
+      adduser --quiet --system --no-create-home --uid 99 --ingroup users \
+        --shell /usr/sbin/nologin \
+        --comment "Hoserva template UID pin (Q26)" \
+        hoserva-apps
     fi
 
     # smartmontools (issue #161's own Depends: addition) is a dependency

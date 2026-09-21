@@ -22,6 +22,9 @@
    browseable = no
    read only = no
    guest ok = no
+   create mask = 0664
+   directory mask = 2775
+   force group = users
    fruit:time machine = yes
    fruit:time machine max size = 500G
 
