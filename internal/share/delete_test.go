@@ -283,6 +283,23 @@ func TestDeleteFile_MissingFileIsRefused(t *testing.T) {
 	}
 }
 
+// TestRemoveConfined_MissingFileUnderSymlinkedRootIsNotFound covers a root
+// that is itself a symlink (e.g. a symlinked cache path): confineSharePathOnFS
+// returns the missing leaf's path built from the raw root, not the resolved
+// one, so removeConfined's own containment check must still recognize it as
+// confined instead of misreporting a path escape.
+func TestRemoveConfined_MissingFileUnderSymlinkedRootIsNotFound(t *testing.T) {
+	real := t.TempDir()
+	root := filepath.Join(t.TempDir(), "root-link")
+	if err := os.Symlink(real, root); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := removeConfined(OSFS{}, root, "nope.mkv"); !errors.Is(err, ErrFileNotFound) {
+		t.Fatalf("removeConfined missing file under symlinked root = %v, want ErrFileNotFound", err)
+	}
+}
+
 // swapParentAfterValidateFS embeds OSFS and, the first time EvalSymlinks is
 // asked to resolve trigger, swaps victim for a symlink pointing at swapTo —
 // simulating a concurrent writer replacing an in-share parent directory
