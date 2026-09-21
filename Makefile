@@ -336,6 +336,7 @@ packaging-test:
 	packaging/test-preinst-smartd-dropin.sh
 	packaging/test-postinst-smartd-mask.sh
 	packaging/test-postinst-smartd-survives-upgrade.sh
+	packaging/test-postinst-hoserva-apps.sh
 
 # Go-only lint: CI's lint-and-unit job calls this so it does not also
 # run the web job's lint/typecheck. Local `make lint` still includes
