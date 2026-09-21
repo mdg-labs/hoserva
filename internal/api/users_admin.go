@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -143,30 +144,45 @@ func (s *AuthService) SetUserPassword(ctx context.Context, userID, password stri
 		return nil, ErrCannotModifyAdmin
 	}
 	oldHash := u.PasswordHash
+	firstSMBCredential := u.SMBCredentialSetAt == nil
 
 	newHash, err := auth.HashPasswordContext(ctx, password)
 	if err != nil {
 		return nil, fmt.Errorf("hashing password: %w", err)
 	}
-	if err := s.Store.UpdatePasswordHash(ctx, userID, newHash); err != nil {
+
+	// The password hash and (the first time) the smb_credential_set_at
+	// marker are written together, before the Samba call: that closes the
+	// window a separate, later marker write left open, where a
+	// marker-write failure after a successful Samba write could leave a
+	// fully, correctly changed password looking unprovisioned
+	// (HasSMBCredential false) (#225 CodeRabbit finding on PR #228).
+	var setAt time.Time
+	if firstSMBCredential {
+		setAt = s.Now()
+		if err := s.Store.UpdatePasswordHashAndMarkSMBCredential(ctx, userID, newHash, setAt); err != nil {
+			return nil, fmt.Errorf("writing password: %w", err)
+		}
+	} else if err := s.Store.UpdatePasswordHash(ctx, userID, newHash); err != nil {
 		return nil, fmt.Errorf("writing password: %w", err)
 	}
 
 	if err := s.SambaAccounts.SetPassword(ctx, u.Username, password); err != nil {
-		if rbErr := s.Store.UpdatePasswordHash(ctx, userID, oldHash); rbErr != nil {
+		var rbErr error
+		if firstSMBCredential {
+			rbErr = s.Store.RestorePasswordHashAndClearSMBCredential(ctx, userID, oldHash)
+		} else {
+			rbErr = s.Store.UpdatePasswordHash(ctx, userID, oldHash)
+		}
+		if rbErr != nil {
 			return nil, fmt.Errorf("samba password write failed (%v), and rolling back the UI credential also failed: %w", err, rbErr)
 		}
 		return nil, fmt.Errorf("%w: %v", ErrSambaPasswordFailed, err)
 	}
 
-	if u.SMBCredentialSetAt == nil {
-		setAt := s.Now()
-		if err := s.Store.MarkSMBCredentialSet(ctx, userID, setAt); err != nil {
-			return nil, fmt.Errorf("recording smb credential: %w", err)
-		}
+	u.PasswordHash = newHash
+	if firstSMBCredential {
 		u.SMBCredentialSetAt = &setAt
 	}
-
-	u.PasswordHash = newHash
 	return u, nil
 }

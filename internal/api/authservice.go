@@ -347,16 +347,21 @@ func (s *AuthService) Login(ctx context.Context, username, password, totpCode, s
 	}
 
 	loginAt := s.Now()
-	if err := s.Store.RecordLogin(ctx, u.ID, loginAt); err != nil {
-		return nil, "", err
-	}
-	u.LastLoginAt = &loginAt
-
-	token, err := s.createSession(ctx, u.ID)
+	raw, hash, err := auth.NewSessionToken()
 	if err != nil {
 		return nil, "", err
 	}
-	return u, token, nil
+	sess := &Session{
+		TokenHash: hash,
+		UserID:    u.ID,
+		CreatedAt: loginAt,
+		ExpiresAt: loginAt.Add(sessionTTL),
+	}
+	if err := s.Store.RecordLoginAndCreateSession(ctx, u.ID, loginAt, sess); err != nil {
+		return nil, "", err
+	}
+	u.LastLoginAt = &loginAt
+	return u, raw, nil
 }
 
 // Logout revokes rawToken's session server-side. Revoking a token that

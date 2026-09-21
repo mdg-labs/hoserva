@@ -352,6 +352,46 @@ func (s *AuthStore) UpdatePasswordHash(ctx context.Context, userID, hash string)
 	return nil
 }
 
+// UpdatePasswordHashAndMarkSMBCredential sets password_hash to hash and
+// smb_credential_set_at to setAt in one transaction, so the two writes
+// SetUserPassword makes before its Samba call can never separate — a
+// marker-write failure can no longer leave a changed password hash with
+// HasSMBCredential still false (#225 CodeRabbit finding on PR #228).
+func (s *AuthStore) UpdatePasswordHashAndMarkSMBCredential(ctx context.Context, userID, hash string, setAt time.Time) error {
+	return s.updatePasswordHashAndSMBCredentialMarker(ctx, userID, hash, sql.NullString{String: setAt.UTC().Format(timeFormat), Valid: true})
+}
+
+// RestorePasswordHashAndClearSMBCredential sets password_hash back to hash
+// and clears smb_credential_set_at to NULL, in one transaction —
+// SetUserPassword's compensation when the Samba write that followed a
+// first-time UpdatePasswordHashAndMarkSMBCredential call fails.
+func (s *AuthStore) RestorePasswordHashAndClearSMBCredential(ctx context.Context, userID, hash string) error {
+	return s.updatePasswordHashAndSMBCredentialMarker(ctx, userID, hash, sql.NullString{})
+}
+
+func (s *AuthStore) updatePasswordHashAndSMBCredentialMarker(ctx context.Context, userID, hash string, smbCredentialSetAt sql.NullString) error {
+	sqlDB, ok := s.db.(*sql.DB)
+	if !ok {
+		return fmt.Errorf("auth store: password transaction requires *sql.DB")
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning password transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, "UPDATE users SET password_hash = ? WHERE id = ?", hash, userID); err != nil {
+		return fmt.Errorf("updating password: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE users SET smb_credential_set_at = ? WHERE id = ?", smbCredentialSetAt, userID); err != nil {
+		return fmt.Errorf("recording smb credential: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing password transaction: %w", err)
+	}
+	return nil
+}
+
 // RecordLogin sets userID's last_login_at to at (#225, doc 03 §7) — called
 // only from a completed Login, never from anything that merely checks
 // whether a session is still live.
@@ -365,16 +405,29 @@ func (s *AuthStore) RecordLogin(ctx context.Context, userID string, at time.Time
 	return nil
 }
 
-// MarkSMBCredentialSet sets userID's smb_credential_set_at to at (#225,
-// doc 03 §7) — called only once SetUserPassword's Samba write has actually
-// succeeded, so it is never set for an account whose Samba account write
-// failed and was rolled back.
-func (s *AuthStore) MarkSMBCredentialSet(ctx context.Context, userID string, at time.Time) error {
-	if err := s.q.MarkUserSMBCredentialSet(ctx, storedb.MarkUserSMBCredentialSetParams{
-		SmbCredentialSetAt: sql.NullString{String: at.UTC().Format(timeFormat), Valid: true},
-		ID:                 userID,
-	}); err != nil {
-		return fmt.Errorf("recording smb credential: %w", err)
+// RecordLoginAndCreateSession sets userID's last_login_at and inserts sess
+// in one transaction, so a session-creation failure can never leave
+// last_login_at reporting a completed sign-in with no session behind it.
+func (s *AuthStore) RecordLoginAndCreateSession(ctx context.Context, userID string, at time.Time, sess *Session) error {
+	sqlDB, ok := s.db.(*sql.DB)
+	if !ok {
+		return fmt.Errorf("auth store: login transaction requires *sql.DB")
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning login transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	txStore := s.WithTx(tx)
+	if err := txStore.RecordLogin(ctx, userID, at); err != nil {
+		return err
+	}
+	if err := txStore.CreateSession(ctx, sess); err != nil {
+		return fmt.Errorf("creating session: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing login transaction: %w", err)
 	}
 	return nil
 }
