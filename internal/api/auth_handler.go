@@ -66,6 +66,8 @@ func mapAuthError(err error) error {
 		return &apiError{code: "samba_delete_failed", statusCode: 502, message: err.Error()}
 	case errors.Is(err, ErrInvalidAccessLevel):
 		return &apiError{code: "invalid_access_level", statusCode: 400, message: err.Error()}
+	case errors.Is(err, ErrDuplicateGrant):
+		return &apiError{code: "duplicate_grant", statusCode: 400, message: err.Error()}
 	case errors.Is(err, store.ErrShareNotFound):
 		// Same code and status share_handler.go's own mapShareError uses
 		// for the same sentinel — the permission endpoints reach this

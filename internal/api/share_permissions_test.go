@@ -127,6 +127,58 @@ func TestGetUserSharePermissionsRefusesUnknownUser(t *testing.T) {
 	}
 }
 
+func TestSetSharePermissionsRefusesDuplicateUser(t *testing.T) {
+	svc, db := newAuthTestService(t)
+	ctx := context.Background()
+	seedShare(t, db, "media")
+	u, err := svc.CreateUser(ctx, "alice", "viewer")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	err = svc.SetSharePermissions(ctx, "media", []api.PermissionGrant{
+		{ID: u.ID, Access: "read-only"},
+		{ID: u.ID, Access: "read-write"},
+	}, nil)
+	if !errors.Is(err, api.ErrDuplicateGrant) {
+		t.Errorf("SetSharePermissions(duplicate user) = %v, want ErrDuplicateGrant", err)
+	}
+
+	users, _, err := svc.GetSharePermissions(ctx, "media")
+	if err != nil {
+		t.Fatalf("GetSharePermissions: %v", err)
+	}
+	if len(users) != 0 {
+		t.Errorf("share permissions after a refused write = %v, want none", users)
+	}
+}
+
+func TestSetUserSharePermissionsRefusesDuplicateShare(t *testing.T) {
+	svc, db := newAuthTestService(t)
+	ctx := context.Background()
+	seedShare(t, db, "media")
+	u, err := svc.CreateUser(ctx, "alice", "viewer")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	err = svc.SetUserSharePermissions(ctx, u.ID, []api.UserSharePermission{
+		{ShareName: "media", Access: "read-only"},
+		{ShareName: "media", Access: "read-write"},
+	})
+	if !errors.Is(err, api.ErrDuplicateGrant) {
+		t.Errorf("SetUserSharePermissions(duplicate share) = %v, want ErrDuplicateGrant", err)
+	}
+
+	fromUserSide, err := svc.GetUserSharePermissions(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("GetUserSharePermissions: %v", err)
+	}
+	if len(fromUserSide) != 0 {
+		t.Errorf("user share permissions after a refused write = %v, want none", fromUserSide)
+	}
+}
+
 func TestSetSharePermissionsReplacesExistingRows(t *testing.T) {
 	svc, db := newAuthTestService(t)
 	ctx := context.Background()
