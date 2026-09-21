@@ -63,7 +63,7 @@ export function SharesPage(): React.ReactElement {
         setError(null);
         const list = data?.shares ?? [];
         setShares(list);
-        void Promise.all(
+        return Promise.all(
           list.map((share) =>
             hoservaClient
               .GET("/shares/{name}/permissions", { params: { path: { name: share.name } }, signal })
