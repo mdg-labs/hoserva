@@ -1,6 +1,9 @@
 package parity
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 // TestParseList_Shares is captured from a real snapraid 12.4-1 binary in
 // the loop-device lab (testdata/parsers/snapraid_list_shares.log, #223):
@@ -51,6 +54,23 @@ func TestParseList_EmptyInput(t *testing.T) {
 func TestParseList_Malformed(t *testing.T) {
 	if _, err := ParseList([]byte("not a snapraid log\nat all\n")); err == nil {
 		t.Fatal("ParseList(malformed): got nil error, want ErrListParse")
+	}
+}
+
+// TestParseList_MalformedFileLine proves a truncated or otherwise
+// unparseable `file:` record fails the whole parse rather than silently
+// vanishing from report.Files — a log this malformed indicates a
+// truncated write or a SnapRAID format change, not a file with nothing
+// to report, and ComputeShareUsage must never persist a snapshot built
+// from a report that dropped tracked files unnoticed.
+func TestParseList_MalformedFileLine(t *testing.T) {
+	log := []byte("data:disk1:/mnt/disk1/\n" +
+		"file:disk1:movies/a.mkv\n" + // missing size/mtime/etc fields
+		"summary:file_count:1\n" +
+		"summary:exit:ok\n")
+	_, err := ParseList(log)
+	if !errors.Is(err, ErrListParse) {
+		t.Fatalf("ParseList(malformed file line) = %v, want ErrListParse", err)
 	}
 }
 

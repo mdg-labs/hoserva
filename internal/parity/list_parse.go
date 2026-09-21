@@ -59,9 +59,11 @@ func ParseList(log []byte) (ListReport, error) {
 				report.DataMounts[id] = path
 			}
 		case "file":
-			if f, ok := parseListFileLine(rest); ok {
-				report.Files = append(report.Files, f)
+			f, ok := parseListFileLine(rest)
+			if !ok {
+				return ListReport{}, fmt.Errorf("%w: malformed file record: %q", ErrListParse, line)
 			}
+			report.Files = append(report.Files, f)
 		case "summary":
 			sawSummary = true
 		}
