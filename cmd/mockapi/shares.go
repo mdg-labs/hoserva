@@ -93,6 +93,7 @@ func (h *handler) CreateShare(ctx context.Context, req *apiv1.CreateShareRequest
 		CreatePolicy: policy,
 		Smb:          smb,
 		Nfs:          nfs,
+		Usage:        apiv1.NilShareUsage{Null: true},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
