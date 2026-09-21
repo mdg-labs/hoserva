@@ -23,6 +23,7 @@ import (
 )
 
 func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
+	settings, assigned := h.arrayTopology(ctx)
 	entries := []apiv1.PoolDiskEntry{}
 	if h.Disks != nil {
 		disks, err := h.Disks.List(ctx)
@@ -33,10 +34,16 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 			if d.Boot {
 				continue
 			}
+			role := apiv1.PoolDiskEntryRoleUnassigned
+			mountPoint := ""
+			if ad, ok := assigned[d.Device]; ok {
+				role = arrayRoleToAPI(ad.Role)
+				mountPoint = ad.Mountpoint
+			}
 			entries = append(entries, apiv1.PoolDiskEntry{
 				Device:     d.Device,
-				MountPoint: "",
-				Role:       apiv1.PoolDiskEntryRoleUnassigned,
+				MountPoint: mountPoint,
+				Role:       role,
 				State:      apiv1.DiskStateActive,
 				SizeBytes:  apiv1.NewOptNilInt64(d.Size),
 			})
@@ -47,8 +54,43 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 		mounted = false
 	}
 	status := &apiv1.PoolStatus{Mounted: mounted, Disks: entries}
-	h.populatePoolSpace(ctx, status)
+	h.populatePoolSpace(ctx, status, settings, assigned)
 	return status, nil
+}
+
+// arrayTopology returns the persisted array settings and disks keyed by
+// device path, or a zero settings value and nil map with no ArrayStore
+// configured or no array created yet (GetPool must still report disk
+// inventory before create-array has run).
+func (h *Handler) arrayTopology(ctx context.Context) (store.ArraySettings, map[string]store.ArrayDisk) {
+	if h.ArrayStore == nil {
+		return store.ArraySettings{}, nil
+	}
+	settings, disks, err := h.ArrayStore.GetArray(ctx)
+	if err != nil {
+		return store.ArraySettings{}, nil
+	}
+	byDevice := make(map[string]store.ArrayDisk, len(disks))
+	for _, d := range disks {
+		byDevice[d.Device] = d
+	}
+	return settings, byDevice
+}
+
+// arrayRoleToAPI maps a persisted store.ArrayRole* spelling to its API
+// enum value, honestly falling back to unassigned for anything unrecognized
+// rather than guessing.
+func arrayRoleToAPI(role string) apiv1.PoolDiskEntryRole {
+	switch role {
+	case store.ArrayRoleParity:
+		return apiv1.PoolDiskEntryRoleParity
+	case store.ArrayRoleData:
+		return apiv1.PoolDiskEntryRoleData
+	case store.ArrayRoleCache:
+		return apiv1.PoolDiskEntryRoleCache
+	default:
+		return apiv1.PoolDiskEntryRoleUnassigned
+	}
 }
 
 // populatePoolSpace fills status's pool-free, largest-single-disk-free and
@@ -58,21 +100,17 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 // disk mountpoints to statfs), or without an ArrayStore configured, status
 // is returned with these fields unset rather than as an error, since
 // GetPool must still report disk inventory before create-array has run.
-func (h *Handler) populatePoolSpace(ctx context.Context, status *apiv1.PoolStatus) {
+func (h *Handler) populatePoolSpace(ctx context.Context, status *apiv1.PoolStatus, settings store.ArraySettings, assigned map[string]store.ArrayDisk) {
 	if h.ArrayStore == nil {
 		return
 	}
-	settings, disks, err := h.ArrayStore.GetArray(ctx)
-	if err != nil {
-		return
-	}
-	mountByDevice := make(map[string]string, len(disks))
+	mountByDevice := make(map[string]string, len(assigned))
 	var dataMounts []string
-	for _, d := range disks {
+	for device, d := range assigned {
 		if d.Role != store.ArrayRoleData {
 			continue
 		}
-		mountByDevice[d.Device] = d.Mountpoint
+		mountByDevice[device] = d.Mountpoint
 		dataMounts = append(dataMounts, d.Mountpoint)
 	}
 	if len(dataMounts) == 0 {
