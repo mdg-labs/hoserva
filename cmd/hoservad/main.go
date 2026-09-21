@@ -211,6 +211,7 @@ func run(cfg config) error {
 	history := store.NewHistory(db)
 	disks := newPersistingDiskProvider(linuxDisks, history)
 	arrayStore := store.NewArrayStore(db)
+	shareStore := store.NewShareStore(db)
 	configRoot := cfg.configRoot
 	if configRoot == "" {
 		configRoot = "/etc"
@@ -222,6 +223,13 @@ func run(cfg config) error {
 		Store:     arrayStore,
 		Generator: generator,
 		Mounter:   disk.SystemdMounter{Runner: linuxDisks.Exec},
+	}))
+	// The mover cooperatively checks StopRequested between files and
+	// leaves consistent on-disk state at any stopping point (a duplicate,
+	// never a gap — doc 09 §2), so it honestly supports being cancelled,
+	// same as TypeACMEIssue below.
+	registry.Register(job.TypeMover, true, job.RunMover(job.MoverDeps{
+		Shares: moverSharesFromStore(shareStore, arrayStore),
 	}))
 	scheduler := job.NewScheduler(jobStore, logs, hub, registry)
 	if err := scheduler.RecoverFromRestart(ctx); err != nil {
