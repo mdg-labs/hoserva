@@ -93,6 +93,17 @@ CREATE INDEX jobs_class_idx ON jobs (class);
 -- SQLite's ALTER TABLE ADD COLUMN can only append) — replaying every
 -- migration has to reproduce this exact column order for db-check's own
 -- schema-drift comparison to pass.
+--
+-- last_login_at and smb_credential_set_at (#225, doc 03 §7) are declared
+-- last for the same append-only reason. last_login_at is set only by a
+-- successful Login — never derived from session liveness, so it still
+-- reads "never logged in" (NULL) once a session expires or is revoked.
+-- smb_credential_set_at is set the first time setUserPassword's Samba
+-- write succeeds for this account and, since there is no separate
+-- "revoke SMB access" operation short of deleting the whole account
+-- (Q27: one password sets both surfaces), never cleared again — it
+-- answers "has a Samba credential ever been provisioned for this
+-- account", which is exactly "is SMB access currently on" given that.
 CREATE TABLE users (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
@@ -102,7 +113,9 @@ CREATE TABLE users (
     totp_confirmed_at TEXT,
     totp_last_step INTEGER NOT NULL,
     created_at TEXT NOT NULL,
-    totp_pending_secret BLOB
+    totp_pending_secret BLOB,
+    last_login_at TEXT,
+    smb_credential_set_at TEXT
 ) STRICT;
 
 -- Enforces "creating the admin is atomic — a race between two setup

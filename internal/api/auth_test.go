@@ -210,6 +210,52 @@ func TestLoginSuccess(t *testing.T) {
 	}
 }
 
+// TestLoginRecordsLastLoginAtAuthenticationTime is #225's acceptance
+// criterion: last-login is set by a completed Login, not derived from
+// whether a session happens to still be live.
+func TestLoginRecordsLastLoginAtAuthenticationTime(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+	if _, _, err := svc.CreateFirstAdmin(ctx, "admin", "correct horse battery staple"); err != nil {
+		t.Fatalf("CreateFirstAdmin: %v", err)
+	}
+
+	before, err := svc.Store.GetUserByUsername(ctx, "admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if before.LastLoginAt != nil {
+		t.Fatalf("LastLoginAt = %v before any Login call, want nil", before.LastLoginAt)
+	}
+
+	u, token, err := svc.Login(ctx, "admin", "correct horse battery staple", "", "203.0.113.5")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if u.LastLoginAt == nil {
+		t.Fatal("Login did not set LastLoginAt on the returned user")
+	}
+
+	after, err := svc.Store.GetUserByUsername(ctx, "admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if after.LastLoginAt == nil {
+		t.Fatal("LastLoginAt was not persisted")
+	}
+
+	if err := svc.Logout(ctx, token); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	stillThere, err := svc.Store.GetUserByUsername(ctx, "admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if stillThere.LastLoginAt == nil {
+		t.Fatal("LastLoginAt must survive session revocation, not be derived from session liveness")
+	}
+}
+
 func TestLoginWrongPasswordAndUnknownUserSameError(t *testing.T) {
 	svc, _ := newAuthTestService(t)
 	ctx := context.Background()

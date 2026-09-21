@@ -235,15 +235,17 @@ type SpinEvent struct {
 }
 
 type User struct {
-	ID                string         `json:"id"`
-	Username          string         `json:"username"`
-	PasswordHash      string         `json:"password_hash"`
-	Role              string         `json:"role"`
-	TotpSecret        []byte         `json:"totp_secret"`
-	TotpConfirmedAt   sql.NullString `json:"totp_confirmed_at"`
-	TotpLastStep      int64          `json:"totp_last_step"`
-	CreatedAt         string         `json:"created_at"`
-	TotpPendingSecret []byte         `json:"totp_pending_secret"`
+	ID                 string         `json:"id"`
+	Username           string         `json:"username"`
+	PasswordHash       string         `json:"password_hash"`
+	Role               string         `json:"role"`
+	TotpSecret         []byte         `json:"totp_secret"`
+	TotpConfirmedAt    sql.NullString `json:"totp_confirmed_at"`
+	TotpLastStep       int64          `json:"totp_last_step"`
+	CreatedAt          string         `json:"created_at"`
+	TotpPendingSecret  []byte         `json:"totp_pending_secret"`
+	LastLoginAt        sql.NullString `json:"last_login_at"`
+	SmbCredentialSetAt sql.NullString `json:"smb_credential_set_at"`
 }
 
 type UserGroup struct {

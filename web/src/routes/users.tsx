@@ -1,5 +1,5 @@
 import { MoreHorizontal, Plus, Users as UsersIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
@@ -118,17 +118,6 @@ export function UsersPage(): React.ReactElement {
     load(controller.signal);
     return () => controller.abort();
   }, []);
-
-  const lastLoginByUser = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const session of sessions ?? []) {
-      const current = map.get(session.userId);
-      if (!current || session.createdAt > current) {
-        map.set(session.userId, session.createdAt);
-      }
-    }
-    return map;
-  }, [sessions]);
 
   function openCreatePanel(): void {
     setEditingUser(null);
@@ -370,10 +359,7 @@ export function UsersPage(): React.ReactElement {
     {
       id: "lastLogin",
       header: t("users.columns.lastLogin"),
-      cell: (user) => {
-        const lastLogin = lastLoginByUser.get(user.id);
-        return lastLogin ? new Date(lastLogin).toLocaleString() : t("users.noActiveSession");
-      },
+      cell: (user) => (user.lastLogin ? new Date(user.lastLogin).toLocaleString() : t("users.neverLoggedIn")),
     },
     {
       id: "actions",
@@ -622,7 +608,18 @@ export function UsersPage(): React.ReactElement {
 
         {editingUser ? (
           <div className="flex flex-col gap-2">
-            <InlineNote description={t("users.panel.smbAccessUnknownNote")} />
+            <SettingSwitch
+              label={t("users.panel.uiLoginAccess")}
+              description={t("users.panel.uiLoginAccessDescription")}
+              checked={editingUser.role !== "share-only" && editingUser.hasCredential}
+              disabled
+            />
+            <SettingSwitch
+              label={t("users.panel.smbAccess")}
+              description={t("users.panel.smbAccessDescription")}
+              checked={editingUser.hasCredential}
+              disabled
+            />
             <Field className="flex-row items-start gap-2">
               <Checkbox
                 checked={smbAccessDraft}

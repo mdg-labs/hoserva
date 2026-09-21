@@ -20,7 +20,7 @@ const beforeCommitTimeout = 10 * time.Second
 // since this is the only caller that ever needs every row at once.
 func (s *AuthStore) ListUsers(ctx context.Context) ([]*User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, username, password_hash, role, totp_confirmed_at, created_at
+SELECT id, username, password_hash, role, totp_confirmed_at, created_at, last_login_at, smb_credential_set_at
 FROM users ORDER BY username`)
 	if err != nil {
 		return nil, fmt.Errorf("listing users: %w", err)
@@ -30,9 +30,9 @@ FROM users ORDER BY username`)
 	var out []*User
 	for rows.Next() {
 		var u User
-		var totpConfirmedAt sql.NullString
+		var totpConfirmedAt, lastLoginAt, smbCredentialSetAt sql.NullString
 		var createdAt string
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &totpConfirmedAt, &createdAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &totpConfirmedAt, &createdAt, &lastLoginAt, &smbCredentialSetAt); err != nil {
 			return nil, fmt.Errorf("scanning user row: %w", err)
 		}
 		t, err := time.Parse(timeFormat, createdAt)
@@ -46,6 +46,20 @@ FROM users ORDER BY username`)
 				return nil, fmt.Errorf("parsing user %s totp_confirmed_at: %w", u.ID, err)
 			}
 			u.TOTPConfirmedAt = &ct
+		}
+		if lastLoginAt.Valid {
+			lt, err := time.Parse(timeFormat, lastLoginAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parsing user %s last_login_at: %w", u.ID, err)
+			}
+			u.LastLoginAt = &lt
+		}
+		if smbCredentialSetAt.Valid {
+			st, err := time.Parse(timeFormat, smbCredentialSetAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("parsing user %s smb_credential_set_at: %w", u.ID, err)
+			}
+			u.SMBCredentialSetAt = &st
 		}
 		out = append(out, &u)
 	}

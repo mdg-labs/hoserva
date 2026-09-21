@@ -91,8 +91,27 @@ func TestHandlerSetUserPasswordAndSessions(t *testing.T) {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
+	list, err := h.ListUsers(ctx)
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if list.Users[0].HasCredential || !list.Users[0].LastLogin.IsNull() {
+		t.Errorf("kid = %+v, want no credential and no last login before SetUserPassword/Login", list.Users[0])
+	}
+
 	if err := h.SetUserPassword(ctx, &apiv1.SetUserPasswordRequest{Password: "correct horse battery staple"}, apiv1.SetUserPasswordParams{UserId: created.ID}); err != nil {
 		t.Fatalf("SetUserPassword: %v", err)
+	}
+
+	list, err = h.ListUsers(ctx)
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if !list.Users[0].HasCredential {
+		t.Error("HasCredential must be true once SetUserPassword succeeds")
+	}
+	if !list.Users[0].LastLogin.IsNull() {
+		t.Error("LastLogin must still be null — setting a password is not signing in")
 	}
 
 	_, token, err := authSvc.Login(ctx, "kid", "correct horse battery staple", "", "")
@@ -101,6 +120,14 @@ func TestHandlerSetUserPasswordAndSessions(t *testing.T) {
 	}
 	if token == "" {
 		t.Fatal("expected a session token")
+	}
+
+	list, err = h.ListUsers(ctx)
+	if err != nil {
+		t.Fatalf("ListUsers: %v", err)
+	}
+	if list.Users[0].LastLogin.IsNull() {
+		t.Error("LastLogin must be set after a successful Login")
 	}
 
 	sessions, err := h.ListSessions(ctx)

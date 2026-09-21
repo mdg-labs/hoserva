@@ -346,6 +346,12 @@ func (s *AuthService) Login(ctx context.Context, username, password, totpCode, s
 		return nil, "", ErrShareOnlyNoLogin
 	}
 
+	loginAt := s.Now()
+	if err := s.Store.RecordLogin(ctx, u.ID, loginAt); err != nil {
+		return nil, "", err
+	}
+	u.LastLoginAt = &loginAt
+
 	token, err := s.createSession(ctx, u.ID)
 	if err != nil {
 		return nil, "", err

@@ -159,6 +159,14 @@ func (s *AuthService) SetUserPassword(ctx context.Context, userID, password stri
 		return nil, fmt.Errorf("%w: %v", ErrSambaPasswordFailed, err)
 	}
 
+	if u.SMBCredentialSetAt == nil {
+		setAt := s.Now()
+		if err := s.Store.MarkSMBCredentialSet(ctx, userID, setAt); err != nil {
+			return nil, fmt.Errorf("recording smb credential: %w", err)
+		}
+		u.SMBCredentialSetAt = &setAt
+	}
+
 	u.PasswordHash = newHash
 	return u, nil
 }
