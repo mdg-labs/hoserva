@@ -28,9 +28,6 @@ FROM users WHERE id = ?;
 -- name: RecordUserLogin :exec
 UPDATE users SET last_login_at = sqlc.arg('last_login_at') WHERE id = sqlc.arg('id');
 
--- name: MarkUserSMBCredentialSet :exec
-UPDATE users SET smb_credential_set_at = sqlc.arg('smb_credential_set_at') WHERE id = sqlc.arg('id');
-
 -- name: CountAdmins :one
 SELECT COUNT(*) FROM users WHERE role = 'admin';
 

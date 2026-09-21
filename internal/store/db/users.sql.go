@@ -156,20 +156,6 @@ func (q *Queries) HasEncryptedTOTPSecrets(ctx context.Context) (bool, error) {
 	return exists, err
 }
 
-const markUserSMBCredentialSet = `-- name: MarkUserSMBCredentialSet :exec
-UPDATE users SET smb_credential_set_at = ?1 WHERE id = ?2
-`
-
-type MarkUserSMBCredentialSetParams struct {
-	SmbCredentialSetAt sql.NullString `json:"smb_credential_set_at"`
-	ID                 string         `json:"id"`
-}
-
-func (q *Queries) MarkUserSMBCredentialSet(ctx context.Context, arg MarkUserSMBCredentialSetParams) error {
-	_, err := q.db.ExecContext(ctx, markUserSMBCredentialSet, arg.SmbCredentialSetAt, arg.ID)
-	return err
-}
-
 const recordUserLogin = `-- name: RecordUserLogin :exec
 UPDATE users SET last_login_at = ?1 WHERE id = ?2
 `

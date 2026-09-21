@@ -313,6 +313,55 @@ func TestSetUserPasswordRollsBackUICredentialOnSambaFailure(t *testing.T) {
 	}
 }
 
+// TestSetUserPasswordRollbackClearsSMBCredentialMarkerOnSambaFailure covers
+// the failure path of writing password_hash and smb_credential_set_at
+// together (#225 CodeRabbit finding on PR #228): when this is the
+// account's first SetUserPassword call and the Samba write fails, the
+// smb_credential_set_at marker set in the same transaction as the (now
+// rolled back) password hash must be cleared with it, not left set for a
+// password that was never actually accepted by Samba.
+func TestSetUserPasswordRollbackClearsSMBCredentialMarkerOnSambaFailure(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+	fake := share.NewFakeSambaAccounts()
+	svc.SambaAccounts = fake
+
+	u, err := svc.CreateUser(ctx, "kid", "")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if u.HasSMBCredential() {
+		t.Fatal("a freshly created account must not already show a provisioned credential")
+	}
+
+	fake.FailSetPassword(errors.New("smbpasswd: simulated failure"))
+	if _, err := svc.SetUserPassword(ctx, u.ID, "correct horse battery staple"); !errors.Is(err, api.ErrSambaPasswordFailed) {
+		t.Fatalf("SetUserPassword with a failing Samba write = %v, want ErrSambaPasswordFailed", err)
+	}
+
+	stored, err := svc.Store.GetUserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if stored.HasSMBCredential() {
+		t.Error("smb_credential_set_at was left set even though the Samba write it was written alongside failed")
+	}
+
+	// Recovery: a later, successful SetUserPassword call must still be
+	// able to mark the credential provisioned for the first time.
+	fake.FailSetPassword(nil)
+	if _, err := svc.SetUserPassword(ctx, u.ID, "a working password"); err != nil {
+		t.Fatalf("SetUserPassword after clearing the simulated failure: %v", err)
+	}
+	stored, err = svc.Store.GetUserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if !stored.HasSMBCredential() {
+		t.Error("HasSMBCredential must become true once a subsequent SetUserPassword call actually succeeds")
+	}
+}
+
 // TestDeleteUserRemovesSambaAccount is the fix for "deleting a user leaves
 // their Samba passdb entry active": a user whose password was set (and so
 // has a provisioned Samba account) must have that account removed as part
