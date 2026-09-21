@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
-	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -71,22 +70,26 @@ func TestHandler_GetPool_PopulatesFreeSpaceFromStatfs(t *testing.T) {
 	}
 	h.ArrayStore = arrayStore
 
-	// Measured immediately around the GetPool call, after every setup
-	// write, so nothing else on the same filesystem changes free space
-	// between this and GetPool's own statfs(2) call.
-	want, err := (pool.StatfsSpaceStatter{}).StatSpace(ctx, dataDir)
-	if err != nil {
-		t.Fatalf("StatSpace(%s): %v", dataDir, err)
-	}
 	got, err := h.GetPool(ctx)
 	if err != nil {
 		t.Fatalf("GetPool: %v", err)
 	}
-	if v, ok := got.PoolFreeBytes.Get(); !ok || v != want.FreeBytes {
-		t.Fatalf("PoolFreeBytes = %+v, want %d", got.PoolFreeBytes, want.FreeBytes)
+
+	// Two statfs(2) samples of the same filesystem — one taken here, one
+	// inside GetPool — can legitimately disagree by a few blocks even
+	// with nothing under this test's own control writing to it (other
+	// processes share the same underlying filesystem). Assert presence
+	// and a sane positive value, then that GetPool's own figures agree
+	// with each other: with the single data disk this test sets up,
+	// PoolFreeBytes, LargestDiskFreeBytes and Disks[0].FreeBytes must
+	// all be the same one statfs(2) reading GetPool itself took.
+	poolFree, ok := got.PoolFreeBytes.Get()
+	if !ok || poolFree <= 0 {
+		t.Fatalf("PoolFreeBytes = %+v, want a positive value", got.PoolFreeBytes)
 	}
-	if v, ok := got.LargestDiskFreeBytes.Get(); !ok || v != want.FreeBytes {
-		t.Fatalf("LargestDiskFreeBytes = %+v, want %d", got.LargestDiskFreeBytes, want.FreeBytes)
+	largestFree, ok := got.LargestDiskFreeBytes.Get()
+	if !ok || largestFree != poolFree {
+		t.Fatalf("LargestDiskFreeBytes = %+v, want %d (PoolFreeBytes, the only data disk)", got.LargestDiskFreeBytes, poolFree)
 	}
 	if v, ok := got.LargestDiskPath.Get(); !ok || v != dataDir {
 		t.Fatalf("LargestDiskPath = %+v, want %s", got.LargestDiskPath, dataDir)
@@ -95,8 +98,8 @@ func TestHandler_GetPool_PopulatesFreeSpaceFromStatfs(t *testing.T) {
 		t.Fatalf("len(Disks) = %d, want 1", len(got.Disks))
 	}
 	entry := got.Disks[0]
-	if v, ok := entry.FreeBytes.Get(); !ok || v != want.FreeBytes {
-		t.Fatalf("Disks[0].FreeBytes = %+v, want %d", entry.FreeBytes, want.FreeBytes)
+	if v, ok := entry.FreeBytes.Get(); !ok || v != poolFree {
+		t.Fatalf("Disks[0].FreeBytes = %+v, want %d (PoolFreeBytes, the only data disk)", entry.FreeBytes, poolFree)
 	}
 	if v, ok := entry.NearMinFreeSpace.Get(); !ok || !v {
 		t.Fatalf("Disks[0].NearMinFreeSpace = %+v, want true (minFreeSpace == actual free bytes)", entry.NearMinFreeSpace)
