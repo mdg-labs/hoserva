@@ -36,10 +36,15 @@ confirming it in the code and design docs first.
 
 ## Determine the PR
 
-`$ARGUMENTS` is the PR number. If missing, ask once. Confirm it's the
-expected shape with `gh pr view <n> --repo mdg-labs/hoserva --json number,title,baseRefName,headRefName,state` —
-this skill assumes `head` is `dev` (per `open-pr`); if it isn't, stop
-and ask before proceeding, since fixes below land on `dev` directly.
+This skill covers only the internal `dev → main` promotion PR that
+`open-pr` opens — its head is always the repo's own `dev` branch, never
+a fork. `$ARGUMENTS` is the PR number. If missing, ask once. Confirm
+it's the expected shape with `gh pr view <n> --repo mdg-labs/hoserva
+--json number,title,baseRefName,headRefName,state` — this skill assumes
+`head` is `dev`; if it isn't (for example, a contributor PR from a fork
+branch targeting `dev`), stop and ask rather than proceeding, since
+fixes below land on `dev` directly and no fix-and-push workflow is
+defined for a PR whose head this repo doesn't own.
 
 That check only confirms what's on GitHub. Before the first `Edit` or
 `git commit`, also verify the *local* checkout: `git status` must show
