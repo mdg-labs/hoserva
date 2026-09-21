@@ -3,15 +3,14 @@ name: beta-diff
 description: Fast-forwards local main from origin/main (without switching away from whatever branch is currently checked out) and reports how beta currently differs from it — commits ahead each direction, and the number and names of files that differ. Use for "how far ahead is beta", "diff main and beta", "how many files differ between beta and main".
 argument-hint: (no arguments)
 allowed-tools:
-  - Bash(git fetch *)
   - Bash(git status)
-  - Bash(git branch *)
-  - Bash(git symbolic-ref *)
+  - Bash(git fetch origin)
+  - Bash(git fetch origin main:main)
+  - Bash(git pull --ff-only origin main)
   - Bash(git rev-parse *)
-  - Bash(git rev-list *)
-  - Bash(git diff *)
-  - Bash(git pull *)
-  - Bash(git log *)
+  - Bash(git rev-list --left-right --count main...beta)
+  - Bash(git diff --name-only main...beta)
+  - Bash(git diff --stat main...beta)
 ---
 
 # beta-diff
