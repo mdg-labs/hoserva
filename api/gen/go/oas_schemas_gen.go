@@ -6711,6 +6711,13 @@ type PoolDiskEntry struct {
 	State      DiskState         `json:"state"`
 	SizeBytes  OptNilInt64       `json:"sizeBytes"`
 	UsedBytes  OptNilInt64       `json:"usedBytes"`
+	// Free space from statfs(2) on this disk's mountpoint (doc 09 §5) — never a directory walk. Null
+	// for a non-data disk, or when free-space accounting is unavailable (no array topology yet).
+	FreeBytes OptNilInt64 `json:"freeBytes"`
+	// True once this disk's free space is at or below the pool's configured minfreespace (doc 09 §1) —
+	// the point mergerfs itself excludes it from create-policy placement. Omitted when freeBytes is not
+	// being reported for this disk.
+	NearMinFreeSpace OptBool `json:"nearMinFreeSpace"`
 }
 
 // GetDevice returns the value of Device.
@@ -6743,6 +6750,16 @@ func (s *PoolDiskEntry) GetUsedBytes() OptNilInt64 {
 	return s.UsedBytes
 }
 
+// GetFreeBytes returns the value of FreeBytes.
+func (s *PoolDiskEntry) GetFreeBytes() OptNilInt64 {
+	return s.FreeBytes
+}
+
+// GetNearMinFreeSpace returns the value of NearMinFreeSpace.
+func (s *PoolDiskEntry) GetNearMinFreeSpace() OptBool {
+	return s.NearMinFreeSpace
+}
+
 // SetDevice sets the value of Device.
 func (s *PoolDiskEntry) SetDevice(val string) {
 	s.Device = val
@@ -6771,6 +6788,16 @@ func (s *PoolDiskEntry) SetSizeBytes(val OptNilInt64) {
 // SetUsedBytes sets the value of UsedBytes.
 func (s *PoolDiskEntry) SetUsedBytes(val OptNilInt64) {
 	s.UsedBytes = val
+}
+
+// SetFreeBytes sets the value of FreeBytes.
+func (s *PoolDiskEntry) SetFreeBytes(val OptNilInt64) {
+	s.FreeBytes = val
+}
+
+// SetNearMinFreeSpace sets the value of NearMinFreeSpace.
+func (s *PoolDiskEntry) SetNearMinFreeSpace(val OptBool) {
+	s.NearMinFreeSpace = val
 }
 
 type PoolDiskEntryRole string
@@ -6846,6 +6873,15 @@ func (s *PoolDiskEntryRole) UnmarshalText(data []byte) error {
 type PoolStatus struct {
 	Mounted bool            `json:"mounted"`
 	Disks   []PoolDiskEntry `json:"disks"`
+	// Sum of data-disk free space (doc 09 §5) — distinct from a `df` on the pool mount, which reports
+	// the same misleading pool-wide total this field exists to be shown alongside rather than replace.
+	// Null when no array topology is configured yet.
+	PoolFreeBytes OptNilInt64 `json:"poolFreeBytes"`
+	// The largest single data disk's free space — the real answer to "what is the biggest file I can
+	// write" (doc 09 §5).
+	LargestDiskFreeBytes OptNilInt64 `json:"largestDiskFreeBytes"`
+	// Mountpoint of the disk largestDiskFreeBytes refers to.
+	LargestDiskPath OptNilString `json:"largestDiskPath"`
 }
 
 // GetMounted returns the value of Mounted.
@@ -6858,6 +6894,21 @@ func (s *PoolStatus) GetDisks() []PoolDiskEntry {
 	return s.Disks
 }
 
+// GetPoolFreeBytes returns the value of PoolFreeBytes.
+func (s *PoolStatus) GetPoolFreeBytes() OptNilInt64 {
+	return s.PoolFreeBytes
+}
+
+// GetLargestDiskFreeBytes returns the value of LargestDiskFreeBytes.
+func (s *PoolStatus) GetLargestDiskFreeBytes() OptNilInt64 {
+	return s.LargestDiskFreeBytes
+}
+
+// GetLargestDiskPath returns the value of LargestDiskPath.
+func (s *PoolStatus) GetLargestDiskPath() OptNilString {
+	return s.LargestDiskPath
+}
+
 // SetMounted sets the value of Mounted.
 func (s *PoolStatus) SetMounted(val bool) {
 	s.Mounted = val
@@ -6866,6 +6917,21 @@ func (s *PoolStatus) SetMounted(val bool) {
 // SetDisks sets the value of Disks.
 func (s *PoolStatus) SetDisks(val []PoolDiskEntry) {
 	s.Disks = val
+}
+
+// SetPoolFreeBytes sets the value of PoolFreeBytes.
+func (s *PoolStatus) SetPoolFreeBytes(val OptNilInt64) {
+	s.PoolFreeBytes = val
+}
+
+// SetLargestDiskFreeBytes sets the value of LargestDiskFreeBytes.
+func (s *PoolStatus) SetLargestDiskFreeBytes(val OptNilInt64) {
+	s.LargestDiskFreeBytes = val
+}
+
+// SetLargestDiskPath sets the value of LargestDiskPath.
+func (s *PoolStatus) SetLargestDiskPath(val OptNilString) {
+	s.LargestDiskPath = val
 }
 
 // Ref: #/components/schemas/RegisterExternalDiskRequest

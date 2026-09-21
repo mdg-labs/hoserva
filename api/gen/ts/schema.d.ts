@@ -2272,10 +2272,29 @@ export interface components {
             sizeBytes?: number | null;
             /** Format: int64 */
             usedBytes?: number | null;
+            /**
+             * Format: int64
+             * @description Free space from statfs(2) on this disk's mountpoint (doc 09 §5) — never a directory walk. Null for a non-data disk, or when free-space accounting is unavailable (no array topology yet).
+             */
+            freeBytes?: number | null;
+            /** @description True once this disk's free space is at or below the pool's configured minfreespace (doc 09 §1) — the point mergerfs itself excludes it from create-policy placement. Omitted when freeBytes is not being reported for this disk. */
+            nearMinFreeSpace?: boolean;
         };
         PoolStatus: {
             mounted: boolean;
             disks: components["schemas"]["PoolDiskEntry"][];
+            /**
+             * Format: int64
+             * @description Sum of data-disk free space (doc 09 §5) — distinct from a `df` on the pool mount, which reports the same misleading pool-wide total this field exists to be shown alongside rather than replace. Null when no array topology is configured yet.
+             */
+            poolFreeBytes?: number | null;
+            /**
+             * Format: int64
+             * @description The largest single data disk's free space — the real answer to "what is the biggest file I can write" (doc 09 §5).
+             */
+            largestDiskFreeBytes?: number | null;
+            /** @description Mountpoint of the disk largestDiskFreeBytes refers to. */
+            largestDiskPath?: string | null;
         };
         SpinTransition: {
             /** @description e.g. `/dev/sdb` — as recorded, never accepted back as input (doc 01 §7). */

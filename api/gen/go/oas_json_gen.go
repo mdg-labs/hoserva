@@ -12225,15 +12225,29 @@ func (s *PoolDiskEntry) encodeFields(e *jx.Encoder) {
 			s.UsedBytes.Encode(e)
 		}
 	}
+	{
+		if s.FreeBytes.Set {
+			e.FieldStart("freeBytes")
+			s.FreeBytes.Encode(e)
+		}
+	}
+	{
+		if s.NearMinFreeSpace.Set {
+			e.FieldStart("nearMinFreeSpace")
+			s.NearMinFreeSpace.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfPoolDiskEntry = [6]string{
+var jsonFieldsNameOfPoolDiskEntry = [8]string{
 	0: "device",
 	1: "mountPoint",
 	2: "role",
 	3: "state",
 	4: "sizeBytes",
 	5: "usedBytes",
+	6: "freeBytes",
+	7: "nearMinFreeSpace",
 }
 
 // Decode decodes PoolDiskEntry from json.
@@ -12308,6 +12322,26 @@ func (s *PoolDiskEntry) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"usedBytes\"")
+			}
+		case "freeBytes":
+			if err := func() error {
+				s.FreeBytes.Reset()
+				if err := s.FreeBytes.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"freeBytes\"")
+			}
+		case "nearMinFreeSpace":
+			if err := func() error {
+				s.NearMinFreeSpace.Reset()
+				if err := s.NearMinFreeSpace.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"nearMinFreeSpace\"")
 			}
 		default:
 			return d.Skip()
@@ -12434,11 +12468,32 @@ func (s *PoolStatus) encodeFields(e *jx.Encoder) {
 		}
 		e.ArrEnd()
 	}
+	{
+		if s.PoolFreeBytes.Set {
+			e.FieldStart("poolFreeBytes")
+			s.PoolFreeBytes.Encode(e)
+		}
+	}
+	{
+		if s.LargestDiskFreeBytes.Set {
+			e.FieldStart("largestDiskFreeBytes")
+			s.LargestDiskFreeBytes.Encode(e)
+		}
+	}
+	{
+		if s.LargestDiskPath.Set {
+			e.FieldStart("largestDiskPath")
+			s.LargestDiskPath.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfPoolStatus = [2]string{
+var jsonFieldsNameOfPoolStatus = [5]string{
 	0: "mounted",
 	1: "disks",
+	2: "poolFreeBytes",
+	3: "largestDiskFreeBytes",
+	4: "largestDiskPath",
 }
 
 // Decode decodes PoolStatus from json.
@@ -12479,6 +12534,36 @@ func (s *PoolStatus) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"disks\"")
+			}
+		case "poolFreeBytes":
+			if err := func() error {
+				s.PoolFreeBytes.Reset()
+				if err := s.PoolFreeBytes.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"poolFreeBytes\"")
+			}
+		case "largestDiskFreeBytes":
+			if err := func() error {
+				s.LargestDiskFreeBytes.Reset()
+				if err := s.LargestDiskFreeBytes.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"largestDiskFreeBytes\"")
+			}
+		case "largestDiskPath":
+			if err := func() error {
+				s.LargestDiskPath.Reset()
+				if err := s.LargestDiskPath.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"largestDiskPath\"")
 			}
 		default:
 			return d.Skip()
