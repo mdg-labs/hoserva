@@ -15,6 +15,7 @@ const DefaultScrubOlderThanDays = 10
 func diffArgv() []string   { return []string{"diff"} }
 func statusArgv() []string { return []string{"status"} }
 func touchArgv() []string  { return []string{"touch"} }
+func listArgv() []string   { return []string{"list"} }
 
 // syncArgv builds sync's own tail. emptiesADisk maps to `-E`
 // (`--force-empty`): SnapRAID refuses a sync that would empty a

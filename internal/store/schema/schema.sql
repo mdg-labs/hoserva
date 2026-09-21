@@ -515,3 +515,34 @@ CREATE TABLE share_group_permissions (
 ) STRICT;
 
 CREATE INDEX share_group_permissions_group_id_idx ON share_group_permissions (group_id);
+
+-- Per-share, per-disk bytes used (#223, doc 02 §1 line 78, doc 03
+-- §4.1-4.2): computed once after every successful sync from SnapRAID's
+-- own tracked state (`snapraid list`, which reads the content file the
+-- sync just wrote), never a live directory walk (CLAUDE.md). Recomputed
+-- from scratch each time — the whole table is cleared and rewritten in
+-- one transaction (parity.UsageStore.Replace), so a disk a share no
+-- longer occupies simply has no row after the next sync rather than a
+-- stale one lingering. share_name is not a foreign key to shares.name: a
+-- share can be deleted while its disks still hold files from before the
+-- next sync runs, and the last-known distribution should keep reading
+-- rather than vanish out from under a still-mounted branch.
+CREATE TABLE share_usage (
+    share_name TEXT NOT NULL,
+    disk_mountpoint TEXT NOT NULL,
+    bytes INTEGER NOT NULL CHECK (bytes >= 0),
+    PRIMARY KEY (share_name, disk_mountpoint)
+) STRICT;
+
+CREATE INDEX share_usage_share_idx ON share_usage (share_name);
+
+-- Singleton marking when share_usage was last (re)computed (#223, doc 03
+-- §4.2's "as of the last sync"). Absent until the first sync computes it,
+-- the same pattern schedule_chain's own singleton row uses — a share
+-- created after this timestamp has honestly never been through that
+-- computation yet, distinct from a share that has and genuinely holds
+-- zero bytes.
+CREATE TABLE share_usage_computed_at (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    computed_at TEXT NOT NULL
+) STRICT;

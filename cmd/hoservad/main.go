@@ -29,6 +29,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
+	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
 	"github.com/mdg-labs/hoserva/web"
@@ -211,6 +212,7 @@ func run(cfg config) error {
 	history := store.NewHistory(db)
 	disks := newPersistingDiskProvider(linuxDisks, history)
 	arrayStore := store.NewArrayStore(db)
+	shareStore := store.NewShareStore(db)
 	configRoot := cfg.configRoot
 	if configRoot == "" {
 		configRoot = "/etc"
@@ -222,6 +224,13 @@ func run(cfg config) error {
 		Store:     arrayStore,
 		Generator: generator,
 		Mounter:   disk.SystemdMounter{Runner: linuxDisks.Exec},
+	}))
+	// The mover cooperatively checks StopRequested between files and
+	// leaves consistent on-disk state at any stopping point (a duplicate,
+	// never a gap — doc 09 §2), so it honestly supports being cancelled,
+	// same as TypeACMEIssue below.
+	registry.Register(job.TypeMover, true, job.RunMover(job.MoverDeps{
+		Shares: moverSharesFromStore(shareStore, arrayStore),
 	}))
 	scheduler := job.NewScheduler(jobStore, logs, hub, registry)
 	if err := scheduler.RecoverFromRestart(ctx); err != nil {
@@ -249,6 +258,7 @@ func run(cfg config) error {
 	}
 	var chainGuard job.DiffGuard
 	if parityEngine != nil {
+		parityEngine.Usage = parity.NewUsageStore(db)
 		registry.Register(job.TypeSync, false, job.RunSync(parityEngine))
 		registry.Register(job.TypeScrub, false, job.RunScrub(parityEngine))
 		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}

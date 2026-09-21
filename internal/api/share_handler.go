@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/config"
@@ -212,9 +213,31 @@ func shareToAPI(s share.Share) apiv1.Share {
 			Hosts:   append([]string(nil), hosts...),
 			Squash:  squash,
 		},
+		Usage:     shareUsageToAPI(s.Usage),
 		CreatedAt: s.CreatedAt,
 		UpdatedAt: s.UpdatedAt,
 	}
+}
+
+// shareUsageToAPI maps share.Usage to the API's nullable ShareUsage
+// (doc 03 §4.1-4.2, #223): Null when the share has not been through a
+// sync since it was created — never a zero value dressed up as real data.
+func shareUsageToAPI(u share.Usage) apiv1.NilShareUsage {
+	if !u.Synced {
+		var nu apiv1.NilShareUsage
+		nu.SetToNull()
+		return nu
+	}
+	perDisk := make([]apiv1.ShareDiskUsage, 0, len(u.Disks))
+	for disk, bytes := range u.Disks {
+		perDisk = append(perDisk, apiv1.ShareDiskUsage{Disk: disk, Bytes: bytes})
+	}
+	sort.Slice(perDisk, func(i, j int) bool { return perDisk[i].Disk < perDisk[j].Disk })
+	return apiv1.NewNilShareUsage(apiv1.ShareUsage{
+		TotalBytes: u.TotalBytes,
+		PerDisk:    perDisk,
+		AsOf:       u.AsOf,
+	})
 }
 
 func smbFromAPI(s apiv1.ShareSMB) share.SMB {

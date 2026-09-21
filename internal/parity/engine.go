@@ -189,14 +189,18 @@ func (s ParityStatus) DataDiskLabel(mount string) (string, bool) {
 // (doc 01 §4). context.Context is first on every method because every one
 // of them shells out to snapraid. Sync, Scrub, Fix and Check are doc 01
 // §4's four Parity-class job types — each streams Progress because each
-// can run for real time against real data; Diff and Status are not job
-// types at all (`internal/job`'s own Type table has no entry for either):
-// diff runs synchronously immediately before every sync and on request,
-// never on a timer, and status only reads the boot-device content file,
-// so both return a single value once they finish rather than a channel.
-// Touch is not part of this interface at all — Q17 makes it an automatic
-// step Sync takes on its own before syncing, never something called
-// independently.
+// can run for real time against real data; Diff, Status and List are not
+// job types at all (`internal/job`'s own Type table has no entry for any
+// of them): diff runs synchronously immediately before every sync and on
+// request, never on a timer; status only reads the boot-device content
+// file; and List reads that same tracked state to report every file
+// SnapRAID currently tracks, each with its owning disk and size — the
+// per-disk directory breakdown doc 02 §1 line 78 describes, computed only
+// as a step of the sync job (RunSync, #223), never live and never on its
+// own timer. All three return a single value once they finish rather than
+// a channel. Touch is not part of this interface at all — Q17 makes it an
+// automatic step Sync takes on its own before syncing, never something
+// called independently.
 type Engine interface {
 	Sync(ctx context.Context, opts SyncOpts) (<-chan Progress, error)
 	Diff(ctx context.Context) (DiffReport, error)
@@ -209,4 +213,5 @@ type Engine interface {
 	Status(ctx context.Context) (ParityStatus, error)
 	Fix(ctx context.Context, opts FixOpts) (<-chan Progress, error)
 	Check(ctx context.Context, opts CheckOpts) (<-chan Progress, error)
+	List(ctx context.Context) (ListReport, error)
 }

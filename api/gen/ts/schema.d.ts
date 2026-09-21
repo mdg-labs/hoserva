@@ -2272,10 +2272,29 @@ export interface components {
             sizeBytes?: number | null;
             /** Format: int64 */
             usedBytes?: number | null;
+            /**
+             * Format: int64
+             * @description Free space from statfs(2) on this disk's mountpoint (doc 09 §5) — never a directory walk. Null for a non-data disk, or when free-space accounting is unavailable (no array topology yet).
+             */
+            freeBytes?: number | null;
+            /** @description True once this disk's free space is at or below the pool's configured minfreespace (doc 09 §1) — the point mergerfs itself excludes it from create-policy placement. Omitted when freeBytes is not being reported for this disk. */
+            nearMinFreeSpace?: boolean;
         };
         PoolStatus: {
             mounted: boolean;
             disks: components["schemas"]["PoolDiskEntry"][];
+            /**
+             * Format: int64
+             * @description Sum of data-disk free space (doc 09 §5) — distinct from a `df` on the pool mount, which reports the same misleading pool-wide total this field exists to be shown alongside rather than replace. Null when no array topology is configured yet.
+             */
+            poolFreeBytes?: number | null;
+            /**
+             * Format: int64
+             * @description The largest single data disk's free space — the real answer to "what is the biggest file I can write" (doc 09 §5).
+             */
+            largestDiskFreeBytes?: number | null;
+            /** @description Mountpoint of the disk largestDiskFreeBytes refers to. */
+            largestDiskPath?: string | null;
         };
         SpinTransition: {
             /** @description e.g. `/dev/sdb` — as recorded, never accepted back as input (doc 01 §7). */
@@ -2521,6 +2540,24 @@ export interface components {
              */
             squash: "root_squash" | "no_root_squash" | "all_squash";
         };
+        ShareDiskUsage: {
+            /** @description Data disk mount point currently holding files for this share. */
+            disk: string;
+            /** Format: int64 */
+            bytes: number;
+        };
+        /** @description Bytes used and per-disk distribution as of the last sync (doc 02 §1 line 78, doc 03 §4.1-4.2, #223) — computed once as a step of the sync job, from SnapRAID's own tracked state, never a live directory walk. */
+        ShareUsage: {
+            /** Format: int64 */
+            totalBytes: number;
+            /** @description Which disks currently hold this share's files, and how much (doc 03 §4.2). A disk this share does not currently occupy is simply absent, not a zero entry. */
+            perDisk: components["schemas"]["ShareDiskUsage"][];
+            /**
+             * Format: date-time
+             * @description When the sync that produced these figures completed.
+             */
+            asOf: string;
+        };
         Share: {
             name: components["schemas"]["ShareName"];
             /** @description The share's mount path (`/mnt/user/<name>`, D10). */
@@ -2529,6 +2566,8 @@ export interface components {
             createPolicy: components["schemas"]["ArrayCreatePolicy"];
             smb: components["schemas"]["ShareSMB"];
             nfs: components["schemas"]["ShareNFS"];
+            /** @description Null when this share has not been through a sync since it was created — an honest "not yet synced" state (doc 03 §4.1-4.2), never a zero or placeholder that looks like real data. */
+            usage: components["schemas"]["ShareUsage"] | null;
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */

@@ -19,6 +19,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/pool"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
@@ -45,7 +46,62 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 	if err != nil {
 		mounted = false
 	}
-	return &apiv1.PoolStatus{Mounted: mounted, Disks: entries}, nil
+	status := &apiv1.PoolStatus{Mounted: mounted, Disks: entries}
+	h.populatePoolSpace(ctx, status)
+	return status, nil
+}
+
+// populatePoolSpace fills status's pool-free, largest-single-disk-free and
+// per-disk free/nearMinFreeSpace figures straight from statfs(2) on each
+// data disk's mountpoint (pool.ComputePoolSpace, doc 09 §5) — never a
+// directory walk. It is best-effort: with no array topology yet (no data
+// disk mountpoints to statfs), or without an ArrayStore configured, status
+// is returned with these fields unset rather than as an error, since
+// GetPool must still report disk inventory before create-array has run.
+func (h *Handler) populatePoolSpace(ctx context.Context, status *apiv1.PoolStatus) {
+	if h.ArrayStore == nil {
+		return
+	}
+	settings, disks, err := h.ArrayStore.GetArray(ctx)
+	if err != nil {
+		return
+	}
+	mountByDevice := make(map[string]string, len(disks))
+	var dataMounts []string
+	for _, d := range disks {
+		if d.Role != store.ArrayRoleData {
+			continue
+		}
+		mountByDevice[d.Device] = d.Mountpoint
+		dataMounts = append(dataMounts, d.Mountpoint)
+	}
+	if len(dataMounts) == 0 {
+		return
+	}
+	space, err := pool.ComputePoolSpace(ctx, pool.StatfsSpaceStatter{}, dataMounts, settings.MinFreeSpace)
+	if err != nil {
+		return
+	}
+	status.PoolFreeBytes = apiv1.NewOptNilInt64(space.PoolFreeBytes)
+	status.LargestDiskFreeBytes = apiv1.NewOptNilInt64(space.LargestDiskFreeBytes)
+	status.LargestDiskPath = apiv1.NewOptNilString(space.LargestDiskPath)
+
+	byPath := make(map[string]pool.DiskSpace, len(space.Disks))
+	for _, d := range space.Disks {
+		byPath[d.Path] = d
+	}
+	for i := range status.Disks {
+		mnt, ok := mountByDevice[status.Disks[i].Device]
+		if !ok {
+			continue
+		}
+		d, ok := byPath[mnt]
+		if !ok {
+			continue
+		}
+		status.Disks[i].FreeBytes = apiv1.NewOptNilInt64(d.FreeBytes)
+		status.Disks[i].NearMinFreeSpace = apiv1.NewOptBool(d.NearMinFreeSpace)
+	}
 }
 
 func diskToAPI(d disk.Disk) apiv1.DiskInventoryEntry {

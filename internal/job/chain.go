@@ -72,7 +72,7 @@ type StepResult struct {
 	// Skipped is true when the step was disabled, or — for scrub — this
 	// run isn't the weekly day, or — for config backup — no ConfigBackup
 	// is configured yet, or — for the mover — TypeMover has no registered
-	// RunFunc yet (until #53). An unregistered sync or scrub is a chain
+	// RunFunc on this Scheduler. An unregistered sync or scrub is a chain
 	// failure, not a skip: omitting parity would consume the nightly
 	// window and look like success.
 	Skipped bool

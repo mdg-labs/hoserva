@@ -19,6 +19,9 @@ type FakeEngine struct {
 	status    ParityStatus
 	statusErr error
 
+	list    ListReport
+	listErr error
+
 	syncSteps  []Progress
 	syncErr    error
 	guardBlock *GuardResult
@@ -68,6 +71,21 @@ func (f *FakeEngine) FailStatus(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.statusErr = err
+}
+
+// SetList scripts the report the next List call returns.
+func (f *FakeEngine) SetList(l ListReport) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.list = l
+	f.listErr = nil
+}
+
+// FailList scripts List to fail.
+func (f *FakeEngine) FailList(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listErr = err
 }
 
 // ScriptSync scripts the next Sync call. If immediateErr is non-nil, Sync
@@ -148,6 +166,18 @@ func (f *FakeEngine) Status(ctx context.Context) (ParityStatus, error) {
 		return ParityStatus{}, f.statusErr
 	}
 	return f.status, nil
+}
+
+func (f *FakeEngine) List(ctx context.Context) (ListReport, error) {
+	if err := ctx.Err(); err != nil {
+		return ListReport{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return ListReport{}, f.listErr
+	}
+	return f.list, nil
 }
 
 func (f *FakeEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progress, error) {

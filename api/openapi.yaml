@@ -3888,6 +3888,22 @@ components:
             - integer
             - "null"
           format: int64
+        freeBytes:
+          type:
+            - integer
+            - "null"
+          format: int64
+          description: >-
+            Free space from statfs(2) on this disk's mountpoint (doc 09 §5)
+            — never a directory walk. Null for a non-data disk, or when
+            free-space accounting is unavailable (no array topology yet).
+        nearMinFreeSpace:
+          type: boolean
+          description: >-
+            True once this disk's free space is at or below the pool's
+            configured minfreespace (doc 09 §1) — the point mergerfs itself
+            excludes it from create-policy placement. Omitted when
+            freeBytes is not being reported for this disk.
 
     PoolStatus:
       type: object
@@ -3899,6 +3915,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PoolDiskEntry'
+        poolFreeBytes:
+          type:
+            - integer
+            - "null"
+          format: int64
+          description: >-
+            Sum of data-disk free space (doc 09 §5) — distinct from a `df`
+            on the pool mount, which reports the same misleading pool-wide
+            total this field exists to be shown alongside rather than
+            replace. Null when no array topology is configured yet.
+        largestDiskFreeBytes:
+          type:
+            - integer
+            - "null"
+          format: int64
+          description: >-
+            The largest single data disk's free space — the real answer to
+            "what is the biggest file I can write" (doc 09 §5).
+        largestDiskPath:
+          type:
+            - string
+            - "null"
+          description: Mountpoint of the disk largestDiskFreeBytes refers to.
 
     SpinTransition:
       type: object
@@ -4353,9 +4392,47 @@ components:
           description: NFS squash option (doc 03 §4.2).
           enum: [root_squash, no_root_squash, all_squash]
 
+    ShareDiskUsage:
+      type: object
+      required: [disk, bytes]
+      properties:
+        disk:
+          type: string
+          description: Data disk mount point currently holding files for this share.
+        bytes:
+          type: integer
+          format: int64
+          minimum: 0
+
+    ShareUsage:
+      type: object
+      required: [totalBytes, perDisk, asOf]
+      description: >-
+        Bytes used and per-disk distribution as of the last sync
+        (doc 02 §1 line 78, doc 03 §4.1-4.2, #223) — computed once as a
+        step of the sync job, from SnapRAID's own tracked state, never a
+        live directory walk.
+      properties:
+        totalBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        perDisk:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShareDiskUsage'
+          description: >-
+            Which disks currently hold this share's files, and how much
+            (doc 03 §4.2). A disk this share does not currently occupy is
+            simply absent, not a zero entry.
+        asOf:
+          type: string
+          format: date-time
+          description: When the sync that produced these figures completed.
+
     Share:
       type: object
-      required: [name, path, cacheMode, createPolicy, smb, nfs, createdAt, updatedAt]
+      required: [name, path, cacheMode, createPolicy, smb, nfs, usage, createdAt, updatedAt]
       properties:
         name:
           $ref: '#/components/schemas/ShareName'
@@ -4370,6 +4447,14 @@ components:
           $ref: '#/components/schemas/ShareSMB'
         nfs:
           $ref: '#/components/schemas/ShareNFS'
+        usage:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ShareUsage'
+          description: >-
+            Null when this share has not been through a sync since it was
+            created — an honest "not yet synced" state (doc 03 §4.1-4.2),
+            never a zero or placeholder that looks like real data.
         createdAt:
           type: string
           format: date-time
