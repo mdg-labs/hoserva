@@ -15,6 +15,7 @@ type FS interface {
 	Chmod(path string, mode os.FileMode) error
 	Chown(path string, uid, gid int) error
 	RemoveAll(path string) error
+	Remove(path string) error
 	ReadDir(path string) ([]os.DirEntry, error)
 	Lstat(path string) (os.FileInfo, error)
 	EvalSymlinks(path string) (string, error)
@@ -51,6 +52,14 @@ func (OSFS) Chown(path string, uid, gid int) error {
 
 func (OSFS) RemoveAll(path string) error {
 	return os.RemoveAll(path)
+}
+
+// Remove removes a single file or empty directory. Unlike RemoveAll, it
+// fails rather than recursing into a non-empty directory (doc 03 §4.2:
+// browse delete is a single file or empty directory, never a full
+// subtree).
+func (OSFS) Remove(path string) error {
+	return os.Remove(path)
 }
 
 func (OSFS) ReadDir(path string) ([]os.DirEntry, error) {

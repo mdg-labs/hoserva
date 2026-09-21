@@ -885,7 +885,11 @@ export interface paths {
         get: operations["browseShare"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a file or empty directory from the share
+         * @description Deletes one file or empty directory within the share, given a path relative to the share root (doc 03 §4.2 Browse tab). Refuses the share root itself and any path that would resolve outside the share's root, including through a symlink. `confirm: true` is required.
+         */
+        delete: operations["deleteShareFile"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3944,6 +3948,34 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ShareBrowseResult"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteShareFile: {
+        parameters: {
+            query: {
+                /** @description File or empty directory to delete, relative to the share root. */
+                path: string;
+            };
+            header?: never;
+            path: {
+                name: components["parameters"]["ShareName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmShareRequest"];
+            };
+        };
+        responses: {
+            /** @description File or directory deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

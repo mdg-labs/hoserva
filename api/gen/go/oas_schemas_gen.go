@@ -1337,6 +1337,9 @@ func (s *DeleteShareDataRequest) SetConfirmation(val string) {
 	s.Confirmation = val
 }
 
+// DeleteShareFileNoContent is response for DeleteShareFile operation.
+type DeleteShareFileNoContent struct{}
+
 // DeleteShareNoContent is response for DeleteShare operation.
 type DeleteShareNoContent struct{}
 

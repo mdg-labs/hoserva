@@ -25,6 +25,7 @@ const (
 	DeleteNotificationChannelOperation      OperationName = "DeleteNotificationChannel"
 	DeleteShareOperation                    OperationName = "DeleteShare"
 	DeleteShareDataOperation                OperationName = "DeleteShareData"
+	DeleteShareFileOperation                OperationName = "DeleteShareFile"
 	DeleteUserOperation                     OperationName = "DeleteUser"
 	DeleteUserGroupOperation                OperationName = "DeleteUserGroup"
 	DisableLetsEncryptOperation             OperationName = "DisableLetsEncrypt"
