@@ -77,7 +77,14 @@ func (s *UsageStore) Replace(ctx context.Context, rows []ShareUsage, computedAt 
 // ComputedAt returns the timestamp the current share_usage table
 // reflects, or ErrUsageNeverComputed if ComputeShareUsage has never run.
 func (s *UsageStore) ComputedAt(ctx context.Context) (time.Time, error) {
-	row, err := s.q.GetShareUsageComputedAt(ctx)
+	return computedAt(ctx, s.q)
+}
+
+// computedAt is ComputedAt's own query, taking q so Get and ListAll can
+// run it against a tx-bound *storedb.Queries and read the same snapshot
+// their row query sees (below).
+func computedAt(ctx context.Context, q *storedb.Queries) (time.Time, error) {
+	row, err := q.GetShareUsageComputedAt(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return time.Time{}, ErrUsageNeverComputed
@@ -97,14 +104,21 @@ func (s *UsageStore) ComputedAt(ctx context.Context) (time.Time, error) {
 // has been through a sync and genuinely holds zero bytes (an ok=true
 // result with an empty Disks map).
 func (s *UsageStore) Get(ctx context.Context, share string) (UsageSnapshot, bool, error) {
-	computedAt, err := s.ComputedAt(ctx)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return UsageSnapshot{}, false, fmt.Errorf("parity: beginning share usage read transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.q.WithTx(tx)
+
+	at, err := computedAt(ctx, q)
 	if err != nil {
 		if errors.Is(err, ErrUsageNeverComputed) {
 			return UsageSnapshot{}, false, nil
 		}
 		return UsageSnapshot{}, false, err
 	}
-	rows, err := s.q.ListShareUsageByShare(ctx, share)
+	rows, err := q.ListShareUsageByShare(ctx, share)
 	if err != nil {
 		return UsageSnapshot{}, false, fmt.Errorf("parity: listing share usage for %s: %w", share, err)
 	}
@@ -112,7 +126,7 @@ func (s *UsageStore) Get(ctx context.Context, share string) (UsageSnapshot, bool
 	for _, r := range rows {
 		disks[r.DiskMountpoint] = r.Bytes
 	}
-	return UsageSnapshot{Disks: disks, ComputedAt: computedAt}, true, nil
+	return UsageSnapshot{Disks: disks, ComputedAt: at}, true, nil
 }
 
 // ListAll returns the computed-at timestamp the whole table reflects,
@@ -123,15 +137,22 @@ func (s *UsageStore) Get(ctx context.Context, share string) (UsageSnapshot, bool
 // caller (internal/share.Service) decides that only by comparing
 // computedAt against its own share's CreatedAt. ok is false only when no
 // computation has ever run, and computedAt/byShare are meaningless then.
-func (s *UsageStore) ListAll(ctx context.Context) (computedAt time.Time, byShare map[string]map[string]int64, ok bool, err error) {
-	computedAt, err = s.ComputedAt(ctx)
+func (s *UsageStore) ListAll(ctx context.Context) (at time.Time, byShare map[string]map[string]int64, ok bool, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return time.Time{}, nil, false, fmt.Errorf("parity: beginning share usage read transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.q.WithTx(tx)
+
+	at, err = computedAt(ctx, q)
 	if err != nil {
 		if errors.Is(err, ErrUsageNeverComputed) {
 			return time.Time{}, nil, false, nil
 		}
 		return time.Time{}, nil, false, err
 	}
-	rows, err := s.q.ListAllShareUsage(ctx)
+	rows, err := q.ListAllShareUsage(ctx)
 	if err != nil {
 		return time.Time{}, nil, false, fmt.Errorf("parity: listing share usage: %w", err)
 	}
@@ -144,5 +165,5 @@ func (s *UsageStore) ListAll(ctx context.Context) (computedAt time.Time, byShare
 		}
 		disks[r.DiskMountpoint] = r.Bytes
 	}
-	return computedAt, out, true, nil
+	return at, out, true, nil
 }
