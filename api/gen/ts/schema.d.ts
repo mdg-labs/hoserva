@@ -2576,6 +2576,13 @@ export interface components {
             role: components["schemas"]["UserRole"];
             /** @description Whether TOTP is confirmed and active on this account. */
             totpEnrolled: boolean;
+            /** @description Whether a Samba/password credential (SMB access) is currently provisioned for this account (doc 03 §7). Set the first time setUserPassword succeeds for it; there is no separate action that clears it short of deleting the account. */
+            hasCredential: boolean;
+            /**
+             * Format: date-time
+             * @description When this account last completed sign-in, tracked at authentication time — never derived from whether a session is still live (doc 03 §7). Null when it has never signed in.
+             */
+            lastLogin: string | null;
             /** Format: date-time */
             createdAt: string;
         };

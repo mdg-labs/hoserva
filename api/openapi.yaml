@@ -4445,7 +4445,7 @@ components:
 
     UserSummary:
       type: object
-      required: [id, username, role, totpEnrolled, createdAt]
+      required: [id, username, role, totpEnrolled, hasCredential, lastLogin, createdAt]
       properties:
         id:
           type: string
@@ -4457,6 +4457,21 @@ components:
         totpEnrolled:
           type: boolean
           description: Whether TOTP is confirmed and active on this account.
+        hasCredential:
+          type: boolean
+          description: >-
+            Whether a Samba/password credential (SMB access) is currently
+            provisioned for this account (doc 03 §7). Set the first time
+            setUserPassword succeeds for it; there is no separate action
+            that clears it short of deleting the account.
+        lastLogin:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this account last completed sign-in, tracked at
+            authentication time — never derived from whether a session is
+            still live (doc 03 §7). Null when it has never signed in.
         createdAt:
           type: string
           format: date-time

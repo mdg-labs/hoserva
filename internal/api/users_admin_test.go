@@ -225,6 +225,48 @@ func TestSetUserPasswordWritesBothCredentialsTogether(t *testing.T) {
 	}
 }
 
+// TestSetUserPasswordMarksSMBCredentialProvisioned is #225's acceptance
+// criterion: the account's provisioned state is exposed through the User
+// model once setUserPassword's Samba write actually succeeds, and stays
+// set on a later password change rather than being newly recomputed.
+func TestSetUserPasswordMarksSMBCredentialProvisioned(t *testing.T) {
+	svc, _ := newAuthTestService(t)
+	ctx := context.Background()
+	fake := share.NewFakeSambaAccounts()
+	svc.SambaAccounts = fake
+
+	u, err := svc.CreateUser(ctx, "kid", "")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if u.HasSMBCredential() {
+		t.Fatal("a freshly created account must not already show a provisioned credential")
+	}
+
+	if _, err := svc.SetUserPassword(ctx, u.ID, "correct horse battery staple"); err != nil {
+		t.Fatalf("SetUserPassword: %v", err)
+	}
+	stored, err := svc.Store.GetUserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if !stored.HasSMBCredential() {
+		t.Fatal("HasSMBCredential must be true once SetUserPassword's Samba write succeeds")
+	}
+	firstSetAt := stored.SMBCredentialSetAt
+
+	if _, err := svc.SetUserPassword(ctx, u.ID, "a different password"); err != nil {
+		t.Fatalf("SetUserPassword (second time): %v", err)
+	}
+	stored, err = svc.Store.GetUserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID: %v", err)
+	}
+	if !stored.HasSMBCredential() || !stored.SMBCredentialSetAt.Equal(*firstSetAt) {
+		t.Errorf("SMBCredentialSetAt = %v after a second password change, want unchanged from %v", stored.SMBCredentialSetAt, firstSetAt)
+	}
+}
+
 // TestSetUserPasswordRollsBackUICredentialOnSambaFailure is the
 // safety-critical scenario this issue's acceptance criteria name
 // directly: "rolled back together on failure" — if the Samba passdb

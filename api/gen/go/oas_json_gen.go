@@ -8485,6 +8485,52 @@ func (s *NetworkSettings) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes time.Time as json.
+func (o NilDateTime) Encode(e *jx.Encoder, format func(*jx.Encoder, time.Time)) {
+	if o.Null {
+		e.Null()
+		return
+	}
+	format(e, o.Value)
+}
+
+// Decode decodes time.Time from json.
+func (o *NilDateTime) Decode(d *jx.Decoder, format func(*jx.Decoder) (time.Time, error)) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode NilDateTime to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v time.Time
+		o.Value = v
+		o.Null = true
+		return nil
+	}
+	o.Null = false
+	v, err := format(d)
+	if err != nil {
+		return err
+	}
+	o.Value = v
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s NilDateTime) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e, json.EncodeDateTime)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *NilDateTime) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d, json.DecodeDateTime)
+}
+
 // Encode implements json.Marshaler.
 func (s *NotificationAlert) Encode(e *jx.Encoder) {
 	e.ObjStart()
@@ -18868,17 +18914,27 @@ func (s *UserSummary) encodeFields(e *jx.Encoder) {
 		e.Bool(s.TotpEnrolled)
 	}
 	{
+		e.FieldStart("hasCredential")
+		e.Bool(s.HasCredential)
+	}
+	{
+		e.FieldStart("lastLogin")
+		s.LastLogin.Encode(e, json.EncodeDateTime)
+	}
+	{
 		e.FieldStart("createdAt")
 		json.EncodeDateTime(e, s.CreatedAt)
 	}
 }
 
-var jsonFieldsNameOfUserSummary = [5]string{
+var jsonFieldsNameOfUserSummary = [7]string{
 	0: "id",
 	1: "username",
 	2: "role",
 	3: "totpEnrolled",
-	4: "createdAt",
+	4: "hasCredential",
+	5: "lastLogin",
+	6: "createdAt",
 }
 
 // Decode decodes UserSummary from json.
@@ -18936,8 +18992,30 @@ func (s *UserSummary) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"totpEnrolled\"")
 			}
-		case "createdAt":
+		case "hasCredential":
 			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				v, err := d.Bool()
+				s.HasCredential = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"hasCredential\"")
+			}
+		case "lastLogin":
+			requiredBitSet[0] |= 1 << 5
+			if err := func() error {
+				if err := s.LastLogin.Decode(d, json.DecodeDateTime); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"lastLogin\"")
+			}
+		case "createdAt":
+			requiredBitSet[0] |= 1 << 6
 			if err := func() error {
 				v, err := json.DecodeDateTime(d)
 				s.CreatedAt = v
@@ -18958,7 +19036,7 @@ func (s *UserSummary) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00011111,
+		0b01111111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.

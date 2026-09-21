@@ -1153,7 +1153,7 @@
     "edit": "Edit",
     "delete": "Delete",
     "actionsMenu": "Actions for {{username}}",
-    "noActiveSession": "No active session",
+    "neverLoggedIn": "Never logged in",
     "roles": {
       "admin": "Admin",
       "viewer": "Viewer",
@@ -1184,11 +1184,12 @@
         "viewer": "Read-only UI access. UI login: yes.",
         "share-only": "SMB/NFS access only, no UI login. This is the default for new accounts."
       },
+      "uiLoginAccess": "UI login",
+      "uiLoginAccessDescription": "Whether this account can currently sign in to this UI — a viewer or admin role with a credential provisioned.",
       "smbAccess": "SMB access",
       "smbAccessDescription": "Setting a password provisions the Samba account together with the UI credential (Q27). A user account can carry both UI login and SMB access.",
       "smbAccessSetAction": "Set or change SMB password",
       "smbAccessSetActionDescription": "Provisions or updates the Samba account. This does not remove existing SMB access, and leaving it unchecked does not change it either.",
-      "smbAccessUnknownNote": "The UI can't currently show whether this account already has SMB access provisioned — only whether you set a new password here.",
       "password": "Password",
       "groups": "Groups",
       "groupsPlaceholder": "Add a group",

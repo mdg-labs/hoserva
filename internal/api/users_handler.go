@@ -14,13 +14,20 @@ func errAuthNotConfigured() error {
 }
 
 func userSummaryToAPI(u *User) apiv1.UserSummary {
-	return apiv1.UserSummary{
-		ID:           uuid.MustParse(u.ID),
-		Username:     u.Username,
-		Role:         apiv1.UserRole(u.Role),
-		TotpEnrolled: u.TOTPEnrolled(),
-		CreatedAt:    u.CreatedAt,
+	out := apiv1.UserSummary{
+		ID:            uuid.MustParse(u.ID),
+		Username:      u.Username,
+		Role:          apiv1.UserRole(u.Role),
+		TotpEnrolled:  u.TOTPEnrolled(),
+		HasCredential: u.HasSMBCredential(),
+		CreatedAt:     u.CreatedAt,
 	}
+	if u.LastLoginAt != nil {
+		out.LastLogin = apiv1.NewNilDateTime(*u.LastLoginAt)
+	} else {
+		out.LastLogin.SetToNull()
+	}
+	return out
 }
 
 func groupToAPI(g *Group) apiv1.UserGroup {

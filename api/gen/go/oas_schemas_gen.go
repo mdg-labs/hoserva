@@ -3738,6 +3738,51 @@ func (s *NetworkSettings) SetListenPortRestartRequired(val OptBool) {
 	s.ListenPortRestartRequired = val
 }
 
+// NewNilDateTime returns new NilDateTime with value set to v.
+func NewNilDateTime(v time.Time) NilDateTime {
+	return NilDateTime{
+		Value: v,
+	}
+}
+
+// NilDateTime is nullable time.Time.
+type NilDateTime struct {
+	Value time.Time
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilDateTime) SetTo(v time.Time) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilDateTime) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilDateTime) SetToNull() {
+	o.Null = true
+	var v time.Time
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilDateTime) Get() (v time.Time, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilDateTime) Or(d time.Time) time.Time {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // Ref: #/components/schemas/NotificationAlert
 type NotificationAlert struct {
 	ID        string                `json:"id"`
@@ -9215,8 +9260,15 @@ type UserSummary struct {
 	Username string    `json:"username"`
 	Role     UserRole  `json:"role"`
 	// Whether TOTP is confirmed and active on this account.
-	TotpEnrolled bool      `json:"totpEnrolled"`
-	CreatedAt    time.Time `json:"createdAt"`
+	TotpEnrolled bool `json:"totpEnrolled"`
+	// Whether a Samba/password credential (SMB access) is currently provisioned for this account (doc 03
+	// §7). Set the first time setUserPassword succeeds for it; there is no separate action that clears it
+	// short of deleting the account.
+	HasCredential bool `json:"hasCredential"`
+	// When this account last completed sign-in, tracked at authentication time — never derived from
+	// whether a session is still live (doc 03 §7). Null when it has never signed in.
+	LastLogin NilDateTime `json:"lastLogin"`
+	CreatedAt time.Time   `json:"createdAt"`
 }
 
 // GetID returns the value of ID.
@@ -9237,6 +9289,16 @@ func (s *UserSummary) GetRole() UserRole {
 // GetTotpEnrolled returns the value of TotpEnrolled.
 func (s *UserSummary) GetTotpEnrolled() bool {
 	return s.TotpEnrolled
+}
+
+// GetHasCredential returns the value of HasCredential.
+func (s *UserSummary) GetHasCredential() bool {
+	return s.HasCredential
+}
+
+// GetLastLogin returns the value of LastLogin.
+func (s *UserSummary) GetLastLogin() NilDateTime {
+	return s.LastLogin
 }
 
 // GetCreatedAt returns the value of CreatedAt.
@@ -9262,6 +9324,16 @@ func (s *UserSummary) SetRole(val UserRole) {
 // SetTotpEnrolled sets the value of TotpEnrolled.
 func (s *UserSummary) SetTotpEnrolled(val bool) {
 	s.TotpEnrolled = val
+}
+
+// SetHasCredential sets the value of HasCredential.
+func (s *UserSummary) SetHasCredential(val bool) {
+	s.HasCredential = val
+}
+
+// SetLastLogin sets the value of LastLogin.
+func (s *UserSummary) SetLastLogin(val NilDateTime) {
+	s.LastLogin = val
 }
 
 // SetCreatedAt sets the value of CreatedAt.

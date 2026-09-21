@@ -241,13 +241,21 @@ describe("UsersPage", () => {
     expect(within(panel).getByText("SMB access")).toBeInTheDocument();
   });
 
-  it("never shows the edit panel's SMB control as a state switch, since current SMB access is unknown", async () => {
+  it("shows the edit panel's UI login and SMB access switches reflecting real current state", async () => {
     mockGet.mockImplementation((path: string) => {
       if (path === "/users") {
         return Promise.resolve({
           data: {
             users: [
-              { id: "u1", username: "alice", role: "share-only", totpEnrolled: false, createdAt: "2026-01-01T00:00:00Z" },
+              {
+                id: "u1",
+                username: "alice",
+                role: "share-only",
+                totpEnrolled: false,
+                hasCredential: true,
+                lastLogin: null,
+                createdAt: "2026-01-01T00:00:00Z",
+              },
             ],
           },
           response: { ok: true },
@@ -281,15 +289,15 @@ describe("UsersPage", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
 
     const panel = await screen.findByRole("dialog");
-    // The create flow's state-styled Switch must not appear here: it would
-    // silently show "off" for an account (share-only) that may already have
-    // SMB credentials provisioned, since UserSummary carries no such field.
-    expect(within(panel).queryByRole("switch", { name: "SMB access" })).not.toBeInTheDocument();
+    // alice is share-only with a credential provisioned: SMB access reflects
+    // that (on), UI login stays off since her role has no UI login at all —
+    // both read from UserSummary's own hasCredential/role, not guessed.
+    const uiLoginSwitch = within(panel).getByRole("switch", { name: "UI login" });
+    const smbSwitch = within(panel).getByRole("switch", { name: "SMB access" });
+    expect(uiLoginSwitch).toHaveAttribute("aria-checked", "false");
+    expect(smbSwitch).toHaveAttribute("aria-checked", "true");
+    expect(uiLoginSwitch).toHaveAttribute("aria-disabled", "true");
+    expect(smbSwitch).toHaveAttribute("aria-disabled", "true");
     expect(within(panel).getByRole("checkbox", { name: "Set or change SMB password" })).toBeInTheDocument();
-    expect(
-      within(panel).getByText(
-        "The UI can't currently show whether this account already has SMB access provisioned — only whether you set a new password here.",
-      ),
-    ).toBeInTheDocument();
   });
 });
