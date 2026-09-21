@@ -20,6 +20,14 @@ type AcmeConfig struct {
 	UpdatedAt      string         `json:"updated_at"`
 }
 
+type ApiToken struct {
+	TokenHash string `json:"token_hash"`
+	UserID    string `json:"user_id"`
+	Name      string `json:"name"`
+	Role      string `json:"role"`
+	CreatedAt string `json:"created_at"`
+}
+
 type ArrayDisk struct {
 	ID           int64          `json:"id"`
 	Role         string         `json:"role"`
@@ -206,6 +214,18 @@ type Share struct {
 	UpdatedAt             string         `json:"updated_at"`
 }
 
+type ShareGroupPermission struct {
+	ShareName string `json:"share_name"`
+	GroupID   string `json:"group_id"`
+	Access    string `json:"access"`
+}
+
+type ShareUserPermission struct {
+	ShareName string `json:"share_name"`
+	UserID    string `json:"user_id"`
+	Access    string `json:"access"`
+}
+
 type SpinEvent struct {
 	ID        int64  `json:"id"`
 	Device    string `json:"device"`
@@ -224,4 +244,15 @@ type User struct {
 	TotpLastStep      int64          `json:"totp_last_step"`
 	CreatedAt         string         `json:"created_at"`
 	TotpPendingSecret []byte         `json:"totp_pending_secret"`
+}
+
+type UserGroup struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at"`
+}
+
+type UserGroupMember struct {
+	GroupID string `json:"group_id"`
+	UserID  string `json:"user_id"`
 }

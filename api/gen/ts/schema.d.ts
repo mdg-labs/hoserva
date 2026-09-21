@@ -1517,6 +1517,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/{username}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["parameters"]["Username"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a personal API token
+         * @description A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP. The raw token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring how a session cookie is handled (doc 01 §7). Refused for a share-only account (share-only has no API access at all, Q27), and refused when role exceeds the account's own role: a token can narrow an account's access (an admin can hand out a viewer-scoped token to reduce a script's own blast radius), never widen it.
+         */
+        post: operations["createApiToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List personal API tokens
+         * @description Every account's tokens, most recently created first (doc 03 §7).
+         */
+        get: operations["listApiTokens"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api-tokens/{tokenId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tokenId: components["parameters"]["ApiTokenId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a personal API token
+         * @description Ends this token immediately — the request it would have authenticated next is refused the moment this returns, since every request looks the token up fresh (no caching).
+         */
+        delete: operations["revokeApiToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users/{username}/reset-password": {
         parameters: {
             query?: never;
@@ -2593,6 +2657,40 @@ export interface components {
             /** Format: date-time */
             expiresAt: string;
         };
+        /**
+         * @description Q43: a token's own scope, always admin or viewer — never share-only, since a share-only account has no API access to scope (Q27).
+         * @enum {string}
+         */
+        ApiTokenRole: "admin" | "viewer";
+        CreateApiTokenRequest: {
+            /** @description A caller-chosen label distinguishing this token from an account's others. */
+            name: string;
+            role: components["schemas"]["ApiTokenRole"];
+        };
+        ApiTokenSummary: {
+            /** @description The token's own hash — never the raw token value. */
+            id: string;
+            /** Format: uuid */
+            userId: string;
+            username: string;
+            name: string;
+            role: components["schemas"]["ApiTokenRole"];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ApiTokenCreated: {
+            /** @description The token's own hash — never the raw token value. */
+            id: string;
+            /** Format: uuid */
+            userId: string;
+            username: string;
+            name: string;
+            role: components["schemas"]["ApiTokenRole"];
+            /** Format: date-time */
+            createdAt: string;
+            /** @description The raw bearer value — shown once, on creation, and never retrievable again (doc 01 §7). */
+            token: string;
+        };
     };
     responses: {
         /** @description An error response (doc 01 §5). */
@@ -2613,6 +2711,7 @@ export interface components {
         UserId: string;
         UserGroupId: string;
         SessionId: string;
+        ApiTokenId: string;
         ShareName: components["schemas"]["ShareName"];
         ExternalLabel: components["schemas"]["ExternalDiskLabel"];
     };
@@ -4676,6 +4775,77 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Session revoked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createApiToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["parameters"]["Username"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateApiTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description The new token, with its raw value shown once. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiTokenCreated"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listApiTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every personal API token. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tokens: components["schemas"]["ApiTokenSummary"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeApiToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tokenId: components["parameters"]["ApiTokenId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Token revoked. */
             204: {
                 headers: {
                     [name: string]: unknown;

@@ -118,6 +118,20 @@ func (UnimplementedHandler) ConfirmTotp(ctx context.Context, req *TotpConfirmReq
 	return ht.ErrNotImplemented
 }
 
+// CreateApiToken implements createApiToken operation.
+//
+// A personal API token (Q43), scoped to admin or viewer, for scripting and the remote CLI over TCP.
+// The raw token is returned only here, once — only its SHA-256 is ever stored afterward, mirroring
+// how a session cookie is handled (doc 01 §7). Refused for a share-only account (share-only has no
+// API access at all, Q27), and refused when role exceeds the account's own role: a token can narrow an
+// account's access (an admin can hand out a viewer-scoped token to reduce a script's own blast
+// radius), never widen it.
+//
+// POST /users/{username}/tokens
+func (UnimplementedHandler) CreateApiToken(ctx context.Context, req *CreateApiTokenRequest, params CreateApiTokenParams) (r *ApiTokenCreated, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // CreateArray implements createArray operation.
 //
 // Queues a Topology job that formats or adopts the assigned disks (doc 03 §3.1 step 6, doc 02 §4).
@@ -494,6 +508,15 @@ func (UnimplementedHandler) ImportConfig(ctx context.Context, req *ImportConfigR
 	return ht.ErrNotImplemented
 }
 
+// ListApiTokens implements listApiTokens operation.
+//
+// Every account's tokens, most recently created first (doc 03 §7).
+//
+// GET /api-tokens
+func (UnimplementedHandler) ListApiTokens(ctx context.Context) (r *ListApiTokensOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ListDisks implements listDisks operation.
 //
 // Every block device Hoserva knows about (doc 02 §4).
@@ -691,6 +714,16 @@ func (UnimplementedHandler) ResetUserPassword(ctx context.Context, req *ResetUse
 // POST /jobs/{jobId}/resume
 func (UnimplementedHandler) ResumeJob(ctx context.Context, params ResumeJobParams) (r *Job, _ error) {
 	return r, ht.ErrNotImplemented
+}
+
+// RevokeApiToken implements revokeApiToken operation.
+//
+// Ends this token immediately — the request it would have authenticated next is refused the moment
+// this returns, since every request looks the token up fresh (no caching).
+//
+// DELETE /api-tokens/{tokenId}
+func (UnimplementedHandler) RevokeApiToken(ctx context.Context, params RevokeApiTokenParams) error {
+	return ht.ErrNotImplemented
 }
 
 // RevokeSession implements revokeSession operation.

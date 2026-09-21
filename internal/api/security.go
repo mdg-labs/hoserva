@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/auth"
@@ -42,24 +43,41 @@ func enforceRole(operation apiv1.OperationName, role Role) error {
 
 // SessionSecurityHandler implements apiv1.SecurityHandler for the TCP
 // transport (doc 01 §5): real session cookies against AuthService, and
-// personal API tokens (Q43) — deferred to Phase 2, so every bearer token
-// is refused here rather than accepted. It never treats any particular
-// cookie or header value as automatically trusted; TrustedSecurityHandler
-// below is the one place that shortcut exists, and it is wired only to
-// the Unix-socket listener.
+// personal API tokens (Q43, #50) for scripts and the remote CLI. It never
+// treats any particular cookie or header value as automatically trusted;
+// TrustedSecurityHandler below is the one place that shortcut exists, and
+// it is wired only to the Unix-socket listener.
 type SessionSecurityHandler struct {
 	Auth *AuthService
 }
 
 var _ apiv1.SecurityHandler = (*SessionSecurityHandler)(nil)
 
-// errAPITokensNotImplemented is Q43's own Phase 2 boundary: the apiToken
-// security scheme exists in the spec so a scoped-token client already has
-// somewhere to point at, but no token can validate yet.
-var errAPITokensNotImplemented = errors.New("personal API tokens are not implemented yet (Q43, Phase 2)")
-
+// HandleApiToken authenticates a bearer personal API token (Q43): looked
+// up fresh against api_tokens.token_hash on every call (no caching, so
+// revocation takes effect immediately), capped to its owning account's
+// current role (effectiveTokenRole), then recorded in the audit log
+// (#50's own acceptance criteria) — best-effort, since an audit-sink
+// hiccup must never fail the caller's own request (RecordAPITokenUse's
+// own doc comment).
 func (h *SessionSecurityHandler) HandleApiToken(ctx context.Context, operationName apiv1.OperationName, t apiv1.ApiToken) (context.Context, error) {
-	return ctx, errAPITokensNotImplemented
+	tok, u, err := h.Auth.ValidateAPIToken(ctx, t.Token)
+	if err != nil {
+		return ctx, err
+	}
+	role := effectiveTokenRole(u.Role, tok.Role)
+	if err := enforceRole(operationName, role); err != nil {
+		return ctx, err
+	}
+	if err := h.Auth.RecordAPITokenUse(ctx, tok, u, string(operationName)); err != nil {
+		log.Printf("hoservad: recording api token use: %v", err)
+	}
+	principal := Principal{
+		UserID:   u.ID,
+		Username: u.Username,
+		Role:     role,
+	}
+	return withPrincipal(ctx, principal), nil
 }
 
 func (h *SessionSecurityHandler) HandleSessionCookie(ctx context.Context, operationName apiv1.OperationName, t apiv1.SessionCookie) (context.Context, error) {

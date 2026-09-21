@@ -42,6 +42,204 @@ func (s *ApiToken) SetRoles(val []string) {
 	s.Roles = val
 }
 
+// Ref: #/components/schemas/ApiTokenCreated
+type ApiTokenCreated struct {
+	// The token's own hash — never the raw token value.
+	ID        string       `json:"id"`
+	UserId    uuid.UUID    `json:"userId"`
+	Username  string       `json:"username"`
+	Name      string       `json:"name"`
+	Role      ApiTokenRole `json:"role"`
+	CreatedAt time.Time    `json:"createdAt"`
+	// The raw bearer value — shown once, on creation, and never retrievable again (doc 01 §7).
+	Token string `json:"token"`
+}
+
+// GetID returns the value of ID.
+func (s *ApiTokenCreated) GetID() string {
+	return s.ID
+}
+
+// GetUserId returns the value of UserId.
+func (s *ApiTokenCreated) GetUserId() uuid.UUID {
+	return s.UserId
+}
+
+// GetUsername returns the value of Username.
+func (s *ApiTokenCreated) GetUsername() string {
+	return s.Username
+}
+
+// GetName returns the value of Name.
+func (s *ApiTokenCreated) GetName() string {
+	return s.Name
+}
+
+// GetRole returns the value of Role.
+func (s *ApiTokenCreated) GetRole() ApiTokenRole {
+	return s.Role
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *ApiTokenCreated) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// GetToken returns the value of Token.
+func (s *ApiTokenCreated) GetToken() string {
+	return s.Token
+}
+
+// SetID sets the value of ID.
+func (s *ApiTokenCreated) SetID(val string) {
+	s.ID = val
+}
+
+// SetUserId sets the value of UserId.
+func (s *ApiTokenCreated) SetUserId(val uuid.UUID) {
+	s.UserId = val
+}
+
+// SetUsername sets the value of Username.
+func (s *ApiTokenCreated) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetName sets the value of Name.
+func (s *ApiTokenCreated) SetName(val string) {
+	s.Name = val
+}
+
+// SetRole sets the value of Role.
+func (s *ApiTokenCreated) SetRole(val ApiTokenRole) {
+	s.Role = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *ApiTokenCreated) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// SetToken sets the value of Token.
+func (s *ApiTokenCreated) SetToken(val string) {
+	s.Token = val
+}
+
+// Q43: a token's own scope, always admin or viewer — never share-only, since a share-only account
+// has no API access to scope (Q27).
+// Ref: #/components/schemas/ApiTokenRole
+type ApiTokenRole string
+
+const (
+	ApiTokenRoleAdmin  ApiTokenRole = "admin"
+	ApiTokenRoleViewer ApiTokenRole = "viewer"
+)
+
+// AllValues returns all ApiTokenRole values.
+func (ApiTokenRole) AllValues() []ApiTokenRole {
+	return []ApiTokenRole{
+		ApiTokenRoleAdmin,
+		ApiTokenRoleViewer,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ApiTokenRole) MarshalText() ([]byte, error) {
+	switch s {
+	case ApiTokenRoleAdmin:
+		return []byte(s), nil
+	case ApiTokenRoleViewer:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ApiTokenRole) UnmarshalText(data []byte) error {
+	switch ApiTokenRole(data) {
+	case ApiTokenRoleAdmin:
+		*s = ApiTokenRoleAdmin
+		return nil
+	case ApiTokenRoleViewer:
+		*s = ApiTokenRoleViewer
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ApiTokenSummary
+type ApiTokenSummary struct {
+	// The token's own hash — never the raw token value.
+	ID        string       `json:"id"`
+	UserId    uuid.UUID    `json:"userId"`
+	Username  string       `json:"username"`
+	Name      string       `json:"name"`
+	Role      ApiTokenRole `json:"role"`
+	CreatedAt time.Time    `json:"createdAt"`
+}
+
+// GetID returns the value of ID.
+func (s *ApiTokenSummary) GetID() string {
+	return s.ID
+}
+
+// GetUserId returns the value of UserId.
+func (s *ApiTokenSummary) GetUserId() uuid.UUID {
+	return s.UserId
+}
+
+// GetUsername returns the value of Username.
+func (s *ApiTokenSummary) GetUsername() string {
+	return s.Username
+}
+
+// GetName returns the value of Name.
+func (s *ApiTokenSummary) GetName() string {
+	return s.Name
+}
+
+// GetRole returns the value of Role.
+func (s *ApiTokenSummary) GetRole() ApiTokenRole {
+	return s.Role
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *ApiTokenSummary) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// SetID sets the value of ID.
+func (s *ApiTokenSummary) SetID(val string) {
+	s.ID = val
+}
+
+// SetUserId sets the value of UserId.
+func (s *ApiTokenSummary) SetUserId(val uuid.UUID) {
+	s.UserId = val
+}
+
+// SetUsername sets the value of Username.
+func (s *ApiTokenSummary) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetName sets the value of Name.
+func (s *ApiTokenSummary) SetName(val string) {
+	s.Name = val
+}
+
+// SetRole sets the value of Role.
+func (s *ApiTokenSummary) SetRole(val ApiTokenRole) {
+	s.Role = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *ApiTokenSummary) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
 // Ref: #/components/schemas/ApplyHostConfigRequest
 type ApplyHostConfigRequest struct {
 	Files []HostConfigChoice `json:"files"`
@@ -553,6 +751,33 @@ func (s *ConfirmUpdateRequest) GetConfirm() bool {
 // SetConfirm sets the value of Confirm.
 func (s *ConfirmUpdateRequest) SetConfirm(val bool) {
 	s.Confirm = val
+}
+
+// Ref: #/components/schemas/CreateApiTokenRequest
+type CreateApiTokenRequest struct {
+	// A caller-chosen label distinguishing this token from an account's others.
+	Name string       `json:"name"`
+	Role ApiTokenRole `json:"role"`
+}
+
+// GetName returns the value of Name.
+func (s *CreateApiTokenRequest) GetName() string {
+	return s.Name
+}
+
+// GetRole returns the value of Role.
+func (s *CreateApiTokenRequest) GetRole() ApiTokenRole {
+	return s.Role
+}
+
+// SetName sets the value of Name.
+func (s *CreateApiTokenRequest) SetName(val string) {
+	s.Name = val
+}
+
+// SetRole sets the value of Role.
+func (s *CreateApiTokenRequest) SetRole(val ApiTokenRole) {
+	s.Role = val
 }
 
 // Ref: #/components/schemas/CreateArrayRequest
@@ -2563,6 +2788,20 @@ func (s *LetsEncryptStatus) SetHasSecret(val OptBool) {
 // SetLastError sets the value of LastError.
 func (s *LetsEncryptStatus) SetLastError(val OptString) {
 	s.LastError = val
+}
+
+type ListApiTokensOK struct {
+	Tokens []ApiTokenSummary `json:"tokens"`
+}
+
+// GetTokens returns the value of Tokens.
+func (s *ListApiTokensOK) GetTokens() []ApiTokenSummary {
+	return s.Tokens
+}
+
+// SetTokens sets the value of Tokens.
+func (s *ListApiTokensOK) SetTokens(val []ApiTokenSummary) {
+	s.Tokens = val
 }
 
 type ListDisksOK struct {
@@ -6630,6 +6869,9 @@ func (s *ResetUserPasswordRequest) GetPassword() string {
 func (s *ResetUserPasswordRequest) SetPassword(val string) {
 	s.Password = val
 }
+
+// RevokeApiTokenNoContent is response for RevokeApiToken operation.
+type RevokeApiTokenNoContent struct{}
 
 // RevokeSessionNoContent is response for RevokeSession operation.
 type RevokeSessionNoContent struct{}

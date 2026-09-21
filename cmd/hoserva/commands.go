@@ -281,7 +281,7 @@ func syncCmd() *cobra.Command {
 		Use:   "sync",
 		Short: "Start a SnapRAID sync",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -307,7 +307,7 @@ func scrubCmd() *cobra.Command {
 		Use:   "scrub",
 		Short: "Start a SnapRAID scrub",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -340,7 +340,7 @@ func fixCmd() *cobra.Command {
 			if !confirm {
 				return fmt.Errorf("fix requires --confirm")
 			}
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -379,7 +379,7 @@ func logsCmd() *cobra.Command {
 		Use:   "logs",
 		Short: "Job logs",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -433,7 +433,7 @@ func configCmd() *cobra.Command {
 		Use:   "export",
 		Short: "Export a config archive",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -485,7 +485,7 @@ func configCmd() *cobra.Command {
 			if !confirm {
 				return fmt.Errorf("import requires --confirm")
 			}
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -519,7 +519,7 @@ func doctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Run prerequisite checks",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -551,7 +551,7 @@ func applyHostConfigCmd() *cobra.Command {
 		Use:   "apply-host-config",
 		Short: "Import or leave unmanaged existing host configuration (Q76)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -654,7 +654,7 @@ func userCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -668,7 +668,7 @@ func userCmd() *cobra.Command {
 		Short: "Disable a user's TOTP",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -681,7 +681,7 @@ func userCmd() *cobra.Command {
 		Short: "Clear login lockout",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -693,13 +693,64 @@ func userCmd() *cobra.Command {
 	return cmd
 }
 
+// tokenCmd manages personal API tokens (Q43, #50) — scripting and remote
+// CLI credentials, distinct from userCmd's root-only account recovery
+// above.
+func tokenCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "token", Short: "Personal API tokens (Q43)"}
+
+	var role string
+	create := &cobra.Command{
+		Use:   "create [username] [name]",
+		Short: "Create a personal API token, printed once",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newAPIClient()
+			if err != nil {
+				return err
+			}
+			out, err := c.CreateApiToken(apiCtx(),
+				&apiv1.CreateApiTokenRequest{Name: args[1], Role: apiv1.ApiTokenRole(role)},
+				apiv1.CreateApiTokenParams{Username: args[0]})
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			emit(out)
+			return nil
+		},
+	}
+	create.Flags().StringVar(&role, "role", "viewer", "Token scope: admin or viewer (Q43)")
+	cmd.AddCommand(create)
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List every account's personal API tokens",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.ListApiTokens(apiCtx()) }),
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "revoke [id]",
+		Short: "Revoke a personal API token immediately",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newAPIClient()
+			if err != nil {
+				return err
+			}
+			return mapAPIErr(c.RevokeApiToken(apiCtx(), apiv1.RevokeApiTokenParams{TokenId: args[0]}))
+		},
+	})
+
+	return cmd
+}
+
 func updateCmd() *cobra.Command {
 	var check, confirm bool
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update Hoserva from its signed release index (Q67)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newAPIClient(socketPath)
+			c, err := newAPIClient()
 			if err != nil {
 				return err
 			}
@@ -765,7 +816,7 @@ func rebootCmd() *cobra.Command {
 
 func runAPI(fn func(*apiv1.Client) (any, error)) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		c, err := newAPIClient(socketPath)
+		c, err := newAPIClient()
 		if err != nil {
 			return err
 		}
@@ -783,6 +834,9 @@ func mapAPIErr(err error) error {
 		return nil
 	}
 	if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no such file") {
+		if remoteHost != "" {
+			return fmt.Errorf("could not connect to hoservad at %s:%d — is the daemon running and reachable?", remoteHost, remotePort)
+		}
 		return fmt.Errorf("could not connect to hoservad at %s — is the daemon running?", socketPath)
 	}
 	return err

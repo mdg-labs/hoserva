@@ -75,8 +75,9 @@ func (s *AuthStore) UpdateUserRole(ctx context.Context, userID, role string) err
 	return nil
 }
 
-// DeleteUser removes userID along with its sessions, group memberships
-// and per-share permissions, all inside one transaction, then invokes
+// DeleteUser removes userID along with its sessions, personal API tokens
+// (#50, Q43), group memberships and per-share permissions, all inside one
+// transaction, then invokes
 // beforeCommit with the deleted user's username before committing. It
 // refuses (ErrCannotModifyAdmin) an admin-role target, and reports
 // ErrUserNotFound for an unknown id.
@@ -111,6 +112,9 @@ func (s *AuthStore) DeleteUser(ctx context.Context, userID string, beforeCommit 
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, userID); err != nil {
 		return fmt.Errorf("deleting user sessions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM api_tokens WHERE user_id = ?`, userID); err != nil {
+		return fmt.Errorf("deleting user api tokens: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM user_group_members WHERE user_id = ?`, userID); err != nil {
 		return fmt.Errorf("deleting user group memberships: %w", err)

@@ -219,6 +219,91 @@ func decodeCancelJobParams(args [1]string, argsEscaped bool, r *http.Request) (p
 	return params, nil
 }
 
+// CreateApiTokenParams is parameters of createApiToken operation.
+type CreateApiTokenParams struct {
+	Username string
+}
+
+func unpackCreateApiTokenParams(packed middleware.Parameters) (params CreateApiTokenParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "username",
+			In:   "path",
+		}
+		params.Username = packed[key].(string)
+	}
+	return params
+}
+
+func decodeCreateApiTokenParams(args [1]string, argsEscaped bool, r *http.Request) (params CreateApiTokenParams, _ error) {
+	// Decode path: username.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "username",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Username = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := (validate.String{
+					MinLength:     1,
+					MinLengthSet:  true,
+					MaxLength:     64,
+					MaxLengthSet:  true,
+					Email:         false,
+					Hostname:      false,
+					Regex:         nil,
+					MinNumeric:    0,
+					MinNumericSet: false,
+					MaxNumeric:    0,
+					MaxNumericSet: false,
+				}).Validate(string(params.Username)); err != nil {
+					return errors.Wrap(err, "string")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "username",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // DeleteNotificationChannelParams is parameters of deleteNotificationChannel operation.
 type DeleteNotificationChannelParams struct {
 	ChannelId uuid.UUID
@@ -1890,6 +1975,91 @@ func decodeResumeJobParams(args [1]string, argsEscaped bool, r *http.Request) (p
 	}(); err != nil {
 		return params, &ogenerrors.DecodeParamError{
 			Name: "jobId",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// RevokeApiTokenParams is parameters of revokeApiToken operation.
+type RevokeApiTokenParams struct {
+	TokenId string
+}
+
+func unpackRevokeApiTokenParams(packed middleware.Parameters) (params RevokeApiTokenParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "tokenId",
+			In:   "path",
+		}
+		params.TokenId = packed[key].(string)
+	}
+	return params
+}
+
+func decodeRevokeApiTokenParams(args [1]string, argsEscaped bool, r *http.Request) (params RevokeApiTokenParams, _ error) {
+	// Decode path: tokenId.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "tokenId",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.TokenId = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := (validate.String{
+					MinLength:     1,
+					MinLengthSet:  true,
+					MaxLength:     0,
+					MaxLengthSet:  false,
+					Email:         false,
+					Hostname:      false,
+					Regex:         nil,
+					MinNumeric:    0,
+					MinNumericSet: false,
+					MaxNumeric:    0,
+					MaxNumericSet: false,
+				}).Validate(string(params.TokenId)); err != nil {
+					return errors.Wrap(err, "string")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "tokenId",
 			In:   "path",
 			Err:  err,
 		}

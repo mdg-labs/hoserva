@@ -122,6 +122,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.ApplyHostConfigOperation,
 		apiv1.CancelJobOperation,
 		apiv1.ConfirmTotpOperation,
+		apiv1.CreateApiTokenOperation,
 		apiv1.CreateArrayOperation,
 		apiv1.CreateFirstAdminOperation,
 		apiv1.CreateNotificationChannelOperation,
@@ -151,6 +152,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.ImportConfigOperation,
 		apiv1.EjectExternalDiskOperation,
 		apiv1.FormatExternalDiskOperation,
+		apiv1.ListApiTokensOperation,
 		apiv1.ListDisksOperation,
 		apiv1.ListExternalDisksOperation,
 		apiv1.ListSessionsOperation,
@@ -168,6 +170,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.LogoutOperation,
 		apiv1.ResetUserPasswordOperation,
 		apiv1.ResumeJobOperation,
+		apiv1.RevokeApiTokenOperation,
 		apiv1.RevokeSessionOperation,
 		apiv1.RunDoctorOperation,
 		apiv1.RunParityDiffOperation,
@@ -252,6 +255,30 @@ func TestRoleSatisfies(t *testing.T) {
 	for _, c := range cases {
 		if got := c.have.Satisfies(c.want); got != c.ok {
 			t.Errorf("Role(%q).Satisfies(%q) = %v, want %v", c.have, c.want, got, c.ok)
+		}
+	}
+}
+
+// TestEffectiveTokenRoleCapsToCurrentAccountRole is #50's own defense in
+// depth: a token issued while its account was admin must never keep
+// granting admin the moment that account is demoted — effectiveTokenRole
+// always recomputes from the account's *current* role, never trusts the
+// token's own stored role alone.
+func TestEffectiveTokenRoleCapsToCurrentAccountRole(t *testing.T) {
+	cases := []struct {
+		accountRole, tokenRole string
+		want                   Role
+	}{
+		{"admin", "admin", RoleAdmin},
+		{"admin", "viewer", RoleViewer},
+		{"viewer", "viewer", RoleViewer},
+		{"viewer", "admin", RoleViewer},
+		{"share-only", "admin", Role("share-only")},
+		{"share-only", "viewer", Role("share-only")},
+	}
+	for _, c := range cases {
+		if got := effectiveTokenRole(c.accountRole, c.tokenRole); got != c.want {
+			t.Errorf("effectiveTokenRole(%q, %q) = %q, want %q", c.accountRole, c.tokenRole, got, c.want)
 		}
 	}
 }
