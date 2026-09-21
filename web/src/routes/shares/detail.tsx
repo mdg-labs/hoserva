@@ -273,6 +273,7 @@ export function ShareDetailPage(): React.ReactElement {
       });
       if (apiError) {
         setBrowseError(apiError.message);
+        setDeleteFileTarget(null);
         return;
       }
       setDeleteFileTarget(null);
