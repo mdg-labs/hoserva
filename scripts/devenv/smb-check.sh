@@ -165,6 +165,20 @@ fs_read=$(setpriv --reuid "$TEST_UID" --regid "$TEST_GID" --clear-groups \
   || die "plain filesystem read as $TEST_UID:$TEST_GID did not see the content written over SMB"
 echo "ok: plain filesystem read as $TEST_UID:$TEST_GID sees the content written over SMB"
 
+# Overwrite of the SMB-created file, on the plain filesystem as 99:100 —
+# the masks only guarantee a *new* file lands group-writable; this is what
+# actually proves an existing Samba-owned file stays writable by the
+# shared identity afterward.
+via_smb_overwrite="hoserva smb-check via SMB, overwritten on the filesystem $(date +%s%N)"
+setpriv --reuid "$TEST_UID" --regid "$TEST_GID" --clear-groups \
+  tee "$share_dir/via-smb.txt" >/dev/null <<<"$via_smb_overwrite" \
+  || die "overwriting via-smb.txt as $TEST_UID:$TEST_GID failed"
+fs_reread=$(setpriv --reuid "$TEST_UID" --regid "$TEST_GID" --clear-groups \
+  cat "$share_dir/via-smb.txt")
+[[ "$fs_reread" == "$via_smb_overwrite" ]] \
+  || die "plain filesystem read as $TEST_UID:$TEST_GID did not see its own overwrite of the SMB-created file"
+echo "ok: $TEST_UID:$TEST_GID overwrote the SMB-created file on the plain filesystem"
+
 # --- Direction 2: write on the plain filesystem as 99:100, read over SMB ---
 via_fs_content="hoserva smb-check via filesystem $(date +%s%N)"
 printf '%s' "$via_fs_content" > "$work/via-fs.txt"
@@ -180,5 +194,20 @@ smbclient "//127.0.0.1/$SHARE" -U "$user_name%$PASSWORD" \
 diff -q "$work/via-fs.txt" "$smb_read" >/dev/null \
   || die "SMB read did not see the content written on the plain filesystem"
 echo "ok: SMB read as $user_name sees the content written on the plain filesystem as $TEST_UID:$TEST_GID"
+
+# Overwrite of the filesystem-created file, over SMB — the mirror of the
+# direction-1 overwrite above: proves the SMB user can write back into a
+# file the plain filesystem identity already owns, not just create fresh
+# ones.
+via_fs_overwrite="hoserva smb-check via filesystem, overwritten over SMB $(date +%s%N)"
+printf '%s' "$via_fs_overwrite" > "$work/via-fs.overwrite.txt"
+smbclient "//127.0.0.1/$SHARE" -U "$user_name%$PASSWORD" \
+  -c "put $work/via-fs.overwrite.txt via-fs.txt" \
+  || die "smbclient overwrite of via-fs.txt failed — see $LAB/samba/log/smbd.log"
+fs_overwrite_read=$(setpriv --reuid "$TEST_UID" --regid "$TEST_GID" --clear-groups \
+  cat "$share_dir/via-fs.txt")
+[[ "$fs_overwrite_read" == "$via_fs_overwrite" ]] \
+  || die "plain filesystem read as $TEST_UID:$TEST_GID did not see the SMB overwrite of via-fs.txt"
+echo "ok: SMB overwrite of the filesystem-created file is visible on the plain filesystem"
 
 echo "smb-check: confirmed (Hoserva-generated smb.conf, mutual read/write between SMB and the plain filesystem as $TEST_UID:$TEST_GID)"
