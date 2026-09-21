@@ -421,6 +421,76 @@ func TestRelocateToCache_RequiresSync(t *testing.T) {
 	}
 }
 
+// TestRelocateToCache_ReusesOneSnapshotForCopyPhase proves the copy phase's
+// pre-copy open checks take exactly one /proc walk for a share with
+// several eligible files, not one per file — mirroring #238's own
+// TestRun_ReusesOneSnapshotPerShare, using the same countingSnapshotter
+// (mover_test.go).
+func TestRelocateToCache_ReusesOneSnapshotForCopyPhase(t *testing.T) {
+	s := relocateShare(t, "docs", 1)
+	mustWrite(t, filepath.Join(s.Branches[0], "a.txt"), "a bytes")
+	mustWrite(t, filepath.Join(s.Branches[0], "b.txt"), "b bytes")
+	mustWrite(t, filepath.Join(s.Branches[0], "c.txt"), "c bytes")
+
+	engine := parity.NewFakeEngine()
+	engine.Sleep = func(_ time.Duration) {}
+	engine.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+
+	snapshotter := newCountingSnapshotter()
+	deps := testDeps(NewFakeOpenChecker())
+	deps.Open = snapshotter
+	deps.Sync = syncFuncFromEngine(engine)
+
+	report, err := RelocateToCache(context.Background(), s, Config{}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("RelocateToCache: %v", err)
+	}
+	if len(report.Moved()) != 3 {
+		t.Fatalf("expected all three files to move, got %+v", report.Entries)
+	}
+	if snapshotter.snapshots != 1 {
+		t.Fatalf("Snapshot called %d times, want exactly 1 for a three-file copy phase", snapshotter.snapshots)
+	}
+}
+
+// TestRelocateToCache_PreUnlinkRecheckIgnoresStalePreCopySnapshot proves
+// finishRelocateDelete's pre-unlink check is answered by the checker's own
+// live IsOpen, never by the copy phase's snapshot — mirroring #238's own
+// TestRun_PreUnlinkRecheckIgnoresStalePreCopySnapshot: scripting the file
+// closed in the snapshot (so the copy proceeds) but open on the checker's
+// own live IsOpen must still leave the array original in place afterward.
+func TestRelocateToCache_PreUnlinkRecheckIgnoresStalePreCopySnapshot(t *testing.T) {
+	s := relocateShare(t, "docs", 1)
+	src := filepath.Join(s.Branches[0], "report.pdf")
+	mustWrite(t, src, "report bytes")
+
+	snapshotter := newCountingSnapshotter()
+	snapshotter.SetOpen(src, true) // live IsOpen reports open throughout; the snapshot never does
+
+	engine := parity.NewFakeEngine()
+	engine.Sleep = func(_ time.Duration) {}
+	engine.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+
+	deps := testDeps(NewFakeOpenChecker())
+	deps.Open = snapshotter
+	deps.Sync = syncFuncFromEngine(engine)
+
+	report, err := RelocateToCache(context.Background(), s, Config{}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("RelocateToCache: %v", err)
+	}
+	if len(report.Moved()) != 0 {
+		t.Fatalf("expected no completed move, got %+v", report.Entries)
+	}
+	pending := report.byResult(ResultMovedPendingDelete)
+	if len(pending) != 1 {
+		t.Fatalf("expected one moved_pending_delete entry — the copy must have proceeded (the snapshot reported it closed) but the pre-unlink recheck must have caught the live open state, got %+v", report.Entries)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("source held open at delete time must survive: %v", err)
+	}
+}
+
 func TestPrecheck_ReportsOpenFilesOnCacheAndArray(t *testing.T) {
 	s := relocateShare(t, "docs", 2)
 	cacheFile := filepath.Join(s.CachePath, "open-on-cache.txt")
@@ -440,5 +510,26 @@ func TestPrecheck_ReportsOpenFilesOnCacheAndArray(t *testing.T) {
 	}
 	if len(result.OpenPaths) != 2 {
 		t.Fatalf("OpenPaths = %+v, want 2 entries", result.OpenPaths)
+	}
+}
+
+// TestPrecheck_ReusesOneSnapshotAcrossAllRoots proves Precheck takes
+// exactly one /proc walk across the cache path and every array branch
+// combined, not one per file.
+func TestPrecheck_ReusesOneSnapshotAcrossAllRoots(t *testing.T) {
+	s := relocateShare(t, "docs", 2)
+	mustWrite(t, filepath.Join(s.CachePath, "cache.txt"), "a")
+	mustWrite(t, filepath.Join(s.Branches[0], "disk1.txt"), "b")
+	mustWrite(t, filepath.Join(s.Branches[1], "disk2.txt"), "c")
+
+	snapshotter := newCountingSnapshotter()
+	deps := testDeps(NewFakeOpenChecker())
+	deps.Open = snapshotter
+
+	if _, err := Precheck(context.Background(), s, deps); err != nil {
+		t.Fatalf("Precheck: %v", err)
+	}
+	if snapshotter.snapshots != 1 {
+		t.Fatalf("Snapshot called %d times, want exactly 1 across the cache path and every branch", snapshotter.snapshots)
 	}
 }

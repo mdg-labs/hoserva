@@ -223,6 +223,11 @@ func relocateCopyPhase(ctx context.Context, share Share, cfg Config, deps Deps, 
 		total += len(rels)
 	}
 
+	preCopyOpen, err := shareOpenChecker(ctx, deps.Open)
+	if err != nil {
+		return nil, false, fmt.Errorf("cache: snapshot open files for share %q: %w", share.Name, err)
+	}
+
 	done := 0
 branchLoop:
 	for i, b := range share.Branches {
@@ -250,7 +255,7 @@ branchLoop:
 				break branchLoop
 			}
 
-			entry, me := relocateCopyItem(ctx, share, disk, b, rel, cfg, deps)
+			entry, me := relocateCopyItem(ctx, share, disk, b, rel, cfg, deps, preCopyOpen)
 			if entry != nil {
 				report.add(*entry)
 				hooks.logf("relocate: %s %s/%s%s", entry.Result, share.Name, rel, entry.reasonSuffix())
@@ -280,8 +285,12 @@ branchLoop:
 // file's copy onto cache. Exactly one of its two return values is
 // non-nil: entry for a terminal outcome the copy phase must report now,
 // or manifestEntry for a file that is now safely and verifiably on
-// cache, awaiting the sync and delete phases still to come.
-func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string, cfg Config, deps Deps) (entry *Entry, manifestEntry *parity.ManifestEntry) {
+// cache, awaiting the sync and delete phases still to come. preCopyOpen
+// answers the pre-copy open check, possibly from a snapshot taken once
+// for the whole copy phase (relocateCopyPhase's own shareOpenChecker
+// call); the pre-unlink re-check inside finishRelocateDelete always uses
+// deps.Open directly instead, never preCopyOpen.
+func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string, cfg Config, deps Deps, preCopyOpen OpenChecker) (entry *Entry, manifestEntry *parity.ManifestEntry) {
 	src := filepath.Join(branch, rel)
 	dst := filepath.Join(share.CachePath, rel)
 
@@ -314,7 +323,7 @@ func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string
 		return &Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: derr.Error()}, nil
 	}
 
-	open, oerr := deps.Open.IsOpen(ctx, src)
+	open, oerr := preCopyOpen.IsOpen(ctx, src)
 	if oerr != nil {
 		return &Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: oerr.Error()}, nil
 	}
@@ -399,6 +408,11 @@ func Precheck(ctx context.Context, share Share, deps Deps) (PrecheckResult, erro
 	deps = deps.withDefaults()
 	var result PrecheckResult
 
+	open, err := shareOpenChecker(ctx, deps.Open)
+	if err != nil {
+		return PrecheckResult{}, fmt.Errorf("cache: precheck: snapshot open files for share %q: %w", share.Name, err)
+	}
+
 	roots := append([]string{share.CachePath}, share.Branches...)
 	for _, root := range roots {
 		rels, err := enumerateFiles(root)
@@ -406,11 +420,11 @@ func Precheck(ctx context.Context, share Share, deps Deps) (PrecheckResult, erro
 			return PrecheckResult{}, fmt.Errorf("cache: precheck: enumerate %q: %w", root, err)
 		}
 		for _, rel := range rels {
-			open, err := deps.Open.IsOpen(ctx, filepath.Join(root, rel))
+			isOpen, err := open.IsOpen(ctx, filepath.Join(root, rel))
 			if err != nil {
 				return PrecheckResult{}, fmt.Errorf("cache: precheck: %q: %w", filepath.Join(root, rel), err)
 			}
-			if open {
+			if isOpen {
 				result.OpenPaths = append(result.OpenPaths, rel)
 			}
 		}
