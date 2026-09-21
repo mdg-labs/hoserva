@@ -72,6 +72,70 @@ func TestCreate_MakesBranchDirsAndMounts(t *testing.T) {
 	}
 }
 
+func TestCreate_SetsShareDirModeAndGroupNotRecursively(t *testing.T) {
+	ctx, svc, layout, _ := testService(t)
+
+	// Simulate a share directory already holding adopted/migrated data
+	// (doc 05 §4): a file with ownership Hoserva must never rewrite.
+	preexisting := filepath.Join(layout.dataDisks[0], "media", "film.mkv")
+	writeFile(t, preexisting, "movie")
+	if err := os.Chmod(preexisting, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.Create(ctx, CreateInput{Name: "media", CacheMode: pool.ArrayOnly}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	roots := []string{
+		filepath.Join(layout.dataDisks[0], "media"),
+		filepath.Join(layout.dataDisks[1], "media"),
+	}
+	for _, dir := range roots {
+		st, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat %s: %v", dir, err)
+		}
+		if st.Mode().Perm() != 0o775 {
+			t.Fatalf("mode of %s = %o, want 0775 (setgid checked separately)", dir, st.Mode().Perm())
+		}
+		if st.Mode()&os.ModeSetgid == 0 {
+			t.Fatalf("mode of %s = %v, want the setgid bit set", dir, st.Mode())
+		}
+	}
+
+	fs, ok := svc.FS.(*ownerRecordingFS)
+	if !ok {
+		t.Fatalf("svc.FS = %T, want *ownerRecordingFS", svc.FS)
+	}
+	for _, dir := range roots {
+		found := false
+		for _, c := range fs.chowns {
+			if c.path != dir {
+				continue
+			}
+			found = true
+			if c.uid != -1 || c.gid != ShareGID {
+				t.Fatalf("chown(%s) = uid %d gid %d, want uid -1 gid %d", dir, c.uid, c.gid, ShareGID)
+			}
+		}
+		if !found {
+			t.Fatalf("no Chown recorded for %s", dir)
+		}
+	}
+
+	// The pre-existing file's own mode must be untouched: only the
+	// share's top-level directory is brought to the shared group, never
+	// its contents (AC3).
+	st, err := os.Stat(preexisting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("pre-existing file mode = %o, want unchanged 0600", st.Mode().Perm())
+	}
+}
+
 func TestCreate_CacheOnlyHasNoMoverMount(t *testing.T) {
 	ctx, svc, layout, mounter := testService(t)
 	if _, err := svc.Create(ctx, CreateInput{Name: "appdata", CacheMode: pool.CacheOnly}); err != nil {

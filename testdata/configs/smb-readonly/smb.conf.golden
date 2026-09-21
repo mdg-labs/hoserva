@@ -22,5 +22,8 @@
    browseable = no
    read only = yes
    guest ok = no
+   create mask = 0664
+   directory mask = 2775
+   force group = users
 
 include = /etc/hoserva/smb.custom.conf

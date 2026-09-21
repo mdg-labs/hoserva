@@ -22,12 +22,18 @@
    browseable = no
    read only = no
    guest ok = no
+   create mask = 0664
+   directory mask = 2775
+   force group = users
 
 [media]
    path = /mnt/user/media
    browseable = yes
    read only = no
    guest ok = yes
+   create mask = 0664
+   directory mask = 2775
+   force group = users
    vfs objects = catia fruit streams_xattr recycle
    recycle:repository = .recycle
    recycle:keeptree = yes
@@ -38,6 +44,9 @@
    browseable = no
    read only = no
    guest ok = no
+   create mask = 0664
+   directory mask = 2775
+   force group = users
    fruit:time machine = yes
    fruit:time machine max size = 1T
 
