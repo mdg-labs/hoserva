@@ -479,13 +479,18 @@ func TestDeleteFile_RefusesLeafSwappedForDifferentFileMidRace(t *testing.T) {
 	target := filepath.Join(shareRoot, "sub", "file.txt")
 	writeFile(t, target, "original")
 
+	// The replacement file is created before the swap fires, while
+	// "original" still occupies its inode, so the allocator cannot hand
+	// the replacement the same inode number — swapping it in with Rename
+	// guarantees a different identity deterministically, rather than
+	// hoping a remove-then-create at the same path happens not to reuse
+	// the just-freed inode (filesystem-dependent, and not guaranteed).
+	replacement := target + ".swapped"
+	writeFile(t, replacement, "swapped-in")
 	svc.FS = &swapLeafAfterValidateFS{
 		trigger: target,
 		swap: func() error {
-			if err := os.Remove(target); err != nil {
-				return err
-			}
-			return os.WriteFile(target, []byte("swapped-in"), 0o644)
+			return os.Rename(replacement, target)
 		},
 	}
 
