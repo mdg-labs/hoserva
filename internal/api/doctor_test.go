@@ -91,6 +91,21 @@ func TestParityFreshnessCheck_Error(t *testing.T) {
 	}
 }
 
+// TestParityFreshnessCheck_NilConcreteEngine reproduces #222: a nil
+// *parity.SnapraidEngine wrapped in the parity.Engine interface (exactly
+// how cmd/hoservad wires Handler.Parity when no snapraid.conf exists yet)
+// does not compare equal to a bare nil, so calling eng.Status on it used
+// to panic — turning GET /api/v1/doctor into a connection-dropping EOF
+// for every client, including `hoserva doctor apply-host-config`.
+func TestParityFreshnessCheck_NilConcreteEngine(t *testing.T) {
+	var eng parity.Engine = (*parity.FakeEngine)(nil)
+	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil)
+	check := findDoctorCheck(report, "parity_freshness")
+	if check.Status != apiv1.DoctorCheckStatusWarn {
+		t.Fatalf("parity_freshness status = %q, want warn for a nil concrete engine", check.Status)
+	}
+}
+
 func TestSmartCheck_Healthy(t *testing.T) {
 	f := disk.NewFakeProvider()
 	f.AddDisk("/dev/sdb", disk.Disk{Device: "/dev/sdb", Size: disk.TB})

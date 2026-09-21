@@ -17,7 +17,10 @@ vm_domain_running "$VM_DOMAIN" || die "domain '$VM_DOMAIN' is not running"
 vm_ssh 'testparm -s --section-name=hoserva-existing >/dev/null'
 # /usr/sbin is not on a non-root guest PATH (Debian 13 cloud image). A
 # missing binary must fail as "No such file", not "command not found".
-vm_ssh '/usr/sbin/exportfs | grep -q /export/hoserva-existing'
+# Unprivileged exportfs can't lock /var/lib/nfs/.etab.lock (errno 13) on
+# this guest, which fails the pipeline under pipefail even though the
+# listing it still prints would have matched — needs sudo to verify.
+vm_ssh 'sudo /usr/sbin/exportfs | grep -q /export/hoserva-existing'
 vm_ssh 'findmnt /mnt/hoserva-existing >/dev/null'
 vm_ssh 'grep -qx hello-samba /srv/hoserva-existing/hello.txt'
 vm_ssh 'grep -qx hello-nfs /export/hoserva-existing/hello.txt'

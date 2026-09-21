@@ -145,6 +145,26 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # Runs before vm-destroy tears the guest down. Only the client-side
+      # symptom (e.g. an EOF from a dropped connection) reaches vm-suite's
+      # own output; the server-side evidence — a panic in hoservad's own
+      # journal, or `hoserva doctor`'s report if the daemon is still
+      # reachable — only exists on the guest (#222).
+      - name: Collect hoservad diagnostics
+        if: failure()
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: scripts/vm/collect-diagnostics.sh "$GITHUB_WORKSPACE/.vm-diagnostics"
+
+      - name: Upload hoservad diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hoservad-diagnostics
+          path: .vm-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: vm-destroy
         if: always()
         env:
