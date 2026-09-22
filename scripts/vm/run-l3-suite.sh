@@ -45,6 +45,263 @@ fail() {
   record "$1" "FAIL: $2"
 }
 
+# Array setup (step 3) and journey 5's own fixture (seeded ahead of step 8,
+# doc 06 §4) share this L3 admin session and cookie jar — the same account
+# step 2's onboarding creates.
+ARRAY_ADMIN_USERNAME="hoserva-l3"
+ARRAY_ADMIN_PASSWORD="hoserva-l3-suite-password"
+ARRAY_COOKIE_JAR="/tmp/hoserva-l3-suite-cookies.txt"
+
+# Journey 5's own share (doc 06 §4): array-only cache mode (no cache disk
+# is assigned below), seeded with far more files than the threshold
+# guard's default removed-count/percent thresholds (Q16) tolerate, so
+# deleting most of them trips the guard the same way a runaway `rm -rf`
+# would. Path is D10's own `/mnt/user/<name>` convention.
+JOURNEY5_SHARE="massdel"
+JOURNEY5_SHARE_PATH="/mnt/user/$JOURNEY5_SHARE"
+JOURNEY5_FILE_COUNT=300
+JOURNEY5_DELETE_COUNT=250
+
+# array_login signs the L3 admin into the guest's own hoservad over its
+# loopback HTTPS listener, writing ARRAY_COOKIE_JAR for every later admin
+# call array_setup and seed_journey5_fixture make.
+array_login() {
+  local result
+  result="$(vm_ssh "curl -sk -c $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ARRAY_ADMIN_USERNAME\",\"password\":\"$ARRAY_ADMIN_PASSWORD\"}'" 2>/dev/null)"
+  [[ "$result" == *"\"username\":\"$ARRAY_ADMIN_USERNAME\""* ]]
+}
+
+# ensure_pool_mounted calls startArray and checks getPool until the array
+# reports mounted. A freshly created array's pool can 501 on startArray
+# until hoservad restarts (issue #262) — this restarts the guest's own
+# hoservad once and retries before giving up, rather than fixing that gap
+# itself (out of scope for this issue).
+ensure_pool_mounted() {
+  local pool_result
+  pool_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+  [[ "$pool_result" == *'"mounted":true'* ]] && return 0
+
+  vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/start" >/dev/null 2>&1 || true
+  pool_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+  [[ "$pool_result" == *'"mounted":true'* ]] && return 0
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: array/start did not mount the pool — restarting hoservad and retrying (issue #262's array-not-mounted-until-restart gap)"
+  vm_ssh 'sudo systemctl restart hoserva' >/dev/null 2>&1 || true
+  local deadline=$((SECONDS + 60))
+  while (( SECONDS < deadline )) && ! vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; do
+    sleep 2
+  done
+  array_login || return 1
+  vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/start" >/dev/null 2>&1 || true
+  pool_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+  [[ "$pool_result" == *'"mounted":true'* ]]
+}
+
+# wait_job_terminal polls getJob until it reaches a terminal JobStatus (or
+# the deadline passes) and prints the status it settled on (or "unknown").
+# Callers read the job body it also leaves for them via job_result_out.
+wait_job_terminal() {
+  local job_id=$1 timeout_s=$2
+  local deadline=$((SECONDS + timeout_s))
+  job_status=""
+  job_result=""
+  while (( SECONDS < deadline )); do
+    job_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/jobs/$job_id" 2>/dev/null)"
+    if [[ "$job_result" =~ \"status\":\"([^\"]+)\" ]]; then
+      job_status="${BASH_REMATCH[1]}"
+    fi
+    case "$job_status" in
+      succeeded | failed | cancelled | interrupted) return 0 ;;
+    esac
+    sleep 2
+  done
+  return 0
+}
+
+# array_setup drives createArray (one parity disk, two data disks — the
+# smallest layout Q18's content-file placement accepts without a cache
+# disk, doc 02 §2) and createShare through the real API, discovering the
+# array's own virtio devices from the domain XML create-vm.sh wrote
+# (same pattern array-sequence-check.sh's own device discovery uses). On
+# failure it sets ARRAY_SETUP_REASON and returns 1.
+array_setup() {
+  echo "vm-suite[$HOSERVA_LAB_ID]: ensuring mergerfs, snapraid, xfsprogs and e2fsprogs are present on the guest"
+  vm_ssh 'command -v mergerfs >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq mergerfs)'
+  vm_ssh 'command -v snapraid >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq snapraid)'
+  vm_ssh 'command -v mkfs.xfs >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq xfsprogs)'
+  vm_ssh 'command -v mkfs.ext4 >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq e2fsprogs)'
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: discovering array disks from the live domain XML"
+  local domxml
+  domxml="$(virsh -c "$VM_CONNECT" dumpxml "$VM_DOMAIN")"
+  if [[ -z "$domxml" ]]; then
+    ARRAY_SETUP_REASON="could not read domain XML for '$VM_DOMAIN'"
+    return 1
+  fi
+
+  local dev="" serial="" parity_dev="" data1_dev="" data2_dev=""
+  while IFS= read -r line; do
+    case "$line" in
+      *'<disk '*) dev=""; serial="" ;;
+    esac
+    if [[ "$line" == *'<target '* && "$line" =~ dev=\'([^\']*)\' ]]; then
+      dev="${BASH_REMATCH[1]}"
+    fi
+    if [[ "$line" =~ \<serial\>([^\<]*)\</serial\> ]]; then
+      serial="${BASH_REMATCH[1]}"
+    fi
+    if [[ "$line" == *'</disk>'* ]]; then
+      case "$serial" in
+        "parity1-hoserva-$HOSERVA_LAB_ID") parity_dev="$dev" ;;
+        "disk1-hoserva-$HOSERVA_LAB_ID") data1_dev="$dev" ;;
+        "disk2-hoserva-$HOSERVA_LAB_ID") data2_dev="$dev" ;;
+      esac
+      dev=""; serial=""
+    fi
+  done <<<"$domxml"
+
+  if [[ -z "$parity_dev" || -z "$data1_dev" || -z "$data2_dev" ]]; then
+    ARRAY_SETUP_REASON="could not find parity1/disk1/disk2 array devices in the domain XML — is this domain fresh from 'make vm-up'?"
+    return 1
+  fi
+  echo "vm-suite[$HOSERVA_LAB_ID]: array devices: parity=/dev/$parity_dev data1=/dev/$data1_dev data2=/dev/$data2_dev"
+
+  if ! array_login; then
+    ARRAY_SETUP_REASON="login as the L3 admin failed ahead of createArray"
+    return 1
+  fi
+
+  local sorted_devices confirmation
+  mapfile -t sorted_devices < <(printf '%s\n' "/dev/$parity_dev" "/dev/$data1_dev" "/dev/$data2_dev" | sort)
+  confirmation="ERASE $(printf '%s, ' "${sorted_devices[@]}")"
+  confirmation="${confirmation%, }"
+
+  local create_array_body create_array_result job_id
+  create_array_body="{\"disks\":[{\"device\":\"/dev/${parity_dev}\",\"role\":\"parity\",\"filesystem\":\"xfs\"},{\"device\":\"/dev/${data1_dev}\",\"role\":\"data\",\"filesystem\":\"ext4\"},{\"device\":\"/dev/${data2_dev}\",\"role\":\"data\",\"filesystem\":\"ext4\"}],\"confirmation\":\"${confirmation}\"}"
+  create_array_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/disks/array -H 'Content-Type: application/json' -d '$create_array_body'" 2>/dev/null)"
+  if [[ "$create_array_result" =~ \"id\":\"([^\"]+)\" ]]; then
+    job_id="${BASH_REMATCH[1]}"
+  else
+    ARRAY_SETUP_REASON="createArray did not return a job id: $create_array_result"
+    return 1
+  fi
+
+  wait_job_terminal "$job_id" 120
+  if [[ "$job_status" != "succeeded" ]]; then
+    ARRAY_SETUP_REASON="createArray job did not succeed (status=${job_status:-unknown}): $job_result"
+    return 1
+  fi
+
+  if ! ensure_pool_mounted; then
+    ARRAY_SETUP_REASON="pool did not report mounted:true after array/start, including after restarting hoservad for issue #262's array-not-mounted-until-restart gap"
+    return 1
+  fi
+
+  # createShare regenerates both smb.conf and /etc/exports for every
+  # share, not only ones with SMB or NFS enabled (D4: the whole file is
+  # generated from state) — step 2's own onboarding left both unmanaged
+  # (--leave-all, Q76), which refuses that write. Importing here takes
+  # over management, but only flips management mode: it does not read
+  # the pre-existing file into the database first, so the very next
+  # regeneration silently drops whatever seed-existing-host.sh put there
+  # (issue #264, a real product bug, filed and deferred rather than
+  # fixed here). The suite's own "existing host config" check therefore
+  # runs right after onboarding, above, before this import ever touches
+  # the files — not here.
+  if ! vm_ssh 'sudo hoserva doctor apply-host-config --samba import --nfs import' >/dev/null 2>&1; then
+    ARRAY_SETUP_REASON="apply-host-config --samba import --nfs import failed — createShare needs smb.conf and /etc/exports importable"
+    return 1
+  fi
+
+  local share_result
+  share_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$JOURNEY5_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
+  if [[ "$share_result" != *"\"name\":\"$JOURNEY5_SHARE\""* ]]; then
+    ARRAY_SETUP_REASON="createShare did not return the expected share: $share_result"
+    return 1
+  fi
+
+  return 0
+}
+
+# seed_journey5_fixture writes JOURNEY5_FILE_COUNT files into journey 5's
+# share through the pool mount, runs a baseline sync through the API
+# (guard is clear on this, its first-ever diff — every file is newly
+# added, nothing removed), then deletes JOURNEY5_DELETE_COUNT of them —
+# well past the threshold guard's default thresholds (Q16:
+# parity.DefaultRemovedFilesMax/DefaultRemovedUpdatedPercent) — so
+# journey 5's own "Run diff" click has real removals, a tripped guard and
+# an unsynced state to assert against. Never runs the diff itself: that
+# is journey 5's own first UI step.
+seed_journey5_fixture() {
+  if ! array_login; then
+    echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture: could not log in as the L3 admin" >&2
+    return 1
+  fi
+  if ! ensure_pool_mounted; then
+    echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture: pool is not mounted, cannot seed $JOURNEY5_SHARE" >&2
+    return 1
+  fi
+
+  local local_script remote_script="/tmp/hoserva-journey5-fixture.sh"
+  local_script="$(mktemp)"
+  trap 'rm -f -- "$local_script"' RETURN
+  cat >"$local_script" <<'FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+mode=$1
+share_path=$2
+case "$mode" in
+  seed)
+    file_count=$3
+    mkdir -p "$share_path"
+    for ((i = 1; i <= file_count; i++)); do
+      echo "journey-5-file-$i" >"$share_path/file-$i.txt"
+    done
+    ;;
+  delete)
+    delete_count=$3
+    mapfile -t victims < <(ls "$share_path"/file-*.txt | head -n "$delete_count")
+    rm -f -- "${victims[@]}"
+    ;;
+  *)
+    echo "hoserva-journey5-fixture: unknown mode '$mode'" >&2
+    exit 1
+    ;;
+esac
+FIXTURE
+  vm_scp "$local_script" "hoserva@127.0.0.1:$remote_script"
+  vm_ssh "chmod +x $remote_script"
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: seeding $JOURNEY5_FILE_COUNT files into $JOURNEY5_SHARE_PATH"
+  if ! vm_ssh "sudo $remote_script seed '$JOURNEY5_SHARE_PATH' $JOURNEY5_FILE_COUNT"; then
+    echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture: seeding files failed" >&2
+    return 1
+  fi
+
+  local sync_result job_id
+  sync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
+  if [[ "$sync_result" =~ \"id\":\"([^\"]+)\" ]]; then
+    job_id="${BASH_REMATCH[1]}"
+  else
+    echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture: baseline startSync did not return a job id: $sync_result" >&2
+    return 1
+  fi
+
+  wait_job_terminal "$job_id" 180
+  if [[ "$job_status" != "succeeded" ]]; then
+    echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture: baseline sync did not succeed (status=${job_status:-unknown}): $job_result" >&2
+    return 1
+  fi
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: deleting $JOURNEY5_DELETE_COUNT of $JOURNEY5_FILE_COUNT seeded files — mass deletion past the guard's default threshold (Q16)"
+  if ! vm_ssh "sudo $remote_script delete '$JOURNEY5_SHARE_PATH' $JOURNEY5_DELETE_COUNT"; then
+    echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture: mass deletion failed" >&2
+    return 1
+  fi
+
+  return 0
+}
+
 echo "vm-suite[$HOSERVA_LAB_ID]: === 1/12 install ==="
 if vm_domain_exists "$VM_DOMAIN"; then
   "$script_dir/destroy-vm.sh"
@@ -87,8 +344,38 @@ else
   not_yet "onboarding" "hoservad is not active on the guest (install step above did not complete — see step 1)"
 fi
 
+# Runs here — right after onboarding and before array setup — because
+# array_setup's own createShare needs smb.conf/exports import (see the
+# comment above array_setup), which regenerates both files from hoservad's
+# database and drops whatever seed-existing-host.sh put there (issue
+# #264: apply-host-config --samba/--nfs import only flips management
+# mode, it never reads the pre-existing file into the database first).
+# Checking survival now, immediately after the one point in the suite
+# where "install and onboarding" (this check's own doc 06 §4/#113
+# contract) has happened and nothing has touched those files yet, is
+# correct regardless of #264; checking after array setup would fail on
+# a real, but separate and already-tracked, product gap.
+echo "vm-suite[$HOSERVA_LAB_ID]: === existing host config (Q76) ==="
+if vm_domain_running "$VM_DOMAIN"; then
+  if "$script_dir/existing-host-config-check.sh"; then
+    pass "existing host config"
+  else
+    fail "existing host config" "Samba share, NFS export or fstab mount did not survive install and onboarding — see existing-host-config-check.sh output above"
+  fi
+else
+  not_yet "existing host config" "no running domain (install step above did not complete — see step 1)"
+fi
+
 echo "vm-suite[$HOSERVA_LAB_ID]: === 3/12 array setup ==="
-not_yet "array setup" "no array/disk/pool operation is in api/openapi.yaml yet (internal/pool, internal/parity exist as Go packages with L1/L2 tests, but no API surface a VM-level end-to-end test could drive) — re-check once that API lands"
+if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+  if array_setup; then
+    pass "array setup"
+  else
+    fail "array setup" "$ARRAY_SETUP_REASON"
+  fi
+else
+  not_yet "array setup" "no active hoservad on the guest (install step above did not complete — see step 1)"
+fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 4/12 disk yank and reconstruction ==="
 not_yet "disk yank and reconstruction" "depends on array setup (step 3) existing first — nothing to reconstruct without a configured array"
@@ -139,11 +426,18 @@ echo "vm-suite[$HOSERVA_LAB_ID]: === 7/12 config backup and restore ==="
 not_yet "config backup and restore" "no backup/export or import operation is in api/openapi.yaml yet (internal/backup does not exist) — doc 10's config backup feature has not landed"
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 8/12 Playwright journeys ==="
+if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+  if seed_journey5_fixture; then
+    echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture ready (share seeded, baseline synced, mass deletion applied)"
+  else
+    echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture preparation failed above — journey 5 must now fail for real, not skip" >&2
+  fi
+fi
 if [[ -x "$script_dir/run-playwright.sh" ]]; then
   if HOSERVA_E2E_BASE_URL="https://127.0.0.1:$VM_HTTPS_PORT" "$script_dir/run-playwright.sh"; then
     pass "Playwright journeys"
   else
-    fail "Playwright journeys" "see web/'s own Playwright report above — journey 5 (mass deletion blocks the sync) is expected to fail honestly until the mover/threshold-guard UI exists (web/src/routes has no share or array page yet), not silently skipped"
+    fail "Playwright journeys" "see web/'s own Playwright report above"
   fi
 else
   not_yet "Playwright journeys" "scripts/vm/run-playwright.sh is missing or not executable"
@@ -162,17 +456,6 @@ fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 10/12 spindown: 30-min flat counters with a running pool ==="
 not_yet "spindown: 30-min flat counters with a running pool" "needs a mergerfs/SnapRAID pool configured through hoservad (no array/pool operation is in api/openapi.yaml yet, the same gap step 3 names) plus a scheduled SMART-poll and change-journal job wired into hoservad (internal/disk's SMART poller and internal/parity's change journal exist as Go packages, issue #24, but cmd/hoservad/main.go calls neither on a timer yet) — the lab's own zero-organic-IO property under realistic idle/appdata/SMB-client load is already confirmed (doc 08 Spike 1, 2026-09-15), but without SMART polling or the change journal actually running; re-check once the pool API and the scheduler land"
-
-echo "vm-suite[$HOSERVA_LAB_ID]: === existing host config (Q76) ==="
-if vm_domain_running "$VM_DOMAIN"; then
-  if "$script_dir/existing-host-config-check.sh"; then
-    pass "existing host config"
-  else
-    fail "existing host config" "Samba share, NFS export or fstab mount did not survive install and onboarding — see existing-host-config-check.sh output above"
-  fi
-else
-  not_yet "existing host config" "no running domain (install step above did not complete — see step 1)"
-fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === NFS export mount (issue #47) ==="
 if vm_domain_running "$VM_DOMAIN"; then
