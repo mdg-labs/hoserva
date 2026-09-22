@@ -191,6 +191,12 @@ your **only** GitHub writes. Never `gh issue edit`, `gh issue close`, or
 - **Docs, code comments and commit messages describe the current design** —
   never the review history, the attempts, or what a previous round got
   wrong. State only what the code and its tests actually do.
+- **Claim nothing you did not check.** A commit message or comment may say
+  "tested", "confirmed", "works the same way as X", "covers every case" or
+  "closes the race" only when a check you ran in this dispatch shows it —
+  name the test or command. Untrue claims were still about one in five of
+  the verifier's blocking findings after 09-17, and each one costs a fix
+  round.
 - **Golden files change only deliberately.** If your change alters generated
   output, the commit message says what changed in the output and why — never
   regenerate goldens just to make a test pass.
