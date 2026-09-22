@@ -950,3 +950,129 @@ func TestWaitForStorageJobs_WaitsThenReturns(t *testing.T) {
 		t.Fatalf("WaitForStorageJobs after sync finished: %v", err)
 	}
 }
+
+// TestScheduler_PauseForBattery_RefusesMoverAndSync proves Q77's
+// on-battery hold: once active, Submit refuses both a mover and a sync
+// job (ErrOnBattery), but leaves every other type alone.
+func TestScheduler_PauseForBattery_RefusesMoverAndSync(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	s.registry.Register(TypeMover, false, blockingRun(make(chan struct{}), make(chan struct{}), nil))
+	s.registry.Register(TypeSync, false, blockingRun(make(chan struct{}), make(chan struct{}), nil))
+	scrubStarted, scrubRelease := registerBlocking(s, TypeScrub, false)
+	defer close(scrubRelease)
+
+	if paused := s.PauseForBattery(); len(paused) != 0 {
+		t.Fatalf("PauseForBattery with nothing running = %v, want none paused", paused)
+	}
+	if !s.OnBattery() {
+		t.Fatal("OnBattery() = false after PauseForBattery")
+	}
+
+	if _, err := s.Submit(ctx, TypeMover, nil, nil); !errors.Is(err, ErrOnBattery) {
+		t.Fatalf("Submit(TypeMover) while on battery = %v, want ErrOnBattery", err)
+	}
+	if _, err := s.Submit(ctx, TypeSync, nil, nil); !errors.Is(err, ErrOnBattery) {
+		t.Fatalf("Submit(TypeSync) while on battery = %v, want ErrOnBattery", err)
+	}
+	if _, err := s.Submit(ctx, TypeScrub, nil, nil); err != nil {
+		t.Fatalf("Submit(TypeScrub) while on battery = %v, want nil — only the mover and sync are held", err)
+	}
+	<-scrubStarted
+}
+
+// TestScheduler_PauseForBattery_StopsRunningMoverAtCheckpoint proves the
+// resumable-stop mechanism EnterMaintenance already uses for maintenance
+// mode also drives Q77's on-battery pause: a running mover job is asked
+// to stop, saves its checkpoint, and ends interrupted — never cancelled
+// outright the way a non-resumable job would be.
+func TestScheduler_PauseForBattery_StopsRunningMoverAtCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	stopSeen := make(chan struct{})
+	returned := make(chan struct{})
+	s.registry.Register(TypeMover, false, func(ctx context.Context, rc *RunContext) error {
+		<-rc.StopRequested()
+		close(stopSeen)
+		if err := rc.SaveCheckpoint([]byte("checkpoint-at-battery-pause")); err != nil {
+			return err
+		}
+		close(returned)
+		return nil
+	})
+	j, err := s.Submit(ctx, TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	paused := s.PauseForBattery()
+	if len(paused) != 1 || paused[0] != j.ID {
+		t.Fatalf("PauseForBattery = %v, want [%s]", paused, j.ID)
+	}
+	<-stopSeen
+	<-returned
+
+	waitFor(t, time.Second, func() bool {
+		got, err := s.store.Get(ctx, j.ID)
+		return err == nil && got.Status == StatusInterrupted
+	})
+}
+
+// TestScheduler_ResumeFromBattery_DispatchesJobQueuedBeforeTheHold
+// proves the dispatch() guard added for Q77's on-battery hold: a mover
+// job already queued for an ordinary class conflict before the hold
+// began stays queued — never started — once that conflict clears while
+// still on battery, and only starts once ResumeFromBattery actually
+// dispatches it. PauseForBattery itself never touches the queue; this is
+// what makes a held job actually start again once power returns.
+func TestScheduler_ResumeFromBattery_DispatchesJobQueuedBeforeTheHold(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	// Occupies ClassArrayWrite so the mover submission below queues
+	// instead of running immediately.
+	aStarted, aRelease := registerBlocking(s, TypeRebalance, false)
+	a, err := s.Submit(ctx, TypeRebalance, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-aStarted
+
+	bStarted, bRelease := registerBlocking(s, TypeMover, false)
+	b, err := s.Submit(ctx, TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit(TypeMover): %v", err)
+	}
+	if b.Status != StatusQueued {
+		t.Fatalf("b.Status = %s, want queued (class-conflicted with the running rebalance)", b.Status)
+	}
+
+	s.PauseForBattery()
+
+	close(aRelease)
+	waitSucceeded(t, s, a.ID)
+
+	// a finishing would ordinarily free b to start (its class conflict
+	// is gone) — the battery hold must keep it queued regardless.
+	select {
+	case <-bStarted:
+		t.Fatal("the queued mover job started while still on battery")
+	case <-time.After(50 * time.Millisecond):
+	}
+	got, err := s.store.Get(ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusQueued {
+		t.Fatalf("b.Status after a finished = %s, want still queued (Q77: held while on battery)", got.Status)
+	}
+
+	s.ResumeFromBattery()
+	if s.OnBattery() {
+		t.Fatal("OnBattery() = true after ResumeFromBattery")
+	}
+	<-bStarted
+	close(bRelease)
+	waitSucceeded(t, s, b.ID)
+}

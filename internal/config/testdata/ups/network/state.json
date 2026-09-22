@@ -1,0 +1,8 @@
+{
+  "connection": "network",
+  "network_host": "nut.example.lan",
+  "network_port": 3493,
+  "network_ups_name": "office-ups",
+  "network_username": "hoserva",
+  "network_password": "s3cr3t-network-pass"
+}

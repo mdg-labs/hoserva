@@ -292,6 +292,51 @@ func TestMaintenanceChain_JobStepFailureDoesNotStopTheChain(t *testing.T) {
 	}
 }
 
+// TestMaintenanceChain_MoverAndSyncStepsSkippedOnBattery proves Q77's
+// "hold scheduled syncs" applies to the nightly chain too: with the
+// scheduler already on battery, the mover and sync steps are both
+// reported Skipped — never a chain failure — while diff+guard and config
+// backup, which do not go through Submit, still run.
+func TestMaintenanceChain_MoverAndSyncStepsSkippedOnBattery(t *testing.T) {
+	s := newTestScheduler(t)
+	rec := &stepRecorder{}
+	registerRecording(s, TypeMover, rec, "mover")
+	registerRecording(s, TypeSync, rec, "sync")
+	s.PauseForBattery()
+
+	guard := &fakeGuard{}
+	backup := &fakeBackup{}
+	chain := &MaintenanceChain{
+		Scheduler: s,
+		Guard:     guard,
+		Backup:    backup,
+		Weekly:    false,
+	}
+
+	result, err := chain.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Blocked {
+		t.Fatal("Run reported Blocked, want false")
+	}
+	if got := rec.get(); len(got) != 0 {
+		t.Fatalf("recorded steps = %v, want none — mover and sync are held while on battery", got)
+	}
+	if !result.Steps[0].Skipped {
+		t.Errorf("mover step Skipped = %v, want true (Q77: held while on battery)", result.Steps[0].Skipped)
+	}
+	if !result.Steps[2].Skipped {
+		t.Errorf("sync step Skipped = %v, want true (Q77: held while on battery)", result.Steps[2].Skipped)
+	}
+	if guard.calls != 1 {
+		t.Errorf("guard.calls = %d, want 1 — diff+guard does not go through Submit", guard.calls)
+	}
+	if backup.count() != 1 {
+		t.Errorf("backup.count() = %d, want 1 — config backup does not go through Submit", backup.count())
+	}
+}
+
 func TestDetectConflict(t *testing.T) {
 	base := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
 
