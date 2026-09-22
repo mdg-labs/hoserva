@@ -51,8 +51,11 @@ stale_patterns=(
   'Community Applications|AppFeed|Squidly271'
 )
 stale_labels=('names the retired beta branch (Q46: dev/main)' 'names a hardware test tier (D20: none exists)' 'references the Unraid CA feed (D19: own catalog)')
+# A line that cites the decision or negates the term ("D20: no hardware
+# tier", "there is no beta branch") states the current design, not a stale
+# assumption.
 for i in "${!stale_patterns[@]}"; do
-  if grep -qiE "${stale_patterns[$i]}" <<<"$body"; then
+  if grep -iE "${stale_patterns[$i]}" <<<"$body" | grep -qviE 'D19|D20|Q46|\bno\b|\bnot\b|never|retired|removed'; then
     reasons+=("stale: ${stale_labels[$i]}")
   fi
 done
