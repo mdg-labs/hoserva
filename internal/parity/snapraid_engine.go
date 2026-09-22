@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -214,6 +215,42 @@ func (e *SnapraidEngine) CurrentRelocationManifest(ctx context.Context) ([]Manif
 	return e.Relocation.Current(ctx)
 }
 
+// confirmManifestTargets marks each entry in manifest whose file is
+// already tracked on its own TargetDisk — read from a real `snapraid
+// list` (List's own doc comment: tracked state only, never a live
+// directory walk) — with ManifestEntry.TargetConfirmed, so matchManifest
+// can account a Q14 two-phase relocation's trailing-sync removal even
+// though its addition was recorded by an earlier sync's own diff, not
+// this one (#248). Sync only calls this when
+// manifestNeedsTargetConfirmation says the same-diff check alone cannot
+// account for something the manifest claims, so an ordinary, same-diff
+// relocation never pays for the extra invocation. The manifest passed in
+// is never mutated or written back anywhere — this returns a fresh slice
+// for this one Sync call's own guard evaluation.
+func (e *SnapraidEngine) confirmManifestTargets(ctx context.Context, manifest []ManifestEntry) ([]ManifestEntry, error) {
+	list, err := e.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("parity: confirming relocation manifest targets: %w", err)
+	}
+	tracked := make(map[fileKey]bool, len(list.Files))
+	for _, f := range list.Files {
+		mount, ok := list.DataMounts[f.Disk]
+		if !ok {
+			continue
+		}
+		tracked[fileKey{filepath.Clean(mount), f.RelPath}] = true
+	}
+
+	confirmed := make([]ManifestEntry, len(manifest))
+	for i, m := range manifest {
+		confirmed[i] = m
+		if tracked[fileKey{m.TargetDisk, m.RelPath}] {
+			confirmed[i].TargetConfirmed = true
+		}
+	}
+	return confirmed, nil
+}
+
 // Diff runs `snapraid status` (for the before-counts BuildDiffReport
 // needs) and then `snapraid diff`, and combines them into the public
 // DiffReport (doc 02 §2). Diff's own exit code 2 ("There are
@@ -404,7 +441,14 @@ func (e *SnapraidEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progre
 	if err != nil {
 		return nil, err
 	}
-	result := e.Guard.Evaluate(diff, opts.Manifest, opts.RemovingDisks)
+	manifest := opts.Manifest
+	if manifestNeedsTargetConfirmation(diff, manifest) {
+		manifest, err = e.confirmManifestTargets(ctx, manifest)
+		if err != nil {
+			return nil, err
+		}
+	}
+	result := e.Guard.Evaluate(diff, manifest, opts.RemovingDisks)
 	if result.Blocked && !opts.Confirm {
 		return nil, &GuardBlockedError{Result: result}
 	}

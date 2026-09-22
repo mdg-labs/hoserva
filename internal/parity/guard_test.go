@@ -228,6 +228,149 @@ func TestGuard_ManifestEntryWithoutReappearanceNotAccounted(t *testing.T) {
 	}
 }
 
+// TestGuard_TargetConfirmedAccountsTrailingSyncRemoval is this issue's
+// (#248) own reproduction: a Q14 two-phase relocation's trailing sync
+// shows only the removal — the addition was already committed by an
+// earlier sync, so it never reappears in AddedFiles here — yet the
+// manifest entry must still be accounted when TargetConfirmed says a
+// real `snapraid list` already found the file on its target disk.
+func TestGuard_TargetConfirmedAccountsTrailingSyncRemoval(t *testing.T) {
+	diff := DiffReport{
+		Removed: 1,
+		PerDisk: map[string]DiskDiff{
+			"/mnt/disk1": {FilesBefore: 100, FilesAfter: 99},
+			"/mnt/disk2": {FilesBefore: 100, FilesAfter: 100},
+		},
+		RemovedFiles: []DiffFile{{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"}},
+		// AddedFiles deliberately empty: unlike the same-diff case, a
+		// trailing sync's diff never shows the addition — it was already
+		// committed by the sync before this one.
+	}
+	manifest := []ManifestEntry{
+		{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2", TargetConfirmed: true},
+	}
+
+	result := Guard{Config: GuardConfig{RemovedFilesMax: 0}}.Evaluate(diff, manifest, nil)
+
+	if len(result.AccountedRemovals) != 1 {
+		t.Fatalf("Evaluate: AccountedRemovals = %+v, want 1 — TargetConfirmed must account it even without a same-diff reappearance", result.AccountedRemovals)
+	}
+	if result.RemovedCount != 0 {
+		t.Fatalf("Evaluate: RemovedCount = %d, want 0 (the one removal is accounted)", result.RemovedCount)
+	}
+	if result.Blocked {
+		t.Fatalf("Evaluate: Blocked = true, want false: %+v", result)
+	}
+}
+
+// TestGuard_TargetConfirmedDoesNotMaskAnUnrelatedRemoval proves
+// TargetConfirmed only exempts the exact (disk, path) it names — an
+// unrelated real removal at the same source disk, not covered by any
+// manifest entry, still counts fully and still blocks.
+func TestGuard_TargetConfirmedDoesNotMaskAnUnrelatedRemoval(t *testing.T) {
+	diff := DiffReport{
+		Removed: 3,
+		PerDisk: map[string]DiskDiff{
+			"/mnt/disk1": {FilesBefore: 100, FilesAfter: 97},
+			"/mnt/disk2": {FilesBefore: 100, FilesAfter: 100},
+		},
+		RemovedFiles: []DiffFile{
+			{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"},
+			{Disk: "/mnt/disk1", RelPath: "movies/unexpected-delete-1.mkv"},
+			{Disk: "/mnt/disk1", RelPath: "movies/unexpected-delete-2.mkv"},
+		},
+	}
+	manifest := []ManifestEntry{
+		{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2", TargetConfirmed: true},
+	}
+
+	// RemovedFilesMax's own zero value falls back to the package default
+	// (500, GuardConfig.removedFilesMax) — 1 is the lowest threshold that
+	// still actually blocks, so 2 unaccounted removals must trip it.
+	result := Guard{Config: GuardConfig{RemovedFilesMax: 1}}.Evaluate(diff, manifest, nil)
+
+	if len(result.AccountedRemovals) != 1 {
+		t.Fatalf("Evaluate: AccountedRemovals = %+v, want exactly 1 (movies/a.mkv only)", result.AccountedRemovals)
+	}
+	if result.RemovedCount != 2 {
+		t.Fatalf("Evaluate: RemovedCount = %d, want 2 — the two unrelated deletions must still count", result.RemovedCount)
+	}
+	if !result.Blocked {
+		t.Fatal("Evaluate: Blocked = false, want true — unaccounted removals alongside a TargetConfirmed one must still block")
+	}
+}
+
+// TestGuard_TargetConfirmedOnWrongEntryStillBlocks reproduces this issue's
+// own "stale/incorrect manifest entry" acceptance criterion: TargetConfirmed
+// set true on an entry naming the wrong path must not exempt a real
+// removal it doesn't actually name — matchManifest matches by (disk, path)
+// key, and TargetConfirmed on one entry never leaks into any other.
+func TestGuard_TargetConfirmedOnWrongEntryStillBlocks(t *testing.T) {
+	diff := DiffReport{
+		Removed: 1,
+		PerDisk: map[string]DiskDiff{
+			"/mnt/disk1": {FilesBefore: 100, FilesAfter: 99},
+			"/mnt/disk2": {FilesBefore: 100, FilesAfter: 100},
+		},
+		RemovedFiles: []DiffFile{{Disk: "/mnt/disk1", RelPath: "movies/unexpected-delete.mkv"}},
+	}
+	// This entry's own path was genuinely confirmed on disk2 (some other,
+	// unrelated relocation), but it names a different RelPath than the
+	// one actually removed above — a stale/incorrect manifest entry must
+	// never account for a removal it doesn't name.
+	manifest := []ManifestEntry{
+		{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2", TargetConfirmed: true},
+	}
+
+	// RemovedFilesMax's own zero value falls back to the package default
+	// (500) — 0 removed files max would too, so this uses the percent
+	// trigger instead: 1 removed against a before-count of 200 files is
+	// 0.5%, well over a RemovedUpdatedPercent lowered to 0.1%.
+	result := Guard{Config: GuardConfig{RemovedUpdatedPercent: 0.1}}.Evaluate(diff, manifest, nil)
+
+	if len(result.AccountedRemovals) != 0 {
+		t.Fatalf("Evaluate: AccountedRemovals = %+v, want none — the confirmed entry names a different path", result.AccountedRemovals)
+	}
+	if result.RemovedCount != 1 {
+		t.Fatalf("Evaluate: RemovedCount = %d, want 1 (unaccounted)", result.RemovedCount)
+	}
+	if !result.Blocked {
+		t.Fatal("Evaluate: Blocked = false, want true")
+	}
+}
+
+// TestManifestNeedsTargetConfirmation exercises the gate
+// SnapraidEngine.Sync calls before ever paying for a real `snapraid list`
+// (#248): it must fire only when a manifest names a removal this diff
+// shows but whose target-side addition it does not, and never fire for an
+// empty manifest, an already same-diff-matched entry, or an entry already
+// marked TargetConfirmed.
+func TestManifestNeedsTargetConfirmation(t *testing.T) {
+	trailingDiff := DiffReport{
+		RemovedFiles: []DiffFile{{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"}},
+	}
+	sameDiff := DiffReport{
+		RemovedFiles: []DiffFile{{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"}},
+		AddedFiles:   []DiffFile{{Disk: "/mnt/disk2", RelPath: "movies/a.mkv"}},
+	}
+	entry := ManifestEntry{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"}
+
+	if manifestNeedsTargetConfirmation(trailingDiff, nil) {
+		t.Error("manifestNeedsTargetConfirmation: true for an empty manifest, want false")
+	}
+	if !manifestNeedsTargetConfirmation(trailingDiff, []ManifestEntry{entry}) {
+		t.Error("manifestNeedsTargetConfirmation: false for a trailing-sync removal with no same-diff addition, want true")
+	}
+	if manifestNeedsTargetConfirmation(sameDiff, []ManifestEntry{entry}) {
+		t.Error("manifestNeedsTargetConfirmation: true when matchManifest can already account it via the same diff, want false")
+	}
+	already := entry
+	already.TargetConfirmed = true
+	if manifestNeedsTargetConfirmation(trailingDiff, []ManifestEntry{already}) {
+		t.Error("manifestNeedsTargetConfirmation: true for an entry already TargetConfirmed, want false")
+	}
+}
+
 // TestGuard_DuplicateManifestEntriesDoNotMaskUnrelatedRemovals reproduces
 // this issue's own rejected-commit finding: a manifest that records the
 // same real removal many times (a retry/resume loop appending an entry

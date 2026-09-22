@@ -529,6 +529,117 @@ func TestSnapraidEngine_Sync_AccountedRemovalsAllowSync(t *testing.T) {
 	}
 }
 
+// trailingStatusLog/trailingDiffLog represent a Q14 two-phase relocation's
+// *trailing* sync (#248): three files removed from d1, none of them
+// showing as added on d2 — that addition was already committed by an
+// earlier sync's own diff, not this one, so matchManifest's same-diff
+// check alone cannot account for them.
+const trailingStatusLog = `data:d1:/lab/guard/mnt/disk1/
+data:d2:/lab/guard/mnt/disk2/
+summary:disk_file_count:d1:1000
+summary:disk_file_count:d2:1003
+`
+const trailingDiffLog = `data:d1:/lab/guard/mnt/disk1/
+data:d2:/lab/guard/mnt/disk2/
+scan:remove:d1:movies/f1.bin
+scan:remove:d1:movies/f2.bin
+scan:remove:d1:movies/f3.bin
+summary:equal:0
+summary:added:0
+summary:removed:3
+summary:updated:0
+summary:moved:0
+summary:copied:0
+summary:restored:0
+summary:exit:diff
+`
+
+// trailingListLogAllTracked is the `snapraid list` a trailing sync's own
+// confirmManifestTargets call reads: f1-f3 already tracked on d2, proving
+// the earlier sync really did commit their addition.
+const trailingListLogAllTracked = `data:d1:/lab/guard/mnt/disk1/
+data:d2:/lab/guard/mnt/disk2/
+file:d2:movies/f1.bin:100:1000000000:1:1
+file:d2:movies/f2.bin:100:1000000000:1:1
+file:d2:movies/f3.bin:100:1000000000:1:1
+summary:file_count:3
+summary:exit:ok
+`
+
+// trailingListLogNoneTracked is the same shape, but d2 never actually
+// received any of the files — the "stale/incorrect manifest" case: a
+// relocation that claims to have moved files that were never really
+// copied and synced.
+const trailingListLogNoneTracked = `data:d1:/lab/guard/mnt/disk1/
+data:d2:/lab/guard/mnt/disk2/
+summary:file_count:0
+summary:exit:ok
+`
+
+// TestSnapraidEngine_Sync_TrailingSyncAccountsConfirmedTarget is this
+// issue's (#248) own central lab-adjacent reproduction at the engine
+// level: a trailing sync whose diff shows only the removal still proceeds
+// once a real `snapraid list` confirms the files are already on their
+// target disk — RemovedFilesMax is set low enough that all 3 removals
+// would block without the exemption.
+func TestSnapraidEngine_Sync_TrailingSyncAccountsConfirmedTarget(t *testing.T) {
+	dir := t.TempDir()
+	r := &scriptedRunner{t: t, script: []scriptedResult{
+		{logBody: trailingStatusLog},                             // status (guard's "before")
+		{logBody: trailingDiffLog, err: &fakeExitError{code: 2}}, // diff (guard evaluation)
+		{logBody: trailingListLogAllTracked},                     // list (confirmManifestTargets)
+		{logBody: string(readCorpus(t, "snapraid_sync_ok.log"))}, // sync
+	}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r, Guard: Guard{Config: GuardConfig{RemovedFilesMax: 2}}}
+
+	ch, err := e.Sync(context.Background(), SyncOpts{
+		Manifest: manifestEntries("movies/f1.bin", "movies/f2.bin", "movies/f3.bin"),
+	})
+	if err != nil {
+		t.Fatalf("Sync for a trailing two-phase sync: %v", err)
+	}
+	final := drain(t, ch)
+	if final.Err != nil {
+		t.Fatalf("Sync final Progress.Err = %v, want nil", final.Err)
+	}
+	if len(r.calls) != 4 {
+		t.Fatalf("got %d snapraid calls, want 4 (status, diff, list, sync): %v", len(r.calls), r.calls)
+	}
+	if got := r.calls[2][len(r.calls[2])-1]; got != "list" {
+		t.Fatalf("third call = %v, want its last arg to be \"list\"", r.calls[2])
+	}
+}
+
+// TestSnapraidEngine_Sync_UnconfirmedTrailingRemovalStillBlocks is the
+// other half of this issue's (#248) own acceptance criteria: the same
+// trailing-sync diff shape, but `snapraid list` shows the files were
+// never actually placed on their claimed target disk — a stale or
+// incorrect manifest entry — so the guard must still block exactly as it
+// would with no manifest at all.
+func TestSnapraidEngine_Sync_UnconfirmedTrailingRemovalStillBlocks(t *testing.T) {
+	dir := t.TempDir()
+	r := &scriptedRunner{t: t, script: []scriptedResult{
+		{logBody: trailingStatusLog},
+		{logBody: trailingDiffLog, err: &fakeExitError{code: 2}},
+		{logBody: trailingListLogNoneTracked},
+	}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r, Guard: Guard{Config: GuardConfig{RemovedFilesMax: 2}}}
+
+	_, err := e.Sync(context.Background(), SyncOpts{
+		Manifest: manifestEntries("movies/f1.bin", "movies/f2.bin", "movies/f3.bin"),
+	})
+	var blocked *GuardBlockedError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("Sync error %v is not a *GuardBlockedError", err)
+	}
+	if blocked.Result.RemovedCount != 3 {
+		t.Fatalf("RemovedCount = %d, want 3 — a manifest entry whose target was never actually confirmed must not be accounted", blocked.Result.RemovedCount)
+	}
+	if len(r.calls) != 3 {
+		t.Fatalf("got %d snapraid calls, want exactly 3 — sync must never run: %v", len(r.calls), r.calls)
+	}
+}
+
 // TestSnapraidEngine_CurrentRelocationManifest_UnwiredReturnsNil confirms
 // a SnapraidEngine with no Relocation store (the zero value, exactly what
 // every engine built before #194 has) reports no manifest — RunSync's own

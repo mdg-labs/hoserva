@@ -31,8 +31,14 @@ type SyncOpts struct {
 	// mover, rebalance, evacuation or share-relocation job recorded for
 	// files it moved since the last sync. The guard excludes a removal
 	// from its thresholds when it matches an entry here and the same
-	// relative path reappears as added or copied on that entry's target
-	// disk in this sync's own fresh diff.
+	// relative path either reappears as added or copied on that entry's
+	// target disk in this sync's own fresh diff, or was already
+	// confirmed there by an earlier sync — Q14's mandated two-phase
+	// order (copy+verify, sync, delete, sync) means a relocation's own
+	// addition and removal are structurally never in the same diff, so
+	// Sync itself checks a real `snapraid list` for exactly the entries
+	// that need it before evaluating the guard (ManifestEntry.
+	// TargetConfirmed, #248).
 	Manifest []ManifestEntry
 	// RemovingDisks is the set of mount points currently being evacuated
 	// (doc 09 §4, keyed the same way DiffReport.PerDisk is) — exempt from
@@ -47,9 +53,13 @@ type SyncOpts struct {
 // ManifestEntry is one file a relocation job (the mover, rebalance,
 // evacuation or share relocation — doc 09 §2-§4) recorded moving since the
 // last sync (doc 02 §2, Q15). Whichever package drives that job owns
-// writing and persisting these; this package only ever reads a slice of
-// them, handed in through SyncOpts.Manifest for the one sync that must
-// account for them.
+// writing and persisting these; this package never persists a change to
+// one — it only ever reads a slice of them, handed in through
+// SyncOpts.Manifest for the one sync that must account for them, and may
+// set TargetConfirmed on its own in-memory copy before evaluating the
+// guard (#248) — a derived fact recomputed fresh from a real `snapraid
+// list` every time, never written back to whatever store the caller
+// loaded the manifest from.
 type ManifestEntry struct {
 	// RelPath is the file's path relative to its disk (matching
 	// DiffFile.RelPath's own shape — what the guard's manifest matching
@@ -60,6 +70,16 @@ type ManifestEntry struct {
 	MTime      time.Time
 	SourceDisk string // mount point, matching DiffReport.PerDisk's own keys.
 	TargetDisk string
+	// TargetConfirmed is true once this entry's file is already tracked
+	// on TargetDisk in SnapRAID's own content file — i.e. an earlier
+	// sync's own diff already recorded the addition this manifest entry
+	// promises (Q14's two-phase order: copy+verify, sync, delete, sync —
+	// the addition and this entry's eventual removal are structurally
+	// never in the same diff, #248). A caller building a manifest never
+	// sets this itself; it always starts false, and SnapraidEngine.Sync
+	// is the only place that ever sets it, from a real `snapraid list`,
+	// never from the manifest's own say-so.
+	TargetConfirmed bool
 }
 
 // DiffReport is what `snapraid diff` reports before a sync: exactly what

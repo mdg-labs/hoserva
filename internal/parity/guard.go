@@ -220,9 +220,34 @@ func (g Guard) Evaluate(diff DiffReport, manifest []ManifestEntry, removingDisks
 // a reappearance elsewhere in the same diff.
 type fileKey struct{ disk, relPath string }
 
+// diffFileKeySets projects diff's RemovedFiles/AddedFiles into the same
+// fileKey shape matchManifest and manifestNeedsTargetConfirmation both
+// match a ManifestEntry's SourceDisk/TargetDisk against, so the two never
+// risk looking at the diff two different ways.
+func diffFileKeySets(diff DiffReport) (removed, added map[fileKey]bool) {
+	removed = make(map[fileKey]bool, len(diff.RemovedFiles))
+	for _, f := range diff.RemovedFiles {
+		removed[fileKey{f.Disk, f.RelPath}] = true
+	}
+	added = make(map[fileKey]bool, len(diff.AddedFiles))
+	for _, f := range diff.AddedFiles {
+		added[fileKey{f.Disk, f.RelPath}] = true
+	}
+	return removed, added
+}
+
 // matchManifest is Q15's own rule: a manifest entry is accounted when its
-// RelPath was removed from SourceDisk *and* the same RelPath appears
-// (added or copied) on TargetDisk, both within the same diff.
+// RelPath was removed from SourceDisk in this diff *and* the same RelPath
+// either appears (added or copied) on TargetDisk within that same diff, or
+// was already confirmed there by an earlier sync (ManifestEntry.
+// TargetConfirmed) — Q14's mandated two-phase order (copy+verify, sync,
+// delete, sync) means a relocation's own addition and its eventual
+// trailing-sync removal are structurally never in the same diff, so the
+// same-diff check alone can never account for one (#248).
+// TargetConfirmed is never taken on trust from the manifest itself: it is
+// set only by SnapraidEngine.Sync, and only after a real `snapraid list`
+// showed the file genuinely already tracked on TargetDisk — the same
+// grounding in real, observed state the same-diff check already had.
 //
 // It returns both the matched manifest entries (for GuardResult's own
 // display group) and matchedRemovals — the *distinct* removal identities
@@ -238,14 +263,7 @@ func matchManifest(diff DiffReport, manifest []ManifestEntry) (accounted []Manif
 		return nil, nil
 	}
 
-	removed := make(map[fileKey]bool, len(diff.RemovedFiles))
-	for _, f := range diff.RemovedFiles {
-		removed[fileKey{f.Disk, f.RelPath}] = true
-	}
-	added := make(map[fileKey]bool, len(diff.AddedFiles))
-	for _, f := range diff.AddedFiles {
-		added[fileKey{f.Disk, f.RelPath}] = true
-	}
+	removed, added := diffFileKeySets(diff)
 
 	matchedRemovals = make(map[fileKey]struct{})
 	for _, m := range manifest {
@@ -253,13 +271,41 @@ func matchManifest(diff DiffReport, manifest []ManifestEntry) (accounted []Manif
 		if _, already := matchedRemovals[key]; already {
 			continue
 		}
-		if !removed[key] || !added[fileKey{m.TargetDisk, m.RelPath}] {
+		if !removed[key] {
+			continue
+		}
+		if !added[fileKey{m.TargetDisk, m.RelPath}] && !m.TargetConfirmed {
 			continue
 		}
 		matchedRemovals[key] = struct{}{}
 		accounted = append(accounted, m)
 	}
 	return accounted, matchedRemovals
+}
+
+// manifestNeedsTargetConfirmation reports whether manifest has an entry
+// whose SourceDisk removal shows up in diff but whose TargetDisk addition
+// does not — exactly the shape a Q14 two-phase relocation's trailing sync
+// leaves matchManifest unable to account for on its own (#248).
+// SnapraidEngine.Sync calls this before paying for a real `snapraid list`
+// (its own confirmManifestTargets): every ordinary, same-diff relocation —
+// the plain mover, and every manifest matchManifest can already account
+// for — costs exactly what it always did, no extra invocation.
+func manifestNeedsTargetConfirmation(diff DiffReport, manifest []ManifestEntry) bool {
+	if len(manifest) == 0 {
+		return false
+	}
+	removed, added := diffFileKeySets(diff)
+	for _, m := range manifest {
+		if m.TargetConfirmed {
+			continue
+		}
+		key := fileKey{m.SourceDisk, m.RelPath}
+		if removed[key] && !added[fileKey{m.TargetDisk, m.RelPath}] {
+			return true
+		}
+	}
+	return false
 }
 
 // anyDiskEmptied reports whether diff would leave any disk (including one
