@@ -183,6 +183,38 @@ func TestWriteUPS_SwitchingFromUSBToNetworkRemovesLocalFiles(t *testing.T) {
 	}
 }
 
+// TestWriteUPS_RefusesControlCharacterInField proves WriteUPS refuses a
+// CR/LF (or other control character) in any user-controlled field before
+// writing anything — the field otherwise lands unescaped in a generated
+// NUT config line, letting it inject a new directive.
+func TestWriteUPS_RefusesControlCharacterInField(t *testing.T) {
+	state := loadUPSState(t, "usb")
+	state.MonitorPassword = "s3cr3t\nSHUTDOWNCMD \"/bin/rm -rf /\""
+	g := NewGenerator(t.TempDir())
+
+	err := g.WriteUPS(context.Background(), state, "settings ups", 1, time.Now())
+	if !errors.Is(err, ErrInvalidUPSField) {
+		t.Fatalf("WriteUPS with a newline in monitor_password = %v, want ErrInvalidUPSField", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(g.Root, PathNUTConf)); !os.IsNotExist(statErr) {
+		t.Fatalf("expected %s to not exist after a refused write", PathNUTConf)
+	}
+}
+
+// TestCanWriteUPS_RefusesWhitespaceInField proves the same validation
+// runs in the CanWriteUPS preflight, not only inside WriteUPS itself —
+// a space in a MONITOR-line field (upsmon.conf(5)) would misalign its
+// positional tokens.
+func TestCanWriteUPS_RefusesWhitespaceInField(t *testing.T) {
+	state := loadUPSState(t, "network")
+	state.NetworkUsername = "hoserva admin"
+
+	err := NewGenerator(t.TempDir()).CanWriteUPS(context.Background(), state)
+	if !errors.Is(err, ErrInvalidUPSField) {
+		t.Fatalf("CanWriteUPS with a space in network_username = %v, want ErrInvalidUPSField", err)
+	}
+}
+
 // TestCanWriteUPS_RefusesExistingHostFile proves the preflight refuses
 // before any file is written when one of the four target paths already
 // exists and was never imported (Q76) — CanWriteShareFiles's own

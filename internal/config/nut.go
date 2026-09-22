@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Q77 UPS config paths, relative to Generator.Root ("/etc" in production,
@@ -83,6 +84,40 @@ type UPSState struct {
 	RuntimeSeconds    int `json:"runtime_seconds,omitempty"`
 }
 
+// ErrInvalidUPSField reports a UPSState field the render functions below
+// cannot safely place in a generated NUT config file: every render
+// function inserts these fields directly into config lines, and NUT's
+// own file formats have no escaping for them, so a CR or LF could add an
+// attacker- or fat-fingered-controlled directive line, and whitespace in
+// a MONITOR-line field (upsmon.conf(5)) would misalign its positional
+// tokens. validateUPSState is the one place this is checked, called from
+// both CanWriteUPS (preflight) and WriteUPS (the actual sink), since
+// WriteUPS has no other caller yet to guarantee CanWriteUPS ran first.
+var ErrInvalidUPSField = fmt.Errorf("config: ups field contains whitespace or a control character")
+
+// validateUPSState rejects a whitespace or control character in any
+// field the render functions below place in a NUT config file.
+func validateUPSState(state UPSState) error {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"driver", state.Driver},
+		{"port", state.Port},
+		{"monitor_password", state.MonitorPassword},
+		{"network_host", state.NetworkHost},
+		{"network_ups_name", state.NetworkUPSName},
+		{"network_username", state.NetworkUsername},
+		{"network_password", state.NetworkPassword},
+	}
+	for _, f := range fields {
+		if strings.IndexFunc(f.value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+			return fmt.Errorf("%w: %s", ErrInvalidUPSField, f.name)
+		}
+	}
+	return nil
+}
+
 // RenderNUTConf renders /etc/nut/nut.conf's MODE line: standalone for a
 // USB-attached UPS Hoserva runs its own upsd against, netclient for a
 // remote NUT server Hoserva only monitors.
@@ -158,6 +193,9 @@ func networkHostPort(state UPSState) string {
 // any of them (Q76's own CanWrite, extended to a multi-file apply the
 // way CanWriteShareFiles already does for shares).
 func (g *Generator) CanWriteUPS(ctx context.Context, state UPSState) error {
+	if err := validateUPSState(state); err != nil {
+		return err
+	}
 	if err := g.CanWrite(ctx, PathNUTConf); err != nil {
 		return err
 	}
@@ -180,6 +218,9 @@ func (g *Generator) CanWriteUPS(ctx context.Context, state UPSState) error {
 // removed-when-no-longer-applicable pattern WritePoolMounts already uses
 // for a share that stops needing its own mover-target unit.
 func (g *Generator) WriteUPS(ctx context.Context, state UPSState, command string, revision int, now time.Time) error {
+	if err := validateUPSState(state); err != nil {
+		return err
+	}
 	if err := g.Write(ctx, File{Path: PathNUTConf, Command: command, Body: []byte(RenderNUTConf(state))}, revision, now); err != nil {
 		return err
 	}
