@@ -37,7 +37,12 @@ Depends: adduser, mergerfs (>= 2.40.2), snapraid (>= 12.4), smartmontools, hdpar
 # a dependency here (D8): it is a prerequisite the user installs from
 # Docker's own repository, checked and reported by `hoservad`/`hoserva
 # doctor`, not something this package pulls in.
-Recommends: rclone, unattended-upgrades
+#
+# nut is the Debian package providing upsd/upsmon/upscmd for a
+# USB-attached UPS or a network NUT server (Q77, doc 13); a host with no
+# UPS at all is the common case, so this stays a Recommends rather than
+# a hard Depends.
+Recommends: rclone, unattended-upgrades, nut
 Description: Home server management for mixed-size disks
  Hoserva is a management layer over mergerfs and SnapRAID: a daemon, CLI
  and web UI that pool mismatched drives behind one mergerfs mount, keep
