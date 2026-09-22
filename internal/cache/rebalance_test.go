@@ -131,6 +131,44 @@ func TestPlanRebalance_WarnsPathPreservingSpread(t *testing.T) {
 	}
 }
 
+// TestPickMovableFile_SkipsCandidateThatWouldInvertSkew proves
+// pickMovableFile rejects a largest-first candidate that has headroom on
+// least but would leave least more full than most, and instead picks a
+// smaller candidate that does not — otherwise the next planning
+// iteration could plan a reverse move of the same file, ping-ponging it
+// through real copy/delete/guarded-sync work without reducing skew.
+func TestPickMovableFile_SkipsCandidateThatWouldInvertSkew(t *testing.T) {
+	most := &branchState{
+		usage: DiskUsage{TotalBytes: 1000, FreeBytes: 100}, // 90% used
+		files: []rebalanceCandidate{{rel: "big.bin", size: 850}, {rel: "small.bin", size: 300}},
+	}
+	least := &branchState{
+		usage: DiskUsage{TotalBytes: 1000, FreeBytes: 900}, // 10% used
+	}
+
+	idx := pickMovableFile(most, least, 0)
+	if idx < 0 || most.files[idx].rel != "small.bin" {
+		t.Fatalf("pickMovableFile picked index %d, want small.bin — big.bin fits least's headroom but would leave least (95%% used) more full than most (5%% used)", idx)
+	}
+}
+
+// TestPickMovableFile_ReturnsNoneWhenEveryCandidateWouldInvertSkew proves
+// pickMovableFile returns -1 rather than falling back to a candidate
+// that has headroom but would invert the skew.
+func TestPickMovableFile_ReturnsNoneWhenEveryCandidateWouldInvertSkew(t *testing.T) {
+	most := &branchState{
+		usage: DiskUsage{TotalBytes: 1000, FreeBytes: 100}, // 90% used
+		files: []rebalanceCandidate{{rel: "big.bin", size: 850}},
+	}
+	least := &branchState{
+		usage: DiskUsage{TotalBytes: 1000, FreeBytes: 900}, // 10% used
+	}
+
+	if idx := pickMovableFile(most, least, 0); idx != -1 {
+		t.Fatalf("pickMovableFile = %d, want -1 — the only candidate would invert the skew", idx)
+	}
+}
+
 // TestPlanRebalance_SkipsShareWithFewerThanTwoBranches proves a share
 // with a single branch — nothing to rebalance between — produces no
 // moves and no error.

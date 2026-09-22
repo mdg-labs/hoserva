@@ -242,13 +242,23 @@ func planShareRebalance(ctx context.Context, s Share, cfg RebalanceConfig, deps 
 
 // pickMovableFile returns the index of the first (largest-first sorted)
 // file on most that still fits on least once least's own MinFreeSpace
-// headroom is kept (doc 09 §3's "or nothing more fits minfreespace"), or
-// -1 when none does.
+// headroom is kept (doc 09 §3's "or nothing more fits minfreespace"), and
+// that would not leave least more full than most — a candidate that
+// overshoots would invert the skew the caller is trying to reduce,
+// letting the next iteration plan a reverse move that ping-pongs the
+// same file back and forth through real copy/delete/guarded-sync work.
+// Returns -1 when no candidate satisfies both.
 func pickMovableFile(most, least *branchState, minFreeSpace int64) int {
 	for i, f := range most.files {
-		if least.usage.FreeBytes-minFreeSpace >= f.size {
-			return i
+		if least.usage.FreeBytes-minFreeSpace < f.size {
+			continue
 		}
+		mostAfter := DiskUsage{TotalBytes: most.usage.TotalBytes, FreeBytes: most.usage.FreeBytes + f.size}
+		leastAfter := DiskUsage{TotalBytes: least.usage.TotalBytes, FreeBytes: least.usage.FreeBytes - f.size}
+		if leastAfter.UsedPercent() > mostAfter.UsedPercent() {
+			continue
+		}
+		return i
 	}
 	return -1
 }
