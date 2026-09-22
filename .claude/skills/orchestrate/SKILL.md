@@ -1,7 +1,7 @@
 ---
 name: orchestrate
 description: Given a GitHub issue number (a single item, or an epic with sub-issues), autonomously implement and verify the work — sonnet execution agents in isolated scratch clones (one per item, or one per bundle of small, correlated items), one independent verifier per attempt, landing on local dev only after a PASS and pushing it there immediately, including safety-critical commits, unless it's blocked by a fresh follow-up. Parallelizes items with disjoint file scope, serializes overlapping ones. Never touches main — that's a separate, maintainer-run dev-to-main promotion. Use when asked to "work on issue #n", "implement epic #n", "run the orchestrator", or "orchestrate #n".
-argument-hint: <issue-number>
+argument-hint: <issue-number>... [--no-discord]
 allowed-tools:
   - Read
   - Grep
@@ -566,9 +566,11 @@ gets its own issue and its own commit.
 
 Don't send it to the user yet — step 13 first.
 
-## 13. Notify Discord — the final action, always
+## 13. Notify Discord — the final action, unless the run was started with `--no-discord`
 
-After T is exhausted — full or partial success — write step 12's report as
+If the invocation carries `--no-discord` (or the maintainer asked in words
+to skip the Discord message), skip this step and say so in one line.
+Otherwise, after T is exhausted — full or partial success — write step 12's report as
 markdown to a temp file and run:
 
 ```
@@ -595,4 +597,4 @@ report as your final message.
 - **Only blocking findings fail an issue or reach a fix round**; a fix round's verifier checks closure and the change, not the whole issue afresh.
 - **Surfaced findings are filed and routed as they arrive** — pulled into this run when they belong to its scope, otherwise attached to the open epic they belong to.
 - **Every written artifact uses its template** — dispatch prompts, the executor's report, the verifier's comment.
-- **Every run ends with exactly one Discord notification**, sent after T is exhausted and before your final message.
+- **Every run ends with exactly one Discord notification**, sent after T is exhausted and before your final message — unless it was started with `--no-discord`.
