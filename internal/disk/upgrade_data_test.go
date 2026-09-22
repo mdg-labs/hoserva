@@ -178,6 +178,50 @@ func TestVerifyDataDiskTree_DetectsCorruptedContent(t *testing.T) {
 	}
 }
 
+// TestVerifyDataDiskTree_IgnoresDestinationOnlyLostAndFound proves a
+// root lost+found on the destination only — mke2fs creates one on every
+// fresh ext2/ext3/ext4 filesystem it formats, even though the old XFS
+// disk never had one — does not fail verification by itself.
+func TestVerifyDataDiskTree_IgnoresDestinationOnlyLostAndFound(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	buildUpgradeTestTree(t, src)
+	if _, _, err := copyDataDiskTree(context.Background(), src, dst, DataDiskUpgradeHooks{}, ""); err != nil {
+		t.Fatalf("copyDataDiskTree: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dst, "lost+found"), 0o700); err != nil {
+		t.Fatalf("mkdir dst lost+found: %v", err)
+	}
+
+	interrupted, err := verifyDataDiskTree(context.Background(), src, dst, true, DataDiskUpgradeHooks{})
+	if err != nil {
+		t.Fatalf("verifyDataDiskTree with a destination-only lost+found: %v", err)
+	}
+	if interrupted {
+		t.Fatal("verifyDataDiskTree reported interrupted with no stop requested")
+	}
+}
+
+// TestVerifyDataDiskTree_DetectsUnexpectedDestinationEntry proves the
+// lost+found allowance does not turn into a blanket pass for any extra
+// destination entry: a genuinely unexpected one is still rejected.
+func TestVerifyDataDiskTree_DetectsUnexpectedDestinationEntry(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	buildUpgradeTestTree(t, src)
+	if _, _, err := copyDataDiskTree(context.Background(), src, dst, DataDiskUpgradeHooks{}, ""); err != nil {
+		t.Fatalf("copyDataDiskTree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dst, "stray.bin"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("writing stray dst file: %v", err)
+	}
+
+	_, err := verifyDataDiskTree(context.Background(), src, dst, true, DataDiskUpgradeHooks{})
+	if !errors.Is(err, ErrDataDiskUpgradeMismatch) {
+		t.Fatalf("verifyDataDiskTree with an unexpected destination entry: err = %v, want ErrDataDiskUpgradeMismatch", err)
+	}
+}
+
 // runDataDiskUpgradeFakes bundles a FakeProvider/FakeRunner/FakeMounter
 // set up for one "new-disk" device, including the blkid stub
 // FilesystemUUID needs both right after formatting and again on a

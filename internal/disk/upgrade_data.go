@@ -620,6 +620,19 @@ func chtimes(path string, info os.FileInfo) error {
 	return os.Chtimes(path, atime, mtime)
 }
 
+// dataDiskUpgradeFilesystemOwnedEntries names root-level entries a
+// filesystem's own mkfs can create on a fresh filesystem that never
+// existed on the old disk — mke2fs creates a root lost+found on every
+// ext2/ext3/ext4 filesystem it formats (XFS and btrfs do not).
+// copyDataDiskTree only ever copies from src, so a destination-only
+// entry named here always means "the new filesystem made this itself",
+// never a copy bug; conditional, not universal, since an old EXT4 disk
+// may already have its own lost+found, in which case it is just another
+// entry in rels and compared like any other.
+var dataDiskUpgradeFilesystemOwnedEntries = map[string]bool{
+	"lost+found": true,
+}
+
 // verifyDataDiskTree compares every entry under src against the same
 // relative path under dst (doc 02 §4 "Larger data disk": ownership,
 // xattrs, timestamps and content) — restarting the whole comparison
@@ -635,8 +648,16 @@ func verifyDataDiskTree(ctx context.Context, src, dst string, checksum bool, hoo
 	if err != nil {
 		return false, err
 	}
-	if len(dstRels) != len(rels) {
-		return false, fmt.Errorf("%w: %s has %d entries, %s has %d", ErrDataDiskUpgradeMismatch, src, len(rels), dst, len(dstRels))
+
+	srcSet := make(map[string]bool, len(rels))
+	for _, rel := range rels {
+		srcSet[rel] = true
+	}
+	for _, rel := range dstRels {
+		if srcSet[rel] || dataDiskUpgradeFilesystemOwnedEntries[rel] {
+			continue
+		}
+		return false, fmt.Errorf("%w: %s has unexpected entry %s not present on %s", ErrDataDiskUpgradeMismatch, dst, rel, src)
 	}
 
 	total := len(rels)
