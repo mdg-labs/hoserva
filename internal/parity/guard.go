@@ -10,8 +10,10 @@
 package parity
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 )
 
 // DefaultRemovedFilesMax and DefaultRemovedUpdatedPercent are Q16's own
@@ -287,10 +289,10 @@ func matchManifest(diff DiffReport, manifest []ManifestEntry) (accounted []Manif
 // whose SourceDisk removal shows up in diff but whose TargetDisk addition
 // does not — exactly the shape a Q14 two-phase relocation's trailing sync
 // leaves matchManifest unable to account for on its own (#248).
-// SnapraidEngine.Sync calls this before paying for a real `snapraid list`
-// (its own confirmManifestTargets): every ordinary, same-diff relocation —
-// the plain mover, and every manifest matchManifest can already account
-// for — costs exactly what it always did, no extra invocation.
+// ConfirmManifestTargets calls this before paying for a real `snapraid
+// list`: every ordinary, same-diff relocation — the plain mover, and every
+// manifest matchManifest can already account for — costs exactly what it
+// always did, no extra invocation.
 func manifestNeedsTargetConfirmation(diff DiffReport, manifest []ManifestEntry) bool {
 	if len(manifest) == 0 {
 		return false
@@ -306,6 +308,53 @@ func manifestNeedsTargetConfirmation(diff DiffReport, manifest []ManifestEntry) 
 		}
 	}
 	return false
+}
+
+// ConfirmManifestTargets applies Q14/#248's own trailing-sync exemption to
+// manifest before a caller evaluates Guard.Evaluate against diff: when
+// manifestNeedsTargetConfirmation finds an entry the same-diff check in
+// matchManifest cannot account for, this runs a real `snapraid list`
+// through lister (List's own doc comment: tracked state only, never a live
+// directory walk) and marks ManifestEntry.TargetConfirmed on every entry
+// whose file is already tracked on its own TargetDisk — the two-phase
+// relocation case where the addition was recorded by an earlier sync's own
+// diff, not this one. An ordinary, same-diff relocation never pays for the
+// extra `snapraid list` call: manifestNeedsTargetConfirmation returns
+// false and manifest comes back unmodified.
+//
+// SnapraidEngine.Sync and the diff-preview endpoint (RunParityDiff,
+// internal/api/parity_handler.go, #252) both call this before evaluating
+// the guard, so the two can never reach a different verdict on the same
+// manifest/diff state. lister is typed as Engine, not *SnapraidEngine, so
+// any caller already holding a parity.Engine — including one outside this
+// package, e.g. internal/job — can call this without a type assertion. The
+// manifest passed in is never mutated or written back anywhere — this
+// returns a fresh slice for the caller's own guard evaluation.
+func ConfirmManifestTargets(ctx context.Context, lister Engine, diff DiffReport, manifest []ManifestEntry) ([]ManifestEntry, error) {
+	if !manifestNeedsTargetConfirmation(diff, manifest) {
+		return manifest, nil
+	}
+	list, err := lister.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("parity: confirming relocation manifest targets: %w", err)
+	}
+	tracked := make(map[fileKey]bool, len(list.Files))
+	for _, f := range list.Files {
+		mount, ok := list.DataMounts[f.Disk]
+		if !ok {
+			continue
+		}
+		tracked[fileKey{filepath.Clean(mount), f.RelPath}] = true
+	}
+
+	confirmed := make([]ManifestEntry, len(manifest))
+	for i, m := range manifest {
+		confirmed[i] = m
+		if tracked[fileKey{m.TargetDisk, m.RelPath}] {
+			confirmed[i].TargetConfirmed = true
+		}
+	}
+	return confirmed, nil
 }
 
 // anyDiskEmptied reports whether diff would leave any disk (including one

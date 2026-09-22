@@ -230,6 +230,99 @@ func TestHandler_RunParityDiff_RemovingDiskExemptFromZeroFilesTrigger(t *testing
 	}
 }
 
+// TestHandler_RunParityDiff_TwoPhaseRelocationTrailingSyncConfirmsTarget is
+// this issue's (#252) own central reproduction: a Q14 two-phase
+// relocation's trailing sync — a diff that shows only the removal, its
+// matching addition already committed by an earlier sync's own diff, not
+// this one — must preview exactly as unblocked as the real Sync call
+// underneath would leave it, once a real `snapraid list` confirms the
+// files already landed on their target disk. RemovedFilesMax is set low
+// enough that all 3 removals would block the preview without the
+// exemption (the pre-#252 bug this reproduces).
+func TestHandler_RunParityDiff_TwoPhaseRelocationTrailingSyncConfirmsTarget(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+	h.ParityGuard = parity.Guard{Config: parity.GuardConfig{RemovedFilesMax: 2}}
+	if err := h.RelocationManifest.Replace(ctx, []parity.ManifestEntry{
+		{RelPath: "movies/f1.bin", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"},
+		{RelPath: "movies/f2.bin", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"},
+		{RelPath: "movies/f3.bin", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"},
+	}, nil); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+
+	rec := parity.NewFakeEngine()
+	rec.SetDiff(parity.DiffReport{
+		Removed: 3,
+		RemovedFiles: []parity.DiffFile{
+			{Disk: "/mnt/disk1", RelPath: "movies/f1.bin"},
+			{Disk: "/mnt/disk1", RelPath: "movies/f2.bin"},
+			{Disk: "/mnt/disk1", RelPath: "movies/f3.bin"},
+		},
+	})
+	rec.SetList(parity.ListReport{
+		DataMounts: map[string]string{"d2": "/mnt/disk2"},
+		Files: []parity.ListFile{
+			{Disk: "d2", RelPath: "movies/f1.bin"},
+			{Disk: "d2", RelPath: "movies/f2.bin"},
+			{Disk: "d2", RelPath: "movies/f3.bin"},
+		},
+	})
+	h.Parity = rec
+
+	got, err := h.RunParityDiff(ctx)
+	if err != nil {
+		t.Fatalf("RunParityDiff: %v", err)
+	}
+	if got.Guard.WouldBlock {
+		t.Fatalf("guard = %+v, want not blocked — a real Sync call would confirm all 3 removals already landed on their target disk", got.Guard)
+	}
+	if got.Groups[0].Count != 0 {
+		t.Fatalf("removed count = %d, want 0 — all 3 removals accounted for by the confirmed manifest", got.Groups[0].Count)
+	}
+}
+
+// TestHandler_RunParityDiff_TwoPhaseRelocationTrailingSyncUnconfirmedStillBlocks
+// is this issue's other acceptance criterion: the same trailing-sync diff
+// shape, but `snapraid list` shows the files were never actually placed on
+// their claimed target disk — a stale or incorrect manifest entry — so the
+// preview must still block exactly as it did before #252.
+func TestHandler_RunParityDiff_TwoPhaseRelocationTrailingSyncUnconfirmedStillBlocks(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+	h.ParityGuard = parity.Guard{Config: parity.GuardConfig{RemovedFilesMax: 2}}
+	if err := h.RelocationManifest.Replace(ctx, []parity.ManifestEntry{
+		{RelPath: "movies/f1.bin", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"},
+		{RelPath: "movies/f2.bin", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"},
+		{RelPath: "movies/f3.bin", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"},
+	}, nil); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+
+	rec := parity.NewFakeEngine()
+	rec.SetDiff(parity.DiffReport{
+		Removed: 3,
+		RemovedFiles: []parity.DiffFile{
+			{Disk: "/mnt/disk1", RelPath: "movies/f1.bin"},
+			{Disk: "/mnt/disk1", RelPath: "movies/f2.bin"},
+			{Disk: "/mnt/disk1", RelPath: "movies/f3.bin"},
+		},
+	})
+	rec.SetList(parity.ListReport{DataMounts: map[string]string{"d2": "/mnt/disk2"}})
+	h.Parity = rec
+
+	got, err := h.RunParityDiff(ctx)
+	if err != nil {
+		t.Fatalf("RunParityDiff: %v", err)
+	}
+	if !got.Guard.WouldBlock {
+		t.Fatal("guard.wouldBlock = false, want true — none of the 3 removals were ever confirmed on their target disk")
+	}
+	if got.Groups[0].Count != 3 {
+		t.Fatalf("removed count = %d, want 3 — a stale manifest entry must not be accounted", got.Groups[0].Count)
+	}
+}
+
 func TestHandler_RunParityDiff_TrippedGuardWithoutSync(t *testing.T) {
 	ctx := context.Background()
 	h, _, _ := newTestHandler(t)

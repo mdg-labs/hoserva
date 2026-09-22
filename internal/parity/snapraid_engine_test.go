@@ -640,6 +640,78 @@ func TestSnapraidEngine_Sync_UnconfirmedTrailingRemovalStillBlocks(t *testing.T)
 	}
 }
 
+// TestConfirmManifestTargets_AgreesWithSyncGuardVerdict is #252's own
+// acceptance criterion: the diff-preview path (Diff, then
+// ConfirmManifestTargets, then Guard.Evaluate directly — exactly what
+// RunParityDiff, internal/api/parity_handler.go, does) must reach the same
+// Blocked verdict Sync itself reaches for the identical manifest/diff/list
+// state, both when a trailing sync's removal is confirmed on its target
+// disk and when it is not.
+func TestConfirmManifestTargets_AgreesWithSyncGuardVerdict(t *testing.T) {
+	cases := []struct {
+		name        string
+		listLog     string
+		wantBlocked bool
+	}{
+		{"targetConfirmed", trailingListLogAllTracked, false},
+		{"targetUnconfirmed", trailingListLogNoneTracked, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			guard := Guard{Config: GuardConfig{RemovedFilesMax: 2}}
+			manifest := manifestEntries("movies/f1.bin", "movies/f2.bin", "movies/f3.bin")
+
+			previewDir := t.TempDir()
+			previewRunner := &scriptedRunner{t: t, script: []scriptedResult{
+				{logBody: trailingStatusLog},
+				{logBody: trailingDiffLog, err: &fakeExitError{code: 2}},
+				{logBody: tc.listLog},
+			}}
+			previewEngine := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: previewDir, Runner: previewRunner, Guard: guard}
+			diff, err := previewEngine.Diff(context.Background())
+			if err != nil {
+				t.Fatalf("Diff: %v", err)
+			}
+			confirmed, err := ConfirmManifestTargets(context.Background(), previewEngine, diff, manifest)
+			if err != nil {
+				t.Fatalf("ConfirmManifestTargets: %v", err)
+			}
+			previewResult := guard.Evaluate(diff, confirmed, nil)
+
+			syncDir := t.TempDir()
+			syncRunner := &scriptedRunner{t: t, script: []scriptedResult{
+				{logBody: trailingStatusLog},
+				{logBody: trailingDiffLog, err: &fakeExitError{code: 2}},
+				{logBody: tc.listLog},
+				{logBody: string(readCorpus(t, "snapraid_sync_ok.log"))},
+			}}
+			syncEngine := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: syncDir, Runner: syncRunner, Guard: guard}
+			ch, syncErr := syncEngine.Sync(context.Background(), SyncOpts{Manifest: manifest})
+			var blocked *GuardBlockedError
+			syncBlocked := errors.As(syncErr, &blocked)
+			if !syncBlocked {
+				if syncErr != nil {
+					t.Fatalf("Sync: %v", syncErr)
+				}
+				if final := drain(t, ch); final.Err != nil {
+					t.Fatalf("Sync final Progress.Err = %v, want nil", final.Err)
+				}
+			}
+
+			if previewResult.Blocked != tc.wantBlocked {
+				t.Fatalf("preview Blocked = %v, want %v", previewResult.Blocked, tc.wantBlocked)
+			}
+			if syncBlocked != tc.wantBlocked {
+				t.Fatalf("Sync Blocked = %v, want %v", syncBlocked, tc.wantBlocked)
+			}
+			if previewResult.Blocked != syncBlocked {
+				t.Fatalf("preview and Sync disagree on the same manifest/diff/list state: preview.Blocked=%v Sync.Blocked=%v", previewResult.Blocked, syncBlocked)
+			}
+		})
+	}
+}
+
 // TestSnapraidEngine_CurrentRelocationManifest_UnwiredReturnsNil confirms
 // a SnapraidEngine with no Relocation store (the zero value, exactly what
 // every engine built before #194 has) reports no manifest — RunSync's own
