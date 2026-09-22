@@ -2,12 +2,16 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 
+	"github.com/google/uuid"
+
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
@@ -141,6 +145,35 @@ func (h *Handler) DeleteShareData(ctx context.Context, req *apiv1.DeleteShareDat
 		return mapShareError(err)
 	}
 	return nil
+}
+
+// StartShareRelocation queues a share_relocation job moving name's files
+// between its cache path and the array (doc 09 §2, #54, #239) — the same
+// startX shape StartSync/StartScrub/StartFix/StartMover already use,
+// scoped to one share. RelocateToArray/RelocateToCache are never called
+// from anywhere else (no second relocation-invocation path).
+func (h *Handler) StartShareRelocation(ctx context.Context, req *apiv1.StartShareRelocationRequest, params apiv1.StartShareRelocationParams) (*apiv1.Job, error) {
+	if h.Shares == nil {
+		return nil, errSharesNotConfigured()
+	}
+	if h.Scheduler == nil {
+		return nil, fmt.Errorf("job scheduler not configured")
+	}
+	if _, err := h.Shares.Get(ctx, string(params.Name)); err != nil {
+		return nil, mapShareError(err)
+	}
+	encoded, err := json.Marshal(job.ShareRelocationParams{
+		Share: string(params.Name),
+		To:    string(req.To),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encoding share relocation params: %w", err)
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeShareRelocation, nil, encoded)
+	if err != nil {
+		return nil, mapSchedulerError(uuid.Nil, err)
+	}
+	return jobToAPI(j)
 }
 
 func (h *Handler) BrowseShare(ctx context.Context, params apiv1.BrowseShareParams) (*apiv1.ShareBrowseResult, error) {

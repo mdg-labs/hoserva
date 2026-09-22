@@ -53,8 +53,15 @@ type Handler struct {
 	Parity parity.Engine
 	// ParityGuard evaluates threshold-guard state for run-diff (doc 02 §2).
 	ParityGuard parity.Guard
-	paritySnap  *paritySnapshotStore
-	parityOnce  sync.Once
+	// RelocationManifest is Q15's own persisted current relocation
+	// manifest and removing-disks set (doc 09 §3-4) — RunParityDiff loads
+	// it before evaluating ParityGuard, so a preview reflects an
+	// in-progress relocation the same way a production sync does. Nil
+	// evaluates against nil manifest/removingDisks, matching this
+	// handler's own pre-#194 behaviour.
+	RelocationManifest *parity.RelocationManifestStore
+	paritySnap         *paritySnapshotStore
+	parityOnce         sync.Once
 	// Backup is the config archive builder for export/import — nil returns
 	// 501 from those operations.
 	Backup *backup.Service

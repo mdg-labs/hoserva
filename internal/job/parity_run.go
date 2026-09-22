@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/mdg-labs/hoserva/internal/parity"
 )
@@ -18,6 +19,22 @@ type shareUsageComputer interface {
 	ComputeShareUsage(ctx context.Context) error
 }
 
+// relocationManifestSource is implemented by *parity.SnapraidEngine when
+// wired with a parity.RelocationManifestStore: RunSync calls it once,
+// right after decoding the request's own params and before calling
+// eng.Sync, to load the current relocation manifest and removing-disks
+// set (Q15, doc 09 §3-4) into SyncOpts.Manifest/RemovingDisks at the
+// production wiring boundary — a relocation job (the mover, rebalance,
+// evacuation or share relocation) persists this state as it runs, and a
+// production sync must account for it the same way a preview does
+// (RunParityDiff, internal/api/parity_handler.go). An Engine that does
+// not implement it (every FakeEngine, and a SnapraidEngine with no
+// Relocation store wired yet) simply has nothing to load here, the same
+// shape shareUsageComputer above already uses.
+type relocationManifestSource interface {
+	CurrentRelocationManifest(ctx context.Context) ([]parity.ManifestEntry, map[string]bool, error)
+}
+
 // RunSync is the RunFunc hoservad registers for TypeSync: it reads
 // persisted params from RunContext and calls eng.Sync. Tests register it
 // against FakeEngine.
@@ -26,6 +43,14 @@ func RunSync(eng parity.Engine) RunFunc {
 		opts, err := SyncOptsFromParams(rc.Params())
 		if err != nil {
 			return err
+		}
+		if ms, ok := eng.(relocationManifestSource); ok {
+			manifest, removingDisks, err := ms.CurrentRelocationManifest(ctx)
+			if err != nil {
+				return fmt.Errorf("job: loading relocation manifest: %w", err)
+			}
+			opts.Manifest = manifest
+			opts.RemovingDisks = removingDisks
 		}
 		ch, err := eng.Sync(ctx, opts)
 		if err := drainProgress(ch, err); err != nil {

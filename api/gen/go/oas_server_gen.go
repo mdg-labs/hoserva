@@ -601,12 +601,29 @@ type Handler interface {
 	//
 	// POST /parity/fix
 	StartFix(ctx context.Context, req *StartFixRequest) (*Job, error)
+	// StartMover implements startMover operation.
+	//
+	// Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
+	// the threshold poll and the nightly chain submit; there is no second mover-invocation path.
+	//
+	// POST /mover/run
+	StartMover(ctx context.Context) (*Job, error)
 	// StartScrub implements startScrub operation.
 	//
 	// Queues a scrub job (`hoserva scrub`, doc 01 §3).
 	//
 	// POST /parity/scrub
 	StartScrub(ctx context.Context, req *StartScrubRequest) (*Job, error)
+	// StartShareRelocation implements startShareRelocation operation.
+	//
+	// Queues a `share_relocation` job moving name's files between its cache path and the array (doc 09
+	// §2, Q14, Q15) — `hoserva share relocate <share> --to cache|array`. Cache to array behaves as a
+	// mover run limited to this share, ignoring the grace period; array to cache follows the two-phase
+	// copy-verify-sync- delete-sync order, through the same threshold guard every other sync goes through.
+	// There is no second relocation-invocation path.
+	//
+	// POST /shares/{name}/relocate
+	StartShareRelocation(ctx context.Context, req *StartShareRelocationRequest, params StartShareRelocationParams) (*Job, error)
 	// StartSync implements startSync operation.
 	//
 	// Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard

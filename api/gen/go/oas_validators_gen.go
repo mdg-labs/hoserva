@@ -3944,6 +3944,40 @@ func (s *StartScrubRequest) Validate() error {
 	return nil
 }
 
+func (s *StartShareRelocationRequest) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.To.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "to",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s StartShareRelocationRequestTo) Validate() error {
+	switch s {
+	case "cache":
+		return nil
+	case "array":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
 func (s *TLSCertificateInfo) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer

@@ -30,6 +30,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
+	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
 	"github.com/mdg-labs/hoserva/web"
@@ -261,6 +262,11 @@ func run(cfg config) error {
 		parityEngine.Usage = parity.NewUsageStore(db)
 		registry.Register(job.TypeSync, false, job.RunSync(parityEngine))
 		registry.Register(job.TypeScrub, false, job.RunScrub(parityEngine))
+		registry.Register(job.TypeFix, false, job.RunFix(parityEngine))
+		registry.Register(job.TypeShareRelocation, true, job.RunShareRelocation(job.ShareRelocationDeps{
+			Share: shareRelocationShareFromStore(shareStore, arrayStore),
+			Sync:  shareRelocationSyncFunc(parityEngine),
+		}))
 		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}
 	}
 	backupService := newBackupService(ctx, cfg, db, machineKey, settingsService, linuxDisks.Exec)
@@ -323,6 +329,17 @@ func run(cfg config) error {
 	pruneOnce(ctx, jobStore, logs, authStore, history)
 	go runDailyPrune(ctx, jobStore, logs, authStore, history)
 	go runNotifyDeliveryLoop(ctx, notifyService, notifyDeliveryInterval, notifyDeliveryBatchLimit)
+	go runMoverThresholdLoop(ctx, &moverThresholdRunner{
+		Scheduler: scheduler,
+		Jobs:      jobStore,
+		Array:     arrayStore,
+		Statter:   pool.StatfsSpaceStatter{},
+	}, moverThresholdInterval)
+	go runSpaceAlertLoop(ctx, &spaceAlertRunner{
+		Array:    arrayStore,
+		Statter:  pool.StatfsSpaceStatter{},
+		Notifier: notifyService,
+	}, spaceAlertInterval)
 	go runScheduleLoop(ctx, &scheduleRunner{
 		Schedules: scheduleService,
 		Scheduler: scheduler,

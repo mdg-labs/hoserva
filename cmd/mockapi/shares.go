@@ -6,6 +6,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
+
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 )
 
@@ -160,6 +162,30 @@ func (h *handler) DeleteShareFile(ctx context.Context, req *apiv1.ConfirmShareRe
 		return errShareNotFound(params.Name)
 	}
 	return nil
+}
+
+// StartShareRelocation is startShareRelocation's mock (doc 09 §2, #239) —
+// the same TypeShareRelocation job a real daemon submits through
+// RunShareRelocation; this mock has no scheduler of its own, so it just
+// records the queued job the way StartMover does for TypeMover.
+func (h *handler) StartShareRelocation(ctx context.Context, req *apiv1.StartShareRelocationRequest, params apiv1.StartShareRelocationParams) (*apiv1.Job, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.shares[string(params.Name)]; !ok {
+		return nil, errShareNotFound(params.Name)
+	}
+	now := time.Now().UTC()
+	j := apiv1.Job{
+		ID:          uuid.New(),
+		Type:        apiv1.JobTypeShareRelocation,
+		Class:       apiv1.JobClassArrayWrite,
+		Status:      apiv1.JobStatusQueued,
+		Resumable:   true,
+		Cancellable: true,
+		CreatedAt:   now,
+	}
+	h.jobs[j.ID] = j
+	return &j, nil
 }
 
 func (h *handler) BrowseShare(ctx context.Context, params apiv1.BrowseShareParams) (*apiv1.ShareBrowseResult, error) {

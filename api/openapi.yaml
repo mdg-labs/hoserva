@@ -43,6 +43,12 @@ tags:
     description: Array start and stop / maintenance mode (Q70, `hoserva array stop|start`).
   - name: parity
     description: SnapRAID sync, scrub and fix through the threshold guard (doc 02 §2).
+  - name: mover
+    description: >-
+      The write cache's mover (doc 09 §2, `hoserva mover run`) — moves a
+      cache-then-move share's files onto the array. Reachable on a schedule
+      (the nightly chain), a cache-usage threshold, or this manual trigger;
+      never continuous.
   - name: config
     description: Config archive export and import (doc 10 §1).
   - name: doctor
@@ -1397,6 +1403,38 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /shares/{name}/relocate:
+    parameters:
+      - $ref: '#/components/parameters/ShareName'
+    post:
+      operationId: startShareRelocation
+      summary: Relocate a share between cache and array
+      description: >-
+        Queues a `share_relocation` job moving name's files between its
+        cache path and the array (doc 09 §2, Q14, Q15) —
+        `hoserva share relocate <share> --to cache|array`. Cache to array
+        behaves as a mover run limited to this share, ignoring the grace
+        period; array to cache follows the two-phase copy-verify-sync-
+        delete-sync order, through the same threshold guard every other
+        sync goes through. There is no second relocation-invocation path.
+      tags: [shares]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartShareRelocationRequest'
+      responses:
+        "200":
+          description: The queued or running share relocation job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
   /shares/{name}/browse:
     parameters:
       - $ref: '#/components/parameters/ShareName'
@@ -1896,6 +1934,26 @@ paths:
       responses:
         "200":
           description: The queued or running fix job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /mover/run:
+    post:
+      operationId: startMover
+      summary: Start a manual mover run
+      description: >-
+        Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger)
+        — the same `TypeMover` job the threshold poll and the nightly chain
+        submit; there is no second mover-invocation path.
+      tags: [mover]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The queued or running mover job.
           content:
             application/json:
               schema:
@@ -4311,6 +4369,17 @@ components:
           format: int32
           minimum: 1
           description: SnapRAID disk index (`hoserva fix --disk N`).
+
+    StartShareRelocationRequest:
+      type: object
+      required: [to]
+      properties:
+        to:
+          type: string
+          enum: [cache, array]
+          description: >-
+            Relocation direction (doc 09 §2, `hoserva share relocate
+            <share> --to cache|array`).
 
     StopArrayRequest:
       type: object

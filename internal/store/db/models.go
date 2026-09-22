@@ -156,6 +156,19 @@ type NotifyRoute struct {
 	ChannelID string `json:"channel_id"`
 }
 
+type RelocationManifest struct {
+	ID         int64  `json:"id"`
+	RelPath    string `json:"rel_path"`
+	Size       int64  `json:"size"`
+	Mtime      string `json:"mtime"`
+	SourceDisk string `json:"source_disk"`
+	TargetDisk string `json:"target_disk"`
+}
+
+type RelocationRemovingDisk struct {
+	Mountpoint string `json:"mountpoint"`
+}
+
 type ScheduleChain struct {
 	ID                  int64          `json:"id"`
 	StartTime           string         `json:"start_time"`

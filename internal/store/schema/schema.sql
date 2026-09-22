@@ -546,3 +546,34 @@ CREATE TABLE share_usage_computed_at (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     computed_at TEXT NOT NULL
 ) STRICT;
+
+-- Q15's own persisted relocation manifest (doc 09 §3-4): the file-level
+-- record a mover/rebalance/evacuation/share-relocation job builds as it
+-- copies and verifies each file onto its target, before requesting the
+-- threshold-guarded sync that protects those copies. RunParityDiff and
+-- RunSync (internal/job/parity_run.go) read this table at the wiring
+-- boundary and pass it into Guard.Evaluate, which is the only place that
+-- ever matches an entry against a diff (D1: this table never computes
+-- anything, it only persists what a relocation job already decided).
+-- Every row here is cleared, in the same transaction as
+-- relocation_removing_disks below, once a relocation job's own trailing
+-- sync (Q14's two-phase "sync, delete, sync again") has finished
+-- accounting for it: both tables empty is "no relocation in progress",
+-- the same nil-manifest behaviour Guard.Evaluate has always had.
+CREATE TABLE relocation_manifest (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rel_path TEXT NOT NULL,
+    size INTEGER NOT NULL CHECK (size >= 0),
+    mtime TEXT NOT NULL,
+    source_disk TEXT NOT NULL,
+    target_disk TEXT NOT NULL
+) STRICT;
+
+-- Disks currently in doc 09 §4's "removing" state (disk evacuation):
+-- exempt from the guard's zero-files rule (Q15) while their branches are
+-- set to no-create and their own files are being relocated off. Cleared
+-- alongside relocation_manifest above once the evacuation's own final
+-- `--force-empty` sync has completed.
+CREATE TABLE relocation_removing_disks (
+    mountpoint TEXT PRIMARY KEY
+) STRICT;

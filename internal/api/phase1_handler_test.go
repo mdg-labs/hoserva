@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/store"
 
@@ -134,5 +135,60 @@ func TestHandler_GetPool_NoArrayTopologyLeavesSpaceFieldsUnset(t *testing.T) {
 	}
 	if _, ok := got.Disks[0].FreeBytes.Get(); ok {
 		t.Fatalf("Disks[0].FreeBytes set with no array topology: %+v", got.Disks[0].FreeBytes)
+	}
+	if got.Disks[0].Role != apiv1.PoolDiskEntryRoleUnassigned || got.Disks[0].MountPoint != "" {
+		t.Fatalf("Disks[0] = role %q mount %q, want unassigned/empty with no array topology", got.Disks[0].Role, got.Disks[0].MountPoint)
+	}
+}
+
+// TestHandler_GetPool_ReportsAssignedDiskRoleAndMountPoint is #233: GetPool
+// must join h.ArrayStore's persisted role and mountpoint per disk — parity
+// and data disks report their real assignment, and a disk the array never
+// picked up still honestly reports unassigned/empty rather than being
+// silently dropped or given a role it doesn't have.
+func TestHandler_GetPool_ReportsAssignedDiskRoleAndMountPoint(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdd", disk.Disk{Size: 4 * disk.TB})
+	h.Disks = p
+
+	dataDir := t.TempDir()
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-sdb", Mountpoint: "/mnt/parity1"},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-sdc", Mountpoint: dataDir},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	if len(got.Disks) != 3 {
+		t.Fatalf("len(Disks) = %d, want 3", len(got.Disks))
+	}
+	byDevice := make(map[string]apiv1.PoolDiskEntry, len(got.Disks))
+	for _, e := range got.Disks {
+		byDevice[e.Device] = e
+	}
+	if e := byDevice["/dev/sdb"]; e.Role != apiv1.PoolDiskEntryRoleParity || e.MountPoint != "/mnt/parity1" {
+		t.Fatalf("sdb = role %q mount %q, want parity/mnt/parity1", e.Role, e.MountPoint)
+	}
+	if e := byDevice["/dev/sdc"]; e.Role != apiv1.PoolDiskEntryRoleData || e.MountPoint != dataDir {
+		t.Fatalf("sdc = role %q mount %q, want data/%s", e.Role, e.MountPoint, dataDir)
+	}
+	if e := byDevice["/dev/sdd"]; e.Role != apiv1.PoolDiskEntryRoleUnassigned || e.MountPoint != "" {
+		t.Fatalf("sdd = role %q mount %q, want unassigned/empty (never assigned)", e.Role, e.MountPoint)
 	}
 }

@@ -39,6 +39,16 @@ type SnapraidEngine struct {
 	// runs and reports success, it simply has nowhere to persist the
 	// figures yet.
 	Usage *UsageStore
+	// Relocation is the persisted current relocation manifest and
+	// removing-disks set (Q15, doc 09 §3-4) CurrentRelocationManifest
+	// reads from — RunSync (internal/job/parity_run.go) loads it through
+	// that method and passes it into SyncOpts.Manifest/RemovingDisks at
+	// the production wiring boundary, before calling Sync. A nil
+	// Relocation — the zero value — leaves that lookup unwired: Sync
+	// still runs and evaluates the guard exactly as it did before this
+	// field existed, against whatever SyncOpts a caller supplied
+	// directly.
+	Relocation *RelocationManifestStore
 	// Now returns the current time, recorded as share usage's own "as of"
 	// timestamp (doc 03 §4.2). Defaults to time.Now; tests override it.
 	Now func() time.Time
@@ -188,6 +198,20 @@ func (e *SnapraidEngine) ComputeShareUsage(ctx context.Context) error {
 		return fmt.Errorf("parity: persisting share usage: %w", err)
 	}
 	return nil
+}
+
+// CurrentRelocationManifest returns the relocation manifest and
+// removing-disks set Relocation currently has persisted (Q15, doc 09
+// §3-4), or nil, nil, nil when Relocation is unwired — RunSync
+// (internal/job/parity_run.go) type-asserts for this method to load
+// SyncOpts.Manifest/RemovingDisks at the production wiring boundary,
+// mirroring ComputeShareUsage/shareUsageComputer's own optional-wiring
+// shape above.
+func (e *SnapraidEngine) CurrentRelocationManifest(ctx context.Context) ([]ManifestEntry, map[string]bool, error) {
+	if e.Relocation == nil {
+		return nil, nil, nil
+	}
+	return e.Relocation.Current(ctx)
 }
 
 // Diff runs `snapraid status` (for the before-counts BuildDiffReport

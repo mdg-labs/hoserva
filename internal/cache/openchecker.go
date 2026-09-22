@@ -86,6 +86,100 @@ func (c ProcOpenChecker) IsOpen(ctx context.Context, path string) (bool, error) 
 
 var _ OpenChecker = ProcOpenChecker{}
 
+// OpenSnapshot answers IsOpen for any number of paths from one /proc walk
+// already taken, rather than repeating that walk per call — resolved from
+// an in-memory device+inode set, with no further syscalls beyond the
+// queried path's own Stat.
+type OpenSnapshot interface {
+	IsOpen(path string) (bool, error)
+}
+
+// Snapshotter is the optional capability an OpenChecker can implement to
+// serve a batch of pre-copy checks from one /proc walk instead of one walk
+// per file — Run's own use of it, once per share, is what keeps a pass
+// over N files to at most one full walk (doc 09 §2, #238). It is
+// deliberately not part of OpenChecker itself: the pre-unlink re-check
+// immediately before a source unlink always calls OpenChecker.IsOpen
+// directly and must never be answered from a snapshot taken before the
+// copy that re-check exists to guard against.
+type Snapshotter interface {
+	Snapshot(ctx context.Context) (OpenSnapshot, error)
+}
+
+// procOpenSnapshot is ProcOpenChecker's own OpenSnapshot: every
+// device+inode pair that was open across every process at the moment the
+// walk ran.
+type procOpenSnapshot map[devIno]bool
+
+type devIno struct {
+	dev, ino uint64
+}
+
+// IsOpen reports whether path's current device and inode were in the open
+// set at snapshot time.
+func (s procOpenSnapshot) IsOpen(path string) (bool, error) {
+	var st syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return s[devIno{dev: uint64(st.Dev), ino: st.Ino}], nil
+}
+
+// Snapshot walks /proc once and returns an OpenSnapshot that can answer
+// IsOpen for any number of paths afterward without repeating the walk.
+func (c ProcOpenChecker) Snapshot(ctx context.Context) (OpenSnapshot, error) {
+	proc := c.ProcPath
+	if proc == "" {
+		proc = "/proc"
+	}
+
+	open := make(procOpenSnapshot)
+	pids, err := os.ReadDir(proc)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range pids {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if _, err := strconv.Atoi(p.Name()); err != nil {
+			continue
+		}
+		fdDir := filepath.Join(proc, p.Name(), "fd")
+		fds, err := os.ReadDir(fdDir)
+		if err != nil {
+			continue
+		}
+		for _, fd := range fds {
+			var st syscall.Stat_t
+			if err := syscall.Stat(filepath.Join(fdDir, fd.Name()), &st); err != nil {
+				continue
+			}
+			open[devIno{dev: uint64(st.Dev), ino: st.Ino}] = true
+		}
+	}
+	return open, nil
+}
+
+var _ Snapshotter = ProcOpenChecker{}
+
+// snapshotChecker adapts an OpenSnapshot back onto OpenChecker, so the
+// mover's pre-copy check can use whichever one a share's snapshot
+// produced without needing to know it came from a snapshot rather than a
+// live walk.
+type snapshotChecker struct {
+	snap OpenSnapshot
+}
+
+func (s snapshotChecker) IsOpen(_ context.Context, path string) (bool, error) {
+	return s.snap.IsOpen(path)
+}
+
+var _ OpenChecker = snapshotChecker{}
+
 // FakeOpenChecker is the scriptable OpenChecker unit tests use in place
 // of scanning a real /proc (CLAUDE.md: "every system-touching subsystem
 // sits behind a package interface with a scriptable fake").

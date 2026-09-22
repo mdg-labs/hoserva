@@ -863,3 +863,91 @@ func TestRun_ProgressReachesComplete(t *testing.T) {
 		t.Fatalf("final progress = %d, want 100", last)
 	}
 }
+
+// countingSnapshotter is a scriptable OpenChecker that also implements
+// the optional Snapshotter interface Run's pre-copy check uses — a stand-
+// in for a real /proc walker that records how many times it was actually
+// asked to walk, so a test can prove Run takes one snapshot per share
+// pass rather than one per file (#238). Its own IsOpen (the pre-unlink
+// path always calls directly, never through a snapshot) behaves exactly
+// like FakeOpenChecker.
+type countingSnapshotter struct {
+	*FakeOpenChecker
+	snapshots int
+	snapOpen  map[string]bool
+}
+
+func newCountingSnapshotter() *countingSnapshotter {
+	return &countingSnapshotter{FakeOpenChecker: NewFakeOpenChecker(), snapOpen: make(map[string]bool)}
+}
+
+func (c *countingSnapshotter) Snapshot(context.Context) (OpenSnapshot, error) {
+	c.snapshots++
+	return countingSnapshot(c.snapOpen), nil
+}
+
+type countingSnapshot map[string]bool
+
+func (s countingSnapshot) IsOpen(path string) (bool, error) {
+	return s[path], nil
+}
+
+// TestRun_ReusesOneSnapshotPerShare proves a mover pass over a share with
+// several eligible files takes exactly one /proc walk for its pre-copy
+// checks, not one per file — the walker itself is asked to Snapshot once
+// no matter how many files the share holds.
+func TestRun_ReusesOneSnapshotPerShare(t *testing.T) {
+	s := newShare(t, "media")
+	mustWrite(t, filepath.Join(s.CachePath, "a.bin"), "aaa")
+	mustWrite(t, filepath.Join(s.CachePath, "b.bin"), "bbb")
+	mustWrite(t, filepath.Join(s.CachePath, "c.bin"), "ccc")
+
+	snapshotter := newCountingSnapshotter()
+	deps := testDeps(NewFakeOpenChecker())
+	deps.Open = snapshotter
+
+	report, err := Run(context.Background(), []Share{s}, Config{}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(report.Moved()) != 3 {
+		t.Fatalf("expected all three files to move, got %+v", report.Entries)
+	}
+	if snapshotter.snapshots != 1 {
+		t.Fatalf("Snapshot called %d times, want exactly 1 for a three-file share pass", snapshotter.snapshots)
+	}
+}
+
+// TestRun_PreUnlinkRecheckIgnoresStalePreCopySnapshot proves
+// finishPendingDelete's pre-unlink check is answered by the checker's own
+// live IsOpen, never by the pre-copy snapshot: scripting the file closed
+// in the snapshot (so the copy proceeds) but open on the checker's own
+// live IsOpen must still leave the source in place afterward, pending a
+// later delete — the snapshot only ever gates the pre-copy decision, and
+// the re-check immediately before unlink stays a fresh check against
+// current process state (doc 09 §2).
+func TestRun_PreUnlinkRecheckIgnoresStalePreCopySnapshot(t *testing.T) {
+	s := newShare(t, "media")
+	src := filepath.Join(s.CachePath, "file.bin")
+	mustWrite(t, src, "content")
+
+	snapshotter := newCountingSnapshotter()
+	snapshotter.SetOpen(src, true) // live IsOpen reports open throughout; the snapshot never does
+
+	deps := testDeps(NewFakeOpenChecker())
+	deps.Open = snapshotter
+
+	report, err := Run(context.Background(), []Share{s}, Config{}, deps, RunHooks{}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(report.Entries) != 1 || report.Entries[0].Result != ResultMovedPendingDelete {
+		t.Fatalf("expected one moved_pending_delete entry — the copy must have proceeded (the snapshot reported it closed) but the pre-unlink recheck must have caught the live open state, got %+v", report.Entries)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("source must survive while the live pre-unlink check reports it open: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.ArrayPath, "file.bin")); err != nil {
+		t.Fatalf("the copy itself must have completed, since the pre-copy snapshot reported the file closed: %v", err)
+	}
+}

@@ -43,6 +43,7 @@ func rootCmd() *cobra.Command {
 		syncCmd(),
 		scrubCmd(),
 		fixCmd(),
+		moverCmd(),
 		jobsCmd(),
 		logsCmd(),
 		configCmd(),
