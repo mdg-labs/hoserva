@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mdg-labs/hoserva/internal/parity"
 )
@@ -318,7 +319,7 @@ func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string
 		if !same {
 			return &Entry{Share: share.Name, Path: rel, Result: ResultConflict}, nil
 		}
-		return nil, &parity.ManifestEntry{RelPath: rel, Size: srcInfo.Size(), MTime: srcInfo.ModTime(), SourceDisk: disk, TargetDisk: share.CachePath}
+		return nil, &parity.ManifestEntry{RelPath: filepath.Join(share.Name, rel), Size: srcInfo.Size(), MTime: srcInfo.ModTime(), SourceDisk: disk, TargetDisk: filepath.Dir(share.CachePath)}
 	} else if !errors.Is(derr, fs.ErrNotExist) {
 		return &Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: derr.Error()}, nil
 	}
@@ -338,7 +339,7 @@ func relocateCopyItem(ctx context.Context, share Share, disk, branch, rel string
 		return &Entry{Share: share.Name, Path: rel, Result: ResultFailed, Err: err.Error()}, nil
 	}
 
-	return nil, &parity.ManifestEntry{RelPath: rel, Size: srcInfo.Size(), MTime: srcInfo.ModTime(), SourceDisk: disk, TargetDisk: share.CachePath}
+	return nil, &parity.ManifestEntry{RelPath: filepath.Join(share.Name, rel), Size: srcInfo.Size(), MTime: srcInfo.ModTime(), SourceDisk: disk, TargetDisk: filepath.Dir(share.CachePath)}
 }
 
 // relocateDeletePhase removes manifest's own array-side sources, in
@@ -355,7 +356,7 @@ func relocateDeletePhase(ctx context.Context, share Share, deps Deps, hooks RunH
 		me := manifest[i]
 		entry := finishRelocateDelete(ctx, share, me, deps)
 		report.add(entry)
-		hooks.logf("relocate: %s %s/%s%s", entry.Result, share.Name, me.RelPath, entry.reasonSuffix())
+		hooks.logf("relocate: %s %s/%s%s", entry.Result, share.Name, entry.Path, entry.reasonSuffix())
 
 		if err := hooks.checkpointRelocate(RelocateCheckpoint{Phase: RelocatePhaseDeleting, Manifest: manifest, DeletedCount: i + 1}); err != nil {
 			return false, fmt.Errorf("cache: save relocate checkpoint: %w", err)
@@ -371,19 +372,25 @@ func relocateDeletePhase(ctx context.Context, share Share, deps Deps, hooks RunH
 // place: both copies are complete and correct, so nothing is lost, and a
 // future run's own resume completes the delete.
 func finishRelocateDelete(ctx context.Context, share Share, me parity.ManifestEntry, deps Deps) Entry {
-	src := filepath.Join(me.SourceDisk, share.Name, me.RelPath)
+	// me.RelPath is disk-relative (share.Name/rel, matching
+	// DiffFile.RelPath's own shape — ManifestEntry's doc comment) so it
+	// already carries the share prefix src needs; rel strips that same
+	// prefix back off for Entry.Path, which stays share-relative like
+	// every other Entry this package produces.
+	src := filepath.Join(me.SourceDisk, me.RelPath)
+	rel := strings.TrimPrefix(me.RelPath, share.Name+"/")
 
 	open, err := deps.Open.IsOpen(ctx, src)
 	if err != nil {
-		return Entry{Share: share.Name, Path: me.RelPath, Bytes: me.Size, Result: ResultMovedPendingDelete, Err: err.Error()}
+		return Entry{Share: share.Name, Path: rel, Bytes: me.Size, Result: ResultMovedPendingDelete, Err: err.Error()}
 	}
 	if open {
-		return Entry{Share: share.Name, Path: me.RelPath, Bytes: me.Size, Result: ResultMovedPendingDelete}
+		return Entry{Share: share.Name, Path: rel, Bytes: me.Size, Result: ResultMovedPendingDelete}
 	}
 	if err := os.Remove(src); err != nil {
-		return Entry{Share: share.Name, Path: me.RelPath, Bytes: me.Size, Result: ResultFailed, Err: err.Error()}
+		return Entry{Share: share.Name, Path: rel, Bytes: me.Size, Result: ResultFailed, Err: err.Error()}
 	}
-	return Entry{Share: share.Name, Path: me.RelPath, Bytes: me.Size, Result: ResultMoved}
+	return Entry{Share: share.Name, Path: rel, Bytes: me.Size, Result: ResultMoved}
 }
 
 // PrecheckResult is what a caller shows before starting a relocation

@@ -105,6 +105,54 @@ func TestRelocateToCache_CopiesVerifiesSyncsDeletes(t *testing.T) {
 	}
 }
 
+// TestRelocateToCache_ManifestUsesDiskRelativePaths proves each
+// ManifestEntry the copy phase hands to Sync matches DiffFile.RelPath's
+// own shape (ManifestEntry's doc comment, Q15): RelPath carries the
+// share prefix and TargetDisk is the cache mount point itself, not the
+// share's own cache subdirectory. Getting this wrong means the guard's
+// matchManifest can never recognize the removal this relocation causes
+// as accounted (internal/parity/guard.go), leaving the trailing sync
+// blocked behind an unnecessary confirm.
+func TestRelocateToCache_ManifestUsesDiskRelativePaths(t *testing.T) {
+	s := relocateShare(t, "docs", 1)
+	src := filepath.Join(s.Branches[0], "sub", "report.pdf")
+	mustWrite(t, src, "report bytes")
+
+	engine := parity.NewFakeEngine()
+	engine.Sleep = func(_ time.Duration) {}
+	engine.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+
+	var gotManifest []parity.ManifestEntry
+	deps := testDeps(NewFakeOpenChecker())
+	deps.Sync = func(ctx context.Context, manifest []parity.ManifestEntry) error {
+		if gotManifest == nil {
+			gotManifest = manifest
+		}
+		return syncFuncFromEngine(engine)(ctx, manifest)
+	}
+
+	if _, err := RelocateToCache(context.Background(), s, Config{}, deps, RunHooks{}, nil); err != nil {
+		t.Fatalf("RelocateToCache: %v", err)
+	}
+
+	if len(gotManifest) != 1 {
+		t.Fatalf("expected one manifest entry, got %+v", gotManifest)
+	}
+	me := gotManifest[0]
+	wantRelPath := filepath.Join("docs", "sub", "report.pdf")
+	if me.RelPath != wantRelPath {
+		t.Errorf("RelPath = %q, want %q (share-prefixed, disk-relative)", me.RelPath, wantRelPath)
+	}
+	wantSourceDisk := filepath.Dir(s.Branches[0])
+	if me.SourceDisk != wantSourceDisk {
+		t.Errorf("SourceDisk = %q, want %q (the data disk mount)", me.SourceDisk, wantSourceDisk)
+	}
+	wantTargetDisk := filepath.Dir(s.CachePath)
+	if me.TargetDisk != wantTargetDisk {
+		t.Errorf("TargetDisk = %q, want %q (the cache disk mount, not the share's cache subdirectory)", me.TargetDisk, wantTargetDisk)
+	}
+}
+
 // TestRelocateToCache_SyncsAgainAfterDelete proves Q14's trailing sync:
 // "copy and verify everything, run sync, delete the sources, then sync
 // again". Parity must never be left stale against a deletion this run
