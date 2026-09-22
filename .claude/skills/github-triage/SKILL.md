@@ -107,6 +107,13 @@ and each issue whole:
   must decide before the code can be specified. In that case, create the
   code issue together with it, blocked by it; `orchestrate` pulls it into
   the same run.
+- **Keep each issue to one reviewable change.** Estimate its size in changed
+  lines, excluding generated code (`api/gen/`, `internal/store/db/`,
+  lockfiles), and put the estimate in the scope hint. Above ~800 lines,
+  split it into issues that each ship on their own **and each carry their
+  own wiring**. Issues over ~1300 changed lines produced 61% of all
+  CodeRabbit escapes; the two largest (#37, #40) passed verification first
+  time and then drew 36 findings between them.
 - **An issue delivers a capability someone can reach, not just a package.**
   Every `feat` or `bug` that adds or changes runtime behaviour carries an
   acceptance criterion `Reachable via: <entry point> → <capability>` — an

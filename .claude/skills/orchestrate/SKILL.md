@@ -352,12 +352,23 @@ restarting the review.
 ```
 Agent({
   subagent_type: "task-verifier",
-  model: "opus",      // when any issue in the unit is safety-critical
+  model: "opus",      // any issue in the unit is safety-critical, OR the unit's diff is large (below)
   model: "sonnet",    // otherwise
   description: "Verify <unit-id> attempt <n>",
   prompt: <the filled template>
 })
 ```
+
+**Large diffs get the Opus verifier too.** Before dispatching, measure the
+unit's changed lines excluding generated code:
+```
+git -C <workspace> diff --numstat dev..HEAD -- . ':!api/gen' ':!internal/store/db' ':!**/package-lock.json' | awk '{s+=$1+$2} END {print s}'
+```
+Above ~1000, dispatch the verifier on Opus and say so in the report. Escapes
+scale with size — the top quarter of issues by size (over ~1300 lines)
+produced 61% of CodeRabbit's findings — and Opus-verified issues let
+through about 40% fewer per changed line. An issue that lands far above its
+triage estimate is worth a line in the report as well.
 
 **One verifier per unit per attempt**, verdicts **per issue**: all seven layers
 run against each commit separately, one comment and one label move per
