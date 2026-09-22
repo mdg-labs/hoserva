@@ -12,6 +12,7 @@
 | Security | {{✅ ⚠️ or ❌}} — {{one line}} |
 | Data safety | {{✅ ⚠️ ❌ or ➖ not applicable}} — {{one line}} |
 | Best practice / obvious bugs | {{✅ ⚠️ or ❌}} — {{one line}} |
+| Reachability (production caller for everything new) | {{✅ ❌ or ➖ nothing new to reach}} — {{one line: the entry point traced}} |
 
 ### Checks run
 {{the exact commands executed and their outcome — including lab integration

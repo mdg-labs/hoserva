@@ -90,7 +90,7 @@ claim of correctness in a comment or commit message inside it.
 With more than one commit, check the **split** as part of layer 2: each
 commit holds only its own issue's files and only its own `Fixes #` trailer.
 
-## Six layers — review each issue's commit against all of them
+## Seven layers — review each issue's commit against all of them
 
 1. **Correctness / compilation.** Run every check that applies, yourself —
    don't accept the executor's report of having run it:
@@ -133,6 +133,26 @@ commit holds only its own issue's files and only its own `Fixes #` trailer.
    speculative abstraction, no dead code, comments only for a non-obvious
    *why*; the neighbouring code's idioms; off-by-ones, unhandled cases that
    will actually occur, unchecked errors, context not propagated.
+7. **Reachability.** For every new or changed exported function, service,
+   handler field, job type, setting, option, API operation and test or
+   check script in the diff, name its **production caller** — trace it
+   from the entry point (`cmd/hoservad/main.go` and its wiring files, a
+   `cmd/hoserva` command, a `web/src/routes` page, a nightly chain step, a
+   `make` target and CI job for tests), not just through the diff. Check the
+   issue's `Reachable via:` criterion end to end. Each of these is
+   **blocking**, whether or not an acceptance criterion spells it out:
+   - a capability with no production caller — a service `hoservad` never
+     constructs, a job type never registered, a handler field left nil so
+     the operation `501`s, a publisher nothing calls;
+   - an option, flag or setting the API or CLI accepts and then ignores;
+   - a stub or fixed/sample data presented as real (`PlaceholderPage`,
+     hard-coded "Confirmed", sample rows);
+   - a test or check script that nothing runs;
+   - an `api/openapi.yaml` change whose `cmd/mockapi` counterpart accepts
+     what production rejects.
+   The one exception: the issue explicitly defers that wiring to a named,
+   open issue it is blocked-by or blocking — say which. "None of the
+   acceptance criteria ask for daemon wiring" is never a reason to pass it.
 
 {{IF ANY SAFETY_CRITICAL:}}**Safety-critical issues get layer 5 in full, with no "not applicable".**
 Walk every destructive code path in the diff and state, for each, what
@@ -161,11 +181,24 @@ done.** Every finding you record is exactly one of two kinds:
     message states something untrue;
   - on a `safety-critical` issue, the data-loss test does not fail on the
     parent commit.
-- **Note** — everything else: wording and style, a test you would also
-  like, hardening beyond what the issue asks, an input no caller produces,
-  doc polish, "could be simpler". Notes go in the comment and nowhere else:
-  they never cause a FAIL, the next attempt is not asked to address them,
-  and nobody files them as issues.
+  - layer 7 finds a capability with no production caller (see above).
+- **Note** — only wording and style, a test you would also like, hardening
+  beyond what the issue asks, an input no caller produces, doc polish,
+  "could be simpler". Notes go in the comment and nowhere else: they never
+  cause a FAIL, the next attempt is not asked to address them, and nobody
+  files them as issues.
+
+**A note never describes a defect.** Before posting, re-read every note:
+if it describes something the code *does wrong* — a scenario you can name,
+not a style you would prefer — it is not a note. In code this diff adds or
+changes, it is **blocking**. In code the diff did not touch, it goes under
+**Findings outside this issue**, where the orchestrator files it. A
+data-loss or security scenario is never a note, however unlikely you judge
+the trigger. (A retrospective found about 25 later CodeRabbit findings
+already written down as verifier notes — among them a duplicate-device
+check on the safety-critical format path, a substring URL allowlist in the
+self-updater, a mover copy onto tmpfs when the array mount is absent, and
+five "callable but never wired" capabilities.)
 
 **FAIL an issue if and only if it has at least one blocking finding.** A
 layer with only notes is ⚠️, never ❌. Calling a finding "security" or
@@ -193,7 +226,7 @@ In this round:
 2. Run **every layer-1 check** in full — a fix can break anything.
 3. Review what changed since the rejected commit
    (`git diff {{PREVIOUS_SHA}} <new sha>`, or compare against
-   `{{PRIOR_COMMIT_PATH}}` for a fresh clone) against all six layers.
+   `{{PRIOR_COMMIT_PATH}}` for a fresh clone) against all seven layers.
 4. Code the previous round already reviewed and this round did not change
    is **not** re-reviewed for new findings. The one exception is a blocking
    data-loss or security defect with a concrete scenario — record it, and

@@ -359,10 +359,15 @@ Agent({
 })
 ```
 
-**One verifier per unit per attempt**, verdicts **per issue**: all six layers
+**One verifier per unit per attempt**, verdicts **per issue**: all seven layers
 run against each commit separately, one comment and one label move per
 issue. **Only blocking findings fail an issue**; notes are recorded in the
-comment and go nowhere else. A mixed PASS/FAIL result is normal. The verifier posts its own
+comment and go nowhere else — which is why a note may never describe a
+defect: a wrong behaviour in code the diff adds is blocking, one in
+untouched code is a finding outside the issue (step 11), and a capability
+with no production caller fails layer 7. If a PASS comment's notes
+describe a concrete defect anyway, treat that note as a finding outside the
+issue and route it in step 11. A mixed PASS/FAIL result is normal. The verifier posts its own
 comments and moves its own labels; read its returned verdicts rather than
 re-deriving them from GitHub.
 
