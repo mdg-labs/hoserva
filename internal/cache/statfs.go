@@ -23,6 +23,42 @@ func AvailableBytes(path string) (int64, error) {
 	return int64(st.Bavail) * int64(st.Bsize), nil
 }
 
+// DiskUsage is one branch's own filesystem usage — PlanRebalance's own
+// target-selection input (doc 09 §3, doc 09 §5): finding a share's most-
+// and least-full disk needs each branch's fill level as a whole, not
+// merely whether one file's worth of bytes fits (AvailableBytes' own,
+// narrower question).
+type DiskUsage struct {
+	TotalBytes int64
+	FreeBytes  int64
+}
+
+// UsedPercent is the fraction of TotalBytes currently used, as a
+// percentage — PlanRebalance's own skew measure between two branches.
+// TotalBytes<=0 (a filesystem this call could not measure) reports 0
+// rather than dividing by zero: an unmeasurable disk is not evidence
+// that it is full.
+func (u DiskUsage) UsedPercent() float64 {
+	if u.TotalBytes <= 0 {
+		return 0
+	}
+	return float64(u.TotalBytes-u.FreeBytes) / float64(u.TotalBytes) * 100
+}
+
+// UsageBytes reports the real implementation of Deps.Usage: statfs(2)'s
+// own total and available byte counts at path, resolved to its nearest
+// existing ancestor the same way AvailableBytes is.
+func UsageBytes(path string) (DiskUsage, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(nearestExisting(path), &st); err != nil {
+		return DiskUsage{}, err
+	}
+	return DiskUsage{
+		TotalBytes: int64(st.Blocks) * int64(st.Bsize),
+		FreeBytes:  int64(st.Bavail) * int64(st.Bsize),
+	}, nil
+}
+
 func nearestExisting(path string) string {
 	for {
 		if _, err := os.Stat(path); err == nil {
