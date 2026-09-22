@@ -237,13 +237,6 @@ func run(cfg config) error {
 		configRoot = "/etc"
 	}
 	generator := cfggen.NewGenerator(configRoot)
-	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
-		Provider:  disks,
-		Runner:    linuxDisks.Exec,
-		Store:     arrayStore,
-		Generator: generator,
-		Mounter:   disk.SystemdMounter{Runner: linuxDisks.Exec},
-	}))
 	// The mover cooperatively checks StopRequested between files and
 	// leaves consistent on-disk state at any stopping point (a duplicate,
 	// never a gap — doc 09 §2), so it honestly supports being cancelled,
@@ -325,6 +318,22 @@ func run(cfg config) error {
 		handler.ParityGuard = parityEngine.Guard
 		handler.RelocationManifest = parityEngine.Relocation
 	}
+
+	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
+		Provider:  disks,
+		Runner:    linuxDisks.Exec,
+		Store:     arrayStore,
+		Generator: generator,
+		Mounter:   disk.SystemdMounter{Runner: linuxDisks.Exec},
+		ArrayReady: func(ctx context.Context) error {
+			seq, err := newArraySequence(ctx, scheduler, arrayStore, disks, linuxDisks.Exec)
+			if err != nil {
+				return err
+			}
+			handler.Array = seq
+			return nil
+		},
+	}))
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
 	if err != nil {

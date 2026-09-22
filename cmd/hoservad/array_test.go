@@ -10,6 +10,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
+	cfggen "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/pool"
@@ -332,5 +333,167 @@ func TestNewArraySequence_ListErrorLeavesGateUnready(t *testing.T) {
 	}
 	if calls := runner.Calls(); len(calls) != 0 {
 		t.Fatalf("StartArray mounted while inventory was unavailable: %+v", calls)
+	}
+}
+
+// newLiveArrayCreateEnv wires job.TypeDiskFormat exactly the way main.go's
+// own registration does — including the ArrayReady hook that rebuilds
+// Handler.Array from freshly persisted topology (#262) — against a real
+// scheduler and a real, migrated SQLite database, so a test here proves
+// the same construction a restart performs at startup also runs after a
+// live CreateArray, without needing to actually restart anything.
+func newLiveArrayCreateEnv(t *testing.T) (context.Context, *api.Handler, *disk.FakeProvider, *disk.FakeRunner) {
+	t.Helper()
+
+	migrations, err := store.Load()
+	if err != nil {
+		t.Fatalf("loading embedded migrations: %v", err)
+	}
+	dbPath := filepath.Join(t.TempDir(), "hoservad-live-array-create-test.db")
+	db, err := sql.Open("sqlite", store.DSN(dbPath))
+	if err != nil {
+		t.Fatalf("opening test database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	runner := &store.Runner{DB: db, Migrations: migrations, SnapshotDir: t.TempDir()}
+	if _, _, err := runner.Apply(context.Background()); err != nil {
+		t.Fatalf("applying migrations: %v", err)
+	}
+
+	arrays := store.NewArrayStore(db)
+	registry := job.NewRegistry()
+	scheduler := job.NewScheduler(job.NewStore(db), job.NewLogStore(t.TempDir()), job.NewHub(), registry)
+	provider := disk.NewFakeProvider()
+	fakeRunner := disk.NewFakeRunner()
+
+	h := &api.Handler{Scheduler: scheduler, Store: job.NewStore(db), Disks: provider, ArrayStore: arrays}
+
+	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
+		Provider:  provider,
+		Runner:    fakeRunner,
+		Store:     arrays,
+		Generator: cfggen.NewGenerator(t.TempDir()),
+		Mounter:   disk.NewFakeMounter(),
+		ArrayReady: func(ctx context.Context) error {
+			seq, err := newArraySequence(ctx, scheduler, arrays, provider, fakeRunner)
+			if err != nil {
+				return err
+			}
+			h.Array = seq
+			return nil
+		},
+		Now: func() time.Time { return time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC) },
+	}))
+
+	return context.Background(), h, provider, fakeRunner
+}
+
+// liveArrayCreateReq assigns one parity and two data disks — Q18 refuses
+// a plan that cannot place at least three content-file copies on
+// distinct physical devices, so a single data disk plus parity is not
+// enough for CreateArray to actually succeed.
+func liveArrayCreateReq(parity, data1, data2 string) *apiv1.CreateArrayRequest {
+	plan := disk.TopologyPlan{
+		Parity: []disk.AssignedDisk{{Device: parity, Filesystem: disk.XFS}},
+		Data: []disk.AssignedDisk{
+			{Device: data1, Filesystem: disk.XFS},
+			{Device: data2, Filesystem: disk.XFS},
+		},
+	}
+	return &apiv1.CreateArrayRequest{
+		Confirmation: plan.Confirmation(),
+		Disks: []apiv1.ArrayDiskAssignment{
+			xfsAssignment(parity, apiv1.ArrayDiskRoleParity),
+			xfsAssignment(data1, apiv1.ArrayDiskRoleData),
+			xfsAssignment(data2, apiv1.ArrayDiskRoleData),
+		},
+	}
+}
+
+func xfsAssignment(dev string, role apiv1.ArrayDiskRole) apiv1.ArrayDiskAssignment {
+	a := apiv1.ArrayDiskAssignment{Device: dev, Role: role}
+	a.SetFilesystem(apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs))
+	return a
+}
+
+// TestHandler_CreateArray_RefreshesArraySequenceWithoutRestart is #262's
+// own regression: a POST /disks/array that succeeds against an already
+// running daemon left Handler.Array nil (StartArray 501 not_configured)
+// and the pool unmounted until hoservad restarted, because
+// newArraySequence was only ever evaluated once, at daemon startup. This
+// proves a live CreateArray job now rebuilds ArraySequence from the
+// topology it just persisted — same Gate, same StorageGate readiness
+// check newArraySequence always runs — so array/start (and the mount it
+// performs) works without a restart, with no other job or process
+// standing in for one.
+func TestHandler_CreateArray_RefreshesArraySequenceWithoutRestart(t *testing.T) {
+	ctx, h, disks, runner := newLiveArrayCreateEnv(t)
+	disks.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB, WWN: "wwn-parity", Serial: "PARITY1", ByIDName: "wwn-wwn-parity"})
+	disks.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB, Serial: "DATA1"})
+	disks.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, Serial: "DATA2"})
+	runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/disk/by-id/wwn-wwn-parity"}, []byte("uuid-parity1\n"), nil)
+	runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdb"}, []byte("uuid-disk1\n"), nil)
+	runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdc"}, []byte("uuid-disk2\n"), nil)
+
+	if h.Array != nil {
+		t.Fatal("Handler.Array is already set before any array has ever been created")
+	}
+	if _, err := h.StartArray(ctx); err == nil {
+		t.Fatal("StartArray succeeded with no array yet — want 501 not_configured")
+	} else if status := handlerAPIError(t, h, err); status.StatusCode != 501 || status.Response.Code != "not_configured" {
+		t.Fatalf("StartArray (no array) = %+v, want 501 not_configured", status)
+	}
+
+	j, err := h.CreateArray(ctx, liveArrayCreateReq("/dev/sda", "/dev/sdb", "/dev/sdc"))
+	if err != nil {
+		t.Fatalf("CreateArray: %v", err)
+	}
+	finished, err := h.Scheduler.Await(ctx, j.ID.String())
+	if err != nil {
+		t.Fatalf("Await: %v", err)
+	}
+	if finished.Status != job.StatusSucceeded {
+		t.Fatalf("create-array job status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+
+	if h.Array == nil {
+		t.Fatal("Handler.Array is nil after a live CreateArray succeeded — array/start would still 501 not_configured until hoservad restarts (#262)")
+	}
+	gate, ok := h.Array.Gate.(*disk.StorageGate)
+	if !ok {
+		t.Fatalf("Gate is %T, want *disk.StorageGate", h.Array.Gate)
+	}
+	if !gate.Ready() {
+		t.Fatal("gate.Ready() = false right after creating the array from the disks that were just formatted — Evaluate was skipped rebuilding the sequence")
+	}
+	realCatchAll, ok := h.Array.CatchAll.(pool.MountController)
+	if !ok {
+		t.Fatalf("CatchAll is %T, want pool.MountController — the live rebuild must not invent a second unmount order", h.Array.CatchAll)
+	}
+
+	// Swap in the same argv-recording fake TestNewArraySequence_Wires...
+	// uses before calling Start, so this proves array/start actually runs
+	// mount(8) through the injected Runner rather than a second real
+	// mkdir/mergerfs invocation against pool.CatchAllPath.
+	h.Array.CatchAll = arrayTestCatchAll{
+		where:  pool.CatchAllPath,
+		argv:   realCatchAll.Mnt.Argv(),
+		runner: runner,
+	}
+
+	got, err := h.StartArray(ctx)
+	if err != nil {
+		t.Fatalf("StartArray after a live CreateArray: %v", err)
+	}
+	if got.MaintenanceMode.Or(false) {
+		t.Fatal("StartArray: maintenanceMode must be false after a successful start")
+	}
+	startCalls := runner.Calls()
+	if len(startCalls) == 0 {
+		t.Fatal("StartArray ran no mount calls — array/start did nothing")
+	}
+	last := startCalls[len(startCalls)-1]
+	if last.Name != "mergerfs" {
+		t.Fatalf("StartArray's last call = %+v, want mergerfs (the catch-all)", last)
 	}
 }
