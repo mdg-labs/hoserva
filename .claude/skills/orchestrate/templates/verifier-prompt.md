@@ -132,7 +132,23 @@ commit holds only its own issue's files and only its own `Fixes #` trailer.
 6. **Best practice and obvious bugs.** `CLAUDE.md`'s conventions — no
    speculative abstraction, no dead code, comments only for a non-obvious
    *why*; the neighbouring code's idioms; off-by-ones, unhandled cases that
-   will actually occur, unchecked errors, context not propagated.
+   will actually occur, unchecked errors, context not propagated. Then walk
+   the four classes that most often reached CodeRabbit after a PASS, for
+   **every** change, not only storage:
+   - **Partial failure** — each function with more than one durable side
+     effect (DB row, generated file, mount, system account, notification
+     row): what is left behind if step *k* fails, and does the caller see
+     the truth?
+   - **Fail-open** — `|| true`, ignored errors, swallowed `.catch`,
+     `continue`-on-error in a gate, check or verdict.
+   - **UI states** — each web API call handles `{ error }`, rejection and
+     abort, and never renders a failed request as empty, unconfigured or
+     successful.
+   - **Test strength** — for each test the diff adds, name the line of the
+     change it would fail without. If you cannot, run it against the
+     parent commit (same throwaway-copy method as the safety-critical
+     check). A test that passes both ways is a blocking finding when it is
+     the proof an acceptance criterion relies on.
 7. **Reachability.** For every new or changed exported function, service,
    handler field, job type, setting, option, API operation and test or
    check script in the diff, name its **production caller** — trace it

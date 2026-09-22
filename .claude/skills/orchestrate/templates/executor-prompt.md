@@ -163,6 +163,25 @@ your **only** GitHub writes. Never `gh issue edit`, `gh issue close`, or
   `hoservad`, build the handler the way `main.go` does). If the wiring needs
   a file outside your declared scope, stop and report the issue `blocked`
   with that file named — never report it done with the wiring missing.
+- **Walk every failure path before you commit** — these are the defect
+  classes that most often got past verification:
+  - **Partial failure.** For any function with more than one durable side
+    effect (a DB row, a generated file, a mount, a system account such as
+    Samba, a notification row): what state is left if step *k* fails? Make
+    it one transaction, validate everything before the first write, or
+    compensate — and return the error. Never report success, or an error,
+    over a half-applied change.
+  - **Fail-open.** No `|| true`, ignored `err`, swallowed `.catch`, or
+    `continue`-on-error in anything that gates, verifies, or decides
+    success. An error in a safety or readiness check means "not safe",
+    never "fine".
+  - **UI states.** Every API call from the web UI handles `{ error }` in
+    the result (the generated client does not throw on HTTP errors), a
+    rejected promise, and an abort — and never turns a failed request into
+    empty, "not configured" or success state.
+  - **Tests that prove something.** For every test you add, know which line
+    of your change it would fail without. A test that passes with the
+    change reverted proves nothing.
 - **Conventions:** no comments unless the *why* is non-obvious; no
   speculative abstraction; no half-finished work; no error handling for
   cases that can't happen. Conventional commit subjects (`feat(parity): …`).
