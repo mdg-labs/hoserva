@@ -446,6 +446,15 @@ func enumerateDataDiskTree(root string) ([]string, error) {
 	return rels, nil
 }
 
+// dataDiskUpgradeCheckpointInterval is how many entries copyDataDiskTree
+// copies between periodic checkpoint writes — bounding checkpoint I/O
+// (one extra write per interval, not one per entry) while bounding how
+// much a hard kill (SIGKILL, power loss, daemon crash) between periodic
+// writes can force copyDataDiskTree to redo, since only a cooperative
+// stop (ctx or hooks.stopRequested) reaches the checkpoint RunDataDiskUpgrade
+// itself writes once copyDataDiskTree returns.
+const dataDiskUpgradeCheckpointInterval = 256
+
 // copyDataDiskTree copies every entry under src to the same relative
 // path under dst, preserving mode, ownership, xattrs and timestamps
 // (doc 02 §4 "Larger data disk"), resuming past everything at or before
@@ -461,6 +470,7 @@ func copyDataDiskTree(ctx context.Context, src, dst string, hooks DataDiskUpgrad
 
 	lastPath = resumeAfter
 	total := len(rels)
+	copied := 0
 	for i, rel := range rels {
 		if resumeAfter != "" && rel <= resumeAfter {
 			continue
@@ -473,9 +483,15 @@ func copyDataDiskTree(ctx context.Context, src, dst string, hooks DataDiskUpgrad
 			return false, lastPath, fmt.Errorf("disk: copy %s: %w", rel, err)
 		}
 		lastPath = rel
+		copied++
 		hooks.logf("data disk upgrade: copied %s", rel)
 		if total > 0 {
 			hooks.progress((i + 1) * 100 / total)
+		}
+		if copied%dataDiskUpgradeCheckpointInterval == 0 {
+			if err := hooks.checkpoint(DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseCopying, LastPath: lastPath}); err != nil {
+				return false, lastPath, err
+			}
 		}
 	}
 

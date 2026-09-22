@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -175,6 +176,56 @@ func TestVerifyDataDiskTree_DetectsCorruptedContent(t *testing.T) {
 	_, err = verifyDataDiskTree(context.Background(), src, dst, true, DataDiskUpgradeHooks{})
 	if !errors.Is(err, ErrDataDiskUpgradeMismatch) {
 		t.Fatalf("verifyDataDiskTree on corrupted content: err = %v, want ErrDataDiskUpgradeMismatch", err)
+	}
+}
+
+// TestCopyDataDiskTree_ChecksPointsPeriodicallyDuringCopy proves
+// copyDataDiskTree persists a checkpoint every
+// dataDiskUpgradeCheckpointInterval entries while it is still copying,
+// not only once a cooperative stop is observed — a hard kill (SIGKILL,
+// power loss, daemon crash) between periodic writes should only lose at
+// most one interval's worth of copying, not the whole tree.
+func TestCopyDataDiskTree_ChecksPointsPeriodicallyDuringCopy(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	count := dataDiskUpgradeCheckpointInterval*2 + 3
+	for i := 0; i < count; i++ {
+		writeUpgradeTestFile(t, filepath.Join(src, fmt.Sprintf("file-%04d.bin", i)), 16, 0o600)
+	}
+
+	var checkpoints []DataDiskUpgradeCheckpoint
+	hooks := DataDiskUpgradeHooks{
+		SaveCheckpoint: func(data []byte) error {
+			var cp DataDiskUpgradeCheckpoint
+			if err := json.Unmarshal(data, &cp); err != nil {
+				t.Fatalf("decoding checkpoint: %v", err)
+			}
+			checkpoints = append(checkpoints, cp)
+			return nil
+		},
+	}
+
+	interrupted, _, err := copyDataDiskTree(context.Background(), src, dst, hooks, "")
+	if err != nil {
+		t.Fatalf("copyDataDiskTree: %v", err)
+	}
+	if interrupted {
+		t.Fatal("copyDataDiskTree reported interrupted with no stop requested")
+	}
+
+	if len(checkpoints) != 2 {
+		t.Fatalf("got %d periodic checkpoints, want 2 (one every %d of %d entries)", len(checkpoints), dataDiskUpgradeCheckpointInterval, count)
+	}
+	for _, cp := range checkpoints {
+		if cp.Phase != DataDiskUpgradePhaseCopying {
+			t.Fatalf("checkpoint phase = %q, want %q", cp.Phase, DataDiskUpgradePhaseCopying)
+		}
+		if cp.LastPath == "" {
+			t.Fatal("periodic checkpoint has an empty LastPath")
+		}
+	}
+	if checkpoints[1].LastPath == checkpoints[0].LastPath {
+		t.Fatalf("second checkpoint LastPath %q did not advance past the first", checkpoints[1].LastPath)
 	}
 }
 
