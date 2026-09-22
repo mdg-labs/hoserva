@@ -43,13 +43,29 @@ func (g *Generator) resolvePath(path string) (full string, key string, err error
 	return filepath.Join(g.Root, clean), clean, nil
 }
 
+// defaultFileMode is the permission Write uses when File.Mode is left
+// zero: readable by any local account, for a generated file that carries
+// nothing secret (the mode `hoserva doctor` and similar read-only tooling
+// already expects).
+const defaultFileMode = 0o644
+
+// secretFileMode is the permission a File whose rendered body embeds a
+// credential sets Mode to, so it never lands world-readable the way
+// defaultFileMode would leave it — owner-read-write only, since a
+// production hoservad runs as root (Q44) and a dev run owns Root itself.
+const secretFileMode = 0o600
+
 // File is one file Generator can write: a path relative to Root, the
-// `hoserva <command>` line its header names, and the rendered body a
-// caller wants written below that header.
+// `hoserva <command>` line its header names, the rendered body a caller
+// wants written below that header, and the permission it lands with. Mode
+// left zero writes defaultFileMode; a render path whose body embeds a
+// credential (nut.go's upsmon.conf and upsd.users, at present) sets Mode
+// to secretFileMode instead.
 type File struct {
 	Path    string
 	Command string
 	Body    []byte
+	Mode    os.FileMode
 }
 
 // Generator writes managed files under Root and records each one's hash
@@ -122,8 +138,12 @@ func (g *Generator) Write(ctx context.Context, file File, revision int, now time
 	_, tracked := manifest[key]
 	untracked := !tracked
 
+	mode := file.Mode
+	if mode == 0 {
+		mode = defaultFileMode
+	}
 	content := Header(file.Command, revision, now) + string(file.Body)
-	if err := atomicWrite(full, []byte(content), 0o644, untracked); err != nil {
+	if err := atomicWrite(full, []byte(content), mode, untracked); err != nil {
 		if untracked && errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("%w: %s", ErrExistingHostFile, key)
 		}

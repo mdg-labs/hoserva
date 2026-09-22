@@ -10,7 +10,10 @@ import (
 
 // Q77 UPS config paths, relative to Generator.Root ("/etc" in production,
 // so these land at /etc/nut/*.conf — the paths Debian's nut package
-// reads).
+// reads). PathUPSMonConf and PathUPSDUsers carry the MONITOR/upsd.users
+// password (WriteUPS below writes both with Mode: secretFileMode);
+// PathNUTConf and PathUPSConf embed nothing secret and write at
+// defaultFileMode.
 const (
 	PathNUTConf    = "nut/nut.conf"
 	PathUPSConf    = "nut/ups.conf"
@@ -250,7 +253,7 @@ func (g *Generator) WriteUPS(ctx context.Context, state UPSState, command string
 	if err := g.Write(ctx, File{Path: PathNUTConf, Command: command, Body: []byte(RenderNUTConf(state))}, revision, now); err != nil {
 		return err
 	}
-	if err := g.Write(ctx, File{Path: PathUPSMonConf, Command: command, Body: []byte(RenderUPSMonConf(state))}, revision, now); err != nil {
+	if err := g.Write(ctx, File{Path: PathUPSMonConf, Command: command, Body: []byte(RenderUPSMonConf(state)), Mode: secretFileMode}, revision, now); err != nil {
 		return err
 	}
 	if state.Connection != UPSConnectionUSB {
@@ -259,7 +262,7 @@ func (g *Generator) WriteUPS(ctx context.Context, state UPSState, command string
 	if err := g.Write(ctx, File{Path: PathUPSConf, Command: command, Body: []byte(RenderUPSConf(state))}, revision, now); err != nil {
 		return err
 	}
-	return g.Write(ctx, File{Path: PathUPSDUsers, Command: command, Body: []byte(RenderUPSDUsers(state))}, revision, now)
+	return g.Write(ctx, File{Path: PathUPSDUsers, Command: command, Body: []byte(RenderUPSDUsers(state)), Mode: secretFileMode}, revision, now)
 }
 
 // reconcileUSBFiles removes ups.conf and upsd.users once the connection

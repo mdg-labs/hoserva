@@ -132,6 +132,41 @@ func TestWriteUPS_USBWritesAllFourFiles(t *testing.T) {
 	}
 }
 
+// TestWriteUPS_SecretFilesAreRestrictedMode proves upsmon.conf and
+// upsd.users — the two files that embed the MONITOR/upsd.users password
+// (#260) — land at secretFileMode rather than the world-readable
+// defaultFileMode every other generated file uses, and that nut.conf and
+// ups.conf, which carry no secret, are unaffected.
+func TestWriteUPS_SecretFilesAreRestrictedMode(t *testing.T) {
+	state := loadUPSState(t, "usb")
+	g := NewGenerator(t.TempDir())
+	now := time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC)
+
+	writeUPS(t, g, state, 1, now)
+
+	restricted := []string{PathUPSMonConf, PathUPSDUsers}
+	for _, path := range restricted {
+		info, err := os.Stat(filepath.Join(g.Root, path))
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != secretFileMode {
+			t.Fatalf("%s mode = %o, want %o", path, got, secretFileMode)
+		}
+	}
+
+	unrestricted := []string{PathNUTConf, PathUPSConf}
+	for _, path := range unrestricted {
+		info, err := os.Stat(filepath.Join(g.Root, path))
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != defaultFileMode {
+			t.Fatalf("%s mode = %o, want %o", path, got, defaultFileMode)
+		}
+	}
+}
+
 // TestWriteUPS_NetworkWritesOnlyTwoFiles proves WriteUPS never writes
 // ups.conf/upsd.users for a network NUT server — those files belong to
 // the remote server's own configuration, not Hoserva's (RenderUPSConf's
