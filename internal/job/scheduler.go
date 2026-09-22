@@ -22,6 +22,7 @@ type RunFunc func(ctx context.Context, rc *RunContext) error
 
 var (
 	ErrMaintenanceMode   = errors.New("job: maintenance mode is active — new jobs are refused")
+	ErrOnBattery         = errors.New("job: on battery — the mover is paused and scheduled syncs are held until power returns")
 	ErrJobNotCancellable = errors.New("job: this job's tool does not support cancellation")
 	ErrJobNotResumable   = errors.New("job: this job type does not persist a checkpoint to resume from")
 	ErrJobNotInterrupted = errors.New("job: only an interrupted job can be resumed")
@@ -44,6 +45,16 @@ const (
 	reasonNone stopReason = iota
 	reasonCancel
 	reasonMaintenance
+	// reasonBatteryHold marks a mover job PauseForBattery asked to stop
+	// at its next checkpoint (Q77) — mechanically the same "resumable job
+	// stops gracefully" path EnterMaintenance already uses for
+	// reasonMaintenance, so runJob still records it StatusInterrupted
+	// (job.Status has no separate "paused" state). What makes an
+	// on-battery pause different from a maintenance-mode interruption is
+	// behavioural, not a status value: UPSController resumes it itself
+	// once power returns, rather than leaving it for an explicit user
+	// Resume the way Q29 requires after a restart or `array stop`.
+	reasonBatteryHold
 )
 
 type runningJob struct {
@@ -83,6 +94,11 @@ type Scheduler struct {
 	evictedTerminalSnapshots    map[string]struct{}
 	evictedTerminalSnapshotFIFO []string
 	maintenance                 bool
+	// batteryHold is Q77's own on-battery hold: lighter than maintenance
+	// mode — it refuses only TypeMover and TypeSync (Submit and dispatch
+	// both check it) and never touches a job of any other type, unlike
+	// EnterMaintenance's own refusal of everything.
+	batteryHold bool
 }
 
 // NewScheduler wires a Scheduler to its persistence, log capture, event
@@ -132,6 +148,10 @@ func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, pa
 	if s.maintenance {
 		s.mu.Unlock()
 		return nil, ErrMaintenanceMode
+	}
+	if s.batteryHold && isBatteryHeldType(t) {
+		s.mu.Unlock()
+		return nil, ErrOnBattery
 	}
 
 	now := time.Now().UTC()
@@ -239,6 +259,10 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 	if s.maintenance {
 		s.mu.Unlock()
 		return nil, ErrMaintenanceMode
+	}
+	if s.batteryHold && isBatteryHeldType(existing.Type) {
+		s.mu.Unlock()
+		return nil, ErrOnBattery
 	}
 
 	now := time.Now().UTC()
@@ -351,6 +375,85 @@ func (s *Scheduler) InMaintenance() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.maintenance
+}
+
+// isBatteryHeldType reports whether t is one of the two types Q77's
+// on-battery hold refuses — exactly the mover and sync, never scrub,
+// fix, check or any other class (Q77's own default: "pause the mover
+// and hold scheduled syncs", not the whole Parity/Array-write classes).
+func isBatteryHeldType(t Type) bool {
+	return t == TypeMover || t == TypeSync
+}
+
+// PauseForBattery is Q77's on-battery reaction: from this point on,
+// Submit and dispatch refuse a new or queued TypeMover/TypeSync job
+// (ErrOnBattery) until ResumeFromBattery is called, and any TypeMover
+// job currently running is asked to stop at its next checkpoint — the
+// same graceful-stop mechanism EnterMaintenance already uses for a
+// resumable job, but without touching anything else: a sync already
+// running keeps running (Q77 only "holds" a sync that hasn't started
+// yet), and no other job class is affected at all. It returns the ID of
+// the mover job it asked to stop, if any, so a caller (job.UPSController)
+// can resume it once power returns — only once that job has actually
+// finished stopping, waited for the same way Drain waits for a running
+// job's own done channel, so a short outage (ONLINE arriving before the
+// stop is fully processed) can never race Resume against a checkpoint
+// still being written: by the time PauseForBattery returns, the job's
+// own Store.UpdateStatus(StatusInterrupted) has already happened, and
+// Resume will find it interrupted rather than failing with
+// ErrJobNotInterrupted and leaving it stuck. Idempotent: calling it
+// again while already on battery is a no-op.
+func (s *Scheduler) PauseForBattery(ctx context.Context) []string {
+	s.mu.Lock()
+	if s.batteryHold {
+		s.mu.Unlock()
+		return nil
+	}
+	s.batteryHold = true
+	var toStop []*runningJob
+	for _, rj := range s.running {
+		if rj.job.Type == TypeMover {
+			toStop = append(toStop, rj)
+		}
+	}
+	s.mu.Unlock()
+
+	paused := make([]string, 0, len(toStop))
+	for _, rj := range toStop {
+		rj.mu.Lock()
+		rj.reason = reasonBatteryHold
+		rj.mu.Unlock()
+		close(rj.stopCh)
+		paused = append(paused, rj.job.ID)
+	}
+	for _, rj := range toStop {
+		select {
+		case <-rj.done:
+		case <-ctx.Done():
+		}
+	}
+	return paused
+}
+
+// ResumeFromBattery reverses PauseForBattery: Submit and dispatch stop
+// refusing a mover or sync job. It does not itself resume the mover job
+// PauseForBattery paused — job.UPSController calls Resume for that,
+// using the ID PauseForBattery returned, once it has called this.
+func (s *Scheduler) ResumeFromBattery() {
+	s.mu.Lock()
+	s.batteryHold = false
+	s.mu.Unlock()
+	// Unlike ExitMaintenance, PauseForBattery never emptied the queue —
+	// a held mover or sync job is still sitting there, queued, waiting.
+	// dispatch() is what actually starts it now that the hold is gone.
+	s.dispatch()
+}
+
+// OnBattery reports whether the on-battery hold is currently active.
+func (s *Scheduler) OnBattery() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.batteryHold
 }
 
 // BlockingStorageJob returns a currently running Parity, Array-write or
@@ -592,6 +695,10 @@ func (s *Scheduler) dispatch() {
 	var remaining []*queuedJob
 	started := make([]*Job, 0, len(s.queue))
 	for _, q := range s.queue {
+		if s.batteryHold && isBatteryHeldType(q.job.Type) {
+			remaining = append(remaining, q)
+			continue
+		}
 		conflict := s.hasConflictWithRunningLocked(q.job.Class, q.job.ResourceIDs)
 		if !conflict {
 			for _, sj := range started {
@@ -678,7 +785,7 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 	switch {
 	case reason == reasonCancel:
 		status = StatusCancelled
-	case reason == reasonMaintenance:
+	case reason == reasonMaintenance, reason == reasonBatteryHold:
 		status = StatusInterrupted
 	case runErr != nil:
 		status = StatusFailed

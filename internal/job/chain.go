@@ -186,6 +186,14 @@ func (c *MaintenanceChain) runJobStep(ctx context.Context, step Step, t Type) (S
 		if errors.Is(err, ErrJobTypeNotRegistered) && step == StepMover {
 			return StepResult{Step: step, Skipped: true}, false, nil
 		}
+		// Q77's own "hold scheduled syncs": a mover or sync step Submit
+		// refuses for being on battery is skipped, not a chain failure —
+		// the chain's next scheduled run picks it back up once power
+		// returns, the same way a disabled step is skipped rather than
+		// failed.
+		if errors.Is(err, ErrOnBattery) {
+			return StepResult{Step: step, Skipped: true}, false, nil
+		}
 		wrapped := fmt.Errorf("job: maintenance chain: starting %s: %w", t, err)
 		return StepResult{Step: step, Err: wrapped}, false, wrapped
 	}

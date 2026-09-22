@@ -53,6 +53,13 @@ type Share struct {
 	Branches     []string
 	MinFreeSpace int64
 	Exclude      []string
+	// PathPreserving marks a share using one of mergerfs's path-preserving
+	// create policies (`ep*`, doc 09 §1). PlanRebalance warns rather than
+	// silently proceeding when its own plan would place a file on a
+	// branch that does not already hold that file's parent path — doing
+	// so changes future placement behaviour for that directory under such
+	// a policy (doc 09 §3's "Path-preserving caveat").
+	PathPreserving bool
 }
 
 // Config is a mover run's tunable behaviour.
@@ -89,8 +96,53 @@ type Deps struct {
 	// real, threshold-guarded parity.SyncOpts.Manifest call belongs with
 	// the rest of that wiring in internal/job, alongside RunMover. Run
 	// and RelocateToArray never call it; it has no default and is
-	// required by RelocateToCache.
+	// required by RelocateToCache and RunRebalance.
 	Sync SyncFunc
+	// Usage reports one branch's own filesystem usage (total and free
+	// bytes) — PlanRebalance's target-selection input (doc 09 §3):
+	// finding a share's own most- and least-full disk needs each
+	// branch's fill level, not merely whether size bytes fits (Avail's
+	// own, narrower question). Defaults to UsageBytes (statfs.go),
+	// matching Avail's own per-path statfs pattern.
+	Usage func(path string) (DiskUsage, error)
+	// RebalanceBatchLimit caps a rebalance batch by plain file count,
+	// independent of anything about the array's current state (doc 02
+	// §2's RemovedFilesMax rule: a fixed count, not a percentage). Nil or
+	// non-positive uses DefaultRebalanceBatchLimit, a fixed margin safely
+	// under parity.DefaultRemovedFilesMax (500) — safe by construction
+	// for an array of any size, unlike RebalancePercentLimit or
+	// TrackedFileCount below, neither of which can be defaulted the same
+	// way.
+	RebalanceBatchLimit func() int
+	// RebalancePercentLimit is the percent-rule threshold a rebalance
+	// batch must stay under (parity's own RemovedUpdatedPercent rule).
+	// Nil, non-positive or >=100 uses parity.DefaultRemovedUpdatedPercent
+	// — safe to default because it is the guard's own threshold value,
+	// not an estimate of the array's state: defaulting it to the same
+	// constant the guard itself defaults to is the conservative choice
+	// whenever a caller hasn't configured the guard differently.
+	RebalancePercentLimit func() float64
+	// TrackedFileCount returns the array's current tracked file count —
+	// the same denominator the threshold guard's own next Evaluate call
+	// will divide by when it computes RemovedUpdatedPercent
+	// (guard.go's Evaluate, "totalBefore": the sum of
+	// DiffReport.PerDisk[mount].FilesBefore across every disk in a fresh
+	// diff). A real caller wires this to something that calls
+	// parity.Engine.Diff and sums PerDisk exactly the way Evaluate does —
+	// never an independent filesystem walk, which would count files
+	// SnapRAID's own parity.DefaultExcludes excludes and so overestimate
+	// the true tracked count in exactly the unsafe direction. This value
+	// must never be larger than what the guard's own next Evaluate call
+	// would actually use; a smaller (staler) number only makes batch
+	// sizing more conservative, never less safe.
+	//
+	// There is deliberately no filesystem-walk fallback and no numeric
+	// default: a nil TrackedFileCount makes RunRebalance refuse outright
+	// (ErrRebalanceTrackedCountRequired) rather than guess at this one
+	// value, unlike RebalanceBatchLimit and RebalancePercentLimit above,
+	// both of which are safe to default because they are threshold
+	// constants, not estimates of array state.
+	TrackedFileCount func(ctx context.Context) (int, error)
 }
 
 func (d Deps) withDefaults() Deps {
@@ -108,6 +160,9 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.FsyncDir == nil {
 		d.FsyncDir = fsyncDir
+	}
+	if d.Usage == nil {
+		d.Usage = UsageBytes
 	}
 	return d
 }

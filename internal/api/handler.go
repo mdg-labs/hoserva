@@ -55,10 +55,12 @@ type Handler struct {
 	ParityGuard parity.Guard
 	// RelocationManifest is Q15's own persisted current relocation
 	// manifest and removing-disks set (doc 09 §3-4) — RunParityDiff loads
-	// it before evaluating ParityGuard, so a preview reflects an
-	// in-progress relocation the same way a production sync does. Nil
-	// evaluates against nil manifest/removingDisks, matching this
-	// handler's own pre-#194 behaviour.
+	// it and runs it through parity.ConfirmManifestTargets before
+	// evaluating ParityGuard, so a preview reflects an in-progress
+	// relocation — including a Q14 two-phase relocation's trailing sync
+	// (#252) — the same way a production Sync call does. Nil evaluates
+	// against nil manifest/removingDisks, matching this handler's own
+	// pre-#194 behaviour.
 	RelocationManifest *parity.RelocationManifestStore
 	paritySnap         *paritySnapshotStore
 	parityOnce         sync.Once

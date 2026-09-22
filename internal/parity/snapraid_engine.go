@@ -404,7 +404,11 @@ func (e *SnapraidEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progre
 	if err != nil {
 		return nil, err
 	}
-	result := e.Guard.Evaluate(diff, opts.Manifest, opts.RemovingDisks)
+	manifest, err := ConfirmManifestTargets(ctx, e, diff, opts.Manifest)
+	if err != nil {
+		return nil, err
+	}
+	result := e.Guard.Evaluate(diff, manifest, opts.RemovingDisks)
 	if result.Blocked && !opts.Confirm {
 		return nil, &GuardBlockedError{Result: result}
 	}

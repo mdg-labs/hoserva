@@ -1,0 +1,6 @@
+[hoserva-ups]
+	driver = usbhid-ups
+	port = auto
+	override.battery.charge.low = 20
+	override.battery.runtime.low = 300
+	desc = "Hoserva-managed UPS"

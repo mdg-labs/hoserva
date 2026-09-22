@@ -10,8 +10,10 @@
 package parity
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 )
 
 // DefaultRemovedFilesMax and DefaultRemovedUpdatedPercent are Q16's own
@@ -220,9 +222,34 @@ func (g Guard) Evaluate(diff DiffReport, manifest []ManifestEntry, removingDisks
 // a reappearance elsewhere in the same diff.
 type fileKey struct{ disk, relPath string }
 
+// diffFileKeySets projects diff's RemovedFiles/AddedFiles into the same
+// fileKey shape matchManifest and manifestNeedsTargetConfirmation both
+// match a ManifestEntry's SourceDisk/TargetDisk against, so the two never
+// risk looking at the diff two different ways.
+func diffFileKeySets(diff DiffReport) (removed, added map[fileKey]bool) {
+	removed = make(map[fileKey]bool, len(diff.RemovedFiles))
+	for _, f := range diff.RemovedFiles {
+		removed[fileKey{f.Disk, f.RelPath}] = true
+	}
+	added = make(map[fileKey]bool, len(diff.AddedFiles))
+	for _, f := range diff.AddedFiles {
+		added[fileKey{f.Disk, f.RelPath}] = true
+	}
+	return removed, added
+}
+
 // matchManifest is Q15's own rule: a manifest entry is accounted when its
-// RelPath was removed from SourceDisk *and* the same RelPath appears
-// (added or copied) on TargetDisk, both within the same diff.
+// RelPath was removed from SourceDisk in this diff *and* the same RelPath
+// either appears (added or copied) on TargetDisk within that same diff, or
+// was already confirmed there by an earlier sync (ManifestEntry.
+// TargetConfirmed) — Q14's mandated two-phase order (copy+verify, sync,
+// delete, sync) means a relocation's own addition and its eventual
+// trailing-sync removal are structurally never in the same diff, so the
+// same-diff check alone can never account for one (#248).
+// TargetConfirmed is never taken on trust from the manifest itself: it is
+// set only by SnapraidEngine.Sync, and only after a real `snapraid list`
+// showed the file genuinely already tracked on TargetDisk — the same
+// grounding in real, observed state the same-diff check already had.
 //
 // It returns both the matched manifest entries (for GuardResult's own
 // display group) and matchedRemovals — the *distinct* removal identities
@@ -238,14 +265,7 @@ func matchManifest(diff DiffReport, manifest []ManifestEntry) (accounted []Manif
 		return nil, nil
 	}
 
-	removed := make(map[fileKey]bool, len(diff.RemovedFiles))
-	for _, f := range diff.RemovedFiles {
-		removed[fileKey{f.Disk, f.RelPath}] = true
-	}
-	added := make(map[fileKey]bool, len(diff.AddedFiles))
-	for _, f := range diff.AddedFiles {
-		added[fileKey{f.Disk, f.RelPath}] = true
-	}
+	removed, added := diffFileKeySets(diff)
 
 	matchedRemovals = make(map[fileKey]struct{})
 	for _, m := range manifest {
@@ -253,13 +273,88 @@ func matchManifest(diff DiffReport, manifest []ManifestEntry) (accounted []Manif
 		if _, already := matchedRemovals[key]; already {
 			continue
 		}
-		if !removed[key] || !added[fileKey{m.TargetDisk, m.RelPath}] {
+		if !removed[key] {
+			continue
+		}
+		if !added[fileKey{m.TargetDisk, m.RelPath}] && !m.TargetConfirmed {
 			continue
 		}
 		matchedRemovals[key] = struct{}{}
 		accounted = append(accounted, m)
 	}
 	return accounted, matchedRemovals
+}
+
+// manifestNeedsTargetConfirmation reports whether manifest has an entry
+// whose SourceDisk removal shows up in diff but whose TargetDisk addition
+// does not — exactly the shape a Q14 two-phase relocation's trailing sync
+// leaves matchManifest unable to account for on its own (#248).
+// ConfirmManifestTargets calls this before paying for a real `snapraid
+// list`: every ordinary, same-diff relocation — the plain mover, and every
+// manifest matchManifest can already account for — costs exactly what it
+// always did, no extra invocation.
+func manifestNeedsTargetConfirmation(diff DiffReport, manifest []ManifestEntry) bool {
+	if len(manifest) == 0 {
+		return false
+	}
+	removed, added := diffFileKeySets(diff)
+	for _, m := range manifest {
+		if m.TargetConfirmed {
+			continue
+		}
+		key := fileKey{m.SourceDisk, m.RelPath}
+		if removed[key] && !added[fileKey{m.TargetDisk, m.RelPath}] {
+			return true
+		}
+	}
+	return false
+}
+
+// ConfirmManifestTargets applies Q14/#248's own trailing-sync exemption to
+// manifest before a caller evaluates Guard.Evaluate against diff: when
+// manifestNeedsTargetConfirmation finds an entry the same-diff check in
+// matchManifest cannot account for, this runs a real `snapraid list`
+// through lister (List's own doc comment: tracked state only, never a live
+// directory walk) and marks ManifestEntry.TargetConfirmed on every entry
+// whose file is already tracked on its own TargetDisk — the two-phase
+// relocation case where the addition was recorded by an earlier sync's own
+// diff, not this one. An ordinary, same-diff relocation never pays for the
+// extra `snapraid list` call: manifestNeedsTargetConfirmation returns
+// false and manifest comes back unmodified.
+//
+// SnapraidEngine.Sync and the diff-preview endpoint (RunParityDiff,
+// internal/api/parity_handler.go, #252) both call this before evaluating
+// the guard, so the two can never reach a different verdict on the same
+// manifest/diff state. lister is typed as Engine, not *SnapraidEngine, so
+// any caller already holding a parity.Engine — including one outside this
+// package, e.g. internal/job — can call this without a type assertion. The
+// manifest passed in is never mutated or written back anywhere — this
+// returns a fresh slice for the caller's own guard evaluation.
+func ConfirmManifestTargets(ctx context.Context, lister Engine, diff DiffReport, manifest []ManifestEntry) ([]ManifestEntry, error) {
+	if !manifestNeedsTargetConfirmation(diff, manifest) {
+		return manifest, nil
+	}
+	list, err := lister.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("parity: confirming relocation manifest targets: %w", err)
+	}
+	tracked := make(map[fileKey]bool, len(list.Files))
+	for _, f := range list.Files {
+		mount, ok := list.DataMounts[f.Disk]
+		if !ok {
+			continue
+		}
+		tracked[fileKey{filepath.Clean(mount), f.RelPath}] = true
+	}
+
+	confirmed := make([]ManifestEntry, len(manifest))
+	for i, m := range manifest {
+		confirmed[i] = m
+		if tracked[fileKey{m.TargetDisk, m.RelPath}] {
+			confirmed[i].TargetConfirmed = true
+		}
+	}
+	return confirmed, nil
 }
 
 // anyDiskEmptied reports whether diff would leave any disk (including one

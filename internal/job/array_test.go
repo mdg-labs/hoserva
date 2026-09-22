@@ -157,10 +157,18 @@ func TestArraySequence_Stop_WaitsForARunningJobToFinishBeforeStoppingServices(t 
 func TestArraySequence_Stop_DrainRespectsContextDeadline(t *testing.T) {
 	s := newTestScheduler(t)
 	_, release := registerBlocking(s, TypeMover, false)
-	t.Cleanup(func() { close(release) })
-	if _, err := s.Submit(context.Background(), TypeMover, nil, nil); err != nil {
+	j, err := s.Submit(context.Background(), TypeMover, nil, nil)
+	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
+	// Release the blocking job and wait for its goroutine to finish
+	// recording its final status before t.Cleanup closes the test DB
+	// (newTestDB's own t.Cleanup, registered earlier and so run after
+	// this one) — otherwise that write races the DB close.
+	t.Cleanup(func() {
+		close(release)
+		await(t, s, j.ID)
+	})
 
 	seq := ArraySequence{Scheduler: s}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)

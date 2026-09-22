@@ -895,12 +895,18 @@ func TestScheduler_EvictedTerminalSnapshotMarkersAreBounded(t *testing.T) {
 func TestBlockingStorageJob_NamesRunningParityJob(t *testing.T) {
 	s := newTestScheduler(t)
 	started, release := registerBlocking(s, TypeSync, false)
-	defer close(release)
 
 	j, err := s.Submit(context.Background(), TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
+	// Wait for the job's goroutine to finish recording its final status
+	// before t.Cleanup closes the test DB (newTestDB's own t.Cleanup,
+	// registered earlier and so run after this one).
+	t.Cleanup(func() {
+		close(release)
+		await(t, s, j.ID)
+	})
 	<-started
 
 	got := s.BlockingStorageJob()
@@ -915,11 +921,18 @@ func TestBlockingStorageJob_NamesRunningParityJob(t *testing.T) {
 func TestBlockingStorageJob_IgnoresServiceJobs(t *testing.T) {
 	s := newTestScheduler(t)
 	started, release := registerBlocking(s, TypeAppdataBackup, false)
-	defer close(release)
 
-	if _, err := s.Submit(context.Background(), TypeAppdataBackup, nil, nil); err != nil {
+	j, err := s.Submit(context.Background(), TypeAppdataBackup, nil, nil)
+	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
+	// Wait for the job's goroutine to finish recording its final status
+	// before t.Cleanup closes the test DB (newTestDB's own t.Cleanup,
+	// registered earlier and so run after this one).
+	t.Cleanup(func() {
+		close(release)
+		await(t, s, j.ID)
+	})
 	<-started
 
 	if got := s.BlockingStorageJob(); got != nil {
@@ -949,4 +962,183 @@ func TestWaitForStorageJobs_WaitsThenReturns(t *testing.T) {
 	if err := s.WaitForStorageJobs(context.Background()); err != nil {
 		t.Fatalf("WaitForStorageJobs after sync finished: %v", err)
 	}
+}
+
+// TestScheduler_PauseForBattery_RefusesMoverAndSync proves Q77's
+// on-battery hold: once active, Submit refuses both a mover and a sync
+// job (ErrOnBattery), but leaves every other type alone.
+func TestScheduler_PauseForBattery_RefusesMoverAndSync(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	s.registry.Register(TypeMover, false, blockingRun(make(chan struct{}), make(chan struct{}), nil))
+	s.registry.Register(TypeSync, false, blockingRun(make(chan struct{}), make(chan struct{}), nil))
+	scrubStarted, scrubRelease := registerBlocking(s, TypeScrub, false)
+
+	if paused := s.PauseForBattery(ctx); len(paused) != 0 {
+		t.Fatalf("PauseForBattery with nothing running = %v, want none paused", paused)
+	}
+	if !s.OnBattery() {
+		t.Fatal("OnBattery() = false after PauseForBattery")
+	}
+
+	if _, err := s.Submit(ctx, TypeMover, nil, nil); !errors.Is(err, ErrOnBattery) {
+		t.Fatalf("Submit(TypeMover) while on battery = %v, want ErrOnBattery", err)
+	}
+	if _, err := s.Submit(ctx, TypeSync, nil, nil); !errors.Is(err, ErrOnBattery) {
+		t.Fatalf("Submit(TypeSync) while on battery = %v, want ErrOnBattery", err)
+	}
+	scrubJob, err := s.Submit(ctx, TypeScrub, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit(TypeScrub) while on battery = %v, want nil — only the mover and sync are held", err)
+	}
+	// Wait for the scrub job's goroutine to finish recording its final
+	// status before t.Cleanup closes the test DB (newTestDB's own
+	// t.Cleanup, registered earlier and so run after this one).
+	t.Cleanup(func() {
+		close(scrubRelease)
+		await(t, s, scrubJob.ID)
+	})
+	<-scrubStarted
+}
+
+// TestScheduler_PauseForBattery_StopsRunningMoverAtCheckpoint proves the
+// resumable-stop mechanism EnterMaintenance already uses for maintenance
+// mode also drives Q77's on-battery pause: a running mover job is asked
+// to stop, saves its checkpoint, and ends interrupted — never cancelled
+// outright the way a non-resumable job would be. It also proves
+// PauseForBattery itself waits for that to finish: by the time it
+// returns, the store already reports StatusInterrupted, with no
+// waitFor needed — the same guarantee that closes the ONBATT-then-
+// immediate-ONLINE race TestUPSController_OnLine_
+// ImmediatelyAfterOnBattery_StillResumes exercises through
+// UPSController.
+func TestScheduler_PauseForBattery_StopsRunningMoverAtCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	stopSeen := make(chan struct{})
+	returned := make(chan struct{})
+	s.registry.Register(TypeMover, false, func(ctx context.Context, rc *RunContext) error {
+		<-rc.StopRequested()
+		close(stopSeen)
+		if err := rc.SaveCheckpoint([]byte("checkpoint-at-battery-pause")); err != nil {
+			return err
+		}
+		close(returned)
+		return nil
+	})
+	j, err := s.Submit(ctx, TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	paused := s.PauseForBattery(ctx)
+	if len(paused) != 1 || paused[0] != j.ID {
+		t.Fatalf("PauseForBattery = %v, want [%s]", paused, j.ID)
+	}
+	<-stopSeen
+	<-returned
+
+	got, err := s.store.Get(ctx, j.ID)
+	if err != nil || got.Status != StatusInterrupted {
+		t.Fatalf("job status right after PauseForBattery returned = %v (err %v), want StatusInterrupted", got, err)
+	}
+}
+
+// TestScheduler_Resume_RefusesBatteryHeldTypeWhileOnBattery proves
+// Resume applies the same on-battery hold Submit and dispatch already
+// do: an interrupted mover job — interrupted by maintenance mode here,
+// deliberately not by PauseForBattery itself, to isolate this check from
+// PauseForBattery's own resume path — must not be resumable while
+// batteryHold is set, the same way a direct Resume call outside
+// UPSController's own round trip could otherwise start it running on a
+// UPS with limited runtime left.
+func TestScheduler_Resume_RefusesBatteryHeldTypeWhileOnBattery(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	stopSeen := make(chan struct{})
+	s.registry.Register(TypeMover, false, func(ctx context.Context, rc *RunContext) error {
+		<-rc.StopRequested()
+		close(stopSeen)
+		return rc.SaveCheckpoint([]byte("checkpoint"))
+	})
+	j, err := s.Submit(ctx, TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	<-stopSeen
+	waitFor(t, time.Second, func() bool {
+		got, err := s.store.Get(ctx, j.ID)
+		return err == nil && got.Status == StatusInterrupted
+	})
+	s.ExitMaintenance()
+
+	s.PauseForBattery(ctx)
+
+	if _, err := s.Resume(ctx, j.ID); !errors.Is(err, ErrOnBattery) {
+		t.Fatalf("Resume(mover) while on battery = %v, want ErrOnBattery", err)
+	}
+}
+
+// TestScheduler_ResumeFromBattery_DispatchesJobQueuedBeforeTheHold
+// proves the dispatch() guard added for Q77's on-battery hold: a mover
+// job already queued for an ordinary class conflict before the hold
+// began stays queued — never started — once that conflict clears while
+// still on battery, and only starts once ResumeFromBattery actually
+// dispatches it. PauseForBattery itself never touches the queue; this is
+// what makes a held job actually start again once power returns.
+func TestScheduler_ResumeFromBattery_DispatchesJobQueuedBeforeTheHold(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	// Occupies ClassArrayWrite so the mover submission below queues
+	// instead of running immediately.
+	aStarted, aRelease := registerBlocking(s, TypeRebalance, false)
+	a, err := s.Submit(ctx, TypeRebalance, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-aStarted
+
+	bStarted, bRelease := registerBlocking(s, TypeMover, false)
+	b, err := s.Submit(ctx, TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit(TypeMover): %v", err)
+	}
+	if b.Status != StatusQueued {
+		t.Fatalf("b.Status = %s, want queued (class-conflicted with the running rebalance)", b.Status)
+	}
+
+	s.PauseForBattery(ctx)
+
+	close(aRelease)
+	waitSucceeded(t, s, a.ID)
+
+	// a finishing would ordinarily free b to start (its class conflict
+	// is gone) — the battery hold must keep it queued regardless.
+	select {
+	case <-bStarted:
+		t.Fatal("the queued mover job started while still on battery")
+	case <-time.After(50 * time.Millisecond):
+	}
+	got, err := s.store.Get(ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusQueued {
+		t.Fatalf("b.Status after a finished = %s, want still queued (Q77: held while on battery)", got.Status)
+	}
+
+	s.ResumeFromBattery()
+	if s.OnBattery() {
+		t.Fatal("OnBattery() = true after ResumeFromBattery")
+	}
+	<-bStarted
+	close(bRelease)
+	waitSucceeded(t, s, b.ID)
 }

@@ -208,8 +208,8 @@ func TestSubmit_ParamsSurviveRestartBetweenQueueAndRun(t *testing.T) {
 	jobStore := NewStore(db)
 	s := NewScheduler(jobStore, NewLogStore(t.TempDir()), NewHub(), NewRegistry())
 	started, release := registerBlocking(s, TypeSync, false)
-	t.Cleanup(func() { close(release) })
-	if _, err := s.Submit(ctx, TypeSync, nil, nil); err != nil {
+	syncJob, err := s.Submit(ctx, TypeSync, nil, nil)
+	if err != nil {
 		t.Fatalf("Submit running sync: %v", err)
 	}
 	<-started
@@ -223,6 +223,15 @@ func TestSubmit_ParamsSurviveRestartBetweenQueueAndRun(t *testing.T) {
 	if queued.Status != StatusQueued {
 		t.Fatalf("status = %s, want queued", queued.Status)
 	}
+	// Release the blocking sync job and wait for it, and the scrub job
+	// it unblocks, to finish recording their final status before
+	// t.Cleanup closes db (registered earlier, so it runs after this
+	// one) — otherwise those writes race the DB close.
+	t.Cleanup(func() {
+		close(release)
+		await(t, s, syncJob.ID)
+		await(t, s, queued.ID)
+	})
 
 	fresh := NewStore(db)
 	got, err := fresh.Get(ctx, queued.ID)
