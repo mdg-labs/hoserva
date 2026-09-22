@@ -895,12 +895,18 @@ func TestScheduler_EvictedTerminalSnapshotMarkersAreBounded(t *testing.T) {
 func TestBlockingStorageJob_NamesRunningParityJob(t *testing.T) {
 	s := newTestScheduler(t)
 	started, release := registerBlocking(s, TypeSync, false)
-	defer close(release)
 
 	j, err := s.Submit(context.Background(), TypeSync, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
+	// Wait for the job's goroutine to finish recording its final status
+	// before t.Cleanup closes the test DB (newTestDB's own t.Cleanup,
+	// registered earlier and so run after this one).
+	t.Cleanup(func() {
+		close(release)
+		await(t, s, j.ID)
+	})
 	<-started
 
 	got := s.BlockingStorageJob()
@@ -915,11 +921,18 @@ func TestBlockingStorageJob_NamesRunningParityJob(t *testing.T) {
 func TestBlockingStorageJob_IgnoresServiceJobs(t *testing.T) {
 	s := newTestScheduler(t)
 	started, release := registerBlocking(s, TypeAppdataBackup, false)
-	defer close(release)
 
-	if _, err := s.Submit(context.Background(), TypeAppdataBackup, nil, nil); err != nil {
+	j, err := s.Submit(context.Background(), TypeAppdataBackup, nil, nil)
+	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
+	// Wait for the job's goroutine to finish recording its final status
+	// before t.Cleanup closes the test DB (newTestDB's own t.Cleanup,
+	// registered earlier and so run after this one).
+	t.Cleanup(func() {
+		close(release)
+		await(t, s, j.ID)
+	})
 	<-started
 
 	if got := s.BlockingStorageJob(); got != nil {
@@ -960,7 +973,6 @@ func TestScheduler_PauseForBattery_RefusesMoverAndSync(t *testing.T) {
 	s.registry.Register(TypeMover, false, blockingRun(make(chan struct{}), make(chan struct{}), nil))
 	s.registry.Register(TypeSync, false, blockingRun(make(chan struct{}), make(chan struct{}), nil))
 	scrubStarted, scrubRelease := registerBlocking(s, TypeScrub, false)
-	defer close(scrubRelease)
 
 	if paused := s.PauseForBattery(); len(paused) != 0 {
 		t.Fatalf("PauseForBattery with nothing running = %v, want none paused", paused)
@@ -975,9 +987,17 @@ func TestScheduler_PauseForBattery_RefusesMoverAndSync(t *testing.T) {
 	if _, err := s.Submit(ctx, TypeSync, nil, nil); !errors.Is(err, ErrOnBattery) {
 		t.Fatalf("Submit(TypeSync) while on battery = %v, want ErrOnBattery", err)
 	}
-	if _, err := s.Submit(ctx, TypeScrub, nil, nil); err != nil {
+	scrubJob, err := s.Submit(ctx, TypeScrub, nil, nil)
+	if err != nil {
 		t.Fatalf("Submit(TypeScrub) while on battery = %v, want nil — only the mover and sync are held", err)
 	}
+	// Wait for the scrub job's goroutine to finish recording its final
+	// status before t.Cleanup closes the test DB (newTestDB's own
+	// t.Cleanup, registered earlier and so run after this one).
+	t.Cleanup(func() {
+		close(scrubRelease)
+		await(t, s, scrubJob.ID)
+	})
 	<-scrubStarted
 }
 
