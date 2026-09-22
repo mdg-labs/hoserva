@@ -64,16 +64,35 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 	}
 }
 
-func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, settings *api.SettingsService, scheduler *job.Scheduler, arraySeq *job.ArraySequence, notifyService *notify.Service, runner disk.Runner, backupSvc *backup.Service) *update.Engine {
+// updateShutdownLookup adapts the daemon's current job.ArraySequence to
+// update.Shutdown, resolved at the moment Engine.Reboot actually calls
+// Stop rather than once at daemon construction (#263) — the same
+// live-array-creation staleness UPS shutdown has (upscontrol.go's
+// upsShutdownLookup). Unlike the UPS path there is no scheduler fallback:
+// with no array ever configured, Reboot has nothing to stop, exactly
+// newUpdateEngine's own pre-#263 behavior when arraySeq was nil at
+// construction.
+type updateShutdownLookup struct {
+	currentArray func() *job.ArraySequence
+}
+
+func (u updateShutdownLookup) Stop(ctx context.Context) error {
+	if u.currentArray == nil {
+		return nil
+	}
+	seq := u.currentArray()
+	if seq == nil {
+		return nil
+	}
+	return seq.Stop(ctx)
+}
+
+func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, settings *api.SettingsService, scheduler *job.Scheduler, currentArray func() *job.ArraySequence, notifyService *notify.Service, runner disk.Runner, backupSvc *backup.Service) *update.Engine {
 	exe, err := os.Executable()
 	if err != nil {
 		exe = "/usr/bin/hoservad"
 	}
 	current := packageVersion(ctx, runner, "hoserva")
-	var shutdown update.Shutdown
-	if arraySeq != nil {
-		shutdown = arraySeq
-	}
 	return &update.Engine{
 		StateDir:    cfg.stateDir,
 		SnapshotDir: filepath.Join(cfg.stateDir, "backups", "pre-migration"),
@@ -87,7 +106,7 @@ func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *au
 		},
 		Host:     update.DebianHost{Runner: runner},
 		Jobs:     scheduler,
-		Shutdown: shutdown,
+		Shutdown: updateShutdownLookup{currentArray: currentArray},
 		Backup:   backupSvc,
 		Notify:   notifyService,
 		Settings: api.NewUpdateSettings(settings),

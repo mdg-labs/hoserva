@@ -75,24 +75,46 @@ func (n *upsNotifier) NotifyUPSBatteryLow(ctx context.Context) {
 	}
 }
 
-// newUPSController builds the daemon's single job.UPSController (Q77,
-// doc 02 §6): its Shutdown composes arraySeq's own Stop with
-// systemctlPowerOff, exactly as job.UPSShutdown's own doc comment
-// describes. arraySeq is nil until an array exists (newArraySequence's
-// own doc comment) — Scheduler alone still lets a low-battery event
-// checkpoint any running job even with no array configured yet, rather
-// than a UPSController that never enters maintenance mode at all.
-func newUPSController(scheduler *job.Scheduler, arraySeq *job.ArraySequence, notifyService *notify.Service, runner disk.Runner) *job.UPSController {
-	seq := job.ArraySequence{Scheduler: scheduler}
-	if arraySeq != nil {
-		seq = *arraySeq
+// upsShutdownLookup composes job.UPSShutdown (Q77, doc 02 §6) against
+// whichever job.ArraySequence currentArray reports at the moment a
+// low-battery shutdown actually runs, not whichever one existed when
+// newUPSController built this — a live array creation after daemon
+// startup (#262) must be visible to a shutdown that happens afterward but
+// before any restart, not leave this stuck on the nil/empty sequence
+// startup saw (#263). currentArray is handler.CurrentArray in production;
+// a nil currentArray (no array ever configured) falls back to Scheduler
+// alone, same as newUPSController's own pre-#263 fallback, so a
+// low-battery event still checkpoints any running job.
+type upsShutdownLookup struct {
+	scheduler    *job.Scheduler
+	currentArray func() *job.ArraySequence
+	power        job.PowerOff
+}
+
+func (u upsShutdownLookup) Shutdown(ctx context.Context) error {
+	seq := job.ArraySequence{Scheduler: u.scheduler}
+	if u.currentArray != nil {
+		if current := u.currentArray(); current != nil {
+			seq = *current
+		}
 	}
+	return job.UPSShutdown{Array: seq, Power: u.power}.Shutdown(ctx)
+}
+
+// newUPSController builds the daemon's single job.UPSController (Q77,
+// doc 02 §6): its Shutdown resolves currentArray at the moment a
+// low-battery event actually triggers a shutdown (upsShutdownLookup
+// above), never once at construction — #262 lets an array be created live
+// on an already-running daemon, and this must react to that array, not a
+// stale snapshot from before it existed.
+func newUPSController(scheduler *job.Scheduler, currentArray func() *job.ArraySequence, notifyService *notify.Service, runner disk.Runner) *job.UPSController {
 	return &job.UPSController{
 		Scheduler: scheduler,
 		Notifier:  &upsNotifier{svc: notifyService},
-		Shutdown: job.UPSShutdown{
-			Array: seq,
-			Power: systemctlPowerOff{Runner: runner},
+		Shutdown: upsShutdownLookup{
+			scheduler:    scheduler,
+			currentArray: currentArray,
+			power:        systemctlPowerOff{Runner: runner},
 		},
 	}
 }

@@ -253,7 +253,14 @@ func run(cfg config) error {
 	if err != nil {
 		return fmt.Errorf("building array stop/start sequence: %w", err)
 	}
-	upsController := newUPSController(scheduler, arraySeq, notifyService, linuxDisks.Exec)
+	// handler is created here, ahead of its other fields, so upsController
+	// and updateEngine (below) can both resolve handler.CurrentArray at
+	// shutdown time instead of capturing arraySeq's own startup value
+	// (#263) — the ArrayReady hook (further down) is this value's only
+	// writer once the daemon starts serving requests.
+	handler := &api.Handler{}
+	handler.SetArray(arraySeq)
+	upsController := newUPSController(scheduler, handler.CurrentArray, notifyService, linuxDisks.Exec)
 
 	// Losing metrics.db must not look like array failure (#186): log and
 	// leave Handler.Metrics nil so GET /metrics returns an empty series.
@@ -297,7 +304,7 @@ func run(cfg config) error {
 			return acmeDatabaseSecrets(reqCtx, acmeStore)
 		},
 	}
-	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, arraySeq, notifyService, linuxDisks.Exec, backupService)
+	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, handler.CurrentArray, notifyService, linuxDisks.Exec, backupService)
 	networkSvc := &cfggen.NetworkService{
 		Generator: generator,
 		Detector:  cfggen.ExecDetector{Root: configRoot},
@@ -313,7 +320,25 @@ func run(cfg config) error {
 		shareUsages = parityEngine.Usage
 	}
 	shareService := newShareService(shareStore, arrayStore, generator, pool.Mounter{Runner: linuxDisks.Exec}, shareUsages)
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine, Generator: generator, HostConfig: store.NewHostConfigStore(db), Docker: cfggen.ExecDocker{}, ArrayStore: arrayStore, Network: networkSvc, ACME: acmeService, Shares: shareService}
+	handler.Scheduler = scheduler
+	handler.Store = jobStore
+	handler.Logs = logs
+	handler.Auth = authService
+	handler.Notify = notifyService
+	handler.Settings = settingsService
+	handler.Schedules = scheduleService
+	handler.Disks = disks
+	handler.Metrics = metricsStore
+	handler.Parity = parityEngine
+	handler.History = history
+	handler.Updates = updateEngine
+	handler.Generator = generator
+	handler.HostConfig = store.NewHostConfigStore(db)
+	handler.Docker = cfggen.ExecDocker{}
+	handler.ArrayStore = arrayStore
+	handler.Network = networkSvc
+	handler.ACME = acmeService
+	handler.Shares = shareService
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
 		handler.RelocationManifest = parityEngine.Relocation
@@ -330,7 +355,7 @@ func run(cfg config) error {
 			if err != nil {
 				return err
 			}
-			handler.Array = seq
+			handler.SetArray(seq)
 			return nil
 		},
 	}))

@@ -75,7 +75,14 @@ type Handler struct {
 	Schedules *ScheduleService
 	// Array is Q70's stop/start sequence. Nil returns 501 from those
 	// operations — the handler never duplicates the sequence itself.
-	Array *job.ArraySequence
+	// #263: main.go's ArrayReady hook replaces this after a live array
+	// creation, from the create-array job's own goroutine, while
+	// StopArray/StartArray (and cmd/hoservad's own UPS/update shutdown
+	// lookups) read it from concurrent goroutines — every access once the
+	// daemon is serving requests goes through CurrentArray/SetArray, which
+	// hold arrayMu, never this field directly.
+	Array   *job.ArraySequence
+	arrayMu sync.RWMutex
 	// History is spin-state and audit-log persistence (Q32, Q74). Nil
 	// returns an empty wake-events list rather than an error.
 	History *store.History

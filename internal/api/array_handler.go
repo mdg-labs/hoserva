@@ -127,24 +127,47 @@ func mapArraySequenceError(err error, failedCode string) error {
 	return &apiError{code: failedCode, statusCode: 409, message: err.Error()}
 }
 
+// CurrentArray returns the daemon's current array stop/start sequence.
+// Safe for concurrent use with SetArray (#263): main.go's ArrayReady hook
+// can replace it from the create-array job's own goroutine, after a live
+// array creation, while this runs from a concurrent HTTP request goroutine
+// or the daemon's own UPS/update shutdown paths at shutdown time.
+func (h *Handler) CurrentArray() *job.ArraySequence {
+	h.arrayMu.RLock()
+	defer h.arrayMu.RUnlock()
+	return h.Array
+}
+
+// SetArray replaces the daemon's current array stop/start sequence.
+// main.go's ArrayReady hook is the only caller once the daemon is serving
+// requests (#263) — every read goes through CurrentArray, never the Array
+// field directly, from that point on.
+func (h *Handler) SetArray(seq *job.ArraySequence) {
+	h.arrayMu.Lock()
+	defer h.arrayMu.Unlock()
+	h.Array = seq
+}
+
 func (h *Handler) StopArray(ctx context.Context, req *apiv1.StopArrayRequest) (*apiv1.SystemStatus, error) {
 	if !req.Confirm {
 		return nil, errConfirmRequired
 	}
-	if h.Array == nil {
+	seq := h.CurrentArray()
+	if seq == nil {
 		return nil, errArrayNotConfigured()
 	}
-	if err := h.Array.Stop(ctx); err != nil {
+	if err := seq.Stop(ctx); err != nil {
 		return nil, mapArraySequenceError(err, "array_stop_failed")
 	}
 	return h.GetStatus(ctx)
 }
 
 func (h *Handler) StartArray(ctx context.Context) (*apiv1.SystemStatus, error) {
-	if h.Array == nil {
+	seq := h.CurrentArray()
+	if seq == nil {
 		return nil, errArrayNotConfigured()
 	}
-	if err := h.Array.Start(ctx); err != nil {
+	if err := seq.Start(ctx); err != nil {
 		return nil, mapArraySequenceError(err, "array_start_failed")
 	}
 	return h.GetStatus(ctx)

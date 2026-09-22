@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -360,7 +361,7 @@ func seqEqual(t *testing.T, got, want []string) {
 
 func attachArraySequence(h *api.Handler, s *job.Scheduler, seq job.ArraySequence) {
 	seq.Scheduler = s
-	h.Array = &seq
+	h.SetArray(&seq)
 }
 
 func confirmStop() *apiv1.StopArrayRequest {
@@ -564,4 +565,41 @@ func TestHandler_StartArray_DoesNotExitMaintenanceOnFailure(t *testing.T) {
 	if !got.MaintenanceMode.Or(false) {
 		t.Fatal("GetStatus: maintenanceMode must stay true after a failed start")
 	}
+}
+
+// TestHandler_SetArray_ConcurrentWithStopStartIsRaceFree is #263's own
+// concurrency regression: a live array creation (#262) calls SetArray from
+// the create-array job's own goroutine while StopArray/StartArray (and
+// cmd/hoservad's own UPS/update shutdown lookups) read the same value from
+// concurrent HTTP request goroutines. Before this fix, Handler.Array was a
+// bare, unsynchronized pointer field written and read directly by both
+// sides — `go test -race` catches that unsynchronized concurrent access
+// here; CurrentArray/SetArray's own arrayMu is what makes this clean.
+func TestHandler_SetArray_ConcurrentWithStopStartIsRaceFree(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+
+	var wg sync.WaitGroup
+	const iterations = 200
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			seq := job.ArraySequence{Scheduler: s}
+			h.SetArray(&seq)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_, _ = h.StopArray(ctx, confirmStop())
+			_, _ = h.StartArray(ctx)
+			_ = h.CurrentArray()
+		}
+	}()
+
+	wg.Wait()
 }

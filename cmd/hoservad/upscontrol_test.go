@@ -153,13 +153,44 @@ func TestNewUPSController_NilArraySequenceStillSetsScheduler(t *testing.T) {
 	scheduler := newRegistryTestScheduler(t, job.NewRegistry())
 	controller := newUPSController(scheduler, nil, nil, disk.NewFakeRunner())
 
-	shutdown, ok := controller.Shutdown.(job.UPSShutdown)
+	shutdown, ok := controller.Shutdown.(upsShutdownLookup)
 	if !ok {
-		t.Fatalf("Shutdown is %T, want job.UPSShutdown", controller.Shutdown)
+		t.Fatalf("Shutdown is %T, want upsShutdownLookup", controller.Shutdown)
 	}
-	if shutdown.Array.Scheduler != scheduler {
-		t.Fatal("UPSShutdown.Array.Scheduler must be set even with no array configured yet")
+	if shutdown.scheduler != scheduler {
+		t.Fatal("upsShutdownLookup.scheduler must be set even with no array configured yet")
 	}
+}
+
+// TestUPSShutdownLookup_ResolvesCurrentArrayAtShutdownTime is #263's own
+// regression: a UPSController built (as newUPSController always is) with
+// no array yet configured, whose currentArray func later starts reporting
+// a real, live-created job.ArraySequence, must run that real sequence's
+// Stop — not the nil/empty one newUPSController saw at construction —
+// once a low-battery event actually triggers a shutdown.
+func TestUPSShutdownLookup_ResolvesCurrentArrayAtShutdownTime(t *testing.T) {
+	scheduler := newRegistryTestScheduler(t, job.NewRegistry())
+	runner := disk.NewFakeRunner()
+
+	mount := arrayTestCatchAll{where: "/mnt/disk1", runner: runner}
+	var current *job.ArraySequence // nil until "live array creation" below
+
+	controller := newUPSController(scheduler, func() *job.ArraySequence { return current }, nil, runner)
+
+	// Simulate a live array creation completing after the controller was
+	// already built, exactly #262's ArrayReady hook does on a running
+	// daemon.
+	current = &job.ArraySequence{Scheduler: scheduler, Disks: []job.ArrayMount{mount}}
+
+	if err := controller.HandleNotify(context.Background(), job.UPSNotifyLowBattery); err != nil {
+		t.Fatalf("HandleNotify(LOWBATT): %v", err)
+	}
+	calls := runner.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("runner calls = %+v, want the live array's own unmount then poweroff — a stale/empty sequence would skip straight to poweroff", calls)
+	}
+	requireArgv(t, calls[0], "fusermount", "-u", "/mnt/disk1")
+	requireArgv(t, calls[1], "systemctl", "poweroff")
 }
 
 func TestSystemctlPowerOff_RunsSystemctlPoweroff(t *testing.T) {
