@@ -260,12 +260,14 @@ func run(cfg config) error {
 	var chainGuard job.DiffGuard
 	if parityEngine != nil {
 		parityEngine.Usage = parity.NewUsageStore(db)
+		parityEngine.Relocation = parity.NewRelocationManifestStore(db)
 		registry.Register(job.TypeSync, false, job.RunSync(parityEngine))
 		registry.Register(job.TypeScrub, false, job.RunScrub(parityEngine))
 		registry.Register(job.TypeFix, false, job.RunFix(parityEngine))
 		registry.Register(job.TypeShareRelocation, true, job.RunShareRelocation(job.ShareRelocationDeps{
-			Share: shareRelocationShareFromStore(shareStore, arrayStore),
-			Sync:  shareRelocationSyncFunc(parityEngine),
+			Share:    shareRelocationShareFromStore(shareStore, arrayStore),
+			Sync:     shareRelocationSyncFunc(parityEngine),
+			Manifest: parityEngine.Relocation,
 		}))
 		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}
 	}
@@ -297,6 +299,7 @@ func run(cfg config) error {
 	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine, Generator: generator, HostConfig: store.NewHostConfigStore(db), Docker: cfggen.ExecDocker{}, ArrayStore: arrayStore, Network: networkSvc, ACME: acmeService}
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
+		handler.RelocationManifest = parityEngine.Relocation
 	}
 
 	webRoot, err := fs.Sub(web.Dist, "dist")

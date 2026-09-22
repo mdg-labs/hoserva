@@ -1,8 +1,10 @@
 package job
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,6 +163,432 @@ func TestRunShareRelocation_ToArray_MovesThroughScheduler(t *testing.T) {
 	}
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
 		t.Fatalf("cache original should be gone after relocation: err=%v", err)
+	}
+}
+
+// storeBackedEngine layers a real *parity.RelocationManifestStore's own
+// Current onto recordingEngine's promoted, scripted
+// CurrentRelocationManifest (params_test.go) — #247's own tests need
+// RunSync's relocationManifestSource wiring to read the *real* store a
+// concurrent share-relocation job wrote to, never a scripted stand-in, so
+// this shadows that method instead of calling ScriptRelocationManifest.
+type storeBackedEngine struct {
+	*recordingEngine
+	store *parity.RelocationManifestStore
+}
+
+func (e *storeBackedEngine) CurrentRelocationManifest(ctx context.Context) ([]parity.ManifestEntry, map[string]bool, error) {
+	return e.store.Current(ctx)
+}
+
+// interruptOnceManifestDurable returns a stopRequested channel and a
+// saveCheckpoint func for a directly-constructed RunContext: every
+// checkpoint is recorded into *lastCheckpoint, and stopRequested is closed
+// the first time this fires — simulating a daemon restart or
+// maintenance-mode stop (doc 01 §4 Q70) landing right after
+// RelocateToCache's own copy phase finishes. Because relocateCopyPhase
+// only checks stopRequested at the *top* of its per-file loop
+// (relocate.go), closing it from inside a checkpoint save never
+// interrupts the copy phase itself mid-file — it takes effect only at the
+// next checkpoint boundary, which for a share with everything already
+// copied is the Phase-Syncing transition RelocateCheckpoint's own doc
+// comment describes: the checkpoint that first carries the manifest, and
+// the one saved immediately before RelocateToCache's first guarded sync
+// call. The result is exactly the window this issue's own acceptance
+// criteria call out: interrupted after the manifest is durable, before any
+// sync ever ran.
+func interruptOnceManifestDurable(lastCheckpoint *[]byte) (stopRequested chan struct{}, saveCheckpoint func(data []byte) error) {
+	stopRequested = make(chan struct{})
+	saveCheckpoint = func(data []byte) error {
+		*lastCheckpoint = data
+		select {
+		case <-stopRequested:
+		default:
+			close(stopRequested)
+		}
+		return nil
+	}
+	return stopRequested, saveCheckpoint
+}
+
+// TestRunShareRelocation_ToCache_PersistsManifestBeforeFirstSync_ThenClears
+// is #247's own write-path test: the manifest a copy phase built must be
+// durable in the real RelocationManifestStore before RelocateToCache's
+// first guarded sync ever runs, and the job's own successful completion
+// (its trailing sync) must clear it again — proven against a real SQLite
+// database (newTestDB), not a fake.
+func TestRunShareRelocation_ToCache_PersistsManifestBeforeFirstSync_ThenClears(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	store := parity.NewRelocationManifestStore(db)
+
+	s := newTestScheduler(t)
+	share := newShareRelocationShare(t, "docs")
+	src := filepath.Join(share.Branches[0], "report.pdf")
+	mustWriteFile(t, src, "report bytes")
+
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+
+	var sawManifestBeforeSync []parity.ManifestEntry
+	sync := func(ctx context.Context, manifest []parity.ManifestEntry) error {
+		persisted, _, err := store.Current(ctx)
+		if err != nil {
+			t.Fatalf("store.Current inside the sync call: %v", err)
+		}
+		sawManifestBeforeSync = persisted
+		return syncFuncFromEngine(eng)(ctx, manifest)
+	}
+
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     sync,
+		Manifest: store,
+	}))
+
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+
+	if len(sawManifestBeforeSync) != 1 || sawManifestBeforeSync[0].RelPath != "docs/report.pdf" {
+		t.Fatalf("manifest visible from inside the first guarded sync = %+v, want the copied file already durable", sawManifestBeforeSync)
+	}
+
+	manifest, removingDisks, err := store.Current(ctx)
+	if err != nil {
+		t.Fatalf("store.Current after completion: %v", err)
+	}
+	if manifest != nil || removingDisks != nil {
+		t.Fatalf("manifest after a completed relocation = %+v/%+v, want cleared", manifest, removingDisks)
+	}
+}
+
+// TestRunShareRelocation_ToCache_SyncDuringOutstandingRelocation_SeesManifest
+// is #247's own central acceptance test. doc 01 §4's own exclusion table
+// (internal/job/exclusion.go's conflicts) makes Parity and Array-write
+// mutually exclusive while a job of either is actually *running* — so this
+// models the real window the guard must cover: a relocation interrupted
+// after its manifest became durable (a daemon restart, or maintenance
+// mode, doc 01 §4 Q70) is no longer occupying the scheduler's Array-write
+// slot, but its own manifest is still outstanding — exactly when a
+// scheduled or manual sync can run next. This proves that sync, driven
+// through the real Scheduler and RunSync's own relocationManifestSource
+// wiring (parity_run.go), reads the relocation's own outstanding manifest
+// from the real RelocationManifestStore rather than seeing nothing, and
+// that once the relocation resumes and its trailing sync completes, a
+// later sync no longer sees a stale one.
+func TestRunShareRelocation_ToCache_SyncDuringOutstandingRelocation_SeesManifest(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	store := parity.NewRelocationManifestStore(db)
+
+	share := newShareRelocationShare(t, "docs")
+	src := filepath.Join(share.Branches[0], "report.pdf")
+	mustWriteFile(t, src, "report bytes")
+
+	relocEng := newRecordingEngine()
+	relocEng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+	fn := RunShareRelocation(ShareRelocationDeps{
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     syncFuncFromEngine(relocEng),
+		Manifest: store,
+	})
+	params := mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"})
+
+	// Interrupt the relocation right after its manifest becomes durable —
+	// before it ever calls Sync — the same way a daemon restart or
+	// maintenance mode would (doc 01 §4 Q70). It no longer holds the
+	// scheduler's Array-write slot from here on.
+	var lastCheckpoint []byte
+	stopRequested, saveCheckpoint := interruptOnceManifestDurable(&lastCheckpoint)
+	rc1 := &RunContext{
+		ctx:            ctx,
+		out:            &bytes.Buffer{},
+		params:         params,
+		stopRequested:  stopRequested,
+		saveCheckpoint: saveCheckpoint,
+		setProgress:    func(int) {},
+	}
+	if err := fn(ctx, rc1); err != nil {
+		t.Fatalf("interrupted run: %v", err)
+	}
+
+	// The relocation is now merely "outstanding" (durably persisted, not
+	// running as a scheduler job at all) — a real, independently scheduled
+	// TypeSync job runs through the real Scheduler and the production
+	// RunSync wiring, sharing only the database with the relocation above.
+	jobStore := NewStore(db)
+	s := NewScheduler(jobStore, NewLogStore(t.TempDir()), NewHub(), NewRegistry())
+	syncEng := &storeBackedEngine{recordingEngine: newRecordingEngine(), store: store}
+	syncEng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+	s.registry.Register(TypeSync, false, RunSync(syncEng))
+
+	syncJob, err := s.Submit(ctx, TypeSync, nil, mustJSON(t, SyncParams{}))
+	if err != nil {
+		t.Fatalf("Submit sync during outstanding relocation: %v", err)
+	}
+	syncFinished := await(t, s, syncJob.ID)
+	if syncFinished.Status != StatusSucceeded {
+		t.Fatalf("sync status = %s (%s), want succeeded", syncFinished.Status, syncFinished.ErrorMessage)
+	}
+	lastSync, _, _, _ := syncEng.snapshot()
+	if len(lastSync.Manifest) != 1 || lastSync.Manifest[0].RelPath != "docs/report.pdf" {
+		t.Fatalf("sync's own SyncOpts.Manifest while the relocation is outstanding = %+v, want the relocation's own manifest, not empty", lastSync.Manifest)
+	}
+
+	// Resume the relocation to completion — its own trailing sync clears
+	// the manifest.
+	rc2 := &RunContext{
+		ctx:           ctx,
+		out:           &bytes.Buffer{},
+		params:        params,
+		checkpoint:    lastCheckpoint,
+		stopRequested: make(chan struct{}),
+		saveCheckpoint: func(data []byte) error {
+			lastCheckpoint = data
+			return nil
+		},
+		setProgress: func(int) {},
+	}
+	if err := fn(ctx, rc2); err != nil {
+		t.Fatalf("resumed run: %v", err)
+	}
+
+	laterSyncJob, err := s.Submit(ctx, TypeSync, nil, mustJSON(t, SyncParams{}))
+	if err != nil {
+		t.Fatalf("Submit later sync: %v", err)
+	}
+	laterFinished := await(t, s, laterSyncJob.ID)
+	if laterFinished.Status != StatusSucceeded {
+		t.Fatalf("later sync status = %s (%s), want succeeded", laterFinished.Status, laterFinished.ErrorMessage)
+	}
+	laterSync, _, _, _ := syncEng.snapshot()
+	if len(laterSync.Manifest) != 0 {
+		t.Fatalf("a sync after the relocation completed still saw a manifest = %+v, want it cleared so an unrelated later removal at the same disk+path is not wrongly accounted", laterSync.Manifest)
+	}
+}
+
+// TestRunShareRelocation_ToCache_FinalSyncFailure_LeavesManifestPersisted
+// is #247's own clear-path safety test (its own issue text: "Get the
+// clear-path wrong and this issue itself becomes a guard-masking bug"):
+// when the relocation's own *trailing* sync fails — after the delete phase
+// already removed the array originals — the manifest must NOT be cleared,
+// since a concurrent or later sync still needs it to correctly exempt
+// those already-accounted removals until the relocation itself resolves.
+func TestRunShareRelocation_ToCache_FinalSyncFailure_LeavesManifestPersisted(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	store := parity.NewRelocationManifestStore(db)
+
+	s := newTestScheduler(t)
+	share := newShareRelocationShare(t, "docs")
+	src := filepath.Join(share.Branches[0], "report.pdf")
+	mustWriteFile(t, src, "report bytes")
+
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+
+	var calls int
+	failFinal := errors.New("threshold guard blocked the trailing sync")
+	sync := func(ctx context.Context, manifest []parity.ManifestEntry) error {
+		calls++
+		if calls == 2 {
+			return failFinal
+		}
+		return syncFuncFromEngine(eng)(ctx, manifest)
+	}
+
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     sync,
+		Manifest: store,
+	}))
+
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("status = %s, want failed", finished.Status)
+	}
+	if !strings.Contains(finished.ErrorMessage, failFinal.Error()) {
+		t.Fatalf("ErrorMessage = %q, want it to surface the trailing sync's own failure", finished.ErrorMessage)
+	}
+	if calls != 2 {
+		t.Fatalf("expected exactly 2 sync calls (pre-delete, trailing), got %d", calls)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatalf("array original should already be gone before the trailing sync failed: err=%v", err)
+	}
+
+	manifest, _, err := store.Current(ctx)
+	if err != nil {
+		t.Fatalf("store.Current after a failed trailing sync: %v", err)
+	}
+	if len(manifest) != 1 || manifest[0].RelPath != "docs/report.pdf" {
+		t.Fatalf("manifest after a failed trailing sync = %+v, want it still persisted, not cleared", manifest)
+	}
+}
+
+// TestRunShareRelocation_ToCache_ManifestSurvivesInterruption_ThenClearsOnResume
+// proves the resumed/checkpoint-continuation path this issue's own
+// acceptance criteria call out explicitly: a run interrupted right after
+// the copy phase makes its manifest durable (before ever calling Sync)
+// must leave that manifest persisted across the interruption, and the
+// resumed run that actually completes the relocation must still clear it.
+func TestRunShareRelocation_ToCache_ManifestSurvivesInterruption_ThenClearsOnResume(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	store := parity.NewRelocationManifestStore(db)
+
+	share := newShareRelocationShare(t, "docs")
+	src := filepath.Join(share.Branches[0], "report.pdf")
+	mustWriteFile(t, src, "report bytes")
+
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+
+	fn := RunShareRelocation(ShareRelocationDeps{
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     syncFuncFromEngine(eng),
+		Manifest: store,
+	})
+	params := mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"})
+
+	// Run 1: interrupted right after the copy phase's own checkpoint save
+	// makes the manifest durable, before RelocateToCache ever calls Sync.
+	var lastCheckpoint []byte
+	stopRequested, saveCheckpoint := interruptOnceManifestDurable(&lastCheckpoint)
+	rc1 := &RunContext{
+		ctx:            ctx,
+		out:            &bytes.Buffer{},
+		params:         params,
+		stopRequested:  stopRequested,
+		saveCheckpoint: saveCheckpoint,
+		setProgress:    func(int) {},
+	}
+	if err := fn(ctx, rc1); err != nil {
+		t.Fatalf("interrupted run: %v", err)
+	}
+	if lastCheckpoint == nil {
+		t.Fatal("interrupted run never saved a checkpoint — nothing to resume from")
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("array original must survive an interrupted run: %v", err)
+	}
+
+	manifest, _, err := store.Current(ctx)
+	if err != nil {
+		t.Fatalf("store.Current after an interrupted run: %v", err)
+	}
+	if len(manifest) != 1 || manifest[0].RelPath != "docs/report.pdf" {
+		t.Fatalf("manifest after an interrupted run = %+v, want the copy phase's own manifest durably persisted", manifest)
+	}
+
+	// Run 2: resumed from run 1's own checkpoint, run to completion.
+	rc2 := &RunContext{
+		ctx:           ctx,
+		out:           &bytes.Buffer{},
+		params:        params,
+		checkpoint:    lastCheckpoint,
+		stopRequested: make(chan struct{}),
+		saveCheckpoint: func(data []byte) error {
+			lastCheckpoint = data
+			return nil
+		},
+		setProgress: func(int) {},
+	}
+	if err := fn(ctx, rc2); err != nil {
+		t.Fatalf("resumed run: %v", err)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatalf("array original should be gone once the resumed run completes: err=%v", err)
+	}
+
+	manifest, removingDisks, err := store.Current(ctx)
+	if err != nil {
+		t.Fatalf("store.Current after the resumed run completes: %v", err)
+	}
+	if manifest != nil || removingDisks != nil {
+		t.Fatalf("manifest after the resumed run completes = %+v/%+v, want cleared", manifest, removingDisks)
+	}
+}
+
+// countingManifestReplacer wraps a real *parity.RelocationManifestStore,
+// counting Replace calls while still writing through to it — #247's own
+// bound-pinning test needs a real store (so the other manifest tests'
+// store.Current assertions keep meaning something) but also needs to
+// observe how many DELETE+INSERT transactions a run actually issues.
+type countingManifestReplacer struct {
+	store *parity.RelocationManifestStore
+	calls int
+}
+
+func (c *countingManifestReplacer) Replace(ctx context.Context, manifest []parity.ManifestEntry, removingDisks map[string]bool) error {
+	c.calls++
+	return c.store.Replace(ctx, manifest, removingDisks)
+}
+
+// TestRunShareRelocation_ToCache_PersistsManifestOnce_NotPerCheckpoint pins
+// this issue's own fix: relocateDeletePhase (internal/cache/relocate.go)
+// checkpoints after every deleted file, and RelocateToCache checkpoints
+// again at each phase transition, but every one of those checkpoints after
+// the first carries the identical manifest the copy phase already built
+// (RelocateCheckpoint's own doc comment) — so persisting it again each
+// time is pure write amplification, not new information for a concurrent
+// sync to see. With several files (several delete-phase checkpoints),
+// store.Replace — a DELETE-then-N-INSERT transaction — must still fire
+// exactly once for the whole run, not once per checkpoint/deleted file.
+func TestRunShareRelocation_ToCache_PersistsManifestOnce_NotPerCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	replacer := &countingManifestReplacer{store: parity.NewRelocationManifestStore(db)}
+
+	s := newTestScheduler(t)
+	share := newShareRelocationShare(t, "docs")
+	const fileCount = 5
+	for i := 0; i < fileCount; i++ {
+		mustWriteFile(t, filepath.Join(share.Branches[0], fmt.Sprintf("f%d.txt", i)), "content")
+	}
+
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     syncFuncFromEngine(eng),
+		Manifest: replacer,
+	}))
+
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+
+	// The write path's own bound: one persist for the whole run, whatever
+	// happened to the delete phase's own checkpoint. The trailing clear
+	// (Replace(ctx, nil, nil) once the relocation's own final sync
+	// succeeds) is the run's second and last call.
+	if replacer.calls != 2 {
+		t.Fatalf("store.Replace called %d times for a %d-file relocation, want exactly 2 (one persist, one clear) — not one per checkpoint/deleted file", replacer.calls, fileCount)
+	}
+
+	manifest, removingDisks, err := replacer.store.Current(ctx)
+	if err != nil {
+		t.Fatalf("store.Current after completion: %v", err)
+	}
+	if manifest != nil || removingDisks != nil {
+		t.Fatalf("manifest after a completed relocation = %+v/%+v, want cleared", manifest, removingDisks)
 	}
 }
 
