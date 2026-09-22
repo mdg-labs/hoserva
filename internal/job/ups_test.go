@@ -227,7 +227,7 @@ func TestUPSController_OnLine_ResumesMoverAndAllowsSync(t *testing.T) {
 	// second battery event would. PauseForBattery re-engages the hold,
 	// so it is released again right after — otherwise the queued sync
 	// below would never be dispatched, and this test would hang.
-	s.PauseForBattery()
+	s.PauseForBattery(ctx)
 	waitFor(t, time.Second, func() bool {
 		got, err := s.store.Get(ctx, j.ID)
 		return err == nil && got.Status == StatusInterrupted
@@ -236,6 +236,46 @@ func TestUPSController_OnLine_ResumesMoverAndAllowsSync(t *testing.T) {
 	<-syncStarted
 	close(syncRelease)
 	waitSucceeded(t, s, sync.ID)
+}
+
+// TestUPSController_OnLine_ImmediatelyAfterOnBattery_StillResumes
+// proves the fix for the race PauseForBattery's own doc comment
+// describes: without PauseForBattery waiting for the mover it stopped
+// to actually reach StatusInterrupted, an ONLINE arriving right after
+// ONBATT (a short outage, with no artificial delay between them the way
+// TestUPSController_OnLine_ResumesMoverAndAllowsSync deliberately adds)
+// could call Resume before the checkpoint write lands, get
+// ErrJobNotInterrupted, and leave the mover stuck — never resumed,
+// since Q77's on-battery/power-restored pair is the one case that
+// resumes automatically rather than waiting for an explicit user
+// action.
+func TestUPSController_OnLine_ImmediatelyAfterOnBattery_StillResumes(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	resumed := registerMoverThatStopsAtCheckpoint(s)
+
+	j, err := s.Submit(ctx, TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit(TypeMover): %v", err)
+	}
+
+	c := &UPSController{Scheduler: s}
+	if err := c.HandleNotify(ctx, UPSNotifyOnBattery); err != nil {
+		t.Fatalf("HandleNotify(ONBATT): %v", err)
+	}
+	if err := c.HandleNotify(ctx, UPSNotifyOnLine); err != nil {
+		t.Fatalf("HandleNotify(ONLINE) immediately after ONBATT: %v", err)
+	}
+
+	select {
+	case <-resumed:
+	case <-time.After(time.Second):
+		t.Fatal("the paused mover job was never resumed after an immediate ONLINE")
+	}
+	waitFor(t, time.Second, func() bool {
+		got, err := s.store.Get(ctx, j.ID)
+		return err == nil && got.Status == StatusRunning
+	})
 }
 
 // TestUPSController_OnLine_WithoutAPriorOnBatteryIsNoop proves ONLINE

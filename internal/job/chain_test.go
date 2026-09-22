@@ -302,7 +302,7 @@ func TestMaintenanceChain_MoverAndSyncStepsSkippedOnBattery(t *testing.T) {
 	rec := &stepRecorder{}
 	registerRecording(s, TypeMover, rec, "mover")
 	registerRecording(s, TypeSync, rec, "sync")
-	s.PauseForBattery()
+	s.PauseForBattery(context.Background())
 
 	guard := &fakeGuard{}
 	backup := &fakeBackup{}

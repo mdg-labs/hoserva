@@ -260,6 +260,10 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 		s.mu.Unlock()
 		return nil, ErrMaintenanceMode
 	}
+	if s.batteryHold && isBatteryHeldType(existing.Type) {
+		s.mu.Unlock()
+		return nil, ErrOnBattery
+	}
 
 	now := time.Now().UTC()
 	if s.hasConflictWithRunningLocked(existing.Class, existing.ResourceIDs) {
@@ -390,9 +394,16 @@ func isBatteryHeldType(t Type) bool {
 // running keeps running (Q77 only "holds" a sync that hasn't started
 // yet), and no other job class is affected at all. It returns the ID of
 // the mover job it asked to stop, if any, so a caller (job.UPSController)
-// can resume it once power returns. Idempotent: calling it again while
-// already on battery is a no-op.
-func (s *Scheduler) PauseForBattery() []string {
+// can resume it once power returns — only once that job has actually
+// finished stopping, waited for the same way Drain waits for a running
+// job's own done channel, so a short outage (ONLINE arriving before the
+// stop is fully processed) can never race Resume against a checkpoint
+// still being written: by the time PauseForBattery returns, the job's
+// own Store.UpdateStatus(StatusInterrupted) has already happened, and
+// Resume will find it interrupted rather than failing with
+// ErrJobNotInterrupted and leaving it stuck. Idempotent: calling it
+// again while already on battery is a no-op.
+func (s *Scheduler) PauseForBattery(ctx context.Context) []string {
 	s.mu.Lock()
 	if s.batteryHold {
 		s.mu.Unlock()
@@ -414,6 +425,12 @@ func (s *Scheduler) PauseForBattery() []string {
 		rj.mu.Unlock()
 		close(rj.stopCh)
 		paused = append(paused, rj.job.ID)
+	}
+	for _, rj := range toStop {
+		select {
+		case <-rj.done:
+		case <-ctx.Done():
+		}
 	}
 	return paused
 }

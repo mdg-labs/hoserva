@@ -119,7 +119,7 @@ func (c *UPSController) handleOnBattery(ctx context.Context) error {
 	c.batteryActive = true
 	c.mu.Unlock()
 
-	paused := c.Scheduler.PauseForBattery()
+	paused := c.Scheduler.PauseForBattery(ctx)
 	c.mu.Lock()
 	c.pausedJobIDs = paused
 	c.mu.Unlock()

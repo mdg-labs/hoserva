@@ -974,7 +974,7 @@ func TestScheduler_PauseForBattery_RefusesMoverAndSync(t *testing.T) {
 	s.registry.Register(TypeSync, false, blockingRun(make(chan struct{}), make(chan struct{}), nil))
 	scrubStarted, scrubRelease := registerBlocking(s, TypeScrub, false)
 
-	if paused := s.PauseForBattery(); len(paused) != 0 {
+	if paused := s.PauseForBattery(ctx); len(paused) != 0 {
 		t.Fatalf("PauseForBattery with nothing running = %v, want none paused", paused)
 	}
 	if !s.OnBattery() {
@@ -1005,7 +1005,13 @@ func TestScheduler_PauseForBattery_RefusesMoverAndSync(t *testing.T) {
 // resumable-stop mechanism EnterMaintenance already uses for maintenance
 // mode also drives Q77's on-battery pause: a running mover job is asked
 // to stop, saves its checkpoint, and ends interrupted — never cancelled
-// outright the way a non-resumable job would be.
+// outright the way a non-resumable job would be. It also proves
+// PauseForBattery itself waits for that to finish: by the time it
+// returns, the store already reports StatusInterrupted, with no
+// waitFor needed — the same guarantee that closes the ONBATT-then-
+// immediate-ONLINE race TestUPSController_OnLine_
+// ImmediatelyAfterOnBattery_StillResumes exercises through
+// UPSController.
 func TestScheduler_PauseForBattery_StopsRunningMoverAtCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	s := newTestScheduler(t)
@@ -1026,17 +1032,57 @@ func TestScheduler_PauseForBattery_StopsRunningMoverAtCheckpoint(t *testing.T) {
 		t.Fatalf("Submit: %v", err)
 	}
 
-	paused := s.PauseForBattery()
+	paused := s.PauseForBattery(ctx)
 	if len(paused) != 1 || paused[0] != j.ID {
 		t.Fatalf("PauseForBattery = %v, want [%s]", paused, j.ID)
 	}
 	<-stopSeen
 	<-returned
 
+	got, err := s.store.Get(ctx, j.ID)
+	if err != nil || got.Status != StatusInterrupted {
+		t.Fatalf("job status right after PauseForBattery returned = %v (err %v), want StatusInterrupted", got, err)
+	}
+}
+
+// TestScheduler_Resume_RefusesBatteryHeldTypeWhileOnBattery proves
+// Resume applies the same on-battery hold Submit and dispatch already
+// do: an interrupted mover job — interrupted by maintenance mode here,
+// deliberately not by PauseForBattery itself, to isolate this check from
+// PauseForBattery's own resume path — must not be resumable while
+// batteryHold is set, the same way a direct Resume call outside
+// UPSController's own round trip could otherwise start it running on a
+// UPS with limited runtime left.
+func TestScheduler_Resume_RefusesBatteryHeldTypeWhileOnBattery(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	stopSeen := make(chan struct{})
+	s.registry.Register(TypeMover, false, func(ctx context.Context, rc *RunContext) error {
+		<-rc.StopRequested()
+		close(stopSeen)
+		return rc.SaveCheckpoint([]byte("checkpoint"))
+	})
+	j, err := s.Submit(ctx, TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	<-stopSeen
 	waitFor(t, time.Second, func() bool {
 		got, err := s.store.Get(ctx, j.ID)
 		return err == nil && got.Status == StatusInterrupted
 	})
+	s.ExitMaintenance()
+
+	s.PauseForBattery(ctx)
+
+	if _, err := s.Resume(ctx, j.ID); !errors.Is(err, ErrOnBattery) {
+		t.Fatalf("Resume(mover) while on battery = %v, want ErrOnBattery", err)
+	}
 }
 
 // TestScheduler_ResumeFromBattery_DispatchesJobQueuedBeforeTheHold
@@ -1068,7 +1114,7 @@ func TestScheduler_ResumeFromBattery_DispatchesJobQueuedBeforeTheHold(t *testing
 		t.Fatalf("b.Status = %s, want queued (class-conflicted with the running rebalance)", b.Status)
 	}
 
-	s.PauseForBattery()
+	s.PauseForBattery(ctx)
 
 	close(aRelease)
 	waitSucceeded(t, s, a.ID)
