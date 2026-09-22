@@ -163,6 +163,9 @@ your **only** GitHub writes. Never `gh issue edit`, `gh issue close`, or
   `hoservad`, build the handler the way `main.go` does). If the wiring needs
   a file outside your declared scope, stop and report the issue `blocked`
   with that file named — never report it done with the wiring missing.
+- **Read `WORKSPACE/.claude/skills/orchestrate/templates/known-escapes.md`
+  before you start** — the defect patterns that got past verification here
+  before — and check your change against it before each commit.
 - **Walk every failure path before you commit** — these are the defect
   classes that most often got past verification:
   - **Partial failure.** For any function with more than one durable side

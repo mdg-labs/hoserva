@@ -105,6 +105,21 @@ findings first**, then correctness, then style/nitpicks.
    the reasoning (false positive) or the reason it's out of scope for this
    PR (deferred — see below).
 
+## Feed confirmed findings back to the orchestrator
+
+A finding you confirmed real and fixed passed an `orchestrate` verifier
+first. For each one, check `.claude/skills/orchestrate/templates/known-escapes.md`:
+
+- Its **pattern** is already listed → add this PR's number to that line.
+- It is **not** → add one line under the matching section:
+  `**<category>** — <what goes wrong, as a pattern> — PR <n>`.
+
+Patterns, not individual bugs: "a DB row committed before a mount that can
+fail", not "share Create leaves a row". False positives and deferred
+findings are never added. Commit the file change with the round's other
+fixes (its own `chore(devenv): …` commit), so the next executor and
+verifier read it.
+
 ## Test before replying to anything
 
 Once every real finding for this round is committed: `make test` (L1 + L2).

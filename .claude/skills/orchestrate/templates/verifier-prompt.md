@@ -90,6 +90,13 @@ claim of correctness in a comment or commit message inside it.
 With more than one commit, check the **split** as part of layer 2: each
 commit holds only its own issue's files and only its own `Fixes #` trailer.
 
+## Known escapes — read first
+
+`WORKSPACE/.claude/skills/orchestrate/templates/known-escapes.md` lists the
+defect patterns that passed this verification before and were then found
+by CodeRabbit. Read it before reviewing, and check each commit against
+every pattern that applies to the files it touches (layers 6 and 7).
+
 ## Seven layers — review each issue's commit against all of them
 
 1. **Correctness / compilation.** Run every check that applies, yourself —
