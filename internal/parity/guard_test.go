@@ -514,6 +514,36 @@ func TestManifestNeedsTargetConfirmation(t *testing.T) {
 	if manifestNeedsTargetConfirmation(trailingDiff, []ManifestEntry{already}) {
 		t.Error("manifestNeedsTargetConfirmation: true for an entry already TargetConfirmed, want false")
 	}
+
+	// A non-empty diff.PerDisk that does not list TargetDisk means
+	// matchManifest already accounts the entry on its own (#240's
+	// cache-target rule) — paying for a `snapraid list` here could never
+	// confirm a cache target anyway (#256), so this must not fire even
+	// though the removal is a trailing-sync one with no same-diff addition.
+	cacheTargetDiff := DiffReport{
+		RemovedFiles: []DiffFile{{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"}},
+		PerDisk: map[string]DiskDiff{
+			"/mnt/disk1": {FilesBefore: 100, FilesAfter: 99},
+		},
+	}
+	cacheEntry := ManifestEntry{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/cache"}
+	if manifestNeedsTargetConfirmation(cacheTargetDiff, []ManifestEntry{cacheEntry}) {
+		t.Error("manifestNeedsTargetConfirmation: true for a cache-target entry confirmed non-data by diff.PerDisk, want false")
+	}
+
+	// The same shape, but TargetDisk genuinely is a tracked data disk
+	// (present in diff.PerDisk): the strict rule must still apply exactly
+	// as before #256.
+	dataTargetDiff := DiffReport{
+		RemovedFiles: []DiffFile{{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"}},
+		PerDisk: map[string]DiskDiff{
+			"/mnt/disk1": {FilesBefore: 100, FilesAfter: 99},
+			"/mnt/disk2": {FilesBefore: 100, FilesAfter: 100},
+		},
+	}
+	if !manifestNeedsTargetConfirmation(dataTargetDiff, []ManifestEntry{entry}) {
+		t.Error("manifestNeedsTargetConfirmation: false for a trailing-sync removal whose TargetDisk is a tracked data disk, want true")
+	}
 }
 
 // TestGuard_DuplicateManifestEntriesDoNotMaskUnrelatedRemovals reproduces

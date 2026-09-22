@@ -317,6 +317,15 @@ func matchManifest(diff DiffReport, manifest []ManifestEntry) (accounted []Manif
 // list`: every ordinary, same-diff relocation — the plain mover, and every
 // manifest matchManifest can already account for — costs exactly what it
 // always did, no extra invocation.
+//
+// It also skips an entry whose TargetDisk is confirmed non-data by a
+// non-empty diff.PerDisk (an array→cache relocation, #256): matchManifest
+// already accounts such an entry from diff.PerDisk alone, regardless of
+// TargetConfirmed, so a `snapraid list` could never change the outcome —
+// and it could never confirm a cache target anyway, since List only
+// reports tracked data disks. An empty diff.PerDisk still falls back to
+// the strict rule below, the same way matchManifest does: it cannot tell
+// TargetDisk apart from a genuine, currently-untracked data disk.
 func manifestNeedsTargetConfirmation(diff DiffReport, manifest []ManifestEntry) bool {
 	if len(manifest) == 0 {
 		return false
@@ -325,6 +334,11 @@ func manifestNeedsTargetConfirmation(diff DiffReport, manifest []ManifestEntry) 
 	for _, m := range manifest {
 		if m.TargetConfirmed {
 			continue
+		}
+		if len(diff.PerDisk) > 0 {
+			if _, targetIsDataDisk := diff.PerDisk[filepath.Clean(m.TargetDisk)]; !targetIsDataDisk {
+				continue
+			}
 		}
 		key := fileKey{m.SourceDisk, m.RelPath}
 		if removed[key] && !added[fileKey{m.TargetDisk, m.RelPath}] {
