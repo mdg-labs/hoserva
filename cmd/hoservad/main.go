@@ -31,6 +31,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/pool"
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
 	"github.com/mdg-labs/hoserva/web"
@@ -314,7 +315,12 @@ func run(cfg config) error {
 	if err := networkSvc.Recover(ctx); err != nil {
 		log.Printf("hoservad: restoring unconfirmed network change: %v", err)
 	}
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine, Generator: generator, HostConfig: store.NewHostConfigStore(db), Docker: cfggen.ExecDocker{}, ArrayStore: arrayStore, Network: networkSvc, ACME: acmeService}
+	var shareUsages share.UsageReader
+	if parityEngine != nil {
+		shareUsages = parityEngine.Usage
+	}
+	shareService := newShareService(shareStore, arrayStore, generator, pool.Mounter{Runner: linuxDisks.Exec}, shareUsages)
+	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine, Generator: generator, HostConfig: store.NewHostConfigStore(db), Docker: cfggen.ExecDocker{}, ArrayStore: arrayStore, Network: networkSvc, ACME: acmeService, Shares: shareService}
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
 		handler.RelocationManifest = parityEngine.Relocation
