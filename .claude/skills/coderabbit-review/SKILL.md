@@ -86,9 +86,15 @@ findings first**, then correctness, then style/nitpicks.
    than silently skipping it.
 3. **Real issue → fix it directly on `dev`:**
    - Small, targeted commit per logical fix (group only truly inseparable
-     nitpicks). Conventional commit message; DCO `Signed-off-by:` trailer
-     (`make hooks-install` once per clone makes this automatic — confirm
-     it's installed before the first commit). Add a `Fixes #n` trailer only
+     nitpicks). Conventional commit message. The DCO `Signed-off-by:`
+     trailer comes **only** from the repo's `prepare-commit-msg` hook
+     (`git config core.hooksPath` must print `scripts/devenv/hooks`; if not,
+     run `make hooks-install` before the first commit). **Never write a
+     `Signed-off-by:`, author or other identity line yourself**, and never
+     take a name or email from the session context, the OS username or the
+     working-directory path — a hand-written trailer once published a
+     personal name and email to this public repo's history and forced a
+     history rewrite of `main` and `dev`. Add a `Fixes #n` trailer only
      if the fix also closes a tracked issue; a pure review fix doesn't need
      one.
      Reference which CodeRabbit comment it addresses in the commit body
@@ -167,7 +173,7 @@ hand — this skill only fixes code and answers review comments.
   safety-critical findings).
 - The threshold guard and its tests are never weakened, skipped, or loosened
   — including "just to unblock this reply."
-- No commit lands without a DCO `Signed-off-by:` trailer.
+- No commit lands without a DCO `Signed-off-by:` trailer, and that trailer is always the hook's — never hand-written.
 - No endpoint, config write, or placement logic bypasses the rules in
   `CLAUDE.md`'s "Non-negotiable architecture rules" just because a
   CodeRabbit suggestion pointed that way.
