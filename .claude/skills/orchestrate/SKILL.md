@@ -178,6 +178,8 @@ For each issue in T, derive the set of top-level paths it will touch:
 - Backtick-quoted paths in the body (`internal/parity/`, `docs/internal/`, `scripts/devenv/`, `.github/workflows/`, …).
 - Fallback: its `area:*` label, via `CLAUDE.md`'s **area → paths** table. A `docs` issue with no area scopes to `docs/internal/`.
 - **Always-shared files** (`CLAUDE.md`'s list — `CLAUDE.md`, `Makefile`, `go.mod`/`go.sum`/`go.work`, `api/openapi.yaml`, `api/gen/`, `web/package.json` + lockfile, `docs/internal/13-open-questions.md`, `.gitignore`, `LICENSE`) are their own scope entries whenever an issue plausibly touches them. Any API change touches `api/openapi.yaml` and `api/gen/`; any spike or default change touches doc 13.
+- **Entry points are in scope.** An issue's `Reachable via:` criterion names where its capability must be reachable from — `cmd/hoservad/main.go` (and its sibling wiring files), `cmd/hoserva/`, `web/src/routes/`, `Makefile`, `.github/workflows/`. Add every such file to the issue's scope as its own entry, the same way as an always-shared file, so lanes serialize on it. An issue with a runtime capability but no `Reachable via:` criterion is not ready — enrich it through `github-triage` before dispatching. Leaving the entry point out of scope is what turned 17 finished features into later "wire it into hoservad" issues.
+- An `api/openapi.yaml` change also puts `cmd/mockapi/` in scope: the mock mirrors production validation.
 - Can't confidently bound it → its scope is **the whole repo**, which serializes it against everything.
 
 ## 4. Batch into waves, then bundles, then lanes

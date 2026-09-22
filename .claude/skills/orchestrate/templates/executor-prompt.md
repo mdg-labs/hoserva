@@ -154,6 +154,15 @@ your **only** GitHub writes. Never `gh issue edit`, `gh issue close`, or
   there: no hardening, extra features or side fixes the issue didn't ask
   for. Something real you notice outside that goes under "Findings outside
   these issues", not into the diff.
+- **Done means reachable in the running product.** A capability that only
+  exists as a package — a service no `hoservad` code constructs, a job type
+  never registered, a handler field left nil (every call `501`s), an option
+  accepted and ignored, a test script no `make` target runs — is not done.
+  Wire it through the entry point the issue's `Reachable via:` criterion
+  names, and prove it with a test that goes through that entry point (for
+  `hoservad`, build the handler the way `main.go` does). If the wiring needs
+  a file outside your declared scope, stop and report the issue `blocked`
+  with that file named — never report it done with the wiring missing.
 - **Conventions:** no comments unless the *why* is non-obvious; no
   speculative abstraction; no half-finished work; no error handling for
   cases that can't happen. Conventional commit subjects (`feat(parity): …`).

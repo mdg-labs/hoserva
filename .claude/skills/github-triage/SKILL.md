@@ -107,6 +107,19 @@ and each issue whole:
   must decide before the code can be specified. In that case, create the
   code issue together with it, blocked by it; `orchestrate` pulls it into
   the same run.
+- **An issue delivers a capability someone can reach, not just a package.**
+  Every `feat` or `bug` that adds or changes runtime behaviour carries an
+  acceptance criterion `Reachable via: <entry point> → <capability>` — an
+  API operation served by `hoservad` (not only `cmd/mockapi`), a CLI
+  command, a web route, a nightly chain step, or, for a test or check
+  script, the `make` target and CI job that runs it. The entry-point file
+  (`cmd/hoservad/main.go`, `cmd/hoserva/…`, `web/src/routes/…`, `Makefile`,
+  `.github/workflows/…`) goes in the scope hint. Never split a capability
+  into a "package" issue and a later "wire it in" issue: the executor stays
+  inside its scope, and the verifier judges against the criteria, so an
+  unnamed wiring step silently never happens. The only exception is a
+  wiring issue created in the same epic at the same time, with a native
+  blocked-by edge, that `orchestrate` pulls into the same run.
 - **Acceptance criteria are the whole definition of done.** A verifier
   fails an issue only on an unmet criterion or a real defect. So write
   criteria that state the bar ("refuses X; Y stays allowed"), and list
@@ -147,8 +160,9 @@ stated (doc 06 §6); nothing is ever routed to the maintainer to test.
 - `## Summary` — one or two sentences on what this actually is, once investigated.
 - `## Design references` — the doc sections and `D`/`Q` numbers it implements or touches.
 - Then, as warranted: `## Reproduction`, `## Root cause / relevant code`, `## Upstream / reference context`, `## Proposed approach`, `## Constraints`, `## Acceptance criteria`, `## Out of scope`, `## Open questions`. Don't force sections that don't apply — except `## Out of scope`, which every `feat`, `bug` and `chore` issue carries.
-- **Acceptance criteria are checkable and complete** — nothing beyond them is required to close the issue. For storage work, name the loop-harness test that proves it (doc 06 §3, doc 09 §6); for `safety-critical` work, the data-loss scenario the test reproduces. For a `spike`, the deliverable is recorded findings (`CLAUDE.md`, "Spikes"): what is measured, the kill or pass criterion (doc 07 §1), and which doc 13 entries it confirms or overturns.
-- **Scope hint.** Name the top-level paths the work will touch in backticks (`internal/parity/`, `docs/internal/`), so `orchestrate` can bound it.
+- **Acceptance criteria are checkable and complete** — nothing beyond them is required to close the issue. Every runtime capability has its `Reachable via:` criterion (see "Fewer, complete issues"). For storage work, name the loop-harness test that proves it (doc 06 §3, doc 09 §6); for `safety-critical` work, the data-loss scenario the test reproduces; for UI work, the error, empty and loading states the page shows. For a `spike`, the deliverable is recorded findings (`CLAUDE.md`, "Spikes"): what is measured, the kill or pass criterion (doc 07 §1), and which doc 13 entries it confirms or overturns.
+- **`## Current state on dev`** — for work that extends existing code: what already exists, what is a stub (`not_configured`, `501`, placeholder page, `test.fail()`), with file:line or commit. Check `dev` before describing anything as still to build.
+- **Scope hint.** Name the top-level paths the work will touch in backticks (`internal/parity/`, `docs/internal/`), **including the entry-point files its `Reachable via` criterion names**, so `orchestrate` can bound it. If an operation is added to or changed in `api/openapi.yaml`, the matching `cmd/mockapi/` change is in scope and mirrors production validation.
 
 ## Epic/sub-issue structure and dependencies — native relationships, never body prose
 
@@ -196,3 +210,4 @@ GitHub's native fields. **Never** as body prose ("Part of #N", "Depends on
 - **An issue never silently contradicts a decision (`Dn`) or a doc 13 default** — it names the conflict and, for a default, includes updating doc 13 in its acceptance criteria.
 - **Extend an open, unstarted issue before creating a new one; never split a decision from the code it implies** unless the maintainer must decide first, and then file both together.
 - **Every non-epic issue gets an open epic and milestone**, and every `feat`/`bug`/`chore` issue gets an `## Out of scope` section.
+- **Every runtime capability names where it is reachable from** (`Reachable via:`), and its entry-point file is in the scope hint. No "wire it in later" split without a same-epic, blocked-by wiring issue created alongside.
