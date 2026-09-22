@@ -100,12 +100,27 @@ type config struct {
 	allowAllSources     bool
 	dev                 bool
 	applyVerifiedUpdate string
+	upsNotifyType       string
+	upsShutdown         bool
 }
 
 func main() {
 	cfg := parseFlags()
-	if cfg.applyVerifiedUpdate != "" {
+	switch {
+	case cfg.applyVerifiedUpdate != "":
 		if err := runApplyVerifiedUpdate(cfg); err != nil {
+			fmt.Fprintln(os.Stderr, "hoservad:", err)
+			os.Exit(1)
+		}
+		return
+	case cfg.upsNotifyType != "":
+		if err := runUPSControlClient(cfg, cfg.upsNotifyType); err != nil {
+			fmt.Fprintln(os.Stderr, "hoservad:", err)
+			os.Exit(1)
+		}
+		return
+	case cfg.upsShutdown:
+		if err := runUPSControlClient(cfg, string(job.UPSNotifyLowBattery)); err != nil {
 			fmt.Fprintln(os.Stderr, "hoservad:", err)
 			os.Exit(1)
 		}
@@ -127,6 +142,8 @@ func parseFlags() config {
 	flag.BoolVar(&cfg.allowAllSources, "allow-all-sources", false, "disable the LAN-only source filter (Q10) — WARNING: accepts connections from any address")
 	flag.BoolVar(&cfg.dev, "dev", false, "development convenience: state dir, socket, machine key and TCP address default to a workspace-local path and 127.0.0.1 (git-ignored); an explicitly set flag always wins over this default")
 	flag.StringVar(&cfg.applyVerifiedUpdate, "apply-verified-update", "", "install a verified pending .deb from this directory (transient unit; Q67)")
+	flag.StringVar(&cfg.upsNotifyType, "ups-notify", "", "internal: relay a NUT upsmon NOTIFYTYPE (ONBATT/ONLINE/LOWBATT) to the running daemon's UPSController over its own control socket (doc 02 §6, Q77) — invoked by /usr/lib/hoserva/nut-notify, never by a user")
+	flag.BoolVar(&cfg.upsShutdown, "ups-shutdown", false, "internal: run the running daemon's clean low-battery shutdown sequence synchronously over its control socket, exiting non-zero if any step failed — SHUTDOWNCMD's own entry point (doc 02 §6, Q77), invoked by /usr/lib/hoserva/nut-shutdown, never by a user")
 	flag.Parse()
 
 	// flag.Visit only visits flags actually given on the command line — so
@@ -242,6 +259,7 @@ func run(cfg config) error {
 	if err != nil {
 		return fmt.Errorf("building array stop/start sequence: %w", err)
 	}
+	upsController := newUPSController(scheduler, arraySeq, notifyService, linuxDisks.Exec)
 
 	// Losing metrics.db must not look like array failure (#186): log and
 	// leave Handler.Metrics nil so GET /metrics returns an empty series.
@@ -328,6 +346,11 @@ func run(cfg config) error {
 		return fmt.Errorf("starting Unix socket listener: %w", err)
 	}
 	applySocketGroupPermissions(cfg.socketPath)
+	upsControlListener, err := setupUnixListener(upsControlSocketPath(cfg.socketPath))
+	if err != nil {
+		return fmt.Errorf("starting ups control socket listener: %w", err)
+	}
+	go serveUPSControl(ctx, upsControlListener, upsController, auth.OSGroupLookup{}, uint32(os.Getuid()))
 
 	pruneOnce(ctx, jobStore, logs, authStore, history)
 	go runDailyPrune(ctx, jobStore, logs, authStore, history)
@@ -382,6 +405,7 @@ func run(cfg config) error {
 	defer cancel()
 	_ = tcpServer.Shutdown(shutdownCtx)
 	_ = unixServer.Shutdown(shutdownCtx)
+	_ = upsControlListener.Close()
 	networkSvc.Close()
 	return runErr
 }

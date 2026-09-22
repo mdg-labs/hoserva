@@ -42,10 +42,24 @@ const UPSMonitorUser = "hoserva-monitor"
 // a literal constant, never built from user or template input (CLAUDE.md:
 // "never interpolate user or template input into a shell command") — NUT
 // itself invokes it with the notification type in $NOTIFYTYPE
-// (upsmon.conf(5)). The script at this path is outside this issue's
-// declared scope; wiring a real one to job.UPSController.HandleNotify is
-// cmd/hoservad's job.
+// (upsmon.conf(5)). The script at this path (packaging/) is a thin
+// wrapper around `hoservad -ups-notify`, which relays the notification to
+// the running daemon's job.UPSController.HandleNotify over its own
+// control socket (cmd/hoservad/upscontrol.go) — the live Scheduler state
+// Array.Stop needs to checkpoint a running job only exists in that one
+// process.
 const UPSNotifyCmd = "/usr/lib/hoserva/nut-notify"
+
+// UPSShutdownCmd is the fixed path upsmon.conf's own SHUTDOWNCMD names —
+// a literal constant for the same reason UPSNotifyCmd is. Unlike NUT's
+// own default shutdown command, this is a Hoserva-owned synchronous
+// helper (packaging/'s thin wrapper around `hoservad -ups-shutdown`) that
+// runs the exact same checkpoint-then-stop-then-power-off sequence
+// UPSNotifyCmd's own LOWBATT notification already triggers, so upsmon's
+// FSD path — which calls SHUTDOWNCMD independently of, and shortly after,
+// its own NOTIFYCMD(LOWBATT) — can never race a raw `shutdown -h +0`
+// against Hoserva's own clean teardown (doc 02 §6, Q70, Q77).
+const UPSShutdownCmd = "/usr/lib/hoserva/nut-shutdown"
 
 // UPSState is doc 03 §8.1's UPS settings card, generated into NUT's own
 // config from the database (Q77) — the shape testdata/ups/*/state.json
@@ -164,6 +178,17 @@ func RenderUPSDUsers(state UPSState) string {
 // on-battery/power-restored/low-battery reactions (doc 02 §6) run
 // through — upsmon itself decides when the UPS is on battery or low
 // (D1), Hoserva only names the command it calls back into.
+//
+// upsmon splits into a privileged parent, which alone runs SHUTDOWNCMD,
+// and a child dropped to RUN_AS_USER, which alone runs NOTIFYCMD
+// (upsmon.conf(5)). Debian's nut package default RUN_AS_USER (nut) would
+// leave NOTIFYCMD's child unable to reach the root-owned ups control
+// socket (cmd/hoservad/upscontrol.go) authorizeUnixPeer admits — NUT
+// explicitly supports naming "root" here for exactly this case, and the
+// only capability this hands the child is executing nut-notify/
+// nut-shutdown, which relay nothing but a fixed NUT-controlled enum
+// value (ONBATT/ONLINE/LOWBATT) over that socket, never
+// attacker-controlled data.
 func RenderUPSMonConf(state UPSState) string {
 	var b strings.Builder
 	switch state.Connection {
@@ -173,7 +198,8 @@ func RenderUPSMonConf(state UPSState) string {
 		fmt.Fprintf(&b, "MONITOR %s@%s 1 %s %s slave\n", state.NetworkUPSName, networkHostPort(state), state.NetworkUsername, state.NetworkPassword)
 	}
 	b.WriteString("MINSUPPLIES 1\n")
-	b.WriteString("SHUTDOWNCMD \"/sbin/shutdown -h +0\"\n")
+	b.WriteString("RUN_AS_USER root\n")
+	fmt.Fprintf(&b, "SHUTDOWNCMD \"%s\"\n", UPSShutdownCmd)
 	fmt.Fprintf(&b, "NOTIFYCMD %s\n", UPSNotifyCmd)
 	b.WriteString("NOTIFYFLAG ONBATT SYSLOG+EXEC\n")
 	b.WriteString("NOTIFYFLAG ONLINE SYSLOG+EXEC\n")

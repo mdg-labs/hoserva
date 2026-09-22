@@ -125,6 +125,19 @@ func unixConnContext(ctx context.Context, c net.Conn) context.Context {
 	return auth.WithPeerCredential(ctx, cred)
 }
 
+// authorizeUnixPeer applies Q44's own admission rule — uid 0, this
+// daemon's own uid, or a member of hoservaGroup — shared by every Unix
+// socket hoservad serves (the main API socket, below, and the ups
+// control socket, cmd/hoservad/upscontrol.go). err is only ever
+// auth.ErrGroupNotFound (the caller logs that case once, degrading to
+// root-and-daemon-uid-only) or a real lookup failure.
+func authorizeUnixPeer(cred auth.PeerCredential, lookup auth.GroupLookup, daemonUID uint32) (bool, error) {
+	if cred.UID == 0 || cred.UID == daemonUID {
+		return true, nil
+	}
+	return lookup.IsMember(cred, hoservaGroup)
+}
+
 // unixSocketAuthMiddleware refuses any request whose connection's peer
 // credential is not uid 0, this daemon's own uid, or a member of
 // hoservaGroup (Q44). The daemon's own uid is authorized in addition to
@@ -149,20 +162,16 @@ func unixSocketAuthMiddleware(next http.Handler, lookup auth.GroupLookup, daemon
 			return
 		}
 
-		authorized := cred.UID == 0 || cred.UID == daemonUID
-		if !authorized {
-			member, err := lookup.IsMember(cred, hoservaGroup)
-			switch {
-			case err == nil:
-				authorized = member
-			case errors.Is(err, auth.ErrGroupNotFound):
-				warnMissingGroupOnce.Do(func() {
-					log.Printf("hoservad: group %q does not exist — the Unix socket accepts only root and this daemon's own user until it is created (Q44)", hoservaGroup)
-				})
-			default:
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
-			}
+		authorized, err := authorizeUnixPeer(cred, lookup, daemonUID)
+		switch {
+		case err == nil:
+		case errors.Is(err, auth.ErrGroupNotFound):
+			warnMissingGroupOnce.Do(func() {
+				log.Printf("hoservad: group %q does not exist — the Unix socket accepts only root and this daemon's own user until it is created (Q44)", hoservaGroup)
+			})
+		default:
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
 		}
 		if !authorized {
 			http.Error(w, "forbidden: connect as root, this daemon's own user, or a member of the hoserva group", http.StatusForbidden)
