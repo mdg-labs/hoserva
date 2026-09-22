@@ -10,18 +10,21 @@ if [[ -n "$(git status --porcelain)" ]]; then
     exit 1
 fi
 
+error_file="$(mktemp)"
+trap 'rm -f "$error_file"' EXIT
+
 git fetch origin --quiet
 
 if [[ "$start_branch" == "main" ]]; then
-    if ! git pull --ff-only origin main --quiet 2>/tmp/dev-diff-err; then
+    if ! git pull --ff-only origin main --quiet 2>"$error_file"; then
         echo "ERROR: local main did not fast-forward from origin/main (diverged)."
-        cat /tmp/dev-diff-err
+        cat "$error_file"
         exit 1
     fi
 else
-    if ! git fetch origin main:main --quiet 2>/tmp/dev-diff-err; then
+    if ! git fetch origin main:main --quiet 2>"$error_file"; then
         echo "ERROR: local main did not fast-forward from origin/main (diverged)."
-        cat /tmp/dev-diff-err
+        cat "$error_file"
         exit 1
     fi
 fi
@@ -60,20 +63,27 @@ fi
 # (generated code, recorded spike evidence, etc.) — otherwise the count
 # includes files that don't count against the cap.
 exclude_specs=()
-if [[ -f .coderabbit.yaml ]] && command -v python3 >/dev/null 2>&1; then
-    while IFS= read -r pattern; do
-        exclude_specs+=(":!$pattern")
-    done < <(python3 -c "
+if [[ -f .coderabbit.yaml ]]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "ERROR: .coderabbit.yaml exists but python3 is unavailable to parse its path_filters." >&2
+        echo "Refusing to report a FILES REVIEWABLE count without them — it would silently include excluded paths." >&2
+        exit 1
+    fi
+    if ! patterns_output="$(python3 -c "
 import yaml, sys
-try:
-    with open('.coderabbit.yaml') as f:
-        cfg = yaml.safe_load(f) or {}
-except Exception:
-    sys.exit(0)
+with open('.coderabbit.yaml') as f:
+    cfg = yaml.safe_load(f) or {}
 for p in (cfg.get('reviews') or {}).get('path_filters') or []:
     if isinstance(p, str) and p.startswith('!'):
         print(p[1:])
-" 2>/dev/null)
+" 2>"$error_file")"; then
+        echo "ERROR: failed to parse .coderabbit.yaml's path_filters (missing PyYAML or invalid YAML)." >&2
+        cat "$error_file" >&2
+        exit 1
+    fi
+    while IFS= read -r pattern; do
+        [[ -n "$pattern" ]] && exclude_specs+=(":!$pattern")
+    done <<<"$patterns_output"
 fi
 
 if [[ "${#exclude_specs[@]}" -gt 0 ]]; then
