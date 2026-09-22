@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,14 +20,26 @@ import (
 type fakeSpaceAlertNotifier struct {
 	nearCalls      []string
 	rebalanceCalls []string
+
+	// nearErr and rebalanceErr, when set, make the next publish call of
+	// their kind fail without recording it in nearCalls/rebalanceCalls —
+	// standing in for a transient notify-delivery failure.
+	nearErr      error
+	rebalanceErr error
 }
 
 func (f *fakeSpaceAlertNotifier) PublishDiskNearMinFreeSpace(_ context.Context, diskPath string, _, _ int64) error {
+	if f.nearErr != nil {
+		return f.nearErr
+	}
 	f.nearCalls = append(f.nearCalls, diskPath)
 	return nil
 }
 
 func (f *fakeSpaceAlertNotifier) PublishRebalanceSuggested(_ context.Context, constrainedDiskPath, _ string) error {
+	if f.rebalanceErr != nil {
+		return f.rebalanceErr
+	}
 	f.rebalanceCalls = append(f.rebalanceCalls, constrainedDiskPath)
 	return nil
 }
@@ -122,6 +135,76 @@ func TestSpaceAlertRunner_RefiresAfterRecovery(t *testing.T) {
 
 	if len(notifier.nearCalls) != 2 {
 		t.Fatalf("nearCalls = %v, want two publishes: once on the first crossing, once on the re-crossing after recovery", notifier.nearCalls)
+	}
+}
+
+// TestSpaceAlertRunner_RetriesNearMinFreeSpaceAfterPublishError proves a
+// transient notify failure does not get recorded as delivered: state
+// must stay at "not yet alerted" so the next tick retries the publish,
+// rather than silently suppressing the warning until the condition
+// clears and re-triggers.
+func TestSpaceAlertRunner_RetriesNearMinFreeSpaceAfterPublishError(t *testing.T) {
+	arrays := newSpaceAlertTestArrayStore(t)
+	putSpaceAlertTestArray(t, arrays, "mfs", "20G", []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", WWN: "wwn-d1", Serial: "DATA1", ByIDName: "wwn-wwn-d1", Mountpoint: "/mnt/disk1"},
+	})
+	notifier := &fakeSpaceAlertNotifier{nearErr: errors.New("notify: transient failure")}
+	r := &spaceAlertRunner{
+		Array: arrays,
+		Statter: fakeThresholdStatter{stats: map[string]pool.SpaceStat{
+			"/mnt/disk1": {TotalBytes: 100 << 30, FreeBytes: 10 << 30}, // below 20G minfreespace
+		}},
+		Notifier: notifier,
+	}
+
+	if err := r.tick(context.Background()); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+	if len(notifier.nearCalls) != 0 {
+		t.Fatalf("nearCalls = %v, want no successful publish while the notifier is failing", notifier.nearCalls)
+	}
+
+	notifier.nearErr = nil
+	if err := r.tick(context.Background()); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+	if len(notifier.nearCalls) != 1 || notifier.nearCalls[0] != "/mnt/disk1" {
+		t.Fatalf("nearCalls = %v, want exactly one publish once the notifier recovers", notifier.nearCalls)
+	}
+}
+
+// TestSpaceAlertRunner_RetriesRebalanceSuggestedAfterPublishError is the
+// same proof for PublishRebalanceSuggested: a failed publish must not be
+// recorded as the current suggestion, so the next tick retries it.
+func TestSpaceAlertRunner_RetriesRebalanceSuggestedAfterPublishError(t *testing.T) {
+	arrays := newSpaceAlertTestArrayStore(t)
+	putSpaceAlertTestArray(t, arrays, "mspmfs", "20G", []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", WWN: "wwn-d1", Serial: "DATA1", ByIDName: "wwn-wwn-d1", Mountpoint: "/mnt/disk1"},
+		{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-d2", WWN: "wwn-d2", Serial: "DATA2", ByIDName: "wwn-wwn-d2", Mountpoint: "/mnt/disk2"},
+	})
+	notifier := &fakeSpaceAlertNotifier{rebalanceErr: errors.New("notify: transient failure")}
+	r := &spaceAlertRunner{
+		Array: arrays,
+		Statter: fakeThresholdStatter{stats: map[string]pool.SpaceStat{
+			"/mnt/disk1": {TotalBytes: 100 << 30, FreeBytes: 10 << 30}, // constrained
+			"/mnt/disk2": {TotalBytes: 100 << 30, FreeBytes: 80 << 30}, // has room
+		}},
+		Notifier: notifier,
+	}
+
+	if err := r.tick(context.Background()); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+	if len(notifier.rebalanceCalls) != 0 {
+		t.Fatalf("rebalanceCalls = %v, want no successful publish while the notifier is failing", notifier.rebalanceCalls)
+	}
+
+	notifier.rebalanceErr = nil
+	if err := r.tick(context.Background()); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+	if len(notifier.rebalanceCalls) != 1 || notifier.rebalanceCalls[0] != "/mnt/disk1" {
+		t.Fatalf("rebalanceCalls = %v, want exactly one publish once the notifier recovers", notifier.rebalanceCalls)
 	}
 }
 

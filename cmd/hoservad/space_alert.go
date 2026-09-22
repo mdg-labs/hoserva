@@ -99,12 +99,16 @@ func (r *spaceAlertRunner) tickNearMinFreeSpace(ctx context.Context, space pool.
 	}
 	for _, d := range space.Disks {
 		was := r.nearMinFreeSpace[d.Path]
-		r.nearMinFreeSpace[d.Path] = d.NearMinFreeSpace
 		if d.NearMinFreeSpace && !was {
 			if err := r.Notifier.PublishDiskNearMinFreeSpace(ctx, d.Path, d.FreeBytes, d.TotalBytes); err != nil {
 				log.Printf("hoservad: publishing disk-near-minfreespace alert for %s: %v", d.Path, err)
+				// Leave nearMinFreeSpace[d.Path] as "was" (false) so the
+				// next tick retries the publish instead of treating a
+				// failed notification as delivered.
+				continue
 			}
 		}
+		r.nearMinFreeSpace[d.Path] = d.NearMinFreeSpace
 	}
 }
 
@@ -120,6 +124,10 @@ func (r *spaceAlertRunner) tickRebalanceSuggestion(ctx context.Context, settings
 		if suggestedPath != r.rebalanceSuggestion {
 			if err := r.Notifier.PublishRebalanceSuggested(ctx, suggestion.ConstrainedDiskPath, suggestion.Reason); err != nil {
 				log.Printf("hoservad: publishing rebalance-suggested alert for %s: %v", suggestedPath, err)
+				// Leave r.rebalanceSuggestion at its previous value so
+				// the next tick retries the publish instead of treating
+				// a failed notification as delivered.
+				return
 			}
 		}
 	}
