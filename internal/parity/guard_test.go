@@ -339,6 +339,151 @@ func TestGuard_TargetConfirmedOnWrongEntryStillBlocks(t *testing.T) {
 	}
 }
 
+// TestGuard_CacheTargetRemovalAccounted is this issue's (#240) own
+// reproduction: a cache.RelocateToCache manifest entry's TargetDisk is the
+// cache mount, which is never a SnapRAID data disk and so can never appear
+// in diff.PerDisk, diff.AddedFiles, or a `snapraid list` — matching on a
+// same-diff reappearance or TargetConfirmed is structurally impossible for
+// it, regardless of sync ordering. The removal must still be accounted once
+// it shows up on its own SourceDisk in the diff, the same way an array-to-
+// array relocation already is.
+func TestGuard_CacheTargetRemovalAccounted(t *testing.T) {
+	diff := DiffReport{
+		Removed: 1,
+		PerDisk: map[string]DiskDiff{
+			// /mnt/cache deliberately absent: it is never a SnapRAID data
+			// disk, so it never appears here.
+			"/mnt/disk1": {FilesBefore: 100, FilesAfter: 99},
+		},
+		RemovedFiles: []DiffFile{{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"}},
+		// AddedFiles deliberately empty: cache is never diffed by SnapRAID,
+		// so the target side of an array→cache relocation can never appear
+		// here, in any diff.
+	}
+	manifest := []ManifestEntry{
+		{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/cache"},
+	}
+
+	result := Guard{Config: GuardConfig{RemovedFilesMax: 0}}.Evaluate(diff, manifest, nil)
+
+	if len(result.AccountedRemovals) != 1 {
+		t.Fatalf("Evaluate: AccountedRemovals = %+v, want 1 — a cache-target removal must be accounted from the source-side removal alone", result.AccountedRemovals)
+	}
+	if result.RemovedCount != 0 {
+		t.Fatalf("Evaluate: RemovedCount = %d, want 0 (the one removal is accounted)", result.RemovedCount)
+	}
+	if result.Blocked {
+		t.Fatalf("Evaluate: Blocked = true, want false: %+v", result)
+	}
+}
+
+// TestGuard_CacheTargetDoesNotMaskUnrelatedRemoval proves the cache-target
+// accounting only exempts the exact (disk, path) a manifest entry names —
+// an unrelated real removal on the same source disk, not covered by any
+// manifest entry, still counts fully and still blocks, exactly as an
+// unaccounted array-to-array removal already does.
+func TestGuard_CacheTargetDoesNotMaskUnrelatedRemoval(t *testing.T) {
+	diff := DiffReport{
+		Removed: 3,
+		PerDisk: map[string]DiskDiff{
+			"/mnt/disk1": {FilesBefore: 100, FilesAfter: 97},
+		},
+		RemovedFiles: []DiffFile{
+			{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"},
+			{Disk: "/mnt/disk1", RelPath: "movies/unexpected-delete-1.mkv"},
+			{Disk: "/mnt/disk1", RelPath: "movies/unexpected-delete-2.mkv"},
+		},
+	}
+	manifest := []ManifestEntry{
+		{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/cache"},
+	}
+
+	// RemovedFilesMax's own zero value falls back to the package default
+	// (500, GuardConfig.removedFilesMax) — 1 is the lowest threshold that
+	// still actually blocks, so 2 unaccounted removals must trip it.
+	result := Guard{Config: GuardConfig{RemovedFilesMax: 1}}.Evaluate(diff, manifest, nil)
+
+	if len(result.AccountedRemovals) != 1 {
+		t.Fatalf("Evaluate: AccountedRemovals = %+v, want exactly 1 (movies/a.mkv only)", result.AccountedRemovals)
+	}
+	if result.RemovedCount != 2 {
+		t.Fatalf("Evaluate: RemovedCount = %d, want 2 — the two unrelated deletions must still count", result.RemovedCount)
+	}
+	if !result.Blocked {
+		t.Fatal("Evaluate: Blocked = false, want true — unaccounted removals alongside a cache-target one must still block")
+	}
+}
+
+// TestGuard_DataDiskTargetStillRequiresStrictMatch proves the looser
+// cache-target rule above never leaks to a manifest entry whose TargetDisk
+// genuinely is a SnapRAID-tracked data disk (diff.PerDisk): such an entry
+// still needs a same-diff reappearance or TargetConfirmed, exactly as
+// before #240 — an entry cannot borrow the cache rule just by pointing at
+// a data disk that happens not to have gained the file in this diff.
+func TestGuard_DataDiskTargetStillRequiresStrictMatch(t *testing.T) {
+	diff := DiffReport{
+		Removed: 1,
+		PerDisk: map[string]DiskDiff{
+			"/mnt/disk1": {FilesBefore: 100, FilesAfter: 99},
+			"/mnt/disk2": {FilesBefore: 100, FilesAfter: 100},
+		},
+		RemovedFiles: []DiffFile{{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"}},
+		// AddedFiles deliberately empty and TargetConfirmed deliberately
+		// unset: disk2 is a real, tracked data disk, so the strict rule —
+		// not the cache-target one — must apply to it.
+	}
+	manifest := []ManifestEntry{
+		{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"},
+	}
+
+	// RemovedFilesMax's own zero value falls back to the package default
+	// (500) — 1 removed file never trips that on its own, so this uses the
+	// percent trigger instead, the same way TestGuard_
+	// TargetConfirmedOnWrongEntryStillBlocks does: 1 removed against a
+	// before-count of 200 files is 0.5%, well over a RemovedUpdatedPercent
+	// lowered to 0.1%.
+	result := Guard{Config: GuardConfig{RemovedUpdatedPercent: 0.1}}.Evaluate(diff, manifest, nil)
+
+	if len(result.AccountedRemovals) != 0 {
+		t.Fatalf("Evaluate: AccountedRemovals = %+v, want none — a tracked data-disk target still needs a same-diff reappearance or TargetConfirmed", result.AccountedRemovals)
+	}
+	if result.RemovedCount != 1 {
+		t.Fatalf("Evaluate: RemovedCount = %d, want 1 (unaccounted)", result.RemovedCount)
+	}
+	if !result.Blocked {
+		t.Fatal("Evaluate: Blocked = false, want true")
+	}
+}
+
+// TestGuard_EmptyPerDiskFallsBackToStrictMatch proves the cache-target rule
+// never activates on a diff that never says which disks it tracks in the
+// first place: with diff.PerDisk empty, matchManifest cannot tell TargetDisk
+// apart from a genuine, currently-untracked data disk, so it must fall back
+// to the strict same-diff-or-confirmed rule rather than assume TargetDisk is
+// a cache mount. A real diff from BuildDiffReport always populates PerDisk
+// (Q19: at least one data disk) — an empty PerDisk only ever happens in a
+// hand-built DiffReport, the shape EngineDiffGuard's own tests
+// (internal/job) use.
+func TestGuard_EmptyPerDiskFallsBackToStrictMatch(t *testing.T) {
+	diff := DiffReport{
+		Removed:      1,
+		RemovedFiles: []DiffFile{{Disk: "/mnt/disk1", RelPath: "movies/a.mkv"}},
+		// PerDisk deliberately left unset.
+	}
+	manifest := []ManifestEntry{
+		{RelPath: "movies/a.mkv", SourceDisk: "/mnt/disk1", TargetDisk: "/mnt/disk2"},
+	}
+
+	result := Guard{Config: GuardConfig{RemovedFilesMax: 0}}.Evaluate(diff, manifest, nil)
+
+	if len(result.AccountedRemovals) != 0 {
+		t.Fatalf("Evaluate: AccountedRemovals = %+v, want none — an empty diff.PerDisk must not be read as \"TargetDisk is non-data\"", result.AccountedRemovals)
+	}
+	if result.RemovedCount != 1 {
+		t.Fatalf("Evaluate: RemovedCount = %d, want 1 (unaccounted)", result.RemovedCount)
+	}
+}
+
 // TestManifestNeedsTargetConfirmation exercises the gate
 // SnapraidEngine.Sync calls before ever paying for a real `snapraid list`
 // (#248): it must fire only when a manifest names a removal this diff
