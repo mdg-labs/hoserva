@@ -359,6 +359,27 @@ Agent({
 })
 ```
 
+**Acceptance that only a real GitHub Actions run can show** — a changed
+workflow under `.github/workflows/`, a nightly L3 step, a release or Pages
+job — cannot be verified from the scratch clone. Before dispatching the
+verifier, run it for real, without touching `dev`:
+```
+git -C <workspace> push <real repo's origin URL> HEAD:refs/heads/ci/<unit-id>
+gh workflow run <workflow file> --repo mdg-labs/hoserva --ref ci/<unit-id>
+gh run list --repo mdg-labs/hoserva --branch ci/<unit-id> --limit 1 --json databaseId,url
+```
+`ci.yml`, `nightly-l3.yml`, `pages.yml` and `s9-hosted-probe.yml` accept
+`workflow_dispatch` (a dispatch needs the trigger on `main`, so a workflow
+newly given one only works after the next promotion). Put the run's URL
+and id in the verifier dispatch, so the verifier reads its result and logs
+(`gh run view <id> --log-failed`) as layer-1 evidence instead of guessing.
+Wait for it with `timeout 5400 gh run watch <id> --repo mdg-labs/hoserva --exit-status`
+as a **background** Bash command, then end your turn — its exit re-invokes
+you, which keeps the "never poll or sleep" rule intact. Delete the
+branch once the unit is resolved:
+`git push <origin URL> --delete ci/<unit-id>`. Never push such a commit to
+`dev` before its PASS.
+
 **Large diffs get the Opus verifier too.** Before dispatching, measure the
 unit's changed lines excluding generated code:
 ```
@@ -588,7 +609,7 @@ report as your final message.
 - **No agent ever runs `gh issue close`.** Closing happens via a pushed commit's trailer.
 - **No agent ever touches a real block device, a real mount, or runs `sudo`** — storage runs only in its own namespaced lab; `needs-sudo` issues never reach an agent.
 - **Every lab is destroyed** before its clone is deleted, and no lane ever uses another lane's lab id.
-- **Never poll or self-schedule while agents run.**
+- **Never poll or self-schedule while agents run.** The one sanctioned wait on something outside the harness is a bounded background `gh run watch` for a CI-dependent unit (step 7).
 - **Exactly one `status:*` label per issue**, only via `scripts/issue-status.sh` / `scripts/epic-status.sh`.
 - **Never invent an issue number** in a trailer.
 - **Parallel lanes never share a scratch clone**, and only you touch the real repo, only at landing, one commit at a time.
