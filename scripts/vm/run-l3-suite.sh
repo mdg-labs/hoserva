@@ -3,7 +3,9 @@
 # Q79): install, onboarding, array setup, disk yank and reconstruction,
 # `virsh destroy` mid-sync recovery, reboot persistence, config
 # backup/restore, spindown, network confirm-or-revert (issue #114),
-# and the array stop/start sequence (issue #146).
+# the array stop/start sequence (issue #146), and the UPS
+# on-battery/power-restored/low-battery flow against NUT's own dummy-ups
+# driver (issue #250).
 #
 # Every step below runs against whatever hoservad actually exposes today
 # and reports PASS/FAIL for it. A step the product does not implement yet
@@ -199,10 +201,21 @@ if vm_domain_running "$VM_DOMAIN"; then
   if "$script_dir/array-sequence-check.sh"; then
     pass "array stop/start sequence"
   else
-    fail "array stop/start sequence" "see array-sequence-check.sh output above (issue #146) — this step permanently detaches one array disk from this domain's own persistent config, so it runs last"
+    fail "array stop/start sequence" "see array-sequence-check.sh output above (issue #146) — this step permanently detaches one array disk from this domain's own persistent config, so it runs after every other step but the UPS one"
   fi
 else
   not_yet "array stop/start sequence" "no running domain (install step above did not complete — see step 1)"
+fi
+
+echo "vm-suite[$HOSERVA_LAB_ID]: === UPS: on battery, power restored, low battery (NUT's own dummy-ups driver, issue #250) ==="
+if vm_domain_running "$VM_DOMAIN"; then
+  if "$script_dir/ups-check.sh"; then
+    pass "UPS on-battery/power-restored/low-battery"
+  else
+    fail "UPS on-battery/power-restored/low-battery" "see ups-check.sh output above (issue #250) — this step ends with a real low-battery shutdown, leaving the domain shut off, so it runs last of all"
+  fi
+else
+  not_yet "UPS on-battery/power-restored/low-battery" "no running domain (install step above did not complete — see step 1)"
 fi
 
 echo ""
