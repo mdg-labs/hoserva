@@ -112,9 +112,9 @@ func TestMoverThresholdRunner_SubmitsMoverAboveThreshold(t *testing.T) {
 func TestMoverThresholdRunner_BelowThresholdSubmitsNothing(t *testing.T) {
 	h := newMoverThresholdHarness(t)
 	putThresholdTestArray(t, h.arrays)
-	var ran bool
+	ran := make(chan struct{})
 	h.registry.Register(job.TypeMover, true, func(context.Context, *job.RunContext) error {
-		ran = true
+		close(ran)
 		return nil
 	})
 
@@ -129,8 +129,16 @@ func TestMoverThresholdRunner_BelowThresholdSubmitsNothing(t *testing.T) {
 	if err := r.tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
-	if ran {
+	// The scheduler runs a submitted job's handler on its own goroutine
+	// (TestMoverThresholdRunner_SkipsSubmitWhenMoverAlreadyActive's own
+	// started/release channels prove Submit doesn't block on it), so a
+	// bare post-tick read of a plain bool would race with that goroutine
+	// and could miss a late, incorrect submission. Wait out a bounded
+	// window instead of asserting immediately.
+	select {
+	case <-ran:
 		t.Fatal("mover ran below the threshold")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 
@@ -214,9 +222,9 @@ func awaitNoActiveMoverJobs(t *testing.T, jobs *job.Store) {
 // does — the daemon can run this loop before create-array has ever run.
 func TestMoverThresholdRunner_NoArrayYetSubmitsNothing(t *testing.T) {
 	h := newMoverThresholdHarness(t)
-	var ran bool
+	ran := make(chan struct{})
 	h.registry.Register(job.TypeMover, true, func(context.Context, *job.RunContext) error {
-		ran = true
+		close(ran)
 		return nil
 	})
 
@@ -229,7 +237,9 @@ func TestMoverThresholdRunner_NoArrayYetSubmitsNothing(t *testing.T) {
 	if err := r.tick(context.Background()); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
-	if ran {
+	select {
+	case <-ran:
 		t.Fatal("mover ran with no array configured")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
