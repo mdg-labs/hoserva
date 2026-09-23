@@ -1,5 +1,5 @@
 import { HardDrive, MoreHorizontal } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
@@ -16,7 +16,18 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { Switch } from "@/components/ui/switch";
 import { DISK_FILTER_ALL, DISK_ROLE_FILTER_VALUES } from "@/hooks/disk-filter-options";
 import { diskDetailPath, PATHS } from "@/hooks/paths";
-import { hoservaClient, type components } from "@/lib/api/client";
+import {
+  getDisks,
+  getExternalDisks,
+  getPool,
+  patchExternalDisk,
+  postExternalDiskEject,
+  postExternalDiskFormat,
+  postExternalDiskMount,
+} from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
+import type { components } from "@/lib/api/client";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
 type Disk = components["schemas"]["DiskInventoryEntry"];
@@ -29,50 +40,50 @@ function erasePhrase(device: string): string {
 
 export function DisksPage(): React.ReactElement {
   const { t } = useTranslation();
-  const [disks, setDisks] = useState<Disk[] | null>(null);
-  const [poolDisks, setPoolDisks] = useState<PoolDisk[] | null>(null);
-  const [externalDisks, setExternalDisks] = useState<ExternalDisk[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState(DISK_FILTER_ALL);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [formatTarget, setFormatTarget] = useState<ExternalDisk | null>(null);
   const [formatConfirm, setFormatConfirm] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const load = useCallback((signal?: AbortSignal) => {
-    return Promise.all([
-      hoservaClient.GET("/disks", { signal }),
-      hoservaClient.GET("/pool", { signal }),
-      hoservaClient.GET("/disks/external", { signal }),
-    ]).then(([diskResult, poolResult, externalResult]) => {
-      if (diskResult.error) {
-        setError(diskResult.error.message);
-        return;
-      }
-      setDisks(diskResult.data?.disks ?? []);
-      if (poolResult.error) {
-        setError(poolResult.error.message);
-        return;
-      }
-      setPoolDisks(poolResult.data?.disks ?? []);
-      if (externalResult.error) {
-        setError(externalResult.error.message);
-        return;
-      }
-      setExternalDisks(externalResult.data?.disks ?? []);
-      setError(null);
-    });
-  }, []);
+  const disksQuery = useApiQuery<{ disks: Disk[] }>({
+    queryKey: "disks-inventory",
+    queryFn: (signal) => getDisks(signal),
+  });
+  const poolQuery = useApiQuery<{ disks: PoolDisk[] }>({
+    queryKey: "disks-pool",
+    queryFn: (signal) => getPool(signal),
+  });
+  const externalQuery = useApiQuery<{ disks: ExternalDisk[] }>({
+    queryKey: "disks-external",
+    queryFn: (signal) => getExternalDisks(signal),
+  });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    load(controller.signal).catch((err: unknown) => {
-      if (!controller.signal.aborted) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    });
-    return () => controller.abort();
-  }, [load]);
+  const disks = disksQuery.data?.disks ?? null;
+  const poolDisks = poolQuery.data?.disks ?? null;
+  const externalDisks = externalQuery.data?.disks ?? null;
+  const loadError = disksQuery.error ?? poolQuery.error ?? externalQuery.error;
+  const loading = disksQuery.loading || poolQuery.loading || externalQuery.loading;
+
+  const refreshAll = async (): Promise<void> => {
+    await Promise.all([disksQuery.refresh(), poolQuery.refresh(), externalQuery.refresh()]);
+  };
+
+  const patchMutation = useApiMutation({
+    mutationFn: ({ label, backupDestination }: { label: string; backupDestination: boolean }) =>
+      patchExternalDisk(label, { backupDestination }),
+  });
+  const mountMutation = useApiMutation({
+    mutationFn: (label: string) => postExternalDiskMount(label),
+  });
+  const ejectMutation = useApiMutation({
+    mutationFn: (label: string) => postExternalDiskEject(label),
+  });
+  const formatMutation = useApiMutation({
+    mutationFn: ({ label, confirmation }: { label: string; confirmation: string }) =>
+      postExternalDiskFormat(label, confirmation),
+  });
 
   const poolByDevice = useMemo(
     () => new Map((poolDisks ?? []).map((disk) => [disk.device, disk])),
@@ -97,55 +108,49 @@ export function DisksPage(): React.ReactElement {
 
   async function runExternal(
     label: string,
-    action: () => Promise<{ error?: { message: string } }>,
-  ): Promise<void> {
+    mutate: () => Promise<{ ok: boolean; error: string }>,
+  ): Promise<boolean> {
     setBusyLabel(label);
-    setError(null);
-    try {
-      const result = await action();
-      if (result.error) {
-        setError(result.error.message);
-        return;
-      }
-      await load();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusyLabel(null);
+    setActionError(null);
+    const result = await mutate();
+    setBusyLabel(null);
+    if (!result.ok) {
+      setActionError(result.error);
+      return false;
     }
+    await refreshAll();
+    return true;
   }
 
   function setBackupDestination(label: string, backupDestination: boolean): void {
     void runExternal(label, () =>
-      hoservaClient.PATCH("/disks/external/{label}", {
-        params: { path: { label } },
-        body: { backupDestination },
-      }),
+      patchMutation.mutate({ label, backupDestination }).then((result) =>
+        result.ok ? { ok: true, error: "" } : { ok: false, error: result.error },
+      ),
     );
   }
 
   function mountExternal(label: string): void {
     void runExternal(label, () =>
-      hoservaClient.POST("/disks/external/{label}/mount", {
-        params: { path: { label } },
-      }),
+      mountMutation.mutate(label).then((result) =>
+        result.ok ? { ok: true, error: "" } : { ok: false, error: result.error },
+      ),
     );
   }
 
   function ejectExternal(label: string): void {
     void runExternal(label, () =>
-      hoservaClient.POST("/disks/external/{label}/eject", {
-        params: { path: { label } },
-      }),
+      ejectMutation.mutate(label).then((result) =>
+        result.ok ? { ok: true, error: "" } : { ok: false, error: result.error },
+      ),
     );
   }
 
-  function formatExternal(label: string, confirmation: string): Promise<void> {
+  async function formatExternal(label: string, confirmation: string): Promise<boolean> {
     return runExternal(label, () =>
-      hoservaClient.POST("/disks/external/{label}/format", {
-        params: { path: { label } },
-        body: { confirmation },
-      }),
+      formatMutation.mutate({ label, confirmation }).then((result) =>
+        result.ok ? { ok: true, error: "" } : { ok: false, error: result.error },
+      ),
     );
   }
 
@@ -271,7 +276,9 @@ export function DisksPage(): React.ReactElement {
     },
   ];
 
-  if (disks === null && !error) {
+  const error = loadError ?? actionError;
+
+  if (loading && disks === null) {
     return <LoadingBlock />;
   }
 
@@ -304,7 +311,7 @@ export function DisksPage(): React.ReactElement {
             />
           }
         />
-        {rows.length === 0 ? (
+        {rows.length === 0 && !loadError ? (
           <EmptyState icon={HardDrive} title={t("disks.empty.title")} description={t("disks.empty.description")} />
         ) : (
           <DataTable columns={columns} rows={rows} getRowKey={(disk) => disk.device} />
@@ -347,9 +354,11 @@ export function DisksPage(): React.ReactElement {
             onClick={() => {
               if (!formatTarget) return;
               const target = formatTarget;
-              void formatExternal(target.label, phrase).then(() => {
-                setFormatTarget(null);
-                setFormatConfirm("");
+              void formatExternal(target.label, phrase).then((ok) => {
+                if (ok) {
+                  setFormatTarget(null);
+                  setFormatConfirm("");
+                }
               });
             }}
           >

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
 
@@ -11,64 +11,34 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { DISK_TAB_CONTENTS, DISK_TAB_OVERVIEW, DISK_TAB_SMART } from "@/hooks/disk-detail-tabs";
 import { PATHS } from "@/hooks/paths";
-import { hoservaClient, type components } from "@/lib/api/client";
+import { getDisks, getPool } from "@/lib/api/operations";
+import { useApiQuery } from "@/lib/api/use-api-query";
+import type { components } from "@/lib/api/client";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
 type Disk = components["schemas"]["DiskInventoryEntry"];
 type PoolDisk = components["schemas"]["PoolDiskEntry"];
 
-interface DiskDetailResult {
-  device: string;
-  disk: Disk | null;
-  poolDisk: PoolDisk | null;
-  error: string | null;
-}
-
 export function DiskDetailPage(): React.ReactElement {
   const { t } = useTranslation();
   const { diskId = "" } = useParams();
   const device = decodeURIComponent(diskId);
-  const [result, setResult] = useState<DiskDetailResult | null>(null);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    Promise.all([
-      hoservaClient.GET("/disks", { signal: controller.signal }),
-      hoservaClient.GET("/pool", { signal: controller.signal }),
-    ])
-      .then(([diskResult, poolResult]) => {
-        if (controller.signal.aborted) return;
-        if (diskResult.error) {
-          setResult({ device, disk: null, poolDisk: null, error: diskResult.error.message });
-          return;
-        }
-        const found = diskResult.data?.disks.find((entry) => entry.device === device) ?? null;
-        setResult({
-          device,
-          disk: found,
-          poolDisk: poolResult.error
-            ? null
-            : (poolResult.data?.disks.find((entry) => entry.device === device) ?? null),
-          error: poolResult.error?.message ?? null,
-        });
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setResult({
-            device,
-            disk: null,
-            poolDisk: null,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      });
-    return () => controller.abort();
-  }, [device]);
+  const disksQuery = useApiQuery<{ disks: Disk[] }>({
+    queryKey: ["disk-detail-disks", device],
+    queryFn: (signal) => getDisks(signal),
+    enabled: Boolean(device),
+  });
+  const poolQuery = useApiQuery<{ disks: PoolDisk[] }>({
+    queryKey: ["disk-detail-pool", device],
+    queryFn: (signal) => getPool(signal),
+    enabled: Boolean(device),
+  });
 
-  const current = result?.device === device ? result : null;
-  const disk = current?.disk ?? null;
-  const poolDisk = current?.poolDisk ?? null;
-  const error = current?.error ?? null;
+  const disk = disksQuery.data?.disks.find((entry) => entry.device === device) ?? null;
+  const poolDisk = poolQuery.data?.disks.find((entry) => entry.device === device) ?? null;
+  const error = disksQuery.error ?? poolQuery.error;
+  const loading = disksQuery.loading || poolQuery.loading;
 
   const smartRows = useMemo(
     () => [
@@ -79,7 +49,7 @@ export function DiskDetailPage(): React.ReactElement {
     [disk, t],
   );
 
-  if (!current) {
+  if (loading && !disk && !error) {
     return <LoadingBlock />;
   }
 

@@ -125,6 +125,28 @@ describe("DisksPage external group", () => {
     expect(mockPost.mock.calls[0][0]).toBe("/disks/external/{label}/mount");
   });
 
+  it("shows a load error instead of treating every disk as unassigned when pool fails", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/disks") {
+        return Promise.resolve({ data: inventory(), response: { ok: true } });
+      }
+      if (path === "/pool") {
+        return Promise.resolve({ error: { message: "pool unavailable" }, response: { ok: false } });
+      }
+      if (path === "/disks/external") {
+        return Promise.resolve({ data: external(), response: { ok: true } });
+      }
+      return Promise.resolve({ data: {}, response: { ok: true } });
+    });
+    render(
+      <MemoryRouter>
+        <DisksPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("pool unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("unassigned")).not.toBeInTheDocument();
+  });
+
   it("mounts a listed unregistered disk even when the list omitted fsUuid", async () => {
     mockGet.mockImplementation((path: string) => {
       if (path === "/disks") {

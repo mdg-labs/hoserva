@@ -237,6 +237,31 @@ describe("StorageSetupPage", () => {
     expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
   });
 
+  it("shows a load error instead of the setup wizard when /pool fails", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/setup/status") {
+        return Promise.resolve({ data: { adminExists: true }, response: { ok: true } });
+      }
+      if (path === "/auth/session") {
+        return Promise.resolve({
+          data: { id: "00000000-0000-0000-0000-000000000001", username: "admin", role: "admin", totpEnrolled: false },
+          response: { ok: true },
+        });
+      }
+      if (path === "/pool") {
+        return Promise.resolve({ error: { message: "pool unavailable" }, response: { ok: false } });
+      }
+      if (path === "/disks") {
+        return Promise.resolve({ data: { disks: [DISK_SDB, DISK_SDC] }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderSetup();
+    expect(await screen.findByText("pool unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Disk discovery")).not.toBeInTheDocument();
+  });
+
   it("lists every disk to erase in typed confirmation", () => {
     const phrase = buildConfirmPhrase(["/dev/sdb", "/dev/sdc"]);
     render(

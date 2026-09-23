@@ -1,5 +1,5 @@
 import { ListChecks } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
@@ -17,57 +17,29 @@ import {
   JOB_TYPE_FILTER_VALUES,
 } from "@/hooks/job-filter-options";
 import { jobDetailPath } from "@/hooks/paths";
-import { hoservaClient, type components } from "@/lib/api/client";
+import { getJobs, postJobCancel } from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
+import type { components } from "@/lib/api/client";
 
 type Job = components["schemas"]["Job"];
 
 export function JobsPage(): React.ReactElement {
   const { t } = useTranslation();
-  const [jobs, setJobs] = useState<Job[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState(JOB_FILTER_ALL);
   const [typeFilter, setTypeFilter] = useState(JOB_FILTER_ALL);
 
-  const loadJobs = async (): Promise<void> => {
-    try {
-      const { data, error: apiError } = await hoservaClient.GET("/jobs");
-      if (apiError) {
-        setError(apiError.message);
-        return;
-      }
-      setError(null);
-      setJobs(data?.jobs ?? []);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
+  const jobsQuery = useApiQuery<{ jobs: Job[] }>({
+    queryKey: "jobs-list",
+    queryFn: (signal) => getJobs(undefined, signal),
+    pollIntervalMs: 15_000,
+  });
+  const cancelMutation = useApiMutation({
+    mutationFn: (jobId: string) => postJobCancel(jobId),
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-
-    void hoservaClient.GET("/jobs").then(({ data, error: apiError }) => {
-      if (cancelled) return;
-      if (apiError) {
-        setError(apiError.message);
-        return;
-      }
-      setError(null);
-      setJobs(data?.jobs ?? []);
-    }).catch((err: unknown) => {
-      if (!cancelled) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    });
-
-    const interval = window.setInterval(() => {
-      void loadJobs();
-    }, 15_000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, []);
+  const jobs = jobsQuery.data?.jobs ?? null;
+  const error = jobsQuery.error ?? cancelMutation.error;
 
   const rows = useMemo(() => {
     if (!jobs) return [];
@@ -79,17 +51,9 @@ export function JobsPage(): React.ReactElement {
   }, [jobs, statusFilter, typeFilter]);
 
   const handleCancel = async (jobId: string): Promise<void> => {
-    try {
-      const { error: apiError } = await hoservaClient.POST("/jobs/{jobId}/cancel", {
-        params: { path: { jobId } },
-      });
-      if (apiError) {
-        setError(apiError.message);
-        return;
-      }
-      await loadJobs();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+    const result = await cancelMutation.mutate(jobId);
+    if (result.ok) {
+      await jobsQuery.refresh();
     }
   };
 
@@ -169,7 +133,7 @@ export function JobsPage(): React.ReactElement {
           </div>
         }
       />
-      {jobs === null && !error ? <LoadingBlock /> : null}
+      {jobsQuery.loading && !jobs ? <LoadingBlock /> : null}
       {jobs && rows.length === 0 ? (
         <EmptyState
           icon={ListChecks}
@@ -178,7 +142,7 @@ export function JobsPage(): React.ReactElement {
         />
       ) : null}
       {rows.length > 0 ? <DataTable columns={columns} rows={rows} getRowKey={(job) => job.id} /> : null}
-      <Button variant="outline" onClick={() => void loadJobs()}>{t("jobs.refresh")}</Button>
+      <Button variant="outline" onClick={() => void jobsQuery.refresh()}>{t("jobs.refresh")}</Button>
     </div>
   );
 }
