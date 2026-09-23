@@ -22,36 +22,10 @@ import (
 // alone rather than mounted again on top of itself. It never reads
 // job-params JSON and never formats.
 func applyArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Generator, mounter disk.UnitMounter, now time.Time) error {
-	settings, disks, err := st.GetArray(ctx)
+	units, err := writeArrayFromStore(ctx, st, g, now)
 	if err != nil {
 		return err
 	}
-
-	units, err := mountUnitsFromStore(disks)
-	if err != nil {
-		return err
-	}
-	if err := g.WriteDiskMounts(ctx, units, arrayCreateCommand, 1, now); err != nil {
-		return err
-	}
-
-	poolState := poolStateFromStore(settings, disks)
-	if err := g.WritePoolMounts(ctx, poolState, arrayCreateCommand, 1, now); err != nil {
-		return err
-	}
-
-	body, err := layoutFromStore(disks).Render()
-	if err != nil {
-		return err
-	}
-	if err := g.Write(ctx, config.File{
-		Path:    "snapraid.conf",
-		Command: arrayCreateCommand,
-		Body:    []byte(body),
-	}, 1, now); err != nil {
-		return err
-	}
-
 	for _, u := range units {
 		if alreadyMounted(u.Where) {
 			continue
@@ -61,6 +35,47 @@ func applyArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Ge
 		}
 	}
 	return nil
+}
+
+// regenerateArrayFromStore writes every generated file applyArrayFromStore
+// writes — disk mount units, pool mount units and snapraid.conf — from
+// SQLite, and mounts nothing (doc 02 §4 Release).
+func regenerateArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Generator, now time.Time) error {
+	_, err := writeArrayFromStore(ctx, st, g, now)
+	return err
+}
+
+func writeArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Generator, now time.Time) ([]disk.MountUnit, error) {
+	settings, disks, err := st.GetArray(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	units, err := mountUnitsFromStore(disks)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.WriteDiskMounts(ctx, units, arrayCreateCommand, 1, now); err != nil {
+		return nil, err
+	}
+
+	poolState := poolStateFromStore(settings, disks)
+	if err := g.WritePoolMounts(ctx, poolState, arrayCreateCommand, 1, now); err != nil {
+		return nil, err
+	}
+
+	body, err := layoutFromStore(disks).Render()
+	if err != nil {
+		return nil, err
+	}
+	if err := g.Write(ctx, config.File{
+		Path:    "snapraid.conf",
+		Command: arrayCreateCommand,
+		Body:    []byte(body),
+	}, 1, now); err != nil {
+		return nil, err
+	}
+	return units, nil
 }
 
 // alreadyMounted reports whether where is already a real mountpoint.

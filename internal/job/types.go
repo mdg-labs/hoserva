@@ -28,6 +28,8 @@ const (
 	TypeDiskAdd           Type = "disk_add"
 	TypeDiskRemove        Type = "disk_remove"
 	TypeDiskReplace       Type = "disk_replace"
+	TypeDiskUpgradeData   Type = "disk_upgrade_data"
+	TypeDiskUpgradeParity Type = "disk_upgrade_parity"
 	TypePoolRemount       Type = "pool_remount"
 	TypeAppdataBackup     Type = "appdata_backup"
 	TypeContainerUpdate   Type = "container_update"
@@ -97,11 +99,13 @@ var classOf = map[Type]Class{
 	TypeMover:            ClassArrayWrite,
 	TypeVMDiskRelocation: ClassArrayWrite,
 
-	TypeDiskFormat:  ClassTopology,
-	TypeDiskAdd:     ClassTopology,
-	TypeDiskRemove:  ClassTopology,
-	TypeDiskReplace: ClassTopology,
-	TypePoolRemount: ClassTopology,
+	TypeDiskFormat:        ClassTopology,
+	TypeDiskAdd:           ClassTopology,
+	TypeDiskRemove:        ClassTopology,
+	TypeDiskReplace:       ClassTopology,
+	TypeDiskUpgradeData:   ClassTopology,
+	TypeDiskUpgradeParity: ClassTopology,
+	TypePoolRemount:       ClassTopology,
 
 	TypeAppdataBackup:   ClassService,
 	TypeContainerUpdate: ClassService,
@@ -117,13 +121,18 @@ var classOf = map[Type]Class{
 }
 
 // resumableTypes are the only job types that persist a checkpoint to
-// resume from (Q29): mover, rebalance, evacuation and share relocation.
-// Sync, scrub and fix are re-run, never resumed.
+// resume from (Q29): mover, rebalance, evacuation, share relocation, and
+// the two disk upgrade types (#116, #289) — both wrap a resumable
+// disk.RunDataDiskUpgrade/parity.RunParityUpgrade call that already
+// checkpoints its own phase. Sync, scrub and fix are re-run, never
+// resumed.
 var resumableTypes = map[Type]bool{
-	TypeMover:           true,
-	TypeRebalance:       true,
-	TypeEvacuation:      true,
-	TypeShareRelocation: true,
+	TypeMover:             true,
+	TypeRebalance:         true,
+	TypeEvacuation:        true,
+	TypeShareRelocation:   true,
+	TypeDiskUpgradeData:   true,
+	TypeDiskUpgradeParity: true,
 }
 
 // ClassOf returns t's mutually exclusive class, and false if t is not a

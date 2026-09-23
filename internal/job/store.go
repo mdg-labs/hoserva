@@ -90,6 +90,24 @@ func (s *Store) ListActive(ctx context.Context) ([]*Job, error) {
 	return fromRows(rows)
 }
 
+// ListPending returns every job of type t that is queued, running or
+// interrupted, oldest first — every job of that type that has not ended.
+func (s *Store) ListPending(ctx context.Context, t Type) ([]*Job, error) {
+	rows, err := s.q.ListPendingJobsOfType(ctx, string(t))
+	if err != nil {
+		return nil, err
+	}
+	return fromRows(rows)
+}
+
+// SetCancellable persists whether the job with id accepts a cancel.
+func (s *Store) SetCancellable(ctx context.Context, id string, cancellable bool) error {
+	return s.q.SetJobCancellable(ctx, storedb.SetJobCancellableParams{
+		Cancellable: boolToSQL(cancellable),
+		ID:          id,
+	})
+}
+
 // UpdateStatus persists a job's terminal or in-flight state transition.
 func (s *Store) UpdateStatus(ctx context.Context, id string, status Status, progress *int, errCode, errMessage string, startedAt, finishedAt *time.Time) error {
 	return s.q.UpdateJobStatus(ctx, storedb.UpdateJobStatusParams{

@@ -38,6 +38,9 @@ var (
 	// when it names a parity or cache slot instead, since doc 02 §4
 	// "Replacing a failed disk" is specific to data disks (#288).
 	ErrArrayDiskNotFound = errors.New("store: no data disk at that mountpoint")
+	// ErrArrayParityDiskNotFound is UpgradeParityDisk's refusal when no
+	// parity disk occupies the given mountpoint (#289).
+	ErrArrayParityDiskNotFound = errors.New("store: no parity disk at that mountpoint")
 )
 
 // ArraySettings is the singleton pool-wide create-array row: mergerfs
@@ -242,6 +245,42 @@ func (s *ArrayStore) ReplaceDataDisk(ctx context.Context, mountpoint string, d A
 	}
 	if n == 0 {
 		return ErrArrayDiskNotFound
+	}
+	return nil
+}
+
+// UpgradeParityDisk re-points the parity slot at oldMountpoint to d's own
+// identity and mountpoint (doc 02 §4 "Larger parity disk" #289): role and
+// role_index are left unchanged, so the array keeps exactly the same
+// number of parity disks it always had, but the new disk takes over that
+// slot at its own fresh mountpoint rather than the old disk's — unlike
+// ReplaceDataDisk, which reuses the failed disk's own mountpoint, a parity
+// upgrade's new disk is formatted, mounted and verified at an independent
+// path while the old parity file stays exactly as valid as it was before
+// the upgrade started (Q71). Refuses (ErrArrayParityDiskNotFound) when no
+// parity disk occupies oldMountpoint, and (ErrArrayDiskExists) when d's
+// own device, filesystem UUID or mountpoint collides with a disk already
+// in the array.
+func (s *ArrayStore) UpgradeParityDisk(ctx context.Context, oldMountpoint string, d ArrayDisk) error {
+	n, err := s.q.UpgradeArrayParityDiskSlot(ctx, storedb.UpgradeArrayParityDiskSlotParams{
+		Device:        d.Device,
+		Filesystem:    d.Filesystem,
+		FsUuid:        d.FSUUID,
+		Wwn:           nullString(d.WWN),
+		Serial:        nullString(d.Serial),
+		ByIDName:      nullString(d.ByIDName),
+		WeakIdentity:  boolToInt(d.WeakIdentity),
+		NewMountpoint: d.Mountpoint,
+		OldMountpoint: oldMountpoint,
+	})
+	if err != nil {
+		if isUniqueConstraint(err) {
+			return fmt.Errorf("%w: %s", ErrArrayDiskExists, d.Device)
+		}
+		return fmt.Errorf("store: upgrading parity disk at %s: %w", oldMountpoint, err)
+	}
+	if n == 0 {
+		return ErrArrayParityDiskNotFound
 	}
 	return nil
 }

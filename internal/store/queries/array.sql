@@ -50,3 +50,10 @@ UPDATE array_disks
 SET device = ?, filesystem = ?, fs_uuid = ?,
     wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?
 WHERE mountpoint = ? AND role = 'data';
+
+-- name: UpgradeArrayParityDiskSlot :execrows
+UPDATE array_disks
+SET device = ?, filesystem = ?, fs_uuid = ?,
+    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?,
+    mountpoint = sqlc.arg(new_mountpoint)
+WHERE mountpoint = sqlc.arg(old_mountpoint) AND role = 'parity';

@@ -397,7 +397,7 @@ A key file owned by the wrong account is not a lost-key situation at all — res
 
 **The contradiction:** doc 01 §4 says interrupted jobs are "never silently resumed". Doc 09 §4 says an evacuation "must survive a daemon restart and pick up where it left off".
 
-**Default: jobs are never resumed automatically. Resumable job types (mover, rebalance, evacuation, share relocation) persist a checkpoint and resume from it, never restarting from zero, when the user clicks Resume or, for the mover only, at its next scheduled run.** Sync, scrub and fix are not resumable; they are re-run. Both documents' intents survive: no surprise background work after a crash, and no repeating a day of copying.
+**Default: jobs are never resumed automatically. Resumable job types (mover, rebalance, evacuation, share relocation, and the data- and parity-disk upgrades) persist a checkpoint and resume from it, never restarting from zero, when the user clicks Resume or, for the mover only, at its next scheduled run.** Sync, scrub and fix are not resumable; they are re-run. Both documents' intents survive: no surprise background work after a crash, and no repeating a day of copying.
 
 ### Q30 — Nightly schedule ordering
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §2, §3, doc 03 §8.4, doc 09 §2, §6
@@ -419,9 +419,9 @@ This is doc 08's refinement. It is measured by doc 06 §6's zero-IO proxy in the
 The event log is cheap and makes R1 diagnosable from day one. Attribution is the differentiator doc 08 calls out, but it has no prior art, and 1.0 shouldn't wait on it.
 
 ### Q69 — Startup order and a disk missing at boot
-**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §1, §6, doc 04 §3, Q12, Q21
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §1, §4, §6, doc 04 §3, Q12, Q21, Q71
 
-**Default: data, parity and cache mounts are `nofail`, so a dead disk never hangs boot — `nofail` alone does this by dropping the mount from `local-fs.target`'s required ordering; `x-systemd.device-timeout=` is not part of this, since that option only applies to an `/etc/fstab` entry and is silently ignored in a native `.mount` unit's own `Options=`, so Hoserva's generated units never emit it. Every mountpoint directory is made immutable while empty, so a write to an unmounted path fails instead of landing on the boot device. Samba, NFS, Docker and libvirt start after `hoserva-storage.target` through managed systemd drop-ins; `hoservad` reaches that target only when every expected disk is present by identity (Q21), or once the user acknowledges the degraded state.**
+**Default: data, parity and cache mounts are `nofail`, so a dead disk never hangs boot — `nofail` alone does this by dropping the mount from `local-fs.target`'s required ordering; `x-systemd.device-timeout=` is not part of this, since that option only applies to an `/etc/fstab` entry and is silently ignored in a native `.mount` unit's own `Options=`, so Hoserva's generated units never emit it. Every mountpoint directory is made immutable while empty, so a write to an unmounted path fails instead of landing on the boot device. Samba, NFS, Docker and libvirt start after `hoserva-storage.target` through managed systemd drop-ins; `hoservad` reaches that target only when every expected disk is present by identity (Q21), or once the user acknowledges the degraded state — and never while a larger-data-disk upgrade is pending (doc 02 §4, UR2).**
 Without this, a container that starts before `/mnt/user` is mounted writes its data onto the boot device and shows the user an empty app — a quiet, common homelab failure. A missing disk is also exactly when the guard's zero-files rule has to hold (doc 02 §2), so nothing that writes to the pool runs before a human has seen the degraded state.
 
 ### Q70 — Stopping the array and shutting down

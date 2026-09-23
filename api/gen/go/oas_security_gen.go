@@ -100,6 +100,7 @@ var operationRolesApiToken = map[string][]string{
 	MountExternalDiskOperation:              []string{},
 	PlanDiskAddOperation:                    []string{},
 	PlanDiskReplaceOperation:                []string{},
+	PlanDiskUpgradeOperation:                []string{},
 	RebootHostOperation:                     []string{},
 	RegenerateTLSCertificateOperation:       []string{},
 	RegisterExternalDiskOperation:           []string{},
@@ -134,6 +135,7 @@ var operationRolesApiToken = map[string][]string{
 	UpdateUpdateSettingsOperation:           []string{},
 	UpdateUserOperation:                     []string{},
 	UpdateUserSharePermissionsOperation:     []string{},
+	UpgradeDiskOperation:                    []string{},
 }
 
 // GetRolesForApiToken returns the required roles for the given operation.
@@ -221,6 +223,7 @@ var operationRolesSessionCookie = map[string][]string{
 	MountExternalDiskOperation:              []string{},
 	PlanDiskAddOperation:                    []string{},
 	PlanDiskReplaceOperation:                []string{},
+	PlanDiskUpgradeOperation:                []string{},
 	RebootHostOperation:                     []string{},
 	RegenerateTLSCertificateOperation:       []string{},
 	RegisterExternalDiskOperation:           []string{},
@@ -255,6 +258,7 @@ var operationRolesSessionCookie = map[string][]string{
 	UpdateUpdateSettingsOperation:           []string{},
 	UpdateUserOperation:                     []string{},
 	UpdateUserSharePermissionsOperation:     []string{},
+	UpgradeDiskOperation:                    []string{},
 }
 
 // GetRolesForSessionCookie returns the required roles for the given operation.

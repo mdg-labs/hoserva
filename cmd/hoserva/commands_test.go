@@ -102,7 +102,7 @@ func TestRootCmdHasDiskAddAndReplace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find disk: %v", err)
 	}
-	for _, name := range []string{"add", "replace"} {
+	for _, name := range []string{"add", "replace", "upgrade"} {
 		if _, _, err := disk.Find([]string{name}); err != nil {
 			t.Fatalf("find disk %s: %v", name, err)
 		}
@@ -113,6 +113,9 @@ func TestRootCmdHasDiskAddAndReplace(t *testing.T) {
 	if _, _, err := root.Find([]string{"disk", "replace", "plan"}); err != nil {
 		t.Fatalf("find disk replace plan: %v", err)
 	}
+	if _, _, err := root.Find([]string{"disk", "upgrade", "plan"}); err != nil {
+		t.Fatalf("find disk upgrade plan: %v", err)
+	}
 }
 
 func TestDiskAddRequiresConfirm(t *testing.T) {
@@ -121,6 +124,10 @@ func TestDiskAddRequiresConfirm(t *testing.T) {
 
 func TestDiskReplaceRequiresConfirm(t *testing.T) {
 	assertRequiresConfirm(t, []string{"disk", "replace", "--mountpoint", "/mnt/disk2", "--device", "/dev/sdx"})
+}
+
+func TestDiskUpgradeRequiresConfirm(t *testing.T) {
+	assertRequiresConfirm(t, []string{"disk", "upgrade", "--mountpoint", "/mnt/disk2", "--device", "/dev/sdx"})
 }
 
 func assertRequiresConfirm(t *testing.T, args []string) {

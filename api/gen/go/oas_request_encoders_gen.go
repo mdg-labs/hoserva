@@ -357,6 +357,20 @@ func encodePlanDiskReplaceRequest(
 	return nil
 }
 
+func encodePlanDiskUpgradeRequest(
+	req *DiskUpgradePlanRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeRebootHostRequest(
 	req *ConfirmUpdateRequest,
 	r *http.Request,
@@ -681,6 +695,20 @@ func encodeUpdateUserRequest(
 
 func encodeUpdateUserSharePermissionsRequest(
 	req *UpdateUserSharePermissionsRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpgradeDiskRequest(
+	req *UpgradeDiskRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

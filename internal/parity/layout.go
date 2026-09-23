@@ -195,6 +195,14 @@ func (l Layout) Render() (string, error) {
 	return b.String(), nil
 }
 
+// ParityFilePath returns the parity file path Render itself computes for
+// a disk mounted at mount — the same join this package's own directive
+// rendering uses, exported so a caller building a ParityUpgradeSpec (#289)
+// can name the old and new parity files without duplicating parityFileName.
+func ParityFilePath(mount string) string {
+	return filepath.Join(mount, parityFileName)
+}
+
 // parityDirective names the directive for the i'th parity disk (0-based):
 // "parity" for the first, "2-parity" for the second — SnapRAID's own
 // naming, confirmed against a real sync in spike S5 (doc 08 §5,

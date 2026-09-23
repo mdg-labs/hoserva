@@ -1777,6 +1777,202 @@ func (s *DiskState) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/DiskUpgradePlan
+type DiskUpgradePlan struct {
+	Mountpoint string        `json:"mountpoint"`
+	Role       ArrayDiskRole `json:"role"`
+	// The device on record for this slot before the upgrade.
+	PreviousDevice    string `json:"previousDevice"`
+	ReplacementDevice string `json:"replacementDevice"`
+	// The replacement disk's own model, for the operator to recognise it by.
+	Model     OptString `json:"model"`
+	Wwn       OptString `json:"wwn"`
+	Serial    OptString `json:"serial"`
+	SizeBytes OptInt64  `json:"sizeBytes"`
+	// The replacement's filesystem before this operation, if any, cached from udev.
+	CurrentFilesystem OptString           `json:"currentFilesystem"`
+	Filesystem        ArrayDiskFilesystem `json:"filesystem"`
+	// Parity upgrades only: the fresh `/mnt/parityN` slot the new disk will be formatted, mounted and
+	// verified at independently of the old one (Q71), submitted back unchanged to `upgradeDisk`.
+	NewMountpoint OptString `json:"newMountpoint"`
+	// The copy/verify/remount steps (data) or copy/verify/switch/check steps (parity) this plan's own
+	// apply call runs, in order.
+	Steps []string `json:"steps"`
+	// Exact typed confirmation `upgradeDisk` requires for this plan: `ERASE <replacementDevice>`.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *DiskUpgradePlan) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetRole returns the value of Role.
+func (s *DiskUpgradePlan) GetRole() ArrayDiskRole {
+	return s.Role
+}
+
+// GetPreviousDevice returns the value of PreviousDevice.
+func (s *DiskUpgradePlan) GetPreviousDevice() string {
+	return s.PreviousDevice
+}
+
+// GetReplacementDevice returns the value of ReplacementDevice.
+func (s *DiskUpgradePlan) GetReplacementDevice() string {
+	return s.ReplacementDevice
+}
+
+// GetModel returns the value of Model.
+func (s *DiskUpgradePlan) GetModel() OptString {
+	return s.Model
+}
+
+// GetWwn returns the value of Wwn.
+func (s *DiskUpgradePlan) GetWwn() OptString {
+	return s.Wwn
+}
+
+// GetSerial returns the value of Serial.
+func (s *DiskUpgradePlan) GetSerial() OptString {
+	return s.Serial
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *DiskUpgradePlan) GetSizeBytes() OptInt64 {
+	return s.SizeBytes
+}
+
+// GetCurrentFilesystem returns the value of CurrentFilesystem.
+func (s *DiskUpgradePlan) GetCurrentFilesystem() OptString {
+	return s.CurrentFilesystem
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *DiskUpgradePlan) GetFilesystem() ArrayDiskFilesystem {
+	return s.Filesystem
+}
+
+// GetNewMountpoint returns the value of NewMountpoint.
+func (s *DiskUpgradePlan) GetNewMountpoint() OptString {
+	return s.NewMountpoint
+}
+
+// GetSteps returns the value of Steps.
+func (s *DiskUpgradePlan) GetSteps() []string {
+	return s.Steps
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *DiskUpgradePlan) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *DiskUpgradePlan) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetRole sets the value of Role.
+func (s *DiskUpgradePlan) SetRole(val ArrayDiskRole) {
+	s.Role = val
+}
+
+// SetPreviousDevice sets the value of PreviousDevice.
+func (s *DiskUpgradePlan) SetPreviousDevice(val string) {
+	s.PreviousDevice = val
+}
+
+// SetReplacementDevice sets the value of ReplacementDevice.
+func (s *DiskUpgradePlan) SetReplacementDevice(val string) {
+	s.ReplacementDevice = val
+}
+
+// SetModel sets the value of Model.
+func (s *DiskUpgradePlan) SetModel(val OptString) {
+	s.Model = val
+}
+
+// SetWwn sets the value of Wwn.
+func (s *DiskUpgradePlan) SetWwn(val OptString) {
+	s.Wwn = val
+}
+
+// SetSerial sets the value of Serial.
+func (s *DiskUpgradePlan) SetSerial(val OptString) {
+	s.Serial = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *DiskUpgradePlan) SetSizeBytes(val OptInt64) {
+	s.SizeBytes = val
+}
+
+// SetCurrentFilesystem sets the value of CurrentFilesystem.
+func (s *DiskUpgradePlan) SetCurrentFilesystem(val OptString) {
+	s.CurrentFilesystem = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *DiskUpgradePlan) SetFilesystem(val ArrayDiskFilesystem) {
+	s.Filesystem = val
+}
+
+// SetNewMountpoint sets the value of NewMountpoint.
+func (s *DiskUpgradePlan) SetNewMountpoint(val OptString) {
+	s.NewMountpoint = val
+}
+
+// SetSteps sets the value of Steps.
+func (s *DiskUpgradePlan) SetSteps(val []string) {
+	s.Steps = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *DiskUpgradePlan) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
+// Ref: #/components/schemas/DiskUpgradePlanRequest
+type DiskUpgradePlanRequest struct {
+	// The existing array slot being upgraded, data or parity, e.g. `/mnt/disk2` or `/mnt/parity1`.
+	Mountpoint string `json:"mountpoint"`
+	// The replacement disk's device path.
+	Device string `json:"device"`
+	// Data-disk upgrades only (default xfs); a parity disk is always formatted XFS (Q20) regardless of
+	// this field.
+	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *DiskUpgradePlanRequest) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetDevice returns the value of Device.
+func (s *DiskUpgradePlanRequest) GetDevice() string {
+	return s.Device
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *DiskUpgradePlanRequest) GetFilesystem() OptArrayDiskFilesystem {
+	return s.Filesystem
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *DiskUpgradePlanRequest) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetDevice sets the value of Device.
+func (s *DiskUpgradePlanRequest) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *DiskUpgradePlanRequest) SetFilesystem(val OptArrayDiskFilesystem) {
+	s.Filesystem = val
+}
+
 // Ref: #/components/schemas/DoctorCheck
 type DoctorCheck struct {
 	ID string `json:"id"`
@@ -2751,6 +2947,8 @@ const (
 	JobTypeDiskAdd           JobType = "disk_add"
 	JobTypeDiskRemove        JobType = "disk_remove"
 	JobTypeDiskReplace       JobType = "disk_replace"
+	JobTypeDiskUpgradeData   JobType = "disk_upgrade_data"
+	JobTypeDiskUpgradeParity JobType = "disk_upgrade_parity"
 	JobTypePoolRemount       JobType = "pool_remount"
 	JobTypeAppdataBackup     JobType = "appdata_backup"
 	JobTypeContainerUpdate   JobType = "container_update"
@@ -2780,6 +2978,8 @@ func (JobType) AllValues() []JobType {
 		JobTypeDiskAdd,
 		JobTypeDiskRemove,
 		JobTypeDiskReplace,
+		JobTypeDiskUpgradeData,
+		JobTypeDiskUpgradeParity,
 		JobTypePoolRemount,
 		JobTypeAppdataBackup,
 		JobTypeContainerUpdate,
@@ -2822,6 +3022,10 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeDiskRemove:
 		return []byte(s), nil
 	case JobTypeDiskReplace:
+		return []byte(s), nil
+	case JobTypeDiskUpgradeData:
+		return []byte(s), nil
+	case JobTypeDiskUpgradeParity:
 		return []byte(s), nil
 	case JobTypePoolRemount:
 		return []byte(s), nil
@@ -2891,6 +3095,12 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeDiskReplace:
 		*s = JobTypeDiskReplace
+		return nil
+	case JobTypeDiskUpgradeData:
+		*s = JobTypeDiskUpgradeData
+		return nil
+	case JobTypeDiskUpgradeParity:
+		*s = JobTypeDiskUpgradeParity
 		return nil
 	case JobTypePoolRemount:
 		*s = JobTypePoolRemount
@@ -9728,6 +9938,69 @@ func (s *UpdateUserSharePermissionsRequest) GetPermissions() []UserSharePermissi
 // SetPermissions sets the value of Permissions.
 func (s *UpdateUserSharePermissionsRequest) SetPermissions(val []UserSharePermission) {
 	s.Permissions = val
+}
+
+// Ref: #/components/schemas/UpgradeDiskRequest
+type UpgradeDiskRequest struct {
+	Mountpoint string                 `json:"mountpoint"`
+	Device     string                 `json:"device"`
+	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
+	// Required, and must equal the matching `planDiskUpgrade` call's own `newMountpoint`, when
+	// `mountpoint` names a parity slot.
+	NewMountpoint OptString `json:"newMountpoint"`
+	// Exact typed confirmation from the matching `planDiskUpgrade` call. A wrong or missing string is
+	// refused and formats nothing.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *UpgradeDiskRequest) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetDevice returns the value of Device.
+func (s *UpgradeDiskRequest) GetDevice() string {
+	return s.Device
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *UpgradeDiskRequest) GetFilesystem() OptArrayDiskFilesystem {
+	return s.Filesystem
+}
+
+// GetNewMountpoint returns the value of NewMountpoint.
+func (s *UpgradeDiskRequest) GetNewMountpoint() OptString {
+	return s.NewMountpoint
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *UpgradeDiskRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *UpgradeDiskRequest) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetDevice sets the value of Device.
+func (s *UpgradeDiskRequest) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *UpgradeDiskRequest) SetFilesystem(val OptArrayDiskFilesystem) {
+	s.Filesystem = val
+}
+
+// SetNewMountpoint sets the value of NewMountpoint.
+func (s *UpgradeDiskRequest) SetNewMountpoint(val OptString) {
+	s.NewMountpoint = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *UpgradeDiskRequest) SetConfirmation(val string) {
+	s.Confirmation = val
 }
 
 // Ref: #/components/schemas/User

@@ -62,10 +62,14 @@ const (
 // Checkpoint.LastPath uses for the mover's per-file resumption.
 // Verifying is never resumed mid-way: it only ever reads, so restarting
 // its whole comparison after an interruption is always safe and cheap
-// enough not to need its own finer-grained checkpoint.
+// enough not to need its own finer-grained checkpoint. NewUUID is the new
+// disk's filesystem UUID, fixed when Formatting finishes and carried by
+// every later checkpoint: a resume trusts it rather than re-reading the
+// device (doc 02 §4 UR4).
 type DataDiskUpgradeCheckpoint struct {
 	Phase    DataDiskUpgradePhase `json:"phase"`
 	LastPath string               `json:"last_path,omitempty"`
+	NewUUID  string               `json:"new_uuid,omitempty"`
 }
 
 // DataDiskUpgradeSpec is one "larger data disk" upgrade (doc 02 §4,
@@ -86,7 +90,7 @@ type DataDiskUpgradeSpec struct {
 // DataDiskUpgradeDeps are RunDataDiskUpgrade's own system-touching
 // dependencies (CLAUDE.md: every system-touching subsystem sits behind
 // a package interface with a scriptable fake). Provider, Runner,
-// Mounter, Diff and Release are all required.
+// Mounter, Diff, Release and ConfirmMounted are all required.
 type DataDiskUpgradeDeps struct {
 	Provider Provider
 	Runner   Runner
@@ -118,6 +122,11 @@ type DataDiskUpgradeDeps struct {
 	// IsMountpoint; overridden by tests that cannot mount a real
 	// filesystem.
 	StagingMounted func(path string) (bool, error)
+	// ConfirmMounted confirms that where is mounted with the filesystem
+	// UUID uuid, read from the kernel mount table (doc 02 §4 UR4). It runs
+	// after Formatting mounts the staging path, after Remounting mounts the
+	// new disk at Old.Where, and before Diffing runs.
+	ConfirmMounted func(ctx context.Context, where, uuid string) error
 	Now            func() time.Time
 }
 
@@ -139,11 +148,16 @@ type DataDiskUpgradeHooks struct {
 	SaveCheckpoint func(data []byte) error
 	SetProgress    func(pct int)
 	Log            func(format string, args ...any)
+
+	newUUID string
 }
 
 func (h DataDiskUpgradeHooks) checkpoint(cp DataDiskUpgradeCheckpoint) error {
 	if h.SaveCheckpoint == nil {
 		return nil
+	}
+	if cp.NewUUID == "" {
+		cp.NewUUID = h.newUUID
 	}
 	data, err := json.Marshal(cp)
 	if err != nil {
@@ -197,8 +211,8 @@ type DataDiskUpgradeResult struct {
 // enforces at every phase boundary.
 func RunDataDiskUpgrade(ctx context.Context, spec DataDiskUpgradeSpec, deps DataDiskUpgradeDeps, hooks DataDiskUpgradeHooks, initialCheckpoint []byte) (DataDiskUpgradeResult, error) {
 	deps = deps.withDefaults()
-	if deps.Provider == nil || deps.Runner == nil || deps.Mounter == nil || deps.Diff == nil || deps.Release == nil {
-		return DataDiskUpgradeResult{}, errors.New("disk: run data disk upgrade: Provider, Runner, Mounter, Diff and Release are all required")
+	if deps.Provider == nil || deps.Runner == nil || deps.Mounter == nil || deps.Diff == nil || deps.Release == nil || deps.ConfirmMounted == nil {
+		return DataDiskUpgradeResult{}, errors.New("disk: run data disk upgrade: Provider, Runner, Mounter, Diff, Release and ConfirmMounted are all required")
 	}
 
 	var cp DataDiskUpgradeCheckpoint
@@ -219,8 +233,12 @@ func RunDataDiskUpgrade(ctx context.Context, spec DataDiskUpgradeSpec, deps Data
 			return DataDiskUpgradeResult{}, err
 		}
 		newUUID = uuid
+		hooks.newUUID = uuid
 		if err := deps.Mounter.Mount(ctx, stagingMountUnit(spec, uuid)); err != nil {
 			return DataDiskUpgradeResult{}, fmt.Errorf("disk: mount new disk at staging path: %w", err)
+		}
+		if err := deps.ConfirmMounted(ctx, spec.Staging, uuid); err != nil {
+			return DataDiskUpgradeResult{}, fmt.Errorf("disk: confirm the new disk at staging path: %w", err)
 		}
 		cp = DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseCopying}
 		if err := hooks.checkpoint(cp); err != nil {
@@ -230,15 +248,14 @@ func RunDataDiskUpgrade(ctx context.Context, spec DataDiskUpgradeSpec, deps Data
 			return DataDiskUpgradeResult{Interrupted: true}, nil
 		}
 	} else {
-		// Resuming past Formatting: the new disk was already formatted
-		// and mounted at Staging by an earlier run — re-read its
-		// filesystem UUID rather than formatting it again, so Remounting
-		// still knows what to mount at Old.Where.
-		uuid, err := FilesystemUUID(ctx, deps.Runner, identityOrDevice(spec.New.ByIDName, spec.New.Device))
-		if err != nil {
-			return DataDiskUpgradeResult{}, fmt.Errorf("disk: re-read new disk's filesystem UUID on resume: %w", err)
+		// Resuming past Formatting: the new disk was already formatted by
+		// an earlier run, and its filesystem UUID was fixed in the
+		// checkpoint then — never re-read from the device (doc 02 §4 UR4).
+		if cp.NewUUID == "" {
+			return DataDiskUpgradeResult{}, fmt.Errorf("disk: data disk upgrade checkpoint at %s carries no new-disk filesystem UUID", cp.Phase)
 		}
-		newUUID = uuid
+		newUUID = cp.NewUUID
+		hooks.newUUID = newUUID
 
 		// Copying and Verifying are the only phases that still read or
 		// write Staging — Remounting, Diffing and Releasing never touch
@@ -259,6 +276,9 @@ func RunDataDiskUpgrade(ctx context.Context, spec DataDiskUpgradeSpec, deps Data
 		hooks.logf("data disk upgrade: copying %s to %s", spec.Old.Where, spec.Staging)
 		interrupted, lastPath, err := copyDataDiskTree(ctx, spec.Old.Where, spec.Staging, hooks, cp.LastPath)
 		if err != nil {
+			if cerr := hooks.checkpoint(DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseCopying, LastPath: lastPath}); cerr != nil {
+				return DataDiskUpgradeResult{}, errors.Join(err, cerr)
+			}
 			return DataDiskUpgradeResult{}, err
 		}
 		if interrupted {
@@ -312,6 +332,9 @@ func RunDataDiskUpgrade(ctx context.Context, spec DataDiskUpgradeSpec, deps Data
 		if err := deps.Mounter.Mount(ctx, newMount); err != nil {
 			return DataDiskUpgradeResult{}, fmt.Errorf("disk: mount new disk at %s: %w", spec.Old.Where, err)
 		}
+		if err := deps.ConfirmMounted(ctx, spec.Old.Where, newUUID); err != nil {
+			return DataDiskUpgradeResult{}, fmt.Errorf("disk: confirm the new disk at %s: %w", spec.Old.Where, err)
+		}
 		cp = DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseDiffing}
 		if err := hooks.checkpoint(cp); err != nil {
 			return DataDiskUpgradeResult{}, err
@@ -322,6 +345,9 @@ func RunDataDiskUpgrade(ctx context.Context, spec DataDiskUpgradeSpec, deps Data
 	}
 
 	if cp.Phase == DataDiskUpgradePhaseDiffing {
+		if err := deps.ConfirmMounted(ctx, spec.Old.Where, newUUID); err != nil {
+			return DataDiskUpgradeResult{}, fmt.Errorf("disk: confirm the new disk at %s before snapraid diff: %w", spec.Old.Where, err)
+		}
 		hooks.logf("data disk upgrade: checking snapraid diff against %s before releasing the old disk", newMount.Where)
 		removed, updated, err := deps.Diff(ctx)
 		if err != nil {

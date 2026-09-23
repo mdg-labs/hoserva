@@ -71,6 +71,7 @@ const (
 	MountExternalDiskOperation              OperationName = "MountExternalDisk"
 	PlanDiskAddOperation                    OperationName = "PlanDiskAdd"
 	PlanDiskReplaceOperation                OperationName = "PlanDiskReplace"
+	PlanDiskUpgradeOperation                OperationName = "PlanDiskUpgrade"
 	RebootHostOperation                     OperationName = "RebootHost"
 	RegenerateTLSCertificateOperation       OperationName = "RegenerateTLSCertificate"
 	RegisterExternalDiskOperation           OperationName = "RegisterExternalDisk"
@@ -105,4 +106,5 @@ const (
 	UpdateUpdateSettingsOperation           OperationName = "UpdateUpdateSettings"
 	UpdateUserOperation                     OperationName = "UpdateUser"
 	UpdateUserSharePermissionsOperation     OperationName = "UpdateUserSharePermissions"
+	UpgradeDiskOperation                    OperationName = "UpgradeDisk"
 )

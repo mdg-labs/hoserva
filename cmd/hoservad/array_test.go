@@ -194,7 +194,7 @@ func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
 			t.Fatalf("Disks[%d].Where() = %q, want %q", i, m.Where(), assigned[i].Mountpoint)
 		}
 	}
-	gate, ok := h.Array.Gate.(*disk.StorageGate)
+	gate, ok := storageGateOf(h.Array.Gate)
 	if !ok {
 		t.Fatalf("Gate is %T, want *disk.StorageGate", h.Array.Gate)
 	}
@@ -231,6 +231,7 @@ func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
 	requireArgv(t, stopCalls[5], "systemctl", "stop", "mnt-parity1.mount")
 	requireArgv(t, stopCalls[6], "systemctl", "stop", "mnt-disk1.mount")
 
+	isolateDiskCheck(t, h.Array)
 	got, err = h.StartArray(ctx)
 	if err != nil {
 		t.Fatalf("StartArray: %v", err)
@@ -382,6 +383,7 @@ func TestNewArraySequence_SharesRejoinStopAndStart(t *testing.T) {
 	requireArgv(t, stopCalls[7], "systemctl", "stop", "mnt-parity1.mount")
 	requireArgv(t, stopCalls[8], "systemctl", "stop", "mnt-disk1.mount")
 
+	isolateDiskCheck(t, h.Array)
 	got, err = h.StartArray(ctx)
 	if err != nil {
 		t.Fatalf("StartArray: %v", err)
@@ -451,7 +453,7 @@ func TestNewArraySequence_StartRefusesWhenGateNotReady(t *testing.T) {
 	if h.Array == nil {
 		t.Fatal("Handler.Array is nil with a persisted topology — Start would 501 instead of refusing through the gate")
 	}
-	gate, ok := h.Array.Gate.(*disk.StorageGate)
+	gate, ok := storageGateOf(h.Array.Gate)
 	if !ok {
 		t.Fatalf("Gate is %T, want *disk.StorageGate", h.Array.Gate)
 	}
@@ -498,7 +500,7 @@ func TestNewArraySequence_ListErrorLeavesGateUnready(t *testing.T) {
 		t.Fatal("Handler.Array would be nil — stop/start would 501 instead of refusing through the gate")
 	}
 	h.Array = seq
-	gate, ok := seq.Gate.(*disk.StorageGate)
+	gate, ok := storageGateOf(seq.Gate)
 	if !ok {
 		t.Fatalf("Gate is %T, want *disk.StorageGate", seq.Gate)
 	}
@@ -640,7 +642,7 @@ func TestHandler_CreateArray_RefreshesArraySequenceWithoutRestart(t *testing.T) 
 	if h.Array == nil {
 		t.Fatal("Handler.Array is nil after a live CreateArray succeeded — array/start would still 501 not_configured until hoservad restarts (#262)")
 	}
-	gate, ok := h.Array.Gate.(*disk.StorageGate)
+	gate, ok := storageGateOf(h.Array.Gate)
 	if !ok {
 		t.Fatalf("Gate is %T, want *disk.StorageGate", h.Array.Gate)
 	}
@@ -662,6 +664,7 @@ func TestHandler_CreateArray_RefreshesArraySequenceWithoutRestart(t *testing.T) 
 		runner: runner,
 	}
 
+	isolateDiskCheck(t, h.Array)
 	got, err := h.StartArray(ctx)
 	if err != nil {
 		t.Fatalf("StartArray after a live CreateArray: %v", err)
@@ -783,5 +786,120 @@ func TestShareService_PostCommit_KeepsArraySequenceShareMountsInSyncWithStore(t 
 	}
 	if len(h.Array.ShareMounts) != 0 {
 		t.Fatalf("ShareMounts = %d after Delete(media), want 0 (the deleted share must not remount on the next array start)", len(h.Array.ShareMounts))
+	}
+}
+
+// storageGateOf unwraps newArraySequence's gate: the storage readiness
+// gate inside job.PendingUpgradeGate (doc 02 §4 UR2).
+func storageGateOf(g job.ReadinessGate) (*disk.StorageGate, bool) {
+	wrapped, ok := g.(job.PendingUpgradeGate)
+	if !ok {
+		return nil, false
+	}
+	inner, ok := wrapped.Gate.(*disk.StorageGate)
+	return inner, ok
+}
+
+// isolateDiskCheck asserts newArraySequence wired UR9's check (doc 02 §4)
+// with the production mount-table reader and SQLite's UUIDs, then swaps
+// that reader for an empty fake table so Start never reads the host's
+// mount table from a test.
+func isolateDiskCheck(t *testing.T, seq *job.ArraySequence) *job.FakeMountTable {
+	t.Helper()
+	check, ok := seq.DiskCheck.(job.ArrayDiskUUIDCheck)
+	if !ok {
+		t.Fatalf("DiskCheck is %T, want job.ArrayDiskUUIDCheck (UR9)", seq.DiskCheck)
+	}
+	if _, ok := check.Mounts.(disk.KernelMounts); !ok {
+		t.Fatalf("DiskCheck.Mounts is %T, want disk.KernelMounts", check.Mounts)
+	}
+	if len(check.Disks) != len(seq.Disks) {
+		t.Fatalf("DiskCheck covers %d disks, want every array disk (%d)", len(check.Disks), len(seq.Disks))
+	}
+	table := job.NewFakeMountTable()
+	check.Mounts = table
+	seq.DiskCheck = check
+	return table
+}
+
+// TestNewArraySequence_UR9_StartRefusesADiskThatIsNotTheOneSQLiteNames:
+// through the daemon's own wiring, a mounted array disk whose filesystem
+// is not the one SQLite names stops array start before the pool or any
+// service starts, unmounts the disks again and keeps maintenance mode
+// (doc 02 §4 UR9).
+func TestNewArraySequence_UR9_StartRefusesADiskThatIsNotTheOneSQLiteNames(t *testing.T) {
+	ctx, h, arrays, shares, disks, runner := newArrayTestEnv(t)
+	assigned := persistSampleArray(t, arrays)
+	presentMatchingDisks(disks, assigned)
+	attachDaemonArray(t, ctx, h, arrays, shares, disks, runner)
+	check := h.Array.DiskCheck.(job.ArrayDiskUUIDCheck)
+	for i, u := range check.Disks {
+		if u.Where != assigned[i].Mountpoint || u.UUID != assigned[i].FSUUID {
+			t.Fatalf("DiskCheck.Disks[%d] = %+v, want %s at %s from SQLite", i, u, assigned[i].FSUUID, assigned[i].Mountpoint)
+		}
+	}
+	table := isolateDiskCheck(t, h.Array)
+	table.Preload("/mnt/disk1", "uuid-of-another-disk")
+
+	if _, err := h.StopArray(ctx, confirmStop()); err != nil {
+		t.Fatalf("StopArray: %v", err)
+	}
+	before := len(runner.Calls())
+	_, err := h.StartArray(ctx)
+	status := handlerAPIError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "array_disk_mismatch" {
+		t.Fatalf("StartArray = %+v, want 409 array_disk_mismatch", status)
+	}
+	var sawUnmount bool
+	for _, c := range runner.Calls()[before:] {
+		if c.Name == "mergerfs" || (c.Name == "systemctl" && len(c.Args) == 2 && c.Args[0] == "start" && strings.HasSuffix(c.Args[1], ".service")) {
+			t.Fatalf("StartArray ran %+v after a mismatched disk", c)
+		}
+		if c.Name == "systemctl" && len(c.Args) == 2 && c.Args[0] == "stop" && c.Args[1] == "mnt-disk1.mount" {
+			sawUnmount = true
+		}
+	}
+	if !sawUnmount {
+		t.Fatal("StartArray did not unmount the disks again after the mismatch")
+	}
+	if !h.Scheduler.InMaintenance() {
+		t.Fatal("maintenance mode ended after a refused start")
+	}
+}
+
+// TestNewArraySequence_PendingDiskUpgradeHoldsTheArrayStopped proves the
+// daemon's wiring of doc 02 §4 while a data-disk upgrade is pending: the
+// readiness gate reports not ready (UR2), `array start` is refused with
+// disk_upgrade_pending (E6), and so is `array stop` (E7), which leaves
+// every mount untouched.
+func TestNewArraySequence_PendingDiskUpgradeHoldsTheArrayStopped(t *testing.T) {
+	ctx, h, arrays, shares, disks, runner := newArrayTestEnv(t)
+	assigned := persistSampleArray(t, arrays)
+	presentMatchingDisks(disks, assigned)
+	attachDaemonArray(t, ctx, h, arrays, shares, disks, runner)
+	if !h.Array.Gate.Ready() {
+		t.Fatal("gate not ready before any upgrade")
+	}
+
+	now := time.Now().UTC()
+	if err := h.Store.Create(ctx, &job.Job{
+		ID: "11111111-1111-1111-1111-111111111111", Type: job.TypeDiskUpgradeData, Class: job.ClassTopology,
+		Status: job.StatusInterrupted, Resumable: true, Cancellable: true, CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if h.Array.Gate.Ready() {
+		t.Fatal("the readiness gate reports ready while a data-disk upgrade is pending (UR2)")
+	}
+	_, err := h.StartArray(ctx)
+	if status := handlerAPIError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_upgrade_pending" {
+		t.Fatalf("StartArray = %+v, want 409 disk_upgrade_pending", status)
+	}
+	_, err = h.StopArray(ctx, confirmStop())
+	if status := handlerAPIError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_upgrade_pending" {
+		t.Fatalf("StopArray = %+v, want 409 disk_upgrade_pending", status)
+	}
+	if calls := runner.Calls(); len(calls) != 0 {
+		t.Fatalf("array start/stop acted while an upgrade was pending: %+v", calls)
 	}
 }

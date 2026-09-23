@@ -129,6 +129,12 @@ func mapArraySequenceError(err error, failedCode string) error {
 	if errors.Is(err, job.ErrStorageNotReady) {
 		return &apiError{code: "storage_not_ready", statusCode: 409, message: err.Error()}
 	}
+	if errors.Is(err, job.ErrDiskUpgradeDataPending) {
+		return &apiError{code: "disk_upgrade_pending", statusCode: 409, message: err.Error()}
+	}
+	if errors.Is(err, job.ErrArrayDiskMismatch) {
+		return &apiError{code: "array_disk_mismatch", statusCode: 409, message: err.Error()}
+	}
 	return &apiError{code: failedCode, statusCode: 409, message: err.Error()}
 }
 
@@ -160,6 +166,15 @@ func (h *Handler) StopArray(ctx context.Context, req *apiv1.StopArrayRequest) (*
 	seq := h.CurrentArray()
 	if seq == nil {
 		return nil, errArrayNotConfigured()
+	}
+	if h.Scheduler != nil {
+		pending, err := h.Scheduler.PendingDiskUpgradeData(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if pending != nil {
+			return nil, &apiError{code: "disk_upgrade_pending", statusCode: 409, message: fmt.Sprintf("the array is already stopped for data-disk upgrade %s — resume it, or cancel it to abort back to the old disk", pending.ID)}
+		}
 	}
 	if err := seq.Stop(ctx); err != nil {
 		return nil, mapArraySequenceError(err, "array_stop_failed")

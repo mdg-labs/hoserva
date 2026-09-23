@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -247,6 +248,102 @@ func DataDiskLabelForMountpoint(disks []store.ArrayDisk, mountpoint string) (str
 		}
 	}
 	return "", fmt.Errorf("job: no data disk at %s", mountpoint)
+}
+
+// ValidateParityDiskUpgrade is ValidateDiskReplacement for a parity slot
+// (doc 02 §4 "Larger parity disk", #289): the same Q19/Q20/Q21/Q23 and
+// identity checks, over the array's current topology with the parity slot
+// being upgraded excluded (its old device is leaving that slot, the new
+// one taking over its role_index at a fresh mountpoint) and replacement —
+// the new, larger parity disk — in its place.
+func ValidateParityDiskUpgrade(disks []store.ArrayDisk, mountpoint string, replacement disk.AssignedDisk, sizes map[string]int64) error {
+	remaining := make([]store.ArrayDisk, 0, len(disks))
+	for _, r := range disks {
+		if r.Mountpoint == mountpoint {
+			continue
+		}
+		remaining = append(remaining, r)
+	}
+	if err := refuseKnownIdentity(remaining, replacement); err != nil {
+		return err
+	}
+	full := disk.TopologyPlan{Parity: []disk.AssignedDisk{replacement}}
+	for _, r := range remaining {
+		switch r.Role {
+		case store.ArrayRoleParity:
+			full.Parity = append(full.Parity, storeDiskAssigned(r))
+		case store.ArrayRoleData:
+			full.Data = append(full.Data, storeDiskAssigned(r))
+		}
+	}
+	return full.Validate(sizes)
+}
+
+// ErrDataDiskUpgradeExceedsParity is planDiskUpgrade's and
+// RunDiskUpgradeData's own refusal (doc 02 §4, Q71, Q20): the replacement
+// data disk would leave a parity disk smaller than it, the same rule
+// disk.DataDiskUpgradeExceedsParity checks directly against the array's
+// current parity disks — "when a new data disk would be larger than the
+// current parity, the flow offers [a parity upgrade] first."
+var ErrDataDiskUpgradeExceedsParity = errors.New("disk: this data disk upgrade would leave a parity disk smaller than the new disk; upgrade parity first")
+
+// arrayDiskAtMountpoint returns the array_disks row at mountpoint,
+// whatever its role — GetDataDiskByMountpoint's own lookup is data-only
+// (doc 02 §4's replace flow is specific to data disks), but a disk
+// upgrade (#289) targets a parity slot exactly as often as a data one, so
+// this checks disks already read from one GetArray call rather than
+// adding a second, role-specific store round trip.
+func arrayDiskAtMountpoint(disks []store.ArrayDisk, mountpoint string) (store.ArrayDisk, bool) {
+	for _, d := range disks {
+		if d.Mountpoint == mountpoint {
+			return d, true
+		}
+	}
+	return store.ArrayDisk{}, false
+}
+
+// parityDiskSizes returns every parity disk's own current size from
+// sizes (the same disk.Provider.List snapshot a plan or job run already
+// has), skipping a parity disk sizes has no entry for rather than
+// treating a missing key as zero (disk.DataDiskUpgradeExceedsParity would
+// otherwise never trigger against a parity disk this snapshot simply
+// didn't see).
+func parityDiskSizes(disks []store.ArrayDisk, sizes map[string]int64) []int64 {
+	var out []int64
+	for _, d := range disks {
+		if d.Role != store.ArrayRoleParity {
+			continue
+		}
+		if s, ok := sizes[d.Device]; ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// diskUpgradeStagingPath is the scratch mountpoint a data disk upgrade
+// mounts the new, larger disk at while it copies and verifies the old
+// disk's tree (doc 02 §4 "Larger data disk", #289) — never a store-
+// tracked slot, and never mounted through config.Generator's own unit
+// files: disk.RunDataDiskUpgrade mounts and unmounts it directly through
+// its own Mounter dependency, so this only ever needs to be a stable,
+// collision-free path, not a persisted one.
+func diskUpgradeStagingPath(mountpoint string) string {
+	return "/mnt/.hoserva-disk-upgrade-staging" + mountpoint
+}
+
+// confirmMountedUUID refuses unless the filesystem mounted at unit.Where
+// carries unit.UUID — the disk a caller is about to trust, not whichever
+// disk happens to be mounted there. A mismatch is never worked around.
+func confirmMountedUUID(ctx context.Context, r disk.Runner, unit disk.MountUnit) error {
+	mounted, err := disk.MountedUUID(ctx, r, unit.Where)
+	if err != nil {
+		return fmt.Errorf("confirming the filesystem mounted at %s: %w", unit.Where, err)
+	}
+	if mounted != unit.UUID {
+		return fmt.Errorf("%s is mounted with filesystem UUID %s, want %s — refusing", unit.Where, mounted, unit.UUID)
+	}
+	return nil
 }
 
 // formatTargetOf returns the path FormatForAddition's own destructive call

@@ -441,6 +441,9 @@ func (h *handler) StopArray(ctx context.Context, req *apiv1.StopArrayRequest) (*
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if id, pending := h.pendingDiskUpgradeLocked(); pending {
+		return nil, errDiskUpgradePending(id)
+	}
 	h.maintenance = true
 	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance), nil
 }
@@ -448,6 +451,9 @@ func (h *handler) StopArray(ctx context.Context, req *apiv1.StopArrayRequest) (*
 func (h *handler) StartArray(ctx context.Context) (*apiv1.SystemStatus, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if id, pending := h.pendingDiskUpgradeLocked(); pending {
+		return nil, errDiskUpgradePending(id)
+	}
 	h.maintenance = false
 	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance), nil
 }

@@ -4085,6 +4085,445 @@ func (s *DiskState) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *DiskUpgradePlan) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *DiskUpgradePlan) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("mountpoint")
+		e.Str(s.Mountpoint)
+	}
+	{
+		e.FieldStart("role")
+		s.Role.Encode(e)
+	}
+	{
+		e.FieldStart("previousDevice")
+		e.Str(s.PreviousDevice)
+	}
+	{
+		e.FieldStart("replacementDevice")
+		e.Str(s.ReplacementDevice)
+	}
+	{
+		if s.Model.Set {
+			e.FieldStart("model")
+			s.Model.Encode(e)
+		}
+	}
+	{
+		if s.Wwn.Set {
+			e.FieldStart("wwn")
+			s.Wwn.Encode(e)
+		}
+	}
+	{
+		if s.Serial.Set {
+			e.FieldStart("serial")
+			s.Serial.Encode(e)
+		}
+	}
+	{
+		if s.SizeBytes.Set {
+			e.FieldStart("sizeBytes")
+			s.SizeBytes.Encode(e)
+		}
+	}
+	{
+		if s.CurrentFilesystem.Set {
+			e.FieldStart("currentFilesystem")
+			s.CurrentFilesystem.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("filesystem")
+		s.Filesystem.Encode(e)
+	}
+	{
+		if s.NewMountpoint.Set {
+			e.FieldStart("newMountpoint")
+			s.NewMountpoint.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("steps")
+		e.ArrStart()
+		for _, elem := range s.Steps {
+			e.Str(elem)
+		}
+		e.ArrEnd()
+	}
+	{
+		e.FieldStart("confirmation")
+		e.Str(s.Confirmation)
+	}
+}
+
+var jsonFieldsNameOfDiskUpgradePlan = [13]string{
+	0:  "mountpoint",
+	1:  "role",
+	2:  "previousDevice",
+	3:  "replacementDevice",
+	4:  "model",
+	5:  "wwn",
+	6:  "serial",
+	7:  "sizeBytes",
+	8:  "currentFilesystem",
+	9:  "filesystem",
+	10: "newMountpoint",
+	11: "steps",
+	12: "confirmation",
+}
+
+// Decode decodes DiskUpgradePlan from json.
+func (s *DiskUpgradePlan) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode DiskUpgradePlan to nil")
+	}
+	var requiredBitSet [2]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "mountpoint":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Mountpoint = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"mountpoint\"")
+			}
+		case "role":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				if err := s.Role.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"role\"")
+			}
+		case "previousDevice":
+			requiredBitSet[0] |= 1 << 2
+			if err := func() error {
+				v, err := d.Str()
+				s.PreviousDevice = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"previousDevice\"")
+			}
+		case "replacementDevice":
+			requiredBitSet[0] |= 1 << 3
+			if err := func() error {
+				v, err := d.Str()
+				s.ReplacementDevice = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"replacementDevice\"")
+			}
+		case "model":
+			if err := func() error {
+				s.Model.Reset()
+				if err := s.Model.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"model\"")
+			}
+		case "wwn":
+			if err := func() error {
+				s.Wwn.Reset()
+				if err := s.Wwn.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"wwn\"")
+			}
+		case "serial":
+			if err := func() error {
+				s.Serial.Reset()
+				if err := s.Serial.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"serial\"")
+			}
+		case "sizeBytes":
+			if err := func() error {
+				s.SizeBytes.Reset()
+				if err := s.SizeBytes.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"sizeBytes\"")
+			}
+		case "currentFilesystem":
+			if err := func() error {
+				s.CurrentFilesystem.Reset()
+				if err := s.CurrentFilesystem.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"currentFilesystem\"")
+			}
+		case "filesystem":
+			requiredBitSet[1] |= 1 << 1
+			if err := func() error {
+				if err := s.Filesystem.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"filesystem\"")
+			}
+		case "newMountpoint":
+			if err := func() error {
+				s.NewMountpoint.Reset()
+				if err := s.NewMountpoint.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"newMountpoint\"")
+			}
+		case "steps":
+			requiredBitSet[1] |= 1 << 3
+			if err := func() error {
+				s.Steps = make([]string, 0)
+				if err := d.Arr(func(d *jx.Decoder) error {
+					var elem string
+					v, err := d.Str()
+					elem = string(v)
+					if err != nil {
+						return err
+					}
+					s.Steps = append(s.Steps, elem)
+					return nil
+				}); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"steps\"")
+			}
+		case "confirmation":
+			requiredBitSet[1] |= 1 << 4
+			if err := func() error {
+				v, err := d.Str()
+				s.Confirmation = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"confirmation\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode DiskUpgradePlan")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [2]uint8{
+		0b00001111,
+		0b00011010,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfDiskUpgradePlan) {
+					name = jsonFieldsNameOfDiskUpgradePlan[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *DiskUpgradePlan) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *DiskUpgradePlan) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *DiskUpgradePlanRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *DiskUpgradePlanRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("mountpoint")
+		e.Str(s.Mountpoint)
+	}
+	{
+		e.FieldStart("device")
+		e.Str(s.Device)
+	}
+	{
+		if s.Filesystem.Set {
+			e.FieldStart("filesystem")
+			s.Filesystem.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfDiskUpgradePlanRequest = [3]string{
+	0: "mountpoint",
+	1: "device",
+	2: "filesystem",
+}
+
+// Decode decodes DiskUpgradePlanRequest from json.
+func (s *DiskUpgradePlanRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode DiskUpgradePlanRequest to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "mountpoint":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Mountpoint = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"mountpoint\"")
+			}
+		case "device":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.Device = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"device\"")
+			}
+		case "filesystem":
+			if err := func() error {
+				s.Filesystem.Reset()
+				if err := s.Filesystem.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"filesystem\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode DiskUpgradePlanRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfDiskUpgradePlanRequest) {
+					name = jsonFieldsNameOfDiskUpgradePlanRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *DiskUpgradePlanRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *DiskUpgradePlanRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *DoctorCheck) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -5988,6 +6427,10 @@ func (s *JobType) Decode(d *jx.Decoder) error {
 		*s = JobTypeDiskRemove
 	case JobTypeDiskReplace:
 		*s = JobTypeDiskReplace
+	case JobTypeDiskUpgradeData:
+		*s = JobTypeDiskUpgradeData
+	case JobTypeDiskUpgradeParity:
+		*s = JobTypeDiskUpgradeParity
 	case JobTypePoolRemount:
 		*s = JobTypePoolRemount
 	case JobTypeAppdataBackup:
@@ -19866,6 +20309,170 @@ func (s *UpdateUserSharePermissionsRequest) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *UpdateUserSharePermissionsRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *UpgradeDiskRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *UpgradeDiskRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("mountpoint")
+		e.Str(s.Mountpoint)
+	}
+	{
+		e.FieldStart("device")
+		e.Str(s.Device)
+	}
+	{
+		if s.Filesystem.Set {
+			e.FieldStart("filesystem")
+			s.Filesystem.Encode(e)
+		}
+	}
+	{
+		if s.NewMountpoint.Set {
+			e.FieldStart("newMountpoint")
+			s.NewMountpoint.Encode(e)
+		}
+	}
+	{
+		e.FieldStart("confirmation")
+		e.Str(s.Confirmation)
+	}
+}
+
+var jsonFieldsNameOfUpgradeDiskRequest = [5]string{
+	0: "mountpoint",
+	1: "device",
+	2: "filesystem",
+	3: "newMountpoint",
+	4: "confirmation",
+}
+
+// Decode decodes UpgradeDiskRequest from json.
+func (s *UpgradeDiskRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UpgradeDiskRequest to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "mountpoint":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Mountpoint = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"mountpoint\"")
+			}
+		case "device":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.Device = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"device\"")
+			}
+		case "filesystem":
+			if err := func() error {
+				s.Filesystem.Reset()
+				if err := s.Filesystem.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"filesystem\"")
+			}
+		case "newMountpoint":
+			if err := func() error {
+				s.NewMountpoint.Reset()
+				if err := s.NewMountpoint.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"newMountpoint\"")
+			}
+		case "confirmation":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				v, err := d.Str()
+				s.Confirmation = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"confirmation\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode UpgradeDiskRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00010011,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfUpgradeDiskRequest) {
+					name = jsonFieldsNameOfUpgradeDiskRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *UpgradeDiskRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UpgradeDiskRequest) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

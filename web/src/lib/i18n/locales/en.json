@@ -227,6 +227,7 @@
     "startArray": "Start array",
     "addDisk": "Add disk",
     "replaceDisk": "Replace disk",
+    "upgradeDisk": "Upgrade disk",
     "identity": {
       "wwn": "WWN {{wwn}}",
       "serial": "Serial {{serial}}",
@@ -264,6 +265,22 @@
       "formatItem": "Formatted as {{filesystem}}",
       "adoptItem": "Existing filesystem kept as-is",
       "rebuildItem": "Runs {{rebuild}}"
+    },
+    "upgrade": {
+      "title": "Upgrade a disk",
+      "description": "Pick the data or parity disk to upgrade and its larger replacement. The old disk is copied and verified, and is never released until that check passes. A data disk is upgraded only while the array is stopped, and the array stays stopped until you start it again.",
+      "slotLabel": "Disk to upgrade",
+      "slotPlaceholder": "Select a slot",
+      "deviceLabel": "Replacement device",
+      "devicePlaceholder": "Select a disk",
+      "filesystemLabel": "Filesystem",
+      "preview": "Preview",
+      "submit": "Upgrade disk",
+      "confirmTitle": "Confirm upgrading {{mountpoint}}",
+      "confirmDescription": "{{device}} will take over once it is copied and verified.",
+      "formatItem": "Formatted as {{filesystem}}",
+      "newMountpointItem": "New parity disk mounts at {{mountpoint}} until the switch",
+      "stepItem": "{{step}}"
     },
     "stop": {
       "title": "Stop the array?",

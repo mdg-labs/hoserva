@@ -59,3 +59,15 @@ UPDATE jobs SET checkpoint = ? WHERE id = ?;
 -- name: InterruptActiveJobs :exec
 UPDATE jobs SET "status" = 'interrupted', finished_at = ?
 WHERE "status" IN ('queued', 'running');
+
+-- name: ListPendingJobsOfType :many
+SELECT
+    id, "type", class, "status", progress, resumable, cancellable,
+    resource_ids, checkpoint, error_code, error_message,
+    created_at, started_at, finished_at, params
+FROM jobs
+WHERE "type" = ? AND "status" IN ('queued', 'running', 'interrupted')
+ORDER BY created_at ASC;
+
+-- name: SetJobCancellable :exec
+UPDATE jobs SET cancellable = ? WHERE id = ?;

@@ -445,6 +445,78 @@ func TestScheduler_CancelJobNotRunningReturnsError(t *testing.T) {
 	}
 }
 
+// TestScheduler_CancelEndsAnInterruptedCancellableJobCancelled: Cancel
+// accepts an interrupted, cancellable job and ends it cancelled — for a
+// type with no AbortFunc, a plain status change.
+func TestScheduler_CancelEndsAnInterruptedCancellableJobCancelled(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	stopSeen := make(chan struct{})
+	s.registry.Register(TypeMover, true, func(ctx context.Context, rc *RunContext) error {
+		<-rc.StopRequested()
+		close(stopSeen)
+		return nil
+	})
+	j, err := s.Submit(ctx, TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	<-stopSeen
+	waitFor(t, time.Second, func() bool {
+		got, err := s.store.Get(ctx, j.ID)
+		return err == nil && got.Status == StatusInterrupted
+	})
+
+	cancelled, err := s.Cancel(ctx, j.ID)
+	if err != nil {
+		t.Fatalf("Cancel(interrupted job): %v", err)
+	}
+	if cancelled.Status != StatusCancelled {
+		t.Fatalf("Cancel(interrupted job) returned status %s, want cancelled", cancelled.Status)
+	}
+	got, err := s.store.Get(ctx, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusCancelled {
+		t.Fatalf("job status after cancelling an interrupted job = %s, want cancelled", got.Status)
+	}
+}
+
+// TestScheduler_CancelRefusesAnInterruptedNonCancellableJob: the
+// interrupted-job cancel path honours the job's cancellable value.
+func TestScheduler_CancelRefusesAnInterruptedNonCancellableJob(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	stopSeen := make(chan struct{})
+	s.registry.Register(TypeMover, false, func(ctx context.Context, rc *RunContext) error {
+		<-rc.StopRequested()
+		close(stopSeen)
+		return nil
+	})
+	j, err := s.Submit(ctx, TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	<-stopSeen
+	waitFor(t, time.Second, func() bool {
+		got, err := s.store.Get(ctx, j.ID)
+		return err == nil && got.Status == StatusInterrupted
+	})
+
+	if _, err := s.Cancel(ctx, j.ID); !errors.Is(err, ErrJobNotCancellable) {
+		t.Fatalf("Cancel(interrupted, non-cancellable job) = %v, want ErrJobNotCancellable", err)
+	}
+}
+
 func TestScheduler_ResumeFailsForUnregisteredType(t *testing.T) {
 	ctx := context.Background()
 	db := newTestDB(t)

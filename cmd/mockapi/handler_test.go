@@ -392,6 +392,85 @@ func TestArrayStopAndStartFlipsMaintenanceMode(t *testing.T) {
 	}
 }
 
+// TestUpgradeDisk_ParityRefusedInMaintenanceMode: production's
+// Scheduler.Submit refuses a parity-disk upgrade with maintenance_mode
+// while the array is stopped, and the mock mirrors that refusal rather
+// than queuing a job production would never accept.
+func TestUpgradeDisk_ParityRefusedInMaintenanceMode(t *testing.T) {
+	client := newTestClient(t, "healthy")
+	ctx := context.Background()
+
+	plan, err := client.PlanDiskUpgrade(ctx, &apiv1.DiskUpgradePlanRequest{
+		Mountpoint: "/mnt/parity",
+		Device:     "/dev/sdf",
+	})
+	if err != nil {
+		t.Fatalf("PlanDiskUpgrade(parity): %v", err)
+	}
+	newMountpoint, ok := plan.NewMountpoint.Get()
+	if !ok || newMountpoint == "" {
+		t.Fatal("PlanDiskUpgrade(parity): NewMountpoint is empty, want a fresh parity slot")
+	}
+
+	if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+		t.Fatalf("StopArray: %v", err)
+	}
+
+	_, err = client.UpgradeDisk(ctx, &apiv1.UpgradeDiskRequest{
+		Mountpoint:    "/mnt/parity",
+		Device:        "/dev/sdf",
+		Confirmation:  plan.Confirmation,
+		NewMountpoint: apiv1.NewOptString(newMountpoint),
+	})
+	if err == nil {
+		t.Fatal("UpgradeDisk(parity, maintenance mode): expected an error")
+	}
+	if code := errorCode(t, err); code != "maintenance_mode" {
+		t.Fatalf("UpgradeDisk(parity, maintenance mode): code = %q, want maintenance_mode", code)
+	}
+}
+
+// TestUpgradeDisk_DataMirrorsProductionAdmission mirrors production's
+// doc 02 §4 rules for a data-disk upgrade: refused with array_not_stopped
+// while the array runs (E8), admitted after `array stop`, then — while it
+// is pending — a second upgrade, `array start` and `array stop` are all
+// refused with disk_upgrade_pending (E8, E6, E7) until it is cancelled.
+func TestUpgradeDisk_DataMirrorsProductionAdmission(t *testing.T) {
+	client := newTestClient(t, "healthy")
+	ctx := context.Background()
+
+	plan, err := client.PlanDiskUpgrade(ctx, &apiv1.DiskUpgradePlanRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdf"})
+	if err != nil {
+		t.Fatalf("PlanDiskUpgrade(data): %v", err)
+	}
+	req := &apiv1.UpgradeDiskRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdf", Confirmation: plan.Confirmation}
+	if _, err := client.UpgradeDisk(ctx, req); errorCode(t, err) != "array_not_stopped" {
+		t.Fatalf("UpgradeDisk with the array running: %v, want array_not_stopped", err)
+	}
+	if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+		t.Fatalf("StopArray: %v", err)
+	}
+	queued, err := client.UpgradeDisk(ctx, req)
+	if err != nil {
+		t.Fatalf("UpgradeDisk after array stop: %v", err)
+	}
+	if _, err := client.UpgradeDisk(ctx, req); errorCode(t, err) != "disk_upgrade_pending" {
+		t.Fatalf("second UpgradeDisk: %v, want disk_upgrade_pending", err)
+	}
+	if _, err := client.StartArray(ctx); errorCode(t, err) != "disk_upgrade_pending" {
+		t.Fatalf("StartArray while pending: %v, want disk_upgrade_pending", err)
+	}
+	if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); errorCode(t, err) != "disk_upgrade_pending" {
+		t.Fatalf("StopArray while pending: %v, want disk_upgrade_pending", err)
+	}
+	if _, err := client.CancelJob(ctx, apiv1.CancelJobParams{JobId: queued.ID}); err != nil {
+		t.Fatalf("CancelJob: %v", err)
+	}
+	if _, err := client.StartArray(ctx); err != nil {
+		t.Fatalf("StartArray after the cancel: %v", err)
+	}
+}
+
 func TestCreateShareNFSEncodes(t *testing.T) {
 	client := newTestClient(t, "fresh-install")
 	ctx := context.Background()

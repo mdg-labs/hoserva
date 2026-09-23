@@ -210,3 +210,41 @@ func (q *Queries) ReplaceArrayDataDiskIdentity(ctx context.Context, arg ReplaceA
 	}
 	return result.RowsAffected()
 }
+
+const upgradeArrayParityDiskSlot = `-- name: UpgradeArrayParityDiskSlot :execrows
+UPDATE array_disks
+SET device = ?, filesystem = ?, fs_uuid = ?,
+    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?,
+    mountpoint = ?8
+WHERE mountpoint = ?9 AND role = 'parity'
+`
+
+type UpgradeArrayParityDiskSlotParams struct {
+	Device        string         `json:"device"`
+	Filesystem    string         `json:"filesystem"`
+	FsUuid        string         `json:"fs_uuid"`
+	Wwn           sql.NullString `json:"wwn"`
+	Serial        sql.NullString `json:"serial"`
+	ByIDName      sql.NullString `json:"by_id_name"`
+	WeakIdentity  int64          `json:"weak_identity"`
+	NewMountpoint string         `json:"new_mountpoint"`
+	OldMountpoint string         `json:"old_mountpoint"`
+}
+
+func (q *Queries) UpgradeArrayParityDiskSlot(ctx context.Context, arg UpgradeArrayParityDiskSlotParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, upgradeArrayParityDiskSlot,
+		arg.Device,
+		arg.Filesystem,
+		arg.FsUuid,
+		arg.Wwn,
+		arg.Serial,
+		arg.ByIDName,
+		arg.WeakIdentity,
+		arg.NewMountpoint,
+		arg.OldMountpoint,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

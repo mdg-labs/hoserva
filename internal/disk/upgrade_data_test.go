@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -299,6 +300,9 @@ type runDataDiskUpgradeFakes struct {
 	// never actually torn down), not a daemon restart. Tests for
 	// finding 2's own scenario override it.
 	stagingMounted func(path string) (bool, error)
+
+	confirmErr   map[string]error
+	confirmCalls []string
 }
 
 func newRunDataDiskUpgradeFakes(t *testing.T, newDevice, newUUID string) *runDataDiskUpgradeFakes {
@@ -336,6 +340,10 @@ func (f *runDataDiskUpgradeFakes) deps() DataDiskUpgradeDeps {
 			return nil
 		},
 		StagingMounted: f.stagingMounted,
+		ConfirmMounted: func(_ context.Context, where, uuid string) error {
+			f.confirmCalls = append(f.confirmCalls, where+"="+uuid)
+			return f.confirmErr[where]
+		},
 	}
 }
 
@@ -453,6 +461,13 @@ func TestRunDataDiskUpgrade_KilledMidCopy_OldDiskNeverUnmountedAndResumeComplete
 	if len(savedCheckpoint) == 0 {
 		t.Fatal("no checkpoint was saved before the interruption")
 	}
+	var saved DataDiskUpgradeCheckpoint
+	if err := json.Unmarshal(savedCheckpoint, &saved); err != nil {
+		t.Fatalf("decoding saved checkpoint: %v", err)
+	}
+	if saved.NewUUID != "1111-uuid" {
+		t.Fatalf("saved checkpoint NewUUID = %q, want 1111-uuid (UR4: B's UUID is fixed in the checkpoint from Copying on)", saved.NewUUID)
+	}
 
 	// Resume, uninterrupted this time.
 	fakes2 := newRunDataDiskUpgradeFakes(t, "/dev/fake-new", "1111-uuid")
@@ -500,7 +515,7 @@ func TestRunDataDiskUpgrade_VerifyMismatch_NeverRemounts(t *testing.T) {
 		NewFilesystem: XFS,
 		Staging:       staging,
 	}
-	cp := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseVerifying})
+	cp := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseVerifying, NewUUID: "1111-uuid"})
 	_, err := RunDataDiskUpgrade(context.Background(), spec, fakes.deps(), DataDiskUpgradeHooks{}, cp)
 	if !errors.Is(err, ErrDataDiskUpgradeMismatch) {
 		t.Fatalf("RunDataDiskUpgrade with a mismatched staging copy: err = %v, want ErrDataDiskUpgradeMismatch", err)
@@ -529,7 +544,7 @@ func TestRunDataDiskUpgrade_DiffNotClean_StopsWithoutReleasing(t *testing.T) {
 	fakes := newRunDataDiskUpgradeFakes(t, "/dev/fake-new", "1111-uuid")
 	fakes.diffRemoved = 2
 
-	cp := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseDiffing})
+	cp := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseDiffing, NewUUID: "1111-uuid"})
 	result, err := RunDataDiskUpgrade(context.Background(), spec, fakes.deps(), DataDiskUpgradeHooks{}, cp)
 	if err != nil {
 		t.Fatalf("RunDataDiskUpgrade with a dirty diff: %v", err)
@@ -592,7 +607,7 @@ func TestRunDataDiskUpgrade_ResumeStagingUnmounted_RemountsBeforeCopying(t *test
 		NewFilesystem: XFS,
 		Staging:       staging,
 	}
-	cp := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseCopying})
+	cp := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseCopying, NewUUID: "1111-uuid"})
 
 	result, err := RunDataDiskUpgrade(context.Background(), spec, fakes.deps(), DataDiskUpgradeHooks{}, cp)
 	if err != nil {
@@ -638,7 +653,7 @@ func TestRunDataDiskUpgrade_ResumeStagingCannotBeRemounted_RefusesWithoutWriting
 		NewFilesystem: XFS,
 		Staging:       staging,
 	}
-	cp := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseCopying})
+	cp := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseCopying, NewUUID: "1111-uuid"})
 
 	_, err := RunDataDiskUpgrade(context.Background(), spec, fakes.deps(), DataDiskUpgradeHooks{}, cp)
 	if err == nil {
@@ -672,4 +687,125 @@ func mustMarshalDataDiskUpgradeCheckpoint(t *testing.T, cp DataDiskUpgradeCheckp
 		t.Fatalf("marshal checkpoint: %v", err)
 	}
 	return data
+}
+
+// TestRunDataDiskUpgrade_ResumeTrustsCheckpointUUIDNeverRereadsDevice
+// covers doc 02 §4 UR4: a resume past Formatting takes B's filesystem
+// UUID from the checkpoint. The runner here has no blkid script, so any
+// re-read of the device fails the run.
+func TestRunDataDiskUpgrade_ResumeTrustsCheckpointUUIDNeverRereadsDevice(t *testing.T) {
+	oldWhere := t.TempDir()
+	staging := t.TempDir()
+	buildUpgradeTestTree(t, oldWhere)
+	fakes := newRunDataDiskUpgradeFakes(t, "/dev/fake-new", "1111-uuid")
+	fakes.runner = NewFakeRunner()
+	spec := DataDiskUpgradeSpec{
+		Old:           MountUnit{Where: oldWhere, UUID: "old-uuid", Filesystem: XFS},
+		New:           DiskAddition{Device: "/dev/fake-new", Filesystem: XFS},
+		NewFilesystem: XFS,
+		Staging:       staging,
+	}
+	cp := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseCopying, NewUUID: "cp-uuid"})
+	result, err := RunDataDiskUpgrade(context.Background(), spec, fakes.deps(), DataDiskUpgradeHooks{}, cp)
+	if err != nil {
+		t.Fatalf("RunDataDiskUpgrade: %v", err)
+	}
+	if !result.Released || result.NewMount.UUID != "cp-uuid" {
+		t.Fatalf("result = %+v, want released with NewMount.UUID=cp-uuid", result)
+	}
+
+	noUUID := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseCopying})
+	if _, err := RunDataDiskUpgrade(context.Background(), spec, fakes.deps(), DataDiskUpgradeHooks{}, noUUID); err == nil {
+		t.Fatal("resume from a checkpoint without NewUUID: got nil error, want a refusal")
+	}
+}
+
+// TestRunDataDiskUpgrade_ConfirmsUUIDAtStagingRemountAndDiff covers the
+// UUID confirmations doc 02 §4 E1 names: G after Formatting, S after
+// Remounting, and S again before Diffing.
+func TestRunDataDiskUpgrade_ConfirmsUUIDAtStagingRemountAndDiff(t *testing.T) {
+	oldWhere := t.TempDir()
+	staging := t.TempDir()
+	buildUpgradeTestTree(t, oldWhere)
+	fakes := newRunDataDiskUpgradeFakes(t, "/dev/fake-new", "1111-uuid")
+	spec := DataDiskUpgradeSpec{
+		Old:           MountUnit{Where: oldWhere, UUID: "old-uuid", Filesystem: XFS},
+		New:           DiskAddition{Device: "/dev/fake-new", Filesystem: XFS},
+		NewFilesystem: XFS,
+		Staging:       staging,
+	}
+	if _, err := RunDataDiskUpgrade(context.Background(), spec, fakes.deps(), DataDiskUpgradeHooks{}, nil); err != nil {
+		t.Fatalf("RunDataDiskUpgrade: %v", err)
+	}
+	want := []string{staging + "=1111-uuid", oldWhere + "=1111-uuid", oldWhere + "=1111-uuid"}
+	if strings.Join(fakes.confirmCalls, ",") != strings.Join(want, ",") {
+		t.Fatalf("ConfirmMounted calls = %v, want %v", fakes.confirmCalls, want)
+	}
+}
+
+// TestRunDataDiskUpgrade_UnconfirmedRemountNeverDiffsOrReleases: when S
+// does not hold B's UUID after Remounting, the run stops before saving
+// diffing, and neither Diff nor Release runs.
+func TestRunDataDiskUpgrade_UnconfirmedRemountNeverDiffsOrReleases(t *testing.T) {
+	oldWhere := t.TempDir()
+	staging := t.TempDir()
+	fakes := newRunDataDiskUpgradeFakes(t, "/dev/fake-new", "1111-uuid")
+	fakes.confirmErr = map[string]error{oldWhere: errors.New("S holds old-uuid")}
+	spec := DataDiskUpgradeSpec{
+		Old:           MountUnit{Where: oldWhere, UUID: "old-uuid", Filesystem: XFS},
+		New:           DiskAddition{Device: "/dev/fake-new", Filesystem: XFS},
+		NewFilesystem: XFS,
+		Staging:       staging,
+	}
+	var saved []DataDiskUpgradePhase
+	hooks := DataDiskUpgradeHooks{SaveCheckpoint: func(data []byte) error {
+		var cp DataDiskUpgradeCheckpoint
+		if err := json.Unmarshal(data, &cp); err != nil {
+			return err
+		}
+		saved = append(saved, cp.Phase)
+		return nil
+	}}
+	for _, phase := range []DataDiskUpgradePhase{DataDiskUpgradePhaseRemounting, DataDiskUpgradePhaseDiffing} {
+		saved = nil
+		cp := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: phase, NewUUID: "1111-uuid"})
+		if _, err := RunDataDiskUpgrade(context.Background(), spec, fakes.deps(), hooks, cp); err == nil {
+			t.Fatalf("resume at %s with S unconfirmed: got nil error", phase)
+		}
+		if len(saved) != 0 {
+			t.Fatalf("resume at %s with S unconfirmed saved %v, want nothing", phase, saved)
+		}
+	}
+	if fakes.diffCalls != 0 || fakes.releaseCalls != 0 {
+		t.Fatalf("diff calls = %d, release calls = %d, want 0 and 0", fakes.diffCalls, fakes.releaseCalls)
+	}
+}
+
+// TestRunDataDiskUpgrade_CopyErrorSavesLastCompletedPath covers doc 02 §4
+// E2 Copying: a copy error leaves the checkpoint at copying with the last
+// completed path and B's UUID.
+func TestRunDataDiskUpgrade_CopyErrorSavesLastCompletedPath(t *testing.T) {
+	oldWhere := t.TempDir()
+	staging := t.TempDir()
+	buildUpgradeTestTree(t, oldWhere)
+	mustMkdirAll(t, filepath.Join(staging, "movies"))
+	// A directory where the copy wants to write a regular file makes that
+	// one entry fail while every earlier entry copies.
+	mustMkdirAll(t, filepath.Join(staging, "movies", "a.bin"))
+	fakes := newRunDataDiskUpgradeFakes(t, "/dev/fake-new", "1111-uuid")
+	spec := DataDiskUpgradeSpec{
+		Old:           MountUnit{Where: oldWhere, UUID: "old-uuid", Filesystem: XFS},
+		New:           DiskAddition{Device: "/dev/fake-new", Filesystem: XFS},
+		NewFilesystem: XFS,
+		Staging:       staging,
+	}
+	var last DataDiskUpgradeCheckpoint
+	hooks := DataDiskUpgradeHooks{SaveCheckpoint: func(data []byte) error { return json.Unmarshal(data, &last) }}
+	cp := mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: DataDiskUpgradePhaseCopying, NewUUID: "1111-uuid"})
+	if _, err := RunDataDiskUpgrade(context.Background(), spec, fakes.deps(), hooks, cp); err == nil {
+		t.Fatal("RunDataDiskUpgrade with a failing copy: got nil error")
+	}
+	if last.Phase != DataDiskUpgradePhaseCopying || last.LastPath != "movies" || last.NewUUID != "1111-uuid" {
+		t.Fatalf("checkpoint after the copy error = %+v, want copying at movies with NewUUID 1111-uuid", last)
+	}
 }

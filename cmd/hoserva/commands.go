@@ -68,6 +68,7 @@ func diskCmd() *cobra.Command {
 	cmd.AddCommand(diskExternalCmd())
 	cmd.AddCommand(diskAddCmd())
 	cmd.AddCommand(diskReplaceCmd())
+	cmd.AddCommand(diskUpgradeCmd())
 	return cmd
 }
 
@@ -175,6 +176,55 @@ func diskReplaceCmd() *cobra.Command {
 	plan.Flags().StringVar(&device, "device", "", "Replacement device, e.g. /dev/sdX (required)")
 	plan.Flags().StringVar(&filesystem, "filesystem", "", "xfs, ext4 or btrfs (default xfs)")
 	plan.Flags().BoolVar(&adopt, "adopt", false, "Keep the existing filesystem instead of formatting (Q23)")
+	_ = plan.MarkFlagRequired("mountpoint")
+	_ = plan.MarkFlagRequired("device")
+	cmd.AddCommand(plan)
+
+	return cmd
+}
+
+// diskUpgradeCmd is `hoserva disk upgrade` (doc 02 §4 "Larger data
+// disk"/"Larger parity disk", #289): one command for either a data or a
+// parity slot — the API resolves which upgrade flow applies from
+// --mountpoint's own role. --new-mountpoint is required only for a parity
+// slot, and must be the exact value `disk upgrade plan` returned.
+func diskUpgradeCmd() *cobra.Command {
+	var mountpoint, device, filesystem, newMountpoint, confirm string
+	cmd := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Upgrade a data or parity disk to a larger one (doc 02 §4)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if confirm == "" {
+				return fmt.Errorf("disk upgrade requires --confirm with the exact phrase `disk upgrade plan` returned")
+			}
+			req := &apiv1.UpgradeDiskRequest{Mountpoint: mountpoint, Device: device, Confirmation: confirm}
+			diskFilesystemFlag(cmd, filesystem, req.SetFilesystem)
+			if cmd.Flags().Changed("new-mountpoint") {
+				req.SetNewMountpoint(apiv1.NewOptString(newMountpoint))
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.UpgradeDisk(apiCtx(), req) })(cmd, args)
+		},
+	}
+	cmd.Flags().StringVar(&mountpoint, "mountpoint", "", "The existing data or parity slot being upgraded, e.g. /mnt/disk2 or /mnt/parity1 (required)")
+	cmd.Flags().StringVar(&device, "device", "", "The new, larger replacement device, e.g. /dev/sdX (required)")
+	cmd.Flags().StringVar(&filesystem, "filesystem", "", "xfs, ext4 or btrfs (default xfs; a parity disk is always XFS)")
+	cmd.Flags().StringVar(&newMountpoint, "new-mountpoint", "", "Parity upgrades only: the exact newMountpoint `disk upgrade plan` returned")
+	cmd.Flags().StringVar(&confirm, "confirm", "", "Exact confirmation phrase from `disk upgrade plan` (required)")
+	_ = cmd.MarkFlagRequired("mountpoint")
+	_ = cmd.MarkFlagRequired("device")
+
+	plan := &cobra.Command{
+		Use:   "plan",
+		Short: "Preview upgrading a disk: the steps it will run and the exact confirmation phrase to type",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := &apiv1.DiskUpgradePlanRequest{Mountpoint: mountpoint, Device: device}
+			diskFilesystemFlag(cmd, filesystem, req.SetFilesystem)
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.PlanDiskUpgrade(apiCtx(), req) })(cmd, args)
+		},
+	}
+	plan.Flags().StringVar(&mountpoint, "mountpoint", "", "The existing data or parity slot being upgraded, e.g. /mnt/disk2 or /mnt/parity1 (required)")
+	plan.Flags().StringVar(&device, "device", "", "The new, larger replacement device, e.g. /dev/sdX (required)")
+	plan.Flags().StringVar(&filesystem, "filesystem", "", "xfs, ext4 or btrfs (default xfs; a parity disk is always XFS)")
 	_ = plan.MarkFlagRequired("mountpoint")
 	_ = plan.MarkFlagRequired("device")
 	cmd.AddCommand(plan)

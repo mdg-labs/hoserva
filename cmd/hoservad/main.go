@@ -407,6 +407,41 @@ func run(cfg config) error {
 		Parity:     replaceParityEngine,
 		ArrayReady: rebuildArraySequence,
 	}))
+	// The data-disk upgrade (doc 02 §4 state machine): its run, its abort
+	// (Cancel of a queued or interrupted upgrade) and startup recovery
+	// share one set of dependencies, so all three unwind the same way.
+	// Registered cancellable: a cancel before the release decision is the
+	// abort, and the scheduler refuses it from releasing on.
+	upgradeDataDeps := job.DiskUpgradeDataDeps{
+		Provider:   disks,
+		Runner:     linuxDisks.Exec,
+		Store:      arrayStore,
+		Generator:  generator,
+		Parity:     replaceParityEngine,
+		Mounts:     disk.KernelMounts{Runner: linuxDisks.Exec},
+		Array:      handler.CurrentArray,
+		ArrayReady: rebuildArraySequence,
+	}
+	registry.Register(job.TypeDiskUpgradeData, true, job.RunDiskUpgradeData(upgradeDataDeps))
+	registry.RegisterAbort(job.TypeDiskUpgradeData, job.AbortDiskUpgradeData(upgradeDataDeps))
+	registry.Register(job.TypeDiskUpgradeParity, true, job.RunDiskUpgradeParity(job.DiskUpgradeParityDeps{
+		Provider:       disks,
+		Runner:         linuxDisks.Exec,
+		Store:          arrayStore,
+		Generator:      generator,
+		Mounter:        disk.SystemdMounter{Runner: linuxDisks.Exec},
+		UpgradeMounter: disk.DirectMounter{Runner: linuxDisks.Exec},
+		Parity:         replaceParityEngine,
+		ArrayReady:     rebuildArraySequence,
+	}))
+
+	// Startup recovery (doc 02 §4 E4, UR1, UR8) runs before any listener
+	// or loop below can submit or resume a job. A failure is recorded on
+	// the job, and the daemon still starts so resume and cancel stay
+	// reachable.
+	if err := job.RecoverDiskUpgradeData(ctx, scheduler, upgradeDataDeps); err != nil {
+		log.Printf("hoservad: data-disk upgrade startup recovery: %v", err)
+	}
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
 	if err != nil {

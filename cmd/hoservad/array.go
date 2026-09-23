@@ -34,6 +34,11 @@ import (
 // and every caller (array stop, the UPS low-battery shutdown, the
 // update reboot) gets the same ordering because they all run this one
 // sequence.
+//
+// The readiness gate also reports not ready while a data-disk upgrade is
+// pending (doc 02 §4 UR2), and Start confirms every mounted array disk
+// against the filesystem UUID SQLite names before anything above the
+// disks starts (UR9).
 func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *store.ArrayStore, shares *store.ShareStore, disks disk.Provider, runner disk.Runner) (*job.ArraySequence, error) {
 	settings, assigned, err := arrays.GetArray(ctx)
 	if err != nil {
@@ -98,9 +103,14 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		gate.Evaluate(present)
 	}
 
+	var checked []disk.MountUnit
+	for _, d := range assigned {
+		checked = append(checked, disk.MountUnit{Where: d.Mountpoint, UUID: d.FSUUID})
+	}
 	seq := &job.ArraySequence{
 		Scheduler: scheduler,
-		Gate:      gate,
+		Gate:      job.PendingUpgradeGate{Gate: gate, Scheduler: scheduler},
+		DiskCheck: job.ArrayDiskUUIDCheck{Mounts: disk.KernelMounts{Runner: runner}, Disks: checked},
 		Services: []job.ArrayService{
 			disk.ServiceUnitController{ServiceName: "Samba", Unit: cfggen.SambaServiceUnit, Runner: runner},
 			disk.ServiceUnitController{ServiceName: "NFS", Unit: cfggen.NFSServiceUnit, Runner: runner},

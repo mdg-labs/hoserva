@@ -217,7 +217,7 @@ This is not architecture astronautics — it is what makes development possible 
 Every long-running operation (sync, scrub, rebuild, mover, disk format, container pull) is a job:
 
 - Persisted in SQLite, survives a daemon restart (marked `interrupted` on restart, **never automatically resumed**)
-- **Resumable job types** (mover, rebalance, evacuation, share relocation) persist a checkpoint and continue from it — not from zero — when the user resumes them, or for the mover at its next scheduled run. Sync, scrub and fix are re-run, not resumed (Q29).
+- **Resumable job types** (mover, rebalance, evacuation, share relocation, and the data- and parity-disk upgrades) persist a checkpoint and continue from it — not from zero — when the user resumes them, or for the mover at its next scheduled run. Sync, scrub and fix are re-run, not resumed (Q29). A data-disk upgrade resumes only as its state machine allows (doc 02 §4).
 - Progress streamed over SSE to the UI
 - Cancellable where the underlying tool supports it, and honestly marked non-cancellable where it doesn't
 - Full stdout/stderr captured to compressed files and downloadable, kept 90 days (Q74)

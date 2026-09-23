@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
@@ -11,9 +12,18 @@ import (
 // something to actually run.
 var ErrJobTypeNotRegistered = fmt.Errorf("job: this job type has no registered implementation yet")
 
+// AbortFunc is a job type's cleanup for Scheduler.Cancel of a queued or
+// interrupted job: most types need none — a plain status flip to Cancelled
+// is enough. TypeDiskUpgradeData registers its Unwind (doc 02 §4 E3), so
+// Cancel records cancelled only once nothing the upgrade touched is still
+// mounted. params is the job's persisted Params, the same payload the
+// RunFunc decodes.
+type AbortFunc func(ctx context.Context, params []byte) error
+
 type registryEntry struct {
 	run         RunFunc
 	cancellable bool
+	abort       AbortFunc
 }
 
 // Registry binds each job Type to the RunFunc that actually performs it,
@@ -54,9 +64,41 @@ func (r *Registry) Register(t Type, cancellable bool, run RunFunc) {
 	r.entries[t] = registryEntry{run: run, cancellable: cancellable}
 }
 
+// RegisterAbort binds t's AbortFunc, called by Scheduler.Cancel before it
+// reports a queued or interrupted job of this type cancelled. t must
+// already be registered with Register; registering an abort
+// func for an unregistered type, a nil func, or the same type's abort
+// twice is a startup wiring bug and panics, the same as Register itself.
+func (r *Registry) RegisterAbort(t Type, abort AbortFunc) {
+	if abort == nil {
+		panic(fmt.Sprintf("job: Registry.RegisterAbort(%s): abort is nil", t))
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.entries[t]
+	if !ok {
+		panic(fmt.Sprintf("job: Registry.RegisterAbort(%s): type is not registered", t))
+	}
+	if e.abort != nil {
+		panic(fmt.Sprintf("job: type %q already has an abort func registered", t))
+	}
+	e.abort = abort
+	r.entries[t] = e
+}
+
 func (r *Registry) lookup(t Type) (registryEntry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	e, ok := r.entries[t]
 	return e, ok
+}
+
+func (r *Registry) lookupAbort(t Type) (AbortFunc, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e, ok := r.entries[t]
+	if !ok || e.abort == nil {
+		return nil, false
+	}
+	return e.abort, true
 }

@@ -35,7 +35,7 @@ A container that starts before `/mnt/user` is mounted writes its data onto the b
 
 - Every data, parity and cache mount is `nofail`, so a dead disk never hangs boot — `nofail` alone does this: it drops the mount from `local-fs.target`'s required ordering, so boot proceeds without ever waiting on the device. `x-systemd.device-timeout=` is not part of this: that option only applies to an `/etc/fstab` entry and is silently ignored in a native `.mount` unit's own `Options=`, so Hoserva's generated units never emit it.
 - Every mountpoint directory is made immutable while empty, so a write to an unmounted path fails instead of landing on the boot device
-- Samba, NFS, Docker and libvirt start after `hoserva-storage.target`, through managed systemd drop-ins; `hoservad` reaches that target only when every expected disk is present by identity (Q21), or once the user acknowledges the degraded state
+- Samba, NFS, Docker and libvirt start after `hoserva-storage.target`, through managed systemd drop-ins; `hoservad` reaches that target only when every expected disk is present by identity (Q21), or once the user acknowledges the degraded state — and never while a larger-data-disk upgrade is pending (§4, UR2)
 - With a disk missing, the pool still mounts from the remaining disks, and the guard's zero-files rule holds (§2)
 
 ### Configuration

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -233,5 +234,184 @@ func TestRegistry_TypeDiskReplaceRunsRunDiskReplace(t *testing.T) {
 	}
 	if switched.Device != "/dev/sdz" {
 		t.Fatalf("disk1 device = %q, want /dev/sdz", switched.Device)
+	}
+}
+
+// TestRegistry_TypeDiskUpgradeDataRunsRunDiskUpgradeData proves main.go's
+// registration shape for job.TypeDiskUpgradeData — one
+// job.DiskUpgradeDataDeps shared by the RunFunc and the AbortFunc, with
+// the array sequence from the handler — reaches disk.RunDataDiskUpgrade
+// and store.ReplaceDataDisk through a real Scheduler.Submit after a real
+// array stop (doc 02 §4 E1, UR3). The mount table is job.FakeMountTable
+// in place of disk.KernelMounts.
+func TestRegistry_TypeDiskUpgradeDataRunsRunDiskUpgradeData(t *testing.T) {
+	ctx := context.Background()
+	registry := job.NewRegistry()
+	s, db := newRegistryTestSchedulerAndDB(t, registry)
+	arrayStore := store.NewArrayStore(db)
+
+	oldWhere := t.TempDir()
+	if err := os.WriteFile(filepath.Join(oldWhere, "file.bin"), []byte("old disk content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs", MinFreeSpace: "20G", CreatedAt: time.Now(),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", Mountpoint: "/mnt/parity1"},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", Mountpoint: oldWhere},
+		{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-d2", Mountpoint: "/mnt/disk2"},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 16 * disk.TB})
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdz", disk.Disk{Size: 10 * disk.TB})
+	r := disk.NewFakeRunner()
+	r.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdz"}, []byte("uuid-new\n"), nil)
+
+	eng := parity.NewFakeEngine()
+	eng.SetDiff(parity.DiffReport{})
+	mounts := job.NewFakeMountTable()
+	seq := &job.ArraySequence{Scheduler: s}
+	staging := t.TempDir()
+	deps := job.DiskUpgradeDataDeps{
+		Provider:    p,
+		Runner:      r,
+		Store:       arrayStore,
+		Generator:   cfggen.NewGenerator(t.TempDir()),
+		Parity:      eng,
+		Mounts:      mounts,
+		Array:       func() *job.ArraySequence { return seq },
+		StagingPath: func(string) string { return staging },
+	}
+	registry.Register(job.TypeDiskUpgradeData, true, job.RunDiskUpgradeData(deps))
+	registry.RegisterAbort(job.TypeDiskUpgradeData, job.AbortDiskUpgradeData(deps))
+
+	if err := seq.Stop(ctx); err != nil {
+		t.Fatalf("ArraySequence.Stop: %v", err)
+	}
+
+	replacement := disk.AssignedDisk{Device: "/dev/sdz", Filesystem: disk.XFS}
+	params, err := json.Marshal(job.DiskUpgradeDataParams{
+		Confirmation: job.SingleDiskConfirmation(replacement),
+		Mountpoint:   oldWhere,
+		Old:          disk.AssignedDisk{Device: "/dev/sdb", Filesystem: disk.XFS, FSUUID: "uuid-d1"},
+		Disk:         replacement,
+		Sizes:        map[string]int64{"/dev/sda": 16 * disk.TB, "/dev/sdb": 4 * disk.TB, "/dev/sdc": 4 * disk.TB, "/dev/sdz": 10 * disk.TB},
+	})
+	if err != nil {
+		t.Fatalf("marshaling DiskUpgradeDataParams: %v", err)
+	}
+	j, err := s.Submit(ctx, job.TypeDiskUpgradeData, nil, params)
+	if err != nil {
+		t.Fatalf("Submit(TypeDiskUpgradeData): %v — TypeDiskUpgradeData must be registered", err)
+	}
+	finished, err := s.Await(ctx, j.ID)
+	if err != nil {
+		t.Fatalf("Await: %v", err)
+	}
+	if finished.Status != job.StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded — job.RunDiskUpgradeData must have reached disk.RunDataDiskUpgrade and store.ReplaceDataDisk", finished.Status, finished.ErrorMessage)
+	}
+	switched, err := arrayStore.GetDataDiskByMountpoint(ctx, oldWhere)
+	if err != nil {
+		t.Fatalf("GetDataDiskByMountpoint(%s): %v", oldWhere, err)
+	}
+	if switched.Device != "/dev/sdz" || switched.FSUUID != "uuid-new" {
+		t.Fatalf("upgraded slot = %s/%s, want /dev/sdz/uuid-new", switched.Device, switched.FSUUID)
+	}
+	if m := mounts.MountedPaths(); len(m) != 0 {
+		t.Fatalf("still mounted after the upgrade: %v", m)
+	}
+}
+
+// TestRegistry_TypeDiskUpgradeParityRunsRunDiskUpgradeParity is
+// TestRegistry_TypeDiskUpgradeDataRunsRunDiskUpgradeData for
+// job.TypeDiskUpgradeParity: it proves main.go's own registration shape
+// reaches parity.RunParityUpgrade and store.UpgradeParityDisk through a
+// real Scheduler.Submit (#289). Unlike the data flow, a parity upgrade
+// runs on a live array (Q71), so this never enters maintenance mode.
+func TestRegistry_TypeDiskUpgradeParityRunsRunDiskUpgradeParity(t *testing.T) {
+	ctx := context.Background()
+	registry := job.NewRegistry()
+	s, db := newRegistryTestSchedulerAndDB(t, registry)
+	arrayStore := store.NewArrayStore(db)
+
+	oldParity := t.TempDir()
+	newParity := t.TempDir()
+	if err := os.WriteFile(filepath.Join(oldParity, "snapraid.parity"), []byte("parity-bytes"), 0o644); err != nil {
+		t.Fatalf("seed old parity file: %v", err)
+	}
+
+	// A cache disk is what satisfies Q18's parity-count+2 (=3) content-file
+	// copy requirement with only one parity and one data disk — the same
+	// reason TestRegistry_TypeDiskReplaceRunsRunDiskReplace seeds one.
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs", MinFreeSpace: "20G", CreatedAt: time.Now(),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", Mountpoint: oldParity},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", Mountpoint: "/mnt/disk1"},
+		{Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdcache", Filesystem: "xfs", FSUUID: "uuid-c", Mountpoint: "/mnt/cache"},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	p.AddDisk("/dev/sdz", disk.Disk{Size: 16 * disk.TB})
+	r := disk.NewFakeRunner()
+	r.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdz"}, []byte("uuid-new\n"), nil)
+	r.Script("findmnt", []string{"-n", "-o", "UUID", newParity}, []byte("uuid-new\n"), nil)
+
+	eng := parity.NewFakeEngine()
+	eng.ScriptCheck([]parity.Progress{{Percent: 100}}, nil)
+
+	registry.Register(job.TypeDiskUpgradeParity, true, job.RunDiskUpgradeParity(job.DiskUpgradeParityDeps{
+		Provider:       p,
+		Runner:         r,
+		Store:          arrayStore,
+		Generator:      cfggen.NewGenerator(t.TempDir()),
+		Mounter:        disk.NewFakeMounter(),
+		UpgradeMounter: disk.NewFakeMounter(),
+		Parity:         eng,
+	}))
+
+	replacement := disk.AssignedDisk{Device: "/dev/sdz", Filesystem: disk.XFS}
+	params, err := json.Marshal(job.DiskUpgradeParityParams{
+		Confirmation:  job.SingleDiskConfirmation(replacement),
+		Mountpoint:    oldParity,
+		NewMountpoint: newParity,
+		Disk:          replacement,
+		Sizes:         map[string]int64{"/dev/sda": 8 * disk.TB, "/dev/sdb": 2 * disk.TB, "/dev/sdz": 16 * disk.TB},
+	})
+	if err != nil {
+		t.Fatalf("marshaling DiskUpgradeParityParams: %v", err)
+	}
+	j, err := s.Submit(ctx, job.TypeDiskUpgradeParity, nil, params)
+	if err != nil {
+		t.Fatalf("Submit(TypeDiskUpgradeParity): %v — TypeDiskUpgradeParity must be registered like TypeDiskReplace", err)
+	}
+	finished, err := s.Await(ctx, j.ID)
+	if err != nil {
+		t.Fatalf("Await: %v", err)
+	}
+	if finished.Status != job.StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded — job.RunDiskUpgradeParity must have reached parity.RunParityUpgrade and store.UpgradeParityDisk", finished.Status, finished.ErrorMessage)
+	}
+	_, disks, err := arrayStore.GetArray(ctx)
+	if err != nil {
+		t.Fatalf("GetArray: %v", err)
+	}
+	var found bool
+	for _, d := range disks {
+		if d.Role == store.ArrayRoleParity && d.Device == "/dev/sdz" && d.Mountpoint == newParity {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no parity disk with device=/dev/sdz mountpoint=%s after upgrade: %+v", newParity, disks)
 	}
 }

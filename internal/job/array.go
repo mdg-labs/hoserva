@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 // ArrayService is one system-touching service the doc 02 §4 stop/start
@@ -48,6 +51,71 @@ type ReadinessGate interface {
 // mount whatever disks happen to be present.
 var ErrStorageNotReady = errors.New("job: storage is degraded and unacknowledged — refusing to start the array")
 
+// ErrDiskUpgradeDataPending refuses `array start`, `array stop` and a
+// second data-disk upgrade while one is pending (doc 02 §4 E6, E7, E8).
+// Callers wrap it with the pending job's id.
+var ErrDiskUpgradeDataPending = errors.New("job: a data-disk upgrade is pending")
+
+// ErrArrayDiskMismatch is Start's refusal when a mounted array disk does
+// not hold the filesystem SQLite names for it (doc 02 §4 UR9).
+var ErrArrayDiskMismatch = errors.New("job: an array disk mountpoint does not hold the disk SQLite names")
+
+// ArrayDiskCheck is UR9's check: every array-disk mountpoint that is
+// mounted holds the filesystem UUID SQLite names for it.
+type ArrayDiskCheck interface {
+	ConfirmArrayDisks(ctx context.Context) error
+}
+
+// ArrayDiskUUIDCheck confirms each of Disks, when mounted, by filesystem
+// UUID from the mount table (doc 02 §4 UR9). Disks come from SQLite.
+type ArrayDiskUUIDCheck struct {
+	Mounts MountTable
+	Disks  []disk.MountUnit
+}
+
+// ConfirmArrayDisks returns an ErrArrayDiskMismatch error naming every
+// mismatched mountpoint, or the error that kept one from being checked.
+func (c ArrayDiskUUIDCheck) ConfirmArrayDisks(ctx context.Context) error {
+	var bad []string
+	for _, u := range c.Disks {
+		mounted, err := c.Mounts.IsMounted(ctx, u.Where)
+		if err != nil {
+			return fmt.Errorf("job: checking whether %s is mounted: %w", u.Where, err)
+		}
+		if !mounted {
+			continue
+		}
+		got, err := c.Mounts.MountedUUID(ctx, u.Where)
+		if err != nil {
+			return fmt.Errorf("job: reading the filesystem mounted at %s: %w", u.Where, err)
+		}
+		if got != u.UUID {
+			bad = append(bad, fmt.Sprintf("%s holds %s, SQLite names %s", u.Where, got, u.UUID))
+		}
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("%w: %s", ErrArrayDiskMismatch, strings.Join(bad, "; "))
+	}
+	return nil
+}
+
+// PendingUpgradeGate is the storage readiness gate (doc 02 §1, Q69) with
+// doc 02 §4 UR2 applied: not ready while a data-disk upgrade is pending,
+// or while that cannot be checked.
+type PendingUpgradeGate struct {
+	Gate      ReadinessGate
+	Scheduler *Scheduler
+}
+
+// Ready reports Gate.Ready, unless a data-disk upgrade is pending.
+func (g PendingUpgradeGate) Ready() bool {
+	pending, err := g.Scheduler.PendingDiskUpgradeData(context.Background())
+	if err != nil || pending != nil {
+		return false
+	}
+	return g.Gate.Ready()
+}
+
 // ArraySequence is doc 02 §4's "Stopping the array" ordering, and Q70's
 // own restatement of it: maintenance mode first (new jobs refused,
 // resumable jobs stopped at their next checkpoint, the rest marked
@@ -77,6 +145,9 @@ type ArraySequence struct {
 	CatchAll ArrayMount
 	// Disks are the physical data, parity and cache mounts.
 	Disks []ArrayMount
+	// DiskCheck, when set, runs once Start has mounted Disks and before
+	// anything above them starts (doc 02 §4 UR9).
+	DiskCheck ArrayDiskCheck
 }
 
 // Stop runs doc 02 §4's sequence. It stops on the first error and does
@@ -126,14 +197,26 @@ func (s ArraySequence) Stop(ctx context.Context) error {
 			return fmt.Errorf("job: unmounting %s: %w", d.Where(), err)
 		}
 	}
+	if s.Scheduler != nil {
+		s.Scheduler.MarkArrayStopped()
+	}
 	return nil
 }
 
 // Start reverses Stop: the disks mount first, then the catch-all, then
 // the per-share mounts, then every service starts, in the reverse of its
 // own Stop order (the last thing stopped is the first thing started).
-// Maintenance mode is exited only once every step succeeds.
+// Maintenance mode is exited only once every step succeeds. It is refused
+// while a data-disk upgrade is pending (doc 02 §4 E6), and once the disks
+// are mounted DiskCheck confirms them before anything above them starts
+// (UR9): on a mismatch the disks are unmounted again and maintenance mode
+// stays on.
 func (s ArraySequence) Start(ctx context.Context) error {
+	if s.Scheduler != nil {
+		if err := s.Scheduler.BeginArrayStart(ctx); err != nil {
+			return err
+		}
+	}
 	if s.Gate != nil && !s.Gate.Ready() {
 		return ErrStorageNotReady
 	}
@@ -141,6 +224,17 @@ func (s ArraySequence) Start(ctx context.Context) error {
 	for _, d := range s.Disks {
 		if err := d.Mount(ctx); err != nil {
 			return fmt.Errorf("job: mounting %s: %w", d.Where(), err)
+		}
+	}
+	if s.DiskCheck != nil {
+		if err := s.DiskCheck.ConfirmArrayDisks(ctx); err != nil {
+			var errs []error
+			for _, d := range s.Disks {
+				if uerr := d.Unmount(ctx); uerr != nil {
+					errs = append(errs, fmt.Errorf("unmounting %s again: %w", d.Where(), uerr))
+				}
+			}
+			return errors.Join(append([]error{err}, errs...)...)
 		}
 	}
 	if s.CatchAll != nil {

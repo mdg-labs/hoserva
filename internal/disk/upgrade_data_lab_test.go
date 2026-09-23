@@ -267,6 +267,9 @@ func TestLabDataDiskUpgrade_CopiesVerifiesRemountsWithCleanRealDiff(t *testing.T
 		Provider: provider,
 		Runner:   r,
 		Mounter:  mounter,
+		ConfirmMounted: func(ctx context.Context, where, uuid string) error {
+			return ConfirmMountedUUID(ctx, r, where, uuid)
+		},
 		Diff: func(ctx context.Context) (int, int, error) {
 			d, err := engine.Diff(ctx)
 			if err != nil {
@@ -384,8 +387,11 @@ func TestLabDataDiskUpgrade_KilledMidCopy_OldDiskStaysMountedAndValidThenResumeC
 		Provider: provider,
 		Runner:   r,
 		Mounter:  mounter,
-		Diff:     func(context.Context) (int, int, error) { return 0, 0, nil },
-		Release:  func(context.Context) error { released = true; return nil },
+		ConfirmMounted: func(ctx context.Context, where, uuid string) error {
+			return ConfirmMountedUUID(ctx, r, where, uuid)
+		},
+		Diff:    func(context.Context) (int, int, error) { return 0, 0, nil },
+		Release: func(context.Context) error { released = true; return nil },
 	}
 
 	stop := make(chan struct{})
@@ -498,8 +504,11 @@ func TestLabDataDiskUpgrade_ResumeAfterRestartStagingUnmounted_RemountsAndResume
 		Provider: provider,
 		Runner:   r,
 		Mounter:  mounter,
-		Diff:     func(context.Context) (int, int, error) { return 0, 0, nil },
-		Release:  func(context.Context) error { return nil },
+		ConfirmMounted: func(ctx context.Context, where, uuid string) error {
+			return ConfirmMountedUUID(ctx, r, where, uuid)
+		},
+		Diff:    func(context.Context) (int, int, error) { return 0, 0, nil },
+		Release: func(context.Context) error { return nil },
 	}
 
 	stop := make(chan struct{})
@@ -584,6 +593,11 @@ func TestLabDataDiskUpgrade_FailDifferentDiskMidUpgrade_ReconstructsViaFix(t *te
 	createFormattedMountedDataDisk(t, lab, "p116-data-victim-parity", parityMount, "330M")
 	newDev := createAttachedLoopDevice(t, lab, "p116-data-victim-new", "360M")
 	staging := filepath.Join(lab, "mnt", "p116-data-victim-staging")
+	// This test leaves its upgrade interrupted with staging mounted; a
+	// rerun in the same lab would otherwise stack a second mount there.
+	t.Cleanup(func() {
+		_, _ = exec.Command("umount", staging).CombinedOutput()
+	})
 
 	confPath := filepath.Join(lab, "p116-data-victim", "snapraid.conf")
 	if err := os.MkdirAll(filepath.Dir(confPath), 0o755); err != nil {
@@ -645,8 +659,11 @@ func TestLabDataDiskUpgrade_FailDifferentDiskMidUpgrade_ReconstructsViaFix(t *te
 		Provider: provider,
 		Runner:   r,
 		Mounter:  mounter,
-		Diff:     func(context.Context) (int, int, error) { return 0, 0, nil },
-		Release:  func(context.Context) error { return nil },
+		ConfirmMounted: func(ctx context.Context, where, uuid string) error {
+			return ConfirmMountedUUID(ctx, r, where, uuid)
+		},
+		Diff:    func(context.Context) (int, int, error) { return 0, 0, nil },
+		Release: func(context.Context) error { return nil },
 	}
 
 	// Interrupt the unrelated upgrade partway through its own copy, then

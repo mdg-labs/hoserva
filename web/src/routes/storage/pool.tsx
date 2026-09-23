@@ -20,6 +20,7 @@ import type { TFunction } from "i18next";
 
 type AddDiskPlan = components["schemas"]["AddDiskPlan"];
 type ReplaceDiskPlan = components["schemas"]["ReplaceDiskPlan"];
+type DiskUpgradePlan = components["schemas"]["DiskUpgradePlan"];
 type ArrayDiskFilesystem = components["schemas"]["ArrayDiskFilesystem"];
 type PoolDiskEntry = components["schemas"]["PoolDiskEntry"];
 
@@ -60,6 +61,13 @@ function slotLabel(t: TFunction, entry: PoolDiskEntry): string {
   return `${entry.mountPoint} (${entry.device})`;
 }
 
+// upgradeSlotLabel names a data-or-parity pool entry for the "Disk to
+// upgrade" select (doc 02 §4) — slotLabel's shape, plus its role, since
+// the list mixes both.
+function upgradeSlotLabel(entry: PoolDiskEntry): string {
+  return `${entry.mountPoint} (${entry.role}, ${entry.device})`;
+}
+
 export function PoolOverviewPage(): React.ReactElement {
   const { t } = useTranslation();
   const { status, pool, loading, error, refresh } = useSystemData();
@@ -95,6 +103,16 @@ export function PoolOverviewPage(): React.ReactElement {
   const [replaceError, setReplaceError] = useState<string | null>(null);
   const [replacePending, setReplacePending] = useState(false);
   const replaceSelectionGen = useRef(0);
+
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [upgradeMountpoint, setUpgradeMountpoint] = useState("");
+  const [upgradeDevice, setUpgradeDevice] = useState("");
+  const [upgradeFilesystem, setUpgradeFilesystem] = useState<ArrayDiskFilesystem>("xfs");
+  const [upgradePlan, setUpgradePlan] = useState<DiskUpgradePlan | null>(null);
+  const [upgradeConfirmValue, setUpgradeConfirmValue] = useState("");
+  const [upgradeError, setUpgradeError] = useState<string | null>(null);
+  const [upgradePending, setUpgradePending] = useState(false);
+  const upgradeSelectionGen = useRef(0);
 
   function resetAddPlan(): void {
     setAddPlan(null);
@@ -252,6 +270,84 @@ export function PoolOverviewPage(): React.ReactElement {
     }
   }
 
+  function resetUpgradePlan(): void {
+    setUpgradePlan(null);
+    setUpgradeConfirmValue("");
+    setUpgradeError(null);
+    // See resetAddPlan: an in-flight preview for the old selection is
+    // already stale (upgradeSelectionGen), so Preview should not stay
+    // disabled waiting for it.
+    setUpgradePending(false);
+  }
+
+  function resetUpgradeDialog(): void {
+    resetUpgradePlan();
+    setUpgradeMountpoint("");
+    setUpgradeDevice("");
+    setUpgradeFilesystem("xfs");
+  }
+
+  async function previewUpgradeDisk(): Promise<void> {
+    if (!upgradeMountpoint || !upgradeDevice) return;
+    upgradeSelectionGen.current += 1;
+    const gen = upgradeSelectionGen.current;
+    const mountpoint = upgradeMountpoint;
+    const device = upgradeDevice;
+    const filesystem = upgradeFilesystem;
+    setUpgradePending(true);
+    setUpgradeError(null);
+    try {
+      const { data, error: apiError } = await hoservaClient.POST("/disks/array/upgrade/plan", {
+        body: { mountpoint, device, filesystem },
+      });
+      // The selection moved on while this request was in flight — never
+      // install a plan (or an error) for a slot the dialog no longer shows.
+      if (upgradeSelectionGen.current !== gen) return;
+      if (apiError) {
+        setUpgradeError(apiError.message);
+        return;
+      }
+      setUpgradePlan(data ?? null);
+      setUpgradeConfirmValue("");
+    } catch (err: unknown) {
+      if (upgradeSelectionGen.current !== gen) return;
+      setUpgradeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (upgradeSelectionGen.current === gen) setUpgradePending(false);
+    }
+  }
+
+  async function submitUpgradeDisk(): Promise<void> {
+    if (!upgradePlan) return;
+    setUpgradePending(true);
+    setUpgradeError(null);
+    try {
+      // Submit the plan's own fields, never the live form state — the
+      // slot, device and (for a parity slot) fresh mountpoint the operator
+      // actually previewed and typed the confirmation against.
+      const { error: apiError } = await hoservaClient.POST("/disks/array/upgrade", {
+        body: {
+          mountpoint: upgradePlan.mountpoint,
+          device: upgradePlan.replacementDevice,
+          filesystem: upgradePlan.filesystem,
+          newMountpoint: upgradePlan.newMountpoint,
+          confirmation: upgradeConfirmValue,
+        },
+      });
+      if (apiError) {
+        setUpgradeError(apiError.message);
+        return;
+      }
+      setUpgradeOpen(false);
+      resetUpgradeDialog();
+      await refresh();
+    } catch (err: unknown) {
+      setUpgradeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUpgradePending(false);
+    }
+  }
+
   const handleStop = async (): Promise<void> => {
     setPending(true);
     try {
@@ -301,6 +397,12 @@ export function PoolOverviewPage(): React.ReactElement {
   // offer (finding 2), not only a slot whose disk is still present.
   const dataDisks = disks.filter((disk) => disk.role === "data");
   const unassignedDisks = disks.filter((disk) => disk.role === "unassigned");
+  // upgradableDisks are the data and parity slots an upgrade (doc 02 §4)
+  // can target — a missing slot has nothing to copy from and goes through
+  // Replace disk instead.
+  const upgradableDisks = disks.filter(
+    (disk) => (disk.role === "data" || disk.role === "parity") && disk.state !== "missing" && disk.device,
+  );
   const total = disks.reduce((sum, disk) => sum + (disk.sizeBytes ?? 0), 0);
   const used = disks.reduce((sum, disk) => sum + (disk.usedBytes ?? 0), 0);
   const usedPercent = total > 0 ? Math.round((used / total) * 100) : 0;
@@ -315,6 +417,8 @@ export function PoolOverviewPage(): React.ReactElement {
 
   const addIdentity = addPlan ? diskIdentitySummary(t, addPlan) : null;
   const replaceIdentity = replacePlan ? diskIdentitySummary(t, replacePlan) : null;
+  const upgradeIdentity = upgradePlan ? diskIdentitySummary(t, upgradePlan) : null;
+  const upgradeIsParity = upgradePlan?.role === "parity";
 
   return (
     <div className="flex flex-col gap-4">
@@ -329,6 +433,14 @@ export function PoolOverviewPage(): React.ReactElement {
           </Button>
           <Button variant="outline" disabled={maintenance} onClick={() => setReplaceOpen(true)}>
             {t("pool.replaceDisk")}
+          </Button>
+          {/* Unlike Add/Replace, Upgrade disk stays enabled in maintenance
+              mode: a data-disk upgrade runs only with the array stopped
+              (doc 02 §4). Every refusal — array_not_stopped,
+              disk_upgrade_pending, or maintenance_mode for a parity
+              upgrade — is shown inside the dialog. */}
+          <Button variant="outline" onClick={() => setUpgradeOpen(true)}>
+            {t("pool.upgradeDisk")}
           </Button>
           {maintenance ? (
             <Button variant="default" onClick={() => setStartOpen(true)}>
@@ -577,6 +689,92 @@ export function PoolOverviewPage(): React.ReactElement {
                 ? t("pool.replace.adoptItem")
                 : t("pool.replace.formatItem", { filesystem: replacePlan.filesystem }),
               t("pool.replace.rebuildItem", { rebuild: replacePlan.rebuild }),
+            ]}
+          />
+        ) : null}
+      </FormOverlay>
+      <FormOverlay
+        open={upgradeOpen}
+        onOpenChange={(open) => {
+          setUpgradeOpen(open);
+          if (!open) resetUpgradeDialog();
+        }}
+        title={t("pool.upgrade.title")}
+        description={t("pool.upgrade.description")}
+        footer={
+          upgradePlan ? (
+            <Button
+              variant="destructive"
+              disabled={upgradePending || upgradeConfirmValue !== upgradePlan.confirmation}
+              onClick={() => void submitUpgradeDisk()}
+            >
+              {t("pool.upgrade.submit")}
+            </Button>
+          ) : (
+            <Button
+              variant="default"
+              disabled={!upgradeMountpoint || !upgradeDevice || upgradePending}
+              onClick={() => void previewUpgradeDisk()}
+            >
+              {t("pool.upgrade.preview")}
+            </Button>
+          )
+        }
+      >
+        {upgradeError ? <Banner tone="error" title={upgradeError} /> : null}
+        <Field>
+          <FieldLabel>{t("pool.upgrade.slotLabel")}</FieldLabel>
+          <SelectFilter
+            value={upgradeMountpoint}
+            onChange={(value) => {
+              upgradeSelectionGen.current += 1;
+              setUpgradeMountpoint(value);
+              resetUpgradePlan();
+            }}
+            placeholder={t("pool.upgrade.slotPlaceholder")}
+            options={upgradableDisks.map((disk) => ({ value: disk.mountPoint, label: upgradeSlotLabel(disk) }))}
+          />
+        </Field>
+        <Field>
+          <FieldLabel>{t("pool.upgrade.deviceLabel")}</FieldLabel>
+          <SelectFilter
+            value={upgradeDevice}
+            onChange={(value) => {
+              upgradeSelectionGen.current += 1;
+              setUpgradeDevice(value);
+              resetUpgradePlan();
+            }}
+            placeholder={t("pool.upgrade.devicePlaceholder")}
+            options={unassignedDisks.map((disk) => ({ value: disk.device, label: disk.device }))}
+          />
+        </Field>
+        <Field>
+          <FieldLabel>{t("pool.upgrade.filesystemLabel")}</FieldLabel>
+          <SelectFilter
+            value={upgradeFilesystem}
+            onChange={(value) => {
+              upgradeSelectionGen.current += 1;
+              setUpgradeFilesystem(value as ArrayDiskFilesystem);
+              resetUpgradePlan();
+            }}
+            placeholder={t("pool.upgrade.filesystemLabel")}
+            options={FILESYSTEM_OPTIONS}
+          />
+        </Field>
+        {upgradePlan ? (
+          <TypedConfirm
+            phrase={upgradePlan.confirmation}
+            value={upgradeConfirmValue}
+            onChange={setUpgradeConfirmValue}
+            title={t("pool.upgrade.confirmTitle", { mountpoint: upgradePlan.mountpoint })}
+            description={t("pool.upgrade.confirmDescription", { device: upgradePlan.replacementDevice })}
+            items={[
+              ...(upgradeIdentity ? [upgradeIdentity] : []),
+              t("pool.upgrade.formatItem", { filesystem: upgradePlan.filesystem }),
+              ...(upgradeIsParity && upgradePlan.newMountpoint
+                ? [t("pool.upgrade.newMountpointItem", { mountpoint: upgradePlan.newMountpoint })]
+                : []),
+              ...upgradePlan.steps.map((step) => t("pool.upgrade.stepItem", { step })),
             ]}
           />
         ) : null}

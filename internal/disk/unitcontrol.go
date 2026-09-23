@@ -114,3 +114,28 @@ func (c ServiceUnitController) Start(ctx context.Context) error {
 	}
 	return nil
 }
+
+// DirectMountController adapts Unit to internal/job.ArrayMount's shape
+// through DirectMounter rather than MountUnitController's systemctl calls
+// (#289): the loop-device lab has no init system (doc 06 §3), so a lab
+// test proving ArraySequence.Stop/Start against a disk-upgrade job's own
+// dependency on a real array stop needs this instead of
+// MountUnitController, the same way every other lab test already uses
+// DirectMounter in place of SystemdMounter.
+type DirectMountController struct {
+	Unit   MountUnit
+	Runner Runner
+}
+
+// Where is the disk's own mountpoint, for logging and error messages.
+func (c DirectMountController) Where() string { return c.Unit.Where }
+
+// Mount mounts Unit by filesystem UUID via DirectMounter.
+func (c DirectMountController) Mount(ctx context.Context) error {
+	return DirectMounter{Runner: c.Runner}.Mount(ctx, c.Unit)
+}
+
+// Unmount unmounts Unit via DirectMounter.
+func (c DirectMountController) Unmount(ctx context.Context) error {
+	return DirectMounter{Runner: c.Runner}.Unmount(ctx, c.Unit)
+}
