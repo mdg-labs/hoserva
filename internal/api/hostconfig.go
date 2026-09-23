@@ -151,11 +151,20 @@ func (h *Handler) rollbackImportedShares(ctx context.Context, names []string) er
 	if h.Shares == nil || h.Shares.Shares == nil || len(names) == 0 {
 		return nil
 	}
+	ctx = context.WithoutCancel(ctx)
 	var first error
+	deleted := false
 	for i := len(names) - 1; i >= 0; i-- {
-		if err := h.Shares.Shares.Delete(ctx, names[i]); err != nil && first == nil {
-			first = err
+		if err := h.Shares.Shares.Delete(ctx, names[i]); err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
 		}
+		deleted = true
+	}
+	if deleted {
+		h.Shares.RefreshSnapshot(ctx)
 	}
 	return first
 }

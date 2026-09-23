@@ -95,15 +95,18 @@ func (s *Service) ImportFromHost(ctx context.Context, sambaRaw, nfsRaw []byte) (
 			continue
 		}
 		if !errors.Is(err, store.ErrShareNotFound) {
-			return nil, rollbackImport(ctx, s.Shares, inserted, err)
+			return nil, s.rollbackImport(ctx, inserted, err)
 		}
 		if err := s.Shares.Insert(ctx, rec); err != nil {
 			if errors.Is(err, store.ErrShareExists) {
 				continue
 			}
-			return nil, rollbackImport(ctx, s.Shares, inserted, err)
+			return nil, s.rollbackImport(ctx, inserted, err)
 		}
 		inserted = append(inserted, rec.Name)
+	}
+	if len(inserted) > 0 {
+		s.RefreshSnapshot(ctx)
 	}
 	return inserted, nil
 }
@@ -117,6 +120,15 @@ func importDefaults(name string, now time.Time) store.Share {
 		UpdatedAt:    now,
 		NFSSquash:    squashRoot,
 	}
+}
+
+func (s *Service) rollbackImport(ctx context.Context, inserted []string, cause error) error {
+	ctx = context.WithoutCancel(ctx)
+	err := rollbackImport(ctx, s.Shares, inserted, cause)
+	if len(inserted) > 0 {
+		s.RefreshSnapshot(ctx)
+	}
+	return err
 }
 
 func rollbackImport(ctx context.Context, shares *store.ShareStore, inserted []string, cause error) error {

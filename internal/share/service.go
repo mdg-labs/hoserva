@@ -173,6 +173,14 @@ func (s *Service) catchAll() string {
 	return pool.CatchAllPath
 }
 
+// RefreshSnapshot re-reads the share list into the daemon's array
+// sequence. ImportFromHost and its rollback change rows without going
+// through Create, Update, or Delete, which are the only other callers
+// of PostCommit.
+func (s *Service) RefreshSnapshot(ctx context.Context) {
+	s.postCommit(ctx)
+}
+
 // postCommit runs PostCommit, when set, logging rather than propagating
 // its error (see the field's own doc comment).
 func (s *Service) postCommit(ctx context.Context) {

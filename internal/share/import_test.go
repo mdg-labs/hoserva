@@ -1,6 +1,8 @@
 package share
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -95,5 +97,46 @@ func TestImportFromHost_NilSourcesAreNoOp(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("rows = %d", len(rows))
+	}
+}
+
+func TestImportFromHost_RefreshesSnapshotAfterInsert(t *testing.T) {
+	ctx, svc, _, _ := testService(t)
+	var calls int
+	svc.PostCommit = func(context.Context) error {
+		calls++
+		return nil
+	}
+	samba := []byte("[media]\n   path = /mnt/user/media\n   browseable = yes\n")
+	inserted, err := svc.ImportFromHost(ctx, samba, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inserted) != 1 || calls != 1 {
+		t.Fatalf("inserted = %v, PostCommit calls = %d, want one insert and one refresh", inserted, calls)
+	}
+}
+
+func TestRollbackImport_DeletesAfterCancelAndRefreshes(t *testing.T) {
+	ctx, svc, _, _ := testService(t)
+	if err := svc.Shares.Insert(ctx, importDefaults("media", time.Now().UTC())); err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	svc.PostCommit = func(context.Context) error {
+		calls++
+		return nil
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	cause := errors.New("later step failed")
+	if err := svc.rollbackImport(cancelled, []string{"media"}, cause); !errors.Is(err, cause) {
+		t.Fatalf("rollbackImport = %v, want the cause", err)
+	}
+	if calls != 1 {
+		t.Fatalf("PostCommit calls = %d, want 1", calls)
+	}
+	if _, err := svc.Shares.Get(context.Background(), "media"); !errors.Is(err, store.ErrShareNotFound) {
+		t.Fatalf("share after cancelled rollback: %v, want ErrShareNotFound", err)
 	}
 }
