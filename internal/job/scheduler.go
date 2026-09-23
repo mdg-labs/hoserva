@@ -584,18 +584,28 @@ func (s *Scheduler) MarkArrayStopped() {
 // data-disk upgrade is pending (doc 02 §4 E6), and otherwise clears the
 // "stop sequence completed" state under the same lock Submit admits a
 // data-disk upgrade under, so no upgrade is admitted once a start begins.
-func (s *Scheduler) BeginArrayStart(ctx context.Context) error {
+// It returns that state as it was, for RestoreArrayStopped.
+func (s *Scheduler) BeginArrayStart(ctx context.Context) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	pending, err := s.store.ListPending(ctx, TypeDiskUpgradeData)
 	if err != nil {
-		return fmt.Errorf("job: checking for a pending data-disk upgrade: %w", err)
+		return false, fmt.Errorf("job: checking for a pending data-disk upgrade: %w", err)
 	}
 	if len(pending) > 0 {
-		return fmt.Errorf("%w: job %s — resume it, or cancel it to abort back to the old disk", ErrDiskUpgradeDataPending, pending[0].ID)
+		return false, fmt.Errorf("%w: job %s — resume it, or cancel it to abort back to the old disk", ErrDiskUpgradeDataPending, pending[0].ID)
 	}
+	was := s.arrayStopped
 	s.arrayStopped = false
-	return nil
+	return was, nil
+}
+
+// RestoreArrayStopped puts back the state BeginArrayStart returned, for a
+// start that failed without leaving anything mounted.
+func (s *Scheduler) RestoreArrayStopped(was bool) {
+	s.mu.Lock()
+	s.arrayStopped = was && s.maintenance
+	s.mu.Unlock()
 }
 
 // InMaintenance reports whether maintenance mode is currently active.

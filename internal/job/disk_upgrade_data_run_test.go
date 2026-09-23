@@ -1929,6 +1929,21 @@ func TestDiskUpgradeData_UR3_FailedStartKeepsTheCompletedStop(t *testing.T) {
 	if done := h.await(j.ID); done.Status != StatusSucceeded {
 		t.Fatalf("status = %s (%s)", done.Status, done.ErrorMessage)
 	}
+
+	// A stop that failed partway is not made complete by a refused start.
+	h2 := newUpgradeHarness(t)
+	h2.register()
+	h2.samba.setStopErr(errors.New("smbd will not stop"))
+	if err := h2.seq.Stop(h2.ctx); err == nil {
+		t.Fatal("stop with a stuck service succeeded")
+	}
+	h2.seq.Gate = fakeReadinessGate{ready: false}
+	if err := h2.seq.Start(h2.ctx); !errors.Is(err, ErrStorageNotReady) {
+		t.Fatalf("start with an unready gate = %v, want storage_not_ready", err)
+	}
+	if _, err := h2.s.Submit(h2.ctx, TypeDiskUpgradeData, nil, h2.params()); !errors.Is(err, ErrArrayNotStopped) {
+		t.Fatalf("submit after a failed stop and a refused start = %v, want array_not_stopped", err)
+	}
 }
 
 type failingDiskCheck struct{ err error }
