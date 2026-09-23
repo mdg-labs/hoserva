@@ -479,6 +479,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/ups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get UPS / NUT settings
+         * @description Doc 03 §8.1's UPS card on `/settings` General: connection mode (USB or a network NUT server), driver fields, and USB-only shutdown thresholds (Q77). Passwords are never returned — only `monitorPasswordSet` / `networkPasswordSet` (Q28). When no UPS is configured, `configured` is false and every other field is omitted.
+         */
+        get: operations["getUPSSettings"];
+        /**
+         * Set UPS / NUT settings
+         * @description Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the NUT units. Passwords are write-only (Q28): omit to keep an existing secret; a first configure must supply the password the connection mode needs. USB-only thresholds are ignored for network mode. Validation failures and `ErrInvalidUPSField` return 400; unmanaged or existing host NUT files and a missing `nut` group return 409.
+         */
+        put: operations["updateUPSSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/network": {
         parameters: {
             query?: never;
@@ -2158,6 +2182,77 @@ export interface components {
             backupPassphrase?: string;
         };
         /**
+         * @description Doc 03 §8.1 connection choice-cards: a USB-attached UPS Hoserva drives locally, or a remote NUT server this host monitors (Q77).
+         * @enum {string}
+         */
+        UPSConnection: "usb" | "network";
+        UPSSettings: {
+            /** @description Whether a UPS configuration row exists. False means the card shows the optional empty state; every other field is omitted. */
+            configured: boolean;
+            connection?: components["schemas"]["UPSConnection"];
+            /** @description NUT driver name for a USB UPS (e.g. usbhid-ups). */
+            driver?: string;
+            /** @description Driver port for a USB UPS (commonly "auto"). */
+            port?: string;
+            /** @description Whether a local monitor password is stored. The password itself is never returned (Q28). */
+            monitorPasswordSet?: boolean;
+            /** @description Remote NUT server hostname or address. */
+            networkHost?: string;
+            /**
+             * Format: int32
+             * @description Remote NUT server port (default 3493 when omitted on write).
+             */
+            networkPort?: number;
+            /** @description UPS name on the remote NUT server. */
+            networkUpsName?: string;
+            /** @description Monitoring username on the remote NUT server. */
+            networkUsername?: string;
+            /** @description Whether a network monitoring password is stored. The password itself is never returned (Q28). */
+            networkPasswordSet?: boolean;
+            /**
+             * Format: int32
+             * @description USB-only. Charge percent that marks the battery low for a clean shutdown (Q77). Omitted or zero leaves NUT's driver default.
+             */
+            lowBatteryPercent?: number;
+            /**
+             * Format: int32
+             * @description USB-only. Estimated runtime seconds remaining that mark the battery low (Q77). Omitted or zero leaves NUT's driver default.
+             */
+            runtimeSeconds?: number;
+        };
+        UpdateUPSSettingsRequest: {
+            connection: components["schemas"]["UPSConnection"];
+            /** @description Required for USB. NUT driver name (e.g. usbhid-ups). */
+            driver?: string;
+            /** @description Required for USB. Driver port (commonly "auto"). */
+            port?: string;
+            /** @description Write-only. Required on first USB configure; omit on later updates to keep the stored secret (Q28). */
+            monitorPassword?: string;
+            /** @description Required for network. Remote NUT server host. */
+            networkHost?: string;
+            /**
+             * Format: int32
+             * @description Remote NUT port. Defaults to 3493 when omitted.
+             */
+            networkPort?: number;
+            /** @description Required for network. UPS name on the remote server. */
+            networkUpsName?: string;
+            /** @description Required for network. Monitoring username. */
+            networkUsername?: string;
+            /** @description Write-only. Required on first network configure; omit on later updates to keep the stored secret (Q28). */
+            networkPassword?: string;
+            /**
+             * Format: int32
+             * @description USB-only low-battery charge percent (Q77).
+             */
+            lowBatteryPercent?: number;
+            /**
+             * Format: int32
+             * @description USB-only low-battery runtime seconds (Q77).
+             */
+            runtimeSeconds?: number;
+        };
+        /**
          * @description Detected host network backend (Q75).
          * @enum {string}
          */
@@ -3769,6 +3864,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GeneralSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getUPSSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current UPS settings, or an empty configuration. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UPSSettings"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateUPSSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateUPSSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated UPS settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UPSSettings"];
                 };
             };
             default: components["responses"]["Error"];

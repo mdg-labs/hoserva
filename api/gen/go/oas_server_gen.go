@@ -386,6 +386,15 @@ type Handler interface {
 	//
 	// GET /status
 	GetStatus(ctx context.Context) (*SystemStatus, error)
+	// GetUPSSettings implements getUPSSettings operation.
+	//
+	// Doc 03 §8.1's UPS card on `/settings` General: connection mode (USB or a network NUT server),
+	// driver fields, and USB-only shutdown thresholds (Q77). Passwords are never returned — only
+	// `monitorPasswordSet` / `networkPasswordSet` (Q28). When no UPS is configured, `configured` is false
+	// and every other field is omitted.
+	//
+	// GET /settings/ups
+	GetUPSSettings(ctx context.Context) (*UPSSettings, error)
 	// GetUpdateStatus implements getUpdateStatus operation.
 	//
 	// Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
@@ -819,6 +828,16 @@ type Handler interface {
 	//
 	// PUT /shares/{name}/permissions
 	UpdateSharePermissions(ctx context.Context, req *UpdateSharePermissionsRequest, params UpdateSharePermissionsParams) (*SharePermissionsResult, error)
+	// UpdateUPSSettings implements updateUPSSettings operation.
+	//
+	// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the
+	// NUT units. Passwords are write-only (Q28): omit to keep an existing secret; a first configure must
+	// supply the password the connection mode needs. USB-only thresholds are ignored for network mode.
+	// Validation failures and `ErrInvalidUPSField` return 400; unmanaged or existing host NUT files and a
+	// missing `nut` group return 409.
+	//
+	// PUT /settings/ups
+	UpdateUPSSettings(ctx context.Context, req *UpdateUPSSettingsRequest) (*UPSSettings, error)
 	// UpdateUpdateSettings implements updateUpdateSettings operation.
 	//
 	// Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49,

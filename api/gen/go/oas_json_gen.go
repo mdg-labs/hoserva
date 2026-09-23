@@ -12636,6 +12636,39 @@ func (s *OptString) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes UPSConnection as json.
+func (o OptUPSConnection) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes UPSConnection from json.
+func (o *OptUPSConnection) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptUPSConnection to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptUPSConnection) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptUPSConnection) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes UpdateChannel as json.
 func (o OptUpdateChannel) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -18807,6 +18840,330 @@ func (s *TotpEnrollResponse) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes UPSConnection as json.
+func (s UPSConnection) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes UPSConnection from json.
+func (s *UPSConnection) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UPSConnection to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch UPSConnection(v) {
+	case UPSConnectionUsb:
+		*s = UPSConnectionUsb
+	case UPSConnectionNetwork:
+		*s = UPSConnectionNetwork
+	default:
+		*s = UPSConnection(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s UPSConnection) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UPSConnection) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *UPSSettings) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *UPSSettings) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("configured")
+		e.Bool(s.Configured)
+	}
+	{
+		if s.Connection.Set {
+			e.FieldStart("connection")
+			s.Connection.Encode(e)
+		}
+	}
+	{
+		if s.Driver.Set {
+			e.FieldStart("driver")
+			s.Driver.Encode(e)
+		}
+	}
+	{
+		if s.Port.Set {
+			e.FieldStart("port")
+			s.Port.Encode(e)
+		}
+	}
+	{
+		if s.MonitorPasswordSet.Set {
+			e.FieldStart("monitorPasswordSet")
+			s.MonitorPasswordSet.Encode(e)
+		}
+	}
+	{
+		if s.NetworkHost.Set {
+			e.FieldStart("networkHost")
+			s.NetworkHost.Encode(e)
+		}
+	}
+	{
+		if s.NetworkPort.Set {
+			e.FieldStart("networkPort")
+			s.NetworkPort.Encode(e)
+		}
+	}
+	{
+		if s.NetworkUpsName.Set {
+			e.FieldStart("networkUpsName")
+			s.NetworkUpsName.Encode(e)
+		}
+	}
+	{
+		if s.NetworkUsername.Set {
+			e.FieldStart("networkUsername")
+			s.NetworkUsername.Encode(e)
+		}
+	}
+	{
+		if s.NetworkPasswordSet.Set {
+			e.FieldStart("networkPasswordSet")
+			s.NetworkPasswordSet.Encode(e)
+		}
+	}
+	{
+		if s.LowBatteryPercent.Set {
+			e.FieldStart("lowBatteryPercent")
+			s.LowBatteryPercent.Encode(e)
+		}
+	}
+	{
+		if s.RuntimeSeconds.Set {
+			e.FieldStart("runtimeSeconds")
+			s.RuntimeSeconds.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfUPSSettings = [12]string{
+	0:  "configured",
+	1:  "connection",
+	2:  "driver",
+	3:  "port",
+	4:  "monitorPasswordSet",
+	5:  "networkHost",
+	6:  "networkPort",
+	7:  "networkUpsName",
+	8:  "networkUsername",
+	9:  "networkPasswordSet",
+	10: "lowBatteryPercent",
+	11: "runtimeSeconds",
+}
+
+// Decode decodes UPSSettings from json.
+func (s *UPSSettings) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UPSSettings to nil")
+	}
+	var requiredBitSet [2]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "configured":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Bool()
+				s.Configured = bool(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"configured\"")
+			}
+		case "connection":
+			if err := func() error {
+				s.Connection.Reset()
+				if err := s.Connection.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"connection\"")
+			}
+		case "driver":
+			if err := func() error {
+				s.Driver.Reset()
+				if err := s.Driver.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"driver\"")
+			}
+		case "port":
+			if err := func() error {
+				s.Port.Reset()
+				if err := s.Port.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"port\"")
+			}
+		case "monitorPasswordSet":
+			if err := func() error {
+				s.MonitorPasswordSet.Reset()
+				if err := s.MonitorPasswordSet.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"monitorPasswordSet\"")
+			}
+		case "networkHost":
+			if err := func() error {
+				s.NetworkHost.Reset()
+				if err := s.NetworkHost.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"networkHost\"")
+			}
+		case "networkPort":
+			if err := func() error {
+				s.NetworkPort.Reset()
+				if err := s.NetworkPort.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"networkPort\"")
+			}
+		case "networkUpsName":
+			if err := func() error {
+				s.NetworkUpsName.Reset()
+				if err := s.NetworkUpsName.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"networkUpsName\"")
+			}
+		case "networkUsername":
+			if err := func() error {
+				s.NetworkUsername.Reset()
+				if err := s.NetworkUsername.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"networkUsername\"")
+			}
+		case "networkPasswordSet":
+			if err := func() error {
+				s.NetworkPasswordSet.Reset()
+				if err := s.NetworkPasswordSet.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"networkPasswordSet\"")
+			}
+		case "lowBatteryPercent":
+			if err := func() error {
+				s.LowBatteryPercent.Reset()
+				if err := s.LowBatteryPercent.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"lowBatteryPercent\"")
+			}
+		case "runtimeSeconds":
+			if err := func() error {
+				s.RuntimeSeconds.Reset()
+				if err := s.RuntimeSeconds.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"runtimeSeconds\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode UPSSettings")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [2]uint8{
+		0b00000001,
+		0b00000000,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfUPSSettings) {
+					name = jsonFieldsNameOfUPSSettings[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *UPSSettings) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UPSSettings) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes UpdateChannel as json.
 func (s UpdateChannel) Encode(e *jx.Encoder) {
 	e.Str(string(s))
@@ -20596,6 +20953,271 @@ func (s *UpdateStatus) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
 func (s *UpdateStatus) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
+func (s *UpdateUPSSettingsRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *UpdateUPSSettingsRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("connection")
+		s.Connection.Encode(e)
+	}
+	{
+		if s.Driver.Set {
+			e.FieldStart("driver")
+			s.Driver.Encode(e)
+		}
+	}
+	{
+		if s.Port.Set {
+			e.FieldStart("port")
+			s.Port.Encode(e)
+		}
+	}
+	{
+		if s.MonitorPassword.Set {
+			e.FieldStart("monitorPassword")
+			s.MonitorPassword.Encode(e)
+		}
+	}
+	{
+		if s.NetworkHost.Set {
+			e.FieldStart("networkHost")
+			s.NetworkHost.Encode(e)
+		}
+	}
+	{
+		if s.NetworkPort.Set {
+			e.FieldStart("networkPort")
+			s.NetworkPort.Encode(e)
+		}
+	}
+	{
+		if s.NetworkUpsName.Set {
+			e.FieldStart("networkUpsName")
+			s.NetworkUpsName.Encode(e)
+		}
+	}
+	{
+		if s.NetworkUsername.Set {
+			e.FieldStart("networkUsername")
+			s.NetworkUsername.Encode(e)
+		}
+	}
+	{
+		if s.NetworkPassword.Set {
+			e.FieldStart("networkPassword")
+			s.NetworkPassword.Encode(e)
+		}
+	}
+	{
+		if s.LowBatteryPercent.Set {
+			e.FieldStart("lowBatteryPercent")
+			s.LowBatteryPercent.Encode(e)
+		}
+	}
+	{
+		if s.RuntimeSeconds.Set {
+			e.FieldStart("runtimeSeconds")
+			s.RuntimeSeconds.Encode(e)
+		}
+	}
+}
+
+var jsonFieldsNameOfUpdateUPSSettingsRequest = [11]string{
+	0:  "connection",
+	1:  "driver",
+	2:  "port",
+	3:  "monitorPassword",
+	4:  "networkHost",
+	5:  "networkPort",
+	6:  "networkUpsName",
+	7:  "networkUsername",
+	8:  "networkPassword",
+	9:  "lowBatteryPercent",
+	10: "runtimeSeconds",
+}
+
+// Decode decodes UpdateUPSSettingsRequest from json.
+func (s *UpdateUPSSettingsRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode UpdateUPSSettingsRequest to nil")
+	}
+	var requiredBitSet [2]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "connection":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				if err := s.Connection.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"connection\"")
+			}
+		case "driver":
+			if err := func() error {
+				s.Driver.Reset()
+				if err := s.Driver.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"driver\"")
+			}
+		case "port":
+			if err := func() error {
+				s.Port.Reset()
+				if err := s.Port.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"port\"")
+			}
+		case "monitorPassword":
+			if err := func() error {
+				s.MonitorPassword.Reset()
+				if err := s.MonitorPassword.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"monitorPassword\"")
+			}
+		case "networkHost":
+			if err := func() error {
+				s.NetworkHost.Reset()
+				if err := s.NetworkHost.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"networkHost\"")
+			}
+		case "networkPort":
+			if err := func() error {
+				s.NetworkPort.Reset()
+				if err := s.NetworkPort.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"networkPort\"")
+			}
+		case "networkUpsName":
+			if err := func() error {
+				s.NetworkUpsName.Reset()
+				if err := s.NetworkUpsName.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"networkUpsName\"")
+			}
+		case "networkUsername":
+			if err := func() error {
+				s.NetworkUsername.Reset()
+				if err := s.NetworkUsername.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"networkUsername\"")
+			}
+		case "networkPassword":
+			if err := func() error {
+				s.NetworkPassword.Reset()
+				if err := s.NetworkPassword.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"networkPassword\"")
+			}
+		case "lowBatteryPercent":
+			if err := func() error {
+				s.LowBatteryPercent.Reset()
+				if err := s.LowBatteryPercent.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"lowBatteryPercent\"")
+			}
+		case "runtimeSeconds":
+			if err := func() error {
+				s.RuntimeSeconds.Reset()
+				if err := s.RuntimeSeconds.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"runtimeSeconds\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode UpdateUPSSettingsRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [2]uint8{
+		0b00000001,
+		0b00000000,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfUpdateUPSSettingsRequest) {
+					name = jsonFieldsNameOfUpdateUPSSettingsRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *UpdateUPSSettingsRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *UpdateUPSSettingsRequest) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }

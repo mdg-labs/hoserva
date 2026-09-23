@@ -611,3 +611,25 @@ CREATE TABLE cache_usage_breakdown (
     other_bytes INTEGER NOT NULL CHECK (other_bytes >= 0),
     computed_at TEXT NOT NULL
 ) STRICT;
+
+-- UPS / NUT settings (#249, doc 03 §8.1, Q77, Q28): one row, id=1, the
+-- same singleton pattern as acme_config. monitor_password and
+-- network_password are ciphertext from internal/auth.MachineKey.Encrypt
+-- (nonce||AES-256-GCM) — write-only on the API; GET only exposes the
+-- *PasswordSet booleans. Connection-specific columns for the inactive
+-- mode are empty strings / zero / empty blobs.
+CREATE TABLE ups_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    connection TEXT NOT NULL CHECK (connection IN ('usb', 'network')),
+    driver TEXT NOT NULL,
+    port TEXT NOT NULL,
+    monitor_password BLOB NOT NULL,
+    network_host TEXT NOT NULL,
+    network_port INTEGER NOT NULL CHECK (network_port >= 0 AND network_port <= 65535),
+    network_ups_name TEXT NOT NULL,
+    network_username TEXT NOT NULL,
+    network_password BLOB NOT NULL,
+    low_battery_percent INTEGER NOT NULL CHECK (low_battery_percent >= 0 AND low_battery_percent <= 100),
+    runtime_seconds INTEGER NOT NULL CHECK (runtime_seconds >= 0),
+    updated_at TEXT NOT NULL
+) STRICT;

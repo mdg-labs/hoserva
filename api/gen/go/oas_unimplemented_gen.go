@@ -532,6 +532,18 @@ func (UnimplementedHandler) GetStatus(ctx context.Context) (r *SystemStatus, _ e
 	return r, ht.ErrNotImplemented
 }
 
+// GetUPSSettings implements getUPSSettings operation.
+//
+// Doc 03 §8.1's UPS card on `/settings` General: connection mode (USB or a network NUT server),
+// driver fields, and USB-only shutdown thresholds (Q77). Passwords are never returned — only
+// `monitorPasswordSet` / `networkPasswordSet` (Q28). When no UPS is configured, `configured` is false
+// and every other field is omitted.
+//
+// GET /settings/ups
+func (UnimplementedHandler) GetUPSSettings(ctx context.Context) (r *UPSSettings, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetUpdateStatus implements getUpdateStatus operation.
 //
 // Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
@@ -1118,6 +1130,19 @@ func (UnimplementedHandler) UpdateShare(ctx context.Context, req *UpdateShareReq
 //
 // PUT /shares/{name}/permissions
 func (UnimplementedHandler) UpdateSharePermissions(ctx context.Context, req *UpdateSharePermissionsRequest, params UpdateSharePermissionsParams) (r *SharePermissionsResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateUPSSettings implements updateUPSSettings operation.
+//
+// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the
+// NUT units. Passwords are write-only (Q28): omit to keep an existing secret; a first configure must
+// supply the password the connection mode needs. USB-only thresholds are ignored for network mode.
+// Validation failures and `ErrInvalidUPSField` return 400; unmanaged or existing host NUT files and a
+// missing `nut` group return 409.
+//
+// PUT /settings/ups
+func (UnimplementedHandler) UpdateUPSSettings(ctx context.Context, req *UpdateUPSSettingsRequest) (r *UPSSettings, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

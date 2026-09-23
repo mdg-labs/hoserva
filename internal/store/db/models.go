@@ -279,6 +279,22 @@ type SpinEvent struct {
 	At        string `json:"at"`
 }
 
+type UpsConfig struct {
+	ID                int64  `json:"id"`
+	Connection        string `json:"connection"`
+	Driver            string `json:"driver"`
+	Port              string `json:"port"`
+	MonitorPassword   []byte `json:"monitor_password"`
+	NetworkHost       string `json:"network_host"`
+	NetworkPort       int64  `json:"network_port"`
+	NetworkUpsName    string `json:"network_ups_name"`
+	NetworkUsername   string `json:"network_username"`
+	NetworkPassword   []byte `json:"network_password"`
+	LowBatteryPercent int64  `json:"low_battery_percent"`
+	RuntimeSeconds    int64  `json:"runtime_seconds"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
 type User struct {
 	ID                 string         `json:"id"`
 	Username           string         `json:"username"`

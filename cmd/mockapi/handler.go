@@ -54,6 +54,7 @@ type handler struct {
 	quietHours      apiv1.NotificationQuietHours
 	inboxAlerts     []apiv1.NotificationAlert
 	generalSettings apiv1.GeneralSettings
+	upsSettings     apiv1.UPSSettings
 	schedules       apiv1.Schedules
 	updateStatus    apiv1.UpdateStatus
 	network         apiv1.NetworkSettings

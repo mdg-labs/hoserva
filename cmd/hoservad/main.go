@@ -229,6 +229,7 @@ func run(cfg config) error {
 	settingsStore := api.NewSettingsStore(db)
 	settingsService := api.NewSettingsService(settingsStore, machineKey)
 	scheduleService := api.NewScheduleService(api.NewScheduleStore(db), settingsStore)
+	upsStore := api.NewUPSStore(db)
 
 	logsDir := filepath.Join(cfg.stateDir, "jobs")
 	jobStore := job.NewStore(db)
@@ -343,7 +344,15 @@ func run(cfg config) error {
 	backupService.Secrets = &backup.ServiceSecretSource{
 		BackupPassphraseFn: settingsService.BackupPassphrase,
 		DatabaseSecretsFn: func(reqCtx context.Context) ([]backup.DatabaseSecret, error) {
-			return acmeDatabaseSecrets(reqCtx, acmeStore)
+			acmeSecrets, err := acmeDatabaseSecrets(reqCtx, acmeStore)
+			if err != nil {
+				return nil, err
+			}
+			upsSecrets, err := upsDatabaseSecrets(reqCtx, upsStore)
+			if err != nil {
+				return nil, err
+			}
+			return append(acmeSecrets, upsSecrets...), nil
 		},
 	}
 	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, handler.CurrentArray, notifyService, linuxDisks.Exec, backupService)
@@ -413,6 +422,7 @@ func run(cfg config) error {
 	handler.Notify = notifyService
 	handler.Settings = settingsService
 	handler.Schedules = scheduleService
+	handler.UPS = api.NewUPSService(upsStore, machineKey, generator, newNUTReloader(linuxDisks.Exec))
 	handler.Disks = disks
 	handler.Metrics = metricsStore
 	handler.Parity = parityEngine

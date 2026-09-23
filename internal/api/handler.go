@@ -125,6 +125,9 @@ type Handler struct {
 	// ACME is Let's Encrypt DNS-01 (#211). Nil omits status and returns 501
 	// from configure/disable.
 	ACME *acme.Service
+	// UPS is #249's UPS / NUT settings (doc 03 §8.1, Q77). Nil returns an
+	// internal error from those operations.
+	UPS *UPSService
 }
 
 var _ apiv1.Handler = (*Handler)(nil)
