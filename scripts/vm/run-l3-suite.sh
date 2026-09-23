@@ -845,6 +845,17 @@ else
   not_yet "SMB-connected array stop/start" "no active hoservad on the guest (install or array setup above did not complete — see step 1 and step 3)"
 fi
 
+echo "vm-suite[$HOSERVA_LAB_ID]: === pool survives hoservad restart (issue #335) ==="
+if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+  if ARRAY_ADMIN_USERNAME="$ARRAY_ADMIN_USERNAME" ARRAY_ADMIN_PASSWORD="$ARRAY_ADMIN_PASSWORD" ARRAY_RESTART_SHARE="$JOURNEY5_SHARE" "$script_dir/pool-restart-check.sh"; then
+    pass "pool survives hoservad restart"
+  else
+    fail "pool survives hoservad restart" "see pool-restart-check.sh output above (issue #335) — needs array setup (step 3)'s own admin account and '$JOURNEY5_SHARE' share still present and the array still mounted"
+  fi
+else
+  not_yet "pool survives hoservad restart" "no active hoservad on the guest (install or array setup above did not complete — see step 1 and step 3)"
+fi
+
 echo "vm-suite[$HOSERVA_LAB_ID]: === 5/13 disk yank and reconstruction ==="
 not_yet "disk yank and reconstruction" "array setup (step 3, #258) now gives this a real array to yank a disk from, but there is still no add/replace/remove-disk operation in api/openapi.yaml to reintroduce a replacement disk into an already-created array: createArray (POST /disks/array) only drives the wizard's one-time initial array creation (doc 03 §3.1 step 6); the only other topology-touching operations are formatExternalDisk (non-array disks only, doc 02 §4's Q72) and startFix (POST /parity/fix), which reconstructs a disk already mounted at its assigned /mnt/diskN — it has nothing to reconstruct onto if no operation ever formats and remounts a replacement there. JobType reserves disk_add/disk_replace/disk_remove (doc 01 §4) but no REST operation triggers any of them, and cmd/hoserva has no 'disk add'/'disk replace' subcommand either — re-check once one lands"
 

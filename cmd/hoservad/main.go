@@ -344,7 +344,7 @@ func run(cfg config) error {
 		handler.SetArray(seq)
 		return nil
 	}
-	shareService := newShareService(shareStore, arrayStore, generator, pool.Mounter{Runner: linuxDisks.Exec}, shareUsages)
+	shareService := newShareService(shareStore, arrayStore, generator, pool.SystemdMounter{Runner: linuxDisks.Exec}, shareUsages)
 	shareService.PostCommit = rebuildArraySequence
 	// topologyChanged is the disk-topology jobs' ArrayReady hook. Those
 	// jobs write only the catch-all's unit, so share.Service rewrites

@@ -156,7 +156,7 @@ func TestUPSController_LowBatteryAfterLiveArrayCreation_StopsRealArrayFirst(t *t
 	requireArgv(t, calls[1], "systemctl", "stop", "smbd.service")
 	requireArgv(t, calls[2], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
 	requireArgv(t, calls[3], "systemctl", "stop", "nfs-kernel-server.service")
-	requireArgv(t, calls[4], "fusermount", "-u", pool.CatchAllPath)
+	requireArgv(t, calls[4], "systemctl", "stop", pool.UnitFileName(pool.CatchAllPath))
 }
 
 // TestUpdateEngine_RebootAfterLiveArrayCreation_StopsRealArrayFirst is the
@@ -186,5 +186,5 @@ func TestUpdateEngine_RebootAfterLiveArrayCreation_StopsRealArrayFirst(t *testin
 	requireArgv(t, calls[1], "systemctl", "stop", "smbd.service")
 	requireArgv(t, calls[2], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
 	requireArgv(t, calls[3], "systemctl", "stop", "nfs-kernel-server.service")
-	requireArgv(t, calls[4], "fusermount", "-u", pool.CatchAllPath)
+	requireArgv(t, calls[4], "systemctl", "stop", pool.UnitFileName(pool.CatchAllPath))
 }

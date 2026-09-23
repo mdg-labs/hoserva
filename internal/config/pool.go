@@ -37,30 +37,10 @@ type PoolState struct {
 	CreatePolicy pool.CreatePolicy `json:"create_policy,omitempty"`
 }
 
-// unitFileName turns where into the systemd unit name a mount at that
-// path must use: "/" between path segments becomes "-", and any literal
-// "-" already in a segment (ValidateShareName allows one in a share name)
-// is escaped as \x2d so it can't collide with a separator — the same
-// systemd-escape --path rule mkunitfiles-generator-style tooling follows.
-// Every byte here is one ValidateShareName already restricted to
-// [A-Za-z0-9_-] plus the "/" this function itself consumes, so no other
-// escaping is needed.
+// unitFileName is pool.UnitFileName — kept as a local alias so this
+// package's call sites stay readable next to mountUnitPath.
 func unitFileName(where string) string {
-	trimmed := strings.Trim(where, "/")
-	var b strings.Builder
-	b.Grow(len(trimmed) + 6)
-	for _, r := range trimmed {
-		switch r {
-		case '/':
-			b.WriteByte('-')
-		case '-':
-			b.WriteString(`\x2d`)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteString(".mount")
-	return b.String()
+	return pool.UnitFileName(where)
 }
 
 // poolMountUnitPrefixes are the escaped-name prefixes every unit

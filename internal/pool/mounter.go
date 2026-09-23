@@ -24,9 +24,12 @@ const (
 	unmountRetryDelay  = 250 * time.Millisecond
 )
 
-// Mounter brings up and tears down a Mount's real mergerfs process
+// Mounter brings up and tears down a Mount by execing mergerfs directly
 // through disk.Runner — the same argv-only, no-shell execution disk's
-// own Provider uses (CLAUDE.md), reused here rather than duplicated.
+// own Provider uses (CLAUDE.md). The loop-device lab has no init system
+// (doc 06 §3), so every lab test uses this type. Production hoservad
+// uses SystemdMounter instead (#335): mergerfs must not live in
+// hoserva.service's cgroup.
 type Mounter struct {
 	Runner disk.Runner
 
