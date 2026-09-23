@@ -259,7 +259,7 @@ func run(cfg config) error {
 				if errors.Is(err, store.ErrNoArray) {
 					return "", nil, nil
 				}
-				return "", nil, err
+				return "", nil, fmt.Errorf("loading array topology for cache usage: %w", err)
 			}
 			var cacheMount string
 			for _, d := range disks {
@@ -273,7 +273,7 @@ func run(cfg config) error {
 			}
 			all, err := shareStore.List(ctx)
 			if err != nil {
-				return "", nil, err
+				return "", nil, fmt.Errorf("listing shares for cache usage: %w", err)
 			}
 			out := make([]cache.UsageShare, 0, len(all))
 			for _, s := range all {
