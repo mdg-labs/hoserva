@@ -1395,6 +1395,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/mover/last-run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Most recent finished mover run
+         * @description The structured result of the most recent finished mover run (doc 09 §2's honest reporting, doc 03 §3.6): files moved, bytes, duration, and every skipped entry with its reason. Persisted in SQLite by the mover job itself (#273), not reconstructed from the job log. Null when no mover job has ever finished.
+         */
+        get: operations["getLastMoverRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cache/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cache usage breakdown
+         * @description Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a by-product of each mover run (Q87), never a live directory walk on a timer (Q13). Null when no mover run has computed it yet.
+         */
+        get: operations["getCacheUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/config/export": {
         parameters: {
             query?: never;
@@ -2840,6 +2880,54 @@ export interface components {
              * @description When the sync that produced these figures completed.
              */
             asOf: string;
+        };
+        /** @description One file the mover chose not to move (or could not move), with why (doc 09 §2, doc 03 §3.6's skipped-because-in-use list). */
+        MoverSkippedEntry: {
+            share: string;
+            /** @description Path relative to the share root. */
+            path: string;
+            /** Format: int64 */
+            bytes?: number;
+            /** @description The mover's own result code (e.g. skipped_open, skipped_grace_period, conflict). */
+            result: string;
+            /** @description Optional human detail (error text or skip reason). */
+            reason?: string;
+        };
+        /** @description Structured outcome of one finished mover run (#273, doc 09 §2), persisted in SQLite rather than only in the job log. */
+        MoverRunResult: {
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            finishedAt: string;
+            /** Format: int64 */
+            durationMs: number;
+            /** Format: int32 */
+            filesMoved: number;
+            /** Format: int64 */
+            bytesMoved: number;
+            /** @description True when the run stopped early (cancel, stop, or context). */
+            interrupted: boolean;
+            skipped: components["schemas"]["MoverSkippedEntry"][];
+        };
+        /** @description Cache disk byte breakdown for the cache page (doc 03 §3.6), computed as a by-product of each mover run (Q87) — never a live directory walk on a timer (Q13). */
+        CacheUsageBreakdown: {
+            /**
+             * Format: int64
+             * @description Bytes under cache-only shares (appdata and similar).
+             */
+            appdataBytes: number;
+            /**
+             * Format: int64
+             * @description Bytes still under cache-then-move shares, waiting for a future mover pass.
+             */
+            pendingMovesBytes: number;
+            /**
+             * Format: int64
+             * @description Remaining used bytes on the cache filesystem (statfs used minus appdata and pending), including non-share paths.
+             */
+            otherBytes: number;
+            /** Format: date-time */
+            computedAt: string;
         };
         Share: {
             name: components["schemas"]["ShareName"];
@@ -4932,6 +5020,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getLastMoverRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The last finished mover run, or null when none has finished yet. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MoverRunResult"] | null;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCacheUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The latest persisted breakdown, or null when none has been computed yet. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CacheUsageBreakdown"] | null;
                 };
             };
             default: components["responses"]["Error"];

@@ -339,6 +339,20 @@ func (h *handler) StartMover(ctx context.Context) (*apiv1.Job, error) {
 	return &job, nil
 }
 
+// GetLastMoverRun mirrors production's null-before-first-run shape (#273).
+func (h *handler) GetLastMoverRun(ctx context.Context) (apiv1.NilMoverRunResult, error) {
+	var null apiv1.NilMoverRunResult
+	null.SetToNull()
+	return null, nil
+}
+
+// GetCacheUsage mirrors production's null-before-first-run shape (#273).
+func (h *handler) GetCacheUsage(ctx context.Context) (apiv1.NilCacheUsageBreakdown, error) {
+	var null apiv1.NilCacheUsageBreakdown
+	null.SetToNull()
+	return null, nil
+}
+
 func (h *handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest) (*apiv1.Job, error) {
 	plan, err := mockTopologyPlan(req)
 	if err != nil {

@@ -257,6 +257,14 @@ type Handler interface {
 	//
 	// POST /disks/external/{label}/format
 	FormatExternalDisk(ctx context.Context, req *FormatExternalDiskRequest, params FormatExternalDiskParams) (*ExternalDisk, error)
+	// GetCacheUsage implements getCacheUsage operation.
+	//
+	// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
+	// by-product of each mover run (Q87), never a live directory walk on a timer (Q13). Null when no mover
+	// run has computed it yet.
+	//
+	// GET /cache/usage
+	GetCacheUsage(ctx context.Context) (NilCacheUsageBreakdown, error)
 	// GetCurrentSession implements getCurrentSession operation.
 	//
 	// The signed-in user this session cookie belongs to.
@@ -282,6 +290,15 @@ type Handler interface {
 	//
 	// GET /jobs/{jobId}/log
 	GetJobLog(ctx context.Context, params GetJobLogParams) (GetJobLogOK, error)
+	// GetLastMoverRun implements getLastMoverRun operation.
+	//
+	// The structured result of the most recent finished mover run (doc 09 §2's honest reporting, doc 03
+	// §3.6): files moved, bytes, duration, and every skipped entry with its reason. Persisted in SQLite
+	// by the mover job itself (#273), not reconstructed from the job log. Null when no mover job has ever
+	// finished.
+	//
+	// GET /mover/last-run
+	GetLastMoverRun(ctx context.Context) (NilMoverRunResult, error)
 	// GetMetrics implements getMetrics operation.
 	//
 	// Returns downsampled samples from metrics.db for one metric/subject over a time window (Q74, doc 03

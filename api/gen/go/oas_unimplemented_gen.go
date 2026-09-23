@@ -349,6 +349,17 @@ func (UnimplementedHandler) FormatExternalDisk(ctx context.Context, req *FormatE
 	return r, ht.ErrNotImplemented
 }
 
+// GetCacheUsage implements getCacheUsage operation.
+//
+// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
+// by-product of each mover run (Q87), never a live directory walk on a timer (Q13). Null when no mover
+// run has computed it yet.
+//
+// GET /cache/usage
+func (UnimplementedHandler) GetCacheUsage(ctx context.Context) (r NilCacheUsageBreakdown, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetCurrentSession implements getCurrentSession operation.
 //
 // The signed-in user this session cookie belongs to.
@@ -383,6 +394,18 @@ func (UnimplementedHandler) GetJob(ctx context.Context, params GetJobParams) (r 
 //
 // GET /jobs/{jobId}/log
 func (UnimplementedHandler) GetJobLog(ctx context.Context, params GetJobLogParams) (r GetJobLogOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetLastMoverRun implements getLastMoverRun operation.
+//
+// The structured result of the most recent finished mover run (doc 09 §2's honest reporting, doc 03
+// §3.6): files moved, bytes, duration, and every skipped entry with its reason. Persisted in SQLite
+// by the mover job itself (#273), not reconstructed from the job log. Null when no mover job has ever
+// finished.
+//
+// GET /mover/last-run
+func (UnimplementedHandler) GetLastMoverRun(ctx context.Context) (r NilMoverRunResult, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

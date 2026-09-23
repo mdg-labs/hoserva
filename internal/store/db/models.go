@@ -58,6 +58,14 @@ type AuditLog struct {
 	At     string         `json:"at"`
 }
 
+type CacheUsageBreakdown struct {
+	ID                int64  `json:"id"`
+	AppdataBytes      int64  `json:"appdata_bytes"`
+	PendingMovesBytes int64  `json:"pending_moves_bytes"`
+	OtherBytes        int64  `json:"other_bytes"`
+	ComputedAt        string `json:"computed_at"`
+}
+
 type ExternalDisk struct {
 	ID                int64          `json:"id"`
 	Label             string         `json:"label"`
@@ -101,6 +109,18 @@ type MachineKeyCheck struct {
 	ID         int64  `json:"id"`
 	CheckValue []byte `json:"check_value"`
 	CreatedAt  string `json:"created_at"`
+}
+
+type MoverRunResult struct {
+	ID          int64  `json:"id"`
+	StartedAt   string `json:"started_at"`
+	FinishedAt  string `json:"finished_at"`
+	DurationMs  int64  `json:"duration_ms"`
+	FilesMoved  int64  `json:"files_moved"`
+	BytesMoved  int64  `json:"bytes_moved"`
+	Interrupted int64  `json:"interrupted"`
+	SkippedJson string `json:"skipped_json"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 type NotifyAlert struct {

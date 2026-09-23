@@ -278,6 +278,14 @@ type Invoker interface {
 	//
 	// POST /disks/external/{label}/format
 	FormatExternalDisk(ctx context.Context, request *FormatExternalDiskRequest, params FormatExternalDiskParams) (*ExternalDisk, error)
+	// GetCacheUsage invokes getCacheUsage operation.
+	//
+	// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
+	// by-product of each mover run (Q87), never a live directory walk on a timer (Q13). Null when no mover
+	// run has computed it yet.
+	//
+	// GET /cache/usage
+	GetCacheUsage(ctx context.Context) (NilCacheUsageBreakdown, error)
 	// GetCurrentSession invokes getCurrentSession operation.
 	//
 	// The signed-in user this session cookie belongs to.
@@ -303,6 +311,15 @@ type Invoker interface {
 	//
 	// GET /jobs/{jobId}/log
 	GetJobLog(ctx context.Context, params GetJobLogParams) (GetJobLogOK, error)
+	// GetLastMoverRun invokes getLastMoverRun operation.
+	//
+	// The structured result of the most recent finished mover run (doc 09 §2's honest reporting, doc 03
+	// §3.6): files moved, bytes, duration, and every skipped entry with its reason. Persisted in SQLite
+	// by the mover job itself (#273), not reconstructed from the job log. Null when no mover job has ever
+	// finished.
+	//
+	// GET /mover/last-run
+	GetLastMoverRun(ctx context.Context) (NilMoverRunResult, error)
 	// GetMetrics invokes getMetrics operation.
 	//
 	// Returns downsampled samples from metrics.db for one metric/subject over a time window (Q74, doc 03
@@ -4895,6 +4912,133 @@ func (c *Client) sendFormatExternalDisk(ctx context.Context, request *FormatExte
 	return result, nil
 }
 
+// GetCacheUsage invokes getCacheUsage operation.
+//
+// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
+// by-product of each mover run (Q87), never a live directory walk on a timer (Q13). Null when no mover
+// run has computed it yet.
+//
+// GET /cache/usage
+func (c *Client) GetCacheUsage(ctx context.Context) (NilCacheUsageBreakdown, error) {
+	res, err := c.sendGetCacheUsage(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetCacheUsage(ctx context.Context) (res NilCacheUsageBreakdown, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getCacheUsage"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/cache/usage"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetCacheUsageOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/cache/usage"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetCacheUsageOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetCacheUsageOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetCacheUsageResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetCurrentSession invokes getCurrentSession operation.
 //
 // The signed-in user this session cookie belongs to.
@@ -5426,6 +5570,134 @@ func (c *Client) sendGetJobLog(ctx context.Context, params GetJobLogParams) (res
 
 	stage = "DecodeResponse"
 	result, err := decodeGetJobLogResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetLastMoverRun invokes getLastMoverRun operation.
+//
+// The structured result of the most recent finished mover run (doc 09 §2's honest reporting, doc 03
+// §3.6): files moved, bytes, duration, and every skipped entry with its reason. Persisted in SQLite
+// by the mover job itself (#273), not reconstructed from the job log. Null when no mover job has ever
+// finished.
+//
+// GET /mover/last-run
+func (c *Client) GetLastMoverRun(ctx context.Context) (NilMoverRunResult, error) {
+	res, err := c.sendGetLastMoverRun(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetLastMoverRun(ctx context.Context) (res NilMoverRunResult, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getLastMoverRun"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/mover/last-run"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetLastMoverRunOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/mover/last-run"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetLastMoverRunOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetLastMoverRunOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetLastMoverRunResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

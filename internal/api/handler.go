@@ -19,6 +19,7 @@ import (
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/acme"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
@@ -111,6 +112,10 @@ type Handler struct {
 	DiskRunner disk.Runner
 	// Shares is the share model (#46). Nil returns 501 from share operations.
 	Shares *share.Service
+	// MoverResults is the persisted last mover run and cache usage
+	// breakdown (#273). Nil returns null from those operations — the same
+	// honest "never computed" shape a fresh install has.
+	MoverResults *cache.ResultStore
 	// Network is host ifupdown settings with confirm-or-revert (Q75, #114).
 	// Nil returns 501 from those operations.
 	Network *config.NetworkService

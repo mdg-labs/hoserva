@@ -580,3 +580,34 @@ CREATE TABLE relocation_manifest (
 CREATE TABLE relocation_removing_disks (
     mountpoint TEXT PRIMARY KEY
 ) STRICT;
+
+-- Most recent finished mover run's structured result (#273, doc 09 §2,
+-- doc 03 §3.6): files moved, bytes, duration, and every skipped entry
+-- with its reason. Singleton row (id = 1); RunMover upserts it whenever
+-- cache.Run produced a started report, including interrupted or failed
+-- runs that still have partial results. Absent until the first mover
+-- job has ever finished — GET /mover/last-run then returns null, the
+-- same honest "never run" shape share_usage uses before the first sync.
+CREATE TABLE mover_run_result (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
+    files_moved INTEGER NOT NULL CHECK (files_moved >= 0),
+    bytes_moved INTEGER NOT NULL CHECK (bytes_moved >= 0),
+    interrupted INTEGER NOT NULL CHECK (interrupted IN (0, 1)),
+    skipped_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT;
+
+-- Cache usage breakdown (#273, doc 03 §3.6, Q87): appdata / pending
+-- moves / other, computed as a by-product of each mover run — never a
+-- live directory walk on a timer (Q13). Singleton; absent until the
+-- first mover run that could resolve a cache disk has finished.
+CREATE TABLE cache_usage_breakdown (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    appdata_bytes INTEGER NOT NULL CHECK (appdata_bytes >= 0),
+    pending_moves_bytes INTEGER NOT NULL CHECK (pending_moves_bytes >= 0),
+    other_bytes INTEGER NOT NULL CHECK (other_bytes >= 0),
+    computed_at TEXT NOT NULL
+) STRICT;
