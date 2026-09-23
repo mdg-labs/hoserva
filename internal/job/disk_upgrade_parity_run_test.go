@@ -117,6 +117,9 @@ func TestRunDiskUpgradeParity_HappyPath(t *testing.T) {
 	if found.Device != "/dev/sdz" || found.Mountpoint != newParity || found.FSUUID != "uuid-new" {
 		t.Fatalf("upgraded parity row = %+v, want device=/dev/sdz mountpoint=%s", found, newParity)
 	}
+	if !found.SizeSet || found.Size != 16*disk.TB {
+		t.Fatalf("upgraded parity size = %d set=%v, want 16TiB set — UpgradeParityDisk must persist size_bytes (#341)", found.Size, found.SizeSet)
+	}
 
 	// The old parity file's own bytes are untouched.
 	oldBytes, err := os.ReadFile(filepath.Join(oldParity, "snapraid.parity"))

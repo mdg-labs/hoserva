@@ -600,7 +600,7 @@ func (d DiskUpgradeDataDeps) release(ctx context.Context, rc *RunContext, params
 		return fmt.Errorf("job: no data disk at %s", params.Mountpoint)
 	}
 	if slot.FSUUID != newUUID {
-		if err := d.Store.ReplaceDataDisk(ctx, params.Mountpoint, store.ArrayDisk{
+		row := store.ArrayDisk{
 			Device:       params.Disk.Device,
 			Filesystem:   string(params.Disk.Filesystem),
 			FSUUID:       newUUID,
@@ -608,7 +608,12 @@ func (d DiskUpgradeDataDeps) release(ctx context.Context, rc *RunContext, params
 			Serial:       params.Disk.Serial,
 			ByIDName:     params.Disk.ByIDName,
 			WeakIdentity: params.Disk.WeakIdentity,
-		}); err != nil {
+		}
+		if size, ok := params.Sizes[params.Disk.Device]; ok {
+			row.Size = size
+			row.SizeSet = true
+		}
+		if err := d.Store.ReplaceDataDisk(ctx, params.Mountpoint, row); err != nil {
 			return fmt.Errorf("job: naming the new disk for %s: %w", params.Mountpoint, err)
 		}
 	}
