@@ -433,6 +433,22 @@ func TestShares_RefusedInMaintenanceMode(t *testing.T) {
 		t.Fatalf("DeleteShare after StopArray: code = %q, want maintenance_mode", code)
 	}
 
+	err = client.DeleteShareData(ctx, &apiv1.DeleteShareDataRequest{Confirmation: "media"}, apiv1.DeleteShareDataParams{Name: "media"})
+	if err == nil {
+		t.Fatal("DeleteShareData after StopArray: expected an error")
+	}
+	if code := errorCode(t, err); code != "maintenance_mode" {
+		t.Fatalf("DeleteShareData after StopArray: code = %q, want maintenance_mode", code)
+	}
+
+	err = client.DeleteShareFile(ctx, &apiv1.ConfirmShareRequest{Confirm: true}, apiv1.DeleteShareFileParams{Name: "media", Path: "movie.mkv"})
+	if err == nil {
+		t.Fatal("DeleteShareFile after StopArray: expected an error")
+	}
+	if code := errorCode(t, err); code != "maintenance_mode" {
+		t.Fatalf("DeleteShareFile after StopArray: code = %q, want maintenance_mode", code)
+	}
+
 	got, err := client.GetShare(ctx, apiv1.GetShareParams{Name: "media"})
 	if err != nil {
 		t.Fatalf("GetShare(media) after refused delete: %v", err)

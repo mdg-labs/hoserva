@@ -155,6 +155,9 @@ func (h *handler) DeleteShareData(ctx context.Context, req *apiv1.DeleteShareDat
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.maintenance {
+		return errMaintenanceMode()
+	}
 	if _, ok := h.shares[string(params.Name)]; !ok {
 		return errShareNotFound(params.Name)
 	}
@@ -167,6 +170,9 @@ func (h *handler) DeleteShareFile(ctx context.Context, req *apiv1.ConfirmShareRe
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.maintenance {
+		return errMaintenanceMode()
+	}
 	if _, ok := h.shares[string(params.Name)]; !ok {
 		return errShareNotFound(params.Name)
 	}

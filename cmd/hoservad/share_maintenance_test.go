@@ -141,4 +141,19 @@ func TestShares_RefusedInMaintenanceModeAfterStopArray(t *testing.T) {
 	if _, err := shares.Get(ctx, "media"); err != nil {
 		t.Fatalf("DeleteShare while stopped removed the share row: %v", err)
 	}
+
+	err = h.DeleteShareData(ctx, &apiv1.DeleteShareDataRequest{Confirmation: "media"}, apiv1.DeleteShareDataParams{Name: "media"})
+	status = handlerAPIError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "maintenance_mode" {
+		t.Fatalf("DeleteShareData after StopArray = %+v, want 409 maintenance_mode", status)
+	}
+	if _, err := os.Stat(filepath.Join(disk1, "media")); err != nil {
+		t.Fatalf("DeleteShareData while stopped removed %s: %v", filepath.Join(disk1, "media"), err)
+	}
+
+	err = h.DeleteShareFile(ctx, &apiv1.ConfirmShareRequest{Confirm: true}, apiv1.DeleteShareFileParams{Name: "media", Path: "movie.mkv"})
+	status = handlerAPIError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "maintenance_mode" {
+		t.Fatalf("DeleteShareFile after StopArray = %+v, want 409 maintenance_mode", status)
+	}
 }

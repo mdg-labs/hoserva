@@ -71,26 +71,33 @@ func (h *Handler) GetShare(ctx context.Context, params apiv1.GetShareParams) (*a
 	return &out, nil
 }
 
-// refuseShareMutationInMaintenance refuses create/update/delete while
-// the array is stopped (Q70, #333): those operations mkdir and mount
-// under bare disk mountpoints that sit on the root filesystem after
-// StopArray unmounts the disks, and the next array start would hide
-// anything written there. Reuses the same maintenance_mode mapping
-// Scheduler.Submit already returns for new jobs.
-func (h *Handler) refuseShareMutationInMaintenance() error {
-	if h.Scheduler != nil && h.Scheduler.InMaintenance() {
-		return mapSchedulerError(uuid.Nil, job.ErrMaintenanceMode)
+// admitShareMutation refuses a share mutation once the array is stopping
+// or stopped (Q70, #333), and holds array stop until this call finishes.
+// Create, update, delete, and deleting a share's files all mkdir or
+// remove under disk mountpoints. A check of InMaintenance alone does
+// not cover the gap before StopArray unmounts: the directory would sit
+// on the root filesystem, and the next array start would hide it.
+// Delete of an absent branch while the disk is unmounted would also
+// report success and leave the data on the disk.
+func (h *Handler) admitShareMutation() (func(), error) {
+	if h.Scheduler == nil {
+		return func() {}, nil
 	}
-	return nil
+	if err := h.Scheduler.BeginShareMutation(); err != nil {
+		return nil, mapSchedulerError(uuid.Nil, err)
+	}
+	return h.Scheduler.FinishShareMutation, nil
 }
 
 func (h *Handler) CreateShare(ctx context.Context, req *apiv1.CreateShareRequest) (*apiv1.Share, error) {
 	if h.Shares == nil {
 		return nil, errSharesNotConfigured()
 	}
-	if err := h.refuseShareMutationInMaintenance(); err != nil {
+	release, err := h.admitShareMutation()
+	if err != nil {
 		return nil, err
 	}
+	defer release()
 	in := share.CreateInput{Name: string(req.Name)}
 	if v, ok := req.CacheMode.Get(); ok {
 		in.CacheMode = pool.CacheMode(v)
@@ -118,9 +125,11 @@ func (h *Handler) UpdateShare(ctx context.Context, req *apiv1.UpdateShareRequest
 	if h.Shares == nil {
 		return nil, errSharesNotConfigured()
 	}
-	if err := h.refuseShareMutationInMaintenance(); err != nil {
+	release, err := h.admitShareMutation()
+	if err != nil {
 		return nil, err
 	}
+	defer release()
 	in := share.UpdateInput{}
 	if v, ok := req.CacheMode.Get(); ok {
 		mode := pool.CacheMode(v)
@@ -150,9 +159,11 @@ func (h *Handler) DeleteShare(ctx context.Context, req *apiv1.ConfirmShareReques
 	if h.Shares == nil {
 		return errSharesNotConfigured()
 	}
-	if err := h.refuseShareMutationInMaintenance(); err != nil {
+	release, err := h.admitShareMutation()
+	if err != nil {
 		return err
 	}
+	defer release()
 	if err := h.Shares.Delete(ctx, string(params.Name), req.Confirm); err != nil {
 		return mapShareError(err)
 	}
@@ -163,6 +174,11 @@ func (h *Handler) DeleteShareData(ctx context.Context, req *apiv1.DeleteShareDat
 	if h.Shares == nil {
 		return errSharesNotConfigured()
 	}
+	release, err := h.admitShareMutation()
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := h.Shares.DeleteData(ctx, string(params.Name), req.Confirmation); err != nil {
 		return mapShareError(err)
 	}
@@ -231,6 +247,11 @@ func (h *Handler) DeleteShareFile(ctx context.Context, req *apiv1.ConfirmShareRe
 	if h.Shares == nil {
 		return errSharesNotConfigured()
 	}
+	release, err := h.admitShareMutation()
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := h.Shares.DeleteFile(ctx, string(params.Name), params.Path, req.Confirm); err != nil {
 		return mapShareError(err)
 	}

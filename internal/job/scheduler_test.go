@@ -1222,3 +1222,33 @@ func TestScheduler_ResumeFromBattery_DispatchesJobQueuedBeforeTheHold(t *testing
 	close(bRelease)
 	waitSucceeded(t, s, b.ID)
 }
+
+func TestScheduler_ShareMutationDrainWaitsAndMaintenanceRefuses(t *testing.T) {
+	s := NewScheduler(nil, nil, nil, NewRegistry())
+	if err := s.BeginShareMutation(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- s.DrainShareMutations(ctx)
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("DrainShareMutations returned before FinishShareMutation: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	s.FinishShareMutation()
+	if err := <-done; err != nil {
+		t.Fatalf("DrainShareMutations: %v", err)
+	}
+
+	if err := s.EnterMaintenance(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BeginShareMutation(); !errors.Is(err, ErrMaintenanceMode) {
+		t.Fatalf("BeginShareMutation during maintenance = %v, want ErrMaintenanceMode", err)
+	}
+}
