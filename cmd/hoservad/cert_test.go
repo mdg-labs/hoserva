@@ -68,7 +68,7 @@ func TestWriteTLSCertificatePairLeavesValidPEMWithoutTempFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generateSelfSignedCertificate: %v", err)
 	}
-	if err := writeTLSCertificatePair(certPath, keyPath, certPEM, keyPEM); err != nil {
+	if _, err := writeTLSCertificatePair(certPath, keyPath, certPEM, keyPEM); err != nil {
 		t.Fatalf("writeTLSCertificatePair: %v", err)
 	}
 	if _, err := tls.LoadX509KeyPair(certPath, keyPath); err != nil {
@@ -175,6 +175,99 @@ func TestInstallTLSCertificateReplacesSelfSigned(t *testing.T) {
 	view := tlsCertViewFromParsed(parsed)
 	if view.Kind != "lets_encrypt" || view.Domain != "nas.example.com" {
 		t.Fatalf("view = %+v", view)
+	}
+}
+
+func TestInstallTLSCertificate_StagingFailureLeavesExistingPairUntouched(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "hoserva.crt")
+	keyPath := filepath.Join(dir, "hoserva.key")
+	if _, err := loadOrGenerateTLSCertificate(certPath, keyPath); err != nil {
+		t.Fatal(err)
+	}
+	certBefore, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyBefore, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certInfo, err := os.Stat(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyInfo, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issuedCert, issuedKey, err := generateNamedCertificate("nas.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if err := installTLSCertificate(certPath, keyPath, issuedCert, issuedKey); err == nil {
+		t.Fatal("expected install to fail when the certificate directory is not writable")
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	certAfter, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyAfter, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(certAfter) != string(certBefore) || string(keyAfter) != string(keyBefore) {
+		t.Fatal("staging failure rewrote the existing certificate pair")
+	}
+	certInfoAfter, err := os.Stat(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyInfoAfter, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !certInfo.ModTime().Equal(certInfoAfter.ModTime()) || !keyInfo.ModTime().Equal(keyInfoAfter.ModTime()) {
+		t.Fatal("staging failure truncated or rewrote the existing certificate files")
+	}
+}
+
+func TestLoadOrGenerateTLSCertificate_RecoversInterruptedPairFromBackup(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "hoserva.crt")
+	keyPath := filepath.Join(dir, "hoserva.key")
+	original, err := loadOrGenerateTLSCertificate(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuedCert, issuedKey, err := generateNamedCertificate("nas.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := installTLSCertificate(certPath, keyPath, issuedCert, issuedKey); err != nil {
+		t.Fatal(err)
+	}
+
+	// The live certificate no longer matches its key. The snapshot taken
+	// before that install is the previous pair.
+	if err := os.WriteFile(certPath, issuedCert[:len(issuedCert)/2], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := loadOrGenerateTLSCertificate(certPath, keyPath)
+	if err != nil {
+		t.Fatalf("load after interrupted install: %v", err)
+	}
+	if string(recovered.Certificate[0]) != string(original.Certificate[0]) {
+		t.Fatal("interrupted install should restore the snapshotted pair, not keep a mismatched one or mint a new certificate")
 	}
 }
 

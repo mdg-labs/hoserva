@@ -57,18 +57,28 @@ func loadOrGenerateTLSCertificate(certPath, keyPath string) (tls.Certificate, er
 				return tls.Certificate{}, err
 			}
 			cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-			if err != nil {
-				return tls.Certificate{}, fmt.Errorf("loading existing TLS certificate: %w", err)
+			if err == nil {
+				return cert, nil
 			}
-			return cert, nil
+			// A crash between the key rename and the certificate rename
+			// leaves both paths present but not a pair. The previous
+			// pair, if installTLSCertificate snapshotted one, is still
+			// a recoverable unit.
+			if recovered, recErr := recoverTLSCertificatePair(certPath, keyPath); recErr == nil {
+				return recovered, nil
+			}
+			return tls.Certificate{}, fmt.Errorf("loading existing TLS certificate: %w", err)
 		}
+	}
+	if recovered, recErr := recoverTLSCertificatePair(certPath, keyPath); recErr == nil {
+		return recovered, nil
 	}
 
 	certPEM, keyPEM, err := generateSelfSignedCertificate()
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("generating self-signed certificate: %w", err)
 	}
-	if err := writeTLSCertificatePair(certPath, keyPath, certPEM, keyPEM); err != nil {
+	if _, err := writeTLSCertificatePair(certPath, keyPath, certPEM, keyPEM); err != nil {
 		return tls.Certificate{}, err
 	}
 
@@ -134,46 +144,59 @@ func generateSelfSignedCertificate() (certPEM, keyPEM []byte, err error) {
 	return certPEM, keyPEM, nil
 }
 
+// tlsInstallProgress records which final paths writeTLSCertificatePair
+// has already renamed over. A failure before either rename leaves both
+// false, so a caller must not rewrite the existing pair.
+type tlsInstallProgress struct {
+	keyInstalled  bool
+	certInstalled bool
+}
+
 // writeTLSCertificatePair persists certPEM/keyPEM at certPath/keyPath.
 // Each file is fully written and fsynced in a hidden temp name first;
 // only after both are ready are they renamed into place and the parent
 // directory fsynced, so a crash mid-write cannot leave a zero-byte or
-// truncated file at the final path.
-func writeTLSCertificatePair(certPath, keyPath string, certPEM, keyPEM []byte) error {
+// truncated file at the final path. The two renames are not one
+// operation: progress reports how far the install got so a caller can
+// put back only the paths that changed.
+func writeTLSCertificatePair(certPath, keyPath string, certPEM, keyPEM []byte) (tlsInstallProgress, error) {
+	var progress tlsInstallProgress
 	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
-		return fmt.Errorf("validating TLS certificate pair: %w", err)
+		return progress, fmt.Errorf("validating TLS certificate pair: %w", err)
 	}
 	dir := filepath.Dir(certPath)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating certificate directory: %w", err)
+		return progress, fmt.Errorf("creating certificate directory: %w", err)
 	}
 
 	tmpCertPath, err := writeTLSTempFile(dir, "hoserva.crt", certPEM, 0o644)
 	if err != nil {
-		return fmt.Errorf("writing certificate: %w", err)
+		return progress, fmt.Errorf("writing certificate: %w", err)
 	}
 	tmpKeyPath, err := writeTLSTempFile(dir, "hoserva.key", keyPEM, 0o600)
 	if err != nil {
 		_ = os.Remove(tmpCertPath)
-		return fmt.Errorf("writing certificate key: %w", err)
+		return progress, fmt.Errorf("writing certificate key: %w", err)
 	}
 
 	if err := os.Rename(tmpKeyPath, keyPath); err != nil {
 		_ = os.Remove(tmpCertPath)
 		_ = os.Remove(tmpKeyPath)
-		return fmt.Errorf("installing certificate key: %w", err)
+		return progress, fmt.Errorf("installing certificate key: %w", err)
 	}
+	progress.keyInstalled = true
 	if err := os.Rename(tmpCertPath, certPath); err != nil {
 		_ = os.Remove(tmpCertPath)
-		return fmt.Errorf("installing certificate: %w", err)
+		return progress, fmt.Errorf("installing certificate: %w", err)
 	}
+	progress.certInstalled = true
 	if err := fsyncDir(dir); err != nil {
-		return err
+		return progress, err
 	}
 	if err := checkTLSKeyPermissions(keyPath); err != nil {
-		return err
+		return progress, err
 	}
-	return nil
+	return progress, nil
 }
 
 func writeTLSTempFile(dir, base string, data []byte, perm os.FileMode) (string, error) {
@@ -215,33 +238,135 @@ func fsyncDir(dir string) error {
 	return nil
 }
 
-// installTLSCertificate atomically replaces certPath/keyPath. Invalid PEM
-// is rejected before any file is touched, so a failed Let's Encrypt
-// install cannot leave the listener without a certificate.
+// installTLSCertificate replaces certPath/keyPath with certPEM/keyPEM.
+// Invalid PEM is rejected before any file is touched. A pair that
+// already loads is snapshotted to sibling .bak files first, so a crash
+// between the key rename and the certificate rename can be repaired by
+// loadOrGenerateTLSCertificate. A failure before either rename leaves
+// the existing files untouched — restoring them with os.WriteFile would
+// truncate a valid pair.
 func installTLSCertificate(certPath, keyPath string, certPEM, keyPEM []byte) error {
 	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
 		return fmt.Errorf("installing TLS certificate: %w", err)
 	}
-
-	oldCert, _ := os.ReadFile(certPath)
-	oldKey, _ := os.ReadFile(keyPath)
-
-	restore := func() {
-		if len(oldCert) > 0 {
-			_ = os.WriteFile(certPath, oldCert, 0o644)
-		}
-		if len(oldKey) > 0 {
-			_ = os.WriteFile(keyPath, oldKey, 0o600)
-		}
+	if err := snapshotTLSPair(certPath, keyPath); err != nil {
+		return err
 	}
 
-	if err := writeTLSCertificatePair(certPath, keyPath, certPEM, keyPEM); err != nil {
-		restore()
+	progress, err := writeTLSCertificatePair(certPath, keyPath, certPEM, keyPEM)
+	if err != nil {
+		if rbErr := restoreInstalledTLSFiles(certPath, keyPath, progress); rbErr != nil {
+			return fmt.Errorf("%w (restoring previous certificate: %v)", err, rbErr)
+		}
 		return err
 	}
 	if _, err := tls.LoadX509KeyPair(certPath, keyPath); err != nil {
-		restore()
+		progress.keyInstalled = true
+		progress.certInstalled = true
+		if rbErr := restoreInstalledTLSFiles(certPath, keyPath, progress); rbErr != nil {
+			return fmt.Errorf("verifying installed TLS certificate: %w (restoring previous: %v)", err, rbErr)
+		}
 		return fmt.Errorf("verifying installed TLS certificate: %w", err)
+	}
+	return nil
+}
+
+func snapshotTLSPair(certPath, keyPath string) error {
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading TLS certificate: %w", err)
+	}
+	keyPEM, err := os.ReadFile(keyPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading TLS key: %w", err)
+	}
+	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
+		return nil
+	}
+	if err := writeTLSFileDurable(certPath+".bak", certPEM, 0o644); err != nil {
+		return fmt.Errorf("snapshotting TLS certificate: %w", err)
+	}
+	if err := writeTLSFileDurable(keyPath+".bak", keyPEM, 0o600); err != nil {
+		return fmt.Errorf("snapshotting TLS key: %w", err)
+	}
+	return fsyncDir(filepath.Dir(certPath))
+}
+
+func restoreInstalledTLSFiles(certPath, keyPath string, progress tlsInstallProgress) error {
+	if !progress.keyInstalled && !progress.certInstalled {
+		return nil
+	}
+	if progress.keyInstalled {
+		keyPEM, err := os.ReadFile(keyPath + ".bak")
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("reading TLS key backup: %w", err)
+		}
+		if err == nil {
+			if err := writeTLSFileDurable(keyPath, keyPEM, 0o600); err != nil {
+				return fmt.Errorf("restoring TLS key: %w", err)
+			}
+		}
+	}
+	if progress.certInstalled {
+		certPEM, err := os.ReadFile(certPath + ".bak")
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("reading TLS certificate backup: %w", err)
+		}
+		if err == nil {
+			if err := writeTLSFileDurable(certPath, certPEM, 0o644); err != nil {
+				return fmt.Errorf("restoring TLS certificate: %w", err)
+			}
+		}
+	}
+	return fsyncDir(filepath.Dir(certPath))
+}
+
+// recoverTLSCertificatePair installs the snapshotted pair over the live
+// paths when that snapshot itself loads. A missing snapshot is an error
+// so the caller can fall through to generating a certificate only when
+// no previous pair exists.
+func recoverTLSCertificatePair(certPath, keyPath string) (tls.Certificate, error) {
+	bakCert, bakKey := certPath+".bak", keyPath+".bak"
+	if err := checkTLSKeyPermissions(bakKey); err != nil {
+		return tls.Certificate{}, err
+	}
+	certPEM, err := os.ReadFile(bakCert)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	keyPEM, err := os.ReadFile(bakKey)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
+		return tls.Certificate{}, err
+	}
+	if err := writeTLSFileDurable(keyPath, keyPEM, 0o600); err != nil {
+		return tls.Certificate{}, err
+	}
+	if err := writeTLSFileDurable(certPath, certPEM, 0o644); err != nil {
+		return tls.Certificate{}, err
+	}
+	if err := fsyncDir(filepath.Dir(certPath)); err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.LoadX509KeyPair(certPath, keyPath)
+}
+
+func writeTLSFileDurable(path string, data []byte, perm os.FileMode) error {
+	tmp, err := writeTLSTempFile(filepath.Dir(path), filepath.Base(path), data, perm)
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
 	}
 	return nil
 }
