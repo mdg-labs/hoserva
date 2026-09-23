@@ -38,6 +38,7 @@ func findAuthorization(h http.Header, prefix string) (string, bool) {
 
 // operationRolesApiToken is a private map storing roles per operation.
 var operationRolesApiToken = map[string][]string{
+	AddDiskOperation:                        []string{},
 	ApplyHostConfigOperation:                []string{},
 	ApplyNetworkSettingsOperation:           []string{},
 	ApplyUpdateOperation:                    []string{},
@@ -97,9 +98,12 @@ var operationRolesApiToken = map[string][]string{
 	LogoutOperation:                         []string{},
 	MarkNotificationsReadOperation:          []string{},
 	MountExternalDiskOperation:              []string{},
+	PlanDiskAddOperation:                    []string{},
+	PlanDiskReplaceOperation:                []string{},
 	RebootHostOperation:                     []string{},
 	RegenerateTLSCertificateOperation:       []string{},
 	RegisterExternalDiskOperation:           []string{},
+	ReplaceDiskOperation:                    []string{},
 	ResetUserPasswordOperation:              []string{},
 	ResumeJobOperation:                      []string{},
 	RevokeApiTokenOperation:                 []string{},
@@ -155,6 +159,7 @@ func GetRolesForApiToken(operation string) []string {
 
 // operationRolesSessionCookie is a private map storing roles per operation.
 var operationRolesSessionCookie = map[string][]string{
+	AddDiskOperation:                        []string{},
 	ApplyHostConfigOperation:                []string{},
 	ApplyNetworkSettingsOperation:           []string{},
 	ApplyUpdateOperation:                    []string{},
@@ -214,9 +219,12 @@ var operationRolesSessionCookie = map[string][]string{
 	LogoutOperation:                         []string{},
 	MarkNotificationsReadOperation:          []string{},
 	MountExternalDiskOperation:              []string{},
+	PlanDiskAddOperation:                    []string{},
+	PlanDiskReplaceOperation:                []string{},
 	RebootHostOperation:                     []string{},
 	RegenerateTLSCertificateOperation:       []string{},
 	RegisterExternalDiskOperation:           []string{},
+	ReplaceDiskOperation:                    []string{},
 	ResetUserPasswordOperation:              []string{},
 	ResumeJobOperation:                      []string{},
 	RevokeApiTokenOperation:                 []string{},

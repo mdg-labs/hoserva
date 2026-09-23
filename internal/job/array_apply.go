@@ -14,9 +14,13 @@ import (
 
 // applyArrayFromStore generates disk mount units, mergerfs pool units and
 // snapraid.conf from SQLite topology (D4, D1) and mounts each physical
-// disk by the filesystem UUID stored there (Q21). Rewriting units and
-// remounting a disk already mounted by that stored UUID is success, not
-// a second format. It never reads job-params JSON and never formats.
+// disk by the filesystem UUID stored there (Q21). Rewriting units for a
+// disk already mounted is success, not a second format — and, since #288
+// (disk_add/disk_replace call this a second time against disks
+// create-array's own call already mounted), not a second, stacked kernel
+// mount either: a mountpoint this call finds already mounted is left
+// alone rather than mounted again on top of itself. It never reads
+// job-params JSON and never formats.
 func applyArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Generator, mounter disk.UnitMounter, now time.Time) error {
 	settings, disks, err := st.GetArray(ctx)
 	if err != nil {
@@ -49,11 +53,25 @@ func applyArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Ge
 	}
 
 	for _, u := range units {
+		if alreadyMounted(u.Where) {
+			continue
+		}
 		if err := mounter.Mount(ctx, u); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// alreadyMounted reports whether where is already a real mountpoint.
+// Any error (most commonly the mountpoint directory not existing yet, the
+// ordinary case for a disk's first-ever mount) is treated as "not
+// mounted" rather than propagated — this check only ever skips a Mount
+// call it is positively certain is already satisfied; anything less
+// certain still goes through Mount exactly as before.
+func alreadyMounted(where string) bool {
+	mounted, err := disk.IsMountpoint(where)
+	return err == nil && mounted
 }
 
 func mountUnitsFromStore(disks []store.ArrayDisk) ([]disk.MountUnit, error) {

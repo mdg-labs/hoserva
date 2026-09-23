@@ -13,6 +13,18 @@ type UnimplementedHandler struct{}
 
 var _ Handler = UnimplementedHandler{}
 
+// AddDisk implements addDisk operation.
+//
+// Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
+// units, the pool and `snapraid.conf` from SQLite (D4, doc 02 §4 "Adding a disk"). The confirmation
+// must be the exact string the matching `planDiskAdd` call returned; a wrong or missing one is refused
+// with `confirmation_required` and formats nothing.
+//
+// POST /disks/array/add
+func (UnimplementedHandler) AddDisk(ctx context.Context, req *AddDiskRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ApplyHostConfig implements applyHostConfig operation.
 //
 // Q76: each detected Samba file, NFS exports file, fstab, Docker containers list and images list is
@@ -674,6 +686,36 @@ func (UnimplementedHandler) MountExternalDisk(ctx context.Context, params MountE
 	return r, ht.ErrNotImplemented
 }
 
+// PlanDiskAdd implements planDiskAdd operation.
+//
+// Computes the add plan (doc 02 §4 "Adding a disk"): the target disk's own identity (model, WWN or
+// serial, size, its existing filesystem if any), its assigned mountpoint (`disk.NextDataMountpoint`)
+// and the exact typed confirmation `addDisk` requires. Refuses (Q20) a disk that would leave a parity
+// disk smaller than the array's largest data disk, and (Q21) a device already identified as one of the
+// array's own members by WWN or serial, reusing `disk.TopologyPlan.Validate` over the resulting data
+// set — the same check array setup runs. Read-only: nothing is formatted or persisted.
+//
+// POST /disks/array/add/plan
+func (UnimplementedHandler) PlanDiskAdd(ctx context.Context, req *AddDiskPlanRequest) (r *AddDiskPlan, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// PlanDiskReplace implements planDiskReplace operation.
+//
+// Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity
+// (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that
+// reconstructs the slot's contents after it is formatted, and the exact typed confirmation
+// `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is
+// genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
+// §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
+// replacement that would leave a parity disk smaller than the array's largest data disk. Read-only:
+// nothing is formatted or persisted.
+//
+// POST /disks/array/replace/plan
+func (UnimplementedHandler) PlanDiskReplace(ctx context.Context, req *ReplaceDiskPlanRequest) (r *ReplaceDiskPlan, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // RebootHost implements rebootHost operation.
 //
 // Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -703,6 +745,23 @@ func (UnimplementedHandler) RegenerateTLSCertificate(ctx context.Context) (r *Ne
 //
 // POST /disks/external
 func (UnimplementedHandler) RegisterExternalDisk(ctx context.Context, req *RegisterExternalDiskRequest) (r *ExternalDisk, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ReplaceDisk implements replaceDisk operation.
+//
+// Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same
+// mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the
+// mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix`
+// to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
+// disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
+// (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
+// or still present by identity. The confirmation must be the exact string the matching
+// `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and
+// formats nothing.
+//
+// POST /disks/array/replace
+func (UnimplementedHandler) ReplaceDisk(ctx context.Context, req *ReplaceDiskRequest) (r *Job, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

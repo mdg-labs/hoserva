@@ -70,6 +70,31 @@ func (p DiskFormatParams) Plan() disk.TopologyPlan {
 	return disk.TopologyPlan{Parity: p.Parity, Data: p.Data, Cache: p.Cache}
 }
 
+// DiskAddParams is addDisk's persisted Topology-job payload (doc 02 §4
+// "Adding a disk"): the disk to format or adopt, the typed confirmation
+// planDiskAdd's own plan required, and every currently-listed disk's size
+// from that same disk.Provider.List call — RunDiskAdd re-validates Q20
+// against the array's current topology plus this snapshot rather than
+// trusting the queued plan alone, the same defense-in-depth
+// createArray's own FormatPlan already applies to DiskFormatParams.
+type DiskAddParams struct {
+	Confirmation string            `json:"confirmation"`
+	Disk         disk.AssignedDisk `json:"disk"`
+	Sizes        map[string]int64  `json:"sizes"`
+}
+
+// DiskReplaceParams is replaceDisk's persisted Topology-job payload
+// (doc 02 §4 "Replacing a failed disk"): the existing data-disk slot being
+// replaced, the replacement disk, the typed confirmation planDiskReplace's
+// own plan required, and a disk-size snapshot for the same Q20 re-check
+// DiskAddParams carries.
+type DiskReplaceParams struct {
+	Confirmation string            `json:"confirmation"`
+	Mountpoint   string            `json:"mountpoint"`
+	Disk         disk.AssignedDisk `json:"disk"`
+	Sizes        map[string]int64  `json:"sizes"`
+}
+
 // ValidateParams checks params against t at Submit time (not in SQL).
 // Empty or null is valid for types whose payload is optional. TypeFix
 // requires confirm=true, so an absent payload is rejected. Types that
@@ -86,6 +111,12 @@ func ValidateParams(t Type, params []byte) error {
 		if t == TypeShareRelocation {
 			return fmt.Errorf("job: share_relocation params require share and to")
 		}
+		if t == TypeDiskAdd {
+			return fmt.Errorf("job: disk_add params require confirmation")
+		}
+		if t == TypeDiskReplace {
+			return fmt.Errorf("job: disk_replace params require confirmation")
+		}
 		return nil
 	}
 	switch t {
@@ -100,6 +131,12 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeDiskFormat:
 		_, err := decodeDiskFormatParams(params)
+		return err
+	case TypeDiskAdd:
+		_, err := decodeDiskAddParams(params)
+		return err
+	case TypeDiskReplace:
+		_, err := decodeDiskReplaceParams(params)
 		return err
 	case TypeShareRelocation:
 		_, err := decodeShareRelocationParams(params)
@@ -205,6 +242,40 @@ func decodeDiskFormatParams(params []byte) (DiskFormatParams, error) {
 	}
 	if len(p.Parity) == 0 && len(p.Data) == 0 && p.Cache == nil {
 		return DiskFormatParams{}, fmt.Errorf("job: disk_format params require a plan")
+	}
+	return p, nil
+}
+
+func decodeDiskAddParams(params []byte) (DiskAddParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return DiskAddParams{}, fmt.Errorf("job: disk_add params require confirmation")
+	}
+	var p DiskAddParams
+	if err := decodeJSON(params, &p); err != nil {
+		return DiskAddParams{}, err
+	}
+	if p.Confirmation == "" {
+		return DiskAddParams{}, fmt.Errorf("job: disk_add params require confirmation")
+	}
+	if p.Disk.Device == "" {
+		return DiskAddParams{}, fmt.Errorf("job: disk_add params require a device")
+	}
+	return p, nil
+}
+
+func decodeDiskReplaceParams(params []byte) (DiskReplaceParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return DiskReplaceParams{}, fmt.Errorf("job: disk_replace params require confirmation")
+	}
+	var p DiskReplaceParams
+	if err := decodeJSON(params, &p); err != nil {
+		return DiskReplaceParams{}, err
+	}
+	if p.Confirmation == "" {
+		return DiskReplaceParams{}, fmt.Errorf("job: disk_replace params require confirmation")
+	}
+	if p.Mountpoint == "" || p.Disk.Device == "" {
+		return DiskReplaceParams{}, fmt.Errorf("job: disk_replace params require mountpoint and a replacement device")
 	}
 	return p, nil
 }

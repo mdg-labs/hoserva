@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 // blockingRun returns a RunFunc that signals started, then blocks until
@@ -300,7 +302,13 @@ func TestScheduler_TopologyExcludesEveryStorageClassButNotServiceOrVM(t *testing
 	s := newTestScheduler(t)
 
 	topStarted, topRelease := registerBlocking(s, TypeDiskAdd, false)
-	_, err := s.Submit(ctx, TypeDiskAdd, nil, nil)
+	// registerBlocking's own fake RunFunc never decodes params — this is
+	// only a Topology-class placeholder for the class-exclusion behaviour
+	// below — but Submit still runs ValidateParams first, so disk_add's
+	// own confirmation/device requirement (#288) needs a well-formed
+	// payload here, not nil.
+	topologyParams := mustJSON(t, DiskAddParams{Confirmation: "ERASE /dev/sdx", Disk: disk.AssignedDisk{Device: "/dev/sdx"}})
+	_, err := s.Submit(ctx, TypeDiskAdd, nil, topologyParams)
 	if err != nil {
 		t.Fatalf("Submit topology job: %v", err)
 	}

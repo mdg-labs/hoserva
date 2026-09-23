@@ -6,6 +6,7 @@ package apiv1
 type OperationName = string
 
 const (
+	AddDiskOperation                        OperationName = "AddDisk"
 	ApplyHostConfigOperation                OperationName = "ApplyHostConfig"
 	ApplyNetworkSettingsOperation           OperationName = "ApplyNetworkSettings"
 	ApplyUpdateOperation                    OperationName = "ApplyUpdate"
@@ -68,9 +69,12 @@ const (
 	LogoutOperation                         OperationName = "Logout"
 	MarkNotificationsReadOperation          OperationName = "MarkNotificationsRead"
 	MountExternalDiskOperation              OperationName = "MountExternalDisk"
+	PlanDiskAddOperation                    OperationName = "PlanDiskAdd"
+	PlanDiskReplaceOperation                OperationName = "PlanDiskReplace"
 	RebootHostOperation                     OperationName = "RebootHost"
 	RegenerateTLSCertificateOperation       OperationName = "RegenerateTLSCertificate"
 	RegisterExternalDiskOperation           OperationName = "RegisterExternalDisk"
+	ReplaceDiskOperation                    OperationName = "ReplaceDisk"
 	ResetUserPasswordOperation              OperationName = "ResetUserPassword"
 	ResumeJobOperation                      OperationName = "ResumeJob"
 	RevokeApiTokenOperation                 OperationName = "RevokeApiToken"

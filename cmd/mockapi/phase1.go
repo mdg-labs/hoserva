@@ -79,6 +79,14 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 			Model:     apiv1.NewOptString("WDC WD140EFGX"),
 			Serial:    apiv1.NewOptString("WD-WCC7E0000001"),
 		},
+		// Not in mockArrayDisks — the spare candidate `disk add`/`disk
+		// replace` demos exercise against (#288).
+		{
+			Device:    "/dev/sdf",
+			SizeBytes: mockDiskSize,
+			Model:     apiv1.NewOptString("WDC WD40EFRX"),
+			Serial:    apiv1.NewOptString("WD-WCC4E1111111"),
+		},
 	}
 	if scenario == "degraded" {
 		disks[2].Failed = apiv1.NewOptBool(true)

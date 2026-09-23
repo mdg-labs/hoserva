@@ -1115,6 +1115,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/disks/array/add/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview adding a data disk
+         * @description Computes the add plan (doc 02 §4 "Adding a disk"): the target disk's own identity (model, WWN or serial, size, its existing filesystem if any), its assigned mountpoint (`disk.NextDataMountpoint`) and the exact typed confirmation `addDisk` requires. Refuses (Q20) a disk that would leave a parity disk smaller than the array's largest data disk, and (Q21) a device already identified as one of the array's own members by WWN or serial, reusing `disk.TopologyPlan.Validate` over the resulting data set — the same check array setup runs. Read-only: nothing is formatted or persisted.
+         */
+        post: operations["planDiskAdd"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/disks/array/add": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a data disk to the running array
+         * @description Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount units, the pool and `snapraid.conf` from SQLite (D4, doc 02 §4 "Adding a disk"). The confirmation must be the exact string the matching `planDiskAdd` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
+         */
+        post: operations["addDisk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/disks/array/replace/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview replacing a data disk
+         * @description Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that reconstructs the slot's contents after it is formatted, and the exact typed confirmation `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02 §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a replacement that would leave a parity disk smaller than the array's largest data disk. Read-only: nothing is formatted or persisted.
+         */
+        post: operations["planDiskReplace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/disks/array/replace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace a data disk
+         * @description Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix` to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted or still present by identity. The confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
+         */
+        post: operations["replaceDisk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/array/stop": {
         parameters: {
             query?: never;
@@ -2454,6 +2534,81 @@ export interface components {
             /** @description mergerfs minfreespace in its size-suffix syntax (doc 02 §1), e.g. `50G`. Omitted uses the engine default. */
             minFreeSpace?: string;
             /** @description Exact typed confirmation for this plan (doc 03 §3.1 step 6): `ERASE /dev/sda, /dev/sdb` listing every device that will be formatted, sorted, or `ADOPT ONLY — NOTHING ERASED` when every assigned disk is adopted. A wrong or missing string is refused and formats nothing. */
+            confirmation: string;
+        };
+        AddDiskPlanRequest: {
+            device: string;
+            filesystem?: components["schemas"]["ArrayDiskFilesystem"];
+            /**
+             * @description Keep the existing filesystem instead of formatting (Q23).
+             * @default false
+             */
+            adopt: boolean;
+        };
+        AddDiskPlan: {
+            device: string;
+            /** @description The target disk's own model, for the operator to recognise it by. */
+            model?: string;
+            wwn?: string;
+            serial?: string;
+            /** Format: int64 */
+            sizeBytes?: number;
+            /** @description The disk's filesystem before this operation, if any, cached from udev. */
+            currentFilesystem?: string;
+            filesystem: components["schemas"]["ArrayDiskFilesystem"];
+            adopt: boolean;
+            /** @description The next free `/mnt/diskN` this disk will be mounted at (doc 02 §4 "Adding a disk" step 4). */
+            mountpoint: string;
+            /** @description Exact typed confirmation `addDisk` requires for this plan: `ERASE <device>`, or `ADOPT ONLY — NOTHING ERASED` when adopt is true. */
+            confirmation: string;
+        };
+        AddDiskRequest: {
+            device: string;
+            filesystem?: components["schemas"]["ArrayDiskFilesystem"];
+            /** @default false */
+            adopt: boolean;
+            /** @description Exact typed confirmation from the matching `planDiskAdd` call. A wrong or missing string is refused and formats nothing. */
+            confirmation: string;
+        };
+        ReplaceDiskPlanRequest: {
+            /** @description The existing data disk slot being replaced, e.g. `/mnt/disk2`. */
+            mountpoint: string;
+            /** @description The replacement disk's device path. */
+            device: string;
+            filesystem?: components["schemas"]["ArrayDiskFilesystem"];
+            /**
+             * @description Keep the existing filesystem instead of formatting (Q23).
+             * @default false
+             */
+            adopt: boolean;
+        };
+        ReplaceDiskPlan: {
+            mountpoint: string;
+            /** @description The device on record for this slot before the replacement. */
+            previousDevice: string;
+            replacementDevice: string;
+            /** @description The replacement disk's own model, for the operator to recognise it by. */
+            model?: string;
+            wwn?: string;
+            serial?: string;
+            /** Format: int64 */
+            sizeBytes?: number;
+            /** @description The replacement's filesystem before this operation, if any, cached from udev. */
+            currentFilesystem?: string;
+            filesystem: components["schemas"]["ArrayDiskFilesystem"];
+            adopt: boolean;
+            /** @description The SnapRAID command this plan's own apply call runs to reconstruct the slot's contents from parity (doc 02 §4 "Replacing a failed disk" step 4), e.g. `snapraid fix -d d2`. */
+            rebuild: string;
+            /** @description Exact typed confirmation `replaceDisk` requires for this plan: `ERASE <replacementDevice>`, or `ADOPT ONLY — NOTHING ERASED` when adopt is true. */
+            confirmation: string;
+        };
+        ReplaceDiskRequest: {
+            mountpoint: string;
+            device: string;
+            filesystem?: components["schemas"]["ArrayDiskFilesystem"];
+            /** @default false */
+            adopt: boolean;
+            /** @description Exact typed confirmation from the matching `planDiskReplace` call. A wrong or missing string is refused and formats nothing. */
             confirmation: string;
         };
         /**
@@ -4354,6 +4509,106 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CreateArrayRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued Topology job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    planDiskAdd: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddDiskPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description The add plan. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddDiskPlan"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    addDisk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddDiskRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued Topology job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    planDiskReplace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplaceDiskPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description The replace plan. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplaceDiskPlan"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    replaceDisk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplaceDiskRequest"];
             };
         };
         responses: {

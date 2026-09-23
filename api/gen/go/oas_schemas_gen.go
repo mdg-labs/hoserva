@@ -17,6 +17,213 @@ func (s *ErrorStatusCode) Error() string {
 	return fmt.Sprintf("code %d: %+v", s.StatusCode, s.Response)
 }
 
+// Ref: #/components/schemas/AddDiskPlan
+type AddDiskPlan struct {
+	Device string `json:"device"`
+	// The target disk's own model, for the operator to recognise it by.
+	Model     OptString `json:"model"`
+	Wwn       OptString `json:"wwn"`
+	Serial    OptString `json:"serial"`
+	SizeBytes OptInt64  `json:"sizeBytes"`
+	// The disk's filesystem before this operation, if any, cached from udev.
+	CurrentFilesystem OptString           `json:"currentFilesystem"`
+	Filesystem        ArrayDiskFilesystem `json:"filesystem"`
+	Adopt             bool                `json:"adopt"`
+	// The next free `/mnt/diskN` this disk will be mounted at (doc 02 §4 "Adding a disk" step 4).
+	Mountpoint string `json:"mountpoint"`
+	// Exact typed confirmation `addDisk` requires for this plan: `ERASE <device>`, or
+	// `ADOPT ONLY — NOTHING ERASED` when adopt is true.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetDevice returns the value of Device.
+func (s *AddDiskPlan) GetDevice() string {
+	return s.Device
+}
+
+// GetModel returns the value of Model.
+func (s *AddDiskPlan) GetModel() OptString {
+	return s.Model
+}
+
+// GetWwn returns the value of Wwn.
+func (s *AddDiskPlan) GetWwn() OptString {
+	return s.Wwn
+}
+
+// GetSerial returns the value of Serial.
+func (s *AddDiskPlan) GetSerial() OptString {
+	return s.Serial
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *AddDiskPlan) GetSizeBytes() OptInt64 {
+	return s.SizeBytes
+}
+
+// GetCurrentFilesystem returns the value of CurrentFilesystem.
+func (s *AddDiskPlan) GetCurrentFilesystem() OptString {
+	return s.CurrentFilesystem
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *AddDiskPlan) GetFilesystem() ArrayDiskFilesystem {
+	return s.Filesystem
+}
+
+// GetAdopt returns the value of Adopt.
+func (s *AddDiskPlan) GetAdopt() bool {
+	return s.Adopt
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *AddDiskPlan) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *AddDiskPlan) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetDevice sets the value of Device.
+func (s *AddDiskPlan) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetModel sets the value of Model.
+func (s *AddDiskPlan) SetModel(val OptString) {
+	s.Model = val
+}
+
+// SetWwn sets the value of Wwn.
+func (s *AddDiskPlan) SetWwn(val OptString) {
+	s.Wwn = val
+}
+
+// SetSerial sets the value of Serial.
+func (s *AddDiskPlan) SetSerial(val OptString) {
+	s.Serial = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *AddDiskPlan) SetSizeBytes(val OptInt64) {
+	s.SizeBytes = val
+}
+
+// SetCurrentFilesystem sets the value of CurrentFilesystem.
+func (s *AddDiskPlan) SetCurrentFilesystem(val OptString) {
+	s.CurrentFilesystem = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *AddDiskPlan) SetFilesystem(val ArrayDiskFilesystem) {
+	s.Filesystem = val
+}
+
+// SetAdopt sets the value of Adopt.
+func (s *AddDiskPlan) SetAdopt(val bool) {
+	s.Adopt = val
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *AddDiskPlan) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *AddDiskPlan) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
+// Ref: #/components/schemas/AddDiskPlanRequest
+type AddDiskPlanRequest struct {
+	Device     string                 `json:"device"`
+	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
+	// Keep the existing filesystem instead of formatting (Q23).
+	Adopt OptBool `json:"adopt"`
+}
+
+// GetDevice returns the value of Device.
+func (s *AddDiskPlanRequest) GetDevice() string {
+	return s.Device
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *AddDiskPlanRequest) GetFilesystem() OptArrayDiskFilesystem {
+	return s.Filesystem
+}
+
+// GetAdopt returns the value of Adopt.
+func (s *AddDiskPlanRequest) GetAdopt() OptBool {
+	return s.Adopt
+}
+
+// SetDevice sets the value of Device.
+func (s *AddDiskPlanRequest) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *AddDiskPlanRequest) SetFilesystem(val OptArrayDiskFilesystem) {
+	s.Filesystem = val
+}
+
+// SetAdopt sets the value of Adopt.
+func (s *AddDiskPlanRequest) SetAdopt(val OptBool) {
+	s.Adopt = val
+}
+
+// Ref: #/components/schemas/AddDiskRequest
+type AddDiskRequest struct {
+	Device     string                 `json:"device"`
+	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
+	Adopt      OptBool                `json:"adopt"`
+	// Exact typed confirmation from the matching `planDiskAdd` call. A wrong or missing string is refused
+	// and formats nothing.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetDevice returns the value of Device.
+func (s *AddDiskRequest) GetDevice() string {
+	return s.Device
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *AddDiskRequest) GetFilesystem() OptArrayDiskFilesystem {
+	return s.Filesystem
+}
+
+// GetAdopt returns the value of Adopt.
+func (s *AddDiskRequest) GetAdopt() OptBool {
+	return s.Adopt
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *AddDiskRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetDevice sets the value of Device.
+func (s *AddDiskRequest) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *AddDiskRequest) SetFilesystem(val OptArrayDiskFilesystem) {
+	s.Filesystem = val
+}
+
+// SetAdopt sets the value of Adopt.
+func (s *AddDiskRequest) SetAdopt(val OptBool) {
+	s.Adopt = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *AddDiskRequest) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
 type ApiToken struct {
 	Token string
 	Roles []string
@@ -7014,6 +7221,261 @@ func (s *RegisterExternalDiskRequest) SetLabel(val ExternalDiskLabel) {
 // SetBackupDestination sets the value of BackupDestination.
 func (s *RegisterExternalDiskRequest) SetBackupDestination(val OptBool) {
 	s.BackupDestination = val
+}
+
+// Ref: #/components/schemas/ReplaceDiskPlan
+type ReplaceDiskPlan struct {
+	Mountpoint string `json:"mountpoint"`
+	// The device on record for this slot before the replacement.
+	PreviousDevice    string `json:"previousDevice"`
+	ReplacementDevice string `json:"replacementDevice"`
+	// The replacement disk's own model, for the operator to recognise it by.
+	Model     OptString `json:"model"`
+	Wwn       OptString `json:"wwn"`
+	Serial    OptString `json:"serial"`
+	SizeBytes OptInt64  `json:"sizeBytes"`
+	// The replacement's filesystem before this operation, if any, cached from udev.
+	CurrentFilesystem OptString           `json:"currentFilesystem"`
+	Filesystem        ArrayDiskFilesystem `json:"filesystem"`
+	Adopt             bool                `json:"adopt"`
+	// The SnapRAID command this plan's own apply call runs to reconstruct the slot's contents from parity
+	// (doc 02 §4 "Replacing a failed disk" step 4), e.g. `snapraid fix -d d2`.
+	Rebuild string `json:"rebuild"`
+	// Exact typed confirmation `replaceDisk` requires for this plan: `ERASE <replacementDevice>`, or
+	// `ADOPT ONLY — NOTHING ERASED` when adopt is true.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *ReplaceDiskPlan) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetPreviousDevice returns the value of PreviousDevice.
+func (s *ReplaceDiskPlan) GetPreviousDevice() string {
+	return s.PreviousDevice
+}
+
+// GetReplacementDevice returns the value of ReplacementDevice.
+func (s *ReplaceDiskPlan) GetReplacementDevice() string {
+	return s.ReplacementDevice
+}
+
+// GetModel returns the value of Model.
+func (s *ReplaceDiskPlan) GetModel() OptString {
+	return s.Model
+}
+
+// GetWwn returns the value of Wwn.
+func (s *ReplaceDiskPlan) GetWwn() OptString {
+	return s.Wwn
+}
+
+// GetSerial returns the value of Serial.
+func (s *ReplaceDiskPlan) GetSerial() OptString {
+	return s.Serial
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *ReplaceDiskPlan) GetSizeBytes() OptInt64 {
+	return s.SizeBytes
+}
+
+// GetCurrentFilesystem returns the value of CurrentFilesystem.
+func (s *ReplaceDiskPlan) GetCurrentFilesystem() OptString {
+	return s.CurrentFilesystem
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *ReplaceDiskPlan) GetFilesystem() ArrayDiskFilesystem {
+	return s.Filesystem
+}
+
+// GetAdopt returns the value of Adopt.
+func (s *ReplaceDiskPlan) GetAdopt() bool {
+	return s.Adopt
+}
+
+// GetRebuild returns the value of Rebuild.
+func (s *ReplaceDiskPlan) GetRebuild() string {
+	return s.Rebuild
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *ReplaceDiskPlan) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *ReplaceDiskPlan) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetPreviousDevice sets the value of PreviousDevice.
+func (s *ReplaceDiskPlan) SetPreviousDevice(val string) {
+	s.PreviousDevice = val
+}
+
+// SetReplacementDevice sets the value of ReplacementDevice.
+func (s *ReplaceDiskPlan) SetReplacementDevice(val string) {
+	s.ReplacementDevice = val
+}
+
+// SetModel sets the value of Model.
+func (s *ReplaceDiskPlan) SetModel(val OptString) {
+	s.Model = val
+}
+
+// SetWwn sets the value of Wwn.
+func (s *ReplaceDiskPlan) SetWwn(val OptString) {
+	s.Wwn = val
+}
+
+// SetSerial sets the value of Serial.
+func (s *ReplaceDiskPlan) SetSerial(val OptString) {
+	s.Serial = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *ReplaceDiskPlan) SetSizeBytes(val OptInt64) {
+	s.SizeBytes = val
+}
+
+// SetCurrentFilesystem sets the value of CurrentFilesystem.
+func (s *ReplaceDiskPlan) SetCurrentFilesystem(val OptString) {
+	s.CurrentFilesystem = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *ReplaceDiskPlan) SetFilesystem(val ArrayDiskFilesystem) {
+	s.Filesystem = val
+}
+
+// SetAdopt sets the value of Adopt.
+func (s *ReplaceDiskPlan) SetAdopt(val bool) {
+	s.Adopt = val
+}
+
+// SetRebuild sets the value of Rebuild.
+func (s *ReplaceDiskPlan) SetRebuild(val string) {
+	s.Rebuild = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *ReplaceDiskPlan) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
+// Ref: #/components/schemas/ReplaceDiskPlanRequest
+type ReplaceDiskPlanRequest struct {
+	// The existing data disk slot being replaced, e.g. `/mnt/disk2`.
+	Mountpoint string `json:"mountpoint"`
+	// The replacement disk's device path.
+	Device     string                 `json:"device"`
+	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
+	// Keep the existing filesystem instead of formatting (Q23).
+	Adopt OptBool `json:"adopt"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *ReplaceDiskPlanRequest) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetDevice returns the value of Device.
+func (s *ReplaceDiskPlanRequest) GetDevice() string {
+	return s.Device
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *ReplaceDiskPlanRequest) GetFilesystem() OptArrayDiskFilesystem {
+	return s.Filesystem
+}
+
+// GetAdopt returns the value of Adopt.
+func (s *ReplaceDiskPlanRequest) GetAdopt() OptBool {
+	return s.Adopt
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *ReplaceDiskPlanRequest) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetDevice sets the value of Device.
+func (s *ReplaceDiskPlanRequest) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *ReplaceDiskPlanRequest) SetFilesystem(val OptArrayDiskFilesystem) {
+	s.Filesystem = val
+}
+
+// SetAdopt sets the value of Adopt.
+func (s *ReplaceDiskPlanRequest) SetAdopt(val OptBool) {
+	s.Adopt = val
+}
+
+// Ref: #/components/schemas/ReplaceDiskRequest
+type ReplaceDiskRequest struct {
+	Mountpoint string                 `json:"mountpoint"`
+	Device     string                 `json:"device"`
+	Filesystem OptArrayDiskFilesystem `json:"filesystem"`
+	Adopt      OptBool                `json:"adopt"`
+	// Exact typed confirmation from the matching `planDiskReplace` call. A wrong or missing string is
+	// refused and formats nothing.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *ReplaceDiskRequest) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetDevice returns the value of Device.
+func (s *ReplaceDiskRequest) GetDevice() string {
+	return s.Device
+}
+
+// GetFilesystem returns the value of Filesystem.
+func (s *ReplaceDiskRequest) GetFilesystem() OptArrayDiskFilesystem {
+	return s.Filesystem
+}
+
+// GetAdopt returns the value of Adopt.
+func (s *ReplaceDiskRequest) GetAdopt() OptBool {
+	return s.Adopt
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *ReplaceDiskRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *ReplaceDiskRequest) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetDevice sets the value of Device.
+func (s *ReplaceDiskRequest) SetDevice(val string) {
+	s.Device = val
+}
+
+// SetFilesystem sets the value of Filesystem.
+func (s *ReplaceDiskRequest) SetFilesystem(val OptArrayDiskFilesystem) {
+	s.Filesystem = val
+}
+
+// SetAdopt sets the value of Adopt.
+func (s *ReplaceDiskRequest) SetAdopt(val OptBool) {
+	s.Adopt = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *ReplaceDiskRequest) SetConfirmation(val string) {
+	s.Confirmation = val
 }
 
 // ResetUserPasswordNoContent is response for ResetUserPassword operation.

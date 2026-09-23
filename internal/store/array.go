@@ -26,9 +26,18 @@ var (
 	// ErrArrayExists is PutArray's refusal when topology is already
 	// persisted, and create-array's refusal of a retry whose plan does
 	// not match stored devices/roles. A matching retry re-applies from
-	// SQLite and never formats (#181; adding/removing disks is a later
-	// issue).
+	// SQLite and never formats (#181).
 	ErrArrayExists = errors.New("store: array topology already exists")
+	// ErrArrayDiskExists is AddDataDisk/ReplaceDataDisk's refusal when the
+	// device, filesystem UUID or mountpoint given is already claimed by
+	// another row — the same UNIQUE constraints PutArray's own inserts
+	// rely on (#288).
+	ErrArrayDiskExists = errors.New("store: a disk already occupies that device, filesystem or mountpoint")
+	// ErrArrayDiskNotFound is ReplaceDataDisk/GetDataDiskByMountpoint's
+	// refusal when no data disk occupies the given mountpoint — including
+	// when it names a parity or cache slot instead, since doc 02 §4
+	// "Replacing a failed disk" is specific to data disks (#288).
+	ErrArrayDiskNotFound = errors.New("store: no data disk at that mountpoint")
 )
 
 // ArraySettings is the singleton pool-wide create-array row: mergerfs
@@ -153,20 +162,103 @@ func (s *ArrayStore) GetArray(ctx context.Context) (ArraySettings, []ArrayDisk, 
 	}
 	disks := make([]ArrayDisk, 0, len(rows))
 	for _, r := range rows {
-		disks = append(disks, ArrayDisk{
-			Role:         r.Role,
-			RoleIndex:    int(r.RoleIndex),
-			Device:       r.Device,
-			Filesystem:   r.Filesystem,
-			FSUUID:       r.FsUuid,
-			WWN:          r.Wwn.String,
-			Serial:       r.Serial.String,
-			ByIDName:     r.ByIDName.String,
-			WeakIdentity: r.WeakIdentity != 0,
-			Mountpoint:   r.Mountpoint,
-		})
+		disks = append(disks, arrayDiskFromRow(r))
 	}
 	return settings, disks, nil
+}
+
+// AddDataDisk inserts one new data-disk row into an already-existing array
+// (doc 02 §4 "Adding a disk" steps 5-6). Refuses (ErrNoArray) before
+// create-array has ever run — this method only ever grows an array that
+// already exists, never creates the first one (PutArray's own job) — and
+// (ErrArrayDiskExists) when d's device, filesystem UUID or mountpoint is
+// already claimed by another row.
+func (s *ArrayStore) AddDataDisk(ctx context.Context, d ArrayDisk) error {
+	exists, err := s.Exists(ctx)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNoArray
+	}
+	if err := s.q.InsertArrayDisk(ctx, storedb.InsertArrayDiskParams{
+		Role:         ArrayRoleData,
+		RoleIndex:    int64(d.RoleIndex),
+		Device:       d.Device,
+		Filesystem:   d.Filesystem,
+		FsUuid:       d.FSUUID,
+		Wwn:          nullString(d.WWN),
+		Serial:       nullString(d.Serial),
+		ByIDName:     nullString(d.ByIDName),
+		WeakIdentity: boolToInt(d.WeakIdentity),
+		Mountpoint:   d.Mountpoint,
+	}); err != nil {
+		if isUniqueConstraint(err) {
+			return fmt.Errorf("%w: %s", ErrArrayDiskExists, d.Device)
+		}
+		return fmt.Errorf("store: inserting data disk %s: %w", d.Device, err)
+	}
+	return nil
+}
+
+// GetDataDiskByMountpoint returns the data disk currently assigned to
+// mountpoint (e.g. "/mnt/disk2"), or ErrArrayDiskNotFound when no data disk
+// occupies it — including when mountpoint names a parity or cache slot
+// instead (doc 02 §4 "Replacing a failed disk" is specific to data disks).
+func (s *ArrayStore) GetDataDiskByMountpoint(ctx context.Context, mountpoint string) (ArrayDisk, error) {
+	row, err := s.q.GetArrayDataDiskByMountpoint(ctx, mountpoint)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ArrayDisk{}, ErrArrayDiskNotFound
+		}
+		return ArrayDisk{}, err
+	}
+	return arrayDiskFromRow(row), nil
+}
+
+// ReplaceDataDisk re-points the data disk at mountpoint to a replacement's
+// identity (doc 02 §4 "Replacing a failed disk" step 3): role and
+// role_index are left unchanged, so mount units and snapraid.conf
+// regenerate at the exact same slot the failed disk used. Refuses
+// (ErrArrayDiskNotFound) when no data disk occupies mountpoint, and
+// (ErrArrayDiskExists) when the replacement's own device or filesystem
+// UUID collides with a disk already in the array.
+func (s *ArrayStore) ReplaceDataDisk(ctx context.Context, mountpoint string, d ArrayDisk) error {
+	n, err := s.q.ReplaceArrayDataDiskIdentity(ctx, storedb.ReplaceArrayDataDiskIdentityParams{
+		Device:       d.Device,
+		Filesystem:   d.Filesystem,
+		FsUuid:       d.FSUUID,
+		Wwn:          nullString(d.WWN),
+		Serial:       nullString(d.Serial),
+		ByIDName:     nullString(d.ByIDName),
+		WeakIdentity: boolToInt(d.WeakIdentity),
+		Mountpoint:   mountpoint,
+	})
+	if err != nil {
+		if isUniqueConstraint(err) {
+			return fmt.Errorf("%w: %s", ErrArrayDiskExists, d.Device)
+		}
+		return fmt.Errorf("store: replacing data disk at %s: %w", mountpoint, err)
+	}
+	if n == 0 {
+		return ErrArrayDiskNotFound
+	}
+	return nil
+}
+
+func arrayDiskFromRow(r *storedb.ArrayDisk) ArrayDisk {
+	return ArrayDisk{
+		Role:         r.Role,
+		RoleIndex:    int(r.RoleIndex),
+		Device:       r.Device,
+		Filesystem:   r.Filesystem,
+		FSUUID:       r.FsUuid,
+		WWN:          r.Wwn.String,
+		Serial:       r.Serial.String,
+		ByIDName:     r.ByIDName.String,
+		WeakIdentity: r.WeakIdentity != 0,
+		Mountpoint:   r.Mountpoint,
+	}
 }
 
 func nullString(s string) sql.NullString {

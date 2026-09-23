@@ -344,20 +344,56 @@ func run(cfg config) error {
 		handler.RelocationManifest = parityEngine.Relocation
 	}
 
+	rebuildArraySequence := func(ctx context.Context) error {
+		seq, err := newArraySequence(ctx, scheduler, arrayStore, disks, linuxDisks.Exec)
+		if err != nil {
+			return err
+		}
+		handler.SetArray(seq)
+		return nil
+	}
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
-		Provider:  disks,
-		Runner:    linuxDisks.Exec,
-		Store:     arrayStore,
-		Generator: generator,
-		Mounter:   disk.SystemdMounter{Runner: linuxDisks.Exec},
-		ArrayReady: func(ctx context.Context) error {
-			seq, err := newArraySequence(ctx, scheduler, arrayStore, disks, linuxDisks.Exec)
-			if err != nil {
-				return err
-			}
-			handler.SetArray(seq)
-			return nil
-		},
+		Provider:   disks,
+		Runner:     linuxDisks.Exec,
+		Store:      arrayStore,
+		Generator:  generator,
+		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		ArrayReady: rebuildArraySequence,
+	}))
+	registry.Register(job.TypeDiskAdd, false, job.RunDiskAdd(job.DiskAddDeps{
+		Provider:   disks,
+		Runner:     linuxDisks.Exec,
+		Store:      arrayStore,
+		Generator:  generator,
+		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		ArrayReady: rebuildArraySequence,
+	}))
+	// replaceParityEngine is left a true nil interface, not a non-nil
+	// interface wrapping a nil *parity.SnapraidEngine, when snapraid.conf
+	// doesn't exist yet (no array created): RunDiskReplace's own
+	// dependency check (d.Parity == nil) only catches the former, and its
+	// GetArray call already fails closed with ErrNoArray in that case
+	// before ever reaching Parity — this is only extra safety against
+	// arrayStore and snapraid.conf ever disagreeing about whether an
+	// array exists.
+	var replaceParityEngine parity.Engine
+	if parityEngine != nil {
+		replaceParityEngine = parityEngine
+	}
+	// TypeDiskReplace's own snapraid fix step genuinely honors context
+	// cancellation (exec.CommandContext kills the subprocess, #288's own
+	// lab test proves this), so it is registered cancellable — a stuck or
+	// unwanted replace can be cancelled the same way a mover or ACME issue
+	// job already can, leaving the array's topology already switched over
+	// to the replacement and recoverable via an ordinary `hoserva fix`.
+	registry.Register(job.TypeDiskReplace, true, job.RunDiskReplace(job.DiskReplaceDeps{
+		Provider:   disks,
+		Runner:     linuxDisks.Exec,
+		Store:      arrayStore,
+		Generator:  generator,
+		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		Parity:     replaceParityEngine,
+		ArrayReady: rebuildArraySequence,
 	}))
 
 	webRoot, err := fs.Sub(web.Dist, "dist")

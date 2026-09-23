@@ -38,3 +38,15 @@ ORDER BY
         ELSE 4
     END,
     role_index ASC;
+
+-- name: GetArrayDataDiskByMountpoint :one
+SELECT
+    id, role, role_index, device, filesystem, fs_uuid,
+    wwn, serial, by_id_name, weak_identity, mountpoint
+FROM array_disks WHERE mountpoint = ? AND role = 'data';
+
+-- name: ReplaceArrayDataDiskIdentity :execrows
+UPDATE array_disks
+SET device = ?, filesystem = ?, fs_uuid = ?,
+    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?
+WHERE mountpoint = ? AND role = 'data';
