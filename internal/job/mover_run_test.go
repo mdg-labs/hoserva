@@ -233,3 +233,33 @@ func TestRunMover_PersistsStructuredResult(t *testing.T) {
 		t.Fatalf("PendingMovesBytes = %d, want 0 after the file was moved", usage.PendingMovesBytes)
 	}
 }
+
+func TestRunMover_PersistsResultWhenContextIsCancelled(t *testing.T) {
+	db := newTestDB(t)
+	results := cache.NewResultStore(db)
+	share := newTestMoverShare(t)
+	fn := RunMover(MoverDeps{
+		Shares: func(context.Context) ([]cache.Share, error) {
+			return []cache.Share{share}, nil
+		},
+		Results: results,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out bytes.Buffer
+	rc := &RunContext{
+		ctx:            ctx,
+		out:            &out,
+		stopRequested:  make(chan struct{}),
+		saveCheckpoint: func([]byte) error { return nil },
+		setProgress:    func(int) {},
+	}
+	_ = fn(ctx, rc)
+	run, err := results.LastRun(context.Background())
+	if err != nil {
+		t.Fatalf("LastRun after a cancelled run: %v", err)
+	}
+	if run.StartedAt.IsZero() {
+		t.Fatal("cancelled run was not persisted")
+	}
+}

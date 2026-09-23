@@ -57,7 +57,7 @@ func RunMover(d MoverDeps) RunFunc {
 						cacheMount, usageShares = mount, plan
 					}
 				}
-				if perr := d.Results.SaveFromReport(ctx, report, cacheMount, usageShares); perr != nil {
+				if perr := d.Results.SaveFromReport(context.WithoutCancel(ctx), report, cacheMount, usageShares); perr != nil {
 					_, _ = fmt.Fprintf(rc.Output(), "mover: persisting run result: %v\n", perr)
 				}
 			}
