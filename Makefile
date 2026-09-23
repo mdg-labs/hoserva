@@ -258,7 +258,7 @@ $(error invalid DEB: must not contain '$$' — no Make or shell expansion syntax
 endif
 export DEB
 
-.PHONY: build test test-unit test-go test-integration packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite vm-soak hooks-install
+.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -577,10 +577,21 @@ lab-snapraid-check: lab-require-id
 # on the host, into this lab's own bind-mounted directory, because the lab
 # image carries no Go toolchain (unlike snapraid/mergerfs, which are native
 # packages) — smb-check.sh, run inside the container next, does everything
-# Samba-related itself.
+# Samba-related itself. test-lab (issue #328) then compiles every
+# //go:build lab package on the host and runs each binary in this lab;
+# smb-check runs first so a destroy+create reset inside test-lab cannot
+# wipe smb.conf.rendered mid-check.
 test-integration: lab-require-id
 	$(GO) run ./scripts/devenv/gen-smb-conf > ".lab/$$HOSERVA_LAB_ID/smb.conf.rendered"
 	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/smb-check.sh
+	$(MAKE) test-lab
+
+# Every //go:build lab Go test (doc 06 §3, issue #328): compile on the
+# host with `go test -tags lab -c`, run each binary inside this lab's
+# container. Includes internal/parity/guard_lab_test.go — the threshold
+# guard's real-snapraid proof. A failing lab test fails this target.
+test-lab: lab-require-id
+	scripts/devenv/run-lab-tests.sh
 
 # destroy-array.sh runs as root inside the container and fails loudly (exit
 # non-zero) if a mount cannot be freed, rather than silently continuing to a

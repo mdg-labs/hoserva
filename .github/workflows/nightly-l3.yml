@@ -35,6 +35,47 @@ permissions:
   contents: read
 
 jobs:
+  # Every //go:build lab Go test (issue #328, doc 06 §3): compile on the
+  # host with -tags lab, run each binary inside a loop-device lab. Separate
+  # from the L3 VM job — no KVM needed, and a lab-test regression turns
+  # the nightly red without waiting on the 105-minute VM suite. The
+  # merge-gate lab job in ci.yml also reaches these via `make
+  # test-integration`; this job is the nightly signal the issue asked for.
+  lab-go:
+    name: Lab Go tests (-tags lab)
+    if: github.repository == 'mdg-labs/hoserva'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Derive this run's lab id
+        id: lab
+        run: echo "id=nightly-lab-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: lab-up
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make lab-up
+
+      # test-integration runs smb-check then test-lab (issue #328), so a
+      # lab-tagged Go regression fails this job the same way a local
+      # `make test-integration HOSERVA_LAB_ID=…` would.
+      - name: test-integration
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make test-integration
+
+      - name: lab-destroy
+        if: always()
+        env:
+          HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+        run: make lab-destroy
+
   l3:
     name: L3 VM suite
     if: github.repository == 'mdg-labs/hoserva'
