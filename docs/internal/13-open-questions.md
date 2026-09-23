@@ -425,17 +425,22 @@ The event log is cheap and makes R1 diagnosable from day one. Attribution is the
 Without this, a container that starts before `/mnt/user` is mounted writes its data onto the boot device and shows the user an empty app — a quiet, common homelab failure. A missing disk is also exactly when the guard's zero-files rule has to hold (doc 02 §2), so nothing that writes to the pool runs before a human has seen the degraded state.
 
 ### Q70 — Stopping the array and shutting down
-**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §3, §4, doc 02 §4, doc 03 §3.2, Q29
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §3, §4, doc 02 §4, doc 03 §3.2, Q29, Q69, Q71
 
-**Default: `hoserva array stop` — *Stop array* on `/storage` — puts the system in maintenance mode: new jobs are refused, running resumable jobs stop at their next checkpoint and the rest are marked interrupted, VMs shut down (gracefully, then forced after a timeout), containers stop, Samba and NFS stop, then the per-share mounts, the catch-all and the disks unmount. `hoserva array start` reverses it. System shutdown and reboot run the same sequence through `hoserva-storage.target`. The replace and upgrade flows require maintenance mode, or a powered-off box, before a disk is physically touched.**
+**Default: `hoserva array stop` — *Stop array* on `/storage` — puts the system in maintenance mode: new jobs are refused, running resumable jobs stop at their next checkpoint and the rest are marked interrupted, VMs shut down (gracefully, then forced after a timeout), containers stop, Samba and NFS stop, then the per-share mounts, the catch-all and the disks unmount. `hoserva array start` reverses it. System shutdown and reboot run the same sequence through `hoserva-storage.target`. The replace and upgrade flows require maintenance mode, or a powered-off box, before a disk is physically touched. A larger-data-disk upgrade (Q71) is the one job maintenance mode admits, and only once the stop sequence has completed. From submit until it succeeds, fails or is cancelled, it holds the array stopped, across daemon restarts and reboots too. While it is pending, `hoserva array start` and boot's readiness gate (Q69) are refused, and so is `hoserva array stop`; system shutdown, reboot and the UPS path still run the stop sequence. That upgrade's state machine in doc 02 §4 is the authority on what each command does meanwhile.**
 Every NAS owner eventually needs "stop everything so I can swap a disk". Without a defined order, a container holding a file open blocks the unmount, or a disk is pulled mid-write.
 
 ### Q71 — Replacing a healthy disk with a larger one
-**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 02 §4, doc 03 §3.2, Q14, Q20
+**Status:** Default · **Gate:** Phase 2 · **Affects:** doc 02 §4, doc 03 §3.2, Q14, Q20, Q29, Q70
 
 **Default: two guided flows, each keeping the old disk untouched until the new one verifies.**
 - **Larger parity disk:** copy the parity file to the new disk, verify it byte for byte, switch the configuration, and pass `snapraid check` before the old parity disk is released — the array stays protected throughout. When a new data disk would be larger than the current parity, the flow offers this first and then reuses the old parity disk as a data disk.
-- **Larger data disk:** in maintenance mode (Q70), copy the old disk's files to the new one, preserving ownership, xattrs and timestamps; mount the new disk at the same `/mnt/diskN`; and require `snapraid diff` to show no removed or updated files before the old disk is released.
+- **Larger data disk:** with the array stopped (Q70), and `snapraid diff` showing nothing to sync, copy the old disk's files to the new one, preserving ownership, xattrs and timestamps. Verify the copy, then mount the new disk at the same `/mnt/diskN` by its filesystem UUID. Require `snapraid diff` to show no removed or updated files before the old disk is released.
+  - The job mounts every array disk itself, and unmounts all of them whenever it stops.
+  - The pool and every service stay down until the upgrade succeeds, fails or is cancelled.
+  - Cancelling is the abort back to the old disk. It is allowed until the job reaches its release step.
+  - Once the copy has verified, nothing goes back to copying.
+  - Doc 02 §4 ("Larger data disk: the upgrade's state machine") specifies every checkpoint against cancel, interruption, restart, `array start`, `array stop`, resume and a second upgrade. The implementation follows it exactly.
 
 Both follow SnapRAID's documented replacement procedures, and the exact diff expectations are confirmed against SnapRAID 12.4 in the lab before this ships. Rebuilding from parity (`snapraid fix`) stays reserved for failed disks: it leaves the array without redundancy for the rebuild's duration, which is needless while a healthy source disk exists.
 
