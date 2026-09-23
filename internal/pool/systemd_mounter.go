@@ -95,7 +95,7 @@ func (m SystemdMounter) Unmount(ctx context.Context, where string) error {
 		if err == nil {
 			return nil
 		}
-		if isBusyUnmountError(err) && now().Before(deadline) {
+		if systemdStopShouldRetry(err) && now().Before(deadline) {
 			sleep(unmountRetryDelay)
 			continue
 		}

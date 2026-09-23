@@ -85,6 +85,29 @@ func isBusyUnmountError(err error) bool {
 	return err != nil && strings.HasSuffix(strings.TrimSpace(err.Error()), "Device or resource busy")
 }
 
+// systemdStopShouldRetry reports whether a systemctl stop failure is
+// worth retrying. fusermount's own EBUSY text is one case. A busy .mount
+// unit is the other: systemctl reports "Job for <unit>.mount failed"
+// and does not append umount's strerror, so matching only
+// "Device or resource busy" would give up on the first attempt.
+// "not loaded", "not found", a masked unit, and an authentication
+// failure are permanent and are not retried.
+func systemdStopShouldRetry(err error) bool {
+	if isBusyUnmountError(err) {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "not loaded") || strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "masked") || strings.Contains(msg, "Access denied") ||
+		strings.Contains(msg, "Interactive authentication") {
+		return false
+	}
+	return strings.Contains(msg, "Job failed") || strings.Contains(msg, ".mount failed")
+}
+
 // Mount execs mnt's own argv and returns once the mount is live.
 // mergerfs daemonizes on its own (Argv passes no -f), matching
 // scripts/devenv/create-array.sh's own invocation, so Runner.Run's

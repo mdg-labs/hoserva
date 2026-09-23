@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
 )
@@ -98,5 +99,55 @@ func TestSystemdMounter_Mount_PropagatesStartError(t *testing.T) {
 	mounter := SystemdMounter{Runner: r, IsMountpoint: func(string) (bool, error) { return false, nil }}
 	if err := mounter.Mount(context.Background(), m); !errors.Is(err, wantErr) {
 		t.Fatalf("Mount: got %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+func TestSystemdMounter_Unmount_RetriesGenericFailedJob(t *testing.T) {
+	where := testWhere(t)
+	unit := UnitFileName(where)
+	r := newScriptedRunner()
+	jobFailed := errors.New("Job for " + unit + " failed.")
+	r.Script("systemctl", []string{"stop", unit}, jobFailed)
+	r.Script("systemctl", []string{"stop", unit}, jobFailed)
+	r.Script("systemctl", []string{"stop", unit}, nil)
+	clock := &fakeUnmountClock{now: time.Now()}
+	mounter := SystemdMounter{
+		Runner:       r,
+		Now:          clock.Now,
+		Sleep:        clock.Sleep,
+		IsMountpoint: func(string) (bool, error) { return true, nil },
+	}
+	if err := mounter.Unmount(context.Background(), where); err != nil {
+		t.Fatalf("Unmount: %v", err)
+	}
+	stops := 0
+	for _, c := range r.Calls() {
+		if c.Name == "systemctl" && len(c.Args) > 0 && c.Args[0] == "stop" {
+			stops++
+		}
+	}
+	if stops != 3 {
+		t.Fatalf("stop calls = %d, want 3 (two generic job failures, then success)", stops)
+	}
+}
+
+func TestSystemdMounter_Unmount_DoesNotRetryUnitNotLoaded(t *testing.T) {
+	where := testWhere(t)
+	unit := UnitFileName(where)
+	r := newScriptedRunner()
+	notLoaded := errors.New("Failed to stop " + unit + ": Unit " + unit + " not loaded.")
+	r.Script("systemctl", []string{"stop", unit}, notLoaded)
+	clock := &fakeUnmountClock{now: time.Now()}
+	mounter := SystemdMounter{
+		Runner:       r,
+		Now:          clock.Now,
+		Sleep:        clock.Sleep,
+		IsMountpoint: func(string) (bool, error) { return true, nil },
+	}
+	if err := mounter.Unmount(context.Background(), where); err == nil {
+		t.Fatal("Unmount: want an error for a unit that is not loaded")
+	}
+	if len(r.Calls()) != 1 {
+		t.Fatalf("calls = %+v, want a single stop and no retry", r.Calls())
 	}
 }
