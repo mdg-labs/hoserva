@@ -37,6 +37,25 @@ COOKIE_JAR="/tmp/hoserva-pool-restart-check-cookies.txt"
 HOLD_PID_FILE="/tmp/hoserva-335-hold.pid"
 MARKER_BODY="hoserva-335-restart-check"
 
+# hoserva.service is Type=simple, so systemctl is-active can succeed before
+# the API socket is accepting. Poll the login itself inside the deadline.
+wait_for_admin_login() {
+  local label=$1
+  local deadline=$((SECONDS + 60))
+  local result=""
+  while (( SECONDS < deadline )); do
+    if vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+      result="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'" 2>/dev/null || true)"
+      if [[ "$result" == *'"role":"admin"'* ]]; then
+        LOGIN_RESULT="$result"
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  die "$label: API did not accept an admin login within 60s (last response: ${result:-service inactive})"
+}
+
 echo "pool-restart-check[$HOSERVA_LAB_ID]: refreshing hoservad from source so the binary under test is this workspace's build (#335)"
 BUILD_OUT="$VM_STATE_DIR/pool-restart-build"
 mkdir -p -- "$BUILD_OUT"
@@ -47,15 +66,9 @@ vm_ssh 'sudo install -m0755 /tmp/hoservad-335 /usr/bin/hoservad
 sudo install -m0644 /tmp/hoserva.service-335 /etc/systemd/system/hoserva.service
 sudo systemctl daemon-reload
 sudo systemctl restart hoserva'
-deadline=$((SECONDS + 60))
-while (( SECONDS < deadline )) && ! vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; do
-  sleep 2
-done
-vm_ssh 'sudo systemctl is-active hoserva' >/dev/null || die "hoservad did not become active after the from-source refresh"
 
 echo "pool-restart-check[$HOSERVA_LAB_ID]: logging in as $ADMIN_USERNAME"
-LOGIN_RESULT="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'" 2>/dev/null)"
-[[ "$LOGIN_RESULT" == *'"role":"admin"'* ]] || die "login as $ADMIN_USERNAME did not return an admin session: $LOGIN_RESULT"
+wait_for_admin_login "after the from-source refresh"
 
 echo "pool-restart-check[$HOSERVA_LAB_ID]: confirming the pool and share '$SHARE_NAME' are mounted"
 POOL_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
@@ -110,14 +123,8 @@ trap cleanup_hold EXIT
 
 echo "pool-restart-check[$HOSERVA_LAB_ID]: === scenario 1/2: systemctl restart hoserva ==="
 vm_ssh 'sudo systemctl restart hoserva'
-deadline=$((SECONDS + 60))
-while (( SECONDS < deadline )) && ! vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; do
-  sleep 2
-done
-vm_ssh 'sudo systemctl is-active hoserva' >/dev/null || die "hoservad did not become active within 60s of systemctl restart"
 # Re-login: the daemon's sessions died with the process.
-LOGIN_RESULT="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'" 2>/dev/null)"
-[[ "$LOGIN_RESULT" == *'"role":"admin"'* ]] || die "re-login after systemctl restart failed: $LOGIN_RESULT"
+wait_for_admin_login "after systemctl restart"
 assert_mounts_and_marker "after systemctl restart"
 echo "pool-restart-check[$HOSERVA_LAB_ID]: scenario 1 — PASS"
 
@@ -125,13 +132,7 @@ echo "pool-restart-check[$HOSERVA_LAB_ID]: === scenario 2/2: SIGKILL hoservad Ma
 MAIN_PID="$(vm_ssh 'sudo systemctl show -p MainPID --value hoserva' 2>/dev/null || true)"
 [[ "$MAIN_PID" =~ ^[1-9][0-9]*$ ]] || die "could not read hoserva MainPID (got '$MAIN_PID')"
 vm_ssh "sudo kill -KILL $MAIN_PID"
-deadline=$((SECONDS + 60))
-while (( SECONDS < deadline )) && ! vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; do
-  sleep 2
-done
-vm_ssh 'sudo systemctl is-active hoserva' >/dev/null || die "hoservad did not become active within 60s of SIGKILL (Restart=on-failure)"
-LOGIN_RESULT="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}'" 2>/dev/null)"
-[[ "$LOGIN_RESULT" == *'"role":"admin"'* ]] || die "re-login after SIGKILL failed: $LOGIN_RESULT"
+wait_for_admin_login "after SIGKILL"
 assert_mounts_and_marker "after SIGKILL"
 echo "pool-restart-check[$HOSERVA_LAB_ID]: scenario 2 — PASS"
 
