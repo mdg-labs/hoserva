@@ -220,6 +220,9 @@
     "diskCount": "Data disks",
     "dataDisks": "Disks in the mergerfs pool",
     "noRebuildNote": "Adding a disk does not require a rebuild — mergerfs includes new branches on the next mount.",
+    "diskState": {
+      "missing": "Missing — not detected"
+    },
     "stopArray": "Stop array",
     "startArray": "Start array",
     "stop": {

@@ -49,7 +49,7 @@ func TestHandler_GetPool_PopulatesFreeSpaceFromStatfs(t *testing.T) {
 	h, _, _ := newTestHandler(t)
 
 	p := disk.NewFakeProvider()
-	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-sdb"})
 	h.Disks = p
 
 	dataDir := t.TempDir()
@@ -65,7 +65,7 @@ func TestHandler_GetPool_PopulatesFreeSpaceFromStatfs(t *testing.T) {
 		MinFreeSpace: fmt.Sprintf("%d", 1<<62),
 		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
 	}, []store.ArrayDisk{
-		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-sdb", Mountpoint: dataDir},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-sdb", WWN: "wwn-sdb", Mountpoint: dataDir},
 	}); err != nil {
 		t.Fatalf("PutArray: %v", err)
 	}
@@ -151,9 +151,9 @@ func TestHandler_GetPool_ReportsAssignedDiskRoleAndMountPoint(t *testing.T) {
 	h, _, _ := newTestHandler(t)
 
 	p := disk.NewFakeProvider()
-	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB})
-	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB})
-	p.AddDisk("/dev/sdd", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-sdb"})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-sdc"})
+	p.AddDisk("/dev/sdd", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-sdd"})
 	h.Disks = p
 
 	dataDir := t.TempDir()
@@ -164,8 +164,8 @@ func TestHandler_GetPool_ReportsAssignedDiskRoleAndMountPoint(t *testing.T) {
 		MinFreeSpace: "1000000",
 		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
 	}, []store.ArrayDisk{
-		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-sdb", Mountpoint: "/mnt/parity1"},
-		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-sdc", Mountpoint: dataDir},
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-sdb", WWN: "wwn-sdb", Mountpoint: "/mnt/parity1"},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-sdc", WWN: "wwn-sdc", Mountpoint: dataDir},
 	}); err != nil {
 		t.Fatalf("PutArray: %v", err)
 	}
@@ -190,5 +190,151 @@ func TestHandler_GetPool_ReportsAssignedDiskRoleAndMountPoint(t *testing.T) {
 	}
 	if e := byDevice["/dev/sdd"]; e.Role != apiv1.PoolDiskEntryRoleUnassigned || e.MountPoint != "" {
 		t.Fatalf("sdd = role %q mount %q, want unassigned/empty (never assigned)", e.Role, e.MountPoint)
+	}
+}
+
+// TestHandler_GetPool_MatchesRenumberedDiskByIdentity is #326: GetPool must
+// match a stored array member to inventory by its WWN (Q21), not by the
+// /dev/sdX path recorded at create-array time. A member that renumbered
+// keeps its role and mountpoint at its new path, and a different disk that
+// took over the vacated path is reported unassigned rather than inheriting
+// the old member's assignment. Against the pre-#326 GetPool, which matches
+// purely by device path, the renumbered member would come back unassigned
+// and the new disk would wrongly inherit its data role.
+func TestHandler_GetPool_MatchesRenumberedDiskByIdentity(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	dataDir := t.TempDir()
+	p := disk.NewFakeProvider()
+	// The stored data member renumbered from /dev/sdc to /dev/sdz.
+	p.AddDisk("/dev/sdz", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-data"})
+	// A different physical disk now occupies the data member's old path.
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-new-disk"})
+	h.Disks = p
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-data", WWN: "wwn-data", Mountpoint: dataDir},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	if len(got.Disks) != 2 {
+		t.Fatalf("len(Disks) = %d, want 2", len(got.Disks))
+	}
+	byDevice := make(map[string]apiv1.PoolDiskEntry, len(got.Disks))
+	for _, e := range got.Disks {
+		byDevice[e.Device] = e
+	}
+	if e := byDevice["/dev/sdz"]; e.Role != apiv1.PoolDiskEntryRoleData || e.MountPoint != dataDir {
+		t.Fatalf("sdz (renumbered data member) = role %q mount %q, want data/%s", e.Role, e.MountPoint, dataDir)
+	}
+	if e := byDevice["/dev/sdc"]; e.Role != apiv1.PoolDiskEntryRoleUnassigned || e.MountPoint != "" {
+		t.Fatalf("sdc (new disk on old data path) = role %q mount %q, want unassigned/empty", e.Role, e.MountPoint)
+	}
+}
+
+// TestHandler_GetPool_MatchesWeakIdentityDiskByFilesystemUUID is #326: a
+// weak-identity disk (no wwn/serial by-id link at all, e.g. every disk in
+// the loop-device lab, doc 06 §3) has nothing for disk.Identity.Matches to
+// compare, so a renumbered weak-identity member must still be found by its
+// stored filesystem UUID (Q21) rather than being reported missing.
+func TestHandler_GetPool_MatchesWeakIdentityDiskByFilesystemUUID(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	dataDir := t.TempDir()
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sdz", disk.Disk{Size: 4 * disk.TB, WeakIdentity: true, FSUUID: "uuid-weak"})
+	h.Disks = p
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-weak", WeakIdentity: true, Mountpoint: dataDir},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	if len(got.Disks) != 1 {
+		t.Fatalf("len(Disks) = %d, want 1", len(got.Disks))
+	}
+	if e := got.Disks[0]; e.Device != "/dev/sdz" || e.Role != apiv1.PoolDiskEntryRoleData || e.MountPoint != dataDir {
+		t.Fatalf("sdz (renumbered weak-identity member) = device %q role %q mount %q, want /dev/sdz/data/%s", e.Device, e.Role, e.MountPoint, dataDir)
+	}
+}
+
+// TestHandler_GetPool_ReportsMissingArrayDisk is #326: a stored array
+// member with no identity match anywhere in inventory (a dead or pulled
+// drive, doc 02 §4) must still get its own entry — stored device, role and
+// mountpoint, state missing, no size — rather than disappearing from the
+// response entirely, since that is the one slot the pool page's own
+// replace-disk flow (#288) needs to show. Against the pre-#326 GetPool,
+// which only ever emits an entry per h.Disks.List result, the missing data
+// disk here would not appear in got.Disks at all.
+func TestHandler_GetPool_ReportsMissingArrayDisk(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	p := disk.NewFakeProvider()
+	// Only the parity disk is present; the data disk has failed or been
+	// pulled and is absent from inventory entirely.
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-parity"})
+	h.Disks = p
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-parity", WWN: "wwn-parity", Mountpoint: "/mnt/parity1"},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-sdc", WWN: "wwn-sdc", Mountpoint: "/mnt/disk1"},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	if len(got.Disks) != 2 {
+		t.Fatalf("len(Disks) = %d, want 2", len(got.Disks))
+	}
+	byDevice := make(map[string]apiv1.PoolDiskEntry, len(got.Disks))
+	for _, e := range got.Disks {
+		byDevice[e.Device] = e
+	}
+	missing, ok := byDevice["/dev/sdc"]
+	if !ok {
+		t.Fatalf("missing data disk /dev/sdc not reported at all, want a %q entry", apiv1.DiskStateMissing)
+	}
+	if missing.State != apiv1.DiskStateMissing || missing.Role != apiv1.PoolDiskEntryRoleData || missing.MountPoint != "/mnt/disk1" {
+		t.Fatalf("sdc = state %q role %q mount %q, want missing/data//mnt/disk1", missing.State, missing.Role, missing.MountPoint)
+	}
+	if v, ok := missing.SizeBytes.Get(); ok {
+		t.Fatalf("missing disk SizeBytes = %+v, want unset", v)
+	}
+	if e := byDevice["/dev/sdb"]; e.State != apiv1.DiskStateActive {
+		t.Fatalf("sdb (present) state = %q, want active", e.State)
 	}
 }
