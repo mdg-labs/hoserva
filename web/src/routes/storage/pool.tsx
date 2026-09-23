@@ -125,7 +125,7 @@ export function PoolOverviewPage(): React.ReactElement {
           const missing = disk.state === "missing";
           return (
             <MetricTile
-              key={disk.device}
+              key={`${disk.device || "missing"}-${disk.mountPoint}`}
               title={disk.mountPoint}
               value={disk.device}
               description={`${disk.role} · ${formatBytes(diskUsed)}`}

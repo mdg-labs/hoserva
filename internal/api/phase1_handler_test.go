@@ -338,3 +338,86 @@ func TestHandler_GetPool_ReportsMissingArrayDisk(t *testing.T) {
 		t.Fatalf("sdb (present) state = %q, want active", e.State)
 	}
 }
+
+// TestHandler_GetPool_AmbiguousCloneMatchesNoMember: a weak-identity member
+// and a dd-made clone share one filesystem UUID, so both inventory disks
+// match the same stored row. Neither may be reported as that member —
+// picking one by inventory order would show two disks at one role and
+// mountpoint, or the wrong one.
+func TestHandler_GetPool_AmbiguousCloneMatchesNoMember(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sdy", disk.Disk{Size: 4 * disk.TB, WeakIdentity: true, FSUUID: "uuid-weak"})
+	p.AddDisk("/dev/sdz", disk.Disk{Size: 4 * disk.TB, WeakIdentity: true, FSUUID: "uuid-weak"})
+	h.Disks = p
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-weak", WeakIdentity: true, Mountpoint: "/mnt/disk1"},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	for _, e := range got.Disks {
+		if e.State == apiv1.DiskStateActive && e.Role != apiv1.PoolDiskEntryRoleUnassigned {
+			t.Fatalf("%s reported as active %s member at %q; an ambiguous match must assign no inventory disk", e.Device, e.Role, e.MountPoint)
+		}
+	}
+}
+
+// TestHandler_GetPool_MissingMemberDoesNotReuseAPresentDevicePath: a
+// missing member's stored /dev path now belongs to a different, present
+// disk (the kernel reused it). The pool page keys and indexes entries by
+// device, so the missing entry must not repeat that path.
+func TestHandler_GetPool_MissingMemberDoesNotReuseAPresentDevicePath(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 8 * disk.TB, WWN: "wwn-replacement"})
+	h.Disks = p
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-sdc", WWN: "wwn-dead", Mountpoint: "/mnt/disk1"},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	seen := map[string]int{}
+	var missing *apiv1.PoolDiskEntry
+	for i, e := range got.Disks {
+		if e.Device != "" {
+			seen[e.Device]++
+		}
+		if e.State == apiv1.DiskStateMissing {
+			missing = &got.Disks[i]
+		}
+	}
+	if seen["/dev/sdc"] != 1 {
+		t.Fatalf("/dev/sdc reported %d times, want once", seen["/dev/sdc"])
+	}
+	if missing == nil || missing.MountPoint != "/mnt/disk1" || missing.Role != apiv1.PoolDiskEntryRoleData {
+		t.Fatalf("missing member = %+v, want a data entry at /mnt/disk1", missing)
+	}
+}
