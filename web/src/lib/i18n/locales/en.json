@@ -639,6 +639,9 @@
     "yes": "Yes",
     "no": "No"
   },
+  "api": {
+    "requestFailed": "Request failed"
+  },
   "codeView": {
     "readOnly": "Read-only configuration preview"
   },
