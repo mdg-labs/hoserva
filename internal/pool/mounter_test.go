@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -211,7 +212,11 @@ func TestMounter_Unmount_FailsAfterBoundWhenBusyThroughout(t *testing.T) {
 	}
 
 	clock := &fakeUnmountClock{now: time.Unix(0, 0)}
-	mounter := Mounter{Runner: r, Now: clock.Now, Sleep: clock.Sleep}
+	// IsMountpoint: where is a literal path this test never creates, so
+	// the production check (os.Stat) would itself see ENOENT and, since
+	// #268, treat that as "already gone" — this test is about the busy-
+	// retry bound, not that tolerance, so it fakes "still mounted".
+	mounter := Mounter{Runner: r, Now: clock.Now, Sleep: clock.Sleep, IsMountpoint: func(string) (bool, error) { return true, nil }}
 	err := mounter.Unmount(context.Background(), where)
 	if !errors.Is(err, busyErr) {
 		t.Fatalf("Unmount: got %v, want it to wrap the last busy error %v", err, busyErr)
@@ -238,7 +243,10 @@ func TestMounter_Unmount_StopsRetryingOnNonBusyError(t *testing.T) {
 	r.Script("fusermount", []string{"-u", where}, nonBusyErr)
 
 	clock := &fakeUnmountClock{now: time.Unix(0, 0)}
-	mounter := Mounter{Runner: r, Now: clock.Now, Sleep: clock.Sleep}
+	// IsMountpoint: see TestMounter_Unmount_FailsAfterBoundWhenBusyThroughout
+	// — where is never created, so the real check would treat it as
+	// already gone rather than exercising the non-busy-error path.
+	mounter := Mounter{Runner: r, Now: clock.Now, Sleep: clock.Sleep, IsMountpoint: func(string) (bool, error) { return true, nil }}
 	err := mounter.Unmount(context.Background(), where)
 	if !errors.Is(err, nonBusyErr) {
 		t.Fatalf("Unmount: got %v, want it to wrap the non-busy error %v", err, nonBusyErr)
@@ -267,7 +275,10 @@ func TestMounter_Unmount_DoesNotRetryOnErrorMentioningBusyPath(t *testing.T) {
 	r.Script("fusermount", []string{"-u", where}, nonBusyErr)
 
 	clock := &fakeUnmountClock{now: time.Unix(0, 0)}
-	mounter := Mounter{Runner: r, Now: clock.Now, Sleep: clock.Sleep}
+	// IsMountpoint: see TestMounter_Unmount_FailsAfterBoundWhenBusyThroughout
+	// — where is never created, so the real check would treat it as
+	// already gone rather than exercising the busy-path-name path.
+	mounter := Mounter{Runner: r, Now: clock.Now, Sleep: clock.Sleep, IsMountpoint: func(string) (bool, error) { return true, nil }}
 	err := mounter.Unmount(context.Background(), where)
 	if !errors.Is(err, nonBusyErr) {
 		t.Fatalf("Unmount: got %v, want it to wrap %v", err, nonBusyErr)
@@ -276,6 +287,146 @@ func TestMounter_Unmount_DoesNotRetryOnErrorMentioningBusyPath(t *testing.T) {
 	calls := r.Calls()
 	if len(calls) != 1 {
 		t.Fatalf("Unmount: got %d fusermount calls %+v, want exactly 1 (a non-busy error against a busy-looking path must not retry)", len(calls), calls)
+	}
+}
+
+// TestMounter_Mount_NoOpWhenAlreadyMountedWithMatchingFSName is #268's
+// central start-side case: a Start called against a path that already
+// has mnt's own mount up (a retried apply, or Start run without an
+// intervening Stop) must not stack a second mergerfs on top of the
+// first. Against the pre-fix Mount, which never checks, this test fails
+// — it would issue a second mergerfs call.
+func TestMounter_Mount_NoOpWhenAlreadyMountedWithMatchingFSName(t *testing.T) {
+	where := testWhere(t)
+	if err := os.MkdirAll(where, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	r := disk.NewFakeRunner()
+	r.Script("findmnt", []string{"-n", "-o", "SOURCE", where}, []byte("hoserva-pool\n"), nil)
+
+	m := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	mounter := Mounter{Runner: r, IsMountpoint: func(string) (bool, error) { return true, nil }}
+	if err := mounter.Mount(context.Background(), m); err != nil {
+		t.Fatalf("Mount: got %v, want nil (already mounted with matching fsname)", err)
+	}
+
+	calls := r.Calls()
+	if len(calls) != 1 || calls[0].Name != "findmnt" {
+		t.Fatalf("Mount: got calls %+v, want exactly one findmnt call and no mergerfs call", calls)
+	}
+}
+
+// TestMounter_Mount_FailsWhenAlreadyMountedByDifferentFSName proves Mount
+// refuses, rather than silently accepting, a path that is already
+// mounted by something other than mnt itself — a wrong mount
+// masquerading as "already there" would be worse than a start that
+// refuses loudly.
+func TestMounter_Mount_FailsWhenAlreadyMountedByDifferentFSName(t *testing.T) {
+	where := testWhere(t)
+	if err := os.MkdirAll(where, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	r := disk.NewFakeRunner()
+	r.Script("findmnt", []string{"-n", "-o", "SOURCE", where}, []byte("hoserva-appdata\n"), nil)
+
+	m := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	mounter := Mounter{Runner: r, IsMountpoint: func(string) (bool, error) { return true, nil }}
+	err := mounter.Mount(context.Background(), m)
+	if err == nil {
+		t.Fatal("Mount: got nil, want an error — the mounted fsname does not match mnt's own")
+	}
+
+	calls := r.Calls()
+	if len(calls) != 1 || calls[0].Name != "findmnt" {
+		t.Fatalf("Mount: got calls %+v, want exactly one findmnt call and no mergerfs call", calls)
+	}
+}
+
+// TestMounter_Unmount_NoOpWhenAlreadyGone is #268's own deleteShare
+// scenario: a share whose per-share mount is already gone for any
+// reason must unmount as a clean no-op, not 500 on fusermount's own
+// "No such file or directory" for a mount that was never there. Against
+// the pre-fix Unmount, which returns fusermount's raw error, this test
+// fails.
+func TestMounter_Unmount_NoOpWhenAlreadyGone(t *testing.T) {
+	where := "/mnt/user/gone-share"
+	r := disk.NewFakeRunner()
+	r.Script("fusermount", []string{"-u", where}, nil, errors.New("fusermount: failed to unmount /mnt/user/gone-share: No such file or directory"))
+
+	mounter := Mounter{Runner: r, IsMountpoint: func(string) (bool, error) { return false, nil }}
+	if err := mounter.Unmount(context.Background(), where); err != nil {
+		t.Fatalf("Unmount: got %v, want nil (already gone)", err)
+	}
+
+	calls := r.Calls()
+	if len(calls) != 1 || calls[0].Name != "fusermount" {
+		t.Fatalf("Unmount: got calls %+v, want exactly one fusermount call and no busy retry", calls)
+	}
+}
+
+// TestMounter_Unmount_NoOpWhenPathDoesNotExist is
+// TestMounter_Unmount_NoOpWhenAlreadyGone's own scenario against the
+// production isMountpoint (IsMountpoint left nil), not a fake that
+// already answers "not mounted": where is never created at all, so a
+// real os.Stat of it fails with ENOENT, not the (false, nil)
+// TestMounter_Unmount_NoOpWhenAlreadyGone's fake injects directly. A
+// deleted share's own /mnt/user/<name> after the catch-all's own
+// remount recreated everything but that one branch directory, or a
+// mover write target under a fresh /run that was never recreated,
+// reproduces exactly this: fusermount reports "No such file or
+// directory" and isMountpoint's own os.Stat of the missing path fails
+// the same way, which is still "not a mount point", not an error to
+// propagate.
+func TestMounter_Unmount_NoOpWhenPathDoesNotExist(t *testing.T) {
+	where := filepath.Join(t.TempDir(), "mnt", "user", "gone-share")
+	r := disk.NewFakeRunner()
+	r.Script("fusermount", []string{"-u", where}, nil, errors.New("fusermount: failed to unmount "+where+": No such file or directory"))
+
+	mounter := Mounter{Runner: r}
+	if err := mounter.Unmount(context.Background(), where); err != nil {
+		t.Fatalf("Unmount: got %v, want nil (path never existed)", err)
+	}
+
+	calls := r.Calls()
+	if len(calls) != 1 || calls[0].Name != "fusermount" {
+		t.Fatalf("Unmount: got calls %+v, want exactly one fusermount call and no busy retry", calls)
+	}
+}
+
+// TestMounter_Unmount_StillFailsWhenStillMounted proves the
+// already-gone tolerance does not swallow a genuine unmount failure
+// against a path that is, in fact, still mounted.
+func TestMounter_Unmount_StillFailsWhenStillMounted(t *testing.T) {
+	where := "/mnt/user"
+	r := disk.NewFakeRunner()
+	wantErr := errors.New("permission denied")
+	r.Script("fusermount", []string{"-u", where}, nil, wantErr)
+
+	mounter := Mounter{Runner: r, IsMountpoint: func(string) (bool, error) { return true, nil }}
+	if err := mounter.Unmount(context.Background(), where); !errors.Is(err, wantErr) {
+		t.Fatalf("Unmount: got %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+// TestMounter_Unmount_StillFailsWhenMountpointCheckErrorsForOtherReason
+// proves the ENOENT tolerance is narrow, not "any isMountpoint error
+// means already gone": a dead FUSE mount's own endpoint reports
+// ENOTCONN, not ENOENT, from a stat against it (doc 08 §6's own
+// "unreachable" mount state) — a live-but-broken mount, not an absent
+// one — so Unmount must still surface fusermount's own error rather than
+// swallow it.
+func TestMounter_Unmount_StillFailsWhenMountpointCheckErrorsForOtherReason(t *testing.T) {
+	where := "/mnt/user"
+	r := disk.NewFakeRunner()
+	wantErr := errors.New("fusermount: failed to unmount /mnt/user: Transport endpoint is not connected")
+	r.Script("fusermount", []string{"-u", where}, nil, wantErr)
+
+	mounter := Mounter{
+		Runner:       r,
+		IsMountpoint: func(string) (bool, error) { return false, syscall.ENOTCONN },
+	}
+	if err := mounter.Unmount(context.Background(), where); !errors.Is(err, wantErr) {
+		t.Fatalf("Unmount: got %v, want it to wrap %v", err, wantErr)
 	}
 }
 
@@ -315,7 +466,11 @@ func TestMounter_Remount_PropagatesUnmountError(t *testing.T) {
 
 	previous := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
 	m := previous
-	mounter := Mounter{Runner: r}
+	// IsMountpoint: /mnt/user is never created here, so the real check
+	// would treat it as already gone (#268) and Unmount would return nil
+	// instead of wantErr — this test is about Remount stopping after a
+	// genuine Unmount failure, so it fakes "still mounted".
+	mounter := Mounter{Runner: r, IsMountpoint: func(string) (bool, error) { return true, nil }}
 	if err := mounter.Remount(context.Background(), previous, m); !errors.Is(err, wantErr) {
 		t.Fatalf("Remount: got %v, want it to wrap %v", err, wantErr)
 	}

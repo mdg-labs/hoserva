@@ -45,6 +45,7 @@ func newLiveArrayShutdownEnv(t *testing.T) (context.Context, *api.Handler, *job.
 	}
 
 	arrays := store.NewArrayStore(db)
+	shares := store.NewShareStore(db)
 	registry := job.NewRegistry()
 	scheduler := job.NewScheduler(job.NewStore(db), job.NewLogStore(t.TempDir()), job.NewHub(), registry)
 	provider := disk.NewFakeProvider()
@@ -59,7 +60,7 @@ func newLiveArrayShutdownEnv(t *testing.T) (context.Context, *api.Handler, *job.
 		Generator: cfggen.NewGenerator(t.TempDir()),
 		Mounter:   disk.NewFakeMounter(),
 		ArrayReady: func(ctx context.Context) error {
-			seq, err := newArraySequence(ctx, scheduler, arrays, provider, fakeRunner)
+			seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, fakeRunner)
 			if err != nil {
 				return err
 			}

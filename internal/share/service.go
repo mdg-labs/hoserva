@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -142,6 +143,20 @@ type Service struct {
 	// pool.CatchAllPath. Tests point it at a temp dir so listing never
 	// walks the host's /mnt/user.
 	CatchAll string
+	// PostCommit, when set, runs once after Create, Update or Delete
+	// returns, regardless of outcome (#268): a daemon's own
+	// job.ArraySequence snapshot of the persisted share list is the only
+	// other place that list is read, and it has no way to notice a
+	// share being created, updated, deleted, or a create/delete rolling
+	// back, unless something tells it to look again. Determining exactly
+	// which of Create/Update/Delete's several store-mutating and
+	// rollback paths actually changed a row is more failure-prone than
+	// simply re-resolving the current list once, unconditionally, after
+	// the fact — cheap, since it is only ever a store read plus building
+	// pool.Mount values, never a real mount or unmount. Its own error is
+	// only logged: the share operation already succeeded or failed on
+	// its own terms.
+	PostCommit func(ctx context.Context) error
 }
 
 func (s *Service) now() time.Time {
@@ -156,6 +171,17 @@ func (s *Service) catchAll() string {
 		return s.CatchAll
 	}
 	return pool.CatchAllPath
+}
+
+// postCommit runs PostCommit, when set, logging rather than propagating
+// its error (see the field's own doc comment).
+func (s *Service) postCommit(ctx context.Context) {
+	if s.PostCommit == nil {
+		return
+	}
+	if err := s.PostCommit(ctx); err != nil {
+		log.Printf("share: refreshing the array sequence after a share change: %v", err)
+	}
 }
 
 // List returns every share, sorted by name, with its Usage attached
@@ -239,6 +265,7 @@ func usageFromBatch(computed bool, computedAt time.Time, disks map[string]int64,
 // per-share mergerfs units through the existing renderer, mounts them,
 // and regenerates smb.conf and /etc/exports.
 func (s *Service) Create(ctx context.Context, in CreateInput) (Share, error) {
+	defer s.postCommit(ctx)
 	if err := validateName(in.Name); err != nil {
 		return Share{}, err
 	}
@@ -326,6 +353,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Share, error) {
 // Update changes cache mode, create policy, SMB and NFS options, then
 // regenerates mounts, smb.conf and exports. Existing files are not relocated.
 func (s *Service) Update(ctx context.Context, name string, in UpdateInput) (Share, error) {
+	defer s.postCommit(ctx)
 	existing, err := s.Get(ctx, name)
 	if err != nil {
 		return Share{}, err
@@ -418,6 +446,7 @@ func (s *Service) ensureShareDirOwnership(dir string) error {
 // Delete removes the share definition and regenerates mounts, smb.conf
 // and /etc/exports. It does not delete files. confirm must be true.
 func (s *Service) Delete(ctx context.Context, name string, confirm bool) error {
+	defer s.postCommit(ctx)
 	if !confirm {
 		return fmt.Errorf("%w: delete definition requires confirm=true", ErrConfirmation)
 	}

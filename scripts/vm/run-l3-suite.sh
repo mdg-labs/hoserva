@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # `make vm-suite` — the nightly/pre-release L3 suite (doc 06 §4, §7,
-# Q79): install, onboarding, array setup, disk yank and reconstruction,
-# `virsh destroy` mid-sync recovery, reboot persistence, config
-# backup/restore, spindown, network confirm-or-revert (issue #114),
-# the array stop/start sequence (issue #146), and the UPS
-# on-battery/power-restored/low-battery flow against NUT's own dummy-ups
-# driver (issue #250).
+# Q79): install, onboarding, array setup, array stop/start with a live
+# share (issue #268), disk yank and reconstruction, `virsh destroy`
+# mid-sync recovery, reboot persistence, config backup/restore, spindown,
+# network confirm-or-revert (issue #114), the array stop/start sequence
+# (issue #146), and the UPS on-battery/power-restored/low-battery flow
+# against NUT's own dummy-ups driver (issue #250).
 #
 # Every step below runs against whatever hoservad actually exposes today
 # and reports PASS/FAIL for it. A step the product does not implement yet
@@ -245,6 +245,84 @@ array_setup() {
   share_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$JOURNEY5_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
   if [[ "$share_result" != *"\"name\":\"$JOURNEY5_SHARE\""* ]]; then
     ARRAY_SETUP_REASON="createShare did not return the expected share: $share_result"
+    return 1
+  fi
+
+  return 0
+}
+
+# array_stop_start_share_check is #268's own reproduction, run against
+# the live share array_setup (step 3, above) just created: with that
+# share still mounted, POST /array/stop must succeed rather than fail
+# EBUSY on the catch-all (the share's own per-share mergerfs mount was
+# never unmounted first, because newArraySequence never populated
+# ArraySequence.ShareMounts), and POST /array/start afterward must bring
+# the catch-all back exactly once — not stacked on top of a mount a
+# failed stop left behind — and the share's own mount back with it,
+# still serving a file written before the stop. On failure it sets
+# ARRAY_STOP_START_REASON and returns 1.
+array_stop_start_share_check() {
+  local marker="$JOURNEY5_SHARE_PATH/hoserva-268-marker.txt"
+  local marker_body
+  marker_body="hoserva-268-$(date +%s)"
+
+  if ! vm_ssh "echo '$marker_body' | sudo tee $marker >/dev/null"; then
+    ARRAY_STOP_START_REASON="could not write a marker file into $JOURNEY5_SHARE_PATH before stopping the array"
+    return 1
+  fi
+  local before
+  before="$(vm_ssh "sudo cat $marker" 2>/dev/null)"
+  if [[ "$before" != "$marker_body" ]]; then
+    ARRAY_STOP_START_REASON="marker file was not readable at $marker before stopping the array"
+    return 1
+  fi
+
+  local stop_result
+  stop_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/stop -H 'Content-Type: application/json' -d '{\"confirm\":true}'" 2>/dev/null)"
+  if [[ "$stop_result" != *'"maintenanceMode":true'* ]]; then
+    ARRAY_STOP_START_REASON="array/stop did not report maintenanceMode:true with the share still live — the catch-all unmount fails EBUSY while the share's own mount is still nested under it (#268's own symptom): $stop_result"
+    return 1
+  fi
+
+  # Neither the catch-all nor the share's own mount may still be mounted
+  # under /mnt/user once stop reports success — " on /mnt/user" matches
+  # both mount(8) table lines ("... on /mnt/user type ..." and "... on
+  # /mnt/user/massdel type ...").
+  local mounts_after_stop
+  mounts_after_stop="$(vm_ssh "mount | grep -c ' on /mnt/user'" 2>/dev/null)"
+  if [[ "${mounts_after_stop:-0}" != "0" ]]; then
+    ARRAY_STOP_START_REASON="array/stop reported success but a mount under /mnt/user is still up (mount | grep -c count: ${mounts_after_stop:-unknown})"
+    return 1
+  fi
+
+  local start_result
+  start_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/array/start" 2>/dev/null)"
+  if [[ "$start_result" != *'"maintenanceMode":false'* ]]; then
+    ARRAY_STOP_START_REASON="array/start did not report maintenanceMode:false: $start_result"
+    return 1
+  fi
+
+  # Exactly one catch-all mount — a second array/start after a failed
+  # stop must not stack a duplicate mergerfs mount on top of one already
+  # there (pool.Mounter.Mount's own idempotency guard).
+  local catchall_count
+  catchall_count="$(vm_ssh "mount | grep -c ' on /mnt/user type fuse.mergerfs'" 2>/dev/null)"
+  if [[ "${catchall_count:-0}" != "1" ]]; then
+    ARRAY_STOP_START_REASON="expected exactly one catch-all mount at /mnt/user after array/start, found ${catchall_count:-unknown}"
+    return 1
+  fi
+
+  local share_mount_count
+  share_mount_count="$(vm_ssh "mount | grep -c ' on $JOURNEY5_SHARE_PATH type fuse.mergerfs'" 2>/dev/null)"
+  if [[ "${share_mount_count:-0}" != "1" ]]; then
+    ARRAY_STOP_START_REASON="expected exactly one share mount at $JOURNEY5_SHARE_PATH after array/start, found ${share_mount_count:-unknown} — a share that survives array/stop must have its own mount rejoin array/start"
+    return 1
+  fi
+
+  local after
+  after="$(vm_ssh "sudo cat $marker" 2>/dev/null)"
+  if [[ "$after" != "$marker_body" ]]; then
+    ARRAY_STOP_START_REASON="marker file at $marker did not read back its pre-stop content after array/start (got: $after, want: $marker_body) — the share's own mount came back pointed at the wrong branches, or not at all"
     return 1
   fi
 
@@ -670,7 +748,7 @@ config_backup_restore() {
   return 0
 }
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 1/12 install ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 1/13 install ==="
 if vm_domain_exists "$VM_DOMAIN"; then
   "$script_dir/destroy-vm.sh"
 fi
@@ -689,7 +767,7 @@ else
   fail "install" "deploy.sh failed — see its own output above (on the dev host this is expected: dpkg-buildpackage/debhelper/fakeroot are deliberately not installed here, per scripts/release/build-deb.sh's own header comment; a hosted CI runner has them)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 2/12 onboarding ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 2/13 onboarding ==="
 if vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   SETUP_STATUS="$(vm_ssh "curl -sk https://127.0.0.1:8008/api/v1/setup/status" 2>/dev/null || true)"
   if [[ "$SETUP_STATUS" == *'"adminExists":false'* ]]; then
@@ -734,7 +812,7 @@ else
   not_yet "existing host config" "no running domain (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 3/12 array setup ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 3/13 array setup ==="
 if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if array_setup; then
     pass "array setup"
@@ -745,10 +823,21 @@ else
   not_yet "array setup" "no active hoservad on the guest (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 4/12 disk yank and reconstruction ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 4/13 array stop/start with a live share (issue #268) ==="
+if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+  if array_stop_start_share_check; then
+    pass "array stop/start with a live share"
+  else
+    fail "array stop/start with a live share" "$ARRAY_STOP_START_REASON"
+  fi
+else
+  not_yet "array stop/start with a live share" "no active hoservad on the guest, or array setup (step 3) did not complete"
+fi
+
+echo "vm-suite[$HOSERVA_LAB_ID]: === 5/13 disk yank and reconstruction ==="
 not_yet "disk yank and reconstruction" "array setup (step 3, #258) now gives this a real array to yank a disk from, but there is still no add/replace/remove-disk operation in api/openapi.yaml to reintroduce a replacement disk into an already-created array: createArray (POST /disks/array) only drives the wizard's one-time initial array creation (doc 03 §3.1 step 6); the only other topology-touching operations are formatExternalDisk (non-array disks only, doc 02 §4's Q72) and startFix (POST /parity/fix), which reconstructs a disk already mounted at its assigned /mnt/diskN — it has nothing to reconstruct onto if no operation ever formats and remounts a replacement there. JobType reserves disk_add/disk_replace/disk_remove (doc 01 §4) but no REST operation triggers any of them, and cmd/hoserva has no 'disk add'/'disk replace' subcommand either — re-check once one lands"
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 5/12 virsh destroy mid-sync recovery ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 6/13 virsh destroy mid-sync recovery ==="
 if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if midsync_destroy; then
     pass "virsh destroy mid-sync recovery"
@@ -759,7 +848,7 @@ else
   not_yet "virsh destroy mid-sync recovery" "no active hoservad on the guest (install or array setup above did not complete)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 6/12 reboot persistence ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 7/13 reboot persistence ==="
 if vm_domain_running "$VM_DOMAIN"; then
   # sshd answering (the existing service, still up from before any
   # reboot happened) can satisfy a plain "wait for SSH" check without the
@@ -798,7 +887,7 @@ else
   not_yet "reboot persistence" "no running domain (install step above did not complete)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 7/12 config backup and restore ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 8/13 config backup and restore ==="
 if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if config_backup_restore; then
     pass "config backup and restore"
@@ -811,7 +900,7 @@ else
   not_yet "config backup and restore" "no active hoservad on the guest (install or array setup above did not complete)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 8/12 Playwright journeys ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 9/13 Playwright journeys ==="
 if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if seed_journey5_fixture; then
     echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture ready (share seeded, baseline synced, mass deletion applied)"
@@ -829,7 +918,7 @@ else
   not_yet "Playwright journeys" "scripts/vm/run-playwright.sh is missing or not executable"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 9/12 spindown: SMART-poll IO-neutrality ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 10/13 spindown: SMART-poll IO-neutrality ==="
 if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if "$script_dir/spindown-check.sh"; then
     pass "spindown: SMART-poll IO-neutrality"
@@ -840,7 +929,7 @@ else
   not_yet "spindown: SMART-poll IO-neutrality" "no active hoservad on the guest (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 10/12 spindown: 30-min flat counters with a running pool ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 11/13 spindown: 30-min flat counters with a running pool ==="
 not_yet "spindown: 30-min flat counters with a running pool" "array setup (step 3, #258) now gives this a real mergerfs/SnapRAID pool with a mounted share to test against — that half of the old gap is closed — but hoservad still does not run internal/disk's SMART poller or internal/parity's change journal on a timer (both exist as Go packages, issue #24, but cmd/hoservad/main.go wires neither into a scheduled job). spindown-check.sh (step 9) already stands in for that missing scheduler by looping the poller's own smartctl command directly against empty array disks; doing the same loop against this step's live pool would still only be standing in for the scheduler, not proving hoservad's own 30-minute window produces zero drive writes with a pool mounted underneath it — re-check once cmd/hoservad/main.go wires the SMART poller and change journal on a timer"
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === NFS export mount (issue #47) ==="
@@ -854,7 +943,7 @@ else
   not_yet "NFS export mount" "no running domain (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 11/12 network confirm-or-revert (Q75) ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 12/13 network confirm-or-revert (Q75) ==="
 if vm_domain_running "$VM_DOMAIN"; then
   if "$script_dir/network-revert-check.sh"; then
     pass "network confirm-or-revert"
@@ -865,7 +954,7 @@ else
   not_yet "network confirm-or-revert" "no running domain (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 12/12 array stop/start sequence: missing disk at boot, service stops before unmount ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 13/13 array stop/start sequence: missing disk at boot, service stops before unmount ==="
 if vm_domain_running "$VM_DOMAIN"; then
   if "$script_dir/array-sequence-check.sh"; then
     pass "array stop/start sequence"

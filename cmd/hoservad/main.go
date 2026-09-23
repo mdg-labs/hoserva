@@ -249,7 +249,7 @@ func run(cfg config) error {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
 
-	arraySeq, err := newArraySequence(ctx, scheduler, arrayStore, disks, linuxDisks.Exec)
+	arraySeq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, linuxDisks.Exec)
 	if err != nil {
 		return fmt.Errorf("building array stop/start sequence: %w", err)
 	}
@@ -319,7 +319,27 @@ func run(cfg config) error {
 	if parityEngine != nil {
 		shareUsages = parityEngine.Usage
 	}
+	// rebuildArraySequence is also the ArrayReady hook job.TypeDiskFormat/
+	// DiskAdd/DiskReplace call below, moved up here (from its previous
+	// position right after this point) so shareService can already close
+	// over it as its PostCommit: a live createShare/updateShare/
+	// deleteShare changes store.ShareStore directly, never through one of
+	// those disk-topology jobs, so without this same rebuild running
+	// after every one of those calls too, Handler.Array's own ShareMounts
+	// stays exactly as stale as it was at the last daemon start or
+	// disk-topology change — array/stop then fails EBUSY on a share that
+	// exists and is mounted, but that the running daemon has never once
+	// rebuilt its ArraySequence to know about (#268).
+	rebuildArraySequence := func(ctx context.Context) error {
+		seq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, linuxDisks.Exec)
+		if err != nil {
+			return err
+		}
+		handler.SetArray(seq)
+		return nil
+	}
 	shareService := newShareService(shareStore, arrayStore, generator, pool.Mounter{Runner: linuxDisks.Exec}, shareUsages)
+	shareService.PostCommit = rebuildArraySequence
 	handler.Scheduler = scheduler
 	handler.Store = jobStore
 	handler.Logs = logs
@@ -344,14 +364,6 @@ func run(cfg config) error {
 		handler.RelocationManifest = parityEngine.Relocation
 	}
 
-	rebuildArraySequence := func(ctx context.Context) error {
-		seq, err := newArraySequence(ctx, scheduler, arrayStore, disks, linuxDisks.Exec)
-		if err != nil {
-			return err
-		}
-		handler.SetArray(seq)
-		return nil
-	}
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
 		Provider:   disks,
 		Runner:     linuxDisks.Exec,

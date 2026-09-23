@@ -18,7 +18,15 @@ import (
 // Forgetting Evaluate here would leave StorageGate unready and refuse
 // every Start even with every disk present; skipping the gate would
 // mount a degraded array.
-func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *store.ArrayStore, disks disk.Provider, runner disk.Runner) (*job.ArraySequence, error) {
+//
+// shares populates ShareMounts with every persisted share's own mount
+// and, for every non-cache-only share, its mover write target (#268):
+// without this, Stop never unmounts a share's own mergerfs mount before
+// the catch-all, so the catch-all unmount fails EBUSY the moment any
+// share exists, and Start never remounts a share at all — a share that
+// survives to a reboot loses its own mount and its mover write target
+// until something other than array start remounts it by hand.
+func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *store.ArrayStore, shares *store.ShareStore, disks disk.Provider, runner disk.Runner) (*job.ArraySequence, error) {
 	settings, assigned, err := arrays.GetArray(ctx)
 	if err != nil {
 		if errors.Is(err, store.ErrNoArray) {
@@ -30,6 +38,7 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 	expected := make([]disk.ExpectedDisk, 0, len(assigned))
 	diskMounts := make([]job.ArrayMount, 0, len(assigned))
 	var dataMounts []string
+	var cachePath string
 	for _, d := range assigned {
 		if d.Mountpoint == "" {
 			return nil, fmt.Errorf("array disk %s has no mountpoint", d.Device)
@@ -52,8 +61,11 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 			},
 			Runner: runner,
 		})
-		if d.Role == store.ArrayRoleData {
+		switch d.Role {
+		case store.ArrayRoleData:
 			dataMounts = append(dataMounts, d.Mountpoint)
+		case store.ArrayRoleCache:
+			cachePath = d.Mountpoint
 		}
 	}
 
@@ -97,6 +109,38 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 	seq.CatchAll = pool.MountController{
 		Mnt:     catchAll,
 		Mounter: pool.Mounter{Runner: runner},
+	}
+
+	rows, err := shares.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("loading shares: %w", err)
+	}
+	opts := pool.Options{MinFreeSpace: settings.MinFreeSpace}
+	for _, row := range rows {
+		sh := pool.Share{
+			Name:         row.Name,
+			CacheMode:    pool.CacheMode(row.CacheMode),
+			CreatePolicy: pool.CreatePolicy(row.CreatePolicy),
+		}
+		shareMount, err := pool.ShareMount(sh, dataMounts, cachePath, opts)
+		if err != nil {
+			return nil, fmt.Errorf("building share mount for %q: %w", sh.Name, err)
+		}
+		seq.ShareMounts = append(seq.ShareMounts, pool.MountController{
+			Mnt:     shareMount,
+			Mounter: pool.Mounter{Runner: runner},
+		})
+		if sh.CacheMode == pool.CacheOnly {
+			continue
+		}
+		moverMount, err := pool.MoverTargetMount(sh, dataMounts, opts)
+		if err != nil {
+			return nil, fmt.Errorf("building mover target mount for %q: %w", sh.Name, err)
+		}
+		seq.ShareMounts = append(seq.ShareMounts, pool.MountController{
+			Mnt:     moverMount,
+			Mounter: pool.Mounter{Runner: runner},
+		})
 	}
 	return seq, nil
 }

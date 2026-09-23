@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,12 +15,13 @@ import (
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/pool"
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 
 	_ "modernc.org/sqlite"
 )
 
-func newArrayTestEnv(t *testing.T) (context.Context, *api.Handler, *store.ArrayStore, *disk.FakeProvider, *disk.FakeRunner) {
+func newArrayTestEnv(t *testing.T) (context.Context, *api.Handler, *store.ArrayStore, *store.ShareStore, *disk.FakeProvider, *disk.FakeRunner) {
 	t.Helper()
 
 	migrations, err := store.Load()
@@ -39,10 +41,11 @@ func newArrayTestEnv(t *testing.T) (context.Context, *api.Handler, *store.ArrayS
 	}
 
 	arrays := store.NewArrayStore(db)
+	shares := store.NewShareStore(db)
 	jobStore := job.NewStore(db)
 	scheduler := job.NewScheduler(jobStore, job.NewLogStore(t.TempDir()), job.NewHub(), job.NewRegistry())
 	h := &api.Handler{Scheduler: scheduler, Store: jobStore}
-	return context.Background(), h, arrays, disk.NewFakeProvider(), disk.NewFakeRunner()
+	return context.Background(), h, arrays, shares, disk.NewFakeProvider(), disk.NewFakeRunner()
 }
 
 func sampleArrayDisks() []store.ArrayDisk {
@@ -76,9 +79,9 @@ func presentMatchingDisks(p *disk.FakeProvider, disks []store.ArrayDisk) {
 	}
 }
 
-func attachDaemonArray(t *testing.T, ctx context.Context, h *api.Handler, arrays *store.ArrayStore, disks disk.Provider, runner disk.Runner) {
+func attachDaemonArray(t *testing.T, ctx context.Context, h *api.Handler, arrays *store.ArrayStore, shares *store.ShareStore, disks disk.Provider, runner disk.Runner) {
 	t.Helper()
-	seq, err := newArraySequence(ctx, h.Scheduler, arrays, disks, runner)
+	seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, disks, runner)
 	if err != nil {
 		t.Fatalf("newArraySequence: %v", err)
 	}
@@ -112,9 +115,13 @@ func confirmStop() *apiv1.StopArrayRequest {
 	return &apiv1.StopArrayRequest{Confirm: true}
 }
 
-// arrayTestCatchAll is the catch-all half of ArraySequence's Mount fake for
-// hoservad's L1 wiring test: it records fusermount/mergerfs through the
-// injected Runner without os.MkdirAll on pool.CatchAllPath (#207).
+// arrayTestCatchAll is ArraySequence's Mount fake for hoservad's L1
+// wiring tests: it records fusermount/mergerfs through the injected
+// Runner without os.MkdirAll or a real mount attempt against a real
+// path under /mnt or /run/hoserva (#207). Despite the name (kept to
+// avoid touching every existing caller), it stands in for any single
+// ArrayMount — the catch-all, or, for #268's own ShareMounts wiring
+// test, a share's own mount and its mover write target.
 type arrayTestCatchAll struct {
 	where  string
 	argv   []string
@@ -145,11 +152,11 @@ func (c arrayTestCatchAll) Unmount(ctx context.Context) error {
 // enter or leave maintenance. Inventing a second unmount order, or
 // skipping Evaluate so Start always refuses, is the other half.
 func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
-	ctx, h, arrays, disks, runner := newArrayTestEnv(t)
+	ctx, h, arrays, shares, disks, runner := newArrayTestEnv(t)
 	assigned := persistSampleArray(t, arrays)
 	presentMatchingDisks(disks, assigned)
 
-	attachDaemonArray(t, ctx, h, arrays, disks, runner)
+	attachDaemonArray(t, ctx, h, arrays, shares, disks, runner)
 	if h.Array == nil {
 		t.Fatal("Handler.Array is nil with a persisted topology — stop/start would 501 not_configured and never run ArraySequence")
 	}
@@ -230,13 +237,113 @@ func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
 	}
 }
 
+// TestNewArraySequence_SharesRejoinStopAndStart is #268's own
+// reproduction: a persisted share must have its own mount and (since it
+// is not cache-only) its mover write target woven into ArraySequence's
+// ShareMounts, unmounted before the catch-all on Stop and mounted after
+// it on Start (doc 02 §4). Against today's newArraySequence, which never
+// reads store.ShareStore, ShareMounts stays empty — both the wiring
+// assertions and the Stop/Start call-ordering assertions below fail
+// against it.
+func TestNewArraySequence_SharesRejoinStopAndStart(t *testing.T) {
+	ctx, h, arrays, shares, disks, runner := newArrayTestEnv(t)
+	assigned := persistSampleArray(t, arrays)
+	presentMatchingDisks(disks, assigned)
+
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	if err := shares.Insert(ctx, store.Share{
+		Name:         "media",
+		CacheMode:    "array-only",
+		CreatePolicy: "mfs",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}); err != nil {
+		t.Fatalf("Insert share: %v", err)
+	}
+
+	attachDaemonArray(t, ctx, h, arrays, shares, disks, runner)
+	if h.Array == nil {
+		t.Fatal("Handler.Array is nil with a persisted topology")
+	}
+	if len(h.Array.ShareMounts) != 2 {
+		t.Fatalf("ShareMounts = %d, want 2 (the share's own mount and its mover write target)", len(h.Array.ShareMounts))
+	}
+	shareMount, ok := h.Array.ShareMounts[0].(pool.MountController)
+	if !ok {
+		t.Fatalf("ShareMounts[0] is %T, want pool.MountController", h.Array.ShareMounts[0])
+	}
+	if shareMount.Where() != pool.SharePath("media") {
+		t.Fatalf("ShareMounts[0].Where() = %q, want %q", shareMount.Where(), pool.SharePath("media"))
+	}
+	moverMount, ok := h.Array.ShareMounts[1].(pool.MountController)
+	if !ok {
+		t.Fatalf("ShareMounts[1] is %T, want pool.MountController", h.Array.ShareMounts[1])
+	}
+	if moverMount.Where() != pool.MoverTargetPath("media") {
+		t.Fatalf("ShareMounts[1].Where() = %q, want %q", moverMount.Where(), pool.MoverTargetPath("media"))
+	}
+
+	// Swap the catch-all and both share mounts for the argv-recording
+	// fake before calling Stop/Start, exactly as
+	// TestNewArraySequence_WiresStopAndStartWhenTopologyExists does for
+	// the catch-all alone (#207): this proves the wiring and ordering
+	// without ever touching a real path under /mnt or /run/hoserva.
+	realCatchAll, ok := h.Array.CatchAll.(pool.MountController)
+	if !ok {
+		t.Fatalf("CatchAll is %T, want pool.MountController", h.Array.CatchAll)
+	}
+	h.Array.CatchAll = arrayTestCatchAll{where: pool.CatchAllPath, argv: realCatchAll.Mnt.Argv(), runner: runner}
+	h.Array.ShareMounts[0] = arrayTestCatchAll{where: shareMount.Where(), argv: shareMount.Mnt.Argv(), runner: runner}
+	h.Array.ShareMounts[1] = arrayTestCatchAll{where: moverMount.Where(), argv: moverMount.Mnt.Argv(), runner: runner}
+
+	got, err := h.StopArray(ctx, confirmStop())
+	if err != nil {
+		t.Fatalf("StopArray: %v", err)
+	}
+	if !got.MaintenanceMode.Or(false) {
+		t.Fatal("StopArray: maintenanceMode must be true after a successful stop")
+	}
+	stopCalls := runner.Calls()
+	if len(stopCalls) != 5 {
+		t.Fatalf("StopArray runner calls = %+v, want the share mount, its mover target, the catch-all, then both disks", stopCalls)
+	}
+	requireArgv(t, stopCalls[0], "fusermount", "-u", pool.SharePath("media"))
+	requireArgv(t, stopCalls[1], "fusermount", "-u", pool.MoverTargetPath("media"))
+	requireArgv(t, stopCalls[2], "fusermount", "-u", pool.CatchAllPath)
+	requireArgv(t, stopCalls[3], "systemctl", "stop", "mnt-parity1.mount")
+	requireArgv(t, stopCalls[4], "systemctl", "stop", "mnt-disk1.mount")
+
+	got, err = h.StartArray(ctx)
+	if err != nil {
+		t.Fatalf("StartArray: %v", err)
+	}
+	if got.MaintenanceMode.Or(false) {
+		t.Fatal("StartArray: maintenanceMode must be false after a successful start")
+	}
+	startCalls := runner.Calls()[len(stopCalls):]
+	if len(startCalls) != 5 {
+		t.Fatalf("StartArray runner calls = %+v, want both disks, the catch-all, the share mount, then its mover target", startCalls)
+	}
+	requireArgv(t, startCalls[0], "systemctl", "start", "mnt-parity1.mount")
+	requireArgv(t, startCalls[1], "systemctl", "start", "mnt-disk1.mount")
+	if startCalls[2].Name != "mergerfs" || startCalls[2].Args[len(startCalls[2].Args)-1] != pool.CatchAllPath {
+		t.Fatalf("StartArray call[2] = %+v, want the catch-all mergerfs mount", startCalls[2])
+	}
+	if startCalls[3].Name != "mergerfs" || startCalls[3].Args[len(startCalls[3].Args)-1] != pool.SharePath("media") {
+		t.Fatalf("StartArray call[3] = %+v, want the share's own mergerfs mount, after the catch-all", startCalls[3])
+	}
+	if startCalls[4].Name != "mergerfs" || startCalls[4].Args[len(startCalls[4].Args)-1] != pool.MoverTargetPath("media") {
+		t.Fatalf("StartArray call[4] = %+v, want the mover write target mergerfs mount", startCalls[4])
+	}
+}
+
 // TestNewArraySequence_NilWhenNoArray is the empty-path half of the
 // data-loss scenario: with no persisted topology, Array stays nil so
 // stop/start 501 rather than unmounting an empty path.
 func TestNewArraySequence_NilWhenNoArray(t *testing.T) {
-	ctx, h, arrays, disks, runner := newArrayTestEnv(t)
+	ctx, h, arrays, shares, disks, runner := newArrayTestEnv(t)
 
-	attachDaemonArray(t, ctx, h, arrays, disks, runner)
+	attachDaemonArray(t, ctx, h, arrays, shares, disks, runner)
 	if h.Array != nil {
 		t.Fatal("Handler.Array is set with no persisted topology — stop/start must 501, not unmount an empty path")
 	}
@@ -263,11 +370,11 @@ func TestNewArraySequence_NilWhenNoArray(t *testing.T) {
 // construction that skips the gate, or Starts while it is unready, would
 // mount a degraded array.
 func TestNewArraySequence_StartRefusesWhenGateNotReady(t *testing.T) {
-	ctx, h, arrays, disks, runner := newArrayTestEnv(t)
+	ctx, h, arrays, shares, disks, runner := newArrayTestEnv(t)
 	assigned := persistSampleArray(t, arrays)
 	presentMatchingDisks(disks, assigned[:1])
 
-	attachDaemonArray(t, ctx, h, arrays, disks, runner)
+	attachDaemonArray(t, ctx, h, arrays, shares, disks, runner)
 	if h.Array == nil {
 		t.Fatal("Handler.Array is nil with a persisted topology — Start would 501 instead of refusing through the gate")
 	}
@@ -306,11 +413,11 @@ func (p failListProvider) List(context.Context) ([]disk.Disk, error) {
 // return a sequence (so the API and Stop stay up) with the gate unready
 // (so Start refuses). Returning that error used to abort hoservad entirely.
 func TestNewArraySequence_ListErrorLeavesGateUnready(t *testing.T) {
-	ctx, h, arrays, disks, runner := newArrayTestEnv(t)
+	ctx, h, arrays, shares, disks, runner := newArrayTestEnv(t)
 	persistSampleArray(t, arrays)
 	failing := failListProvider{Provider: disks, err: context.DeadlineExceeded}
 
-	seq, err := newArraySequence(ctx, h.Scheduler, arrays, failing, runner)
+	seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, failing, runner)
 	if err != nil {
 		t.Fatalf("newArraySequence: %v — a List failure must not abort daemon startup", err)
 	}
@@ -361,6 +468,7 @@ func newLiveArrayCreateEnv(t *testing.T) (context.Context, *api.Handler, *disk.F
 	}
 
 	arrays := store.NewArrayStore(db)
+	shares := store.NewShareStore(db)
 	registry := job.NewRegistry()
 	scheduler := job.NewScheduler(job.NewStore(db), job.NewLogStore(t.TempDir()), job.NewHub(), registry)
 	provider := disk.NewFakeProvider()
@@ -375,7 +483,7 @@ func newLiveArrayCreateEnv(t *testing.T) (context.Context, *api.Handler, *disk.F
 		Generator: cfggen.NewGenerator(t.TempDir()),
 		Mounter:   disk.NewFakeMounter(),
 		ArrayReady: func(ctx context.Context) error {
-			seq, err := newArraySequence(ctx, scheduler, arrays, provider, fakeRunner)
+			seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, fakeRunner)
 			if err != nil {
 				return err
 			}
@@ -495,5 +603,99 @@ func TestHandler_CreateArray_RefreshesArraySequenceWithoutRestart(t *testing.T) 
 	last := startCalls[len(startCalls)-1]
 	if last.Name != "mergerfs" {
 		t.Fatalf("StartArray's last call = %+v, want mergerfs (the catch-all)", last)
+	}
+}
+
+// failOnMountMounter is share.Mounter's Mount fake for
+// TestShareService_PostCommit_KeepsArraySequenceShareMountsInSyncWithStore's
+// own failed-Create half: it refuses any mount whose path contains
+// refuseSubstr, so a test can force share.Service.Create's own
+// syncLiveMounts call to fail and drive rollbackCreate, without ever
+// touching a real path under /mnt or /run/hoserva (#207).
+type failOnMountMounter struct{ refuseSubstr string }
+
+func (m failOnMountMounter) Mount(ctx context.Context, mnt pool.Mount) error {
+	if strings.Contains(mnt.Where, m.refuseSubstr) {
+		return fmt.Errorf("failOnMountMounter: refusing to mount %s", mnt.Where)
+	}
+	return nil
+}
+
+func (m failOnMountMounter) Unmount(ctx context.Context, where string) error { return nil }
+
+// TestShareService_PostCommit_KeepsArraySequenceShareMountsInSyncWithStore
+// is #268's second finding: newArraySequence only ever runs at daemon
+// startup or a disk-topology change, so without share.Service telling it
+// to look again, Handler.Array's ShareMounts stayed exactly as stale as
+// it was at the last of those two events — a live createShare left it
+// missing the new share entirely, and a live deleteShare left a stale
+// entry behind (array start would then recreate a deleted share's
+// directory on a data disk, and array stop would fail on it). This
+// drives a real share.Service — the same construction main.go's own
+// run() wires, with shareService.PostCommit set to the same rebuild
+// closure — through Create, Delete, and a failed Create (whose own
+// rollbackCreate deletes the row it just inserted), asserting
+// Handler.Array.ShareMounts always matches what store.ShareStore
+// actually holds immediately afterward. Against 7898360, which never
+// sets PostCommit, ShareMounts never changes after daemon construction
+// and every assertion below except the first fails.
+func TestShareService_PostCommit_KeepsArraySequenceShareMountsInSyncWithStore(t *testing.T) {
+	ctx, h, arrays, shares, disks, runner := newArrayTestEnv(t)
+
+	root := t.TempDir()
+	assigned := []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", WWN: "wwn-p", Serial: "PARITY1", ByIDName: "wwn-wwn-p", Mountpoint: filepath.Join(root, "parity1")},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d", WWN: "wwn-d", Serial: "DATA1", ByIDName: "wwn-wwn-d", Mountpoint: filepath.Join(root, "disk1")},
+	}
+	if err := arrays.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC),
+	}, assigned); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	presentMatchingDisks(disks, assigned)
+
+	attachDaemonArray(t, ctx, h, arrays, shares, disks, runner)
+	if h.Array == nil {
+		t.Fatal("Handler.Array is nil with a persisted topology")
+	}
+	if len(h.Array.ShareMounts) != 0 {
+		t.Fatalf("ShareMounts = %d before any share exists, want 0", len(h.Array.ShareMounts))
+	}
+
+	generator := cfggen.NewGenerator(filepath.Join(root, "etc"))
+	shareService := newShareService(shares, arrays, generator, failOnMountMounter{refuseSubstr: "badshare"}, nil)
+	shareService.PostCommit = func(ctx context.Context) error {
+		seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, disks, runner)
+		if err != nil {
+			return err
+		}
+		h.Array = seq
+		return nil
+	}
+
+	if _, err := shareService.Create(ctx, share.CreateInput{Name: "media", CacheMode: pool.ArrayOnly}); err != nil {
+		t.Fatalf("Create(media): %v", err)
+	}
+	if len(h.Array.ShareMounts) != 2 {
+		t.Fatalf("ShareMounts = %d right after Create(media), want 2 (the share's own mount and its mover write target)", len(h.Array.ShareMounts))
+	}
+
+	if _, err := shareService.Create(ctx, share.CreateInput{Name: "badshare", CacheMode: pool.ArrayOnly}); err == nil {
+		t.Fatal("Create(badshare): got nil error, want the injected mount failure to propagate")
+	}
+	if _, err := shares.Get(ctx, "badshare"); err == nil {
+		t.Fatal("badshare is still in the store after its own rollbackCreate — Create's rollback did not delete it")
+	}
+	if len(h.Array.ShareMounts) != 2 {
+		t.Fatalf("ShareMounts = %d after a rolled-back Create(badshare), want 2 (unchanged — badshare was never really created)", len(h.Array.ShareMounts))
+	}
+
+	if err := shareService.Delete(ctx, "media", true); err != nil {
+		t.Fatalf("Delete(media): %v", err)
+	}
+	if len(h.Array.ShareMounts) != 0 {
+		t.Fatalf("ShareMounts = %d after Delete(media), want 0 (the deleted share must not remount on the next array start)", len(h.Array.ShareMounts))
 	}
 }

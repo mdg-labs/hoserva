@@ -2,7 +2,9 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
@@ -33,6 +35,21 @@ type Mounter struct {
 	// uses for its own scripted delays.
 	Now   disk.Clock
 	Sleep disk.Sleeper
+
+	// IsMountpoint reports whether a path is currently a mount point.
+	// Nil means "use the real stat-based check" (isMountpoint, below) —
+	// a test injects a fake to observe Mount's already-mounted and
+	// Unmount's already-gone paths without a real mount boundary on
+	// disk (internal/disk's own equivalent check is unexported, so this
+	// package keeps its own copy rather than reaching into it).
+	IsMountpoint func(where string) (bool, error)
+}
+
+func (m Mounter) isMountpoint() func(string) (bool, error) {
+	if m.IsMountpoint != nil {
+		return m.IsMountpoint
+	}
+	return isMountpoint
 }
 
 // isBusyUnmountError reports whether err is fusermount's EBUSY —
@@ -55,10 +72,36 @@ func isBusyUnmountError(err error) bool {
 // scripts/devenv/create-array.sh's own invocation, so Runner.Run's
 // ordinary wait-for-exit is enough — no foreground process or PID
 // tracking is needed here.
+//
+// mnt.Where already being a mount point is a no-op success, not a second
+// mergerfs stacked on top of the first: a Start called against an
+// already-mounted catch-all or share path (a retried apply, or a Start
+// run without an intervening Stop) must not hide the live mount beneath
+// a new one (#268). The existing mount is only trusted as mnt's own when
+// findmnt reports its SOURCE as mnt.FSName — the same fsname doc 02 §1's
+// table says is "recognisable in df and mount listings" precisely so it
+// can be told apart this way — because a wrong mount masquerading as
+// "already there" would be worse than a start that refuses loudly.
 func (m Mounter) Mount(ctx context.Context, mnt Mount) error {
 	if err := os.MkdirAll(mnt.Where, 0o755); err != nil {
 		return fmt.Errorf("pool: creating mount point %s: %w", mnt.Where, err)
 	}
+
+	mounted, err := m.isMountpoint()(mnt.Where)
+	if err != nil {
+		return fmt.Errorf("pool: checking whether %s is already mounted: %w", mnt.Where, err)
+	}
+	if mounted {
+		out, err := m.Runner.Run(ctx, "findmnt", "-n", "-o", "SOURCE", mnt.Where)
+		if err != nil {
+			return fmt.Errorf("pool: %s is already mounted, and its filesystem could not be identified: %w", mnt.Where, err)
+		}
+		if strings.TrimSpace(string(out)) == mnt.FSName {
+			return nil
+		}
+		return fmt.Errorf("pool: %s is already mounted by something other than %s", mnt.Where, mnt.FSName)
+	}
+
 	argv := mnt.Argv()
 	if _, err := m.Runner.Run(ctx, argv[0], argv[1:]...); err != nil {
 		return fmt.Errorf("pool: mounting %s: %w", mnt.Where, err)
@@ -75,10 +118,21 @@ func (m Mounter) Mount(ctx context.Context, mnt Mount) error {
 // intervals until unmountRetryWindow elapses, since after Samba/NFS
 // stop the catch-all unmount can briefly race their own file handles
 // being released (issue #332). Any other error, or ctx being done,
-// returns immediately without retrying. When the window ends with the
-// mount still busy, Unmount returns that last error, so a genuinely
-// busy pool still fails array stop rather than being silently retried
-// forever.
+// returns immediately without retrying. Once retrying stops — the
+// window elapsed while still busy, or a non-busy failure — a where that
+// turns out to already not be a mount point, or to not exist at all, is
+// success, not an error: deleteShare on a share whose per-share mount is
+// already gone for any reason (a reboot that never remounted it, or the
+// mover's write target directory never existing on a fresh /run, #268)
+// must be a clean no-op, the same tolerance disk.DirectMounter.Unmount
+// already gives a physical disk, rather than 500 on fusermount's own
+// "No such file or directory" / "Invalid argument" for a mount that was
+// never there. A missing path cannot itself be a live mount point, so
+// isMountpoint's own os.Stat failing with fs.ErrNotExist is treated the
+// same as a stat that succeeds and reports "not mounted" — but any other
+// stat failure (in particular ENOTCONN, what a dead FUSE mount's own
+// endpoint reports, not ENOENT) still falls through to the fusermount
+// error below, since that is a live-but-broken mount, not an absent one.
 func (m Mounter) Unmount(ctx context.Context, where string) error {
 	now := m.Now
 	if now == nil {
@@ -88,6 +142,7 @@ func (m Mounter) Unmount(ctx context.Context, where string) error {
 	if sleep == nil {
 		sleep = time.Sleep
 	}
+	isMountpoint := m.isMountpoint()
 
 	deadline := now().Add(unmountRetryWindow)
 	for {
@@ -98,13 +153,18 @@ func (m Mounter) Unmount(ctx context.Context, where string) error {
 		if err == nil {
 			return nil
 		}
-		if !isBusyUnmountError(err) {
-			return fmt.Errorf("pool: unmounting %s: %w", where, err)
+		if isBusyUnmountError(err) && now().Before(deadline) {
+			sleep(unmountRetryDelay)
+			continue
 		}
-		if !now().Before(deadline) {
-			return fmt.Errorf("pool: unmounting %s: %w", where, err)
+		mounted, checkErr := isMountpoint(where)
+		if checkErr == nil && !mounted {
+			return nil
 		}
-		sleep(unmountRetryDelay)
+		if checkErr != nil && errors.Is(checkErr, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("pool: unmounting %s: %w", where, err)
 	}
 }
 
