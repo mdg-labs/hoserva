@@ -1309,7 +1309,10 @@ paths:
         Persists the share (D4), creates its directory tree on the
         branches its cache mode uses, writes the per-share mergerfs
         mount through the existing pool renderer, and regenerates
-        `smb.conf` (doc 02 §1, doc 03 §4).
+        `smb.conf` (doc 02 §1, doc 03 §4). Refused with 409
+        `maintenance_mode` while the array is stopped (Q70): create
+        would mkdir under bare disk mountpoints on the root filesystem,
+        and the next array start would hide those writes.
       tags: [shares]
       x-hoserva-role: admin
       requestBody:
@@ -1352,7 +1355,9 @@ paths:
       description: >-
         Updates cache mode, create policy and SMB options, then
         regenerates the per-share mount and `smb.conf`. Does not relocate
-        existing files (doc 09 §2).
+        existing files (doc 09 §2). Refused with 409 `maintenance_mode`
+        while the array is stopped (Q70): update would mkdir and remount
+        under bare disk mountpoints on the root filesystem.
       tags: [shares]
       x-hoserva-role: admin
       requestBody:
@@ -1377,7 +1382,9 @@ paths:
         Removes the share row and regenerates mounts and `smb.conf`.
         Leaves the share's files on disk (doc 03 §4.2 danger zone).
         `confirm: true` is required. Deleting the data is
-        `deleteShareData`.
+        `deleteShareData`. Refused with 409 `maintenance_mode` while the
+        array is stopped (Q70): delete would unmount and rewrite share
+        mounts against bare disk mountpoints on the root filesystem.
       tags: [shares]
       x-hoserva-role: admin
       requestBody:
@@ -2195,6 +2202,56 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /mover/last-run:
+    get:
+      operationId: getLastMoverRun
+      summary: Most recent finished mover run
+      description: >-
+        The structured result of the most recent finished mover run
+        (doc 09 §2's honest reporting, doc 03 §3.6): files moved, bytes,
+        duration, and every skipped entry with its reason. Persisted in
+        SQLite by the mover job itself (#273), not reconstructed from the
+        job log. Null when no mover job has ever finished.
+      tags: [mover]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: >-
+            The last finished mover run, or null when none has finished yet.
+          content:
+            application/json:
+              schema:
+                nullable: true
+                allOf:
+                  - $ref: '#/components/schemas/MoverRunResult'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /cache/usage:
+    get:
+      operationId: getCacheUsage
+      summary: Cache usage breakdown
+      description: >-
+        Appdata / pending-moves / other byte breakdown for the cache disk
+        (doc 03 §3.6). Computed as a by-product of each mover run (Q87),
+        never a live directory walk on a timer (Q13). Null when no mover
+        run has computed it yet.
+      tags: [mover]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: >-
+            The latest persisted breakdown, or null when none has been
+            computed yet.
+          content:
+            application/json:
+              schema:
+                nullable: true
+                allOf:
+                  - $ref: '#/components/schemas/CacheUsageBreakdown'
         default:
           $ref: '#/components/responses/Error'
 
@@ -4967,6 +5024,95 @@ components:
           type: string
           format: date-time
           description: When the sync that produced these figures completed.
+
+    MoverSkippedEntry:
+      type: object
+      required: [share, path, result]
+      description: >-
+        One file the mover chose not to move (or could not move), with
+        why (doc 09 §2, doc 03 §3.6's skipped-because-in-use list).
+      properties:
+        share:
+          type: string
+        path:
+          type: string
+          description: Path relative to the share root.
+        bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        result:
+          type: string
+          description: >-
+            The mover's own result code (e.g. skipped_open,
+            skipped_grace_period, conflict).
+        reason:
+          type: string
+          description: Optional human detail (error text or skip reason).
+
+    MoverRunResult:
+      type: object
+      required: [startedAt, finishedAt, durationMs, filesMoved, bytesMoved, interrupted, skipped]
+      description: >-
+        Structured outcome of one finished mover run (#273, doc 09 §2),
+        persisted in SQLite rather than only in the job log.
+      properties:
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        durationMs:
+          type: integer
+          format: int64
+          minimum: 0
+        filesMoved:
+          type: integer
+          format: int32
+          minimum: 0
+        bytesMoved:
+          type: integer
+          format: int64
+          minimum: 0
+        interrupted:
+          type: boolean
+          description: True when the run stopped early (cancel, stop, or context).
+        skipped:
+          type: array
+          items:
+            $ref: '#/components/schemas/MoverSkippedEntry'
+
+    CacheUsageBreakdown:
+      type: object
+      required: [appdataBytes, pendingMovesBytes, otherBytes, computedAt]
+      description: >-
+        Cache disk byte breakdown for the cache page (doc 03 §3.6),
+        computed as a by-product of each mover run (Q87) — never a live
+        directory walk on a timer (Q13).
+      properties:
+        appdataBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Bytes under cache-only shares (appdata and similar).
+        pendingMovesBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            Bytes still under cache-then-move shares, waiting for a
+            future mover pass.
+        otherBytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            Remaining used bytes on the cache filesystem (statfs used
+            minus appdata and pending), including non-share paths.
+        computedAt:
+          type: string
+          format: date-time
 
     Share:
       type: object

@@ -24,7 +24,7 @@ import (
 )
 
 // wiringTestMounter fakes share.Mounter — never touches /mnt (CLAUDE.md)
-// — standing in for the real pool.Mounter{Runner: linuxDisks.Exec} that
+// — standing in for the real pool.SystemdMounter{Runner: linuxDisks.Exec} that
 // newShareService wires in production. This test is about the HTTP path
 // from main.go's Handler to share.Service, not mergerfs itself, which is
 // already covered elsewhere (internal/pool's own tests, and for real,

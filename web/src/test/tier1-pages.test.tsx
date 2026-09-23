@@ -493,7 +493,7 @@ describe("Tier 1 pages", () => {
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Sync now" }));
 
-    expect(await screen.findByText("sync refused")).toBeInTheDocument();
+    expect(await within(dialog).findByText("sync refused")).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 

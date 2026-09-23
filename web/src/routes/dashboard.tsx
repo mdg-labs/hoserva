@@ -1,5 +1,4 @@
 import type React from "react";
-import { useEffect, useState } from "react";
 import { HardDrive } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -19,7 +18,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useActiveJobs } from "@/hooks/use-active-jobs";
 import { diskDetailPath, PATHS } from "@/hooks/paths";
 import { useSystemData } from "@/hooks/use-system-status";
-import { hoservaClient } from "@/lib/api/client";
+import { getMetrics } from "@/lib/api/operations";
+import { useApiQuery } from "@/lib/api/use-api-query";
+import type { components } from "@/lib/api/client";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
 const METRIC_DISK_THROUGHPUT = "disk_throughput_bytes_per_sec";
@@ -62,49 +63,35 @@ function metricPointsToChart(points: { at: string; value: number }[]): ChartPoin
   }));
 }
 
+type MetricSeries = components["schemas"]["MetricSeries"];
+
 function useMetricSeries(metric: string, enabled: boolean): ChartPoint[] | null {
-  const [data, setData] = useState<ChartPoint[] | null>(null);
-
-  useEffect(() => {
-    if (!enabled) {
-      return;
-    }
-
-    const controller = new AbortController();
-    const to = new Date();
-    const from = new Date(to.getTime() - CHART_WINDOW_MS);
-
-    void hoservaClient
-      .GET("/metrics", {
-        params: {
-          query: {
-            metric,
-            from: from.toISOString(),
-            to: to.toISOString(),
-          },
+  const to = new Date();
+  const from = new Date(to.getTime() - CHART_WINDOW_MS);
+  const metricsQuery = useApiQuery<MetricSeries>({
+    queryKey: ["dashboard-metrics", metric, enabled],
+    queryFn: (signal) =>
+      getMetrics(
+        {
+          metric,
+          from: from.toISOString(),
+          to: to.toISOString(),
         },
-        signal: controller.signal,
-      })
-      .then(({ data: series, error }) => {
-        if (error || !series) {
-          setData([]);
-          return;
-        }
-        setData(metricPointsToChart(series.points));
-      })
-      .catch(() => {
-        setData([]);
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [metric, enabled]);
+        signal,
+      ),
+    enabled,
+  });
 
   if (!enabled) {
     return null;
   }
-  return data;
+  if (metricsQuery.loading && metricsQuery.data === null) {
+    return null;
+  }
+  if (metricsQuery.error || !metricsQuery.data) {
+    return [];
+  }
+  return metricPointsToChart(metricsQuery.data.points);
 }
 
 export function DashboardPage(): React.ReactElement {

@@ -49,7 +49,10 @@ var ErrDiskAlreadyMember = errors.New("disk: this disk is already a member of th
 // disk at a renumbered /dev/sdX path as the same physical disk: without
 // it, a weak-identity array member unmounted and reattached at a new path
 // has nothing WWN/serial can compare and would otherwise pass this check
-// as if it were a fresh disk.
+// as if it were a fresh disk. Size is not compared here: AssignedDisk
+// carries no capacity, and a same-UUID clone is still refused by
+// UNIQUE(fs_uuid) on insert; GetPool's own matchArrayDisk is what must
+// not treat a different-capacity clone as the live member (#327).
 func refuseKnownIdentity(disks []store.ArrayDisk, d disk.AssignedDisk) error {
 	target := disk.Identity{WWN: d.WWN, Serial: d.Serial}
 	for _, r := range disks {
@@ -180,13 +183,13 @@ var ErrReplacementSlotDiskPresent = errors.New("disk: the disk at this slot is s
 // still carries old's stored WWN or serial (disk.Identity.Matches, Q21),
 // or — for a weak-identity disk with no WWN or serial at all, as every
 // disk in the loop-device lab is (doc 06 §3) — its stored filesystem UUID
-// (the same fallback GetPool's own matchArrayDisk uses, #326). It never
-// trusts an unmount alone: a failed disk merely detached from its bay but
-// still attached over another path would otherwise slip through. A stat
-// error reading mountpoint (most commonly the path not existing) is
-// treated as "not mounted" rather than propagated, the same fail-open
-// reading applyArrayFromStore's own alreadyMounted already relies on for
-// this exact check.
+// and, when size is stored, equal size (the same fallback GetPool's own
+// matchArrayDisk uses, #326/#327). It never trusts an unmount alone: a
+// failed disk merely detached from its bay but still attached over another
+// path would otherwise slip through. A stat error reading mountpoint (most
+// commonly the path not existing) is treated as "not mounted" rather than
+// propagated, the same fail-open reading applyArrayFromStore's own
+// alreadyMounted already relies on for this exact check.
 func ConfirmReplacementTargetAbsent(mountpoint string, old store.ArrayDisk, listed []disk.Disk) error {
 	if mounted, err := disk.IsMountpoint(mountpoint); err == nil && mounted {
 		return fmt.Errorf("%w: %s is still mounted", ErrReplacementSlotDiskPresent, mountpoint)
@@ -197,6 +200,9 @@ func ConfirmReplacementTargetAbsent(mountpoint string, old store.ArrayDisk, list
 			return fmt.Errorf("%w: %s", ErrReplacementSlotDiskPresent, inv.Device)
 		}
 		if old.WeakIdentity && inv.WeakIdentity && old.FSUUID != "" && old.FSUUID == inv.FSUUID {
+			if old.SizeSet && old.Size != inv.Size {
+				continue
+			}
 			return fmt.Errorf("%w: %s", ErrReplacementSlotDiskPresent, inv.Device)
 		}
 	}

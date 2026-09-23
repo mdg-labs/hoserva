@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -25,6 +26,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/cache"
 	cfggen "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
@@ -247,8 +249,42 @@ func run(cfg config) error {
 	// leaves consistent on-disk state at any stopping point (a duplicate,
 	// never a gap — doc 09 §2), so it honestly supports being cancelled,
 	// same as TypeACMEIssue below.
+	moverResults := cache.NewResultStore(db)
 	registry.Register(job.TypeMover, true, job.RunMover(job.MoverDeps{
-		Shares: moverSharesFromStore(shareStore, arrayStore),
+		Shares:  moverSharesFromStore(shareStore, arrayStore),
+		Results: moverResults,
+		UsagePlan: func(ctx context.Context) (string, []cache.UsageShare, error) {
+			_, disks, err := arrayStore.GetArray(ctx)
+			if err != nil {
+				if errors.Is(err, store.ErrNoArray) {
+					return "", nil, nil
+				}
+				return "", nil, fmt.Errorf("loading array topology for cache usage: %w", err)
+			}
+			var cacheMount string
+			for _, d := range disks {
+				if d.Role == store.ArrayRoleCache {
+					cacheMount = d.Mountpoint
+					break
+				}
+			}
+			if cacheMount == "" {
+				return "", nil, nil
+			}
+			all, err := shareStore.List(ctx)
+			if err != nil {
+				return "", nil, fmt.Errorf("listing shares for cache usage: %w", err)
+			}
+			out := make([]cache.UsageShare, 0, len(all))
+			for _, s := range all {
+				out = append(out, cache.UsageShare{
+					Name: s.Name,
+					Path: cacheMount + "/" + s.Name,
+					Mode: s.CacheMode,
+				})
+			}
+			return cacheMount, out, nil
+		},
 	}))
 	scheduler := job.NewScheduler(jobStore, logs, hub, registry)
 	if err := scheduler.RecoverFromRestart(ctx); err != nil {
@@ -344,7 +380,7 @@ func run(cfg config) error {
 		handler.SetArray(seq)
 		return nil
 	}
-	shareService := newShareService(shareStore, arrayStore, generator, pool.Mounter{Runner: linuxDisks.Exec}, shareUsages)
+	shareService := newShareService(shareStore, arrayStore, generator, pool.SystemdMounter{Runner: linuxDisks.Exec}, shareUsages)
 	shareService.PostCommit = rebuildArraySequence
 	// topologyChanged is the disk-topology jobs' ArrayReady hook. Those
 	// jobs write only the catch-all's unit, so share.Service rewrites
@@ -389,6 +425,7 @@ func run(cfg config) error {
 	handler.Network = networkSvc
 	handler.ACME = acmeService
 	handler.Shares = shareService
+	handler.MoverResults = moverResults
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
 		handler.RelocationManifest = parityEngine.Relocation

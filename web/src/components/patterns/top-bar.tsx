@@ -32,7 +32,9 @@ import { useIsMobile } from "@/hooks/use-media-query";
 import { jobDetailPath, PATHS } from "@/hooks/paths";
 import { useSystemData } from "@/hooks/use-system-status";
 import { useAuth } from "@/lib/api/auth-context";
-import { hoservaClient } from "@/lib/api/client";
+import { getNotifications, postAuthLogout, postNotificationsReadAll } from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
 import {
   subscribeToEvents,
   type NotificationAlert,
@@ -59,10 +61,12 @@ function NotificationInboxPanel({
   groups,
   unreadCount,
   onMarkAllRead,
+  error,
 }: {
   groups: NotificationGroup[];
   unreadCount: number;
   onMarkAllRead: () => void;
+  error?: string | null;
 }): React.ReactElement {
   const { t } = useTranslation();
 
@@ -77,7 +81,9 @@ function NotificationInboxPanel({
         ) : null}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        {groups.length === 0 ? (
+        {error ? (
+          <p role="alert" className="text-destructive px-2 py-4 text-sm">{error}</p>
+        ) : groups.length === 0 ? (
           <p className="text-muted-foreground px-2 py-4 text-sm">{t("topBar.notifications.empty")}</p>
         ) : (
           <div className="flex flex-col gap-4">
@@ -126,25 +132,25 @@ export function TopBar(): React.ReactElement {
   });
   const { groups: notificationGroups, unreadCount } = inbox;
 
+  const notificationsQuery = useApiQuery({
+    queryKey: "top-bar-notifications",
+    queryFn: (signal) => getNotifications(signal),
+  });
+  const markReadMutation = useApiMutation({ mutationFn: postNotificationsReadAll });
+  const logoutMutation = useApiMutation({
+    mutationFn: postAuthLogout,
+    fallbackError: t("topBar.userMenu.logoutFailed"),
+  });
+
   useEffect(() => {
-    const controller = new AbortController();
-    hoservaClient
-      .GET("/notifications", { signal: controller.signal })
-      .then((result) => {
-        if (result.error || !result.data) {
-          return;
-        }
-        dispatchInbox({
-          type: "snapshot",
-          groups: result.data.groups,
-          unreadCount: result.data.unreadCount,
-        });
-      })
-      .catch(() => {
-        // Initial inbox load failure leaves the bell empty until SSE or a reload.
+    if (notificationsQuery.data) {
+      dispatchInbox({
+        type: "snapshot",
+        groups: notificationsQuery.data.groups,
+        unreadCount: notificationsQuery.data.unreadCount,
       });
-    return () => controller.abort();
-  }, []);
+    }
+  }, [notificationsQuery.data]);
 
   useEffect(() => {
     return subscribeToEvents((event) => {
@@ -168,26 +174,21 @@ export function TopBar(): React.ReactElement {
 
   const handleMarkAllRead = async (): Promise<void> => {
     const knownIds = notificationAlertIds(notificationGroups);
-    const { data, error } = await hoservaClient.POST("/notifications/read", {
-      body: { all: true },
-    });
-    if (error || !data) {
-      return;
+    const result = await markReadMutation.mutate(undefined);
+    if (result.ok && result.data) {
+      dispatchInbox({ type: "markKnownRead", knownIds, unreadCount: result.data.unreadCount });
     }
-    dispatchInbox({ type: "markKnownRead", knownIds, unreadCount: data.unreadCount });
   };
 
   const handleLogout = async (): Promise<void> => {
-    try {
-      const { error: apiError } = await hoservaClient.POST("/auth/logout");
-      if (apiError) {
-        setLogoutError(apiError.message || t("topBar.userMenu.logoutFailed"));
-        return;
+    const result = await logoutMutation.mutate(undefined);
+    if (!result.ok) {
+      if (!result.aborted) {
+        setLogoutError(result.error || t("topBar.userMenu.logoutFailed"));
       }
-      window.location.assign("/login");
-    } catch (err: unknown) {
-      setLogoutError(err instanceof Error ? err.message : t("topBar.userMenu.logoutFailed"));
+      return;
     }
+    window.location.assign("/login");
   };
 
   const toggleTheme = (): void => {
@@ -212,6 +213,7 @@ export function TopBar(): React.ReactElement {
       groups={notificationGroups}
       unreadCount={unreadCount}
       onMarkAllRead={() => void handleMarkAllRead()}
+      error={notificationsQuery.error}
     />
   );
 

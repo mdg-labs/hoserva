@@ -27,6 +27,26 @@ func TestParseSambaSharesSkipsGlobalAndPrinters(t *testing.T) {
 	}
 }
 
+func TestParseSambaShareDetails(t *testing.T) {
+	raw, err := os.ReadFile("../../testdata/parsers/host_smb.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseSambaShareDetails(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("details = %+v", got)
+	}
+	if got[0].Name != "media" || got[0].ReadOnly || !got[0].Browseable || got[0].Guest {
+		t.Fatalf("media = %+v", got[0])
+	}
+	if got[1].Name != "homes" || got[1].Browseable {
+		t.Fatalf("homes = %+v", got[1])
+	}
+}
+
 func TestParseNFSExports(t *testing.T) {
 	raw, err := os.ReadFile("../../testdata/parsers/host_exports")
 	if err != nil {
@@ -44,6 +64,45 @@ func TestParseNFSExports(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("exports = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestParseNFSExportDetails(t *testing.T) {
+	raw, err := os.ReadFile("../../testdata/parsers/host_exports")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseNFSExportDetails(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("details = %+v", got)
+	}
+	if got[0].Name != "media" || got[0].Path != "/export/media" ||
+		len(got[0].Hosts) != 1 || got[0].Hosts[0] != "192.168.1.0/24" ||
+		got[0].Squash != "root_squash" {
+		t.Fatalf("media = %+v", got[0])
+	}
+	if got[1].Name != "backup" || len(got[1].Hosts) != 1 || got[1].Hosts[0] != "*" {
+		t.Fatalf("backup = %+v", got[1])
+	}
+}
+
+func TestParseNFSExportDetails_DefaultOptionsAreNotHosts(t *testing.T) {
+	raw := []byte("/srv/data -ro,no_root_squash 192.168.1.0/24(rw)\n")
+	got, err := ParseNFSExportDetails(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("details = %+v", got)
+	}
+	if len(got[0].Hosts) != 1 || got[0].Hosts[0] != "192.168.1.0/24" {
+		t.Fatalf("hosts = %#v, want only the client", got[0].Hosts)
+	}
+	if got[0].Squash != "no_root_squash" {
+		t.Fatalf("squash = %q, want no_root_squash from the default-options field", got[0].Squash)
 	}
 }
 

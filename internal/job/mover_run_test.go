@@ -182,3 +182,84 @@ func TestMaintenanceChain_MoverStepRunsWhenRegistered(t *testing.T) {
 		t.Fatalf("mover step should have actually moved the file: %v", err)
 	}
 }
+
+// TestRunMover_PersistsStructuredResult proves RunMover writes the
+// cache.Report into ResultStore (#273), not only the job-log Summary line.
+func TestRunMover_PersistsStructuredResult(t *testing.T) {
+	db := newTestDB(t)
+	results := cache.NewResultStore(db)
+	share := newTestMoverShare(t)
+
+	s := newTestScheduler(t)
+	s.registry.Register(TypeMover, true, RunMover(MoverDeps{
+		Shares: func(ctx context.Context) ([]cache.Share, error) {
+			return []cache.Share{share}, nil
+		},
+		Results: results,
+		UsagePlan: func(ctx context.Context) (string, []cache.UsageShare, error) {
+			cacheMount := filepath.Dir(share.CachePath)
+			return cacheMount, []cache.UsageShare{{
+				Name: share.Name,
+				Path: share.CachePath,
+				Mode: "cache-then-move",
+			}}, nil
+		},
+	}))
+
+	j, err := s.Submit(context.Background(), TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished, err := s.Await(context.Background(), j.ID)
+	if err != nil {
+		t.Fatalf("Await: %v", err)
+	}
+	if finished.Status != StatusSucceeded {
+		t.Fatalf("job status = %s, want %s", finished.Status, StatusSucceeded)
+	}
+
+	run, err := results.LastRun(context.Background())
+	if err != nil {
+		t.Fatalf("LastRun: %v", err)
+	}
+	if run.FilesMoved != 1 || run.BytesMoved != int64(len("movie bytes")) {
+		t.Fatalf("persisted moved = %d/%d, want 1/%d", run.FilesMoved, run.BytesMoved, len("movie bytes"))
+	}
+	usage, err := results.CacheUsage(context.Background())
+	if err != nil {
+		t.Fatalf("CacheUsage: %v", err)
+	}
+	if usage.PendingMovesBytes != 0 {
+		t.Fatalf("PendingMovesBytes = %d, want 0 after the file was moved", usage.PendingMovesBytes)
+	}
+}
+
+func TestRunMover_PersistsResultWhenContextIsCancelled(t *testing.T) {
+	db := newTestDB(t)
+	results := cache.NewResultStore(db)
+	share := newTestMoverShare(t)
+	fn := RunMover(MoverDeps{
+		Shares: func(context.Context) ([]cache.Share, error) {
+			return []cache.Share{share}, nil
+		},
+		Results: results,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out bytes.Buffer
+	rc := &RunContext{
+		ctx:            ctx,
+		out:            &out,
+		stopRequested:  make(chan struct{}),
+		saveCheckpoint: func([]byte) error { return nil },
+		setProgress:    func(int) {},
+	}
+	_ = fn(ctx, rc)
+	run, err := results.LastRun(context.Background())
+	if err != nil {
+		t.Fatalf("LastRun after a cancelled run: %v", err)
+	}
+	if run.StartedAt.IsZero() {
+		t.Fatal("cancelled run was not persisted")
+	}
+}

@@ -143,7 +143,9 @@ type Handler interface {
 	//
 	// Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the
 	// per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1,
-	// doc 03 §4).
+	// doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would
+	// mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those
+	// writes.
 	//
 	// POST /shares
 	CreateShare(ctx context.Context, req *CreateShareRequest) (*Share, error)
@@ -172,7 +174,9 @@ type Handler interface {
 	// DeleteShare implements deleteShare operation.
 	//
 	// Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc
-	// 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`.
+	// 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`. Refused
+	// with 409 `maintenance_mode` while the array is stopped (Q70): delete would unmount and rewrite share
+	// mounts against bare disk mountpoints on the root filesystem.
 	//
 	// DELETE /shares/{name}
 	DeleteShare(ctx context.Context, req *ConfirmShareRequest, params DeleteShareParams) error
@@ -253,6 +257,14 @@ type Handler interface {
 	//
 	// POST /disks/external/{label}/format
 	FormatExternalDisk(ctx context.Context, req *FormatExternalDiskRequest, params FormatExternalDiskParams) (*ExternalDisk, error)
+	// GetCacheUsage implements getCacheUsage operation.
+	//
+	// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
+	// by-product of each mover run (Q87), never a live directory walk on a timer (Q13). Null when no mover
+	// run has computed it yet.
+	//
+	// GET /cache/usage
+	GetCacheUsage(ctx context.Context) (NilCacheUsageBreakdown, error)
 	// GetCurrentSession implements getCurrentSession operation.
 	//
 	// The signed-in user this session cookie belongs to.
@@ -278,6 +290,15 @@ type Handler interface {
 	//
 	// GET /jobs/{jobId}/log
 	GetJobLog(ctx context.Context, params GetJobLogParams) (GetJobLogOK, error)
+	// GetLastMoverRun implements getLastMoverRun operation.
+	//
+	// The structured result of the most recent finished mover run (doc 09 §2's honest reporting, doc 03
+	// §3.6): files moved, bytes, duration, and every skipped entry with its reason. Persisted in SQLite
+	// by the mover job itself (#273), not reconstructed from the job log. Null when no mover job has ever
+	// finished.
+	//
+	// GET /mover/last-run
+	GetLastMoverRun(ctx context.Context) (NilMoverRunResult, error)
 	// GetMetrics implements getMetrics operation.
 	//
 	// Returns downsampled samples from metrics.db for one metric/subject over a time window (Q74, doc 03
@@ -784,7 +805,9 @@ type Handler interface {
 	// UpdateShare implements updateShare operation.
 	//
 	// Updates cache mode, create policy and SMB options, then regenerates the per-share mount and
-	// `smb.conf`. Does not relocate existing files (doc 09 §2).
+	// `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while
+	// the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root
+	// filesystem.
 	//
 	// PATCH /shares/{name}
 	UpdateShare(ctx context.Context, req *UpdateShareRequest, params UpdateShareParams) (*Share, error)

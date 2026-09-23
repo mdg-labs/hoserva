@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/mdg-labs/hoserva/internal/config/golden"
@@ -30,13 +29,6 @@ type poolState struct {
 	Shares    []shareState `json:"shares"`
 }
 
-// unitFileName mirrors disk.UnitFileName's own systemd-escape rule
-// (CLAUDE.md: kept consistent in style, not shared code, since these
-// are different packages rendering different kinds of units).
-func unitFileName(where string) string {
-	return strings.ReplaceAll(strings.Trim(where, "/"), "/", "-") + ".mount"
-}
-
 // TestRenderPoolMounts golden-tests every mount doc 02 §1's topology
 // describes — the catch-all, one per-share mount per cache mode, and
 // each share's own mover write target — against testdata/configs/
@@ -59,7 +51,7 @@ func TestRenderPoolMounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CatchAllMount: %v", err)
 	}
-	golden.Compare(t, filepath.Join(poolTestdataDir, unitFileName(catchAll.Where)+".golden"), []byte(catchAll.Render()))
+	golden.Compare(t, filepath.Join(poolTestdataDir, UnitFileName(catchAll.Where)+".golden"), []byte(catchAll.Render()))
 
 	for _, s := range state.Shares {
 		share := Share{Name: s.Name, CacheMode: CacheMode(s.CacheMode), CreatePolicy: CreatePolicy(s.CreatePolicy)}
@@ -68,7 +60,7 @@ func TestRenderPoolMounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ShareMount(%s): %v", s.Name, err)
 		}
-		golden.Compare(t, filepath.Join(poolTestdataDir, unitFileName(shareMount.Where)+".golden"), []byte(shareMount.Render()))
+		golden.Compare(t, filepath.Join(poolTestdataDir, UnitFileName(shareMount.Where)+".golden"), []byte(shareMount.Render()))
 
 		if share.CacheMode == CacheOnly {
 			// CacheOnly data lives on cache permanently and is never
@@ -80,6 +72,6 @@ func TestRenderPoolMounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MoverTargetMount(%s): %v", s.Name, err)
 		}
-		golden.Compare(t, filepath.Join(poolTestdataDir, unitFileName(moverMount.Where)+".golden"), []byte(moverMount.Render()))
+		golden.Compare(t, filepath.Join(poolTestdataDir, UnitFileName(moverMount.Where)+".golden"), []byte(moverMount.Render()))
 	}
 }

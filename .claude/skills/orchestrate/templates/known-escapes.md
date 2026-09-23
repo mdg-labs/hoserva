@@ -23,31 +23,39 @@ existing line by adding its PR number.
 
 ## Partial failure and atomicity
 - **partial-failure** — DB row committed before a later side effect (generated file, mount, Samba account, audit row, notification row) that can fail; error returned over a half-applied change, or retry blocked by the leftover row — PR 174, 206, 213, 216, 218, 228
+- **partial-failure** — a compensating delete uses the request context, so a disconnect cancels the rollback and leaves the rows it was supposed to remove — PR 344
 - **partial-failure** — rollback restores the row and files but not the live state (mounts) — PR 218
 - **live-state** — change persisted and written to config but never applied to what is running (an idempotency early return keyed on a name that never changes; units written but the live mount left on its old branches) — PR 338
+- **live-state** — a share-list mutation that bypasses Create/Update/Delete never runs PostCommit, so the array sequence keeps the previous share list — PR 344
 - **resume** — a resumed run looks its target up by the key an earlier invocation already moved, or re-checks an identity field the run itself changed (filesystem UUID after its own format), so every resume fails — PR 338
 - **reconcile** — regenerate-and-reconcile from a partial state (disks but no shares) deletes files another subsystem owns — PR 338
-- **durability** — `rename` without an fsync of the directory; truncate-then-write of a settings file; archive written in place with `O_TRUNC` — PR 150, 174, 213, 236
+- **durability** — `rename` without an fsync of the directory; truncate-then-write of a settings file or certificate; archive written in place with `O_TRUNC`; a certificate and key replaced as two renames with no recovery if the process stops between them — PR 150, 174, 213, 236, 344
 - **atomicity** — read-modify-write of a whole row lets concurrent partial updates overwrite each other — PR 182, 199
 - **atomicity** — check-then-act on a path (validate, then re-resolve by name) — PR 228, 236
+- **atomicity** — a maintenance check that returns before the mutation, so array stop can unmount while the mutation is still writing under the mountpoint — PR 344
 
 ## Fail-open and error handling
 - **fail-open** — a safety or readiness check that continues on error (boot-disk detection with an unreadable mount table, identity-less format fallback) — PR 150, 159
 - **fail-open** — `|| true` or a swallowed error inside a gate, so the gate reports PASS after a failure — PR 163, 210
 - **fail-open** — a skip meant for one step applied to every step (unregistered mover skip also skipping sync/scrub) — PR 201
 - **fail-open** — an input that matches nothing turns a protective change into a silent no-op (a removing disk not in the data-disk list leaves every branch RW) — PR 337
+- **fail-open** — a destructive call treats a missing path as success while the disks are unmounted, so the data is still on disk — PR 344
 - **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor, a completed-stop flag cleared before the start's fallible checks) — PR 199, 246, 338
+- **errors** — a secondary failure (a usage breakdown, a cancelled job context) discards a result that was already produced — PR 344
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201
 - **errors** — infrastructure failure mapped to HTTP 400 with raw internal text — PR 216
 - **errors** — external command without `CommandContext` or a timeout, able to block a request forever — PR 174, 206
 
 ## Web UI
-- **ui-states** — `openapi-fetch` returns `{ error }` instead of throwing; ignoring it turns a failed request into empty, "no array" or success state — PR 187, 193, 199, 216, 228
-- **ui-states** — unhandled rejection or abort from a request inside an effect or a detached `Promise.all` — PR 187, 199, 228
+- **ui-states** — `openapi-fetch` returns `{ error }` instead of throwing, and can return `error: undefined` on an empty non-OK body; ignoring either turns a failed request into empty, "no array" or success state — PR 187, 193, 199, 216, 228, 344
+- **ui-states** — unhandled rejection or abort from a request inside an effect or a detached `Promise.all`, including a fetch queued in a microtask that cleanup does not cancel — PR 187, 199, 228, 344
+- **ui-states** — `loading` stays true for a background refetch, so a page that treats it as "no data yet" unmounts dialogs on every poll — PR 344
+- **ui-states** — an error replaces the confirmation text the operator needs in order to retry — PR 344
 - **ui-states** — stale response overwrites the current selection (open A, open B, A's response lands) — PR 195, 228
 - **ui-states** — error rendered behind an open dialog or overlay — PR 216, 228
 - **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
 - **i18n** — raw API enum shown instead of a catalog label for every value but the one the author tested — PR 337
+- **i18n** — a user-visible fallback written as an English literal instead of a catalog key — PR 344
 - **a11y** — controls without an accessible name; focus indicator removed with no replacement — PR 187, 199
 
 ## Validation and contracts
@@ -71,6 +79,8 @@ existing line by adding its PR number.
 - **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record) — PR 159, 163, 231, 337
 - **tests** — unsynchronized read of state written by another goroutine — PR 166, 246
 - **tests** — exact equality between two separately sampled system values — PR 236
+- **tests** — parallel labs compile test binaries into one directory, so one lab replaces another's binary — PR 344
+- **tests** — a restart check treats systemd active as API-ready, so the single login races the listener — PR 344
 
 ## External tool semantics
 - **platform** — systemd unit names need `systemd-escape` (`-` → `\x2d`); `x-systemd.*` options are ignored in a native `.mount` unit — PR 150, 156
@@ -79,3 +89,5 @@ existing line by adding its PR number.
 - **platform** — `mkfs.ext4` creates `lost+found`; smartctl reports NVMe health in a different section than ATA — PR 150, 254
 - **platform** — a daemon that drops privileges reads its config as its own group; a root-only generated file locks it out (upsd.users needs root:nut 0640) — PR 337
 - **platform** — systemd: a masked unit cannot start, and a disabled one was switched off on purpose — never start either — PR 338
+- **platform** — exports(5) default-options field (`-opts`) stored as a client host — PR 344
+- **platform** — systemd `systemctl stop` of a busy mount reports a failed job without EBUSY text, so a retry that matches only strerror never runs — PR 344

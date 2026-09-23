@@ -392,6 +392,72 @@ func TestArrayStopAndStartFlipsMaintenanceMode(t *testing.T) {
 	}
 }
 
+// TestShares_RefusedInMaintenanceMode: production refuses create/update/
+// deleteShare with maintenance_mode while the array is stopped (#333),
+// and the mock mirrors that refusal rather than mutating shares that a
+// real daemon would never change under bare mountpoints.
+func TestShares_RefusedInMaintenanceMode(t *testing.T) {
+	client := newTestClient(t, "healthy")
+	ctx := context.Background()
+
+	if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media"}); err != nil {
+		t.Fatalf("CreateShare(media) before stop: %v", err)
+	}
+	if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+		t.Fatalf("StopArray: %v", err)
+	}
+
+	_, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "hidden"})
+	if err == nil {
+		t.Fatal("CreateShare after StopArray: expected an error")
+	}
+	if code := errorCode(t, err); code != "maintenance_mode" {
+		t.Fatalf("CreateShare after StopArray: code = %q, want maintenance_mode", code)
+	}
+
+	_, err = client.UpdateShare(ctx, &apiv1.UpdateShareRequest{
+		CreatePolicy: apiv1.NewOptArrayCreatePolicy(apiv1.ArrayCreatePolicyMfs),
+	}, apiv1.UpdateShareParams{Name: "media"})
+	if err == nil {
+		t.Fatal("UpdateShare after StopArray: expected an error")
+	}
+	if code := errorCode(t, err); code != "maintenance_mode" {
+		t.Fatalf("UpdateShare after StopArray: code = %q, want maintenance_mode", code)
+	}
+
+	err = client.DeleteShare(ctx, &apiv1.ConfirmShareRequest{Confirm: true}, apiv1.DeleteShareParams{Name: "media"})
+	if err == nil {
+		t.Fatal("DeleteShare after StopArray: expected an error")
+	}
+	if code := errorCode(t, err); code != "maintenance_mode" {
+		t.Fatalf("DeleteShare after StopArray: code = %q, want maintenance_mode", code)
+	}
+
+	err = client.DeleteShareData(ctx, &apiv1.DeleteShareDataRequest{Confirmation: "media"}, apiv1.DeleteShareDataParams{Name: "media"})
+	if err == nil {
+		t.Fatal("DeleteShareData after StopArray: expected an error")
+	}
+	if code := errorCode(t, err); code != "maintenance_mode" {
+		t.Fatalf("DeleteShareData after StopArray: code = %q, want maintenance_mode", code)
+	}
+
+	err = client.DeleteShareFile(ctx, &apiv1.ConfirmShareRequest{Confirm: true}, apiv1.DeleteShareFileParams{Name: "media", Path: "movie.mkv"})
+	if err == nil {
+		t.Fatal("DeleteShareFile after StopArray: expected an error")
+	}
+	if code := errorCode(t, err); code != "maintenance_mode" {
+		t.Fatalf("DeleteShareFile after StopArray: code = %q, want maintenance_mode", code)
+	}
+
+	got, err := client.GetShare(ctx, apiv1.GetShareParams{Name: "media"})
+	if err != nil {
+		t.Fatalf("GetShare(media) after refused delete: %v", err)
+	}
+	if got.Name != "media" {
+		t.Fatalf("GetShare after refused delete = %+v, want media still present", got)
+	}
+}
+
 // TestUpgradeDisk_ParityRefusedInMaintenanceMode: production's
 // Scheduler.Submit refuses a parity-disk upgrade with maintenance_mode
 // while the array is stopped, and the mock mirrors that refusal rather

@@ -293,6 +293,163 @@ func TestHandler_UpgradeDisk_WrongConfirmationRefusesAndFormatsNothing(t *testin
 	}
 }
 
+// TestHandler_UpgradeDisk_Data_WeakIdentityPersistsSizeRejectsClone is
+// #341's data-loss scenario through POST /disks/array/upgrade and GET
+// /pool: a weak-identity data-disk upgrade must persist size_bytes, so a
+// same-UUID inventory disk of a different capacity is not taken as the
+// upgraded member (Q21). Against current code that omits SizeSet on
+// ReplaceDataDisk, size_bytes stays NULL and GetPool matches the clone.
+func TestHandler_UpgradeDisk_Data_WeakIdentityPersistsSizeRejectsClone(t *testing.T) {
+	ctx := context.Background()
+	oldWhere := t.TempDir()
+	staging := t.TempDir()
+	h, s, p, st, _, r := newDiskUpgradeHandler(t, staging)
+	if err := os.WriteFile(filepath.Join(oldWhere, "keep.bin"), []byte("hello"), 0o644); err != nil {
+		t.Fatalf("seed old disk file: %v", err)
+	}
+
+	const newUUID = "uuid-new"
+	const newSize = 10 * disk.TB
+	const cloneSize = 4 * disk.TB
+
+	p.AddDisk("/dev/sda", disk.Disk{Size: 16 * disk.TB, WWN: "wwn-p", ByIDName: "wwn-wwn-p"})
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB, WeakIdentity: true, FSUUID: "uuid-d1"})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, WeakIdentity: true, FSUUID: "uuid-d2"})
+	p.AddDisk("/dev/sdz", disk.Disk{Size: newSize, WeakIdentity: true})
+	if err := st.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs", MinFreeSpace: "20G", CreatedAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", WWN: "wwn-p", ByIDName: "wwn-wwn-p", Mountpoint: "/mnt/parity1", Size: 16 * disk.TB, SizeSet: true},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", WeakIdentity: true, Mountpoint: oldWhere, Size: 4 * disk.TB, SizeSet: true},
+		{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-d2", WeakIdentity: true, Mountpoint: "/mnt/disk2", Size: 4 * disk.TB, SizeSet: true},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	scriptUUID(r, "/dev/sdz", newUUID)
+
+	plan, err := h.PlanDiskUpgrade(ctx, &apiv1.DiskUpgradePlanRequest{Mountpoint: oldWhere, Device: "/dev/sdz"})
+	if err != nil {
+		t.Fatalf("PlanDiskUpgrade: %v", err)
+	}
+	if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+		t.Fatalf("StopArray: %v", err)
+	}
+	got, err := h.UpgradeDisk(ctx, &apiv1.UpgradeDiskRequest{Mountpoint: oldWhere, Device: "/dev/sdz", Confirmation: plan.Confirmation})
+	if err != nil {
+		t.Fatalf("UpgradeDisk: %v", err)
+	}
+	finished := awaitJob(t, s, got.ID.String())
+	if finished.Status != job.StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+
+	switched, err := st.GetDataDiskByMountpoint(ctx, oldWhere)
+	if err != nil {
+		t.Fatalf("GetDataDiskByMountpoint: %v", err)
+	}
+	if !switched.SizeSet || switched.Size != newSize {
+		t.Fatalf("upgraded slot size = %d set=%v, want %d set — without SizeSet, weak-identity matching falls back to UUID only", switched.Size, switched.SizeSet, newSize)
+	}
+	if !switched.WeakIdentity || switched.FSUUID != newUUID {
+		t.Fatalf("upgraded slot = %+v, want weak-identity uuid-new", switched)
+	}
+
+	cloneProv := disk.NewFakeProvider()
+	cloneProv.AddDisk("/dev/sdy", disk.Disk{Size: cloneSize, WeakIdentity: true, FSUUID: newUUID})
+	h.Disks = cloneProv
+
+	pool, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	byDevice := make(map[string]apiv1.PoolDiskEntry, len(pool.Disks))
+	var missingUpgraded *apiv1.PoolDiskEntry
+	for i, e := range pool.Disks {
+		if e.Device != "" {
+			byDevice[e.Device] = e
+		}
+		if e.State == apiv1.DiskStateMissing && e.MountPoint == oldWhere {
+			missingUpgraded = &pool.Disks[i]
+		}
+	}
+	if e := byDevice["/dev/sdy"]; e.Role != apiv1.PoolDiskEntryRoleUnassigned {
+		t.Fatalf("different-size same-UUID clone reported as %s member; want unassigned (Q21)", e.Role)
+	}
+	if missingUpgraded == nil || missingUpgraded.Role != apiv1.PoolDiskEntryRoleData {
+		t.Fatalf("missing upgraded member = %+v, want data at %s", missingUpgraded, oldWhere)
+	}
+}
+
+// TestHandler_UpgradeDisk_Parity_PersistsSizeBytes is #341 for the
+// parity-upgrade write: RunDiskUpgradeParity (the same RunFunc
+// POST /disks/array/upgrade registers) must store size_bytes from the
+// plan's sizes map. Q21 refuses a weak-identity parity disk, so the
+// UUID+size GetPool scenario is covered on the data path; this asserts
+// the store write itself.
+func TestHandler_UpgradeDisk_Parity_PersistsSizeBytes(t *testing.T) {
+	ctx := context.Background()
+	oldParity := t.TempDir()
+	newParity := t.TempDir()
+	_, s, p, st, _, r := newDiskUpgradeHandler(t, t.TempDir())
+
+	const newSize = 16 * disk.TB
+	if err := os.WriteFile(filepath.Join(oldParity, "snapraid.parity"), []byte("parity-bytes"), 0o644); err != nil {
+		t.Fatalf("seed old parity file: %v", err)
+	}
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 2 * disk.TB})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 2 * disk.TB})
+	p.AddDisk("/dev/sdz", disk.Disk{Size: newSize})
+	if err := st.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs", MinFreeSpace: "20G", CreatedAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", Mountpoint: oldParity, Size: 8 * disk.TB, SizeSet: true},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", Mountpoint: "/mnt/disk1", Size: 2 * disk.TB, SizeSet: true},
+		{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-d2", Mountpoint: "/mnt/disk2", Size: 2 * disk.TB, SizeSet: true},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	scriptUUID(r, "/dev/sdz", "uuid-new")
+	r.Script("findmnt", []string{"-n", "-o", "UUID", newParity}, []byte("uuid-new\n"), nil)
+
+	replacement := disk.AssignedDisk{Device: "/dev/sdz", Filesystem: disk.XFS}
+	params := job.DiskUpgradeParityParams{
+		Confirmation:  job.SingleDiskConfirmation(replacement),
+		Mountpoint:    oldParity,
+		NewMountpoint: newParity,
+		Disk:          replacement,
+		Sizes:         map[string]int64{"/dev/sda": 8 * disk.TB, "/dev/sdb": 2 * disk.TB, "/dev/sdc": 2 * disk.TB, "/dev/sdz": newSize},
+	}
+	body, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.Submit(ctx, job.TypeDiskUpgradeParity, nil, body)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := awaitJob(t, s, j.ID)
+	if finished.Status != job.StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+	_, disks, err := st.GetArray(ctx)
+	if err != nil {
+		t.Fatalf("GetArray: %v", err)
+	}
+	var found *store.ArrayDisk
+	for i := range disks {
+		if disks[i].Role == store.ArrayRoleParity {
+			found = &disks[i]
+		}
+	}
+	if found == nil || found.Device != "/dev/sdz" || found.FSUUID != "uuid-new" {
+		t.Fatalf("upgraded parity = %+v, want /dev/sdz uuid-new", found)
+	}
+	if !found.SizeSet || found.Size != newSize {
+		t.Fatalf("upgraded parity size = %d set=%v, want %d set", found.Size, found.SizeSet, newSize)
+	}
+}
+
 // TestHandler_UpgradeDisk_Parity_WrongNewMountpointRefused proves
 // upgradeDisk refuses a parity upgrade whose newMountpoint no longer
 // matches the array's current topology — planDiskUpgrade's plan is the

@@ -25,7 +25,7 @@ Consolidated from: doc 00 §6 (license), doc 02 §1 (spindown "open risk"), doc 
 | Gate | Questions |
 |---|---|
 | **Now** (repo is public) | Q2 (Q1 settled → D17) |
-| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84, Q85, Q86 |
+| **Before Phase 1** | Q3–Q21, Q28–Q32, Q40, Q42, Q44–Q46, Q48, Q49, Q59, Q60, Q63, Q66–Q70, Q74, Q76, Q78, Q79, Q84, Q85, Q86, Q87 |
 | **Before Phase 2** | Q26, Q27, Q41, Q43, Q61, Q71–Q73, Q75, Q77, Q80 |
 | **Before Phase 3** | Q22–Q25, Q36–Q39, Q62, Q64, Q65, Q81–Q83 (Q33–Q35 settled → D19) |
 | **Before Phase 3.5** | Q51–Q58 |
@@ -323,7 +323,7 @@ The parity file is a single file roughly as large as the largest data disk. ext4
 ### Q21 — Disk identity
 **Status:** Default (mount-by-filesystem-UUID confirmed in S2, agent-run in the lab, doc 08 §2; L3 virtual-disk identity confirmed, agent-run in an L3 VM against a real, unmodified `disk.LinuxProvider.List()` path — `ResolveIdentity` recognizes the guest's `virtio-<serial>` by-id link and resolves every array disk to a non-weak `Identity` that `Matches` correctly, via a truncation-safe `<serial>` field order in `scripts/vm/create-vm.sh`, not via a `<wwn>` device attribute, which libvirt/qemu refuse on a virtio-blk-bus disk on this host, issue #162. What remains open: real hardware's own `ata-`/`scsi-`/`nvme-`/`usb-` WWN by-id links, and enclosures/HBAs that report identity inconsistently — neither tier below real hardware can produce either, so both stay a documented residual risk under D20, not an actionable next step (doc 06 §6)) · **Gate:** Phase 1 · **Affects:** doc 02 §4, doc 05 §4, doc 10 §1
 
-**Default: a disk's identity is its `/dev/disk/by-id` WWN, falling back to serial. Mounts use filesystem UUID. When a USB enclosure hides the serial, the disk is marked "weak identity": allowed as a data disk (matched on FS UUID + size), refused as parity, and warned about in the setup wizard and migration scan.**
+**Default: a disk's identity is its `/dev/disk/by-id` WWN, falling back to serial. Mounts use filesystem UUID. When a USB enclosure hides the serial, the disk is marked "weak identity": allowed as a data disk (matched on FS UUID + size, with size recorded on the `array_disks` row at create/add/replace time — rows from before that column existed keep a NULL size and fall back to FS UUID alone), refused as parity, and warned about in the setup wizard and migration scan.**
 Serial matching is validated by Unraid's own model (doc 08). Enclosures that mask serials are the known exception, and a wrong parity-disk match is the most expensive mistake that exception could cause.
 
 **Identity-bound formatting.** Confirming identity is not enough on its own if the destructive call that follows still runs against a `/dev/sdX` path: that path can be reassigned between the confirmation and the call. Formatting and adopt-checking (doc 02 §4) always run against the confirmed disk's own `/dev/disk/by-id` path when one is known — the exact by-id link basename WWN/Serial were resolved from, retained end to end from discovery rather than reconstructed only from WWN — so the kernel resolves it to whichever physical disk currently carries that identity at the moment the call actually opens it, regardless of `/dev/sdX` renumbering in between. A disk with no by-id link at all (every disk in the loop-device lab, doc 06 §3) has nothing to bind to and keeps using its plain device path, exactly as before.
@@ -470,6 +470,13 @@ A recurring complaint about Unraid is the lack of iSCSI without a plugin, most o
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 09 §5, `CLAUDE.md`
 
 **Default: a per-disk `statfs(2)` call on the existing minute schedule-tick cadence does not violate "nothing on a timer walks a data disk."** `statfs(2)` reads a mounted filesystem's own cached VFS/superblock free-space counters — the same call `df` issues — never a directory walk or a data read, so it needs no I/O to a spun-down disk's platters to answer. Doc 09 §5 already treats how often this is recomputed as a caching tunable (`cache.statfs`) rather than a spindown hazard, and `internal/pool.ComputePoolSpace` already read every data disk this way for `GetPool`'s on-demand path (#57) before the periodic disk-near-minfreespace/rebalance-suggested check (#237) added a second, ticking caller. This is confirmed from `statfs(2)`'s own semantics and doc 09 §5's existing framing, not from an instrumented lab measurement — doc 08's existing spike runs did not specifically instrument `statfs` wake behaviour, so a follow-up measurement stays open if that assumption ever needs harder evidence.
+
+### Q87 — Cache usage breakdown without a live directory walk
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 03 §3.6, doc 09 §2, `#273`
+
+**Default: the cache page's appdata / pending-moves / other breakdown is computed as a by-product of each mover run, persisted in SQLite, and read by `GET /cache/usage` — never recomputed on a timer or on each page load.** After `cache.Run` finishes (including interrupted or failed runs that still produced a started report), the mover job walks every share's cache-side directory once to sum bytes by cache mode (`cache-only` → appdata, `cache-then-move` → pending moves), then takes a single `statfs(2)` of the cache mount (Q85) for total used and sets `other = max(0, used − appdata − pending)`. That walk is part of an Array-write job the user already asked for (schedule, threshold, or manual), not a polled live `du`. Until the first mover run that can resolve a cache disk has finished, the API returns null — the same honest "not yet computed" shape share usage uses before the first sync (#223).
+
+A live request-time walk would wake the cache for every UI poll and would also be the wrong place to invent a second accounting path beside the mover's own enumeration. Recomputing only when the mover itself already touches those trees keeps Q13 intact and keeps the figures "as of the last mover run", which is exactly what doc 03 §3.6's last-run panel shows next to the breakdown.
 
 ---
 

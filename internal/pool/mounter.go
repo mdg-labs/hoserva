@@ -24,9 +24,12 @@ const (
 	unmountRetryDelay  = 250 * time.Millisecond
 )
 
-// Mounter brings up and tears down a Mount's real mergerfs process
+// Mounter brings up and tears down a Mount by execing mergerfs directly
 // through disk.Runner — the same argv-only, no-shell execution disk's
-// own Provider uses (CLAUDE.md), reused here rather than duplicated.
+// own Provider uses (CLAUDE.md). The loop-device lab has no init system
+// (doc 06 §3), so every lab test uses this type. Production hoservad
+// uses SystemdMounter instead (#335): mergerfs must not live in
+// hoserva.service's cgroup.
 type Mounter struct {
 	Runner disk.Runner
 
@@ -80,6 +83,29 @@ func (m Mounter) isMountpoint() func(string) (bool, error) {
 // an unrelated error retry.
 func isBusyUnmountError(err error) bool {
 	return err != nil && strings.HasSuffix(strings.TrimSpace(err.Error()), "Device or resource busy")
+}
+
+// systemdStopShouldRetry reports whether a systemctl stop failure is
+// worth retrying. fusermount's own EBUSY text is one case. A busy .mount
+// unit is the other: systemctl reports "Job for <unit>.mount failed"
+// and does not append umount's strerror, so matching only
+// "Device or resource busy" would give up on the first attempt.
+// "not loaded", "not found", a masked unit, and an authentication
+// failure are permanent and are not retried.
+func systemdStopShouldRetry(err error) bool {
+	if isBusyUnmountError(err) {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "not loaded") || strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "masked") || strings.Contains(msg, "Access denied") ||
+		strings.Contains(msg, "Interactive authentication") {
+		return false
+	}
+	return strings.Contains(msg, "Job failed") || strings.Contains(msg, ".mount failed")
 }
 
 // Mount execs mnt's own argv and returns once the mount is live.

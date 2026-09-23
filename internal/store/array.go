@@ -65,6 +65,12 @@ type ArrayDisk struct {
 	ByIDName     string
 	WeakIdentity bool
 	Mountpoint   string
+	// Size is the disk's capacity in bytes at the time it joined the
+	// array (Q21). SizeSet is false for rows written before that column
+	// existed, or when a write path had no size to record — a weak-
+	// identity match then falls back to filesystem UUID alone.
+	Size    int64
+	SizeSet bool
 }
 
 // ArrayStore persists create-array topology in the central SQLite
@@ -125,6 +131,7 @@ func (s *ArrayStore) PutArray(ctx context.Context, settings ArraySettings, disks
 			Device:       d.Device,
 			Filesystem:   d.Filesystem,
 			FsUuid:       d.FSUUID,
+			SizeBytes:    nullInt64(d.Size, d.SizeSet),
 			Wwn:          nullString(d.WWN),
 			Serial:       nullString(d.Serial),
 			ByIDName:     nullString(d.ByIDName),
@@ -190,6 +197,7 @@ func (s *ArrayStore) AddDataDisk(ctx context.Context, d ArrayDisk) error {
 		Device:       d.Device,
 		Filesystem:   d.Filesystem,
 		FsUuid:       d.FSUUID,
+		SizeBytes:    nullInt64(d.Size, d.SizeSet),
 		Wwn:          nullString(d.WWN),
 		Serial:       nullString(d.Serial),
 		ByIDName:     nullString(d.ByIDName),
@@ -231,6 +239,7 @@ func (s *ArrayStore) ReplaceDataDisk(ctx context.Context, mountpoint string, d A
 		Device:       d.Device,
 		Filesystem:   d.Filesystem,
 		FsUuid:       d.FSUUID,
+		SizeBytes:    nullInt64(d.Size, d.SizeSet),
 		Wwn:          nullString(d.WWN),
 		Serial:       nullString(d.Serial),
 		ByIDName:     nullString(d.ByIDName),
@@ -266,6 +275,7 @@ func (s *ArrayStore) UpgradeParityDisk(ctx context.Context, oldMountpoint string
 		Device:        d.Device,
 		Filesystem:    d.Filesystem,
 		FsUuid:        d.FSUUID,
+		SizeBytes:     nullInt64(d.Size, d.SizeSet),
 		Wwn:           nullString(d.WWN),
 		Serial:        nullString(d.Serial),
 		ByIDName:      nullString(d.ByIDName),
@@ -297,6 +307,8 @@ func arrayDiskFromRow(r *storedb.ArrayDisk) ArrayDisk {
 		ByIDName:     r.ByIDName.String,
 		WeakIdentity: r.WeakIdentity != 0,
 		Mountpoint:   r.Mountpoint,
+		Size:         r.SizeBytes.Int64,
+		SizeSet:      r.SizeBytes.Valid,
 	}
 }
 
@@ -305,6 +317,13 @@ func nullString(s string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: s, Valid: true}
+}
+
+func nullInt64(v int64, set bool) sql.NullInt64 {
+	if !set {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: v, Valid: true}
 }
 
 func boolToInt(b bool) int64 {

@@ -89,6 +89,38 @@ function poolWithMissingDisk() {
   };
 }
 
+describe("PoolOverviewPage load failures", () => {
+  beforeEach(() => {
+    cleanup();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockMatchMedia();
+  });
+
+  it("shows a load error instead of the unmounted capacity tile when /pool fails", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/status") {
+        return Promise.resolve({ data: { healthy: true, summary: "OK" }, response: { ok: true } });
+      }
+      if (path === "/pool") {
+        return Promise.resolve({ error: { message: "pool unavailable" }, response: { ok: false } });
+      }
+      if (path === "/jobs") {
+        return Promise.resolve({ data: { jobs: [] }, response: { ok: true } });
+      }
+      if (path === "/doctor") {
+        return Promise.resolve({ data: { overall: "pass", checks: [] }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    expect(await screen.findByText("pool unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Unmounted")).not.toBeInTheDocument();
+  });
+});
+
 describe("PoolOverviewPage missing disk", () => {
   beforeEach(() => {
     cleanup();

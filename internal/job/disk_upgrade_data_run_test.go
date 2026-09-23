@@ -558,6 +558,18 @@ func TestDiskUpgradeData_E1_FreshRunReleasesAndEndsStopped(t *testing.T) {
 	if got := h.slotUUID(); got != upgradeNewUUID {
 		t.Fatalf("SQLite names %s for the slot, want %s (Done)", got, upgradeNewUUID)
 	}
+	_, disks, err := h.st.GetArray(h.ctx)
+	if err != nil {
+		t.Fatalf("GetArray: %v", err)
+	}
+	for _, d := range disks {
+		if d.Mountpoint != h.oldWhere {
+			continue
+		}
+		if !d.SizeSet || d.Size != 10*disk.TB {
+			t.Fatalf("upgraded slot size = %d set=%v, want 10TiB set (#341)", d.Size, d.SizeSet)
+		}
+	}
 	h.assertStopped()
 	if unit := h.generatedUnitFor(h.oldWhere); !strings.Contains(unit, "/dev/disk/by-uuid/"+upgradeNewUUID) {
 		t.Fatalf("the slot's generated mount unit does not name B:\n%s", unit)
@@ -604,6 +616,46 @@ func TestDiskUpgradeData_E1_FreshRunReleasesAndEndsStopped(t *testing.T) {
 	if h.readyCalls() != 1 {
 		t.Fatalf("array sequence rebuilt %d times, want 1 (Release)", h.readyCalls())
 	}
+}
+
+// TestDiskUpgradeData_WeakIdentityPersistsSizeBytes is #341 at the job
+// write: a weak-identity replacement's size must land in array_disks so
+// Q21's UUID+size match does not fall back to UUID only.
+func TestDiskUpgradeData_WeakIdentityPersistsSizeBytes(t *testing.T) {
+	h := newUpgradeHarness(t)
+	h.provider.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB, WeakIdentity: true, FSUUID: upgradeOldUUID})
+	h.provider.AddDisk("/dev/sdz", disk.Disk{Size: 10 * disk.TB, WeakIdentity: true})
+	params := h.paramsValue()
+	params.Old.WeakIdentity = true
+	params.Disk.WeakIdentity = true
+	h.register()
+	h.stopArray()
+
+	j, err := h.s.Submit(h.ctx, TypeDiskUpgradeData, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	done := h.await(j.ID)
+	if done.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s: %s), want succeeded", done.Status, done.ErrorCode, done.ErrorMessage)
+	}
+	_, disks, err := h.st.GetArray(h.ctx)
+	if err != nil {
+		t.Fatalf("GetArray: %v", err)
+	}
+	for _, d := range disks {
+		if d.Mountpoint != h.oldWhere {
+			continue
+		}
+		if !d.WeakIdentity || d.FSUUID != upgradeNewUUID {
+			t.Fatalf("upgraded slot = %+v, want weak-identity %s", d, upgradeNewUUID)
+		}
+		if !d.SizeSet || d.Size != 10*disk.TB {
+			t.Fatalf("upgraded slot size = %d set=%v, want 10TiB set", d.Size, d.SizeSet)
+		}
+		return
+	}
+	t.Fatalf("no data disk at %s", h.oldWhere)
 }
 
 func indexOf(ops []string, want string) int {

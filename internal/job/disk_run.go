@@ -116,7 +116,7 @@ func RunDiskFormat(d DiskFormatDeps) RunFunc {
 			CreatePolicy: arrayCreatePolicy(params),
 			MinFreeSpace: arrayMinFreeSpace(params),
 			CreatedAt:    created,
-		}, arrayDisksFromPlan(plan, uuids, units)); err != nil {
+		}, arrayDisksFromPlan(plan, uuids, units, params.Sizes)); err != nil {
 			return err
 		}
 
@@ -184,7 +184,7 @@ func filesystemUUIDs(ctx context.Context, r disk.Runner, plan disk.TopologyPlan)
 	return uuids, nil
 }
 
-func arrayDisksFromPlan(plan disk.TopologyPlan, uuids map[string]string, units []disk.MountUnit) []store.ArrayDisk {
+func arrayDisksFromPlan(plan disk.TopologyPlan, uuids map[string]string, units []disk.MountUnit, sizes map[string]int64) []store.ArrayDisk {
 	byWhere := make(map[string]disk.MountUnit, len(units))
 	for _, u := range units {
 		byWhere[u.Where] = u
@@ -193,7 +193,7 @@ func arrayDisksFromPlan(plan disk.TopologyPlan, uuids map[string]string, units [
 	appendRole := func(role string, disks []disk.AssignedDisk, whereFor func(int) string) {
 		for i, d := range disks {
 			where := whereFor(i)
-			out = append(out, store.ArrayDisk{
+			ad := store.ArrayDisk{
 				Role:         role,
 				RoleIndex:    i + 1,
 				Device:       d.Device,
@@ -204,7 +204,12 @@ func arrayDisksFromPlan(plan disk.TopologyPlan, uuids map[string]string, units [
 				ByIDName:     d.ByIDName,
 				WeakIdentity: d.WeakIdentity,
 				Mountpoint:   byWhere[where].Where,
-			})
+			}
+			if size, ok := sizes[d.Device]; ok {
+				ad.Size = size
+				ad.SizeSet = true
+			}
+			out = append(out, ad)
 		}
 	}
 	appendRole(store.ArrayRoleData, plan.Data, func(i int) string { return fmt.Sprintf("/mnt/disk%d", i+1) })

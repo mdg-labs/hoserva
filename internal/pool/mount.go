@@ -22,6 +22,29 @@ type Mount struct {
 	RequiresMountsFor []string
 }
 
+// UnitFileName returns the systemd .mount unit filename for a mount at
+// where (systemd-escape --path): drop the leading slash, turn every
+// remaining '/' into '-', and escape a literal '-' as `\x2d` so a share
+// name with a hyphen cannot collide with a deeper path segment (known
+// escapes: platform — systemd unit names need systemd-escape).
+func UnitFileName(where string) string {
+	trimmed := strings.Trim(where, "/")
+	var b strings.Builder
+	b.Grow(len(trimmed) + 6)
+	for _, r := range trimmed {
+		switch r {
+		case '/':
+			b.WriteByte('-')
+		case '-':
+			b.WriteString(`\x2d`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteString(".mount")
+	return b.String()
+}
+
 // optionsString returns m's full comma-separated mergerfs option list,
 // in doc 02 §1's table order — the same string Render's Options= line
 // and Argv's -o argument both use, so the two are never able to drift

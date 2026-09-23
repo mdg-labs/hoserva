@@ -175,6 +175,13 @@ func (s ArraySequence) Stop(ctx context.Context) error {
 		if err := s.Scheduler.Drain(ctx); err != nil {
 			return err
 		}
+		// Share create/update/delete is not a job, so Drain does not
+		// wait for it. A mutation admitted before maintenance mode can
+		// still be mkdir'ing a branch directory; unmounting first would
+		// hide that directory on the root filesystem.
+		if err := s.Scheduler.DrainShareMutations(ctx); err != nil {
+			return err
+		}
 	}
 
 	for _, svc := range s.Services {

@@ -173,7 +173,7 @@ func RunDiskUpgradeParity(d DiskUpgradeParityDeps) RunFunc {
 					// regeneration below still needs to run.
 					return d.regenerateAfterSwitch(ctx)
 				}
-				if err := d.Store.UpgradeParityDisk(ctx, params.Mountpoint, store.ArrayDisk{
+				row := store.ArrayDisk{
 					Role:         store.ArrayRoleParity,
 					RoleIndex:    oldDisk.RoleIndex,
 					Device:       params.Disk.Device,
@@ -184,7 +184,12 @@ func RunDiskUpgradeParity(d DiskUpgradeParityDeps) RunFunc {
 					ByIDName:     params.Disk.ByIDName,
 					WeakIdentity: params.Disk.WeakIdentity,
 					Mountpoint:   params.NewMountpoint,
-				}); err != nil {
+				}
+				if size, ok := params.Sizes[params.Disk.Device]; ok {
+					row.Size = size
+					row.SizeSet = true
+				}
+				if err := d.Store.UpgradeParityDisk(ctx, params.Mountpoint, row); err != nil {
 					return err
 				}
 				return d.regenerateAfterSwitch(ctx)

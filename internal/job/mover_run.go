@@ -13,9 +13,16 @@ import (
 // job-params payload of its own, the same way DiffGuard and ConfigBackup
 // read directly from configured state rather than from a submitted
 // request body.
+//
+// Results, when non-nil, persists the structured run report and the
+// cache usage breakdown (#273). UsagePlan, when non-nil, supplies the
+// cache mount and every share directory on it for that breakdown (Q87);
+// a nil UsagePlan still persists the run result without a breakdown.
 type MoverDeps struct {
-	Shares func(ctx context.Context) ([]cache.Share, error)
-	Config cache.Config
+	Shares    func(ctx context.Context) ([]cache.Share, error)
+	Config    cache.Config
+	Results   *cache.ResultStore
+	UsagePlan func(ctx context.Context) (cacheMount string, shares []cache.UsageShare, err error)
 }
 
 // RunMover is the RunFunc hoservad registers for TypeMover: a thin
@@ -39,6 +46,21 @@ func RunMover(d MoverDeps) RunFunc {
 		report, err := cache.Run(ctx, shares, d.Config, cache.Deps{}, hooks, rc.InitialCheckpoint())
 		if !report.StartedAt.IsZero() {
 			_, _ = fmt.Fprintln(rc.Output(), report.Summary())
+			if d.Results != nil {
+				var cacheMount string
+				var usageShares []cache.UsageShare
+				if d.UsagePlan != nil {
+					mount, plan, perr := d.UsagePlan(ctx)
+					if perr != nil {
+						_, _ = fmt.Fprintf(rc.Output(), "mover: resolving usage plan: %v\n", perr)
+					} else {
+						cacheMount, usageShares = mount, plan
+					}
+				}
+				if perr := d.Results.SaveFromReport(context.WithoutCancel(ctx), report, cacheMount, usageShares); perr != nil {
+					_, _ = fmt.Fprintf(rc.Output(), "mover: persisting run result: %v\n", perr)
+				}
+			}
 		}
 		if err != nil {
 			return err

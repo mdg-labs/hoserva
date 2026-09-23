@@ -1,5 +1,5 @@
 import { Database, HardDrive, Layers, Shield, SkipForward } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
@@ -12,8 +12,10 @@ import { TypedConfirm } from "@/components/patterns/typed-confirm";
 import { Wizard } from "@/components/patterns/wizard";
 import { Card, CardDescription, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
-import { hoservaClient, type components } from "@/lib/api/client";
-import { isApiError } from "@/lib/api/errors";
+import type { components } from "@/lib/api/client";
+import { getDisks, getPool, postDisksArray } from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
 import { buildConfigPreview, formatBytes } from "@/routes/storage-setup/config-preview";
 import {
   buildDiscoveryColumns,
@@ -83,59 +85,50 @@ function initialFilesystemChoices(
 export function StorageSetupPage(): React.ReactElement {
   const { t } = useTranslation();
   const [step, setStep] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [poolMounted, setPoolMounted] = useState(false);
-  const [disks, setDisks] = useState<DiskEntry[]>([]);
-  const [roles, setRoles] = useState<Record<string, DiskRole>>({});
-  const [filesystemChoices, setFilesystemChoices] = useState<Record<string, FilesystemChoice>>({});
+  const [roleOverrides, setRoleOverrides] = useState<Partial<Record<string, DiskRole>>>({});
+  const [filesystemOverrides, setFilesystemOverrides] = useState<Partial<Record<string, FilesystemChoice>>>({});
   const [createPolicy, setCreatePolicy] = useState<CreatePolicy>("mspmfs");
   const [minFreeSpaceGb, setMinFreeSpaceGb] = useState(DEFAULT_MIN_FREE_GB);
   const [confirmText, setConfirmText] = useState("");
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const poolQuery = useApiQuery({
+    queryKey: "storage-setup-pool",
+    queryFn: (signal) => getPool(signal),
+    fallbackError: t("storageSetup.loadFailed"),
+  });
+  const disksQuery = useApiQuery({
+    queryKey: "storage-setup-disks",
+    queryFn: (signal) => getDisks(signal),
+    fallbackError: t("storageSetup.loadFailed"),
+  });
+  const createMutation = useApiMutation({
+    mutationFn: postDisksArray,
+    fallbackError: t("storageSetup.confirm.createFailed"),
+  });
 
-    Promise.all([
-      hoservaClient.GET("/pool", {}),
-      hoservaClient.GET("/disks", {}),
-    ])
-      .then(([poolResult, disksResult]) => {
-        if (cancelled) {
-          return;
-        }
-        if (poolResult.error) {
-          setError(poolResult.error.message);
-          setLoading(false);
-          return;
-        }
-        if (disksResult.error) {
-          setError(disksResult.error.message);
-          setLoading(false);
-          return;
-        }
-        const inventory = (disksResult.data?.disks ?? []) as DiskEntry[];
-        const nextRoles = initialRoles(inventory);
-        setPoolMounted(poolResult.data?.mounted ?? false);
-        setDisks(inventory);
-        setRoles(nextRoles);
-        setFilesystemChoices(initialFilesystemChoices(inventory, nextRoles));
-        setLoading(false);
-      })
-      .catch(() => {
-        if (cancelled) {
-          return;
-        }
-        setError(t("storageSetup.loadFailed"));
-        setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [t]);
+  const loading = poolQuery.loading || disksQuery.loading;
+  const loadError = poolQuery.error ?? disksQuery.error;
+  const poolMounted = poolQuery.data?.mounted ?? false;
+  const disks = useMemo(
+    () => (disksQuery.data?.disks ?? []) as DiskEntry[],
+    [disksQuery.data],
+  );
+  const defaultRoles = useMemo(() => initialRoles(disks), [disks]);
+  const roles = useMemo(
+    () => ({ ...defaultRoles, ...roleOverrides }) as Record<string, DiskRole>,
+    [defaultRoles, roleOverrides],
+  );
+  const defaultFilesystemChoices = useMemo(
+    () => initialFilesystemChoices(disks, roles),
+    [disks, roles],
+  );
+  const filesystemChoices = useMemo(
+    () => ({ ...defaultFilesystemChoices, ...filesystemOverrides }) as Record<string, FilesystemChoice>,
+    [defaultFilesystemChoices, filesystemOverrides],
+  );
 
   const validation = useMemo(() => validateRoleAssignment(disks, roles), [disks, roles]);
   const preview = useMemo(
@@ -176,12 +169,12 @@ export function StorageSetupPage(): React.ReactElement {
   );
 
   const setRole = useCallback((device: string, role: DiskRole): void => {
-    setRoles((current) => ({ ...current, [device]: role }));
+    setRoleOverrides((current) => ({ ...current, [device]: role }));
     if (role === "data" || role === "cache") {
-      setFilesystemChoices((current) => ({ ...current, [device]: current[device] ?? FORMAT_CHOICE }));
+      setFilesystemOverrides((current) => ({ ...current, [device]: current[device] ?? FORMAT_CHOICE }));
       return;
     }
-    setFilesystemChoices((current) => {
+    setFilesystemOverrides((current) => {
       const next = { ...current };
       delete next[device];
       return next;
@@ -206,22 +199,18 @@ export function StorageSetupPage(): React.ReactElement {
     setActiveJob(null);
     setCreating(true);
     setError(null);
-    try {
-      const { data, error: apiError } = await hoservaClient.POST("/disks/array", {
-        body: buildCreateArrayRequest(disks, roles, filesystemChoices, createPolicy, minFreeSpaceGb, confirmPhrase),
-      });
-      if (apiError) {
-        setError(isApiError(apiError) ? apiError.message : t("storageSetup.confirm.createFailed"));
-        return;
-      }
-      if (data) {
-        setActiveJob(data);
-      }
-    } catch {
-      setError(t("storageSetup.confirm.createFailed"));
-    } finally {
+    const result = await createMutation.mutate(
+      buildCreateArrayRequest(disks, roles, filesystemChoices, createPolicy, minFreeSpaceGb, confirmPhrase),
+    );
+    if (!result.ok) {
+      setError(result.error || t("storageSetup.confirm.createFailed"));
       setCreating(false);
+      return;
     }
+    if (result.data) {
+      setActiveJob(result.data);
+    }
+    setCreating(false);
   }
 
   function handleNext(): void {
@@ -278,6 +267,10 @@ export function StorageSetupPage(): React.ReactElement {
     return <p className="text-muted-foreground text-sm">{t("loading.label")}</p>;
   }
 
+  if (loadError && (poolQuery.data === null || disksQuery.data === null)) {
+    return <Banner tone="error" title={loadError} />;
+  }
+
   if (poolMounted) {
     return (
       <Banner
@@ -300,7 +293,7 @@ export function StorageSetupPage(): React.ReactElement {
       nextLoading={creating}
       nextLabel={nextLabel}
     >
-      {error ? <Banner tone="error" title={error} /> : null}
+      {error ?? loadError ? <Banner tone="error" title={error ?? loadError ?? ""} /> : null}
 
       {step === 0 ? (
         <DataTable
@@ -357,7 +350,7 @@ export function StorageSetupPage(): React.ReactElement {
                       name={filesystemChoiceName(disk.device)}
                       value={choice}
                       onChange={(value) =>
-                        setFilesystemChoices((current) => ({
+                        setFilesystemOverrides((current) => ({
                           ...current,
                           [disk.device]: value as FilesystemChoice,
                         }))

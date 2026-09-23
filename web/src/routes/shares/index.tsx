@@ -17,6 +17,7 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { SHARE_TAB_BROWSE } from "@/hooks/share-detail-tabs";
 import { shareDetailPath } from "@/hooks/paths";
 import { hoservaClient, type components } from "@/lib/api/client";
+import { isApiError } from "@/lib/api/errors";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
 type Share = components["schemas"]["Share"];
@@ -24,6 +25,19 @@ type SharePermissionsResult = components["schemas"]["SharePermissionsResult"];
 
 function shareBrowsePath(name: string): string {
   return `${shareDetailPath(name)}?tab=${SHARE_TAB_BROWSE}`;
+}
+
+function shareMutationError(err: unknown, t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (isApiError(err) && err.code === "maintenance_mode") {
+    return t("shares.errors.maintenanceMode");
+  }
+  if (isApiError(err)) {
+    return err.message;
+  }
+  if (err instanceof Error) {
+    return err.message;
+  }
+  return String(err);
 }
 
 function accessSummary(permissions: SharePermissionsResult | undefined, t: (key: string, options?: Record<string, unknown>) => string): string {
@@ -48,9 +62,11 @@ export function SharesPage(): React.ReactElement {
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Share | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   function load(signal?: AbortSignal): void {
     hoservaClient
@@ -100,15 +116,18 @@ export function SharesPage(): React.ReactElement {
       return;
     }
     setCreateBusy(true);
+    setCreateError(null);
     try {
       const { error: apiError } = await hoservaClient.POST("/shares", { body: { name } });
       if (apiError) {
-        setError(apiError.message);
+        setCreateError(shareMutationError(apiError, t));
         return;
       }
       setCreateOpen(false);
       setCreateName("");
       load();
+    } catch (err: unknown) {
+      setCreateError(shareMutationError(err, t));
     } finally {
       setCreateBusy(false);
     }
@@ -117,18 +136,21 @@ export function SharesPage(): React.ReactElement {
   async function handleDelete(): Promise<void> {
     if (!deleteTarget) return;
     setDeleteBusy(true);
+    setDeleteError(null);
     try {
       const { error: apiError } = await hoservaClient.DELETE("/shares/{name}", {
         params: { path: { name: deleteTarget.name } },
         body: { confirm: true },
       });
       if (apiError) {
-        setError(apiError.message);
+        setDeleteError(shareMutationError(apiError, t));
         return;
       }
       setDeleteTarget(null);
       setDeleteConfirm("");
       load();
+    } catch (err: unknown) {
+      setDeleteError(shareMutationError(err, t));
     } finally {
       setDeleteBusy(false);
     }
@@ -205,6 +227,7 @@ export function SharesPage(): React.ReactElement {
               className="text-destructive-foreground"
               onClick={() => {
                 setDeleteConfirm("");
+                setDeleteError(null);
                 setDeleteTarget(share);
               }}
             >
@@ -227,7 +250,12 @@ export function SharesPage(): React.ReactElement {
           <h1 className="text-2xl font-semibold font-heading">{t("nav.shares")}</h1>
           <p className="text-muted-foreground">{t("shares.list.description")}</p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
+        <Button
+          onClick={() => {
+            setCreateError(null);
+            setCreateOpen(true);
+          }}
+        >
           <Plus aria-hidden="true" />
           {t("shares.list.create")}
         </Button>
@@ -239,7 +267,12 @@ export function SharesPage(): React.ReactElement {
           title={t("shares.list.empty.title")}
           description={t("shares.list.empty.description")}
           action={
-            <Button onClick={() => setCreateOpen(true)}>
+            <Button
+              onClick={() => {
+                setCreateError(null);
+                setCreateOpen(true);
+              }}
+            >
               <Plus aria-hidden="true" />
               {t("shares.list.create")}
             </Button>
@@ -251,7 +284,13 @@ export function SharesPage(): React.ReactElement {
 
       <FormOverlay
         open={createOpen}
-        onOpenChange={setCreateOpen}
+        onOpenChange={(open) => {
+          setCreateOpen(open);
+          if (!open) {
+            setCreateError(null);
+            setCreateName("");
+          }
+        }}
         title={t("shares.list.create")}
         description={t("shares.create.description")}
         footer={
@@ -265,6 +304,7 @@ export function SharesPage(): React.ReactElement {
           </div>
         }
       >
+        {createError ? <Banner tone="error" title={createError} /> : null}
         <Field>
           <FieldLabel>{t("shares.create.name")}</FieldLabel>
           <Input value={createName} onChange={(event) => setCreateName(event.target.value)} />
@@ -277,6 +317,7 @@ export function SharesPage(): React.ReactElement {
           if (!open) {
             setDeleteTarget(null);
             setDeleteConfirm("");
+            setDeleteError(null);
           }
         }}
         title={t("shares.list.deleteTitle")}
@@ -292,6 +333,7 @@ export function SharesPage(): React.ReactElement {
           </Button>
         }
       >
+        {deleteError ? <Banner tone="error" title={deleteError} /> : null}
         {deleteTarget ? (
           <TypedConfirm
             phrase={deleteTarget.name}

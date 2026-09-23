@@ -190,7 +190,9 @@ func (UnimplementedHandler) CreateNotificationChannel(ctx context.Context, req *
 //
 // Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the
 // per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1,
-// doc 03 §4).
+// doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would
+// mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those
+// writes.
 //
 // POST /shares
 func (UnimplementedHandler) CreateShare(ctx context.Context, req *CreateShareRequest) (r *Share, _ error) {
@@ -231,7 +233,9 @@ func (UnimplementedHandler) DeleteNotificationChannel(ctx context.Context, param
 // DeleteShare implements deleteShare operation.
 //
 // Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc
-// 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`.
+// 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`. Refused
+// with 409 `maintenance_mode` while the array is stopped (Q70): delete would unmount and rewrite share
+// mounts against bare disk mountpoints on the root filesystem.
 //
 // DELETE /shares/{name}
 func (UnimplementedHandler) DeleteShare(ctx context.Context, req *ConfirmShareRequest, params DeleteShareParams) error {
@@ -345,6 +349,17 @@ func (UnimplementedHandler) FormatExternalDisk(ctx context.Context, req *FormatE
 	return r, ht.ErrNotImplemented
 }
 
+// GetCacheUsage implements getCacheUsage operation.
+//
+// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
+// by-product of each mover run (Q87), never a live directory walk on a timer (Q13). Null when no mover
+// run has computed it yet.
+//
+// GET /cache/usage
+func (UnimplementedHandler) GetCacheUsage(ctx context.Context) (r NilCacheUsageBreakdown, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetCurrentSession implements getCurrentSession operation.
 //
 // The signed-in user this session cookie belongs to.
@@ -379,6 +394,18 @@ func (UnimplementedHandler) GetJob(ctx context.Context, params GetJobParams) (r 
 //
 // GET /jobs/{jobId}/log
 func (UnimplementedHandler) GetJobLog(ctx context.Context, params GetJobLogParams) (r GetJobLogOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetLastMoverRun implements getLastMoverRun operation.
+//
+// The structured result of the most recent finished mover run (doc 09 §2's honest reporting, doc 03
+// §3.6): files moved, bytes, duration, and every skipped entry with its reason. Persisted in SQLite
+// by the mover job itself (#273), not reconstructed from the job log. Null when no mover job has ever
+// finished.
+//
+// GET /mover/last-run
+func (UnimplementedHandler) GetLastMoverRun(ctx context.Context) (r NilMoverRunResult, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1074,7 +1101,9 @@ func (UnimplementedHandler) UpdateScheduledJob(ctx context.Context, req *UpdateS
 // UpdateShare implements updateShare operation.
 //
 // Updates cache mode, create policy and SMB options, then regenerates the per-share mount and
-// `smb.conf`. Does not relocate existing files (doc 09 §2).
+// `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while
+// the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root
+// filesystem.
 //
 // PATCH /shares/{name}
 func (UnimplementedHandler) UpdateShare(ctx context.Context, req *UpdateShareRequest, params UpdateShareParams) (r *Share, _ error) {

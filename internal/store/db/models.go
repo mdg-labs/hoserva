@@ -35,6 +35,7 @@ type ArrayDisk struct {
 	Device       string         `json:"device"`
 	Filesystem   string         `json:"filesystem"`
 	FsUuid       string         `json:"fs_uuid"`
+	SizeBytes    sql.NullInt64  `json:"size_bytes"`
 	Wwn          sql.NullString `json:"wwn"`
 	Serial       sql.NullString `json:"serial"`
 	ByIDName     sql.NullString `json:"by_id_name"`
@@ -55,6 +56,14 @@ type AuditLog struct {
 	Action string         `json:"action"`
 	Detail sql.NullString `json:"detail"`
 	At     string         `json:"at"`
+}
+
+type CacheUsageBreakdown struct {
+	ID                int64  `json:"id"`
+	AppdataBytes      int64  `json:"appdata_bytes"`
+	PendingMovesBytes int64  `json:"pending_moves_bytes"`
+	OtherBytes        int64  `json:"other_bytes"`
+	ComputedAt        string `json:"computed_at"`
 }
 
 type ExternalDisk struct {
@@ -100,6 +109,18 @@ type MachineKeyCheck struct {
 	ID         int64  `json:"id"`
 	CheckValue []byte `json:"check_value"`
 	CreatedAt  string `json:"created_at"`
+}
+
+type MoverRunResult struct {
+	ID          int64  `json:"id"`
+	StartedAt   string `json:"started_at"`
+	FinishedAt  string `json:"finished_at"`
+	DurationMs  int64  `json:"duration_ms"`
+	FilesMoved  int64  `json:"files_moved"`
+	BytesMoved  int64  `json:"bytes_moved"`
+	Interrupted int64  `json:"interrupted"`
+	SkippedJson string `json:"skipped_json"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 type NotifyAlert struct {

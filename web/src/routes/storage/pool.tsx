@@ -14,7 +14,18 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { useSystemData } from "@/hooks/use-system-status";
-import { hoservaClient, type components } from "@/lib/api/client";
+import {
+  postArrayAdd,
+  postArrayAddPlan,
+  postArrayReplace,
+  postArrayReplacePlan,
+  postArrayStart,
+  postArrayStop,
+  postArrayUpgrade,
+  postArrayUpgradePlan,
+} from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import type { components } from "@/lib/api/client";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 import type { TFunction } from "i18next";
 
@@ -114,6 +125,15 @@ export function PoolOverviewPage(): React.ReactElement {
   const [upgradePending, setUpgradePending] = useState(false);
   const upgradeSelectionGen = useRef(0);
 
+  const addPlanMutation = useApiMutation({ mutationFn: postArrayAddPlan });
+  const addMutation = useApiMutation({ mutationFn: postArrayAdd });
+  const replacePlanMutation = useApiMutation({ mutationFn: postArrayReplacePlan });
+  const replaceMutation = useApiMutation({ mutationFn: postArrayReplace });
+  const upgradePlanMutation = useApiMutation({ mutationFn: postArrayUpgradePlan });
+  const upgradeMutation = useApiMutation({ mutationFn: postArrayUpgrade });
+  const stopMutation = useApiMutation({ mutationFn: postArrayStop });
+  const startMutation = useApiMutation({ mutationFn: postArrayStart });
+
   function resetAddPlan(): void {
     setAddPlan(null);
     setAddConfirmValue("");
@@ -141,56 +161,37 @@ export function PoolOverviewPage(): React.ReactElement {
     const adopt = addAdopt;
     setAddPending(true);
     setAddError(null);
-    try {
-      const { data, error: apiError } = await hoservaClient.POST("/disks/array/add/plan", {
-        body: { device, filesystem, adopt },
-      });
-      // The selection moved on while this request was in flight — never
-      // install a plan (or an error) for a device the dialog no longer
-      // shows (finding 4).
-      if (addSelectionGen.current !== gen) return;
-      if (apiError) {
-        setAddError(apiError.message);
-        return;
-      }
-      setAddPlan(data ?? null);
-      setAddConfirmValue("");
-    } catch (err: unknown) {
-      if (addSelectionGen.current !== gen) return;
-      setAddError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (addSelectionGen.current === gen) setAddPending(false);
+    const result = await addPlanMutation.mutate({ device, filesystem, adopt });
+    if (addSelectionGen.current !== gen) return;
+    if (!result.ok) {
+      setAddError(result.error);
+      setAddPending(false);
+      return;
     }
+    setAddPlan(result.data ?? null);
+    setAddConfirmValue("");
+    if (addSelectionGen.current === gen) setAddPending(false);
   }
 
   async function submitAddDisk(): Promise<void> {
     if (!addPlan) return;
     setAddPending(true);
     setAddError(null);
-    try {
-      // Submit the plan's own fields, never the live form state (finding
-      // 4): the plan is what the operator actually previewed and typed
-      // the confirmation phrase against.
-      const { error: apiError } = await hoservaClient.POST("/disks/array/add", {
-        body: {
-          device: addPlan.device,
-          filesystem: addPlan.filesystem,
-          adopt: addPlan.adopt,
-          confirmation: addConfirmValue,
-        },
-      });
-      if (apiError) {
-        setAddError(apiError.message);
-        return;
-      }
-      setAddOpen(false);
-      resetAddDialog();
-      await refresh();
-    } catch (err: unknown) {
-      setAddError(err instanceof Error ? err.message : String(err));
-    } finally {
+    const result = await addMutation.mutate({
+      device: addPlan.device,
+      filesystem: addPlan.filesystem,
+      adopt: addPlan.adopt,
+      confirmation: addConfirmValue,
+    });
+    if (!result.ok) {
+      setAddError(result.error);
       setAddPending(false);
+      return;
     }
+    setAddOpen(false);
+    resetAddDialog();
+    await refresh();
+    setAddPending(false);
   }
 
   function resetReplacePlan(): void {
@@ -221,53 +222,38 @@ export function PoolOverviewPage(): React.ReactElement {
     const adopt = replaceAdopt;
     setReplacePending(true);
     setReplaceError(null);
-    try {
-      const { data, error: apiError } = await hoservaClient.POST("/disks/array/replace/plan", {
-        body: { mountpoint, device, filesystem, adopt },
-      });
-      if (replaceSelectionGen.current !== gen) return;
-      if (apiError) {
-        setReplaceError(apiError.message);
-        return;
-      }
-      setReplacePlan(data ?? null);
-      setReplaceConfirmValue("");
-    } catch (err: unknown) {
-      if (replaceSelectionGen.current !== gen) return;
-      setReplaceError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (replaceSelectionGen.current === gen) setReplacePending(false);
+    const result = await replacePlanMutation.mutate({ mountpoint, device, filesystem, adopt });
+    if (replaceSelectionGen.current !== gen) return;
+    if (!result.ok) {
+      setReplaceError(result.error);
+      setReplacePending(false);
+      return;
     }
+    setReplacePlan(result.data ?? null);
+    setReplaceConfirmValue("");
+    if (replaceSelectionGen.current === gen) setReplacePending(false);
   }
 
   async function submitReplaceDisk(): Promise<void> {
     if (!replacePlan) return;
     setReplacePending(true);
     setReplaceError(null);
-    try {
-      // Submit the plan's own fields, never the live form state (finding
-      // 4) — the slot and device the operator actually previewed.
-      const { error: apiError } = await hoservaClient.POST("/disks/array/replace", {
-        body: {
-          mountpoint: replacePlan.mountpoint,
-          device: replacePlan.replacementDevice,
-          filesystem: replacePlan.filesystem,
-          adopt: replacePlan.adopt,
-          confirmation: replaceConfirmValue,
-        },
-      });
-      if (apiError) {
-        setReplaceError(apiError.message);
-        return;
-      }
-      setReplaceOpen(false);
-      resetReplaceDialog();
-      await refresh();
-    } catch (err: unknown) {
-      setReplaceError(err instanceof Error ? err.message : String(err));
-    } finally {
+    const result = await replaceMutation.mutate({
+      mountpoint: replacePlan.mountpoint,
+      device: replacePlan.replacementDevice,
+      filesystem: replacePlan.filesystem,
+      adopt: replacePlan.adopt,
+      confirmation: replaceConfirmValue,
+    });
+    if (!result.ok) {
+      setReplaceError(result.error);
       setReplacePending(false);
+      return;
     }
+    setReplaceOpen(false);
+    resetReplaceDialog();
+    await refresh();
+    setReplacePending(false);
   }
 
   function resetUpgradePlan(): void {
@@ -296,98 +282,74 @@ export function PoolOverviewPage(): React.ReactElement {
     const filesystem = upgradeFilesystem;
     setUpgradePending(true);
     setUpgradeError(null);
-    try {
-      const { data, error: apiError } = await hoservaClient.POST("/disks/array/upgrade/plan", {
-        body: { mountpoint, device, filesystem },
-      });
-      // The selection moved on while this request was in flight — never
-      // install a plan (or an error) for a slot the dialog no longer shows.
-      if (upgradeSelectionGen.current !== gen) return;
-      if (apiError) {
-        setUpgradeError(apiError.message);
-        return;
-      }
-      setUpgradePlan(data ?? null);
-      setUpgradeConfirmValue("");
-    } catch (err: unknown) {
-      if (upgradeSelectionGen.current !== gen) return;
-      setUpgradeError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (upgradeSelectionGen.current === gen) setUpgradePending(false);
+    const result = await upgradePlanMutation.mutate({ mountpoint, device, filesystem });
+    if (upgradeSelectionGen.current !== gen) return;
+    if (!result.ok) {
+      setUpgradeError(result.error);
+      setUpgradePending(false);
+      return;
     }
+    setUpgradePlan(result.data ?? null);
+    setUpgradeConfirmValue("");
+    if (upgradeSelectionGen.current === gen) setUpgradePending(false);
   }
 
   async function submitUpgradeDisk(): Promise<void> {
     if (!upgradePlan) return;
     setUpgradePending(true);
     setUpgradeError(null);
-    try {
-      // Submit the plan's own fields, never the live form state — the
-      // slot, device and (for a parity slot) fresh mountpoint the operator
-      // actually previewed and typed the confirmation against.
-      const { error: apiError } = await hoservaClient.POST("/disks/array/upgrade", {
-        body: {
-          mountpoint: upgradePlan.mountpoint,
-          device: upgradePlan.replacementDevice,
-          filesystem: upgradePlan.filesystem,
-          newMountpoint: upgradePlan.newMountpoint,
-          confirmation: upgradeConfirmValue,
-        },
-      });
-      if (apiError) {
-        setUpgradeError(apiError.message);
-        return;
-      }
-      setUpgradeOpen(false);
-      resetUpgradeDialog();
-      await refresh();
-    } catch (err: unknown) {
-      setUpgradeError(err instanceof Error ? err.message : String(err));
-    } finally {
+    const result = await upgradeMutation.mutate({
+      mountpoint: upgradePlan.mountpoint,
+      device: upgradePlan.replacementDevice,
+      filesystem: upgradePlan.filesystem,
+      newMountpoint: upgradePlan.newMountpoint,
+      confirmation: upgradeConfirmValue,
+    });
+    if (!result.ok) {
+      setUpgradeError(result.error);
       setUpgradePending(false);
+      return;
     }
+    setUpgradeOpen(false);
+    resetUpgradeDialog();
+    await refresh();
+    setUpgradePending(false);
   }
 
   const handleStop = async (): Promise<void> => {
     setPending(true);
-    try {
-      const { error: apiError } = await hoservaClient.POST("/array/stop", {
-        body: { confirm: true },
-      });
-      if (apiError) {
-        setActionError(apiError.message);
-        return;
-      }
-      setActionError(null);
-      setStopOpen(false);
-      await refresh();
-    } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : String(err));
-    } finally {
+    const result = await stopMutation.mutate(undefined);
+    if (!result.ok) {
+      setActionError(result.error);
       setPending(false);
+      return;
     }
+    setActionError(null);
+    setStopOpen(false);
+    await refresh();
+    setPending(false);
   };
 
   const handleStart = async (): Promise<void> => {
     setPending(true);
-    try {
-      const { error: apiError } = await hoservaClient.POST("/array/start");
-      if (apiError) {
-        setActionError(apiError.message);
-        return;
-      }
-      setActionError(null);
-      setStartOpen(false);
-      await refresh();
-    } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : String(err));
-    } finally {
+    const result = await startMutation.mutate(undefined);
+    if (!result.ok) {
+      setActionError(result.error);
       setPending(false);
+      return;
     }
+    setActionError(null);
+    setStartOpen(false);
+    await refresh();
+    setPending(false);
   };
 
   if (loading) {
     return <LoadingBlock />;
+  }
+
+  if (error && !pool) {
+    return <Banner tone="error" title={error} />;
   }
 
   const disks = pool?.disks ?? [];

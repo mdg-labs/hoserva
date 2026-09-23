@@ -155,6 +155,12 @@ type Scheduler struct {
 	// both check it) and never touches a job of any other type, unlike
 	// EnterMaintenance's own refusal of everything.
 	batteryHold bool
+	// shareMutations counts share create/update/delete calls admitted
+	// before maintenance mode. ArraySequence.Stop waits for it to drain
+	// before unmounting, so a mutation that passed the maintenance check
+	// cannot mkdir on a disk after that disk is gone.
+	shareMutations int
+	shareWaiters   []chan struct{}
 }
 
 // NewScheduler wires a Scheduler to its persistence, log capture, event
@@ -613,6 +619,58 @@ func (s *Scheduler) InMaintenance() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.maintenance
+}
+
+// BeginShareMutation admits one share create, update, or delete. It
+// fails once maintenance mode is active, under the same lock that
+// EnterMaintenance sets that flag, so a mutation cannot start after
+// array stop has decided to unmount. FinishShareMutation must be called
+// when the mutation returns, including on error.
+func (s *Scheduler) BeginShareMutation() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.maintenance {
+		return ErrMaintenanceMode
+	}
+	s.shareMutations++
+	return nil
+}
+
+// FinishShareMutation records that a mutation admitted by
+// BeginShareMutation has finished.
+func (s *Scheduler) FinishShareMutation() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.shareMutations == 0 {
+		return
+	}
+	s.shareMutations--
+	if s.shareMutations == 0 {
+		for _, ch := range s.shareWaiters {
+			close(ch)
+		}
+		s.shareWaiters = nil
+	}
+}
+
+// DrainShareMutations blocks until every mutation admitted before
+// maintenance mode has finished, or until ctx is done. ArraySequence.Stop
+// calls it after EnterMaintenance and before unmounting.
+func (s *Scheduler) DrainShareMutations(ctx context.Context) error {
+	s.mu.Lock()
+	if s.shareMutations == 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	ch := make(chan struct{})
+	s.shareWaiters = append(s.shareWaiters, ch)
+	s.mu.Unlock()
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("job: waiting for share updates to finish: %w", ctx.Err())
+	}
 }
 
 // isBatteryHeldType reports whether t is one of the two types Q77's

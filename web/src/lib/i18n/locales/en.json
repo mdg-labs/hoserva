@@ -639,6 +639,9 @@
     "yes": "Yes",
     "no": "No"
   },
+  "api": {
+    "requestFailed": "Request failed"
+  },
   "codeView": {
     "readOnly": "Read-only configuration preview"
   },
@@ -1099,6 +1102,9 @@
     "create": {
       "description": "New shares use the default cache mode and create policy. Adjust them from the share's detail page.",
       "name": "Share name"
+    },
+    "errors": {
+      "maintenanceMode": "The array is stopped. Start the array before creating, updating or deleting a share — otherwise directories would be written under the disk mounts on the root filesystem and hidden when the array starts again."
     },
     "detail": {
       "save": "Save changes",

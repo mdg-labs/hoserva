@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
@@ -14,7 +14,16 @@ import { StatusBadge } from "@/components/patterns/status-badge";
 import { Wizard } from "@/components/patterns/wizard";
 import { useUnsavedGuard } from "@/hooks/use-unsaved-guard";
 import { useSystemData } from "@/hooks/use-system-status";
-import { hoservaClient, type components } from "@/lib/api/client";
+import {
+  getParity,
+  postParityDiff,
+  postParityFix,
+  postParityScrub,
+  postParitySync,
+} from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
+import type { components } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import {
@@ -41,17 +50,31 @@ function freshnessTone(freshness: ParitySnapshot["freshness"]): "success" | "war
 export function ParityPage(): React.ReactElement {
   const { t } = useTranslation();
   const { status, pool, doctor, jobs, loading, error, refresh } = useSystemData();
-  const [parity, setParity] = useState<ParitySnapshot | null>(null);
-  const [parityLoaded, setParityLoaded] = useState(false);
-  const [parityError, setParityError] = useState<string | null>(null);
-  const [diffGroups, setDiffGroups] = useState<ParityDiffGroup[]>([]);
+  const parityQuery = useApiQuery<ParitySnapshot>({
+    queryKey: "parity-snapshot",
+    queryFn: (signal) => getParity(signal),
+  });
+  const diffMutation = useApiMutation({ mutationFn: () => postParityDiff() });
+  const syncMutation = useApiMutation({ mutationFn: () => postParitySync() });
+  const fixMutation = useApiMutation({ mutationFn: () => postParityFix() });
+  const scrubMutation = useApiMutation({ mutationFn: () => postParityScrub() });
+
+  const parity = parityQuery.data;
+  const parityError = parityQuery.error;
+  const parityDiffGroups = useMemo(
+    () => (parity?.groups?.length ? parityDiffGroupsFromAPI(parity.groups) : []),
+    [parity],
+  );
+  const [localDiffGroups, setLocalDiffGroups] = useState<ParityDiffGroup[] | null>(null);
+  const diffGroups = localDiffGroups ?? parityDiffGroups;
   const [runDiffOpen, setRunDiffOpen] = useState(false);
-  const [runDiffBusy, setRunDiffBusy] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [fixOpen, setFixOpen] = useState(false);
   const [fixStep, setFixStep] = useState(0);
   const [fixDirty, setFixDirty] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [diffDialogError, setDiffDialogError] = useState<string | null>(null);
+  const [syncDialogError, setSyncDialogError] = useState<string | null>(null);
   const { requestClose, guardDialog } = useUnsavedGuard({
     dirty: fixDirty,
     onClose: () => {
@@ -61,41 +84,6 @@ export function ParityPage(): React.ReactElement {
     },
   });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    hoservaClient
-      .GET("/parity", { signal: controller.signal })
-      .then(({ data, error: apiError }) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        if (apiError) {
-          setParityError(apiError.message);
-          setParity(null);
-          setDiffGroups([]);
-          return;
-        }
-        setParityError(null);
-        setParity(data ?? null);
-        if (data?.groups?.length) {
-          setDiffGroups(parityDiffGroupsFromAPI(data.groups));
-        }
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setParityError(err instanceof Error ? err.message : String(err));
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setParityLoaded(true);
-        }
-      });
-    return () => {
-      controller.abort();
-    };
-  }, []);
-
   const parityDisk = pool?.disks.find((disk) => disk.role === "parity");
   const guard = parity?.guard;
   const guardTripped = guard?.wouldBlock ?? Boolean(status?.parityBlocked);
@@ -103,99 +91,55 @@ export function ParityPage(): React.ReactElement {
   const parityJobs = jobs.filter((job) => job.class === "parity");
 
   const handleRunDiff = async (): Promise<void> => {
-    setRunDiffBusy(true);
-    try {
-      const { data, error: apiError } = await hoservaClient.POST("/parity/diff");
-      if (apiError) {
-        setActionError(apiError.message);
-        return;
-      }
-      setActionError(null);
-      setRunDiffOpen(false);
-      if (data) {
-        setDiffGroups(parityDiffGroupsFromAPI(data.groups));
-        const parityRefresh = await hoservaClient.GET("/parity");
-        if (!parityRefresh.error && parityRefresh.data) {
-          setParityError(null);
-          setParity(parityRefresh.data);
-          if (parityRefresh.data.groups?.length) {
-            setDiffGroups(parityDiffGroupsFromAPI(parityRefresh.data.groups));
-          }
-        } else {
-          setParity((current) =>
-            current
-              ? {
-                  ...current,
-                  guard: data.guard,
-                  groups: data.groups,
-                }
-              : current,
-          );
-        }
-      }
-    } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRunDiffBusy(false);
+    const result = await diffMutation.mutate(undefined);
+    if (!result.ok) {
+      setDiffDialogError(result.error);
+      return;
+    }
+    setDiffDialogError(null);
+    setRunDiffOpen(false);
+    if (result.data) {
+      setLocalDiffGroups(parityDiffGroupsFromAPI(result.data.groups));
+      await parityQuery.refresh();
     }
   };
 
   const handleSync = async (): Promise<void> => {
-    try {
-      const { error: apiError } = await hoservaClient.POST("/parity/sync", {
-        body: { confirm: true, dryRun: false },
-      });
-      if (apiError) {
-        setActionError(apiError.message);
-        return;
-      }
-      setActionError(null);
-      setSyncOpen(false);
-      await refresh();
-      const parityRefresh = await hoservaClient.GET("/parity");
-      if (!parityRefresh.error && parityRefresh.data) {
-        setParity(parityRefresh.data);
-        if (parityRefresh.data.groups?.length) {
-          setDiffGroups(parityDiffGroupsFromAPI(parityRefresh.data.groups));
-        }
-      }
-    } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : String(err));
+    const result = await syncMutation.mutate(undefined);
+    if (!result.ok) {
+      setSyncDialogError(result.error);
+      return;
     }
+    setSyncDialogError(null);
+    setSyncOpen(false);
+    await refresh();
+    await parityQuery.refresh();
   };
 
   const handleFixStart = async (): Promise<void> => {
-    try {
-      const { error: apiError } = await hoservaClient.POST("/parity/fix", { body: { confirm: true } });
-      if (apiError) {
-        setActionError(apiError.message);
-        return;
-      }
-      setActionError(null);
-      setFixOpen(false);
-      setFixStep(0);
-      setFixDirty(false);
-      await refresh();
-    } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : String(err));
+    const result = await fixMutation.mutate(undefined);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
     }
+    setActionError(null);
+    setFixOpen(false);
+    setFixStep(0);
+    setFixDirty(false);
+    await refresh();
   };
 
   const handleScrub = async (): Promise<void> => {
-    try {
-      const { error: apiError } = await hoservaClient.POST("/parity/scrub", { body: { percent: 100 } });
-      if (apiError) {
-        setActionError(apiError.message);
-        return;
-      }
-      setActionError(null);
-      await refresh();
-    } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : String(err));
+    const result = await scrubMutation.mutate(undefined);
+    if (!result.ok) {
+      setActionError(result.error);
+      return;
     }
+    setActionError(null);
+    await refresh();
   };
 
-  if (loading || !parityLoaded) {
+  if (loading || parityQuery.loading) {
     return <LoadingBlock />;
   }
 
@@ -287,18 +231,38 @@ export function ParityPage(): React.ReactElement {
       </Card>
       <ConfirmDialog
         open={runDiffOpen}
-        onOpenChange={setRunDiffOpen}
+        onOpenChange={(open) => {
+          setRunDiffOpen(open);
+          if (!open) {
+            setDiffDialogError(null);
+          }
+        }}
         title={t("parity.diff.runDiff")}
-        description={t("parity.diff.runDiffWarning")}
+        description={
+          <>
+            {t("parity.diff.runDiffWarning")}
+            {diffDialogError ? <Banner tone="error" title={diffDialogError} /> : null}
+          </>
+        }
         confirmLabel={t("parity.diff.runDiffConfirm")}
-        loading={runDiffBusy}
+        loading={diffMutation.pending}
         onConfirm={() => void handleRunDiff()}
       />
       <ConfirmDialog
         open={syncOpen}
-        onOpenChange={setSyncOpen}
+        onOpenChange={(open) => {
+          setSyncOpen(open);
+          if (!open) {
+            setSyncDialogError(null);
+          }
+        }}
         title={t("parity.actions.sync")}
-        description={guardTripped ? guardSummary ?? t("parity.guard.bannerDescription") : t("parity.actions.syncDescription")}
+        description={
+          <>
+            {guardTripped ? guardSummary ?? t("parity.guard.bannerDescription") : t("parity.actions.syncDescription")}
+            {syncDialogError ? <Banner tone="error" title={syncDialogError} /> : null}
+          </>
+        }
         confirmLabel={t("parity.actions.sync")}
         onConfirm={() => void handleSync()}
       />

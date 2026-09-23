@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
 
@@ -10,70 +9,49 @@ import { StatusBadge } from "@/components/patterns/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { PATHS } from "@/hooks/paths";
-import { hoservaClient, type components } from "@/lib/api/client";
+import { getJob, getJobLog, postJobCancel } from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
+import type { components } from "@/lib/api/client";
 
 type Job = components["schemas"]["Job"];
 
 export function JobDetailPage(): React.ReactElement {
   const { t } = useTranslation();
   const { jobId = "" } = useParams();
-  const [job, setJob] = useState<Job | null>(null);
-  const [log, setLog] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    Promise.all([
-      hoservaClient.GET("/jobs/{jobId}", { params: { path: { jobId } }, signal: controller.signal }),
-      hoservaClient.GET("/jobs/{jobId}/log", { params: { path: { jobId } }, signal: controller.signal }),
-    ])
-      .then(([jobResult, logResult]) => {
-        if (jobResult.error) {
-          setError(jobResult.error.message);
-          return;
-        }
-        setJob(jobResult.data ?? null);
-        if (logResult.error) {
-          setError(logResult.error.message);
-          return;
-        }
-        if (typeof logResult.data === "string") {
-          setLog(logResult.data);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      });
-    return () => controller.abort();
-  }, [jobId]);
+  const jobQuery = useApiQuery<Job>({
+    queryKey: ["job", jobId],
+    queryFn: (signal) => getJob(jobId, signal),
+    enabled: Boolean(jobId),
+  });
+  const logQuery = useApiQuery<string>({
+    queryKey: ["job-log", jobId],
+    queryFn: (signal) => getJobLog(jobId, signal),
+    enabled: Boolean(jobId),
+  });
+  const cancelMutation = useApiMutation({
+    mutationFn: () => postJobCancel(jobId),
+    fallbackError: t("jobs.detail.refreshFailed"),
+  });
+
+  const job = jobQuery.data;
+  const log = logQuery.data;
+  const error = jobQuery.error ?? logQuery.error ?? cancelMutation.error;
 
   const handleCancel = async (): Promise<void> => {
-    try {
-      const cancelResult = await hoservaClient.POST("/jobs/{jobId}/cancel", { params: { path: { jobId } } });
-      if (cancelResult.error) {
-        setError(cancelResult.error.message);
-        return;
-      }
-      const refreshResult = await hoservaClient.GET("/jobs/{jobId}", { params: { path: { jobId } } });
-      if (refreshResult.error || !refreshResult.data) {
-        setError(refreshResult.error?.message ?? t("jobs.detail.refreshFailed"));
-        return;
-      }
-      setError(null);
-      setJob(refreshResult.data);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+    const result = await cancelMutation.mutate(undefined);
+    if (result.ok) {
+      await jobQuery.refresh();
     }
   };
 
-  if (!job && !error) {
+  if ((jobQuery.loading || logQuery.loading) && !job && !error) {
     return <LoadingBlock />;
   }
 
   if (!job) {
-    return <Banner tone="error" title={t("jobs.detail.notFound")} />;
+    return <Banner tone="error" title={error ?? t("jobs.detail.notFound")} />;
   }
 
   return (

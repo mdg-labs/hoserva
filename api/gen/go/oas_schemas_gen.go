@@ -837,6 +837,60 @@ func (s *BlockingJob) SetClass(val JobClass) {
 	s.Class = val
 }
 
+// Cache disk byte breakdown for the cache page (doc 03 §3.6), computed as a by-product of each mover
+// run (Q87) — never a live directory walk on a timer (Q13).
+// Ref: #/components/schemas/CacheUsageBreakdown
+type CacheUsageBreakdown struct {
+	// Bytes under cache-only shares (appdata and similar).
+	AppdataBytes int64 `json:"appdataBytes"`
+	// Bytes still under cache-then-move shares, waiting for a future mover pass.
+	PendingMovesBytes int64 `json:"pendingMovesBytes"`
+	// Remaining used bytes on the cache filesystem (statfs used minus appdata and pending), including
+	// non-share paths.
+	OtherBytes int64     `json:"otherBytes"`
+	ComputedAt time.Time `json:"computedAt"`
+}
+
+// GetAppdataBytes returns the value of AppdataBytes.
+func (s *CacheUsageBreakdown) GetAppdataBytes() int64 {
+	return s.AppdataBytes
+}
+
+// GetPendingMovesBytes returns the value of PendingMovesBytes.
+func (s *CacheUsageBreakdown) GetPendingMovesBytes() int64 {
+	return s.PendingMovesBytes
+}
+
+// GetOtherBytes returns the value of OtherBytes.
+func (s *CacheUsageBreakdown) GetOtherBytes() int64 {
+	return s.OtherBytes
+}
+
+// GetComputedAt returns the value of ComputedAt.
+func (s *CacheUsageBreakdown) GetComputedAt() time.Time {
+	return s.ComputedAt
+}
+
+// SetAppdataBytes sets the value of AppdataBytes.
+func (s *CacheUsageBreakdown) SetAppdataBytes(val int64) {
+	s.AppdataBytes = val
+}
+
+// SetPendingMovesBytes sets the value of PendingMovesBytes.
+func (s *CacheUsageBreakdown) SetPendingMovesBytes(val int64) {
+	s.PendingMovesBytes = val
+}
+
+// SetOtherBytes sets the value of OtherBytes.
+func (s *CacheUsageBreakdown) SetOtherBytes(val int64) {
+	s.OtherBytes = val
+}
+
+// SetComputedAt sets the value of ComputedAt.
+func (s *CacheUsageBreakdown) SetComputedAt(val time.Time) {
+	s.ComputedAt = val
+}
+
 // Ref: #/components/schemas/ConfigureLetsEncryptRequest
 type ConfigureLetsEncryptRequest struct {
 	// Hostname the certificate will cover, challenged via DNS-01.
@@ -3759,6 +3813,154 @@ func (s *MetricSeries) SetPoints(val []MetricPoint) {
 	s.Points = val
 }
 
+// Structured outcome of one finished mover run (#273, doc 09 §2), persisted in SQLite rather than
+// only in the job log.
+// Ref: #/components/schemas/MoverRunResult
+type MoverRunResult struct {
+	StartedAt  time.Time `json:"startedAt"`
+	FinishedAt time.Time `json:"finishedAt"`
+	DurationMs int64     `json:"durationMs"`
+	FilesMoved int32     `json:"filesMoved"`
+	BytesMoved int64     `json:"bytesMoved"`
+	// True when the run stopped early (cancel, stop, or context).
+	Interrupted bool                `json:"interrupted"`
+	Skipped     []MoverSkippedEntry `json:"skipped"`
+}
+
+// GetStartedAt returns the value of StartedAt.
+func (s *MoverRunResult) GetStartedAt() time.Time {
+	return s.StartedAt
+}
+
+// GetFinishedAt returns the value of FinishedAt.
+func (s *MoverRunResult) GetFinishedAt() time.Time {
+	return s.FinishedAt
+}
+
+// GetDurationMs returns the value of DurationMs.
+func (s *MoverRunResult) GetDurationMs() int64 {
+	return s.DurationMs
+}
+
+// GetFilesMoved returns the value of FilesMoved.
+func (s *MoverRunResult) GetFilesMoved() int32 {
+	return s.FilesMoved
+}
+
+// GetBytesMoved returns the value of BytesMoved.
+func (s *MoverRunResult) GetBytesMoved() int64 {
+	return s.BytesMoved
+}
+
+// GetInterrupted returns the value of Interrupted.
+func (s *MoverRunResult) GetInterrupted() bool {
+	return s.Interrupted
+}
+
+// GetSkipped returns the value of Skipped.
+func (s *MoverRunResult) GetSkipped() []MoverSkippedEntry {
+	return s.Skipped
+}
+
+// SetStartedAt sets the value of StartedAt.
+func (s *MoverRunResult) SetStartedAt(val time.Time) {
+	s.StartedAt = val
+}
+
+// SetFinishedAt sets the value of FinishedAt.
+func (s *MoverRunResult) SetFinishedAt(val time.Time) {
+	s.FinishedAt = val
+}
+
+// SetDurationMs sets the value of DurationMs.
+func (s *MoverRunResult) SetDurationMs(val int64) {
+	s.DurationMs = val
+}
+
+// SetFilesMoved sets the value of FilesMoved.
+func (s *MoverRunResult) SetFilesMoved(val int32) {
+	s.FilesMoved = val
+}
+
+// SetBytesMoved sets the value of BytesMoved.
+func (s *MoverRunResult) SetBytesMoved(val int64) {
+	s.BytesMoved = val
+}
+
+// SetInterrupted sets the value of Interrupted.
+func (s *MoverRunResult) SetInterrupted(val bool) {
+	s.Interrupted = val
+}
+
+// SetSkipped sets the value of Skipped.
+func (s *MoverRunResult) SetSkipped(val []MoverSkippedEntry) {
+	s.Skipped = val
+}
+
+// One file the mover chose not to move (or could not move), with why (doc 09 §2, doc 03 §3.6's
+// skipped-because-in-use list).
+// Ref: #/components/schemas/MoverSkippedEntry
+type MoverSkippedEntry struct {
+	Share string `json:"share"`
+	// Path relative to the share root.
+	Path  string   `json:"path"`
+	Bytes OptInt64 `json:"bytes"`
+	// The mover's own result code (e.g. skipped_open, skipped_grace_period, conflict).
+	Result string `json:"result"`
+	// Optional human detail (error text or skip reason).
+	Reason OptString `json:"reason"`
+}
+
+// GetShare returns the value of Share.
+func (s *MoverSkippedEntry) GetShare() string {
+	return s.Share
+}
+
+// GetPath returns the value of Path.
+func (s *MoverSkippedEntry) GetPath() string {
+	return s.Path
+}
+
+// GetBytes returns the value of Bytes.
+func (s *MoverSkippedEntry) GetBytes() OptInt64 {
+	return s.Bytes
+}
+
+// GetResult returns the value of Result.
+func (s *MoverSkippedEntry) GetResult() string {
+	return s.Result
+}
+
+// GetReason returns the value of Reason.
+func (s *MoverSkippedEntry) GetReason() OptString {
+	return s.Reason
+}
+
+// SetShare sets the value of Share.
+func (s *MoverSkippedEntry) SetShare(val string) {
+	s.Share = val
+}
+
+// SetPath sets the value of Path.
+func (s *MoverSkippedEntry) SetPath(val string) {
+	s.Path = val
+}
+
+// SetBytes sets the value of Bytes.
+func (s *MoverSkippedEntry) SetBytes(val OptInt64) {
+	s.Bytes = val
+}
+
+// SetResult sets the value of Result.
+func (s *MoverSkippedEntry) SetResult(val string) {
+	s.Result = val
+}
+
+// SetReason sets the value of Reason.
+func (s *MoverSkippedEntry) SetReason(val OptString) {
+	s.Reason = val
+}
+
 // How this interface obtains its address.
 // Ref: #/components/schemas/NetworkAddressMethod
 type NetworkAddressMethod string
@@ -4160,6 +4362,51 @@ func (s *NetworkSettings) SetListenPortRestartRequired(val OptBool) {
 	s.ListenPortRestartRequired = val
 }
 
+// NewNilCacheUsageBreakdown returns new NilCacheUsageBreakdown with value set to v.
+func NewNilCacheUsageBreakdown(v CacheUsageBreakdown) NilCacheUsageBreakdown {
+	return NilCacheUsageBreakdown{
+		Value: v,
+	}
+}
+
+// NilCacheUsageBreakdown is nullable CacheUsageBreakdown.
+type NilCacheUsageBreakdown struct {
+	Value CacheUsageBreakdown
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilCacheUsageBreakdown) SetTo(v CacheUsageBreakdown) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilCacheUsageBreakdown) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilCacheUsageBreakdown) SetToNull() {
+	o.Null = true
+	var v CacheUsageBreakdown
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilCacheUsageBreakdown) Get() (v CacheUsageBreakdown, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilCacheUsageBreakdown) Or(d CacheUsageBreakdown) CacheUsageBreakdown {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewNilDateTime returns new NilDateTime with value set to v.
 func NewNilDateTime(v time.Time) NilDateTime {
 	return NilDateTime{
@@ -4199,6 +4446,51 @@ func (o NilDateTime) Get() (v time.Time, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o NilDateTime) Or(d time.Time) time.Time {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewNilMoverRunResult returns new NilMoverRunResult with value set to v.
+func NewNilMoverRunResult(v MoverRunResult) NilMoverRunResult {
+	return NilMoverRunResult{
+		Value: v,
+	}
+}
+
+// NilMoverRunResult is nullable MoverRunResult.
+type NilMoverRunResult struct {
+	Value MoverRunResult
+	Null  bool
+}
+
+// SetTo sets value to v.
+func (o *NilMoverRunResult) SetTo(v MoverRunResult) {
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o NilMoverRunResult) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *NilMoverRunResult) SetToNull() {
+	o.Null = true
+	var v MoverRunResult
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o NilMoverRunResult) Get() (v MoverRunResult, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o NilMoverRunResult) Or(d MoverRunResult) MoverRunResult {
 	if v, ok := o.Get(); ok {
 		return v
 	}

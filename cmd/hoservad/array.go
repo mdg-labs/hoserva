@@ -128,9 +128,13 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 	if settings.CreatePolicy != "" {
 		catchAll.CreatePolicy = pool.CreatePolicy(settings.CreatePolicy)
 	}
+	// Production mounts the catch-all and every share through their
+	// generated systemd .mount units (SystemdMounter, #335) so mergerfs
+	// lives outside hoserva.service's cgroup — a restart must not tear
+	// the pool down. Lab tests keep using pool.Mounter (direct exec).
 	seq.CatchAll = pool.MountController{
 		Mnt:     catchAll,
-		Mounter: pool.Mounter{Runner: runner},
+		Mounter: pool.SystemdMounter{Runner: runner},
 	}
 
 	rows, err := shares.List(ctx)
@@ -150,7 +154,7 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		}
 		seq.ShareMounts = append(seq.ShareMounts, pool.MountController{
 			Mnt:     shareMount,
-			Mounter: pool.Mounter{Runner: runner},
+			Mounter: pool.SystemdMounter{Runner: runner},
 		})
 		if sh.CacheMode == pool.CacheOnly {
 			continue
@@ -161,7 +165,7 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		}
 		seq.ShareMounts = append(seq.ShareMounts, pool.MountController{
 			Mnt:     moverMount,
-			Mounter: pool.Mounter{Runner: runner},
+			Mounter: pool.SystemdMounter{Runner: runner},
 		})
 	}
 	return seq, nil
