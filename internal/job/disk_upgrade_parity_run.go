@@ -86,21 +86,28 @@ func RunDiskUpgradeParity(d DiskUpgradeParityDeps) RunFunc {
 		if err != nil {
 			return err
 		}
-		oldDisk, ok := arrayDiskAtMountpoint(disks, params.Mountpoint)
-		if !ok || oldDisk.Role != store.ArrayRoleParity {
-			return fmt.Errorf("job: no parity disk at %s", params.Mountpoint)
+		fresh := len(rc.InitialCheckpoint()) == 0
+		oldDisk, switched, err := parityUpgradeSlot(disks, params, fresh)
+		if err != nil {
+			return err
 		}
 
-		fresh := len(rc.InitialCheckpoint()) == 0
 		if fresh {
 			listed, err := d.Provider.List(ctx)
 			if err != nil {
 				return fmt.Errorf("job: listing disks to confirm %s's current identity: %w", params.Disk.Device, err)
 			}
-			target, err := confirmTargetIdentityUnchanged(listed, params.Disk)
-			if err != nil {
+			// By-id identity only, never the filesystem UUID: the first
+			// checkpoint is saved only once the copy completes, so a run
+			// interrupted anywhere between the format and that point
+			// resumes here with the disk already formatted. Reformatting
+			// it is safe — it holds nothing but a partial parity copy —
+			// and Q21 refuses a weak-identity parity disk, so WWN and
+			// serial always identify it.
+			if err := confirmByIDIdentity(listed, params.Disk); err != nil {
 				return err
 			}
+			target := params.Disk
 			// See RunDiskUpgradeData's own identical check: ValidateParityDiskUpgrade's
 			// "remaining" set excludes oldDisk's own row, so it alone
 			// cannot catch a target that already is oldDisk's own current
@@ -160,6 +167,12 @@ func RunDiskUpgradeParity(d DiskUpgradeParityDeps) RunFunc {
 
 		deps := parity.ParityUpgradeDeps{
 			ApplyLayout: func(ctx context.Context, _ parity.Layout) error {
+				if switched {
+					// An earlier invocation committed the switch and was
+					// interrupted before checkpointing past it; only the
+					// regeneration below still needs to run.
+					return d.regenerateAfterSwitch(ctx)
+				}
 				if err := d.Store.UpgradeParityDisk(ctx, params.Mountpoint, store.ArrayDisk{
 					Role:         store.ArrayRoleParity,
 					RoleIndex:    oldDisk.RoleIndex,
@@ -174,17 +187,7 @@ func RunDiskUpgradeParity(d DiskUpgradeParityDeps) RunFunc {
 				}); err != nil {
 					return err
 				}
-				now := time.Now
-				if d.Now != nil {
-					now = d.Now
-				}
-				if err := applyArrayFromStore(ctx, d.Store, d.Generator, d.Mounter, now()); err != nil {
-					return err
-				}
-				if d.ArrayReady == nil {
-					return nil
-				}
-				return d.ArrayReady(ctx)
+				return d.regenerateAfterSwitch(ctx)
 			},
 			Check: func(ctx context.Context, opts parity.CheckOpts) (<-chan parity.Progress, error) {
 				return d.Parity.Check(ctx, opts)
@@ -219,6 +222,45 @@ func RunDiskUpgradeParity(d DiskUpgradeParityDeps) RunFunc {
 		_, err = parity.RunParityUpgrade(ctx, spec, deps, hooks, rc.InitialCheckpoint())
 		return err
 	}
+}
+
+// regenerateAfterSwitch rewrites every generated file from SQLite once the
+// parity slot names the new disk, mounts its unit and rebuilds the array
+// sequence. It is idempotent, so a resume may run it again.
+func (d DiskUpgradeParityDeps) regenerateAfterSwitch(ctx context.Context) error {
+	now := time.Now
+	if d.Now != nil {
+		now = d.Now
+	}
+	if err := applyArrayFromStore(ctx, d.Store, d.Generator, d.Mounter, now()); err != nil {
+		return err
+	}
+	if d.ArrayReady == nil {
+		return nil
+	}
+	return d.ArrayReady(ctx)
+}
+
+// parityUpgradeSlot finds the parity slot this upgrade works on. Before
+// ApplyLayout it is the row at params.Mountpoint. After it — only ever on
+// a resumed invocation — the row has moved to params.NewMountpoint and
+// names params.Disk; it is returned with its old mountpoint restored, so
+// the old parity file path and Release still address the old disk, and
+// switched reports that the store write must not run again.
+func parityUpgradeSlot(disks []store.ArrayDisk, params DiskUpgradeParityParams, fresh bool) (store.ArrayDisk, bool, error) {
+	if row, ok := arrayDiskAtMountpoint(disks, params.Mountpoint); ok && row.Role == store.ArrayRoleParity {
+		return row, false, nil
+	}
+	if !fresh {
+		row, ok := arrayDiskAtMountpoint(disks, params.NewMountpoint)
+		want := params.Disk
+		if ok && row.Role == store.ArrayRoleParity && row.Device == want.Device &&
+			row.WWN == want.WWN && row.Serial == want.Serial && row.ByIDName == want.ByIDName {
+			row.Mountpoint = params.Mountpoint
+			return row, true, nil
+		}
+	}
+	return store.ArrayDisk{}, false, fmt.Errorf("job: no parity disk at %s", params.Mountpoint)
 }
 
 // disksWithParitySwapped returns a copy of disks with the parity row at

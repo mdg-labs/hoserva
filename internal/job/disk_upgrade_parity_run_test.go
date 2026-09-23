@@ -443,3 +443,156 @@ func (p *listCountingProvider) listCalls() int {
 	defer p.mu.Unlock()
 	return p.calls
 }
+
+// runParityUpgradeResume drives one resumed RunDiskUpgradeParity
+// invocation from checkpoint against a store whose parity slot has
+// already been switched to newParity by the interrupted run.
+func runParityUpgradeResume(t *testing.T, phase parity.ParityUpgradePhase) (*store.ArrayStore, *disk.FakeMounter, *recordingEngine, string, string, error) {
+	t.Helper()
+	ctx := context.Background()
+	st := store.NewArrayStore(newTestDB(t))
+	oldParity := t.TempDir()
+	newParity := t.TempDir()
+	original := []byte("parity-bytes-old")
+	for _, dir := range []string{oldParity, newParity} {
+		if err := os.WriteFile(filepath.Join(dir, "snapraid.parity"), original, 0o644); err != nil {
+			t.Fatalf("seed parity file: %v", err)
+		}
+	}
+	seedParityDiskArrayForUpgrade(t, st, oldParity)
+
+	replacement := disk.AssignedDisk{Device: "/dev/sdz", Filesystem: disk.XFS, WWN: "wwn-new"}
+	// The interrupted run's ApplyLayout already committed the switch.
+	if err := st.UpgradeParityDisk(ctx, oldParity, store.ArrayDisk{
+		Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sdz", Filesystem: "xfs",
+		FSUUID: "uuid-new", WWN: "wwn-new", Mountpoint: newParity,
+	}); err != nil {
+		t.Fatalf("UpgradeParityDisk: %v", err)
+	}
+
+	r := disk.NewFakeRunner()
+	scriptFilesystemUUID(r, "/dev/sdz", "uuid-new")
+	scriptMountedUUID(r, newParity, "uuid-new")
+	eng := newRecordingEngine()
+	eng.ScriptCheck([]parity.Progress{{Percent: 100}}, nil)
+	mounter := disk.NewFakeMounter()
+
+	run := RunDiskUpgradeParity(DiskUpgradeParityDeps{
+		Provider:       disk.NewFakeProvider(),
+		Runner:         r,
+		Store:          st,
+		Generator:      config.NewGenerator(t.TempDir()),
+		Mounter:        mounter,
+		UpgradeMounter: mounter,
+		Parity:         eng,
+		Now:            func() time.Time { return time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC) },
+	})
+	params := DiskUpgradeParityParams{
+		Confirmation:  SingleDiskConfirmation(replacement),
+		Mountpoint:    oldParity,
+		NewMountpoint: newParity,
+		Disk:          replacement,
+		Sizes:         map[string]int64{"/dev/sda": 8 * disk.TB, "/dev/sdz": 16 * disk.TB},
+	}
+	var out bytes.Buffer
+	rc := &RunContext{
+		ctx:            ctx,
+		checkpoint:     mustJSON(t, parity.ParityUpgradeCheckpoint{Phase: phase}),
+		params:         mustJSON(t, params),
+		out:            &out,
+		stopRequested:  make(chan struct{}),
+		saveCheckpoint: func([]byte) error { return nil },
+		setProgress:    func(int) {},
+	}
+	return st, mounter, eng, oldParity, newParity, run(ctx, rc)
+}
+
+// TestRunDiskUpgradeParity_ResumeAfterSwitchCompletes: an interruption
+// after ApplyLayout moved the parity row to the new mountpoint — during
+// `snapraid check`, or between the store commit and the checkpoint save —
+// must resume through Checking and Release, not fail with "no parity disk"
+// at the old mountpoint and leave the old parity disk mounted forever.
+func TestRunDiskUpgradeParity_ResumeAfterSwitchCompletes(t *testing.T) {
+	for _, phase := range []parity.ParityUpgradePhase{parity.ParityUpgradePhaseChecking, parity.ParityUpgradePhaseSwitchingConfig} {
+		t.Run(string(phase), func(t *testing.T) {
+			st, mounter, _, oldParity, newParity, err := runParityUpgradeResume(t, phase)
+			if err != nil {
+				t.Fatalf("resumed RunDiskUpgradeParity from %s: %v", phase, err)
+			}
+			released := false
+			for _, u := range mounter.Unmounts {
+				if u.Where == oldParity {
+					released = true
+				}
+			}
+			if !released {
+				t.Fatalf("resume from %s never released the old parity disk at %s", phase, oldParity)
+			}
+			_, disks, err := st.GetArray(context.Background())
+			if err != nil {
+				t.Fatalf("GetArray: %v", err)
+			}
+			parityRows := 0
+			for _, d := range disks {
+				if d.Role == store.ArrayRoleParity {
+					parityRows++
+					if d.Mountpoint != newParity || d.Device != "/dev/sdz" {
+						t.Fatalf("parity row = %+v, want /dev/sdz at %s", d, newParity)
+					}
+				}
+			}
+			if parityRows != 1 {
+				t.Fatalf("parity rows = %d, want 1", parityRows)
+			}
+		})
+	}
+}
+
+// TestRunDiskUpgradeParity_ResumeBeforeFirstCheckpointReformats: the first
+// checkpoint is saved only after the copy completes, so a run interrupted
+// after formatting resumes with an empty checkpoint and a disk whose
+// filesystem UUID no longer matches the one submitted. That must not fail
+// the job permanently as identity drift; the by-id identity is unchanged
+// and the disk holds nothing but a partial parity copy.
+func TestRunDiskUpgradeParity_ResumeBeforeFirstCheckpointReformats(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	st := store.NewArrayStore(newTestDB(t))
+	oldParity := t.TempDir()
+	newParity := t.TempDir()
+	if err := os.WriteFile(filepath.Join(oldParity, "snapraid.parity"), []byte("parity-bytes-old"), 0o644); err != nil {
+		t.Fatalf("seed old parity file: %v", err)
+	}
+	// A partial copy the interrupted run left behind.
+	if err := os.WriteFile(filepath.Join(newParity, "snapraid.parity"), []byte("parity"), 0o644); err != nil {
+		t.Fatalf("seed partial copy: %v", err)
+	}
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	p.AddDisk("/dev/sdz", disk.Disk{Size: 16 * disk.TB, WWN: "wwn-new", FSUUID: "uuid-from-the-interrupted-format"})
+	r := disk.NewFakeRunner()
+	scriptFilesystemUUID(r, "/dev/sdz", "uuid-new")
+	scriptMountedUUID(r, newParity, "uuid-new")
+	seedParityDiskArrayForUpgrade(t, st, oldParity)
+	eng := newRecordingEngine()
+	eng.ScriptCheck([]parity.Progress{{Percent: 100}}, nil)
+	mounter := disk.NewFakeMounter()
+	registerDiskUpgradeParity(t, s, p, r, st, t.TempDir(), mounter, mounter, eng)
+
+	replacement := disk.AssignedDisk{Device: "/dev/sdz", Filesystem: disk.XFS, WWN: "wwn-new"}
+	params := DiskUpgradeParityParams{
+		Confirmation:  SingleDiskConfirmation(replacement),
+		Mountpoint:    oldParity,
+		NewMountpoint: newParity,
+		Disk:          replacement,
+		Sizes:         map[string]int64{"/dev/sda": 8 * disk.TB, "/dev/sdb": 2 * disk.TB, "/dev/sdc": 2 * disk.TB, "/dev/sdz": 16 * disk.TB},
+	}
+	j, err := s.Submit(ctx, TypeDiskUpgradeParity, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if finished := await(t, s, j.ID); finished.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+}
