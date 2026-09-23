@@ -24,6 +24,9 @@ existing line by adding its PR number.
 ## Partial failure and atomicity
 - **partial-failure** — DB row committed before a later side effect (generated file, mount, Samba account, audit row, notification row) that can fail; error returned over a half-applied change, or retry blocked by the leftover row — PR 174, 206, 213, 216, 218, 228
 - **partial-failure** — rollback restores the row and files but not the live state (mounts) — PR 218
+- **live-state** — change persisted and written to config but never applied to what is running (an idempotency early return keyed on a name that never changes; units written but the live mount left on its old branches) — PR 338
+- **resume** — a resumed run looks its target up by the key an earlier invocation already moved, or re-checks an identity field the run itself changed (filesystem UUID after its own format), so every resume fails — PR 338
+- **reconcile** — regenerate-and-reconcile from a partial state (disks but no shares) deletes files another subsystem owns — PR 338
 - **durability** — `rename` without an fsync of the directory; truncate-then-write of a settings file; archive written in place with `O_TRUNC` — PR 150, 174, 213, 236
 - **atomicity** — read-modify-write of a whole row lets concurrent partial updates overwrite each other — PR 182, 199
 - **atomicity** — check-then-act on a path (validate, then re-resolve by name) — PR 228, 236
@@ -33,7 +36,7 @@ existing line by adding its PR number.
 - **fail-open** — `|| true` or a swallowed error inside a gate, so the gate reports PASS after a failure — PR 163, 210
 - **fail-open** — a skip meant for one step applied to every step (unregistered mover skip also skipping sync/scrub) — PR 201
 - **fail-open** — an input that matches nothing turns a protective change into a silent no-op (a removing disk not in the data-disk list leaves every branch RW) — PR 337
-- **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor) — PR 199, 246
+- **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor, a completed-stop flag cleared before the start's fallible checks) — PR 199, 246, 338
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201
 - **errors** — infrastructure failure mapped to HTTP 400 with raw internal text — PR 216
 - **errors** — external command without `CommandContext` or a timeout, able to block a request forever — PR 174, 206
@@ -75,3 +78,4 @@ existing line by adding its PR number.
 - **platform** — Debian: depend on `adduser` when using `addgroup`; AGPL text is not in `/usr/share/common-licenses` — PR 159
 - **platform** — `mkfs.ext4` creates `lost+found`; smartctl reports NVMe health in a different section than ATA — PR 150, 254
 - **platform** — a daemon that drops privileges reads its config as its own group; a root-only generated file locks it out (upsd.users needs root:nut 0640) — PR 337
+- **platform** — systemd: a masked unit cannot start, and a disabled one was switched off on purpose — never start either — PR 338
