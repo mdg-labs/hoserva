@@ -12,6 +12,11 @@ import (
 // smb.conf ends with (doc 01 §2). Generator never writes that file.
 const SambaCustomInclude = "/etc/hoserva/smb.custom.conf"
 
+// SambaServiceUnit is Samba's systemd service unit on Debian (doc 01
+// §1's table) — smbd, not nmbd, which nothing in this repo currently
+// generates or enables.
+const SambaServiceUnit = "smbd.service"
+
 // SambaShare is the SMB slice of a share RenderSambaConf needs. Disabled
 // shares are omitted by the caller, not rendered as empty sections.
 type SambaShare struct {

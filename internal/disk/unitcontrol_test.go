@@ -50,3 +50,107 @@ func TestMountUnitController_PropagatesErrors(t *testing.T) {
 		t.Fatalf("Unmount: got %v, want it to wrap %v", err, wantErr)
 	}
 }
+
+func TestServiceUnitController_StopAndStart(t *testing.T) {
+	r := NewFakeRunner()
+	r.Script("systemctl", []string{"show", "--property=LoadState", "--value", "smbd.service"}, []byte("loaded\n"), nil)
+	r.Script("systemctl", []string{"stop", "smbd.service"}, nil, nil)
+	r.Script("systemctl", []string{"start", "smbd.service"}, nil, nil)
+
+	c := ServiceUnitController{ServiceName: "Samba", Unit: "smbd.service", Runner: r}
+	if got := c.Name(); got != "Samba" {
+		t.Fatalf("Name() = %q, want Samba", got)
+	}
+	if err := c.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	calls := r.Calls()
+	if len(calls) != 4 {
+		t.Fatalf("got %d calls, want 4: %+v", len(calls), calls)
+	}
+	if calls[0].Name != "systemctl" || calls[0].Args[0] != "show" || calls[0].Args[3] != "smbd.service" {
+		t.Fatalf("first call = %+v, want systemctl show --property=LoadState --value smbd.service", calls[0])
+	}
+	if calls[1].Name != "systemctl" || calls[1].Args[0] != "stop" || calls[1].Args[1] != "smbd.service" {
+		t.Fatalf("second call = %+v, want systemctl stop smbd.service", calls[1])
+	}
+	if calls[2].Name != "systemctl" || calls[2].Args[0] != "show" || calls[2].Args[3] != "smbd.service" {
+		t.Fatalf("third call = %+v, want systemctl show --property=LoadState --value smbd.service", calls[2])
+	}
+	if calls[3].Name != "systemctl" || calls[3].Args[0] != "start" || calls[3].Args[1] != "smbd.service" {
+		t.Fatalf("fourth call = %+v, want systemctl start smbd.service", calls[3])
+	}
+}
+
+func TestServiceUnitController_PropagatesErrors(t *testing.T) {
+	r := NewFakeRunner()
+	wantErr := errors.New("Job failed, unit is holding open files")
+	r.Script("systemctl", []string{"show", "--property=LoadState", "--value", "smbd.service"}, []byte("loaded\n"), nil)
+	r.Script("systemctl", []string{"stop", "smbd.service"}, nil, wantErr)
+	r.Script("systemctl", []string{"start", "smbd.service"}, nil, wantErr)
+
+	c := ServiceUnitController{ServiceName: "Samba", Unit: "smbd.service", Runner: r}
+	if err := c.Stop(context.Background()); !errors.Is(err, wantErr) {
+		t.Fatalf("Stop: got %v, want it to wrap %v", err, wantErr)
+	}
+	if err := c.Start(context.Background()); !errors.Is(err, wantErr) {
+		t.Fatalf("Start: got %v, want it to wrap %v", err, wantErr)
+	}
+}
+
+// TestServiceUnitController_SkipsUnitNotInstalled is #309's fix for
+// hosts with only one of Samba/NFS installed (#331 covers making both
+// `.deb` Depends): a LoadState of "not-found" must be treated as
+// nothing to stop or start, never as a failure that aborts the array
+// sequence, and never by attempting a real systemctl stop/start on a
+// unit that was never installed.
+func TestServiceUnitController_SkipsUnitNotInstalled(t *testing.T) {
+	r := NewFakeRunner()
+	r.Script("systemctl", []string{"show", "--property=LoadState", "--value", "nfs-kernel-server.service"}, []byte("not-found\n"), nil)
+
+	c := ServiceUnitController{ServiceName: "NFS", Unit: "nfs-kernel-server.service", Runner: r}
+	if err := c.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: got %v, want nil — a not-found unit has nothing to stop", err)
+	}
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start: got %v, want nil — a not-found unit has nothing to start", err)
+	}
+
+	calls := r.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("got %d calls, want only the two LoadState queries, no stop/start: %+v", len(calls), calls)
+	}
+	for _, c := range calls {
+		if c.Args[0] != "show" {
+			t.Fatalf("call = %+v, want only LoadState queries — a not-found unit must never be stopped or started", c)
+		}
+	}
+}
+
+// TestServiceUnitController_FailsClosedWhenLoadStateQueryErrors is the
+// other half of #309's fix: a systemctl show error must abort Stop/Start
+// with an error, the same as a real stop/start failure would, rather
+// than being read as "nothing to do" and letting the array sequence
+// unmount storage a service might still be holding open.
+func TestServiceUnitController_FailsClosedWhenLoadStateQueryErrors(t *testing.T) {
+	r := NewFakeRunner()
+	queryErr := errors.New("systemctl: failed to connect to bus")
+	r.Script("systemctl", []string{"show", "--property=LoadState", "--value", "smbd.service"}, nil, queryErr)
+
+	c := ServiceUnitController{ServiceName: "Samba", Unit: "smbd.service", Runner: r}
+	if err := c.Stop(context.Background()); !errors.Is(err, queryErr) {
+		t.Fatalf("Stop: got %v, want it to wrap %v", err, queryErr)
+	}
+	if err := c.Start(context.Background()); !errors.Is(err, queryErr) {
+		t.Fatalf("Start: got %v, want it to wrap %v", err, queryErr)
+	}
+
+	calls := r.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("got %d calls, want only the two failed LoadState queries, no stop/start attempted: %+v", len(calls), calls)
+	}
+}

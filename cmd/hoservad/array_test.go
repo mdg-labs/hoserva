@@ -160,8 +160,19 @@ func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
 	if h.Array == nil {
 		t.Fatal("Handler.Array is nil with a persisted topology — stop/start would 501 not_configured and never run ArraySequence")
 	}
-	if len(h.Array.Services) != 0 {
-		t.Fatalf("Services = %d, want empty until real ArrayService implementations exist", len(h.Array.Services))
+	if len(h.Array.Services) != 2 {
+		t.Fatalf("Services = %d, want Samba and NFS (doc 02 §4, #309)", len(h.Array.Services))
+	}
+	if got := h.Array.Services[0].Name(); got != "Samba" {
+		t.Fatalf("Services[0].Name() = %q, want Samba to stop before NFS", got)
+	}
+	if got := h.Array.Services[1].Name(); got != "NFS" {
+		t.Fatalf("Services[1].Name() = %q, want NFS", got)
+	}
+	for i, svc := range h.Array.Services {
+		if _, ok := svc.(disk.ServiceUnitController); !ok {
+			t.Fatalf("Services[%d] is %T, want disk.ServiceUnitController", i, svc)
+		}
 	}
 	if len(h.Array.ShareMounts) != 0 {
 		t.Fatalf("ShareMounts = %d, want empty (no persisted share list)", len(h.Array.ShareMounts))
@@ -209,12 +220,16 @@ func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
 		t.Fatal("StopArray: maintenanceMode must be true after a successful stop")
 	}
 	stopCalls := runner.Calls()
-	if len(stopCalls) != 3 {
-		t.Fatalf("StopArray runner calls = %+v, want catch-all then both disks", stopCalls)
+	if len(stopCalls) != 7 {
+		t.Fatalf("StopArray runner calls = %+v, want Samba and NFS's LoadState checked and stopped, then catch-all, then both disks", stopCalls)
 	}
-	requireArgv(t, stopCalls[0], "fusermount", "-u", pool.CatchAllPath)
-	requireArgv(t, stopCalls[1], "systemctl", "stop", "mnt-parity1.mount")
-	requireArgv(t, stopCalls[2], "systemctl", "stop", "mnt-disk1.mount")
+	requireArgv(t, stopCalls[0], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
+	requireArgv(t, stopCalls[1], "systemctl", "stop", "smbd.service")
+	requireArgv(t, stopCalls[2], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
+	requireArgv(t, stopCalls[3], "systemctl", "stop", "nfs-kernel-server.service")
+	requireArgv(t, stopCalls[4], "fusermount", "-u", pool.CatchAllPath)
+	requireArgv(t, stopCalls[5], "systemctl", "stop", "mnt-parity1.mount")
+	requireArgv(t, stopCalls[6], "systemctl", "stop", "mnt-disk1.mount")
 
 	got, err = h.StartArray(ctx)
 	if err != nil {
@@ -224,8 +239,8 @@ func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
 		t.Fatal("StartArray: maintenanceMode must be false after a successful start")
 	}
 	startCalls := runner.Calls()[len(stopCalls):]
-	if len(startCalls) != 3 {
-		t.Fatalf("StartArray runner calls = %+v, want both disks then catch-all", startCalls)
+	if len(startCalls) != 7 {
+		t.Fatalf("StartArray runner calls = %+v, want both disks, then catch-all, then NFS and Samba's LoadState checked and started (reverse of stop order)", startCalls)
 	}
 	requireArgv(t, startCalls[0], "systemctl", "start", "mnt-parity1.mount")
 	requireArgv(t, startCalls[1], "systemctl", "start", "mnt-disk1.mount")
@@ -234,6 +249,56 @@ func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
 	}
 	if len(startCalls[2].Args) == 0 || startCalls[2].Args[len(startCalls[2].Args)-1] != pool.CatchAllPath {
 		t.Fatalf("StartArray catch-all argv = %v, want mountpoint %q", startCalls[2].Args, pool.CatchAllPath)
+	}
+	requireArgv(t, startCalls[3], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
+	requireArgv(t, startCalls[4], "systemctl", "start", "nfs-kernel-server.service")
+	requireArgv(t, startCalls[5], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
+	requireArgv(t, startCalls[6], "systemctl", "start", "smbd.service")
+}
+
+// TestNewArraySequence_StopAbortsBeforeAnyUnmountWhenSambaFailsToStop is
+// #309's own central data-loss scenario, reachable through the real
+// wiring: Samba refusing to release a client's connection must abort
+// StopArray before the catch-all or any disk unmounts, leaving the array
+// mounted — exactly the "a client still connected can write into the bare
+// mountpoint" failure mode #309 describes. It fails against the
+// newArraySequence on dev, which never populates Services at all.
+func TestNewArraySequence_StopAbortsBeforeAnyUnmountWhenSambaFailsToStop(t *testing.T) {
+	ctx, h, arrays, shares, disks, runner := newArrayTestEnv(t)
+	assigned := persistSampleArray(t, arrays)
+	presentMatchingDisks(disks, assigned)
+	attachDaemonArray(t, ctx, h, arrays, shares, disks, runner)
+
+	realCatchAll, ok := h.Array.CatchAll.(pool.MountController)
+	if !ok {
+		t.Fatalf("CatchAll is %T, want pool.MountController for argv extraction", h.Array.CatchAll)
+	}
+	h.Array.CatchAll = arrayTestCatchAll{
+		where:  pool.CatchAllPath,
+		argv:   realCatchAll.Mnt.Argv(),
+		runner: runner,
+	}
+
+	runner.Script("systemctl", []string{"stop", "smbd.service"}, nil, fmt.Errorf("smbd.service: Job failed, unit is holding open files"))
+
+	_, err := h.StopArray(ctx, confirmStop())
+	if err == nil {
+		t.Fatal("StopArray: got nil error, want Samba's stop failure to propagate")
+	}
+
+	calls := runner.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("StopArray runner calls = %+v, want only Samba's LoadState check and its failed stop — the array must stay mounted", calls)
+	}
+	requireArgv(t, calls[0], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
+	requireArgv(t, calls[1], "systemctl", "stop", "smbd.service")
+
+	status, err := h.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if !status.MaintenanceMode.Or(false) {
+		t.Fatal("GetStatus: maintenanceMode must still be true — a failed stop must not silently fall back to normal operation")
 	}
 }
 
@@ -304,14 +369,18 @@ func TestNewArraySequence_SharesRejoinStopAndStart(t *testing.T) {
 		t.Fatal("StopArray: maintenanceMode must be true after a successful stop")
 	}
 	stopCalls := runner.Calls()
-	if len(stopCalls) != 5 {
-		t.Fatalf("StopArray runner calls = %+v, want the share mount, its mover target, the catch-all, then both disks", stopCalls)
+	if len(stopCalls) != 9 {
+		t.Fatalf("StopArray runner calls = %+v, want Samba and NFS's LoadState checked and stopped, then the share mount, its mover target, the catch-all, then both disks", stopCalls)
 	}
-	requireArgv(t, stopCalls[0], "fusermount", "-u", pool.SharePath("media"))
-	requireArgv(t, stopCalls[1], "fusermount", "-u", pool.MoverTargetPath("media"))
-	requireArgv(t, stopCalls[2], "fusermount", "-u", pool.CatchAllPath)
-	requireArgv(t, stopCalls[3], "systemctl", "stop", "mnt-parity1.mount")
-	requireArgv(t, stopCalls[4], "systemctl", "stop", "mnt-disk1.mount")
+	requireArgv(t, stopCalls[0], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
+	requireArgv(t, stopCalls[1], "systemctl", "stop", "smbd.service")
+	requireArgv(t, stopCalls[2], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
+	requireArgv(t, stopCalls[3], "systemctl", "stop", "nfs-kernel-server.service")
+	requireArgv(t, stopCalls[4], "fusermount", "-u", pool.SharePath("media"))
+	requireArgv(t, stopCalls[5], "fusermount", "-u", pool.MoverTargetPath("media"))
+	requireArgv(t, stopCalls[6], "fusermount", "-u", pool.CatchAllPath)
+	requireArgv(t, stopCalls[7], "systemctl", "stop", "mnt-parity1.mount")
+	requireArgv(t, stopCalls[8], "systemctl", "stop", "mnt-disk1.mount")
 
 	got, err = h.StartArray(ctx)
 	if err != nil {
@@ -321,8 +390,8 @@ func TestNewArraySequence_SharesRejoinStopAndStart(t *testing.T) {
 		t.Fatal("StartArray: maintenanceMode must be false after a successful start")
 	}
 	startCalls := runner.Calls()[len(stopCalls):]
-	if len(startCalls) != 5 {
-		t.Fatalf("StartArray runner calls = %+v, want both disks, the catch-all, the share mount, then its mover target", startCalls)
+	if len(startCalls) != 9 {
+		t.Fatalf("StartArray runner calls = %+v, want both disks, the catch-all, the share mount, its mover target, then NFS and Samba's LoadState checked and started", startCalls)
 	}
 	requireArgv(t, startCalls[0], "systemctl", "start", "mnt-parity1.mount")
 	requireArgv(t, startCalls[1], "systemctl", "start", "mnt-disk1.mount")
@@ -335,6 +404,10 @@ func TestNewArraySequence_SharesRejoinStopAndStart(t *testing.T) {
 	if startCalls[4].Name != "mergerfs" || startCalls[4].Args[len(startCalls[4].Args)-1] != pool.MoverTargetPath("media") {
 		t.Fatalf("StartArray call[4] = %+v, want the mover write target mergerfs mount", startCalls[4])
 	}
+	requireArgv(t, startCalls[5], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
+	requireArgv(t, startCalls[6], "systemctl", "start", "nfs-kernel-server.service")
+	requireArgv(t, startCalls[7], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
+	requireArgv(t, startCalls[8], "systemctl", "start", "smbd.service")
 }
 
 // TestNewArraySequence_NilWhenNoArray is the empty-path half of the
@@ -597,13 +670,26 @@ func TestHandler_CreateArray_RefreshesArraySequenceWithoutRestart(t *testing.T) 
 		t.Fatal("StartArray: maintenanceMode must be false after a successful start")
 	}
 	startCalls := runner.Calls()
-	if len(startCalls) == 0 {
-		t.Fatal("StartArray ran no mount calls — array/start did nothing")
+	if len(startCalls) < 3 {
+		t.Fatal("StartArray ran too few calls — want at least the catch-all mount and both services started")
 	}
-	last := startCalls[len(startCalls)-1]
-	if last.Name != "mergerfs" {
-		t.Fatalf("StartArray's last call = %+v, want mergerfs (the catch-all)", last)
+	catchAllIdx := -1
+	for i, c := range startCalls {
+		if c.Name == "mergerfs" {
+			catchAllIdx = i
+		}
 	}
+	if catchAllIdx == -1 {
+		t.Fatalf("StartArray calls = %+v, want a mergerfs call for the catch-all", startCalls)
+	}
+	after := startCalls[catchAllIdx+1:]
+	if len(after) != 4 {
+		t.Fatalf("calls after the catch-all mount = %+v, want NFS then Samba's LoadState checked and started (reverse of stop order)", after)
+	}
+	requireArgv(t, after[0], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
+	requireArgv(t, after[1], "systemctl", "start", "nfs-kernel-server.service")
+	requireArgv(t, after[2], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
+	requireArgv(t, after[3], "systemctl", "start", "smbd.service")
 }
 
 // failOnMountMounter is share.Mounter's Mount fake for

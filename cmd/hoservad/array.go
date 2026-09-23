@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 
+	cfggen "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/pool"
@@ -26,6 +27,13 @@ import (
 // share exists, and Start never remounts a share at all — a share that
 // survives to a reboot loses its own mount and its mover write target
 // until something other than array start remounts it by hand.
+//
+// Services always carries Samba and NFS (doc 02 §4's "Samba and NFS
+// stop"/"start" step, #309) — even when there are no data mounts yet —
+// so ArraySequence.Stop always stops them before any unmount can run,
+// and every caller (array stop, the UPS low-battery shutdown, the
+// update reboot) gets the same ordering because they all run this one
+// sequence.
 func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *store.ArrayStore, shares *store.ShareStore, disks disk.Provider, runner disk.Runner) (*job.ArraySequence, error) {
 	settings, assigned, err := arrays.GetArray(ctx)
 	if err != nil {
@@ -93,7 +101,11 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 	seq := &job.ArraySequence{
 		Scheduler: scheduler,
 		Gate:      gate,
-		Disks:     diskMounts,
+		Services: []job.ArrayService{
+			disk.ServiceUnitController{ServiceName: "Samba", Unit: cfggen.SambaServiceUnit, Runner: runner},
+			disk.ServiceUnitController{ServiceName: "NFS", Unit: cfggen.NFSServiceUnit, Runner: runner},
+		},
+		Disks: diskMounts,
 	}
 	if len(dataMounts) == 0 {
 		return seq, nil

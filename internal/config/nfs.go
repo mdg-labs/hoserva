@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// NFSServiceUnit is nfs-kernel-server's systemd service unit on Debian
+// (doc 01 §1's table).
+const NFSServiceUnit = "nfs-kernel-server.service"
+
 // NFSShare is the NFS slice of a share RenderNFSExports needs. Disabled
 // shares are omitted by the caller, not rendered as empty lines.
 type NFSShare struct {

@@ -144,15 +144,19 @@ func TestUPSController_LowBatteryAfterLiveArrayCreation_StopsRealArrayFirst(t *t
 	if last.Name != "systemctl" || len(last.Args) != 1 || last.Args[0] != "poweroff" {
 		t.Fatalf("last call = %+v, want the final `systemctl poweroff`", last)
 	}
-	if len(calls) < 2 {
-		t.Fatalf("calls = %+v, want at least one real unmount before poweroff — a stale/empty ArraySequence would jump straight to poweroff, which is exactly #263's data-loss scenario", calls)
+	if len(calls) < 6 {
+		t.Fatalf("calls = %+v, want Samba and NFS's LoadState checked and stopped and at least one real unmount before poweroff — a stale/empty ArraySequence would jump straight to poweroff, which is exactly #263's data-loss scenario", calls)
 	}
 	for _, c := range calls[:len(calls)-1] {
 		if c.Name == "systemctl" && len(c.Args) == 1 && c.Args[0] == "poweroff" {
 			t.Fatalf("poweroff ran before every unmount finished: %+v", calls)
 		}
 	}
-	requireArgv(t, calls[0], "fusermount", "-u", pool.CatchAllPath)
+	requireArgv(t, calls[0], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
+	requireArgv(t, calls[1], "systemctl", "stop", "smbd.service")
+	requireArgv(t, calls[2], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
+	requireArgv(t, calls[3], "systemctl", "stop", "nfs-kernel-server.service")
+	requireArgv(t, calls[4], "fusermount", "-u", pool.CatchAllPath)
 }
 
 // TestUpdateEngine_RebootAfterLiveArrayCreation_StopsRealArrayFirst is the
@@ -178,5 +182,9 @@ func TestUpdateEngine_RebootAfterLiveArrayCreation_StopsRealArrayFirst(t *testin
 	if len(calls) == 0 {
 		t.Fatal("Reboot's own shutdown stopped nothing — want the real array's own unmounts, exactly #263's data-loss scenario if it stayed stale/nil")
 	}
-	requireArgv(t, calls[0], "fusermount", "-u", pool.CatchAllPath)
+	requireArgv(t, calls[0], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
+	requireArgv(t, calls[1], "systemctl", "stop", "smbd.service")
+	requireArgv(t, calls[2], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
+	requireArgv(t, calls[3], "systemctl", "stop", "nfs-kernel-server.service")
+	requireArgv(t, calls[4], "fusermount", "-u", pool.CatchAllPath)
 }
