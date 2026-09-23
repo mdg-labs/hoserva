@@ -168,7 +168,11 @@ func EvacuationFits(ctx context.Context, statter SpaceStatter, dataDisks []strin
 			found = true
 			continue
 		}
-		remainingFree += d.FreeBytes - minFreeBytes
+		// A disk already below minfreespace takes nothing, but must not
+		// cancel out headroom the other disks do have.
+		if headroom := d.FreeBytes - minFreeBytes; headroom > 0 {
+			remainingFree += headroom
+		}
 	}
 	if !found {
 		return false, fmt.Errorf("%w: %s", ErrDiskNotInPool, evacuating)

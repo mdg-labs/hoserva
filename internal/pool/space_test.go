@@ -183,6 +183,27 @@ func TestEvacuationFits_RespectsMinFreeSpaceOnRemainingDisks(t *testing.T) {
 	}
 }
 
+// TestEvacuationFits_DiskBelowMinFreeSpaceDoesNotSubtractHeadroom: disk2
+// is already under minfreespace, disk3 alone can hold disk1's 40G. The
+// check is conservative — it may pass a plan that later fails, never
+// refuse one the pool can hold — so disk2 contributes zero, not -20G.
+func TestEvacuationFits_DiskBelowMinFreeSpaceDoesNotSubtractHeadroom(t *testing.T) {
+	ctx := context.Background()
+	statter := fakeSpaceStatter{stats: map[string]SpaceStat{
+		"/mnt/disk1": {TotalBytes: 100 * (1 << 30), FreeBytes: 60 * (1 << 30)}, // 40G used
+		"/mnt/disk2": {TotalBytes: 100 * (1 << 30), FreeBytes: 5 * (1 << 30)},
+		"/mnt/disk3": {TotalBytes: 100 * (1 << 30), FreeBytes: 70 * (1 << 30)},
+	}}
+
+	fits, err := EvacuationFits(ctx, statter, []string{"/mnt/disk1", "/mnt/disk2", "/mnt/disk3"}, "/mnt/disk1", "25G")
+	if err != nil {
+		t.Fatalf("EvacuationFits: %v", err)
+	}
+	if !fits {
+		t.Fatal("EvacuationFits = false, want true — disk3 alone has 45G of headroom for 40G")
+	}
+}
+
 func TestEvacuationFits_ErrorsWhenDiskNotInPool(t *testing.T) {
 	ctx := context.Background()
 	statter := fakeSpaceStatter{stats: map[string]SpaceStat{
