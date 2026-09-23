@@ -29,7 +29,7 @@ lab_id_valid "$HOSERVA_LAB_ID" \
 cd -- "$ROOT"
 
 GO="${GO:-go}"
-OUT_DIR="${ROOT}/bin/lab-tests"
+OUT_DIR="${ROOT}/bin/lab-tests/${HOSERVA_LAB_ID}"
 mkdir -p -- "$OUT_DIR"
 
 compose_cmd=(docker compose -f docker-compose.dev.yml)
@@ -71,7 +71,7 @@ for pkg_dir in "${lab_pkgs[@]}"; do
   # internal-parity.test) so two packages never overwrite each other.
   bin_name="${pkg_dir//\//-}.test"
   bin_path="$OUT_DIR/$bin_name"
-  echo "run-lab-tests[$HOSERVA_LAB_ID]: go test -tags lab -c -o bin/lab-tests/$bin_name ./$pkg_dir"
+  echo "run-lab-tests[$HOSERVA_LAB_ID]: go test -tags lab -c -o bin/lab-tests/${HOSERVA_LAB_ID}/$bin_name ./$pkg_dir"
   # CGO_ENABLED=0 matches the L3 harness (array-sequence-check.sh): the
   # lab image is Debian glibc, but a static binary avoids any host/lab
   # libc skew and never needs a C compiler on the host.
@@ -90,7 +90,7 @@ for i in "${!binaries[@]}"; do
   bin_path="${binaries[$i]}"
   pkg_dir="${bin_pkgs[$i]}"
   bin_name="$(basename -- "$bin_path")"
-  container_bin="/src/bin/lab-tests/$bin_name"
+  container_bin="/src/bin/lab-tests/$HOSERVA_LAB_ID/$bin_name"
 
   echo "run-lab-tests[$HOSERVA_LAB_ID]: resetting standing array before ./$pkg_dir"
   lab_exec bash /src/scripts/devenv/destroy-array.sh
