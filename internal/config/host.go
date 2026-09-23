@@ -380,6 +380,15 @@ func ParseNFSExportDetails(raw []byte) ([]NFSExportDetails, error) {
 		hosts := make([]string, 0, len(fields)-1)
 		squash := "root_squash"
 		for _, spec := range fields[1:] {
+			// exports(5) allows one default-options field, beginning
+			// with '-', between the path and the clients. It is not a
+			// client host; its squash setting is the default for the line.
+			if strings.HasPrefix(spec, "-") {
+				if s := nfsSquashFromOpts(strings.TrimPrefix(spec, "-")); s != "" {
+					squash = s
+				}
+				continue
+			}
 			host, opts := splitNFSClient(spec)
 			if host == "" {
 				continue

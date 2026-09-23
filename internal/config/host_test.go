@@ -89,6 +89,23 @@ func TestParseNFSExportDetails(t *testing.T) {
 	}
 }
 
+func TestParseNFSExportDetails_DefaultOptionsAreNotHosts(t *testing.T) {
+	raw := []byte("/srv/data -ro,no_root_squash 192.168.1.0/24(rw)\n")
+	got, err := ParseNFSExportDetails(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("details = %+v", got)
+	}
+	if len(got[0].Hosts) != 1 || got[0].Hosts[0] != "192.168.1.0/24" {
+		t.Fatalf("hosts = %#v, want only the client", got[0].Hosts)
+	}
+	if got[0].Squash != "no_root_squash" {
+		t.Fatalf("squash = %q, want no_root_squash from the default-options field", got[0].Squash)
+	}
+}
+
 func TestParseFstabMountsSkipsPseudoAndKeepsBind(t *testing.T) {
 	raw, err := os.ReadFile("../../testdata/parsers/host_fstab")
 	if err != nil {
