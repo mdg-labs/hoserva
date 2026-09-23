@@ -156,6 +156,40 @@ describe("SharesPage", () => {
 
     expect(await screen.findByText("1.00 MiB")).toBeInTheDocument();
   });
+
+  it("shows a maintenance-mode refusal inside the create dialog", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/shares") {
+        return Promise.resolve({ data: { shares: [] }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    mockPost.mockResolvedValue({
+      error: {
+        code: "maintenance_mode",
+        message: "maintenance mode is active — no new jobs are accepted",
+      },
+      response: { ok: false },
+    });
+
+    render(
+      <MemoryRouter>
+        <SharesPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("No shares yet")).toBeInTheDocument();
+    const openButtons = screen.getAllByRole("button", { name: "Create share" });
+    fireEvent.click(openButtons[0]);
+    fireEvent.change(await screen.findByLabelText("Share name"), { target: { value: "hidden" } });
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create share" }));
+
+    expect(
+      await within(dialog).findByText(/The array is stopped\. Start the array before creating/),
+    ).toBeInTheDocument();
+    expect(mockPost).toHaveBeenCalled();
+  });
 });
 
 describe("ShareDetailPage danger zone", () => {

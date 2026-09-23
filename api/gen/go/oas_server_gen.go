@@ -143,7 +143,9 @@ type Handler interface {
 	//
 	// Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the
 	// per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1,
-	// doc 03 §4).
+	// doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would
+	// mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those
+	// writes.
 	//
 	// POST /shares
 	CreateShare(ctx context.Context, req *CreateShareRequest) (*Share, error)
@@ -172,7 +174,9 @@ type Handler interface {
 	// DeleteShare implements deleteShare operation.
 	//
 	// Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc
-	// 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`.
+	// 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`. Refused
+	// with 409 `maintenance_mode` while the array is stopped (Q70): delete would unmount and rewrite share
+	// mounts against bare disk mountpoints on the root filesystem.
 	//
 	// DELETE /shares/{name}
 	DeleteShare(ctx context.Context, req *ConfirmShareRequest, params DeleteShareParams) error
@@ -784,7 +788,9 @@ type Handler interface {
 	// UpdateShare implements updateShare operation.
 	//
 	// Updates cache mode, create policy and SMB options, then regenerates the per-share mount and
-	// `smb.conf`. Does not relocate existing files (doc 09 §2).
+	// `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while
+	// the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root
+	// filesystem.
 	//
 	// PATCH /shares/{name}
 	UpdateShare(ctx context.Context, req *UpdateShareRequest, params UpdateShareParams) (*Share, error)

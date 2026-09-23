@@ -37,6 +37,7 @@ import {
 } from "@/hooks/share-detail-tabs";
 import { shareAccessOptions } from "@/hooks/share-access-options";
 import { hoservaClient, type components } from "@/lib/api/client";
+import { isApiError } from "@/lib/api/errors";
 import { buildNfsExportLine, buildSmbStanza } from "@/routes/shares/config-preview";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
@@ -48,6 +49,19 @@ type ArrayCreatePolicy = components["schemas"]["ArrayCreatePolicy"];
 type ShareAccessLevel = components["schemas"]["ShareAccessLevel"];
 type ShareBrowseEntry = components["schemas"]["ShareBrowseEntry"];
 type ShareDiskUsage = components["schemas"]["ShareDiskUsage"];
+
+function shareMutationError(err: unknown, t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (isApiError(err) && err.code === "maintenance_mode") {
+    return t("shares.errors.maintenanceMode");
+  }
+  if (isApiError(err)) {
+    return err.message;
+  }
+  if (err instanceof Error) {
+    return err.message;
+  }
+  return String(err);
+}
 
 const CREATE_POLICIES: ArrayCreatePolicy[] = ["mspmfs", "mfs", "lfs", "ff"];
 const CACHE_MODES: ShareCacheMode[] = ["cache-then-move", "cache-only", "array-only"];
@@ -89,6 +103,7 @@ export function ShareDetailPage(): React.ReactElement {
   const [cacheModeDraft, setCacheModeDraft] = useState<ShareCacheMode>("cache-then-move");
   const [cacheConfirmOpen, setCacheConfirmOpen] = useState(false);
   const [savingCache, setSavingCache] = useState(false);
+  const [cacheDialogError, setCacheDialogError] = useState<string | null>(null);
 
   const [smbDraft, setSmbDraft] = useState<ShareSMB | null>(null);
   const [savingSmb, setSavingSmb] = useState(false);
@@ -109,6 +124,7 @@ export function ShareDetailPage(): React.ReactElement {
 
   const [removeOpen, setRemoveOpen] = useState(false);
   const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeDialogError, setRemoveDialogError] = useState<string | null>(null);
   const [deleteDataOpen, setDeleteDataOpen] = useState(false);
   const [deleteDataConfirm, setDeleteDataConfirm] = useState("");
   const [deleteDataBusy, setDeleteDataBusy] = useState(false);
@@ -169,18 +185,23 @@ export function ShareDetailPage(): React.ReactElement {
 
   async function saveShare(patch: Partial<components["schemas"]["UpdateShareRequest"]>): Promise<boolean> {
     setSaveError(null);
-    const { data, error: apiError } = await hoservaClient.PATCH("/shares/{name}", {
-      params: { path: { name } },
-      body: patch,
-    });
-    if (apiError) {
-      setSaveError(apiError.message);
+    try {
+      const { data, error: apiError } = await hoservaClient.PATCH("/shares/{name}", {
+        params: { path: { name } },
+        body: patch,
+      });
+      if (apiError) {
+        setSaveError(shareMutationError(apiError, t));
+        return false;
+      }
+      if (data) {
+        setShare(data);
+      }
+      return true;
+    } catch (err: unknown) {
+      setSaveError(shareMutationError(err, t));
       return false;
     }
-    if (data) {
-      setShare(data);
-    }
-    return true;
   }
 
   async function handleSaveAllocation(): Promise<void> {
@@ -194,11 +215,22 @@ export function ShareDetailPage(): React.ReactElement {
 
   async function handleConfirmCacheMode(): Promise<void> {
     setSavingCache(true);
+    setCacheDialogError(null);
     try {
-      const ok = await saveShare({ cacheMode: cacheModeDraft });
-      if (ok) {
-        setCacheConfirmOpen(false);
+      const { data, error: apiError } = await hoservaClient.PATCH("/shares/{name}", {
+        params: { path: { name } },
+        body: { cacheMode: cacheModeDraft },
+      });
+      if (apiError) {
+        setCacheDialogError(shareMutationError(apiError, t));
+        return;
       }
+      if (data) {
+        setShare(data);
+      }
+      setCacheConfirmOpen(false);
+    } catch (err: unknown) {
+      setCacheDialogError(shareMutationError(err, t));
     } finally {
       setSavingCache(false);
     }
@@ -288,16 +320,19 @@ export function ShareDetailPage(): React.ReactElement {
 
   async function handleRemoveDefinition(): Promise<void> {
     setRemoveBusy(true);
+    setRemoveDialogError(null);
     try {
       const { error: apiError } = await hoservaClient.DELETE("/shares/{name}", {
         params: { path: { name } },
         body: { confirm: true },
       });
       if (apiError) {
-        setSaveError(apiError.message);
+        setRemoveDialogError(shareMutationError(apiError, t));
         return;
       }
       navigate(PATHS.shares);
+    } catch (err: unknown) {
+      setRemoveDialogError(shareMutationError(err, t));
     } finally {
       setRemoveBusy(false);
     }
@@ -784,9 +819,14 @@ export function ShareDetailPage(): React.ReactElement {
 
       <ConfirmDialog
         open={cacheConfirmOpen}
-        onOpenChange={setCacheConfirmOpen}
+        onOpenChange={(open) => {
+          setCacheConfirmOpen(open);
+          if (!open) {
+            setCacheDialogError(null);
+          }
+        }}
         title={t("shares.detail.cache.confirmTitle")}
-        description={t("shares.detail.cache.confirmDescription")}
+        description={cacheDialogError ?? t("shares.detail.cache.confirmDescription")}
         loading={savingCache}
         onConfirm={() => void handleConfirmCacheMode()}
       />
@@ -809,9 +849,14 @@ export function ShareDetailPage(): React.ReactElement {
 
       <ConfirmDialog
         open={removeOpen}
-        onOpenChange={setRemoveOpen}
+        onOpenChange={(open) => {
+          setRemoveOpen(open);
+          if (!open) {
+            setRemoveDialogError(null);
+          }
+        }}
         title={t("shares.detail.danger.removeConfirmTitle")}
-        description={t("shares.detail.danger.removeConfirmDescription")}
+        description={removeDialogError ?? t("shares.detail.danger.removeConfirmDescription")}
         destructive
         loading={removeBusy}
         onConfirm={() => void handleRemoveDefinition()}

@@ -67,6 +67,9 @@ func (h *handler) GetShare(ctx context.Context, params apiv1.GetShareParams) (*a
 func (h *handler) CreateShare(ctx context.Context, req *apiv1.CreateShareRequest) (*apiv1.Share, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	name := string(req.Name)
 	if _, ok := h.shares[name]; ok {
 		return nil, errShareExists(req.Name)
@@ -106,6 +109,9 @@ func (h *handler) CreateShare(ctx context.Context, req *apiv1.CreateShareRequest
 func (h *handler) UpdateShare(ctx context.Context, req *apiv1.UpdateShareRequest, params apiv1.UpdateShareParams) (*apiv1.Share, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	s, ok := h.shares[string(params.Name)]
 	if !ok {
 		return nil, errShareNotFound(params.Name)
@@ -133,6 +139,9 @@ func (h *handler) DeleteShare(ctx context.Context, req *apiv1.ConfirmShareReques
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.maintenance {
+		return errMaintenanceMode()
+	}
 	if _, ok := h.shares[string(params.Name)]; !ok {
 		return errShareNotFound(params.Name)
 	}

@@ -808,7 +808,7 @@ export interface paths {
         put?: never;
         /**
          * Create a share
-         * @description Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1, doc 03 §4).
+         * @description Persists the share (D4), creates its directory tree on the branches its cache mode uses, writes the per-share mergerfs mount through the existing pool renderer, and regenerates `smb.conf` (doc 02 §1, doc 03 §4). Refused with 409 `maintenance_mode` while the array is stopped (Q70): create would mkdir under bare disk mountpoints on the root filesystem, and the next array start would hide those writes.
          */
         post: operations["createShare"];
         delete?: never;
@@ -835,14 +835,14 @@ export interface paths {
         post?: never;
         /**
          * Delete a share definition
-         * @description Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`.
+         * @description Removes the share row and regenerates mounts and `smb.conf`. Leaves the share's files on disk (doc 03 §4.2 danger zone). `confirm: true` is required. Deleting the data is `deleteShareData`. Refused with 409 `maintenance_mode` while the array is stopped (Q70): delete would unmount and rewrite share mounts against bare disk mountpoints on the root filesystem.
          */
         delete: operations["deleteShare"];
         options?: never;
         head?: never;
         /**
          * Update a share
-         * @description Updates cache mode, create policy and SMB options, then regenerates the per-share mount and `smb.conf`. Does not relocate existing files (doc 09 §2).
+         * @description Updates cache mode, create policy and SMB options, then regenerates the per-share mount and `smb.conf`. Does not relocate existing files (doc 09 §2). Refused with 409 `maintenance_mode` while the array is stopped (Q70): update would mkdir and remount under bare disk mountpoints on the root filesystem.
          */
         patch: operations["updateShare"];
         trace?: never;
