@@ -244,6 +244,53 @@ func TestHandler_GetPool_MatchesRenumberedDiskByIdentity(t *testing.T) {
 	}
 }
 
+// TestHandler_GetPool_WeakIdentityDifferentSizeIsNotTheMember is #327
+// through GET /pool: a stored weak-identity member with a recorded size
+// must not be matched by a same-UUID inventory disk of a different
+// capacity — that is the data-loss path when the real member is gone and
+// only a clone remains.
+func TestHandler_GetPool_WeakIdentityDifferentSizeIsNotTheMember(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sdz", disk.Disk{Size: 8 * disk.TB, WeakIdentity: true, FSUUID: "uuid-weak"})
+	h.Disks = p
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-weak", WeakIdentity: true, Mountpoint: "/mnt/disk1", Size: 4 * disk.TB, SizeSet: true},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	byDevice := make(map[string]apiv1.PoolDiskEntry, len(got.Disks))
+	var missing *apiv1.PoolDiskEntry
+	for i, e := range got.Disks {
+		if e.Device != "" {
+			byDevice[e.Device] = e
+		}
+		if e.State == apiv1.DiskStateMissing {
+			missing = &got.Disks[i]
+		}
+	}
+	if e := byDevice["/dev/sdz"]; e.Role != apiv1.PoolDiskEntryRoleUnassigned {
+		t.Fatalf("different-size clone reported as %s member; want unassigned", e.Role)
+	}
+	if missing == nil || missing.Role != apiv1.PoolDiskEntryRoleData || missing.MountPoint != "/mnt/disk1" {
+		t.Fatalf("missing member = %+v, want data at /mnt/disk1", missing)
+	}
+}
+
 // TestHandler_GetPool_MatchesWeakIdentityDiskByFilesystemUUID is #326: a
 // weak-identity disk (no wwn/serial by-id link at all, e.g. every disk in
 // the loop-device lab, doc 06 §3) has nothing for disk.Identity.Matches to

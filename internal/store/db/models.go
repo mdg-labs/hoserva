@@ -35,6 +35,7 @@ type ArrayDisk struct {
 	Device       string         `json:"device"`
 	Filesystem   string         `json:"filesystem"`
 	FsUuid       string         `json:"fs_uuid"`
+	SizeBytes    sql.NullInt64  `json:"size_bytes"`
 	Wwn          sql.NullString `json:"wwn"`
 	Serial       sql.NullString `json:"serial"`
 	ByIDName     sql.NullString `json:"by_id_name"`

@@ -23,7 +23,7 @@ func (q *Queries) CountArraySettings(ctx context.Context) (int64, error) {
 
 const getArrayDataDiskByMountpoint = `-- name: GetArrayDataDiskByMountpoint :one
 SELECT
-    id, role, role_index, device, filesystem, fs_uuid,
+    id, role, role_index, device, filesystem, fs_uuid, size_bytes,
     wwn, serial, by_id_name, weak_identity, mountpoint
 FROM array_disks WHERE mountpoint = ? AND role = 'data'
 `
@@ -38,6 +38,7 @@ func (q *Queries) GetArrayDataDiskByMountpoint(ctx context.Context, mountpoint s
 		&i.Device,
 		&i.Filesystem,
 		&i.FsUuid,
+		&i.SizeBytes,
 		&i.Wwn,
 		&i.Serial,
 		&i.ByIDName,
@@ -66,10 +67,10 @@ func (q *Queries) GetArraySettings(ctx context.Context) (*ArraySetting, error) {
 
 const insertArrayDisk = `-- name: InsertArrayDisk :exec
 INSERT INTO array_disks (
-    role, role_index, device, filesystem, fs_uuid,
+    role, role_index, device, filesystem, fs_uuid, size_bytes,
     wwn, serial, by_id_name, weak_identity, mountpoint
 ) VALUES (
-    ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?
 )
 `
@@ -80,6 +81,7 @@ type InsertArrayDiskParams struct {
 	Device       string         `json:"device"`
 	Filesystem   string         `json:"filesystem"`
 	FsUuid       string         `json:"fs_uuid"`
+	SizeBytes    sql.NullInt64  `json:"size_bytes"`
 	Wwn          sql.NullString `json:"wwn"`
 	Serial       sql.NullString `json:"serial"`
 	ByIDName     sql.NullString `json:"by_id_name"`
@@ -94,6 +96,7 @@ func (q *Queries) InsertArrayDisk(ctx context.Context, arg InsertArrayDiskParams
 		arg.Device,
 		arg.Filesystem,
 		arg.FsUuid,
+		arg.SizeBytes,
 		arg.Wwn,
 		arg.Serial,
 		arg.ByIDName,
@@ -128,7 +131,7 @@ func (q *Queries) InsertArraySettings(ctx context.Context, arg InsertArraySettin
 
 const listArrayDisks = `-- name: ListArrayDisks :many
 SELECT
-    id, role, role_index, device, filesystem, fs_uuid,
+    id, role, role_index, device, filesystem, fs_uuid, size_bytes,
     wwn, serial, by_id_name, weak_identity, mountpoint
 FROM array_disks
 ORDER BY
@@ -157,6 +160,7 @@ func (q *Queries) ListArrayDisks(ctx context.Context) ([]*ArrayDisk, error) {
 			&i.Device,
 			&i.Filesystem,
 			&i.FsUuid,
+			&i.SizeBytes,
 			&i.Wwn,
 			&i.Serial,
 			&i.ByIDName,
@@ -178,7 +182,7 @@ func (q *Queries) ListArrayDisks(ctx context.Context) ([]*ArrayDisk, error) {
 
 const replaceArrayDataDiskIdentity = `-- name: ReplaceArrayDataDiskIdentity :execrows
 UPDATE array_disks
-SET device = ?, filesystem = ?, fs_uuid = ?,
+SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
     wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?
 WHERE mountpoint = ? AND role = 'data'
 `
@@ -187,6 +191,7 @@ type ReplaceArrayDataDiskIdentityParams struct {
 	Device       string         `json:"device"`
 	Filesystem   string         `json:"filesystem"`
 	FsUuid       string         `json:"fs_uuid"`
+	SizeBytes    sql.NullInt64  `json:"size_bytes"`
 	Wwn          sql.NullString `json:"wwn"`
 	Serial       sql.NullString `json:"serial"`
 	ByIDName     sql.NullString `json:"by_id_name"`
@@ -199,6 +204,7 @@ func (q *Queries) ReplaceArrayDataDiskIdentity(ctx context.Context, arg ReplaceA
 		arg.Device,
 		arg.Filesystem,
 		arg.FsUuid,
+		arg.SizeBytes,
 		arg.Wwn,
 		arg.Serial,
 		arg.ByIDName,
@@ -213,16 +219,17 @@ func (q *Queries) ReplaceArrayDataDiskIdentity(ctx context.Context, arg ReplaceA
 
 const upgradeArrayParityDiskSlot = `-- name: UpgradeArrayParityDiskSlot :execrows
 UPDATE array_disks
-SET device = ?, filesystem = ?, fs_uuid = ?,
+SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
     wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?,
-    mountpoint = ?8
-WHERE mountpoint = ?9 AND role = 'parity'
+    mountpoint = ?9
+WHERE mountpoint = ?10 AND role = 'parity'
 `
 
 type UpgradeArrayParityDiskSlotParams struct {
 	Device        string         `json:"device"`
 	Filesystem    string         `json:"filesystem"`
 	FsUuid        string         `json:"fs_uuid"`
+	SizeBytes     sql.NullInt64  `json:"size_bytes"`
 	Wwn           sql.NullString `json:"wwn"`
 	Serial        sql.NullString `json:"serial"`
 	ByIDName      sql.NullString `json:"by_id_name"`
@@ -236,6 +243,7 @@ func (q *Queries) UpgradeArrayParityDiskSlot(ctx context.Context, arg UpgradeArr
 		arg.Device,
 		arg.Filesystem,
 		arg.FsUuid,
+		arg.SizeBytes,
 		arg.Wwn,
 		arg.Serial,
 		arg.ByIDName,

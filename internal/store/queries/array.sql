@@ -18,16 +18,16 @@ SELECT COUNT(*) FROM array_settings;
 
 -- name: InsertArrayDisk :exec
 INSERT INTO array_disks (
-    role, role_index, device, filesystem, fs_uuid,
+    role, role_index, device, filesystem, fs_uuid, size_bytes,
     wwn, serial, by_id_name, weak_identity, mountpoint
 ) VALUES (
-    ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?
 );
 
 -- name: ListArrayDisks :many
 SELECT
-    id, role, role_index, device, filesystem, fs_uuid,
+    id, role, role_index, device, filesystem, fs_uuid, size_bytes,
     wwn, serial, by_id_name, weak_identity, mountpoint
 FROM array_disks
 ORDER BY
@@ -41,19 +41,19 @@ ORDER BY
 
 -- name: GetArrayDataDiskByMountpoint :one
 SELECT
-    id, role, role_index, device, filesystem, fs_uuid,
+    id, role, role_index, device, filesystem, fs_uuid, size_bytes,
     wwn, serial, by_id_name, weak_identity, mountpoint
 FROM array_disks WHERE mountpoint = ? AND role = 'data';
 
 -- name: ReplaceArrayDataDiskIdentity :execrows
 UPDATE array_disks
-SET device = ?, filesystem = ?, fs_uuid = ?,
+SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
     wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?
 WHERE mountpoint = ? AND role = 'data';
 
 -- name: UpgradeArrayParityDiskSlot :execrows
 UPDATE array_disks
-SET device = ?, filesystem = ?, fs_uuid = ?,
+SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
     wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?,
     mountpoint = sqlc.arg(new_mountpoint)
 WHERE mountpoint = sqlc.arg(old_mountpoint) AND role = 'parity';

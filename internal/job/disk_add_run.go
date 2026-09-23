@@ -119,7 +119,7 @@ func RunDiskAdd(d DiskAddDeps) RunFunc {
 			return err
 		}
 
-		if err := d.Store.AddDataDisk(ctx, store.ArrayDisk{
+		row := store.ArrayDisk{
 			Role:         store.ArrayRoleData,
 			RoleIndex:    roleIndex,
 			Device:       params.Disk.Device,
@@ -130,7 +130,12 @@ func RunDiskAdd(d DiskAddDeps) RunFunc {
 			ByIDName:     params.Disk.ByIDName,
 			WeakIdentity: params.Disk.WeakIdentity,
 			Mountpoint:   mountpoint,
-		}); err != nil {
+		}
+		if size, ok := params.Sizes[params.Disk.Device]; ok {
+			row.Size = size
+			row.SizeSet = true
+		}
+		if err := d.Store.AddDataDisk(ctx, row); err != nil {
 			return err
 		}
 

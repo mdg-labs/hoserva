@@ -127,7 +127,7 @@ func RunDiskReplace(d DiskReplaceDeps) RunFunc {
 			return err
 		}
 
-		if err := d.Store.ReplaceDataDisk(ctx, params.Mountpoint, store.ArrayDisk{
+		row := store.ArrayDisk{
 			Device:       params.Disk.Device,
 			Filesystem:   string(params.Disk.Filesystem),
 			FSUUID:       uuid,
@@ -135,7 +135,12 @@ func RunDiskReplace(d DiskReplaceDeps) RunFunc {
 			Serial:       params.Disk.Serial,
 			ByIDName:     params.Disk.ByIDName,
 			WeakIdentity: params.Disk.WeakIdentity,
-		}); err != nil {
+		}
+		if size, ok := params.Sizes[params.Disk.Device]; ok {
+			row.Size = size
+			row.SizeSet = true
+		}
+		if err := d.Store.ReplaceDataDisk(ctx, params.Mountpoint, row); err != nil {
 			return err
 		}
 

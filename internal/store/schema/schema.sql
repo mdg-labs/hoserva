@@ -332,10 +332,12 @@ CREATE TABLE array_settings (
 -- mountpoints (doc 01 §6): /mnt/diskN, /mnt/parityN, /mnt/cache (cache is
 -- always role_index 1). fs_uuid is the filesystem UUID mounts bind to
 -- (Q21), recorded after FormatPlan succeeds — a failed format never
--- inserts a row. UNIQUE(device) and UNIQUE(fs_uuid) are a second,
--- database-level guard against one physical disk (or one filesystem)
--- holding two roles. Identities (wwn/serial/by_id_name/weak_identity) are
--- copied from the Provider.List call that populated the wizard.
+-- inserts a row. size_bytes is capacity at join time (Q21 weak-identity
+-- match); NULL for rows written before that column existed.
+-- UNIQUE(device) and UNIQUE(fs_uuid) are a second, database-level guard
+-- against one physical disk (or one filesystem) holding two roles.
+-- Identities (wwn/serial/by_id_name/weak_identity) are copied from the
+-- Provider.List call that populated the wizard.
 CREATE TABLE array_disks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     role TEXT NOT NULL CHECK (role IN ('parity', 'data', 'cache')),
@@ -343,10 +345,11 @@ CREATE TABLE array_disks (
     device TEXT NOT NULL,
     filesystem TEXT NOT NULL,
     fs_uuid TEXT NOT NULL,
+    size_bytes INTEGER,
     wwn TEXT,
     serial TEXT,
     by_id_name TEXT,
-    weak_identity INTEGER NOT NULL CHECK (weak_identity IN (0, 1)),
+    weak_identity INTEGER NOT NULL DEFAULT 0 CHECK (weak_identity IN (0, 1)),
     mountpoint TEXT NOT NULL,
     UNIQUE (role, role_index),
     UNIQUE (device),

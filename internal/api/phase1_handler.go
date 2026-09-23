@@ -106,8 +106,10 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 // its identity, and a different disk that took over its old path is left
 // unmatched. A weak-identity array disk (no wwn/serial by-id link at all,
 // e.g. every disk in the loop-device lab, doc 06 §3) is matched by
-// filesystem UUID instead, since disk.Identity carries no field to compare
-// that through Matches.
+// filesystem UUID and size (Q21) instead, since disk.Identity carries no
+// field to compare those through Matches. When the stored row has no size
+// (NULL, rows from before #327), the match falls back to filesystem UUID
+// alone so an upgrade never leaves a live member unmatched.
 func matchArrayDisk(d disk.Disk, arrayDisks []store.ArrayDisk) (int, bool) {
 	inv := disk.Identity{WWN: d.WWN, Serial: d.Serial, WeakIdentity: d.WeakIdentity, ByIDName: d.ByIDName}
 	for i, ad := range arrayDisks {
@@ -116,6 +118,9 @@ func matchArrayDisk(d disk.Disk, arrayDisks []store.ArrayDisk) (int, bool) {
 			return i, true
 		}
 		if ad.WeakIdentity && d.WeakIdentity && ad.FSUUID != "" && ad.FSUUID == d.FSUUID {
+			if ad.SizeSet && ad.Size != d.Size {
+				continue
+			}
 			return i, true
 		}
 	}
