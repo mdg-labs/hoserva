@@ -826,7 +826,8 @@ export function ShareDetailPage(): React.ReactElement {
           }
         }}
         title={t("shares.detail.cache.confirmTitle")}
-        description={cacheDialogError ?? t("shares.detail.cache.confirmDescription")}
+        description={t("shares.detail.cache.confirmDescription")}
+        error={cacheDialogError}
         loading={savingCache}
         onConfirm={() => void handleConfirmCacheMode()}
       />
@@ -856,7 +857,8 @@ export function ShareDetailPage(): React.ReactElement {
           }
         }}
         title={t("shares.detail.danger.removeConfirmTitle")}
-        description={removeDialogError ?? t("shares.detail.danger.removeConfirmDescription")}
+        description={t("shares.detail.danger.removeConfirmDescription")}
+        error={removeDialogError}
         destructive
         loading={removeBusy}
         onConfirm={() => void handleRemoveDefinition()}
