@@ -68,14 +68,8 @@ func loadOrGenerateTLSCertificate(certPath, keyPath string) (tls.Certificate, er
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("generating self-signed certificate: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(certPath), 0o700); err != nil {
-		return tls.Certificate{}, fmt.Errorf("creating certificate directory: %w", err)
-	}
-	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
-		return tls.Certificate{}, fmt.Errorf("writing certificate: %w", err)
-	}
-	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
-		return tls.Certificate{}, fmt.Errorf("writing certificate key: %w", err)
+	if err := writeTLSCertificatePair(certPath, keyPath, certPEM, keyPEM); err != nil {
+		return tls.Certificate{}, err
 	}
 
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
@@ -140,15 +134,93 @@ func generateSelfSignedCertificate() (certPEM, keyPEM []byte, err error) {
 	return certPEM, keyPEM, nil
 }
 
+// writeTLSCertificatePair persists certPEM/keyPEM at certPath/keyPath.
+// Each file is fully written and fsynced in a hidden temp name first;
+// only after both are ready are they renamed into place and the parent
+// directory fsynced, so a crash mid-write cannot leave a zero-byte or
+// truncated file at the final path.
+func writeTLSCertificatePair(certPath, keyPath string, certPEM, keyPEM []byte) error {
+	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
+		return fmt.Errorf("validating TLS certificate pair: %w", err)
+	}
+	dir := filepath.Dir(certPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creating certificate directory: %w", err)
+	}
+
+	tmpCertPath, err := writeTLSTempFile(dir, "hoserva.crt", certPEM, 0o644)
+	if err != nil {
+		return fmt.Errorf("writing certificate: %w", err)
+	}
+	tmpKeyPath, err := writeTLSTempFile(dir, "hoserva.key", keyPEM, 0o600)
+	if err != nil {
+		_ = os.Remove(tmpCertPath)
+		return fmt.Errorf("writing certificate key: %w", err)
+	}
+
+	if err := os.Rename(tmpKeyPath, keyPath); err != nil {
+		_ = os.Remove(tmpCertPath)
+		_ = os.Remove(tmpKeyPath)
+		return fmt.Errorf("installing certificate key: %w", err)
+	}
+	if err := os.Rename(tmpCertPath, certPath); err != nil {
+		_ = os.Remove(tmpCertPath)
+		return fmt.Errorf("installing certificate: %w", err)
+	}
+	if err := fsyncDir(dir); err != nil {
+		return err
+	}
+	if err := checkTLSKeyPermissions(keyPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeTLSTempFile(dir, base string, data []byte, perm os.FileMode) (string, error) {
+	tmp, err := os.CreateTemp(dir, "."+base+".tmp-*")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	if err := os.Chmod(tmpPath, perm); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	return tmpPath, nil
+}
+
+func fsyncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("opening %s for fsync: %w", dir, err)
+	}
+	defer func() { _ = f.Close() }()
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("syncing directory %s: %w", dir, err)
+	}
+	return nil
+}
+
 // installTLSCertificate atomically replaces certPath/keyPath. Invalid PEM
 // is rejected before any file is touched, so a failed Let's Encrypt
 // install cannot leave the listener without a certificate.
 func installTLSCertificate(certPath, keyPath string, certPEM, keyPEM []byte) error {
 	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
 		return fmt.Errorf("installing TLS certificate: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(certPath), 0o700); err != nil {
-		return fmt.Errorf("creating certificate directory: %w", err)
 	}
 
 	oldCert, _ := os.ReadFile(certPath)
@@ -163,55 +235,7 @@ func installTLSCertificate(certPath, keyPath string, certPEM, keyPEM []byte) err
 		}
 	}
 
-	tmpCert, err := os.CreateTemp(filepath.Dir(certPath), ".hoserva.crt.tmp-*")
-	if err != nil {
-		return fmt.Errorf("creating temp certificate: %w", err)
-	}
-	tmpCertPath := tmpCert.Name()
-	if _, err := tmpCert.Write(certPEM); err != nil {
-		_ = tmpCert.Close()
-		_ = os.Remove(tmpCertPath)
-		return fmt.Errorf("writing temp certificate: %w", err)
-	}
-	if err := tmpCert.Close(); err != nil {
-		_ = os.Remove(tmpCertPath)
-		return fmt.Errorf("closing temp certificate: %w", err)
-	}
-
-	tmpKey, err := os.CreateTemp(filepath.Dir(keyPath), ".hoserva.key.tmp-*")
-	if err != nil {
-		_ = os.Remove(tmpCertPath)
-		return fmt.Errorf("creating temp certificate key: %w", err)
-	}
-	tmpKeyPath := tmpKey.Name()
-	if _, err := tmpKey.Write(keyPEM); err != nil {
-		_ = tmpKey.Close()
-		_ = os.Remove(tmpCertPath)
-		_ = os.Remove(tmpKeyPath)
-		return fmt.Errorf("writing temp certificate key: %w", err)
-	}
-	if err := tmpKey.Close(); err != nil {
-		_ = os.Remove(tmpCertPath)
-		_ = os.Remove(tmpKeyPath)
-		return fmt.Errorf("closing temp certificate key: %w", err)
-	}
-	if err := os.Chmod(tmpKeyPath, 0o600); err != nil {
-		_ = os.Remove(tmpCertPath)
-		_ = os.Remove(tmpKeyPath)
-		return fmt.Errorf("chmod temp certificate key: %w", err)
-	}
-
-	if err := os.Rename(tmpKeyPath, keyPath); err != nil {
-		_ = os.Remove(tmpCertPath)
-		_ = os.Remove(tmpKeyPath)
-		return fmt.Errorf("installing certificate key: %w", err)
-	}
-	if err := os.Rename(tmpCertPath, certPath); err != nil {
-		restore()
-		_ = os.Remove(tmpCertPath)
-		return fmt.Errorf("installing certificate: %w", err)
-	}
-	if err := checkTLSKeyPermissions(keyPath); err != nil {
+	if err := writeTLSCertificatePair(certPath, keyPath, certPEM, keyPEM); err != nil {
 		restore()
 		return err
 	}

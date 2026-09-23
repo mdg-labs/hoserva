@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -55,6 +56,46 @@ func TestLoadOrGenerateTLSCertificateRefusesReadableExistingKey(t *testing.T) {
 
 	if _, err := loadOrGenerateTLSCertificate(certPath, keyPath); err == nil {
 		t.Fatal("expected an error for a group/world-readable existing TLS key file")
+	}
+}
+
+func TestWriteTLSCertificatePairLeavesValidPEMWithoutTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "hoserva.crt")
+	keyPath := filepath.Join(dir, "hoserva.key")
+
+	certPEM, keyPEM, err := generateSelfSignedCertificate()
+	if err != nil {
+		t.Fatalf("generateSelfSignedCertificate: %v", err)
+	}
+	if err := writeTLSCertificatePair(certPath, keyPath, certPEM, keyPEM); err != nil {
+		t.Fatalf("writeTLSCertificatePair: %v", err)
+	}
+	if _, err := tls.LoadX509KeyPair(certPath, keyPath); err != nil {
+		t.Fatalf("final paths should contain valid PEM: %v", err)
+	}
+	certInfo, err := os.Stat(certPath)
+	if err != nil {
+		t.Fatalf("stat cert: %v", err)
+	}
+	if perm := certInfo.Mode().Perm(); perm != 0o644 {
+		t.Errorf("cert file mode = %o, want 0644", perm)
+	}
+	keyInfo, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatalf("stat key: %v", err)
+	}
+	if perm := keyInfo.Mode().Perm(); perm != 0o600 {
+		t.Errorf("key file mode = %o, want 0600", perm)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), ".tmp-") {
+			t.Errorf("temp file left behind: %s", entry.Name())
+		}
 	}
 }
 
