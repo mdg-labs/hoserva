@@ -14,6 +14,7 @@ export type UseApiQueryResult<T> = {
   data: T | null;
   error: string | null;
   loading: boolean;
+  refreshing: boolean;
   refresh: () => Promise<void>;
 };
 
@@ -118,8 +119,11 @@ export function useApiQuery<T>({
       return;
     }
 
+    let cancelled = false;
     queueMicrotask(() => {
-      void startFetch(epoch);
+      if (!cancelled) {
+        void startFetch(epoch);
+      }
     });
 
     let interval: number | undefined;
@@ -130,6 +134,7 @@ export function useApiQuery<T>({
     }
 
     return () => {
+      cancelled = true;
       activeControllerRef.current?.abort();
       activeControllerRef.current = null;
       if (interval !== undefined) {
@@ -138,5 +143,6 @@ export function useApiQuery<T>({
     };
   }, [enabled, epoch, startFetch, pollIntervalMs]);
 
-  return { data, error, loading: enabled && fetching, refresh };
+  const refreshing = enabled && fetching;
+  return { data, error, loading: refreshing && data === null, refreshing, refresh };
 }

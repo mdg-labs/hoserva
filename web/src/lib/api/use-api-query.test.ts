@@ -56,14 +56,58 @@ describe("useApiQuery", () => {
       }),
     );
 
-    unmount();
-
     await waitFor(() => {
       expect(queryFn).toHaveBeenCalled();
     });
+    const signal = queryFn.mock.calls[0]?.[0];
+    unmount();
 
+    expect(signal?.aborted).toBe(true);
     expect(result.current.error).toBeNull();
     expect(result.current.data).toBeNull();
+  });
+
+  it("does not report loading during a refresh that already has data", async () => {
+    const pending = deferred<ClientResult<{ value: string }>>();
+    let call = 0;
+    const queryFn = vi.fn(async (): Promise<ClientResult<{ value: string }>> => {
+      call += 1;
+      if (call === 1) {
+        return { data: { value: "ok" } };
+      }
+      return pending.promise;
+    });
+
+    const { result } = renderHook(() =>
+      useApiQuery({
+        queryKey: "refresh-loading",
+        queryFn,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.data).toEqual({ value: "ok" });
+    });
+
+    await act(async () => {
+      void result.current.refresh();
+    });
+
+    await waitFor(() => {
+      expect(result.current.refreshing).toBe(true);
+    });
+    expect(result.current.loading).toBe(false);
+    expect(result.current.data).toEqual({ value: "ok" });
+
+    await act(async () => {
+      pending.resolve({ data: { value: "next" } });
+    });
+
+    await waitFor(() => {
+      expect(result.current.data).toEqual({ value: "next" });
+    });
+    expect(result.current.loading).toBe(false);
+    expect(result.current.refreshing).toBe(false);
   });
 
   it("keeps the last good value when a refresh fails", async () => {
@@ -160,7 +204,15 @@ describe("useApiQuery", () => {
       { initialProps: { key: "a" } },
     );
 
+    await waitFor(() => {
+      expect(queryFn).toHaveBeenCalledTimes(1);
+    });
+
     rerender({ key: "b" });
+    await waitFor(() => {
+      expect(queryFn).toHaveBeenCalledTimes(2);
+    });
+
     await act(async () => {
       second.resolve({ data: { value: "new" } });
     });
