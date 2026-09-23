@@ -78,11 +78,17 @@ func (s *ResultStore) SaveFromReport(ctx context.Context, report Report, cacheMo
 		return nil
 	}
 	run := PersistedRunFromReport(report)
-	usage, err := ComputeUsageBreakdown(cacheMount, shares, report.FinishedAt)
-	if err != nil {
-		return fmt.Errorf("cache: computing usage breakdown: %w", err)
+	usage, usageErr := ComputeUsageBreakdown(cacheMount, shares, report.FinishedAt)
+	if usageErr != nil {
+		usage = nil
 	}
-	return s.save(ctx, run, usage)
+	if err := s.save(ctx, run, usage); err != nil {
+		return err
+	}
+	if usageErr != nil {
+		return fmt.Errorf("cache: computing usage breakdown (run result saved): %w", usageErr)
+	}
+	return nil
 }
 
 // PersistedRunFromReport maps a cache.Report onto the API/persistence

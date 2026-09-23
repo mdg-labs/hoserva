@@ -116,6 +116,38 @@ func TestResultStore_SaveFromReportPersistsRunAndUsage(t *testing.T) {
 	}
 }
 
+func TestResultStore_SaveFromReportKeepsRunWhenUsageFails(t *testing.T) {
+	ctx := context.Background()
+	s := cache.NewResultStore(newResultTestDB(t))
+	started := time.Date(2026, 9, 23, 3, 0, 0, 0, time.UTC)
+	report := cache.Report{
+		StartedAt:  started,
+		FinishedAt: started.Add(time.Second),
+		Entries:    []cache.Entry{{Share: "movies", Path: "a.mkv", Bytes: 100, Result: cache.ResultMoved}},
+	}
+	cacheMount := t.TempDir()
+	if err := os.Chmod(cacheMount, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(cacheMount, 0o755) })
+	err := s.SaveFromReport(ctx, report, cacheMount, []cache.UsageShare{{
+		Name: "movies", Path: filepath.Join(cacheMount, "movies"), Mode: "cache-then-move",
+	}})
+	if err == nil {
+		t.Fatal("SaveFromReport: want a usage error when the cache mount is missing")
+	}
+	run, err := s.LastRun(ctx)
+	if err != nil {
+		t.Fatalf("LastRun after usage failure: %v", err)
+	}
+	if run.FilesMoved != 1 || run.BytesMoved != 100 {
+		t.Fatalf("persisted run = %+v, want the move kept", run)
+	}
+	if _, err := s.CacheUsage(ctx); err != cache.ErrNoMoverRun {
+		t.Fatalf("CacheUsage = %v, want ErrNoMoverRun when the breakdown failed", err)
+	}
+}
+
 func TestPersistedRunFromReport_ZeroStartedIsIgnoredBySave(t *testing.T) {
 	s := cache.NewResultStore(newResultTestDB(t))
 	if err := s.SaveFromReport(context.Background(), cache.Report{}, "/tmp", nil); err != nil {

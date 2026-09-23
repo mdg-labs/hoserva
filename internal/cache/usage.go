@@ -74,6 +74,9 @@ func sumTreeBytes(root string) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) && path != root {
+				return nil
+			}
 			return err
 		}
 		if d.IsDir() || !d.Type().IsRegular() {
@@ -84,6 +87,9 @@ func sumTreeBytes(root string) (int64, error) {
 		}
 		info, err := d.Info()
 		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			return err
 		}
 		total += info.Size()
