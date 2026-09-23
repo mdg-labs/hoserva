@@ -681,6 +681,48 @@ func (s *Service) restoreGenerated(ctx context.Context) error {
 	return s.Gen.WriteNFS(ctx, nfs, applyCommand, 1, now)
 }
 
+// ApplyTopology brings every share-dependent file up to date after the
+// array's disks changed (doc 02 §4 "Adding a disk" step 6): every share's
+// mount and mover-target unit gains the new data disk's branch, and
+// smb.conf and exports are rewritten from the same state. When live —
+// the array is running, so every data disk is mounted — it also creates
+// each share's branch directory on every data disk, so the branches the
+// live mounts are about to be given exist. It never creates a directory
+// while the array is stopped: an unmounted /mnt/diskN is the boot disk.
+func (s *Service) ApplyTopology(ctx context.Context, live bool) error {
+	if err := s.restoreGenerated(ctx); err != nil {
+		return err
+	}
+	if !live {
+		return nil
+	}
+	_, disks, err := s.array(ctx)
+	if err != nil {
+		return err
+	}
+	data, cache, _ := splitDisks(disks)
+	rows, err := s.Shares.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		sh := shareFromStore(row)
+		roots, err := shareDataRoots(sh.Name, sh.CacheMode, data, cache)
+		if err != nil {
+			return err
+		}
+		for _, dir := range roots {
+			if err := s.FS.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("share: creating branch directory %s: %w", dir, err)
+			}
+			if err := s.ensureShareDirOwnership(dir); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Service) restoreLiveMounts(ctx context.Context, sh Share) error {
 	if s.Mounter == nil || sh.Name == "" {
 		return nil

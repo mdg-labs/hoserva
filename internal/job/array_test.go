@@ -349,3 +349,27 @@ func TestArraySequence_Start_DoesNotExitMaintenanceOnFailure(t *testing.T) {
 		t.Fatal("Start: maintenance mode must stay active when a mount step fails")
 	}
 }
+
+// TestArraySequence_RefreshLive_UpdatesARunningPoolOnly: a disk added to
+// a running array must reach the catch-all and every share mount at once
+// (doc 02 §4 "Adding a disk" step 6), catch-all first; a stopped array is
+// left alone for Start to mount, and no disk or service is touched.
+func TestArraySequence_RefreshLive_UpdatesARunningPoolOnly(t *testing.T) {
+	var log []string
+	seq := ArraySequence{
+		Services:    []ArrayService{&fakeArrayService{name: "samba", log: &log}},
+		Disks:       []ArrayMount{&fakeArrayMount{where: "/mnt/disk1", log: &log}},
+		CatchAll:    &fakeArrayMount{where: "/mnt/user", log: &log},
+		ShareMounts: []ArrayMount{&fakeArrayMount{where: "/mnt/user/media", log: &log}},
+	}
+
+	if err := seq.RefreshLive(context.Background(), false); err != nil {
+		t.Fatalf("RefreshLive(stopped): %v", err)
+	}
+	sliceEqual(t, log, nil)
+
+	if err := seq.RefreshLive(context.Background(), true); err != nil {
+		t.Fatalf("RefreshLive(running): %v", err)
+	}
+	sliceEqual(t, log, []string{"mount:/mnt/user", "mount:/mnt/user/media"})
+}

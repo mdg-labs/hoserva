@@ -13,6 +13,13 @@ import (
 // for physical mounts. It does no exec and touches nothing but a stat of
 // path and its parent, so Mounter.Mount and Mounter.Unmount can call it
 // unconditionally, even outside the lab.
+// IsMounted reports whether path is currently a mount point; a path
+// that does not exist is not one.
+func IsMounted(path string) bool {
+	mounted, err := isMountpoint(path)
+	return err == nil && mounted
+}
+
 func isMountpoint(path string) (bool, error) {
 	dev, err := deviceID(path)
 	if err != nil {

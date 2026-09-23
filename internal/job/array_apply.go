@@ -12,8 +12,9 @@ import (
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
-// applyArrayFromStore generates disk mount units, mergerfs pool units and
-// snapraid.conf from SQLite topology (D4, D1) and mounts each physical
+// applyArrayFromStore generates disk mount units, the catch-all's mergerfs
+// unit and snapraid.conf from SQLite topology (D4, D1) — share units are
+// share.Service's, rewritten by the ArrayReady hook — and mounts each physical
 // disk by the filesystem UUID stored there (Q21). Rewriting units for a
 // disk already mounted is success, not a second format — and, since #288
 // (disk_add/disk_replace call this a second time against disks
@@ -38,7 +39,7 @@ func applyArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Ge
 }
 
 // regenerateArrayFromStore writes every generated file applyArrayFromStore
-// writes — disk mount units, pool mount units and snapraid.conf — from
+// writes — disk mount units, the catch-all unit and snapraid.conf — from
 // SQLite, and mounts nothing (doc 02 §4 Release).
 func regenerateArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Generator, now time.Time) error {
 	_, err := writeArrayFromStore(ctx, st, g, now)
@@ -60,7 +61,7 @@ func writeArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Ge
 	}
 
 	poolState := poolStateFromStore(settings, disks)
-	if err := g.WritePoolMounts(ctx, poolState, arrayCreateCommand, 1, now); err != nil {
+	if err := g.WriteCatchAllMount(ctx, poolState, arrayCreateCommand, 1, now); err != nil {
 		return nil, err
 	}
 

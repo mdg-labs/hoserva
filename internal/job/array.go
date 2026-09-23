@@ -203,6 +203,27 @@ func (s ArraySequence) Stop(ctx context.Context) error {
 	return nil
 }
 
+// RefreshLive applies this sequence's catch-all and share mounts to a
+// pool that is already running — a disk added to a live array joins every
+// branch list at once (doc 02 §4 "Adding a disk" step 6) instead of at
+// the next array start. Each Mount updates an already-live mount in place
+// (pool.Mounter) and mounts one that is missing. A stopped array is left
+// alone; Start mounts it with the same mounts.
+func (s ArraySequence) RefreshLive(ctx context.Context, running bool) error {
+	if !running || s.CatchAll == nil {
+		return nil
+	}
+	if err := s.CatchAll.Mount(ctx); err != nil {
+		return fmt.Errorf("job: updating %s: %w", s.CatchAll.Where(), err)
+	}
+	for _, m := range s.ShareMounts {
+		if err := m.Mount(ctx); err != nil {
+			return fmt.Errorf("job: updating %s: %w", m.Where(), err)
+		}
+	}
+	return nil
+}
+
 // Start reverses Stop: the disks mount first, then the catch-all, then
 // the per-share mounts, then every service starts, in the reverse of its
 // own Stop order (the last thing stopped is the first thing started).

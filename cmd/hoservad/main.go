@@ -346,6 +346,30 @@ func run(cfg config) error {
 	}
 	shareService := newShareService(shareStore, arrayStore, generator, pool.Mounter{Runner: linuxDisks.Exec}, shareUsages)
 	shareService.PostCommit = rebuildArraySequence
+	// topologyChanged is the disk-topology jobs' ArrayReady hook. Those
+	// jobs write only the catch-all's unit, so share.Service rewrites
+	// every share's units with the new branch list first; then the
+	// rebuilt sequence is applied to a pool that is already running, so
+	// an added disk's capacity is available at once (doc 02 §4 "Adding a
+	// disk" step 6) rather than at the next array start. The live update
+	// runs after the topology is committed: its failure is logged, not
+	// returned, because the job cannot be retried once the disk is a
+	// member, and the next array start applies the same mounts.
+	topologyChanged := func(ctx context.Context) error {
+		live := pool.IsMounted(pool.CatchAllPath)
+		if err := shareService.ApplyTopology(ctx, live); err != nil {
+			return fmt.Errorf("regenerating share configuration: %w", err)
+		}
+		if err := rebuildArraySequence(ctx); err != nil {
+			return err
+		}
+		if seq := handler.CurrentArray(); seq != nil {
+			if err := seq.RefreshLive(ctx, live); err != nil {
+				log.Printf("hoservad: the running pool did not pick up the new disk topology: %v — stop and start the array to apply it", err)
+			}
+		}
+		return nil
+	}
 	handler.Scheduler = scheduler
 	handler.Store = jobStore
 	handler.Logs = logs
@@ -376,7 +400,7 @@ func run(cfg config) error {
 		Store:      arrayStore,
 		Generator:  generator,
 		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
-		ArrayReady: rebuildArraySequence,
+		ArrayReady: topologyChanged,
 	}))
 	registry.Register(job.TypeDiskAdd, false, job.RunDiskAdd(job.DiskAddDeps{
 		Provider:   disks,
@@ -384,7 +408,7 @@ func run(cfg config) error {
 		Store:      arrayStore,
 		Generator:  generator,
 		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
-		ArrayReady: rebuildArraySequence,
+		ArrayReady: topologyChanged,
 	}))
 	// replaceParityEngine is left a true nil interface, not a non-nil
 	// interface wrapping a nil *parity.SnapraidEngine, when snapraid.conf
@@ -411,7 +435,7 @@ func run(cfg config) error {
 		Generator:  generator,
 		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
 		Parity:     replaceParityEngine,
-		ArrayReady: rebuildArraySequence,
+		ArrayReady: topologyChanged,
 	}))
 	// The data-disk upgrade (doc 02 §4 state machine): its run, its abort
 	// (Cancel of a queued or interrupted upgrade) and startup recovery
@@ -426,7 +450,7 @@ func run(cfg config) error {
 		Parity:     replaceParityEngine,
 		Mounts:     disk.KernelMounts{Runner: linuxDisks.Exec},
 		Array:      handler.CurrentArray,
-		ArrayReady: rebuildArraySequence,
+		ArrayReady: topologyChanged,
 	}
 	registry.Register(job.TypeDiskUpgradeData, true, job.RunDiskUpgradeData(upgradeDataDeps))
 	registry.RegisterAbort(job.TypeDiskUpgradeData, job.AbortDiskUpgradeData(upgradeDataDeps))
@@ -438,7 +462,7 @@ func run(cfg config) error {
 		Mounter:        disk.SystemdMounter{Runner: linuxDisks.Exec},
 		UpgradeMounter: disk.DirectMounter{Runner: linuxDisks.Exec},
 		Parity:         replaceParityEngine,
-		ArrayReady:     rebuildArraySequence,
+		ArrayReady:     topologyChanged,
 	}))
 
 	// Startup recovery (doc 02 §4 E4, UR1, UR8) runs before any listener

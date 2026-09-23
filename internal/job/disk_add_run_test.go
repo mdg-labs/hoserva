@@ -2,12 +2,16 @@ package job
 
 import (
 	"context"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -106,6 +110,67 @@ func TestRunDiskAdd_AddsANewDataDiskAndRegeneratesConfig(t *testing.T) {
 	}
 	if !mountedDisk2 {
 		t.Fatalf("mounter.Mounts = %+v, want /mnt/disk2 among them", mounter.Mounts)
+	}
+}
+
+// TestRunDiskAdd_KeepsEveryShareMountUnit: a disk-topology job knows the
+// array's disks but not its shares. Regenerating the pool units from that
+// share-less state reconciled away every share's mount and mover-target
+// unit; the job must leave them for share.Service to rewrite.
+func TestRunDiskAdd_KeepsEveryShareMountUnit(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	st := store.NewArrayStore(newTestDB(t))
+	genRoot := t.TempDir()
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB})
+	r := disk.NewFakeRunner()
+	scriptFilesystemUUID(r, "/dev/sdc", "uuid-d2")
+	seedArray(t, st, "/dev/sda", "/dev/sdb")
+
+	if err := config.NewGenerator(genRoot).WritePoolMounts(ctx, config.PoolState{
+		DataDisks: []string{"/mnt/disk1"},
+		Options:   pool.DefaultOptions(),
+		Shares:    []config.PoolShare{{Name: "movies", CacheMode: pool.ArrayOnly, CreatePolicy: pool.KeepFoldersTogether}},
+	}, "share create", 1, time.Now()); err != nil {
+		t.Fatalf("seeding share units: %v", err)
+	}
+	registerDiskAdd(t, s, p, r, st, genRoot, disk.NewFakeMounter())
+
+	newDisk := disk.AssignedDisk{Device: "/dev/sdc", Filesystem: disk.XFS}
+	j, err := s.Submit(ctx, TypeDiskAdd, nil, mustJSON(t, DiskAddParams{
+		Confirmation: SingleDiskConfirmation(newDisk),
+		Disk:         newDisk,
+		Sizes:        map[string]int64{"/dev/sda": 8 * disk.TB, "/dev/sdb": 4 * disk.TB, "/dev/sdc": 4 * disk.TB},
+	}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if finished := await(t, s, j.ID); finished.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+
+	for _, where := range []string{"Where=/mnt/user/movies\n", "Where=" + pool.MoverTargetPath("movies") + "\n"} {
+		found := false
+		err := filepath.WalkDir(genRoot, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			body, err := os.ReadFile(path)
+			if err == nil && strings.Contains(string(body), where) {
+				found = true
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", genRoot, err)
+		}
+		if !found {
+			t.Fatalf("no generated unit with %q after adding a disk — the share's unit was removed", strings.TrimSpace(where))
+		}
 	}
 }
 
