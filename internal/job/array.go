@@ -233,13 +233,17 @@ func (s ArraySequence) RefreshLive(ctx context.Context, running bool) error {
 // (UR9): on a mismatch the disks are unmounted again and maintenance mode
 // stays on.
 func (s ArraySequence) Start(ctx context.Context) error {
+	// The gate is only read, so it runs before BeginArrayStart clears the
+	// "stop completed" state: a start refused here leaves the array
+	// exactly as stopped as it was, and a data-disk upgrade stays
+	// admissible without another `array stop`.
+	if s.Gate != nil && !s.Gate.Ready() {
+		return ErrStorageNotReady
+	}
 	if s.Scheduler != nil {
 		if err := s.Scheduler.BeginArrayStart(ctx); err != nil {
 			return err
 		}
-	}
-	if s.Gate != nil && !s.Gate.Ready() {
-		return ErrStorageNotReady
 	}
 
 	for _, d := range s.Disks {
@@ -254,6 +258,11 @@ func (s ArraySequence) Start(ctx context.Context) error {
 				if uerr := d.Unmount(ctx); uerr != nil {
 					errs = append(errs, fmt.Errorf("unmounting %s again: %w", d.Where(), uerr))
 				}
+			}
+			// Every disk unmounted again: the array is back to a
+			// completed stop. Any failed unmount leaves it not stopped.
+			if len(errs) == 0 && s.Scheduler != nil {
+				s.Scheduler.MarkArrayStopped()
 			}
 			return errors.Join(append([]error{err}, errs...)...)
 		}

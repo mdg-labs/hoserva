@@ -1905,6 +1905,36 @@ func TestDiskUpgradeData_E8_UR3_AdmittedOnlyAfterACompletedStop(t *testing.T) {
 	}
 }
 
+// UR3: a start that fails before changing anything — the readiness gate
+// refusing a degraded array, or the disk check failing and every disk
+// unmounting again — leaves the stop completed, so a data-disk upgrade
+// is still admitted without another `array stop`. A start that fails with
+// a disk it could not unmount again is not a completed stop.
+func TestDiskUpgradeData_UR3_FailedStartKeepsTheCompletedStop(t *testing.T) {
+	h := newUpgradeHarness(t)
+	h.register()
+	h.stopArray()
+
+	h.seq.Gate = fakeReadinessGate{ready: false}
+	if err := h.seq.Start(h.ctx); !errors.Is(err, ErrStorageNotReady) {
+		t.Fatalf("start with an unready gate = %v, want storage_not_ready", err)
+	}
+	h.seq.Gate = nil
+	checkErr := errors.New("disk1 carries the wrong filesystem")
+	h.seq.DiskCheck = failingDiskCheck{err: checkErr}
+	if err := h.seq.Start(h.ctx); !errors.Is(err, checkErr) {
+		t.Fatalf("start with a failing disk check = %v, want %v", err, checkErr)
+	}
+	j := h.submit()
+	if done := h.await(j.ID); done.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s)", done.Status, done.ErrorMessage)
+	}
+}
+
+type failingDiskCheck struct{ err error }
+
+func (c failingDiskCheck) ConfirmArrayDisks(context.Context) error { return c.err }
+
 // UR4: A's UUID is the one fixed at submit — if SQLite names something
 // else for the slot, the run refuses before formatting.
 func TestDiskUpgradeData_UR4_SlotNoLongerNamingAFailsBeforeFormatting(t *testing.T) {
