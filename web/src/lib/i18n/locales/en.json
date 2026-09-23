@@ -467,6 +467,51 @@
       }
     }
   },
+  "cache": {
+    "description": "Cache disk fill, per-share cache modes, and manual mover control.",
+    "disk": {
+      "title": "Cache disk",
+      "none": "No cache disk",
+      "noneDescription": "Assign a cache disk in the setup wizard or pool overview.",
+      "usageUnavailable": "Used space not available"
+    },
+    "shares": {
+      "title": "Per-share cache modes",
+      "empty": "No shares configured yet.",
+      "modeSelect": "Cache mode for {{name}}",
+      "columns": {
+        "name": "Share",
+        "cacheMode": "Cache mode"
+      }
+    },
+    "schedule": {
+      "title": "Mover schedule and threshold",
+      "description": "The mover runs on the nightly maintenance chain, when the cache crosses its usage threshold, or when you run it manually here.",
+      "link": "Open schedules"
+    },
+    "mover": {
+      "run": "Run mover",
+      "queuedTitle": "Mover job queued",
+      "queuedDescription": "Track progress on the job detail page.",
+      "viewJob": "View job"
+    },
+    "relocation": {
+      "queuedTitle": "Relocation job queued",
+      "queuedDescription": "Existing files are being moved to match the new cache mode.",
+      "viewJob": "View job"
+    },
+    "lastRun": {
+      "title": "Last mover run",
+      "empty": "No mover jobs yet.",
+      "timing": "Started {{timing}}",
+      "statsUnavailable": "Files moved, bytes and skipped-file details appear here once structured mover results are available."
+    },
+    "parityWarning": {
+      "title": "Cache-only data is not covered by parity",
+      "description": "At least one share uses cache-only mode. Back up appdata on the cache disk separately.",
+      "action": "Open backup settings"
+    }
+  },
   "jobs": {
     "refresh": "Refresh list",
     "filters": {
@@ -1159,7 +1204,10 @@
       "cache": {
         "title": "Cache mode",
         "confirmTitle": "Change cache mode?",
-        "confirmDescription": "This changes where new files are placed. Existing files are not moved — a relocation job to move them is not available from this page yet."
+        "confirmDescription": "This changes where new files are placed. Existing files stay where they are unless you choose to relocate them.",
+        "changeModeOnly": "Change mode only",
+        "relocateNow": "Change mode and relocate",
+        "modeChangeSummary": "{{share}}: {{from}} → {{to}}"
       },
       "smb": {
         "title": "SMB",
