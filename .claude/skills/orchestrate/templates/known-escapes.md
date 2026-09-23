@@ -32,6 +32,7 @@ existing line by adding its PR number.
 - **fail-open** — a safety or readiness check that continues on error (boot-disk detection with an unreadable mount table, identity-less format fallback) — PR 150, 159
 - **fail-open** — `|| true` or a swallowed error inside a gate, so the gate reports PASS after a failure — PR 163, 210
 - **fail-open** — a skip meant for one step applied to every step (unregistered mover skip also skipping sync/scrub) — PR 201
+- **fail-open** — an input that matches nothing turns a protective change into a silent no-op (a removing disk not in the data-disk list leaves every branch RW) — PR 337
 - **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor) — PR 199, 246
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201
 - **errors** — infrastructure failure mapped to HTTP 400 with raw internal text — PR 216
@@ -42,6 +43,8 @@ existing line by adding its PR number.
 - **ui-states** — unhandled rejection or abort from a request inside an effect or a detached `Promise.all` — PR 187, 199, 228
 - **ui-states** — stale response overwrites the current selection (open A, open B, A's response lands) — PR 195, 228
 - **ui-states** — error rendered behind an open dialog or overlay — PR 216, 228
+- **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
+- **i18n** — raw API enum shown instead of a catalog label for every value but the one the author tested — PR 337
 - **a11y** — controls without an accessible name; focus indicator removed with no replacement — PR 187, 199
 
 ## Validation and contracts
@@ -49,6 +52,11 @@ existing line by adding its PR number.
 - **validation** — missing map key read as zero; integer overflow after parsing; empty payload skipping a required `confirm` — PR 150, 177, 236
 - **mock-drift** — `cmd/mockapi` accepts what the production handler rejects, or defaults differently — PR 166, 182, 213, 228
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
+- **validation** — mode selected by a flag's non-empty value rather than its presence, so an empty value falls through to the default path (`-ups-notify ""` starting a second daemon) — PR 337
+- **validation** — a required phrase checked anywhere in a document instead of inside the section it must appear in — PR 337
+- **identity** — first match taken when several candidates match (a weak-identity disk and its clone), or a stale path reported beside the disk that now holds it, so one record appears twice — PR 337
+- **accounting** — capacity tracked per consumer (per share) instead of per filesystem, or a negative headroom summed into a total, so a plan overcommits or wrongly refuses — PR 337
+- **planning** — planner and post-check disagree on which entries count (the planner skips symlinks, the post-check rejects them), so the refusal comes only after all the work, on every retry — PR 337
 
 ## Security
 - **security** — host or URL checked by substring instead of parsed host; redirects not validated — PR 201, 228
@@ -57,7 +65,7 @@ existing line by adding its PR number.
 - **security** — user or state values written into a config format without escaping control characters — PR 254
 
 ## Tests
-- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path) — PR 159, 163, 231
+- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record) — PR 159, 163, 231, 337
 - **tests** — unsynchronized read of state written by another goroutine — PR 166, 246
 - **tests** — exact equality between two separately sampled system values — PR 236
 
@@ -66,3 +74,4 @@ existing line by adding its PR number.
 - **platform** — Samba `create mask` caps bits; `force create mode` adds them — PR 221
 - **platform** — Debian: depend on `adduser` when using `addgroup`; AGPL text is not in `/usr/share/common-licenses` — PR 159
 - **platform** — `mkfs.ext4` creates `lost+found`; smartctl reports NVMe health in a different section than ATA — PR 150, 254
+- **platform** — a daemon that drops privileges reads its config as its own group; a root-only generated file locks it out (upsd.users needs root:nut 0640) — PR 337
