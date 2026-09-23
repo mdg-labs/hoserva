@@ -791,6 +791,8 @@ const (
 	JobTypeDiskAdd           JobType = "disk_add"
 	JobTypeDiskRemove        JobType = "disk_remove"
 	JobTypeDiskReplace       JobType = "disk_replace"
+	JobTypeDiskUpgradeData   JobType = "disk_upgrade_data"
+	JobTypeDiskUpgradeParity JobType = "disk_upgrade_parity"
 	JobTypePoolRemount       JobType = "pool_remount"
 	JobTypeAppdataBackup     JobType = "appdata_backup"
 	JobTypeContainerUpdate   JobType = "container_update"
@@ -820,6 +822,8 @@ func (JobType) AllValues() []JobType {
 		JobTypeDiskAdd,
 		JobTypeDiskRemove,
 		JobTypeDiskReplace,
+		JobTypeDiskUpgradeData,
+		JobTypeDiskUpgradeParity,
 		JobTypePoolRemount,
 		JobTypeAppdataBackup,
 		JobTypeContainerUpdate,
@@ -862,6 +866,10 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeDiskRemove:
 		return []byte(s), nil
 	case JobTypeDiskReplace:
+		return []byte(s), nil
+	case JobTypeDiskUpgradeData:
+		return []byte(s), nil
+	case JobTypeDiskUpgradeParity:
 		return []byte(s), nil
 	case JobTypePoolRemount:
 		return []byte(s), nil
@@ -931,6 +939,12 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeDiskReplace:
 		*s = JobTypeDiskReplace
+		return nil
+	case JobTypeDiskUpgradeData:
+		*s = JobTypeDiskUpgradeData
+		return nil
+	case JobTypeDiskUpgradeParity:
+		*s = JobTypeDiskUpgradeParity
 		return nil
 	case JobTypePoolRemount:
 		*s = JobTypePoolRemount
@@ -3034,6 +3048,10 @@ func (s *JobType) Decode(d *jx.Decoder) error {
 		*s = JobTypeDiskRemove
 	case JobTypeDiskReplace:
 		*s = JobTypeDiskReplace
+	case JobTypeDiskUpgradeData:
+		*s = JobTypeDiskUpgradeData
+	case JobTypeDiskUpgradeParity:
+		*s = JobTypeDiskUpgradeParity
 	case JobTypePoolRemount:
 		*s = JobTypePoolRemount
 	case JobTypeAppdataBackup:
@@ -3997,6 +4015,10 @@ func (s JobType) Validate() error {
 	case "disk_remove":
 		return nil
 	case "disk_replace":
+		return nil
+	case "disk_upgrade_data":
+		return nil
+	case "disk_upgrade_parity":
 		return nil
 	case "pool_remount":
 		return nil

@@ -555,3 +555,66 @@ func TestCreate_NFSEnabledRequiresHost(t *testing.T) {
 		t.Fatalf("enabled NFS without hosts = %v, want ErrInvalidInput", err)
 	}
 }
+
+// TestApplyTopology_AddsTheNewDiskToEveryShare is doc 02 §4 "Adding a
+// disk" step 6: after a disk joins the array, every share's unit carries
+// its branch. Its branch directory is created only when the array is
+// running — an unmounted /mnt/diskN is the boot disk.
+func TestApplyTopology_AddsTheNewDiskToEveryShare(t *testing.T) {
+	ctx, svc, layout, _ := testService(t)
+	if _, err := svc.Create(ctx, CreateInput{Name: "media", CacheMode: pool.ArrayOnly}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	disk3 := filepath.Join(filepath.Dir(layout.dataDisks[0]), "disk3")
+	if err := os.MkdirAll(disk3, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Array.AddDataDisk(ctx, store.ArrayDisk{
+		Role: store.ArrayRoleData, RoleIndex: 3, Device: "/dev/sde", Filesystem: "xfs", FSUUID: "uuid-d3", Mountpoint: disk3,
+	}); err != nil {
+		t.Fatalf("AddDataDisk: %v", err)
+	}
+	branch := filepath.Join(disk3, "media")
+
+	if err := svc.ApplyTopology(ctx, false); err != nil {
+		t.Fatalf("ApplyTopology(stopped): %v", err)
+	}
+	if _, err := os.Stat(branch); !os.IsNotExist(err) {
+		t.Fatalf("stopped array: %s created (stat err %v), want nothing written to an unmounted disk path", branch, err)
+	}
+	if !generatedFileContains(t, svc.Gen.Root, "Where="+pool.SharePath("media")+"\n", branch+"=RW") {
+		t.Fatalf("media's generated unit does not list %s", branch)
+	}
+
+	if err := svc.ApplyTopology(ctx, true); err != nil {
+		t.Fatalf("ApplyTopology(running): %v", err)
+	}
+	if st, err := os.Stat(branch); err != nil || !st.IsDir() {
+		t.Fatalf("running array: branch dir %s: %v", branch, err)
+	}
+}
+
+func generatedFileContains(t *testing.T, root string, all ...string) bool {
+	t.Helper()
+	found := false
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, s := range all {
+			if !strings.Contains(string(body), s) {
+				return nil
+			}
+		}
+		found = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", root, err)
+	}
+	return found
+}

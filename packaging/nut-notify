@@ -1,0 +1,12 @@
+#!/bin/sh
+# Installed at /usr/lib/hoserva/nut-notify (internal/config/nut.go's
+# UPSNotifyCmd) — the exact path upsmon.conf's own NOTIFYCMD names.
+# upsmon runs this with the notification type in $NOTIFYTYPE
+# (upsmon.conf(5): ONBATT/ONLINE/LOWBATT/...). It only relays that
+# fixed, NUT-controlled value to the running daemon's own
+# job.UPSController.HandleNotify, over its control socket
+# (cmd/hoservad/upscontrol.go) — never interpolated into a shell command
+# (CLAUDE.md): hoservad parses it as a plain argv value, not shell input.
+set -e
+[ -n "${NOTIFYTYPE:-}" ] || { echo "nut-notify: NOTIFYTYPE is not set" >&2; exit 2; }
+exec /usr/bin/hoservad -ups-notify "$NOTIFYTYPE"

@@ -26,6 +26,7 @@ const (
 // that reads the spec from the repository (never from a built binary) is
 // the mechanism available.
 var operationRoles = map[apiv1.OperationName]Role{
+	apiv1.AddDiskOperation:                        RoleAdmin,
 	apiv1.CancelJobOperation:                      RoleAdmin,
 	apiv1.ConfirmTotpOperation:                    RoleViewer,
 	apiv1.CreateApiTokenOperation:                 RoleAdmin,
@@ -62,7 +63,12 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.ListDisksOperation:                      RoleViewer,
 	apiv1.ListExternalDisksOperation:              RoleViewer,
 	apiv1.MountExternalDiskOperation:              RoleAdmin,
+	apiv1.PlanDiskAddOperation:                    RoleAdmin,
+	apiv1.PlanDiskReplaceOperation:                RoleAdmin,
+	apiv1.PlanDiskUpgradeOperation:                RoleAdmin,
 	apiv1.RegisterExternalDiskOperation:           RoleAdmin,
+	apiv1.ReplaceDiskOperation:                    RoleAdmin,
+	apiv1.UpgradeDiskOperation:                    RoleAdmin,
 	apiv1.UpdateExternalDiskOperation:             RoleAdmin,
 	apiv1.ListSessionsOperation:                   RoleViewer,
 	apiv1.ListUserGroupsOperation:                 RoleViewer,

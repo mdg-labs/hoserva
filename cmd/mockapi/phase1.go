@@ -79,6 +79,14 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 			Model:     apiv1.NewOptString("WDC WD140EFGX"),
 			Serial:    apiv1.NewOptString("WD-WCC7E0000001"),
 		},
+		// Not in mockArrayDisks — the spare candidate `disk add`/`disk
+		// replace` demos exercise against (#288).
+		{
+			Device:    "/dev/sdf",
+			SizeBytes: mockDiskSize,
+			Model:     apiv1.NewOptString("WDC WD40EFRX"),
+			Serial:    apiv1.NewOptString("WD-WCC4E1111111"),
+		},
 	}
 	if scenario == "degraded" {
 		disks[2].Failed = apiv1.NewOptBool(true)
@@ -129,6 +137,16 @@ func mockPoolStatus(scenario string) *apiv1.PoolStatus {
 	}
 	if scenario == "degraded" {
 		disks[1].State = apiv1.DiskStateFailed
+		// A stored array member with no identity match in inventory at
+		// all (#326) — the literal "failed disk" scenario doc 02 §4
+		// describes, mirroring production GetPool's shape: stored
+		// device/role/mountpoint, no size/used/free.
+		disks = append(disks, apiv1.PoolDiskEntry{
+			Device:     "/dev/sdx",
+			MountPoint: "/mnt/disk4",
+			Role:       apiv1.PoolDiskEntryRoleData,
+			State:      apiv1.DiskStateMissing,
+		})
 	}
 	return &apiv1.PoolStatus{Mounted: true, Disks: disks}
 }
@@ -423,6 +441,9 @@ func (h *handler) StopArray(ctx context.Context, req *apiv1.StopArrayRequest) (*
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if id, pending := h.pendingDiskUpgradeLocked(); pending {
+		return nil, errDiskUpgradePending(id)
+	}
 	h.maintenance = true
 	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance), nil
 }
@@ -430,6 +451,9 @@ func (h *handler) StopArray(ctx context.Context, req *apiv1.StopArrayRequest) (*
 func (h *handler) StartArray(ctx context.Context) (*apiv1.SystemStatus, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if id, pending := h.pendingDiskUpgradeLocked(); pending {
+		return nil, errDiskUpgradePending(id)
+	}
 	h.maintenance = false
 	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance), nil
 }

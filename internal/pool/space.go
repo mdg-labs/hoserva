@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -126,6 +127,57 @@ func ParseMinFreeSpace(s string) (int64, error) {
 		return 0, fmt.Errorf("pool: minfreespace %q is too large", s)
 	}
 	return n * unit, nil
+}
+
+// ErrDiskNotInPool is EvacuationFits' refusal: evacuating is not one of
+// dataDisks, so there is nothing meaningful to check it against.
+var ErrDiskNotInPool = errors.New("pool: evacuating disk is not one of the pool's data disks")
+
+// EvacuationFits is doc 09 §4 step 1's own pre-check: a cheap,
+// whole-disk sum-of-bytes comparison — one statfs(2) call per disk via
+// statter, before anything enumerates a single file — reporting whether
+// the disks remaining once evacuating leaves the pool could hold
+// everything currently on it, keeping every remaining disk's own
+// minfreespace headroom.
+//
+// This is deliberately conservative, not authoritative: it can report
+// true even when the real plan cannot succeed — a single file larger
+// than any one remaining disk's own free space makes the pool-wide sum
+// add up while no branch can actually hold that file, since nothing here
+// bin-packs individual files onto individual disks. internal/cache's
+// PlanEvacuation does that per-file placement and is the one that must
+// actually refuse before returning a plan; this catches the case that
+// costs nothing to catch early — an evacuation the remaining pool
+// obviously cannot hold at all — without walking a single directory.
+func EvacuationFits(ctx context.Context, statter SpaceStatter, dataDisks []string, evacuating string, minFreeSpace string) (bool, error) {
+	space, err := ComputePoolSpace(ctx, statter, dataDisks, minFreeSpace)
+	if err != nil {
+		return false, err
+	}
+	minFreeBytes, err := ParseMinFreeSpace(minFreeSpace)
+	if err != nil {
+		return false, err
+	}
+
+	var usedOnEvacuating int64
+	var found bool
+	var remainingFree int64
+	for _, d := range space.Disks {
+		if d.Path == evacuating {
+			usedOnEvacuating = d.TotalBytes - d.FreeBytes
+			found = true
+			continue
+		}
+		// A disk already below minfreespace takes nothing, but must not
+		// cancel out headroom the other disks do have.
+		if headroom := d.FreeBytes - minFreeBytes; headroom > 0 {
+			remainingFree += headroom
+		}
+	}
+	if !found {
+		return false, fmt.Errorf("%w: %s", ErrDiskNotInPool, evacuating)
+	}
+	return usedOnEvacuating <= remainingFree, nil
 }
 
 // RebalanceSuggestion is doc 09 §1's remedy for its named sharp edge:

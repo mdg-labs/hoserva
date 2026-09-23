@@ -98,12 +98,9 @@ func mountUnitPath(where string) string {
 }
 
 func poolMounts(state PoolState) ([]pool.Mount, error) {
-	catchAll, err := pool.CatchAllMount(state.DataDisks, state.Options)
+	catchAll, err := catchAllMount(state)
 	if err != nil {
-		return nil, fmt.Errorf("config: building catch-all pool mount: %w", err)
-	}
-	if state.CreatePolicy != "" {
-		catchAll.CreatePolicy = state.CreatePolicy
+		return nil, err
 	}
 	mounts := []pool.Mount{catchAll}
 	for _, s := range state.Shares {
@@ -142,6 +139,30 @@ func (g *Generator) CanWriteShareFiles(ctx context.Context, state PoolState) err
 		return err
 	}
 	return g.CanWrite(ctx, PathNFS)
+}
+
+func catchAllMount(state PoolState) (pool.Mount, error) {
+	catchAll, err := pool.CatchAllMount(state.DataDisks, state.Options)
+	if err != nil {
+		return pool.Mount{}, fmt.Errorf("config: building catch-all pool mount: %w", err)
+	}
+	if state.CreatePolicy != "" {
+		catchAll.CreatePolicy = state.CreatePolicy
+	}
+	return catchAll, nil
+}
+
+// WriteCatchAllMount writes only the catch-all's mount unit and removes
+// nothing. A disk-topology job knows the array's disks but not its
+// shares, so it must not reconcile pool units the way WritePoolMounts
+// does — that would delete every share's unit; share.Service rewrites
+// those from the share store afterwards.
+func (g *Generator) WriteCatchAllMount(ctx context.Context, state PoolState, command string, revision int, now time.Time) error {
+	catchAll, err := catchAllMount(state)
+	if err != nil {
+		return err
+	}
+	return g.writeMount(ctx, catchAll, command, revision, now, map[string]bool{})
 }
 
 // WritePoolMounts builds every mergerfs mount unit doc 02 §1's topology

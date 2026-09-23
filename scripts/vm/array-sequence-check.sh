@@ -21,11 +21,13 @@
 # directly against the guest's own virtio-blk devices, exactly the way
 # array_lab_test.go already does at L2 against the lab's loop devices.
 #
-# Runs last in run-l3-suite.sh's own step order: scenario 1 below
-# permanently detaches one array disk from this domain's own persistent
-# config for the rest of this VM's life, so nothing earlier in the suite
-# that assumes the full array-disk topology (e.g. spindown-check.sh's own
-# device discovery) needs to run after it.
+# Runs after every other step that assumes the full array-disk topology
+# (e.g. spindown-check.sh's own device discovery) in run-l3-suite.sh's own
+# step order: scenario 1 below permanently detaches one array disk from
+# this domain's own persistent config for the rest of this VM's life. Only
+# ups-check.sh's own low-battery scenario (issue #250) runs after this —
+# it ends the domain's life for this suite run entirely, so it is the true
+# last step.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

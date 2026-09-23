@@ -251,6 +251,27 @@ func diffFileKeySets(diff DiffReport) (removed, added map[fileKey]bool) {
 // showed the file genuinely already tracked on TargetDisk — the same
 // grounding in real, observed state the same-diff check already had.
 //
+// Neither half of that rule can ever be satisfied when TargetDisk is not a
+// SnapRAID-tracked data disk at all — a cache.RelocateToCache manifest
+// entry's TargetDisk is the cache mount, which never appears in a SnapRAID
+// diff's AddedFiles and is never something `snapraid list` tracks for
+// ConfirmManifestTargets to confirm (#240). diff.PerDisk is built directly
+// from the diff's own "data:" config echo (BuildDiffReport), so whenever it
+// is populated it is exactly the set of disks SnapRAID currently tracks for
+// this diff — a real, structurally grounded fact the manifest itself has no
+// say over, and (Q19 requiring at least one data disk) always non-empty for
+// a diff BuildDiffReport actually produced. When diff.PerDisk is non-empty
+// and TargetDisk is not one of its keys, the entry is accounted as soon as
+// its source-side removal appears in the diff, the same "removed and the
+// manifest says why" grounding the data-disk case gets from a real
+// reappearance or a real `snapraid list`. When TargetDisk *is* a tracked
+// data disk, or diff.PerDisk is empty (never true for a real diff, but true
+// of a hand-built DiffReport a test constructs without it), the strict
+// same-diff-or-confirmed rule above still applies unchanged — an entry
+// cannot claim the looser cache rule just by pointing at an unrelated data
+// disk that happens not to have gained the file, or by relying on a diff
+// that never says which disks it tracks in the first place.
+//
 // It returns both the matched manifest entries (for GuardResult's own
 // display group) and matchedRemovals — the *distinct* removal identities
 // (disk, path) those entries matched, deduplicated. matchedRemovals is
@@ -276,8 +297,11 @@ func matchManifest(diff DiffReport, manifest []ManifestEntry) (accounted []Manif
 		if !removed[key] {
 			continue
 		}
-		if !added[fileKey{m.TargetDisk, m.RelPath}] && !m.TargetConfirmed {
-			continue
+		_, targetIsDataDisk := diff.PerDisk[filepath.Clean(m.TargetDisk)]
+		if len(diff.PerDisk) == 0 || targetIsDataDisk {
+			if !added[fileKey{m.TargetDisk, m.RelPath}] && !m.TargetConfirmed {
+				continue
+			}
 		}
 		matchedRemovals[key] = struct{}{}
 		accounted = append(accounted, m)
@@ -293,6 +317,15 @@ func matchManifest(diff DiffReport, manifest []ManifestEntry) (accounted []Manif
 // list`: every ordinary, same-diff relocation — the plain mover, and every
 // manifest matchManifest can already account for — costs exactly what it
 // always did, no extra invocation.
+//
+// It also skips an entry whose TargetDisk is confirmed non-data by a
+// non-empty diff.PerDisk (an array→cache relocation, #256): matchManifest
+// already accounts such an entry from diff.PerDisk alone, regardless of
+// TargetConfirmed, so a `snapraid list` could never change the outcome —
+// and it could never confirm a cache target anyway, since List only
+// reports tracked data disks. An empty diff.PerDisk still falls back to
+// the strict rule below, the same way matchManifest does: it cannot tell
+// TargetDisk apart from a genuine, currently-untracked data disk.
 func manifestNeedsTargetConfirmation(diff DiffReport, manifest []ManifestEntry) bool {
 	if len(manifest) == 0 {
 		return false
@@ -301,6 +334,11 @@ func manifestNeedsTargetConfirmation(diff DiffReport, manifest []ManifestEntry) 
 	for _, m := range manifest {
 		if m.TargetConfirmed {
 			continue
+		}
+		if len(diff.PerDisk) > 0 {
+			if _, targetIsDataDisk := diff.PerDisk[filepath.Clean(m.TargetDisk)]; !targetIsDataDisk {
+				continue
+			}
 		}
 		key := fileKey{m.SourceDisk, m.RelPath}
 		if removed[key] && !added[fileKey{m.TargetDisk, m.RelPath}] {

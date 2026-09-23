@@ -106,3 +106,24 @@ func FilesystemUUID(ctx context.Context, r Runner, dev string) (string, error) {
 	}
 	return uuid, nil
 }
+
+// MountedUUID reads the filesystem UUID currently mounted at where, via
+// findmnt (the same tool DirectMounter.Mount already falls back to, to
+// recognise a mount a retried apply already satisfied). A replace's own
+// fix step calls this immediately before running SnapRAID, to confirm the
+// slot is actually backed by the replacement it just formatted rather than
+// whatever was mounted there before (doc 02 §4 "Replacing a failed disk").
+func MountedUUID(ctx context.Context, r Runner, where string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	out, err := r.Run(ctx, "findmnt", "-n", "-o", "UUID", where)
+	if err != nil {
+		return "", fmt.Errorf("disk: reading the filesystem UUID mounted at %s: %w", where, err)
+	}
+	uuid := strings.TrimSpace(string(out))
+	if uuid == "" {
+		return "", fmt.Errorf("disk: %s reported no mounted filesystem UUID", where)
+	}
+	return uuid, nil
+}

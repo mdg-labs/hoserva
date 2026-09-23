@@ -75,7 +75,14 @@ type Handler struct {
 	Schedules *ScheduleService
 	// Array is Q70's stop/start sequence. Nil returns 501 from those
 	// operations — the handler never duplicates the sequence itself.
-	Array *job.ArraySequence
+	// #263: main.go's ArrayReady hook replaces this after a live array
+	// creation, from the create-array job's own goroutine, while
+	// StopArray/StartArray (and cmd/hoservad's own UPS/update shutdown
+	// lookups) read it from concurrent goroutines — every access once the
+	// daemon is serving requests goes through CurrentArray/SetArray, which
+	// hold arrayMu, never this field directly.
+	Array   *job.ArraySequence
+	arrayMu sync.RWMutex
 	// History is spin-state and audit-log persistence (Q32, Q74). Nil
 	// returns an empty wake-events list rather than an error.
 	History *store.History
@@ -208,8 +215,16 @@ func mapSchedulerError(id uuid.UUID, err error) error {
 	switch {
 	case errors.Is(err, job.ErrNotFound):
 		return &apiError{code: "job_not_found", statusCode: 404, message: fmt.Sprintf("no job with id %s", id)}
+	case errors.Is(err, job.ErrDiskUpgradePastRelease):
+		return &apiError{code: "job_not_cancellable", statusCode: 409, message: fmt.Sprintf("job %s: the data-disk upgrade is past its release decision and has committed to the new disk — resume it to finish", id)}
 	case errors.Is(err, job.ErrJobNotCancellable):
 		return &apiError{code: "job_not_cancellable", statusCode: 409, message: fmt.Sprintf("job %s does not support cancellation", id)}
+	case errors.Is(err, job.ErrJobAbortInProgress):
+		return &apiError{code: "job_abort_in_progress", statusCode: 409, message: fmt.Sprintf("job %s is being aborted right now", id)}
+	case errors.Is(err, job.ErrDiskUpgradeCleanupFailed):
+		return &apiError{code: "disk_upgrade_cleanup_failed", statusCode: 409, message: err.Error()}
+	case errors.Is(err, job.ErrDiskUpgradeDataPending):
+		return &apiError{code: "disk_upgrade_pending", statusCode: 409, message: err.Error() + " — resume it, or cancel it to abort back to the old disk"}
 	case errors.Is(err, job.ErrJobNotResumable):
 		return &apiError{code: "job_not_resumable", statusCode: 409, message: fmt.Sprintf("job %s is not a resumable job type (Q29)", id)}
 	case errors.Is(err, job.ErrJobNotInterrupted):
@@ -218,6 +233,8 @@ func mapSchedulerError(id uuid.UUID, err error) error {
 		return &apiError{code: "job_not_running", statusCode: 409, message: fmt.Sprintf("job %s is not queued or running", id)}
 	case errors.Is(err, job.ErrMaintenanceMode):
 		return &apiError{code: "maintenance_mode", statusCode: 409, message: "maintenance mode is active — no new jobs are accepted"}
+	case errors.Is(err, job.ErrArrayNotStopped):
+		return &apiError{code: "array_not_stopped", statusCode: 409, message: "stop the array first (\"hoserva array stop\") — a data-disk upgrade runs only once the array's stop sequence has completed"}
 	case errors.Is(err, job.ErrJobTypeNotRegistered):
 		return &apiError{code: "job_type_not_registered", statusCode: 501, message: fmt.Sprintf("job %s's type has no registered implementation yet", id)}
 	default:

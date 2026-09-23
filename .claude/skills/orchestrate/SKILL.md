@@ -1,7 +1,7 @@
 ---
 name: orchestrate
 description: Given a GitHub issue number (a single item, or an epic with sub-issues), autonomously implement and verify the work — sonnet execution agents in isolated scratch clones (one per item, or one per bundle of small, correlated items), one independent verifier per attempt, landing on local dev only after a PASS and pushing it there immediately, including safety-critical commits, unless it's blocked by a fresh follow-up. Parallelizes items with disjoint file scope, serializes overlapping ones. Never touches main — that's a separate, maintainer-run dev-to-main promotion. Use when asked to "work on issue #n", "implement epic #n", "run the orchestrator", or "orchestrate #n".
-argument-hint: <issue-number>
+argument-hint: <issue-number>... [--no-discord]
 allowed-tools:
   - Read
   - Grep
@@ -28,7 +28,7 @@ this skill entirely: it only moves via a `dev → main` pull request the
 maintainer opens by hand, gated by GitHub's required status checks (doc 12
 §6).
 
-**You (the current session) are the orchestrator.** You spawn
+**You (the current session) are the orchestrator.** You spawn `issue-refiner`,
 `task-executor` and `task-verifier` subagents and drive the loop yourself —
 this skill is not itself a subagent. Follow the steps in order. An epic
 takes a while; give the user a short progress update at the start of each
@@ -153,6 +153,66 @@ separately, never something a dependent issue needs to wait for.
 Also read the design context each issue cites (`## Design references`) —
 you are about to judge its scope, and the docs are where scope lives.
 
+## 1b. Readiness gate — refine thin or stale issues before anything else
+
+Issues that reached an executor without triage failed verification nearly
+three times as often (39% vs 14%) and let five times as many defects
+through to CodeRabbit (3.6 vs 0.7 per issue). Check every issue in T,
+mechanically, from the real repo:
+
+```
+scripts/issue-readiness.sh <n>
+```
+
+It reads only the issue text: no `## Original report`, no acceptance
+criteria, no out-of-scope, no `Reachable via:` on a `feat`/`bug`, or a
+stale reference (the retired `beta` branch, a hardware tier, the Unraid CA
+feed) → `NOT-READY` with reasons. Path warnings alone never block.
+
+**You do not investigate or rewrite a NOT-READY issue yourself** — that is
+code reading your context must not carry through the rest of the run.
+Dispatch one `issue-refiner` per epic (or per issue without one), all in
+one message, from `.claude/skills/orchestrate/templates/issue-refiner-prompt.md`
+with `MODE = apply`:
+
+```
+Agent({
+  subagent_type: "issue-refiner",
+  model: "opus",      // any issue is safety-critical, or in the migration or VM epics
+  model: "sonnet",    // otherwise
+  description: "Refine <issue numbers>",
+  prompt: <the filled template>
+})
+```
+
+Fill `WORKSPACE_PATH` with a fresh clone for that refiner
+(`git clone <real repo> <scratchpad>/orchestrate/refine-<unit>`),
+`OUT_DIR` with `<scratchpad>/orchestrate/refine-<unit>-out`, and
+`VERDICT_TEMPLATE_PATH` with the real repo's
+`.claude/skills/orchestrate/templates/refiner-verdict.md`. The refiner
+inventories what already exists on `dev` and returns one short verdict per
+issue. Read **only the verdicts**:
+
+- `refined` — the refiner already applied the new body. Wire the
+  relationships it lists natively, run `scripts/issue-status.sh <n> ready`,
+  re-read the issue (step 1's two calls) and continue with it.
+- `split-proposed` — `AskUserQuestion` with the one-line-per-part
+  proposal. On approval, apply `OUT_DIR/<n>.md` to the original issue (it
+  keeps its number as part A) and create each `OUT_DIR/<n>-NEW-*.md` as a
+  new issue with the labels and relationships the verdict lists (same epic
+  and milestone), replace every `<NEW-…>` placeholder in the bodies with the
+  real number (`gh issue edit --body-file`), set each to `ready`, and put
+  all parts in T. The refiner already wrote the bodies — don't rewrite them.
+- `already-done` / `obsolete` — `AskUserQuestion` with the evidence; drop
+  the issue from T. Never cancel or close it yourself.
+- `needs-decision` — `AskUserQuestion` with the refiner's question and
+  recommended default; record the answer on the issue, then treat it as
+  `refined` after a second refiner pass.
+
+Delete each refiner clone when its verdicts are in. An issue that is still
+NOT-READY after one refine pass is reported and left out of T — never
+dispatched thin.
+
 ## 2. Pull out `needs-sudo` issues — they never go through an agent
 
 No agent may run root commands. For each such issue in T:
@@ -178,6 +238,8 @@ For each issue in T, derive the set of top-level paths it will touch:
 - Backtick-quoted paths in the body (`internal/parity/`, `docs/internal/`, `scripts/devenv/`, `.github/workflows/`, …).
 - Fallback: its `area:*` label, via `CLAUDE.md`'s **area → paths** table. A `docs` issue with no area scopes to `docs/internal/`.
 - **Always-shared files** (`CLAUDE.md`'s list — `CLAUDE.md`, `Makefile`, `go.mod`/`go.sum`/`go.work`, `api/openapi.yaml`, `api/gen/`, `web/package.json` + lockfile, `docs/internal/13-open-questions.md`, `.gitignore`, `LICENSE`) are their own scope entries whenever an issue plausibly touches them. Any API change touches `api/openapi.yaml` and `api/gen/`; any spike or default change touches doc 13.
+- **Entry points are in scope.** An issue's `Reachable via:` criterion names where its capability must be reachable from — `cmd/hoservad/main.go` (and its sibling wiring files), `cmd/hoserva/`, `web/src/routes/`, `Makefile`, `.github/workflows/`. Add every such file to the issue's scope as its own entry, the same way as an always-shared file, so lanes serialize on it. An issue with a runtime capability but no `Reachable via:` criterion is not ready — step 1b sends it to `issue-refiner` first. Leaving the entry point out of scope is what turned 17 finished features into later "wire it into hoservad" issues.
+- An `api/openapi.yaml` change also puts `cmd/mockapi/` in scope: the mock mirrors production validation.
 - Can't confidently bound it → its scope is **the whole repo**, which serializes it against everything.
 
 ## 4. Batch into waves, then bundles, then lanes
@@ -350,17 +412,54 @@ restarting the review.
 ```
 Agent({
   subagent_type: "task-verifier",
-  model: "opus",      // when any issue in the unit is safety-critical
+  model: "opus",      // any issue in the unit is safety-critical, OR the unit's diff is large (below)
   model: "sonnet",    // otherwise
   description: "Verify <unit-id> attempt <n>",
   prompt: <the filled template>
 })
 ```
 
-**One verifier per unit per attempt**, verdicts **per issue**: all six layers
+**Acceptance that only a real GitHub Actions run can show** — a changed
+workflow under `.github/workflows/`, a nightly L3 step, a release or Pages
+job — cannot be verified from the scratch clone. Before dispatching the
+verifier, run it for real, without touching `dev`:
+```
+git -C <workspace> push <real repo's origin URL> HEAD:refs/heads/ci/<unit-id>
+gh workflow run <workflow file> --repo mdg-labs/hoserva --ref ci/<unit-id>
+gh run list --repo mdg-labs/hoserva --branch ci/<unit-id> --limit 1 --json databaseId,url
+```
+`ci.yml`, `nightly-l3.yml`, `pages.yml` and `s9-hosted-probe.yml` accept
+`workflow_dispatch` (a dispatch needs the trigger on `main`, so a workflow
+newly given one only works after the next promotion). Put the run's URL
+and id in the verifier dispatch, so the verifier reads its result and logs
+(`gh run view <id> --log-failed`) as layer-1 evidence instead of guessing.
+Wait for it with `timeout 5400 gh run watch <id> --repo mdg-labs/hoserva --exit-status`
+as a **background** Bash command, then end your turn — its exit re-invokes
+you, which keeps the "never poll or sleep" rule intact. Delete the
+branch once the unit is resolved:
+`git push <origin URL> --delete ci/<unit-id>`. Never push such a commit to
+`dev` before its PASS.
+
+**Large diffs get the Opus verifier too.** Before dispatching, measure the
+unit's changed lines excluding generated code:
+```
+git -C <workspace> diff --numstat dev..HEAD -- . ':!api/gen' ':!internal/store/db' ':!**/package-lock.json' | awk '{s+=$1+$2} END {print s}'
+```
+Above ~1000, dispatch the verifier on Opus and say so in the report. Escapes
+scale with size — the top quarter of issues by size (over ~1300 lines)
+produced 61% of CodeRabbit's findings — and Opus-verified issues let
+through about 40% fewer per changed line. An issue that lands far above its
+triage estimate is worth a line in the report as well.
+
+**One verifier per unit per attempt**, verdicts **per issue**: all seven layers
 run against each commit separately, one comment and one label move per
 issue. **Only blocking findings fail an issue**; notes are recorded in the
-comment and go nowhere else. A mixed PASS/FAIL result is normal. The verifier posts its own
+comment and go nowhere else — which is why a note may never describe a
+defect: a wrong behaviour in code the diff adds is blocking, one in
+untouched code is a finding outside the issue (step 11), and a capability
+with no production caller fails layer 7. If a PASS comment's notes
+describe a concrete defect anyway, treat that note as a finding outside the
+issue and route it in step 11. A mixed PASS/FAIL result is normal. The verifier posts its own
 comments and moves its own labels; read its returned verdicts rather than
 re-deriving them from GitHub.
 
@@ -548,9 +647,11 @@ gets its own issue and its own commit.
 
 Don't send it to the user yet — step 13 first.
 
-## 13. Notify Discord — the final action, always
+## 13. Notify Discord — the final action, unless the run was started with `--no-discord`
 
-After T is exhausted — full or partial success — write step 12's report as
+If the invocation carries `--no-discord` (or the maintainer asked in words
+to skip the Discord message), skip this step and say so in one line.
+Otherwise, after T is exhausted — full or partial success — write step 12's report as
 markdown to a temp file and run:
 
 ```
@@ -568,7 +669,7 @@ report as your final message.
 - **No agent ever runs `gh issue close`.** Closing happens via a pushed commit's trailer.
 - **No agent ever touches a real block device, a real mount, or runs `sudo`** — storage runs only in its own namespaced lab; `needs-sudo` issues never reach an agent.
 - **Every lab is destroyed** before its clone is deleted, and no lane ever uses another lane's lab id.
-- **Never poll or self-schedule while agents run.**
+- **Never poll or self-schedule while agents run.** The one sanctioned wait on something outside the harness is a bounded background `gh run watch` for a CI-dependent unit (step 7).
 - **Exactly one `status:*` label per issue**, only via `scripts/issue-status.sh` / `scripts/epic-status.sh`.
 - **Never invent an issue number** in a trailer.
 - **Parallel lanes never share a scratch clone**, and only you touch the real repo, only at landing, one commit at a time.
@@ -577,4 +678,4 @@ report as your final message.
 - **Only blocking findings fail an issue or reach a fix round**; a fix round's verifier checks closure and the change, not the whole issue afresh.
 - **Surfaced findings are filed and routed as they arrive** — pulled into this run when they belong to its scope, otherwise attached to the open epic they belong to.
 - **Every written artifact uses its template** — dispatch prompts, the executor's report, the verifier's comment.
-- **Every run ends with exactly one Discord notification**, sent after T is exhausted and before your final message.
+- **Every run ends with exactly one Discord notification**, sent after T is exhausted and before your final message — unless it was started with `--no-discord`.

@@ -39,6 +39,14 @@ type AssignedDisk struct {
 	Serial       string
 	WeakIdentity bool
 	ByIDName     string
+	// FSUUID is the disk's existing filesystem UUID, when it already has
+	// one (Provider.List's udev cache) — the only identity a weak-identity
+	// disk (no WWN, no serial) carries at all. internal/job's
+	// refuseKnownIdentity uses it, the same way matchArrayDisk and
+	// ConfirmReplacementTargetAbsent already do, to recognise a
+	// weak-identity disk at a renumbered /dev/sdX path as an existing
+	// array member rather than a fresh one (Q21).
+	FSUUID string
 }
 
 // TopologyPlan is the array-setup Topology job's payload (doc 01 §4's

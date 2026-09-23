@@ -124,6 +124,96 @@ func TestComputePoolSpace_InvalidMinFreeSpace(t *testing.T) {
 	}
 }
 
+// TestEvacuationFits_TrueWhenRemainingDisksHaveRoom is doc 09 §4 step 1's
+// own pre-check happy path: disk1's own used bytes fit within disk2 and
+// disk3's combined free space, net of minfreespace.
+func TestEvacuationFits_TrueWhenRemainingDisksHaveRoom(t *testing.T) {
+	ctx := context.Background()
+	statter := fakeSpaceStatter{stats: map[string]SpaceStat{
+		"/mnt/disk1": {TotalBytes: 100 * (1 << 30), FreeBytes: 20 * (1 << 30)}, // 80G used
+		"/mnt/disk2": {TotalBytes: 100 * (1 << 30), FreeBytes: 90 * (1 << 30)},
+		"/mnt/disk3": {TotalBytes: 100 * (1 << 30), FreeBytes: 90 * (1 << 30)},
+	}}
+
+	fits, err := EvacuationFits(ctx, statter, []string{"/mnt/disk1", "/mnt/disk2", "/mnt/disk3"}, "/mnt/disk1", "1G")
+	if err != nil {
+		t.Fatalf("EvacuationFits: %v", err)
+	}
+	if !fits {
+		t.Fatal("EvacuationFits = false, want true — 80G used fits in (90-1)+(90-1)=178G of remaining headroom")
+	}
+}
+
+// TestEvacuationFits_FalseWhenRemainingDisksLackRoom is the refusal case
+// step 1 exists to catch: evacuating a nearly-full disk into a pool with
+// almost nothing free elsewhere.
+func TestEvacuationFits_FalseWhenRemainingDisksLackRoom(t *testing.T) {
+	ctx := context.Background()
+	statter := fakeSpaceStatter{stats: map[string]SpaceStat{
+		"/mnt/disk1": {TotalBytes: 100 * (1 << 30), FreeBytes: 5 * (1 << 30)}, // 95G used
+		"/mnt/disk2": {TotalBytes: 100 * (1 << 30), FreeBytes: 10 * (1 << 30)},
+		"/mnt/disk3": {TotalBytes: 100 * (1 << 30), FreeBytes: 10 * (1 << 30)},
+	}}
+
+	fits, err := EvacuationFits(ctx, statter, []string{"/mnt/disk1", "/mnt/disk2", "/mnt/disk3"}, "/mnt/disk1", "5G")
+	if err != nil {
+		t.Fatalf("EvacuationFits: %v", err)
+	}
+	if fits {
+		t.Fatal("EvacuationFits = true, want false — 95G used cannot fit in (10-5)+(10-5)=10G of remaining headroom")
+	}
+}
+
+// TestEvacuationFits_RespectsMinFreeSpaceOnRemainingDisks proves the
+// headroom subtraction, not just raw free bytes, decides the answer:
+// without it this same fixture would report true.
+func TestEvacuationFits_RespectsMinFreeSpaceOnRemainingDisks(t *testing.T) {
+	ctx := context.Background()
+	statter := fakeSpaceStatter{stats: map[string]SpaceStat{
+		"/mnt/disk1": {TotalBytes: 100 * (1 << 30), FreeBytes: 50 * (1 << 30)}, // 50G used
+		"/mnt/disk2": {TotalBytes: 100 * (1 << 30), FreeBytes: 30 * (1 << 30)},
+	}}
+
+	fits, err := EvacuationFits(ctx, statter, []string{"/mnt/disk1", "/mnt/disk2"}, "/mnt/disk1", "25G")
+	if err != nil {
+		t.Fatalf("EvacuationFits: %v", err)
+	}
+	if fits {
+		t.Fatal("EvacuationFits = true, want false — disk2's own 30G free minus 25G minfreespace leaves only 5G, not enough for 50G")
+	}
+}
+
+// TestEvacuationFits_DiskBelowMinFreeSpaceDoesNotSubtractHeadroom: disk2
+// is already under minfreespace, disk3 alone can hold disk1's 40G. The
+// check is conservative — it may pass a plan that later fails, never
+// refuse one the pool can hold — so disk2 contributes zero, not -20G.
+func TestEvacuationFits_DiskBelowMinFreeSpaceDoesNotSubtractHeadroom(t *testing.T) {
+	ctx := context.Background()
+	statter := fakeSpaceStatter{stats: map[string]SpaceStat{
+		"/mnt/disk1": {TotalBytes: 100 * (1 << 30), FreeBytes: 60 * (1 << 30)}, // 40G used
+		"/mnt/disk2": {TotalBytes: 100 * (1 << 30), FreeBytes: 5 * (1 << 30)},
+		"/mnt/disk3": {TotalBytes: 100 * (1 << 30), FreeBytes: 70 * (1 << 30)},
+	}}
+
+	fits, err := EvacuationFits(ctx, statter, []string{"/mnt/disk1", "/mnt/disk2", "/mnt/disk3"}, "/mnt/disk1", "25G")
+	if err != nil {
+		t.Fatalf("EvacuationFits: %v", err)
+	}
+	if !fits {
+		t.Fatal("EvacuationFits = false, want true — disk3 alone has 45G of headroom for 40G")
+	}
+}
+
+func TestEvacuationFits_ErrorsWhenDiskNotInPool(t *testing.T) {
+	ctx := context.Background()
+	statter := fakeSpaceStatter{stats: map[string]SpaceStat{
+		"/mnt/disk1": {TotalBytes: 100 * (1 << 30), FreeBytes: 50 * (1 << 30)},
+	}}
+	if _, err := EvacuationFits(ctx, statter, []string{"/mnt/disk1"}, "/mnt/disk9", "1G"); !errors.Is(err, ErrDiskNotInPool) {
+		t.Fatalf("EvacuationFits: got %v, want ErrDiskNotInPool", err)
+	}
+}
+
 func TestDetectRebalanceSuggestion_FiresForKeepFoldersTogetherWhenOneDiskIsConstrained(t *testing.T) {
 	space := PoolSpace{
 		Disks: []DiskSpace{

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Installed at /usr/lib/hoserva/nut-shutdown (internal/config/nut.go's
+# UPSShutdownCmd) — the exact path upsmon.conf's own SHUTDOWNCMD names.
+# upsmon runs this once it decides FSD (forced shutdown), independently
+# of and shortly after its own NOTIFYCMD(LOWBATT) (doc 02 §6, Q70, Q77).
+# It synchronously runs the exact same clean shutdown sequence as that
+# LOWBATT notification through the running daemon's own control socket
+# (cmd/hoservad/upscontrol.go) — checkpoint every running job, tear
+# storage down, then power off — and exits non-zero if any step failed,
+# so upsmon never treats a partial shutdown as done.
+set -e
+exec /usr/bin/hoservad -ups-shutdown

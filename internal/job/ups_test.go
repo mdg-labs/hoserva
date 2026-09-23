@@ -325,6 +325,139 @@ func TestUPSController_LowBattery_WithoutShutdownConfiguredIsAnError(t *testing.
 	}
 }
 
+// TestUPSController_LowBattery_ConcurrentCallsRunShutdownOnce is the
+// data-loss scenario #255 fixes: upsmon calls NOTIFYCMD(LOWBATT) and,
+// independently, its own SHUTDOWNCMD a few seconds later once FSD's
+// FINALDELAY elapses (doc 02 §6) — both must reach this exact sequence,
+// but running Array.Stop/PowerOff twice concurrently would unmount
+// storage a still-in-flight first Stop might still be using. Two
+// concurrent HandleNotify(LOWBATT) calls must run the shutdown sequence
+// exactly once; the second gets the first's own result rather than
+// starting a second one.
+func TestUPSController_LowBattery_ConcurrentCallsRunShutdownOnce(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	notifier := &fakeUPSNotifier{}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	shutdown := &blockingShutdown{started: started, release: release}
+	c := &UPSController{Scheduler: s, Notifier: notifier, Shutdown: shutdown}
+
+	firstErr := make(chan error, 1)
+	go func() { firstErr <- c.HandleNotify(ctx, UPSNotifyLowBattery) }()
+	<-started
+
+	secondErr := make(chan error, 1)
+	go func() { secondErr <- c.HandleNotify(ctx, UPSNotifyLowBattery) }()
+
+	// The second call must actually be blocked behind the first, not
+	// racing straight through to its own Shutdown() call — give it a
+	// moment to (wrongly) proceed if it weren't sharing the first call's
+	// in-flight shutdownRun, then confirm it hasn't.
+	select {
+	case err := <-secondErr:
+		t.Fatalf("second HandleNotify(LOWBATT) returned %v before the first, still-running one finished", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+
+	if err := <-firstErr; err != nil {
+		t.Fatalf("first HandleNotify(LOWBATT): %v", err)
+	}
+	if err := <-secondErr; err != nil {
+		t.Fatalf("second HandleNotify(LOWBATT): %v", err)
+	}
+	if shutdown.count() != 1 {
+		t.Fatalf("shutdown.count() = %d, want 1 — the second caller must never start its own Array.Stop", shutdown.count())
+	}
+	if _, batteryLow := notifier.counts(); batteryLow != 1 {
+		t.Fatalf("notifier.batteryLow = %d, want 1", batteryLow)
+	}
+}
+
+// TestUPSController_LowBattery_RetriesAfterAFailedRun is the other half
+// of #255's own data-loss scenario: a first outage's LOWBATT reaches
+// handleLowBattery and fails (a service refuses to stop —
+// TestUPSShutdown_ServiceRefusesToStop_NeverPowersOff's own case), mains
+// return, and a later outage's own LOWBATT must actually retry
+// Array.Stop/PowerOff — not replay the first run's stale cached error
+// without ever calling Shutdown again, which would ride the battery to
+// zero on every outage after the very first failure.
+func TestUPSController_LowBattery_RetriesAfterAFailedRun(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	notifier := &fakeUPSNotifier{}
+	shutdown := &scriptedShutdown{errs: []error{errors.New("service refused to stop"), nil}}
+	c := &UPSController{Scheduler: s, Notifier: notifier, Shutdown: shutdown}
+
+	if err := c.HandleNotify(ctx, UPSNotifyLowBattery); err == nil {
+		t.Fatal("first HandleNotify(LOWBATT) = nil, want the scripted failure")
+	}
+	if err := c.HandleNotify(ctx, UPSNotifyLowBattery); err != nil {
+		t.Fatalf("second HandleNotify(LOWBATT), after the first run failed: %v, want nil (the scripted retry succeeds)", err)
+	}
+	if shutdown.count() != 2 {
+		t.Fatalf("shutdown.count() = %d, want 2 — a later LOWBATT must retry Array.Stop/PowerOff after a prior failure, not replay a cached error", shutdown.count())
+	}
+	if _, batteryLow := notifier.counts(); batteryLow != 2 {
+		t.Fatalf("notifier.batteryLow = %d, want 2 — the retry must publish the battery-low notification again, not skip it", batteryLow)
+	}
+}
+
+// scriptedShutdown is ShutdownSequence's own fake that returns errs[i]
+// on its i-th call (the last entry repeats once exhausted) — used to
+// script a first run failing and a later, separate run succeeding.
+type scriptedShutdown struct {
+	mu   sync.Mutex
+	runs int
+	errs []error
+}
+
+func (f *scriptedShutdown) Shutdown(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := f.runs
+	if i >= len(f.errs) {
+		i = len(f.errs) - 1
+	}
+	f.runs++
+	return f.errs[i]
+}
+
+func (f *scriptedShutdown) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runs
+}
+
+// blockingShutdown is ShutdownSequence's own fake that signals when its
+// Shutdown call starts and blocks until told to finish — used to prove
+// two concurrent HandleNotify(LOWBATT) calls serialize on the same
+// in-flight run rather than each starting their own.
+type blockingShutdown struct {
+	mu      sync.Mutex
+	runs    int
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingShutdown) Shutdown(ctx context.Context) error {
+	b.mu.Lock()
+	b.runs++
+	b.mu.Unlock()
+	close(b.started)
+	<-b.release
+	return nil
+}
+
+func (b *blockingShutdown) count() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.runs
+}
+
 // TestUPSController_HandleNotify_UnknownTypeIsNoop proves a NUT
 // notification type outside Q77's own defined reaction set (COMMBAD,
 // REPLBATT, ...) does nothing.

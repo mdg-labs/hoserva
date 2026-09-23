@@ -13,6 +13,18 @@ type UnimplementedHandler struct{}
 
 var _ Handler = UnimplementedHandler{}
 
+// AddDisk implements addDisk operation.
+//
+// Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
+// units, the pool and `snapraid.conf` from SQLite (D4, doc 02 §4 "Adding a disk"). The confirmation
+// must be the exact string the matching `planDiskAdd` call returned; a wrong or missing one is refused
+// with `confirmation_required` and formats nothing.
+//
+// POST /disks/array/add
+func (UnimplementedHandler) AddDisk(ctx context.Context, req *AddDiskRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ApplyHostConfig implements applyHostConfig operation.
 //
 // Q76: each detected Samba file, NFS exports file, fstab, Docker containers list and images list is
@@ -66,6 +78,13 @@ func (UnimplementedHandler) BrowseShare(ctx context.Context, params BrowseShareP
 //
 // Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be
 // cancelled reports that in its `cancellable` field rather than accepting this call and doing nothing.
+// A queued or running job is stopped; an interrupted, cancellable job is ended `cancelled`. For a
+// data-disk upgrade this is the abort (doc 02 §4 E3): refused with `job_not_cancellable` once its
+// checkpoint is at releasing, whether queued, running or interrupted. A running upgrade is answered
+// with the running job and records its outcome once it has unmounted everything. A queued or
+// interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused
+// with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a
+// second cancel while one runs.
 //
 // POST /jobs/{jobId}/cancel
 func (UnimplementedHandler) CancelJob(ctx context.Context, params CancelJobParams) (r *Job, _ error) {
@@ -674,6 +693,54 @@ func (UnimplementedHandler) MountExternalDisk(ctx context.Context, params MountE
 	return r, ht.ErrNotImplemented
 }
 
+// PlanDiskAdd implements planDiskAdd operation.
+//
+// Computes the add plan (doc 02 §4 "Adding a disk"): the target disk's own identity (model, WWN or
+// serial, size, its existing filesystem if any), its assigned mountpoint (`disk.NextDataMountpoint`)
+// and the exact typed confirmation `addDisk` requires. Refuses (Q20) a disk that would leave a parity
+// disk smaller than the array's largest data disk, and (Q21) a device already identified as one of the
+// array's own members by WWN or serial, reusing `disk.TopologyPlan.Validate` over the resulting data
+// set — the same check array setup runs. Read-only: nothing is formatted or persisted.
+//
+// POST /disks/array/add/plan
+func (UnimplementedHandler) PlanDiskAdd(ctx context.Context, req *AddDiskPlanRequest) (r *AddDiskPlan, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// PlanDiskReplace implements planDiskReplace operation.
+//
+// Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity
+// (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that
+// reconstructs the slot's contents after it is formatted, and the exact typed confirmation
+// `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is
+// genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
+// §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
+// replacement that would leave a parity disk smaller than the array's largest data disk. Read-only:
+// nothing is formatted or persisted.
+//
+// POST /disks/array/replace/plan
+func (UnimplementedHandler) PlanDiskReplace(ctx context.Context, req *ReplaceDiskPlanRequest) (r *ReplaceDiskPlan, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// PlanDiskUpgrade implements planDiskUpgrade operation.
+//
+// Computes the upgrade plan (doc 02 §4 "Larger data disk"/"Larger parity disk") for the existing
+// array slot at `mountpoint`, whichever role it holds: the replacement's own identity (model, WWN or
+// serial, size, its existing filesystem if any), the copy/verify/remount steps a data-disk upgrade
+// runs or the copy/verify/switch/check steps a parity-disk upgrade runs, and the exact typed
+// confirmation `upgradeDisk` requires. For a data disk, refuses (`invalid_plan`) a replacement that
+// would leave a parity disk smaller than it (Q20) — offering the parity upgrade flow first, the same
+// rule `disk.DataDiskUpgradeExceedsParity` checks — and any of `planDiskReplace`'s own
+// Q19/Q20/Q21/Q23 checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new
+// disk will be formatted, mounted and verified at independently of the old one (Q71) — never the old
+// disk's own mountpoint. Read-only: nothing is formatted or persisted.
+//
+// POST /disks/array/upgrade/plan
+func (UnimplementedHandler) PlanDiskUpgrade(ctx context.Context, req *DiskUpgradePlanRequest) (r *DiskUpgradePlan, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // RebootHost implements rebootHost operation.
 //
 // Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -706,6 +773,23 @@ func (UnimplementedHandler) RegisterExternalDisk(ctx context.Context, req *Regis
 	return r, ht.ErrNotImplemented
 }
 
+// ReplaceDisk implements replaceDisk operation.
+//
+// Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same
+// mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the
+// mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix`
+// to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
+// disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
+// (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
+// or still present by identity. The confirmation must be the exact string the matching
+// `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and
+// formats nothing.
+//
+// POST /disks/array/replace
+func (UnimplementedHandler) ReplaceDisk(ctx context.Context, req *ReplaceDiskRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ResetUserPassword implements resetUserPassword operation.
 //
 // Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
@@ -718,9 +802,11 @@ func (UnimplementedHandler) ResetUserPassword(ctx context.Context, req *ResetUse
 
 // ResumeJob implements resumeJob operation.
 //
-// Only resumable job types (mover, rebalance, evacuation, share relocation) persist a checkpoint to
-// resume from (Q29). Jobs are never resumed automatically after a restart — this operation is always
-// an explicit user action.
+// Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk
+// upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
+// restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
+// maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
+// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it.
 //
 // POST /jobs/{jobId}/resume
 func (UnimplementedHandler) ResumeJob(ctx context.Context, params ResumeJobParams) (r *Job, _ error) {
@@ -820,7 +906,12 @@ func (UnimplementedHandler) SetUserPassword(ctx context.Context, req *SetUserPas
 // Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
 // paths, then start services in the reverse of stop order, and exit maintenance mode only once every
 // step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when
-// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted.
+// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted. Also refused with
+// `disk_upgrade_pending` while a data-disk upgrade is pending — queued, running or interrupted at
+// any checkpoint (doc 02 §4 E6); the error names the job to resume or cancel, and nothing is mounted.
+// Once the disks are mounted, each must hold the filesystem SQLite names for it before the pool or any
+// service starts (UR9); otherwise it is refused with `array_disk_mismatch`, the disks are unmounted
+// again and maintenance mode stays on.
 //
 // POST /array/start
 func (UnimplementedHandler) StartArray(ctx context.Context) (r *SystemStatus, _ error) {
@@ -886,7 +977,8 @@ func (UnimplementedHandler) StartSync(ctx context.Context, req *StartSyncRequest
 // paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog
 // already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure
 // leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true`
-// is required.
+// is required. Refused with `disk_upgrade_pending` while a data-disk upgrade is pending (doc 02 §4
+// E7): the array is already stopped for it, and nothing is stopped, signalled or unmounted.
 //
 // POST /array/stop
 func (UnimplementedHandler) StopArray(ctx context.Context, req *StopArrayRequest) (r *SystemStatus, _ error) {
@@ -1028,6 +1120,26 @@ func (UnimplementedHandler) UpdateUser(ctx context.Context, req *UpdateUserReque
 //
 // PUT /users/{userId}/permissions
 func (UnimplementedHandler) UpdateUserSharePermissions(ctx context.Context, req *UpdateUserSharePermissionsRequest, params UpdateUserSharePermissionsParams) (r *UserSharePermissionsResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpgradeDisk implements upgradeDisk operation.
+//
+// Starts a resumable Topology job (`job.TypeDiskUpgradeData` or `job.TypeDiskUpgradeParity`, resolved
+// from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call
+// returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A
+// data-disk upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has
+// completed (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
+// `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies
+// and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to
+// show no removed or updated files, and only then names the new disk in SQLite; the array stays
+// stopped until the user starts it. A parity-disk upgrade runs with the array started (refused with
+// `maintenance_mode` while it is stopped): it copies the parity file, verifies it byte for byte,
+// switches the configuration and passes `snapraid check` before releasing the old parity disk (Q71).
+// The old disk is never written to or released until its verification gate passes.
+//
+// POST /disks/array/upgrade
+func (UnimplementedHandler) UpgradeDisk(ctx context.Context, req *UpgradeDiskRequest) (r *Job, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

@@ -66,6 +66,169 @@ func diskCmd() *cobra.Command {
 		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.ListDisks(apiCtx()) }),
 	})
 	cmd.AddCommand(diskExternalCmd())
+	cmd.AddCommand(diskAddCmd())
+	cmd.AddCommand(diskReplaceCmd())
+	cmd.AddCommand(diskUpgradeCmd())
+	return cmd
+}
+
+// diskFilesystemFlag applies --filesystem to a setter accepting
+// apiv1.OptArrayDiskFilesystem, shared by disk add and disk replace's own
+// plan and apply commands — a value the API itself will refuse
+// (`ArrayDiskFilesystem`'s own enum) is passed through unchanged rather
+// than validated twice.
+func diskFilesystemFlag(cmd *cobra.Command, value string, set func(apiv1.OptArrayDiskFilesystem)) {
+	if cmd.Flags().Changed("filesystem") {
+		set(apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystem(value)))
+	}
+}
+
+// diskAddCmd is `hoserva disk add`: run directly (--device and --confirm,
+// the exact phrase `disk add plan` returned) to queue the job, or
+// `disk add plan` first to preview the mountpoint and confirmation phrase
+// without changing anything.
+func diskAddCmd() *cobra.Command {
+	var device, filesystem, confirm string
+	var adopt bool
+	cmd := &cobra.Command{
+		Use:   "add",
+		Short: "Add a data disk to the running array (doc 02 §4)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if confirm == "" {
+				return fmt.Errorf("disk add requires --confirm with the exact phrase `disk add plan` returned")
+			}
+			req := &apiv1.AddDiskRequest{Device: device, Confirmation: confirm}
+			diskFilesystemFlag(cmd, filesystem, req.SetFilesystem)
+			if cmd.Flags().Changed("adopt") {
+				req.SetAdopt(apiv1.NewOptBool(adopt))
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.AddDisk(apiCtx(), req) })(cmd, args)
+		},
+	}
+	cmd.Flags().StringVar(&device, "device", "", "Device to add, e.g. /dev/sdX (required)")
+	cmd.Flags().StringVar(&filesystem, "filesystem", "", "xfs, ext4 or btrfs (default xfs)")
+	cmd.Flags().BoolVar(&adopt, "adopt", false, "Keep the existing filesystem instead of formatting (Q23)")
+	cmd.Flags().StringVar(&confirm, "confirm", "", "Exact confirmation phrase from `disk add plan` (required)")
+	_ = cmd.MarkFlagRequired("device")
+
+	plan := &cobra.Command{
+		Use:   "plan",
+		Short: "Preview adding a disk: mountpoint and the exact confirmation phrase to type",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := &apiv1.AddDiskPlanRequest{Device: device}
+			diskFilesystemFlag(cmd, filesystem, req.SetFilesystem)
+			if cmd.Flags().Changed("adopt") {
+				req.SetAdopt(apiv1.NewOptBool(adopt))
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.PlanDiskAdd(apiCtx(), req) })(cmd, args)
+		},
+	}
+	plan.Flags().StringVar(&device, "device", "", "Device to add, e.g. /dev/sdX (required)")
+	plan.Flags().StringVar(&filesystem, "filesystem", "", "xfs, ext4 or btrfs (default xfs)")
+	plan.Flags().BoolVar(&adopt, "adopt", false, "Keep the existing filesystem instead of formatting (Q23)")
+	_ = plan.MarkFlagRequired("device")
+	cmd.AddCommand(plan)
+
+	return cmd
+}
+
+// diskReplaceCmd is diskAddCmd's own shape for `hoserva disk replace`
+// (doc 02 §4 "Replacing a failed disk").
+func diskReplaceCmd() *cobra.Command {
+	var mountpoint, device, filesystem, confirm string
+	var adopt bool
+	cmd := &cobra.Command{
+		Use:   "replace",
+		Short: "Replace a failed data disk (doc 02 §4)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if confirm == "" {
+				return fmt.Errorf("disk replace requires --confirm with the exact phrase `disk replace plan` returned")
+			}
+			req := &apiv1.ReplaceDiskRequest{Mountpoint: mountpoint, Device: device, Confirmation: confirm}
+			diskFilesystemFlag(cmd, filesystem, req.SetFilesystem)
+			if cmd.Flags().Changed("adopt") {
+				req.SetAdopt(apiv1.NewOptBool(adopt))
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.ReplaceDisk(apiCtx(), req) })(cmd, args)
+		},
+	}
+	cmd.Flags().StringVar(&mountpoint, "mountpoint", "", "The existing data disk slot being replaced, e.g. /mnt/disk2 (required)")
+	cmd.Flags().StringVar(&device, "device", "", "Replacement device, e.g. /dev/sdX (required)")
+	cmd.Flags().StringVar(&filesystem, "filesystem", "", "xfs, ext4 or btrfs (default xfs)")
+	cmd.Flags().BoolVar(&adopt, "adopt", false, "Keep the existing filesystem instead of formatting (Q23)")
+	cmd.Flags().StringVar(&confirm, "confirm", "", "Exact confirmation phrase from `disk replace plan` (required)")
+	_ = cmd.MarkFlagRequired("mountpoint")
+	_ = cmd.MarkFlagRequired("device")
+
+	plan := &cobra.Command{
+		Use:   "plan",
+		Short: "Preview replacing a disk: the SnapRAID fix it will run and the exact confirmation phrase to type",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := &apiv1.ReplaceDiskPlanRequest{Mountpoint: mountpoint, Device: device}
+			diskFilesystemFlag(cmd, filesystem, req.SetFilesystem)
+			if cmd.Flags().Changed("adopt") {
+				req.SetAdopt(apiv1.NewOptBool(adopt))
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.PlanDiskReplace(apiCtx(), req) })(cmd, args)
+		},
+	}
+	plan.Flags().StringVar(&mountpoint, "mountpoint", "", "The existing data disk slot being replaced, e.g. /mnt/disk2 (required)")
+	plan.Flags().StringVar(&device, "device", "", "Replacement device, e.g. /dev/sdX (required)")
+	plan.Flags().StringVar(&filesystem, "filesystem", "", "xfs, ext4 or btrfs (default xfs)")
+	plan.Flags().BoolVar(&adopt, "adopt", false, "Keep the existing filesystem instead of formatting (Q23)")
+	_ = plan.MarkFlagRequired("mountpoint")
+	_ = plan.MarkFlagRequired("device")
+	cmd.AddCommand(plan)
+
+	return cmd
+}
+
+// diskUpgradeCmd is `hoserva disk upgrade` (doc 02 §4 "Larger data
+// disk"/"Larger parity disk", #289): one command for either a data or a
+// parity slot — the API resolves which upgrade flow applies from
+// --mountpoint's own role. --new-mountpoint is required only for a parity
+// slot, and must be the exact value `disk upgrade plan` returned.
+func diskUpgradeCmd() *cobra.Command {
+	var mountpoint, device, filesystem, newMountpoint, confirm string
+	cmd := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Upgrade a data or parity disk to a larger one (doc 02 §4)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if confirm == "" {
+				return fmt.Errorf("disk upgrade requires --confirm with the exact phrase `disk upgrade plan` returned")
+			}
+			req := &apiv1.UpgradeDiskRequest{Mountpoint: mountpoint, Device: device, Confirmation: confirm}
+			diskFilesystemFlag(cmd, filesystem, req.SetFilesystem)
+			if cmd.Flags().Changed("new-mountpoint") {
+				req.SetNewMountpoint(apiv1.NewOptString(newMountpoint))
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.UpgradeDisk(apiCtx(), req) })(cmd, args)
+		},
+	}
+	cmd.Flags().StringVar(&mountpoint, "mountpoint", "", "The existing data or parity slot being upgraded, e.g. /mnt/disk2 or /mnt/parity1 (required)")
+	cmd.Flags().StringVar(&device, "device", "", "The new, larger replacement device, e.g. /dev/sdX (required)")
+	cmd.Flags().StringVar(&filesystem, "filesystem", "", "xfs, ext4 or btrfs (default xfs; a parity disk is always XFS)")
+	cmd.Flags().StringVar(&newMountpoint, "new-mountpoint", "", "Parity upgrades only: the exact newMountpoint `disk upgrade plan` returned")
+	cmd.Flags().StringVar(&confirm, "confirm", "", "Exact confirmation phrase from `disk upgrade plan` (required)")
+	_ = cmd.MarkFlagRequired("mountpoint")
+	_ = cmd.MarkFlagRequired("device")
+
+	plan := &cobra.Command{
+		Use:   "plan",
+		Short: "Preview upgrading a disk: the steps it will run and the exact confirmation phrase to type",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := &apiv1.DiskUpgradePlanRequest{Mountpoint: mountpoint, Device: device}
+			diskFilesystemFlag(cmd, filesystem, req.SetFilesystem)
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.PlanDiskUpgrade(apiCtx(), req) })(cmd, args)
+		},
+	}
+	plan.Flags().StringVar(&mountpoint, "mountpoint", "", "The existing data or parity slot being upgraded, e.g. /mnt/disk2 or /mnt/parity1 (required)")
+	plan.Flags().StringVar(&device, "device", "", "The new, larger replacement device, e.g. /dev/sdX (required)")
+	plan.Flags().StringVar(&filesystem, "filesystem", "", "xfs, ext4 or btrfs (default xfs; a parity disk is always XFS)")
+	_ = plan.MarkFlagRequired("mountpoint")
+	_ = plan.MarkFlagRequired("device")
+	cmd.AddCommand(plan)
+
 	return cmd
 }
 

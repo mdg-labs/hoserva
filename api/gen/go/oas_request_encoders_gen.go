@@ -15,6 +15,20 @@ import (
 	"github.com/ogen-go/ogen/uri"
 )
 
+func encodeAddDiskRequest(
+	req *AddDiskRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeApplyHostConfigRequest(
 	req *ApplyHostConfigRequest,
 	r *http.Request,
@@ -315,6 +329,48 @@ func encodeMarkNotificationsReadRequest(
 	return nil
 }
 
+func encodePlanDiskAddRequest(
+	req *AddDiskPlanRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodePlanDiskReplaceRequest(
+	req *ReplaceDiskPlanRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodePlanDiskUpgradeRequest(
+	req *DiskUpgradePlanRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeRebootHostRequest(
 	req *ConfirmUpdateRequest,
 	r *http.Request,
@@ -331,6 +387,20 @@ func encodeRebootHostRequest(
 
 func encodeRegisterExternalDiskRequest(
 	req *RegisterExternalDiskRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeReplaceDiskRequest(
+	req *ReplaceDiskRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"
@@ -625,6 +695,20 @@ func encodeUpdateUserRequest(
 
 func encodeUpdateUserSharePermissionsRequest(
 	req *UpdateUserSharePermissionsRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUpgradeDiskRequest(
+	req *UpgradeDiskRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

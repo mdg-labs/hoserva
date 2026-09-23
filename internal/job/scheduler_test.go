@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 // blockingRun returns a RunFunc that signals started, then blocks until
@@ -300,7 +302,13 @@ func TestScheduler_TopologyExcludesEveryStorageClassButNotServiceOrVM(t *testing
 	s := newTestScheduler(t)
 
 	topStarted, topRelease := registerBlocking(s, TypeDiskAdd, false)
-	_, err := s.Submit(ctx, TypeDiskAdd, nil, nil)
+	// registerBlocking's own fake RunFunc never decodes params — this is
+	// only a Topology-class placeholder for the class-exclusion behaviour
+	// below — but Submit still runs ValidateParams first, so disk_add's
+	// own confirmation/device requirement (#288) needs a well-formed
+	// payload here, not nil.
+	topologyParams := mustJSON(t, DiskAddParams{Confirmation: "ERASE /dev/sdx", Disk: disk.AssignedDisk{Device: "/dev/sdx"}})
+	_, err := s.Submit(ctx, TypeDiskAdd, nil, topologyParams)
 	if err != nil {
 		t.Fatalf("Submit topology job: %v", err)
 	}
@@ -434,6 +442,78 @@ func TestScheduler_CancelJobNotRunningReturnsError(t *testing.T) {
 
 	if _, err := s.Cancel(ctx, j.ID); !errors.Is(err, ErrJobNotRunning) {
 		t.Fatalf("Cancel(already-finished job) = %v, want ErrJobNotRunning", err)
+	}
+}
+
+// TestScheduler_CancelEndsAnInterruptedCancellableJobCancelled: Cancel
+// accepts an interrupted, cancellable job and ends it cancelled — for a
+// type with no AbortFunc, a plain status change.
+func TestScheduler_CancelEndsAnInterruptedCancellableJobCancelled(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	stopSeen := make(chan struct{})
+	s.registry.Register(TypeMover, true, func(ctx context.Context, rc *RunContext) error {
+		<-rc.StopRequested()
+		close(stopSeen)
+		return nil
+	})
+	j, err := s.Submit(ctx, TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	<-stopSeen
+	waitFor(t, time.Second, func() bool {
+		got, err := s.store.Get(ctx, j.ID)
+		return err == nil && got.Status == StatusInterrupted
+	})
+
+	cancelled, err := s.Cancel(ctx, j.ID)
+	if err != nil {
+		t.Fatalf("Cancel(interrupted job): %v", err)
+	}
+	if cancelled.Status != StatusCancelled {
+		t.Fatalf("Cancel(interrupted job) returned status %s, want cancelled", cancelled.Status)
+	}
+	got, err := s.store.Get(ctx, j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusCancelled {
+		t.Fatalf("job status after cancelling an interrupted job = %s, want cancelled", got.Status)
+	}
+}
+
+// TestScheduler_CancelRefusesAnInterruptedNonCancellableJob: the
+// interrupted-job cancel path honours the job's cancellable value.
+func TestScheduler_CancelRefusesAnInterruptedNonCancellableJob(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	stopSeen := make(chan struct{})
+	s.registry.Register(TypeMover, false, func(ctx context.Context, rc *RunContext) error {
+		<-rc.StopRequested()
+		close(stopSeen)
+		return nil
+	})
+	j, err := s.Submit(ctx, TypeMover, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	<-stopSeen
+	waitFor(t, time.Second, func() bool {
+		got, err := s.store.Get(ctx, j.ID)
+		return err == nil && got.Status == StatusInterrupted
+	})
+
+	if _, err := s.Cancel(ctx, j.ID); !errors.Is(err, ErrJobNotCancellable) {
+		t.Fatalf("Cancel(interrupted, non-cancellable job) = %v, want ErrJobNotCancellable", err)
 	}
 }
 

@@ -12,48 +12,82 @@ import (
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
-// applyArrayFromStore generates disk mount units, mergerfs pool units and
-// snapraid.conf from SQLite topology (D4, D1) and mounts each physical
-// disk by the filesystem UUID stored there (Q21). Rewriting units and
-// remounting a disk already mounted by that stored UUID is success, not
-// a second format. It never reads job-params JSON and never formats.
+// applyArrayFromStore generates disk mount units, the catch-all's mergerfs
+// unit and snapraid.conf from SQLite topology (D4, D1) — share units are
+// share.Service's, rewritten by the ArrayReady hook — and mounts each physical
+// disk by the filesystem UUID stored there (Q21). Rewriting units for a
+// disk already mounted is success, not a second format — and, since #288
+// (disk_add/disk_replace call this a second time against disks
+// create-array's own call already mounted), not a second, stacked kernel
+// mount either: a mountpoint this call finds already mounted is left
+// alone rather than mounted again on top of itself. It never reads
+// job-params JSON and never formats.
 func applyArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Generator, mounter disk.UnitMounter, now time.Time) error {
-	settings, disks, err := st.GetArray(ctx)
+	units, err := writeArrayFromStore(ctx, st, g, now)
 	if err != nil {
 		return err
+	}
+	for _, u := range units {
+		if alreadyMounted(u.Where) {
+			continue
+		}
+		if err := mounter.Mount(ctx, u); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// regenerateArrayFromStore writes every generated file applyArrayFromStore
+// writes — disk mount units, the catch-all unit and snapraid.conf — from
+// SQLite, and mounts nothing (doc 02 §4 Release).
+func regenerateArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Generator, now time.Time) error {
+	_, err := writeArrayFromStore(ctx, st, g, now)
+	return err
+}
+
+func writeArrayFromStore(ctx context.Context, st *store.ArrayStore, g *config.Generator, now time.Time) ([]disk.MountUnit, error) {
+	settings, disks, err := st.GetArray(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	units, err := mountUnitsFromStore(disks)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := g.WriteDiskMounts(ctx, units, arrayCreateCommand, 1, now); err != nil {
-		return err
+		return nil, err
 	}
 
 	poolState := poolStateFromStore(settings, disks)
-	if err := g.WritePoolMounts(ctx, poolState, arrayCreateCommand, 1, now); err != nil {
-		return err
+	if err := g.WriteCatchAllMount(ctx, poolState, arrayCreateCommand, 1, now); err != nil {
+		return nil, err
 	}
 
 	body, err := layoutFromStore(disks).Render()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := g.Write(ctx, config.File{
 		Path:    "snapraid.conf",
 		Command: arrayCreateCommand,
 		Body:    []byte(body),
 	}, 1, now); err != nil {
-		return err
+		return nil, err
 	}
+	return units, nil
+}
 
-	for _, u := range units {
-		if err := mounter.Mount(ctx, u); err != nil {
-			return err
-		}
-	}
-	return nil
+// alreadyMounted reports whether where is already a real mountpoint.
+// Any error (most commonly the mountpoint directory not existing yet, the
+// ordinary case for a disk's first-ever mount) is treated as "not
+// mounted" rather than propagated — this check only ever skips a Mount
+// call it is positively certain is already satisfied; anything less
+// certain still goes through Mount exactly as before.
+func alreadyMounted(where string) bool {
+	mounted, err := disk.IsMountpoint(where)
+	return err == nil && mounted
 }
 
 func mountUnitsFromStore(disks []store.ArrayDisk) ([]disk.MountUnit, error) {

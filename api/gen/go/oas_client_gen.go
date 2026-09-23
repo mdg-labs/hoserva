@@ -29,6 +29,15 @@ func trimTrailingSlashes(u *url.URL) {
 
 // Invoker invokes operations described by OpenAPI v3 specification.
 type Invoker interface {
+	// AddDisk invokes addDisk operation.
+	//
+	// Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
+	// units, the pool and `snapraid.conf` from SQLite (D4, doc 02 §4 "Adding a disk"). The confirmation
+	// must be the exact string the matching `planDiskAdd` call returned; a wrong or missing one is refused
+	// with `confirmation_required` and formats nothing.
+	//
+	// POST /disks/array/add
+	AddDisk(ctx context.Context, request *AddDiskRequest) (*Job, error)
 	// ApplyHostConfig invokes applyHostConfig operation.
 	//
 	// Q76: each detected Samba file, NFS exports file, fstab, Docker containers list and images list is
@@ -70,6 +79,13 @@ type Invoker interface {
 	//
 	// Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be
 	// cancelled reports that in its `cancellable` field rather than accepting this call and doing nothing.
+	// A queued or running job is stopped; an interrupted, cancellable job is ended `cancelled`. For a
+	// data-disk upgrade this is the abort (doc 02 §4 E3): refused with `job_not_cancellable` once its
+	// checkpoint is at releasing, whether queued, running or interrupted. A running upgrade is answered
+	// with the running job and records its outcome once it has unmounted everything. A queued or
+	// interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused
+	// with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a
+	// second cancel while one runs.
 	//
 	// POST /jobs/{jobId}/cancel
 	CancelJob(ctx context.Context, params CancelJobParams) (*Job, error)
@@ -504,6 +520,45 @@ type Invoker interface {
 	//
 	// POST /disks/external/{label}/mount
 	MountExternalDisk(ctx context.Context, params MountExternalDiskParams) (*ExternalDisk, error)
+	// PlanDiskAdd invokes planDiskAdd operation.
+	//
+	// Computes the add plan (doc 02 §4 "Adding a disk"): the target disk's own identity (model, WWN or
+	// serial, size, its existing filesystem if any), its assigned mountpoint (`disk.NextDataMountpoint`)
+	// and the exact typed confirmation `addDisk` requires. Refuses (Q20) a disk that would leave a parity
+	// disk smaller than the array's largest data disk, and (Q21) a device already identified as one of the
+	// array's own members by WWN or serial, reusing `disk.TopologyPlan.Validate` over the resulting data
+	// set — the same check array setup runs. Read-only: nothing is formatted or persisted.
+	//
+	// POST /disks/array/add/plan
+	PlanDiskAdd(ctx context.Context, request *AddDiskPlanRequest) (*AddDiskPlan, error)
+	// PlanDiskReplace invokes planDiskReplace operation.
+	//
+	// Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity
+	// (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that
+	// reconstructs the slot's contents after it is formatted, and the exact typed confirmation
+	// `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is
+	// genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
+	// §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
+	// replacement that would leave a parity disk smaller than the array's largest data disk. Read-only:
+	// nothing is formatted or persisted.
+	//
+	// POST /disks/array/replace/plan
+	PlanDiskReplace(ctx context.Context, request *ReplaceDiskPlanRequest) (*ReplaceDiskPlan, error)
+	// PlanDiskUpgrade invokes planDiskUpgrade operation.
+	//
+	// Computes the upgrade plan (doc 02 §4 "Larger data disk"/"Larger parity disk") for the existing
+	// array slot at `mountpoint`, whichever role it holds: the replacement's own identity (model, WWN or
+	// serial, size, its existing filesystem if any), the copy/verify/remount steps a data-disk upgrade
+	// runs or the copy/verify/switch/check steps a parity-disk upgrade runs, and the exact typed
+	// confirmation `upgradeDisk` requires. For a data disk, refuses (`invalid_plan`) a replacement that
+	// would leave a parity disk smaller than it (Q20) — offering the parity upgrade flow first, the same
+	// rule `disk.DataDiskUpgradeExceedsParity` checks — and any of `planDiskReplace`'s own
+	// Q19/Q20/Q21/Q23 checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new
+	// disk will be formatted, mounted and verified at independently of the old one (Q71) — never the old
+	// disk's own mountpoint. Read-only: nothing is formatted or persisted.
+	//
+	// POST /disks/array/upgrade/plan
+	PlanDiskUpgrade(ctx context.Context, request *DiskUpgradePlanRequest) (*DiskUpgradePlan, error)
 	// RebootHost invokes rebootHost operation.
 	//
 	// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -527,6 +582,20 @@ type Invoker interface {
 	//
 	// POST /disks/external
 	RegisterExternalDisk(ctx context.Context, request *RegisterExternalDiskRequest) (*ExternalDisk, error)
+	// ReplaceDisk invokes replaceDisk operation.
+	//
+	// Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same
+	// mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the
+	// mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix`
+	// to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
+	// disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
+	// (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
+	// or still present by identity. The confirmation must be the exact string the matching
+	// `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and
+	// formats nothing.
+	//
+	// POST /disks/array/replace
+	ReplaceDisk(ctx context.Context, request *ReplaceDiskRequest) (*Job, error)
 	// ResetUserPassword invokes resetUserPassword operation.
 	//
 	// Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
@@ -536,9 +605,11 @@ type Invoker interface {
 	ResetUserPassword(ctx context.Context, request *ResetUserPasswordRequest, params ResetUserPasswordParams) error
 	// ResumeJob invokes resumeJob operation.
 	//
-	// Only resumable job types (mover, rebalance, evacuation, share relocation) persist a checkpoint to
-	// resume from (Q29). Jobs are never resumed automatically after a restart — this operation is always
-	// an explicit user action.
+	// Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk
+	// upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
+	// restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
+	// maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
+	// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it.
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
@@ -611,7 +682,12 @@ type Invoker interface {
 	// Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
 	// paths, then start services in the reverse of stop order, and exit maintenance mode only once every
 	// step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when
-	// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted.
+	// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted. Also refused with
+	// `disk_upgrade_pending` while a data-disk upgrade is pending — queued, running or interrupted at
+	// any checkpoint (doc 02 §4 E6); the error names the job to resume or cancel, and nothing is mounted.
+	// Once the disks are mounted, each must hold the filesystem SQLite names for it before the pool or any
+	// service starts (UR9); otherwise it is refused with `array_disk_mismatch`, the disks are unmounted
+	// again and maintenance mode stays on.
 	//
 	// POST /array/start
 	StartArray(ctx context.Context) (*SystemStatus, error)
@@ -659,7 +735,8 @@ type Invoker interface {
 	// paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog
 	// already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure
 	// leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true`
-	// is required.
+	// is required. Refused with `disk_upgrade_pending` while a data-disk upgrade is pending (doc 02 §4
+	// E7): the array is already stopped for it, and nothing is stopped, signalled or unmounted.
 	//
 	// POST /array/stop
 	StopArray(ctx context.Context, request *StopArrayRequest) (*SystemStatus, error)
@@ -762,6 +839,23 @@ type Invoker interface {
 	//
 	// PUT /users/{userId}/permissions
 	UpdateUserSharePermissions(ctx context.Context, request *UpdateUserSharePermissionsRequest, params UpdateUserSharePermissionsParams) (*UserSharePermissionsResult, error)
+	// UpgradeDisk invokes upgradeDisk operation.
+	//
+	// Starts a resumable Topology job (`job.TypeDiskUpgradeData` or `job.TypeDiskUpgradeParity`, resolved
+	// from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call
+	// returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A
+	// data-disk upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has
+	// completed (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
+	// `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies
+	// and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to
+	// show no removed or updated files, and only then names the new disk in SQLite; the array stays
+	// stopped until the user starts it. A parity-disk upgrade runs with the array started (refused with
+	// `maintenance_mode` while it is stopped): it copies the parity file, verifies it byte for byte,
+	// switches the configuration and passes `snapraid check` before releasing the old parity disk (Q71).
+	// The old disk is never written to or released until its verification gate passes.
+	//
+	// POST /disks/array/upgrade
+	UpgradeDisk(ctx context.Context, request *UpgradeDiskRequest) (*Job, error)
 }
 
 // Client implements OAS client.
@@ -803,6 +897,137 @@ func (c *Client) requestURL(ctx context.Context) *url.URL {
 		return c.serverURL
 	}
 	return u
+}
+
+// AddDisk invokes addDisk operation.
+//
+// Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
+// units, the pool and `snapraid.conf` from SQLite (D4, doc 02 §4 "Adding a disk"). The confirmation
+// must be the exact string the matching `planDiskAdd` call returned; a wrong or missing one is refused
+// with `confirmation_required` and formats nothing.
+//
+// POST /disks/array/add
+func (c *Client) AddDisk(ctx context.Context, request *AddDiskRequest) (*Job, error) {
+	res, err := c.sendAddDisk(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendAddDisk(ctx context.Context, request *AddDiskRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("addDisk"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array/add"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, AddDiskOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array/add"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeAddDiskRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, AddDiskOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, AddDiskOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeAddDiskResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
 }
 
 // ApplyHostConfig invokes applyHostConfig operation.
@@ -1374,6 +1599,13 @@ func (c *Client) sendBrowseShare(ctx context.Context, params BrowseShareParams) 
 //
 // Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be
 // cancelled reports that in its `cancellable` field rather than accepting this call and doing nothing.
+// A queued or running job is stopped; an interrupted, cancellable job is ended `cancelled`. For a
+// data-disk upgrade this is the abort (doc 02 §4 E3): refused with `job_not_cancellable` once its
+// checkpoint is at releasing, whether queued, running or interrupted. A running upgrade is answered
+// with the running job and records its outcome once it has unmounted everything. A queued or
+// interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused
+// with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a
+// second cancel while one runs.
 //
 // POST /jobs/{jobId}/cancel
 func (c *Client) CancelJob(ctx context.Context, params CancelJobParams) (*Job, error) {
@@ -9121,6 +9353,411 @@ func (c *Client) sendMountExternalDisk(ctx context.Context, params MountExternal
 	return result, nil
 }
 
+// PlanDiskAdd invokes planDiskAdd operation.
+//
+// Computes the add plan (doc 02 §4 "Adding a disk"): the target disk's own identity (model, WWN or
+// serial, size, its existing filesystem if any), its assigned mountpoint (`disk.NextDataMountpoint`)
+// and the exact typed confirmation `addDisk` requires. Refuses (Q20) a disk that would leave a parity
+// disk smaller than the array's largest data disk, and (Q21) a device already identified as one of the
+// array's own members by WWN or serial, reusing `disk.TopologyPlan.Validate` over the resulting data
+// set — the same check array setup runs. Read-only: nothing is formatted or persisted.
+//
+// POST /disks/array/add/plan
+func (c *Client) PlanDiskAdd(ctx context.Context, request *AddDiskPlanRequest) (*AddDiskPlan, error) {
+	res, err := c.sendPlanDiskAdd(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendPlanDiskAdd(ctx context.Context, request *AddDiskPlanRequest) (res *AddDiskPlan, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("planDiskAdd"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array/add/plan"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PlanDiskAddOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array/add/plan"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodePlanDiskAddRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, PlanDiskAddOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, PlanDiskAddOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodePlanDiskAddResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// PlanDiskReplace invokes planDiskReplace operation.
+//
+// Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity
+// (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that
+// reconstructs the slot's contents after it is formatted, and the exact typed confirmation
+// `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is
+// genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
+// §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
+// replacement that would leave a parity disk smaller than the array's largest data disk. Read-only:
+// nothing is formatted or persisted.
+//
+// POST /disks/array/replace/plan
+func (c *Client) PlanDiskReplace(ctx context.Context, request *ReplaceDiskPlanRequest) (*ReplaceDiskPlan, error) {
+	res, err := c.sendPlanDiskReplace(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendPlanDiskReplace(ctx context.Context, request *ReplaceDiskPlanRequest) (res *ReplaceDiskPlan, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("planDiskReplace"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array/replace/plan"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PlanDiskReplaceOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array/replace/plan"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodePlanDiskReplaceRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, PlanDiskReplaceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, PlanDiskReplaceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodePlanDiskReplaceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// PlanDiskUpgrade invokes planDiskUpgrade operation.
+//
+// Computes the upgrade plan (doc 02 §4 "Larger data disk"/"Larger parity disk") for the existing
+// array slot at `mountpoint`, whichever role it holds: the replacement's own identity (model, WWN or
+// serial, size, its existing filesystem if any), the copy/verify/remount steps a data-disk upgrade
+// runs or the copy/verify/switch/check steps a parity-disk upgrade runs, and the exact typed
+// confirmation `upgradeDisk` requires. For a data disk, refuses (`invalid_plan`) a replacement that
+// would leave a parity disk smaller than it (Q20) — offering the parity upgrade flow first, the same
+// rule `disk.DataDiskUpgradeExceedsParity` checks — and any of `planDiskReplace`'s own
+// Q19/Q20/Q21/Q23 checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new
+// disk will be formatted, mounted and verified at independently of the old one (Q71) — never the old
+// disk's own mountpoint. Read-only: nothing is formatted or persisted.
+//
+// POST /disks/array/upgrade/plan
+func (c *Client) PlanDiskUpgrade(ctx context.Context, request *DiskUpgradePlanRequest) (*DiskUpgradePlan, error) {
+	res, err := c.sendPlanDiskUpgrade(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendPlanDiskUpgrade(ctx context.Context, request *DiskUpgradePlanRequest) (res *DiskUpgradePlan, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("planDiskUpgrade"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array/upgrade/plan"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PlanDiskUpgradeOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array/upgrade/plan"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodePlanDiskUpgradeRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, PlanDiskUpgradeOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, PlanDiskUpgradeOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodePlanDiskUpgradeResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // RebootHost invokes rebootHost operation.
 //
 // Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -9507,6 +10144,142 @@ func (c *Client) sendRegisterExternalDisk(ctx context.Context, request *Register
 	return result, nil
 }
 
+// ReplaceDisk invokes replaceDisk operation.
+//
+// Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same
+// mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the
+// mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix`
+// to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
+// disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
+// (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
+// or still present by identity. The confirmation must be the exact string the matching
+// `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and
+// formats nothing.
+//
+// POST /disks/array/replace
+func (c *Client) ReplaceDisk(ctx context.Context, request *ReplaceDiskRequest) (*Job, error) {
+	res, err := c.sendReplaceDisk(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendReplaceDisk(ctx context.Context, request *ReplaceDiskRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("replaceDisk"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array/replace"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ReplaceDiskOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array/replace"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeReplaceDiskRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ReplaceDiskOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ReplaceDiskOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeReplaceDiskResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ResetUserPassword invokes resetUserPassword operation.
 //
 // Root-only over the Unix socket (Q78). Checked against the peer's uid 0 specifically — the
@@ -9657,9 +10430,11 @@ func (c *Client) sendResetUserPassword(ctx context.Context, request *ResetUserPa
 
 // ResumeJob invokes resumeJob operation.
 //
-// Only resumable job types (mover, rebalance, evacuation, share relocation) persist a checkpoint to
-// resume from (Q29). Jobs are never resumed automatically after a restart — this operation is always
-// an explicit user action.
+// Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk
+// upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
+// restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
+// maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
+// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it.
 //
 // POST /jobs/{jobId}/resume
 func (c *Client) ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error) {
@@ -10924,7 +11699,12 @@ func (c *Client) sendSetUserPassword(ctx context.Context, request *SetUserPasswo
 // Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
 // paths, then start services in the reverse of stop order, and exit maintenance mode only once every
 // step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when
-// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted.
+// the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted. Also refused with
+// `disk_upgrade_pending` while a data-disk upgrade is pending — queued, running or interrupted at
+// any checkpoint (doc 02 §4 E6); the error names the job to resume or cancel, and nothing is mounted.
+// Once the disks are mounted, each must hold the filesystem SQLite names for it before the pool or any
+// service starts (UR9); otherwise it is refused with `array_disk_mismatch`, the disks are unmounted
+// again and maintenance mode stays on.
 //
 // POST /array/start
 func (c *Client) StartArray(ctx context.Context) (*SystemStatus, error) {
@@ -11720,7 +12500,8 @@ func (c *Client) sendStartSync(ctx context.Context, request *StartSyncRequest) (
 // paths, the catch-all and data disks — the same list the `/storage` Stop array confirm dialog
 // already shows. The handler calls `job.ArraySequence.Stop` and does not write parity. A failure
 // leaves maintenance mode active so nothing new starts against a half-stopped array. `confirm: true`
-// is required.
+// is required. Refused with `disk_upgrade_pending` while a data-disk upgrade is pending (doc 02 §4
+// E7): the array is already stopped for it, and nothing is stopped, signalled or unmounted.
 //
 // POST /array/stop
 func (c *Client) StopArray(ctx context.Context, request *StopArrayRequest) (*SystemStatus, error) {
@@ -13695,6 +14476,145 @@ func (c *Client) sendUpdateUserSharePermissions(ctx context.Context, request *Up
 
 	stage = "DecodeResponse"
 	result, err := decodeUpdateUserSharePermissionsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpgradeDisk invokes upgradeDisk operation.
+//
+// Starts a resumable Topology job (`job.TypeDiskUpgradeData` or `job.TypeDiskUpgradeParity`, resolved
+// from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call
+// returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A
+// data-disk upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has
+// completed (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
+// `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies
+// and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to
+// show no removed or updated files, and only then names the new disk in SQLite; the array stays
+// stopped until the user starts it. A parity-disk upgrade runs with the array started (refused with
+// `maintenance_mode` while it is stopped): it copies the parity file, verifies it byte for byte,
+// switches the configuration and passes `snapraid check` before releasing the old parity disk (Q71).
+// The old disk is never written to or released until its verification gate passes.
+//
+// POST /disks/array/upgrade
+func (c *Client) UpgradeDisk(ctx context.Context, request *UpgradeDiskRequest) (*Job, error) {
+	res, err := c.sendUpgradeDisk(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendUpgradeDisk(ctx context.Context, request *UpgradeDiskRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("upgradeDisk"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array/upgrade"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpgradeDiskOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array/upgrade"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpgradeDiskRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpgradeDiskOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpgradeDiskOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpgradeDiskResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

@@ -99,3 +99,34 @@ func NextDataMountpoint(used []string) string {
 		}
 	}
 }
+
+// parityMountpointPattern matches the standard parity-disk mountpoint
+// shape (doc 01 §6): "/mnt/parity" followed by its number, nothing else.
+var parityMountpointPattern = regexp.MustCompile(`^/mnt/parity([0-9]+)$`)
+
+// NextParityMountpoint returns the first "/mnt/parityN" (N >= 1) not
+// already present in used — NextDataMountpoint's own logic, applied to
+// parity mountpoints (doc 02 §4 "Larger parity disk", #289): a larger
+// parity disk upgrade mounts the new disk at a fresh slot rather than the
+// old disk's own mountpoint, so the two can be verified side by side
+// while the old parity file stays exactly as valid as it was before the
+// upgrade started (Q71).
+func NextParityMountpoint(used []string) string {
+	taken := make(map[int]bool, len(used))
+	for _, u := range used {
+		m := parityMountpointPattern.FindStringSubmatch(u)
+		if m == nil {
+			continue
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		taken[n] = true
+	}
+	for n := 1; ; n++ {
+		if !taken[n] {
+			return fmt.Sprintf("/mnt/parity%d", n)
+		}
+	}
+}

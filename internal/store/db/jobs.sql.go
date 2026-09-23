@@ -216,6 +216,55 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]*Job, err
 	return items, nil
 }
 
+const listPendingJobsOfType = `-- name: ListPendingJobsOfType :many
+SELECT
+    id, "type", class, "status", progress, resumable, cancellable,
+    resource_ids, checkpoint, error_code, error_message,
+    created_at, started_at, finished_at, params
+FROM jobs
+WHERE "type" = ? AND "status" IN ('queued', 'running', 'interrupted')
+ORDER BY created_at ASC
+`
+
+func (q *Queries) ListPendingJobsOfType(ctx context.Context, type_ string) ([]*Job, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingJobsOfType, type_)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*Job
+	for rows.Next() {
+		var i Job
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Class,
+			&i.Status,
+			&i.Progress,
+			&i.Resumable,
+			&i.Cancellable,
+			&i.ResourceIds,
+			&i.Checkpoint,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Params,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const saveJobCheckpoint = `-- name: SaveJobCheckpoint :exec
 UPDATE jobs SET checkpoint = ? WHERE id = ?
 `
@@ -227,6 +276,20 @@ type SaveJobCheckpointParams struct {
 
 func (q *Queries) SaveJobCheckpoint(ctx context.Context, arg SaveJobCheckpointParams) error {
 	_, err := q.db.ExecContext(ctx, saveJobCheckpoint, arg.Checkpoint, arg.ID)
+	return err
+}
+
+const setJobCancellable = `-- name: SetJobCancellable :exec
+UPDATE jobs SET cancellable = ? WHERE id = ?
+`
+
+type SetJobCancellableParams struct {
+	Cancellable int64  `json:"cancellable"`
+	ID          string `json:"id"`
+}
+
+func (q *Queries) SetJobCancellable(ctx context.Context, arg SetJobCancellableParams) error {
+	_, err := q.db.ExecContext(ctx, setJobCancellable, arg.Cancellable, arg.ID)
 	return err
 }
 

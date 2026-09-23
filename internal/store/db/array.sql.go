@@ -21,6 +21,32 @@ func (q *Queries) CountArraySettings(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const getArrayDataDiskByMountpoint = `-- name: GetArrayDataDiskByMountpoint :one
+SELECT
+    id, role, role_index, device, filesystem, fs_uuid,
+    wwn, serial, by_id_name, weak_identity, mountpoint
+FROM array_disks WHERE mountpoint = ? AND role = 'data'
+`
+
+func (q *Queries) GetArrayDataDiskByMountpoint(ctx context.Context, mountpoint string) (*ArrayDisk, error) {
+	row := q.db.QueryRowContext(ctx, getArrayDataDiskByMountpoint, mountpoint)
+	var i ArrayDisk
+	err := row.Scan(
+		&i.ID,
+		&i.Role,
+		&i.RoleIndex,
+		&i.Device,
+		&i.Filesystem,
+		&i.FsUuid,
+		&i.Wwn,
+		&i.Serial,
+		&i.ByIDName,
+		&i.WeakIdentity,
+		&i.Mountpoint,
+	)
+	return &i, err
+}
+
 const getArraySettings = `-- name: GetArraySettings :one
 SELECT id, create_policy, min_free_space, created_at
 FROM array_settings WHERE id = 1
@@ -148,4 +174,77 @@ func (q *Queries) ListArrayDisks(ctx context.Context) ([]*ArrayDisk, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const replaceArrayDataDiskIdentity = `-- name: ReplaceArrayDataDiskIdentity :execrows
+UPDATE array_disks
+SET device = ?, filesystem = ?, fs_uuid = ?,
+    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?
+WHERE mountpoint = ? AND role = 'data'
+`
+
+type ReplaceArrayDataDiskIdentityParams struct {
+	Device       string         `json:"device"`
+	Filesystem   string         `json:"filesystem"`
+	FsUuid       string         `json:"fs_uuid"`
+	Wwn          sql.NullString `json:"wwn"`
+	Serial       sql.NullString `json:"serial"`
+	ByIDName     sql.NullString `json:"by_id_name"`
+	WeakIdentity int64          `json:"weak_identity"`
+	Mountpoint   string         `json:"mountpoint"`
+}
+
+func (q *Queries) ReplaceArrayDataDiskIdentity(ctx context.Context, arg ReplaceArrayDataDiskIdentityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, replaceArrayDataDiskIdentity,
+		arg.Device,
+		arg.Filesystem,
+		arg.FsUuid,
+		arg.Wwn,
+		arg.Serial,
+		arg.ByIDName,
+		arg.WeakIdentity,
+		arg.Mountpoint,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const upgradeArrayParityDiskSlot = `-- name: UpgradeArrayParityDiskSlot :execrows
+UPDATE array_disks
+SET device = ?, filesystem = ?, fs_uuid = ?,
+    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?,
+    mountpoint = ?8
+WHERE mountpoint = ?9 AND role = 'parity'
+`
+
+type UpgradeArrayParityDiskSlotParams struct {
+	Device        string         `json:"device"`
+	Filesystem    string         `json:"filesystem"`
+	FsUuid        string         `json:"fs_uuid"`
+	Wwn           sql.NullString `json:"wwn"`
+	Serial        sql.NullString `json:"serial"`
+	ByIDName      sql.NullString `json:"by_id_name"`
+	WeakIdentity  int64          `json:"weak_identity"`
+	NewMountpoint string         `json:"new_mountpoint"`
+	OldMountpoint string         `json:"old_mountpoint"`
+}
+
+func (q *Queries) UpgradeArrayParityDiskSlot(ctx context.Context, arg UpgradeArrayParityDiskSlotParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, upgradeArrayParityDiskSlot,
+		arg.Device,
+		arg.Filesystem,
+		arg.FsUuid,
+		arg.Wwn,
+		arg.Serial,
+		arg.ByIDName,
+		arg.WeakIdentity,
+		arg.NewMountpoint,
+		arg.OldMountpoint,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

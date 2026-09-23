@@ -26,6 +26,14 @@ type DiskFormatDeps struct {
 	Store     *store.ArrayStore
 	Generator *config.Generator
 	Mounter   disk.UnitMounter
+	// ArrayReady, when set, runs once applyArrayFromStore has persisted
+	// topology and mounted every physical disk: hoservad uses it to
+	// rebuild its own job.ArraySequence from that freshly written
+	// topology, the same construction a restart already does at startup,
+	// so a live `POST /disks/array` leaves `array start` (and, once
+	// called, `GET /pool`) working without a restart (#262). Optional —
+	// tests that only exercise FormatPlan/apply need no such rebuild.
+	ArrayReady func(ctx context.Context) error
 	// Now, when set, stamps generated-file headers; nil uses time.Now.
 	Now func() time.Time
 }
@@ -67,7 +75,10 @@ func RunDiskFormat(d DiskFormatDeps) RunFunc {
 			if !planMatchesStored(plan, disks) {
 				return store.ErrArrayExists
 			}
-			return applyArrayFromStore(ctx, d.Store, d.Generator, d.Mounter, settings.CreatedAt)
+			if err := applyArrayFromStore(ctx, d.Store, d.Generator, d.Mounter, settings.CreatedAt); err != nil {
+				return err
+			}
+			return runArrayReady(ctx, d)
 		}
 		if err := plan.CheckConfirmation(params.Confirmation); err != nil {
 			return err
@@ -109,8 +120,22 @@ func RunDiskFormat(d DiskFormatDeps) RunFunc {
 			return err
 		}
 
-		return applyArrayFromStore(ctx, d.Store, d.Generator, d.Mounter, created)
+		if err := applyArrayFromStore(ctx, d.Store, d.Generator, d.Mounter, created); err != nil {
+			return err
+		}
+		return runArrayReady(ctx, d)
 	}
+}
+
+// runArrayReady calls d.ArrayReady, if set, once applyArrayFromStore has
+// succeeded — a nil hook (every test that only exercises FormatPlan/apply)
+// is a no-op, never a required dependency the way Store/Generator/Mounter
+// are.
+func runArrayReady(ctx context.Context, d DiskFormatDeps) error {
+	if d.ArrayReady == nil {
+		return nil
+	}
+	return d.ArrayReady(ctx)
 }
 
 func arrayCreatePolicy(p DiskFormatParams) string {

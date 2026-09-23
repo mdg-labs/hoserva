@@ -3,6 +3,22 @@
 package apiv1
 
 // setDefaults set default value of fields.
+func (s *AddDiskPlanRequest) setDefaults() {
+	{
+		val := bool(false)
+		s.Adopt.SetTo(val)
+	}
+}
+
+// setDefaults set default value of fields.
+func (s *AddDiskRequest) setDefaults() {
+	{
+		val := bool(false)
+		s.Adopt.SetTo(val)
+	}
+}
+
+// setDefaults set default value of fields.
 func (s *ArrayDiskAssignment) setDefaults() {
 	{
 		val := bool(false)
@@ -15,6 +31,22 @@ func (s *RegisterExternalDiskRequest) setDefaults() {
 	{
 		val := bool(false)
 		s.BackupDestination.SetTo(val)
+	}
+}
+
+// setDefaults set default value of fields.
+func (s *ReplaceDiskPlanRequest) setDefaults() {
+	{
+		val := bool(false)
+		s.Adopt.SetTo(val)
+	}
+}
+
+// setDefaults set default value of fields.
+func (s *ReplaceDiskRequest) setDefaults() {
+	{
+		val := bool(false)
+		s.Adopt.SetTo(val)
 	}
 }
 

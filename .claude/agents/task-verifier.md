@@ -28,7 +28,7 @@ touch a real block device or mount, never `sudo`.
 
 The dispatch prompt (built from
 `.claude/skills/orchestrate/templates/verifier-prompt.md`) is complete and
-self-contained. Follow it exactly, including its six-layer check list, its
+self-contained. Follow it exactly, including its seven-layer check list, its
 blocking-versus-notes verdict rule, and — this is not optional — **posting your verdict as an
 issue comment via `gh issue comment` before you hand off**, using the
 `verification-comment.md` template filled in completely, then moving the

@@ -23,22 +23,42 @@ import (
 )
 
 func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
-	settings, assigned := h.arrayTopology(ctx)
+	settings, arrayDisks := h.arrayTopology(ctx)
 	entries := []apiv1.PoolDiskEntry{}
+	matched := make([]bool, len(arrayDisks))
+	presentDevices := map[string]bool{}
 	if h.Disks != nil {
 		disks, err := h.Disks.List(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("listing disks: %w", err)
 		}
+		var present []disk.Disk
 		for _, d := range disks {
-			if d.Boot {
-				continue
+			if !d.Boot {
+				present = append(present, d)
 			}
+		}
+		// Count claimants per member first: a weak-identity member and a
+		// dd-made clone share a filesystem UUID, and choosing between
+		// them by inventory order would report the wrong disk (or both)
+		// as the member. An ambiguous member is assigned to neither.
+		matchIdx := make([]int, len(present))
+		claimants := make([]int, len(arrayDisks))
+		for i, d := range present {
+			matchIdx[i] = -1
+			if idx, ok := matchArrayDisk(d, arrayDisks); ok {
+				matchIdx[i] = idx
+				claimants[idx]++
+			}
+		}
+		for i, d := range present {
+			presentDevices[d.Device] = true
 			role := apiv1.PoolDiskEntryRoleUnassigned
 			mountPoint := ""
-			if ad, ok := assigned[d.Device]; ok {
-				role = arrayRoleToAPI(ad.Role)
-				mountPoint = ad.Mountpoint
+			if idx := matchIdx[i]; idx >= 0 && claimants[idx] == 1 {
+				matched[idx] = true
+				role = arrayRoleToAPI(arrayDisks[idx].Role)
+				mountPoint = arrayDisks[idx].Mountpoint
 			}
 			entries = append(entries, apiv1.PoolDiskEntry{
 				Device:     d.Device,
@@ -49,20 +69,64 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 			})
 		}
 	}
+	// Every stored array member with no identity match above is a dead or
+	// pulled drive (doc 02 §4) — reported as its own entry, at its stored
+	// device/role/mountpoint with no size, rather than silently dropped
+	// (#326). Its stored /dev path is dropped when a present disk now
+	// holds that path: the pool and disks pages key entries by device.
+	for i, ad := range arrayDisks {
+		if matched[i] {
+			continue
+		}
+		device := ad.Device
+		if presentDevices[device] {
+			device = ""
+		}
+		entries = append(entries, apiv1.PoolDiskEntry{
+			Device:     device,
+			MountPoint: ad.Mountpoint,
+			Role:       arrayRoleToAPI(ad.Role),
+			State:      apiv1.DiskStateMissing,
+		})
+	}
 	mounted, err := pathIsMountpoint(pool.CatchAllPath)
 	if err != nil {
 		mounted = false
 	}
 	status := &apiv1.PoolStatus{Mounted: mounted, Disks: entries}
-	h.populatePoolSpace(ctx, status, settings, assigned)
+	h.populatePoolSpace(ctx, status, settings)
 	return status, nil
 }
 
-// arrayTopology returns the persisted array settings and disks keyed by
-// device path, or a zero settings value and nil map with no ArrayStore
+// matchArrayDisk finds the stored array_disks row that identifies the same
+// physical disk as d (Q21), reusing disk.Identity.Matches rather than a
+// second implementation: WWN when both sides have one, else serial. It
+// never falls back to comparing /dev/sdX paths, which renumber across
+// reboots (#326) — a stored member whose device changed is still found by
+// its identity, and a different disk that took over its old path is left
+// unmatched. A weak-identity array disk (no wwn/serial by-id link at all,
+// e.g. every disk in the loop-device lab, doc 06 §3) is matched by
+// filesystem UUID instead, since disk.Identity carries no field to compare
+// that through Matches.
+func matchArrayDisk(d disk.Disk, arrayDisks []store.ArrayDisk) (int, bool) {
+	inv := disk.Identity{WWN: d.WWN, Serial: d.Serial, WeakIdentity: d.WeakIdentity, ByIDName: d.ByIDName}
+	for i, ad := range arrayDisks {
+		stored := disk.Identity{WWN: ad.WWN, Serial: ad.Serial, WeakIdentity: ad.WeakIdentity, ByIDName: ad.ByIDName}
+		if inv.Matches(stored) {
+			return i, true
+		}
+		if ad.WeakIdentity && d.WeakIdentity && ad.FSUUID != "" && ad.FSUUID == d.FSUUID {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// arrayTopology returns the persisted array settings and every assigned
+// disk, or a zero settings value and nil slice with no ArrayStore
 // configured or no array created yet (GetPool must still report disk
 // inventory before create-array has run).
-func (h *Handler) arrayTopology(ctx context.Context) (store.ArraySettings, map[string]store.ArrayDisk) {
+func (h *Handler) arrayTopology(ctx context.Context) (store.ArraySettings, []store.ArrayDisk) {
 	if h.ArrayStore == nil {
 		return store.ArraySettings{}, nil
 	}
@@ -70,11 +134,7 @@ func (h *Handler) arrayTopology(ctx context.Context) (store.ArraySettings, map[s
 	if err != nil {
 		return store.ArraySettings{}, nil
 	}
-	byDevice := make(map[string]store.ArrayDisk, len(disks))
-	for _, d := range disks {
-		byDevice[d.Device] = d
-	}
-	return settings, byDevice
+	return settings, disks
 }
 
 // arrayRoleToAPI maps a persisted store.ArrayRole* spelling to its API
@@ -95,23 +155,27 @@ func arrayRoleToAPI(role string) apiv1.PoolDiskEntryRole {
 
 // populatePoolSpace fills status's pool-free, largest-single-disk-free and
 // per-disk free/nearMinFreeSpace figures straight from statfs(2) on each
-// data disk's mountpoint (pool.ComputePoolSpace, doc 09 §5) — never a
-// directory walk. It is best-effort: with no array topology yet (no data
-// disk mountpoints to statfs), or without an ArrayStore configured, status
-// is returned with these fields unset rather than as an error, since
-// GetPool must still report disk inventory before create-array has run.
-func (h *Handler) populatePoolSpace(ctx context.Context, status *apiv1.PoolStatus, settings store.ArraySettings, assigned map[string]store.ArrayDisk) {
+// present data disk's mountpoint (pool.ComputePoolSpace, doc 09 §5) — never
+// a directory walk. It reads mountpoints from status.Disks itself (already
+// reconciled by identity, #326) rather than re-deriving them from the
+// stored array topology by device path, since a renumbered disk's current
+// entry no longer shares its key. A missing data disk's stale mountpoint is
+// deliberately excluded: statfs-ing it would fail and, since
+// ComputePoolSpace is all-or-nothing, take every other disk's figures down
+// with it. It is best-effort throughout: with no data disk to statfs, or
+// without an ArrayStore configured, status is returned with these fields
+// unset rather than as an error, since GetPool must still report disk
+// inventory before create-array has run.
+func (h *Handler) populatePoolSpace(ctx context.Context, status *apiv1.PoolStatus, settings store.ArraySettings) {
 	if h.ArrayStore == nil {
 		return
 	}
-	mountByDevice := make(map[string]string, len(assigned))
 	var dataMounts []string
-	for device, d := range assigned {
-		if d.Role != store.ArrayRoleData {
+	for _, e := range status.Disks {
+		if e.Role != apiv1.PoolDiskEntryRoleData || e.State != apiv1.DiskStateActive || e.MountPoint == "" {
 			continue
 		}
-		mountByDevice[device] = d.Mountpoint
-		dataMounts = append(dataMounts, d.Mountpoint)
+		dataMounts = append(dataMounts, e.MountPoint)
 	}
 	if len(dataMounts) == 0 {
 		return
@@ -129,11 +193,10 @@ func (h *Handler) populatePoolSpace(ctx context.Context, status *apiv1.PoolStatu
 		byPath[d.Path] = d
 	}
 	for i := range status.Disks {
-		mnt, ok := mountByDevice[status.Disks[i].Device]
-		if !ok {
+		if status.Disks[i].Role != apiv1.PoolDiskEntryRoleData || status.Disks[i].State != apiv1.DiskStateActive || status.Disks[i].MountPoint == "" {
 			continue
 		}
-		d, ok := byPath[mnt]
+		d, ok := byPath[status.Disks[i].MountPoint]
 		if !ok {
 			continue
 		}

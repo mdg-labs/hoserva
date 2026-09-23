@@ -31,6 +31,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/pool"
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/store/metrics"
 	"github.com/mdg-labs/hoserva/web"
@@ -100,12 +101,28 @@ type config struct {
 	allowAllSources     bool
 	dev                 bool
 	applyVerifiedUpdate string
+	upsNotifyType       string
+	upsNotifySet        bool
+	upsShutdown         bool
 }
 
 func main() {
 	cfg := parseFlags()
-	if cfg.applyVerifiedUpdate != "" {
+	switch {
+	case cfg.applyVerifiedUpdate != "":
 		if err := runApplyVerifiedUpdate(cfg); err != nil {
+			fmt.Fprintln(os.Stderr, "hoservad:", err)
+			os.Exit(1)
+		}
+		return
+	case cfg.upsNotifySet:
+		if err := runUPSControlClient(cfg, cfg.upsNotifyType); err != nil {
+			fmt.Fprintln(os.Stderr, "hoservad:", err)
+			os.Exit(1)
+		}
+		return
+	case cfg.upsShutdown:
+		if err := runUPSControlClient(cfg, string(job.UPSNotifyLowBattery)); err != nil {
 			fmt.Fprintln(os.Stderr, "hoservad:", err)
 			os.Exit(1)
 		}
@@ -127,6 +144,8 @@ func parseFlags() config {
 	flag.BoolVar(&cfg.allowAllSources, "allow-all-sources", false, "disable the LAN-only source filter (Q10) — WARNING: accepts connections from any address")
 	flag.BoolVar(&cfg.dev, "dev", false, "development convenience: state dir, socket, machine key and TCP address default to a workspace-local path and 127.0.0.1 (git-ignored); an explicitly set flag always wins over this default")
 	flag.StringVar(&cfg.applyVerifiedUpdate, "apply-verified-update", "", "install a verified pending .deb from this directory (transient unit; Q67)")
+	flag.StringVar(&cfg.upsNotifyType, "ups-notify", "", "internal: relay a NUT upsmon NOTIFYTYPE (ONBATT/ONLINE/LOWBATT) to the running daemon's UPSController over its own control socket (doc 02 §6, Q77) — invoked by /usr/lib/hoserva/nut-notify, never by a user")
+	flag.BoolVar(&cfg.upsShutdown, "ups-shutdown", false, "internal: run the running daemon's clean low-battery shutdown sequence synchronously over its control socket, exiting non-zero if any step failed — SHUTDOWNCMD's own entry point (doc 02 §6, Q77), invoked by /usr/lib/hoserva/nut-shutdown, never by a user")
 	flag.Parse()
 
 	// flag.Visit only visits flags actually given on the command line — so
@@ -136,6 +155,11 @@ func parseFlags() config {
 	// the reverse).
 	explicit := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	// An empty -ups-notify must still select client mode: falling through
+	// to run() would open the live daemon's database and mark its running
+	// jobs interrupted before the TCP listener fails (dialUPSControl
+	// refuses the empty value).
+	cfg.upsNotifySet = explicit["ups-notify"]
 
 	if cfg.dev {
 		if !explicit["state-dir"] {
@@ -219,13 +243,6 @@ func run(cfg config) error {
 		configRoot = "/etc"
 	}
 	generator := cfggen.NewGenerator(configRoot)
-	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
-		Provider:  disks,
-		Runner:    linuxDisks.Exec,
-		Store:     arrayStore,
-		Generator: generator,
-		Mounter:   disk.SystemdMounter{Runner: linuxDisks.Exec},
-	}))
 	// The mover cooperatively checks StopRequested between files and
 	// leaves consistent on-disk state at any stopping point (a duplicate,
 	// never a gap — doc 09 §2), so it honestly supports being cancelled,
@@ -238,10 +255,18 @@ func run(cfg config) error {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
 
-	arraySeq, err := newArraySequence(ctx, scheduler, arrayStore, disks, linuxDisks.Exec)
+	arraySeq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, linuxDisks.Exec)
 	if err != nil {
 		return fmt.Errorf("building array stop/start sequence: %w", err)
 	}
+	// handler is created here, ahead of its other fields, so upsController
+	// and updateEngine (below) can both resolve handler.CurrentArray at
+	// shutdown time instead of capturing arraySeq's own startup value
+	// (#263) — the ArrayReady hook (further down) is this value's only
+	// writer once the daemon starts serving requests.
+	handler := &api.Handler{}
+	handler.SetArray(arraySeq)
+	upsController := newUPSController(scheduler, handler.CurrentArray, notifyService, linuxDisks.Exec)
 
 	// Losing metrics.db must not look like array failure (#186): log and
 	// leave Handler.Metrics nil so GET /metrics returns an empty series.
@@ -285,7 +310,7 @@ func run(cfg config) error {
 			return acmeDatabaseSecrets(reqCtx, acmeStore)
 		},
 	}
-	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, arraySeq, notifyService, linuxDisks.Exec, backupService)
+	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, handler.CurrentArray, notifyService, linuxDisks.Exec, backupService)
 	networkSvc := &cfggen.NetworkService{
 		Generator: generator,
 		Detector:  cfggen.ExecDetector{Root: configRoot},
@@ -296,10 +321,156 @@ func run(cfg config) error {
 	if err := networkSvc.Recover(ctx); err != nil {
 		log.Printf("hoservad: restoring unconfirmed network change: %v", err)
 	}
-	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Logs: logs, Auth: authService, Notify: notifyService, Settings: settingsService, Schedules: scheduleService, Disks: disks, Array: arraySeq, Metrics: metricsStore, Parity: parityEngine, History: history, Updates: updateEngine, Generator: generator, HostConfig: store.NewHostConfigStore(db), Docker: cfggen.ExecDocker{}, ArrayStore: arrayStore, Network: networkSvc, ACME: acmeService}
+	var shareUsages share.UsageReader
+	if parityEngine != nil {
+		shareUsages = parityEngine.Usage
+	}
+	// rebuildArraySequence is also the ArrayReady hook job.TypeDiskFormat/
+	// DiskAdd/DiskReplace call below, moved up here (from its previous
+	// position right after this point) so shareService can already close
+	// over it as its PostCommit: a live createShare/updateShare/
+	// deleteShare changes store.ShareStore directly, never through one of
+	// those disk-topology jobs, so without this same rebuild running
+	// after every one of those calls too, Handler.Array's own ShareMounts
+	// stays exactly as stale as it was at the last daemon start or
+	// disk-topology change — array/stop then fails EBUSY on a share that
+	// exists and is mounted, but that the running daemon has never once
+	// rebuilt its ArraySequence to know about (#268).
+	rebuildArraySequence := func(ctx context.Context) error {
+		seq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, linuxDisks.Exec)
+		if err != nil {
+			return err
+		}
+		handler.SetArray(seq)
+		return nil
+	}
+	shareService := newShareService(shareStore, arrayStore, generator, pool.Mounter{Runner: linuxDisks.Exec}, shareUsages)
+	shareService.PostCommit = rebuildArraySequence
+	// topologyChanged is the disk-topology jobs' ArrayReady hook. Those
+	// jobs write only the catch-all's unit, so share.Service rewrites
+	// every share's units with the new branch list first; then the
+	// rebuilt sequence is applied to a pool that is already running, so
+	// an added disk's capacity is available at once (doc 02 §4 "Adding a
+	// disk" step 6) rather than at the next array start. The live update
+	// runs after the topology is committed: its failure is logged, not
+	// returned, because the job cannot be retried once the disk is a
+	// member, and the next array start applies the same mounts.
+	topologyChanged := func(ctx context.Context) error {
+		live := pool.IsMounted(pool.CatchAllPath)
+		if err := shareService.ApplyTopology(ctx, live); err != nil {
+			return fmt.Errorf("regenerating share configuration: %w", err)
+		}
+		if err := rebuildArraySequence(ctx); err != nil {
+			return err
+		}
+		if seq := handler.CurrentArray(); seq != nil {
+			if err := seq.RefreshLive(ctx, live); err != nil {
+				log.Printf("hoservad: the running pool did not pick up the new disk topology: %v — stop and start the array to apply it", err)
+			}
+		}
+		return nil
+	}
+	handler.Scheduler = scheduler
+	handler.Store = jobStore
+	handler.Logs = logs
+	handler.Auth = authService
+	handler.Notify = notifyService
+	handler.Settings = settingsService
+	handler.Schedules = scheduleService
+	handler.Disks = disks
+	handler.Metrics = metricsStore
+	handler.Parity = parityEngine
+	handler.History = history
+	handler.Updates = updateEngine
+	handler.Generator = generator
+	handler.HostConfig = store.NewHostConfigStore(db)
+	handler.Docker = cfggen.ExecDocker{}
+	handler.ArrayStore = arrayStore
+	handler.Network = networkSvc
+	handler.ACME = acmeService
+	handler.Shares = shareService
 	if parityEngine != nil {
 		handler.ParityGuard = parityEngine.Guard
 		handler.RelocationManifest = parityEngine.Relocation
+	}
+
+	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
+		Provider:   disks,
+		Runner:     linuxDisks.Exec,
+		Store:      arrayStore,
+		Generator:  generator,
+		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		ArrayReady: topologyChanged,
+	}))
+	registry.Register(job.TypeDiskAdd, false, job.RunDiskAdd(job.DiskAddDeps{
+		Provider:   disks,
+		Runner:     linuxDisks.Exec,
+		Store:      arrayStore,
+		Generator:  generator,
+		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		ArrayReady: topologyChanged,
+	}))
+	// replaceParityEngine is left a true nil interface, not a non-nil
+	// interface wrapping a nil *parity.SnapraidEngine, when snapraid.conf
+	// doesn't exist yet (no array created): RunDiskReplace's own
+	// dependency check (d.Parity == nil) only catches the former, and its
+	// GetArray call already fails closed with ErrNoArray in that case
+	// before ever reaching Parity — this is only extra safety against
+	// arrayStore and snapraid.conf ever disagreeing about whether an
+	// array exists.
+	var replaceParityEngine parity.Engine
+	if parityEngine != nil {
+		replaceParityEngine = parityEngine
+	}
+	// TypeDiskReplace's own snapraid fix step genuinely honors context
+	// cancellation (exec.CommandContext kills the subprocess, #288's own
+	// lab test proves this), so it is registered cancellable — a stuck or
+	// unwanted replace can be cancelled the same way a mover or ACME issue
+	// job already can, leaving the array's topology already switched over
+	// to the replacement and recoverable via an ordinary `hoserva fix`.
+	registry.Register(job.TypeDiskReplace, true, job.RunDiskReplace(job.DiskReplaceDeps{
+		Provider:   disks,
+		Runner:     linuxDisks.Exec,
+		Store:      arrayStore,
+		Generator:  generator,
+		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		Parity:     replaceParityEngine,
+		ArrayReady: topologyChanged,
+	}))
+	// The data-disk upgrade (doc 02 §4 state machine): its run, its abort
+	// (Cancel of a queued or interrupted upgrade) and startup recovery
+	// share one set of dependencies, so all three unwind the same way.
+	// Registered cancellable: a cancel before the release decision is the
+	// abort, and the scheduler refuses it from releasing on.
+	upgradeDataDeps := job.DiskUpgradeDataDeps{
+		Provider:   disks,
+		Runner:     linuxDisks.Exec,
+		Store:      arrayStore,
+		Generator:  generator,
+		Parity:     replaceParityEngine,
+		Mounts:     disk.KernelMounts{Runner: linuxDisks.Exec},
+		Array:      handler.CurrentArray,
+		ArrayReady: topologyChanged,
+	}
+	registry.Register(job.TypeDiskUpgradeData, true, job.RunDiskUpgradeData(upgradeDataDeps))
+	registry.RegisterAbort(job.TypeDiskUpgradeData, job.AbortDiskUpgradeData(upgradeDataDeps))
+	registry.Register(job.TypeDiskUpgradeParity, true, job.RunDiskUpgradeParity(job.DiskUpgradeParityDeps{
+		Provider:       disks,
+		Runner:         linuxDisks.Exec,
+		Store:          arrayStore,
+		Generator:      generator,
+		Mounter:        disk.SystemdMounter{Runner: linuxDisks.Exec},
+		UpgradeMounter: disk.DirectMounter{Runner: linuxDisks.Exec},
+		Parity:         replaceParityEngine,
+		ArrayReady:     topologyChanged,
+	}))
+
+	// Startup recovery (doc 02 §4 E4, UR1, UR8) runs before any listener
+	// or loop below can submit or resume a job. A failure is recorded on
+	// the job, and the daemon still starts so resume and cancel stay
+	// reachable.
+	if err := job.RecoverDiskUpgradeData(ctx, scheduler, upgradeDataDeps); err != nil {
+		log.Printf("hoservad: data-disk upgrade startup recovery: %v", err)
 	}
 
 	webRoot, err := fs.Sub(web.Dist, "dist")
@@ -328,6 +499,11 @@ func run(cfg config) error {
 		return fmt.Errorf("starting Unix socket listener: %w", err)
 	}
 	applySocketGroupPermissions(cfg.socketPath)
+	upsControlListener, err := setupUnixListener(upsControlSocketPath(cfg.socketPath))
+	if err != nil {
+		return fmt.Errorf("starting ups control socket listener: %w", err)
+	}
+	go serveUPSControl(ctx, upsControlListener, upsController, auth.OSGroupLookup{}, uint32(os.Getuid()))
 
 	pruneOnce(ctx, jobStore, logs, authStore, history)
 	go runDailyPrune(ctx, jobStore, logs, authStore, history)
@@ -382,6 +558,7 @@ func run(cfg config) error {
 	defer cancel()
 	_ = tcpServer.Shutdown(shutdownCtx)
 	_ = unixServer.Shutdown(shutdownCtx)
+	_ = upsControlListener.Close()
 	networkSvc.Close()
 	return runErr
 }

@@ -44,6 +44,40 @@ const (
 	shareRelocationToCache = "cache"
 )
 
+// DiskUpgradeDataParams is upgradeDisk's persisted Topology-job payload
+// for a data-disk upgrade (doc 02 §4 "Larger data disk"): the slot being
+// upgraded, the old disk A as SQLite named it at submit (its identity
+// and filesystem UUID are fixed here, UR4), the new, larger disk B, the
+// typed confirmation planDiskUpgrade's plan required, and a disk-size
+// snapshot for the Q20 re-check. B keeps the slot's mountpoint.
+type DiskUpgradeDataParams struct {
+	Confirmation string            `json:"confirmation"`
+	Mountpoint   string            `json:"mountpoint"`
+	Old          disk.AssignedDisk `json:"old"`
+	Disk         disk.AssignedDisk `json:"disk"`
+	Sizes        map[string]int64  `json:"sizes"`
+}
+
+// DiskUpgradeParityParams is upgradeDisk's persisted Topology-job payload
+// for a parity-disk upgrade (doc 02 §4 "Larger parity disk", #289): the
+// existing parity slot being upgraded, the new, larger disk, the fresh
+// mountpoint planDiskUpgrade computed for it (never the old slot's own —
+// the new parity disk is mounted and verified independently before the
+// configuration ever names it, Q71), the typed confirmation, and a
+// disk-size snapshot. NewMountpoint is fixed at submit time, not
+// recomputed at run time: RunDiskUpgradeParity only ever formats the new
+// disk once, on its very first invocation (a resumed run must never
+// reformat a disk that may already hold a partial parity-file copy), so
+// the mountpoint it was formatted and mounted at must stay the same
+// across every resume.
+type DiskUpgradeParityParams struct {
+	Confirmation  string            `json:"confirmation"`
+	Mountpoint    string            `json:"mountpoint"`
+	NewMountpoint string            `json:"newMountpoint"`
+	Disk          disk.AssignedDisk `json:"disk"`
+	Sizes         map[string]int64  `json:"sizes"`
+}
+
 // ShareRelocationParams is startShareRelocation's persisted request
 // payload: the share to relocate and the direction (doc 09 §2, #239).
 type ShareRelocationParams struct {
@@ -70,6 +104,31 @@ func (p DiskFormatParams) Plan() disk.TopologyPlan {
 	return disk.TopologyPlan{Parity: p.Parity, Data: p.Data, Cache: p.Cache}
 }
 
+// DiskAddParams is addDisk's persisted Topology-job payload (doc 02 §4
+// "Adding a disk"): the disk to format or adopt, the typed confirmation
+// planDiskAdd's own plan required, and every currently-listed disk's size
+// from that same disk.Provider.List call — RunDiskAdd re-validates Q20
+// against the array's current topology plus this snapshot rather than
+// trusting the queued plan alone, the same defense-in-depth
+// createArray's own FormatPlan already applies to DiskFormatParams.
+type DiskAddParams struct {
+	Confirmation string            `json:"confirmation"`
+	Disk         disk.AssignedDisk `json:"disk"`
+	Sizes        map[string]int64  `json:"sizes"`
+}
+
+// DiskReplaceParams is replaceDisk's persisted Topology-job payload
+// (doc 02 §4 "Replacing a failed disk"): the existing data-disk slot being
+// replaced, the replacement disk, the typed confirmation planDiskReplace's
+// own plan required, and a disk-size snapshot for the same Q20 re-check
+// DiskAddParams carries.
+type DiskReplaceParams struct {
+	Confirmation string            `json:"confirmation"`
+	Mountpoint   string            `json:"mountpoint"`
+	Disk         disk.AssignedDisk `json:"disk"`
+	Sizes        map[string]int64  `json:"sizes"`
+}
+
 // ValidateParams checks params against t at Submit time (not in SQL).
 // Empty or null is valid for types whose payload is optional. TypeFix
 // requires confirm=true, so an absent payload is rejected. Types that
@@ -86,6 +145,18 @@ func ValidateParams(t Type, params []byte) error {
 		if t == TypeShareRelocation {
 			return fmt.Errorf("job: share_relocation params require share and to")
 		}
+		if t == TypeDiskAdd {
+			return fmt.Errorf("job: disk_add params require confirmation")
+		}
+		if t == TypeDiskReplace {
+			return fmt.Errorf("job: disk_replace params require confirmation")
+		}
+		if t == TypeDiskUpgradeData {
+			return fmt.Errorf("job: disk_upgrade_data params require confirmation")
+		}
+		if t == TypeDiskUpgradeParity {
+			return fmt.Errorf("job: disk_upgrade_parity params require confirmation")
+		}
 		return nil
 	}
 	switch t {
@@ -100,6 +171,18 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeDiskFormat:
 		_, err := decodeDiskFormatParams(params)
+		return err
+	case TypeDiskAdd:
+		_, err := decodeDiskAddParams(params)
+		return err
+	case TypeDiskReplace:
+		_, err := decodeDiskReplaceParams(params)
+		return err
+	case TypeDiskUpgradeData:
+		_, err := decodeDiskUpgradeDataParams(params)
+		return err
+	case TypeDiskUpgradeParity:
+		_, err := decodeDiskUpgradeParityParams(params)
 		return err
 	case TypeShareRelocation:
 		_, err := decodeShareRelocationParams(params)
@@ -205,6 +288,80 @@ func decodeDiskFormatParams(params []byte) (DiskFormatParams, error) {
 	}
 	if len(p.Parity) == 0 && len(p.Data) == 0 && p.Cache == nil {
 		return DiskFormatParams{}, fmt.Errorf("job: disk_format params require a plan")
+	}
+	return p, nil
+}
+
+func decodeDiskAddParams(params []byte) (DiskAddParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return DiskAddParams{}, fmt.Errorf("job: disk_add params require confirmation")
+	}
+	var p DiskAddParams
+	if err := decodeJSON(params, &p); err != nil {
+		return DiskAddParams{}, err
+	}
+	if p.Confirmation == "" {
+		return DiskAddParams{}, fmt.Errorf("job: disk_add params require confirmation")
+	}
+	if p.Disk.Device == "" {
+		return DiskAddParams{}, fmt.Errorf("job: disk_add params require a device")
+	}
+	return p, nil
+}
+
+func decodeDiskReplaceParams(params []byte) (DiskReplaceParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return DiskReplaceParams{}, fmt.Errorf("job: disk_replace params require confirmation")
+	}
+	var p DiskReplaceParams
+	if err := decodeJSON(params, &p); err != nil {
+		return DiskReplaceParams{}, err
+	}
+	if p.Confirmation == "" {
+		return DiskReplaceParams{}, fmt.Errorf("job: disk_replace params require confirmation")
+	}
+	if p.Mountpoint == "" || p.Disk.Device == "" {
+		return DiskReplaceParams{}, fmt.Errorf("job: disk_replace params require mountpoint and a replacement device")
+	}
+	return p, nil
+}
+
+func decodeDiskUpgradeDataParams(params []byte) (DiskUpgradeDataParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return DiskUpgradeDataParams{}, fmt.Errorf("job: disk_upgrade_data params require confirmation")
+	}
+	var p DiskUpgradeDataParams
+	if err := decodeJSON(params, &p); err != nil {
+		return DiskUpgradeDataParams{}, err
+	}
+	if p.Confirmation == "" {
+		return DiskUpgradeDataParams{}, fmt.Errorf("job: disk_upgrade_data params require confirmation")
+	}
+	if p.Mountpoint == "" || p.Disk.Device == "" {
+		return DiskUpgradeDataParams{}, fmt.Errorf("job: disk_upgrade_data params require mountpoint and a replacement device")
+	}
+	if p.Old.FSUUID == "" {
+		return DiskUpgradeDataParams{}, fmt.Errorf("job: disk_upgrade_data params require the old disk's filesystem UUID")
+	}
+	return p, nil
+}
+
+func decodeDiskUpgradeParityParams(params []byte) (DiskUpgradeParityParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return DiskUpgradeParityParams{}, fmt.Errorf("job: disk_upgrade_parity params require confirmation")
+	}
+	var p DiskUpgradeParityParams
+	if err := decodeJSON(params, &p); err != nil {
+		return DiskUpgradeParityParams{}, err
+	}
+	if p.Confirmation == "" {
+		return DiskUpgradeParityParams{}, fmt.Errorf("job: disk_upgrade_parity params require confirmation")
+	}
+	if p.Mountpoint == "" || p.Disk.Device == "" {
+		return DiskUpgradeParityParams{}, fmt.Errorf("job: disk_upgrade_parity params require mountpoint and a replacement device")
+	}
+	if p.NewMountpoint == "" || p.NewMountpoint == p.Mountpoint {
+		return DiskUpgradeParityParams{}, fmt.Errorf("job: disk_upgrade_parity params require a distinct newMountpoint")
 	}
 	return p, nil
 }

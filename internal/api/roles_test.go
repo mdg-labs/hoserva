@@ -119,6 +119,7 @@ func TestOperationRolesMatchesSpec(t *testing.T) {
 // spec parse above.
 func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 	generated := []apiv1.OperationName{
+		apiv1.AddDiskOperation,
 		apiv1.ApplyHostConfigOperation,
 		apiv1.CancelJobOperation,
 		apiv1.ConfirmTotpOperation,
@@ -161,7 +162,12 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.ListUsersOperation,
 		apiv1.ListWakeEventsOperation,
 		apiv1.MountExternalDiskOperation,
+		apiv1.PlanDiskAddOperation,
+		apiv1.PlanDiskReplaceOperation,
+		apiv1.PlanDiskUpgradeOperation,
 		apiv1.RegisterExternalDiskOperation,
+		apiv1.ReplaceDiskOperation,
+		apiv1.UpgradeDiskOperation,
 		apiv1.UpdateExternalDiskOperation,
 		apiv1.ListJobsOperation,
 		apiv1.ListNotificationChannelsOperation,

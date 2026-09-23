@@ -37,6 +37,46 @@ func TestWriteRendersHeaderAndBody(t *testing.T) {
 	}
 }
 
+// TestWriteDefaultsToWorldReadableMode proves a File with Mode left zero
+// lands at defaultFileMode — the behaviour every generated file had before
+// #260 added File.Mode, preserved for a file with nothing secret in it.
+func TestWriteDefaultsToWorldReadableMode(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+
+	if err := g.Write(context.Background(), testFile(), 1, time.Now()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(g.Root, "snapraid.conf"))
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != defaultFileMode {
+		t.Fatalf("mode = %o, want %o", got, defaultFileMode)
+	}
+}
+
+// TestWriteHonorsExplicitMode proves a File that sets Mode overrides
+// defaultFileMode — the mechanism nut.go's WriteUPS uses to land
+// upsmon.conf and upsd.users at secretFileMode instead (#260).
+func TestWriteHonorsExplicitMode(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	file := testFile()
+	file.Mode = secretFileMode
+
+	if err := g.Write(context.Background(), file, 1, time.Now()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(g.Root, "snapraid.conf"))
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != secretFileMode {
+		t.Fatalf("mode = %o, want %o", got, secretFileMode)
+	}
+}
+
 func TestWriteGoesUnderConfigurableRoot(t *testing.T) {
 	root := t.TempDir()
 	g := NewGenerator(root)
@@ -168,7 +208,7 @@ func TestAtomicWriteExclusiveRefusesExistingDestination(t *testing.T) {
 	if err := os.WriteFile(dest, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := atomicWrite(dest, []byte("[global]\n"), 0o644, true); !errors.Is(err, os.ErrExist) {
+	if err := atomicWrite(dest, []byte("[global]\n"), 0o644, -1, true); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("exclusive atomicWrite = %v, want os.ErrExist", err)
 	}
 	got, err := os.ReadFile(dest)

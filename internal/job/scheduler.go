@@ -3,6 +3,7 @@ package job
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +12,23 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
+
+// diskUpgradeDataCheckpointAtReleasing reports whether a data-disk
+// upgrade checkpoint is at releasing: past its release decision, so the
+// job is never cancellable again (doc 02 §4 E3, UR7, invariant 4).
+func diskUpgradeDataCheckpointAtReleasing(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	var cp disk.DataDiskUpgradeCheckpoint
+	if err := json.Unmarshal(data, &cp); err != nil {
+		return false
+	}
+	return cp.Phase == disk.DataDiskUpgradePhaseReleasing
+}
 
 // RunFunc is a job type's actual work — the mover walking the pool mount,
 // SnapRAID's sync, a container pull, and so on (doc 01 §4). This package
@@ -32,6 +49,31 @@ var (
 	// was evicted to bound scheduler memory, and the store row is still
 	// non-terminal — there is no safe way to keep waiting.
 	ErrTerminalSnapshotEvicted = errors.New("job: terminal snapshot evicted before final status was persisted")
+	// ErrArrayNotStopped refuses a data-disk upgrade unless the array's
+	// stop sequence has completed (doc 02 §4 E8, UR3): maintenance mode
+	// alone is not enough, since a stop that failed partway can leave
+	// services or mounts up. It is the one job type maintenance mode
+	// admits; every other type is refused while maintenance is active.
+	ErrArrayNotStopped = errors.New("job: stop the array first (`hoserva array stop`) — a data-disk upgrade runs only once the stop sequence has completed")
+	// ErrDiskUpgradePastRelease is Cancel's refusal once a data-disk
+	// upgrade's checkpoint is at releasing, whether the job is queued,
+	// running or interrupted (doc 02 §4 E3, invariant 4).
+	ErrDiskUpgradePastRelease = fmt.Errorf("%w: the data-disk upgrade is past its release decision and has committed to the new disk — resume it to finish", ErrJobNotCancellable)
+	// ErrJobAbortInProgress refuses a Cancel or Resume of a job whose
+	// abort is already running (doc 02 §4 UR7).
+	ErrJobAbortInProgress = errors.New("job: an abort of this job is already running")
+	// ErrCancelRequested is what a data-disk upgrade's save of its
+	// releasing checkpoint returns when a Cancel won the race for it
+	// (doc 02 §4 E3, UR7): the checkpoint is not saved and Release never
+	// runs.
+	ErrCancelRequested = errors.New("job: cancel requested before the release decision was saved")
+	// ErrJobNeedsRetry is a RunFunc's own signal that it stopped cleanly
+	// at a resumable checkpoint on its own decision — never through a
+	// Cancel or EnterMaintenance stop — and wants the scheduler to record
+	// it exactly as it would a maintenance-mode interruption: resumable
+	// through an explicit Resume, never a plain terminal failure with no
+	// way back. A RunFunc wraps this with fmt.Errorf's %w.
+	ErrJobNeedsRetry = errors.New("job: stopped at a resumable checkpoint; resume once the condition that stopped it clears")
 )
 
 // stopReason is set on a runningJob before it is asked to stop, so its
@@ -58,15 +100,22 @@ const (
 )
 
 type runningJob struct {
-	job         *Job
-	run         RunFunc
-	cancellable bool
-	cancel      context.CancelFunc
-	stopCh      chan struct{}
-	done        chan struct{}
+	job    *Job
+	run    RunFunc
+	cancel context.CancelFunc
+	stopCh chan struct{}
+	done   chan struct{}
 
-	mu     sync.Mutex
-	reason stopReason
+	// mu guards cancellable, reason and stopSignalled. Lock order is
+	// Scheduler.mu, then mu.
+	mu sync.Mutex
+	// cancellable is decided with a cancel under mu: runJob's
+	// saveCheckpoint clears it, and never sets it again, when a
+	// TypeDiskUpgradeData run saves its releasing checkpoint (doc 02 §4
+	// UR7).
+	cancellable   bool
+	reason        stopReason
+	stopSignalled bool
 }
 
 type queuedJob struct {
@@ -94,6 +143,13 @@ type Scheduler struct {
 	evictedTerminalSnapshots    map[string]struct{}
 	evictedTerminalSnapshotFIFO []string
 	maintenance                 bool
+	// arrayStopped is true only once ArraySequence.Stop has completed every
+	// step since maintenance mode was last entered (doc 02 §4 UR3).
+	arrayStopped bool
+	// aborting holds the id of every job whose abort (Cancel of a queued
+	// or interrupted job) is running, so no Resume or second Cancel of it
+	// runs at the same time (doc 02 §4 UR7).
+	aborting map[string]bool
 	// batteryHold is Q77's own on-battery hold: lighter than maintenance
 	// mode — it refuses only TypeMover and TypeSync (Submit and dispatch
 	// both check it) and never touches a job of any other type, unlike
@@ -112,6 +168,7 @@ func NewScheduler(store *Store, logs *LogStore, hub *Hub, registry *Registry) *S
 		hub:      hub,
 		registry: registry,
 		running:  make(map[string]*runningJob),
+		aborting: make(map[string]bool),
 	}
 }
 
@@ -145,7 +202,12 @@ func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, pa
 	class, _ := ClassOf(t)
 
 	s.mu.Lock()
-	if s.maintenance {
+	if t == TypeDiskUpgradeData {
+		if err := s.admitDiskUpgradeDataLocked(ctx); err != nil {
+			s.mu.Unlock()
+			return nil, err
+		}
+	} else if s.maintenance {
 		s.mu.Unlock()
 		return nil, ErrMaintenanceMode
 	}
@@ -188,21 +250,47 @@ func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, pa
 	return j, nil
 }
 
-// Cancel asks a running job's tool to stop, or removes a still-queued job
-// outright. A running job whose type honestly can't be cancelled reports
-// ErrJobNotCancellable rather than accepting the call and doing nothing
-// (doc 01 §4).
+// admitDiskUpgradeDataLocked is doc 02 §4 E8 for a new data-disk
+// upgrade: refused while another is pending, and admitted only once the
+// array's stop sequence has completed (UR3). Callers must hold s.mu, so
+// the check and the job's creation are one step against ArraySequence
+// .Start's own BeginArrayStart.
+func (s *Scheduler) admitDiskUpgradeDataLocked(ctx context.Context) error {
+	pending, err := s.store.ListPending(ctx, TypeDiskUpgradeData)
+	if err != nil {
+		return fmt.Errorf("job: checking for a pending data-disk upgrade: %w", err)
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("%w: job %s", ErrDiskUpgradeDataPending, pending[0].ID)
+	}
+	if !s.maintenance || !s.arrayStopped {
+		return ErrArrayNotStopped
+	}
+	return nil
+}
+
+// Cancel asks a running job to stop, removes a queued job, or ends an
+// interrupted, cancellable job cancelled. A queued or interrupted job
+// whose type registered an AbortFunc runs it first, and ends cancelled
+// only once it succeeded; otherwise the job is left interrupted with the
+// abort's error recorded, and the error is returned. For a data-disk
+// upgrade that abort is its Unwind (doc 02 §4 E3). A running job's
+// outcome is recorded by runJob once its run returns.
 func (s *Scheduler) Cancel(ctx context.Context, id string) (*Job, error) {
 	s.mu.Lock()
 	if rj, ok := s.running[id]; ok {
+		rj.mu.Lock()
 		if !rj.cancellable {
+			rj.mu.Unlock()
 			s.mu.Unlock()
+			if rj.job.Type == TypeDiskUpgradeData {
+				return nil, ErrDiskUpgradePastRelease
+			}
 			return nil, ErrJobNotCancellable
 		}
-		rj.mu.Lock()
 		rj.reason = reasonCancel
-		rj.mu.Unlock()
 		rj.cancel()
+		rj.mu.Unlock()
 		snapshot := *rj.job
 		s.mu.Unlock()
 		return &snapshot, nil
@@ -212,57 +300,157 @@ func (s *Scheduler) Cancel(ctx context.Context, id string) (*Job, error) {
 		if q.job.ID != id {
 			continue
 		}
-		s.queue = append(s.queue[:i:i], s.queue[i+1:]...)
-		now := time.Now().UTC()
-		q.job.Status = StatusCancelled
-		q.job.FinishedAt = &now
-		snapshot := *q.job
-		s.mu.Unlock()
-
-		if err := s.store.UpdateStatus(ctx, id, StatusCancelled, snapshot.Progress, "", "", snapshot.StartedAt, &now); err != nil {
-			return nil, fmt.Errorf("job: cancelling queued job %s: %w", id, err)
+		if !q.cancellable && q.job.Type == TypeDiskUpgradeData {
+			s.mu.Unlock()
+			return nil, ErrDiskUpgradePastRelease
 		}
-		s.hub.Publish(&snapshot)
-		return &snapshot, nil
+		s.queue = append(s.queue[:i:i], s.queue[i+1:]...)
+		abort, hasAbort := s.registry.lookupAbort(q.job.Type)
+		if !hasAbort {
+			now := time.Now().UTC()
+			q.job.Status = StatusCancelled
+			q.job.FinishedAt = &now
+			snapshot := *q.job
+			s.mu.Unlock()
+
+			if err := s.store.UpdateStatus(ctx, id, StatusCancelled, snapshot.Progress, "", "", snapshot.StartedAt, &now); err != nil {
+				return nil, fmt.Errorf("job: cancelling queued job %s: %w", id, err)
+			}
+			s.hub.Publish(&snapshot)
+			return &snapshot, nil
+		}
+		s.aborting[id] = true
+		job := *q.job
+		s.mu.Unlock()
+		defer s.releaseAbort(id)
+		return s.abortAndCancel(ctx, &job, abort)
 	}
+
+	if s.aborting[id] {
+		s.mu.Unlock()
+		return nil, ErrJobAbortInProgress
+	}
+	s.aborting[id] = true
 	s.mu.Unlock()
+	defer s.releaseAbort(id)
 
 	existing, err := s.store.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return nil, fmt.Errorf("%w: job %s has status %s", ErrJobNotRunning, id, existing.Status)
+	if existing.Status != StatusInterrupted {
+		return nil, fmt.Errorf("%w: job %s has status %s", ErrJobNotRunning, id, existing.Status)
+	}
+	if existing.Type == TypeDiskUpgradeData && diskUpgradeDataCheckpointAtReleasing(existing.Checkpoint) {
+		return nil, ErrDiskUpgradePastRelease
+	}
+	if !existing.Cancellable {
+		return nil, ErrJobNotCancellable
+	}
+	abort, _ := s.registry.lookupAbort(existing.Type)
+	return s.abortAndCancel(ctx, existing, abort)
+}
+
+// abortAndCancel runs abort, if any, then records j cancelled. If abort
+// fails, j is recorded interrupted with the abort's error code instead
+// (an *OutcomeError's Code, or job_abort_failed), and the error is
+// returned. The caller holds j's entry in s.aborting. A caller that goes
+// away does not stop an abort halfway.
+func (s *Scheduler) abortAndCancel(ctx context.Context, j *Job, abort AbortFunc) (*Job, error) {
+	ctx = context.WithoutCancel(ctx)
+	if abort != nil {
+		if err := abort(ctx, j.Params); err != nil {
+			code := "job_abort_failed"
+			var oe *OutcomeError
+			if errors.As(err, &oe) && oe.Code != "" {
+				code = oe.Code
+			}
+			now := time.Now().UTC()
+			if serr := s.store.UpdateStatus(ctx, j.ID, StatusInterrupted, j.Progress, code, err.Error(), j.StartedAt, &now); serr != nil {
+				return nil, fmt.Errorf("job: aborting job %s: %w (recording the failure: %v)", j.ID, err, serr)
+			}
+			j.Status = StatusInterrupted
+			j.ErrorCode = code
+			j.ErrorMessage = err.Error()
+			j.FinishedAt = &now
+			s.hub.Publish(j)
+			return nil, fmt.Errorf("job: aborting job %s: %w", j.ID, err)
+		}
+	}
+	now := time.Now().UTC()
+	if err := s.store.UpdateStatus(ctx, j.ID, StatusCancelled, j.Progress, "", "", j.StartedAt, &now); err != nil {
+		return nil, fmt.Errorf("job: cancelling job %s: %w", j.ID, err)
+	}
+	j.Status = StatusCancelled
+	j.ErrorCode = ""
+	j.ErrorMessage = ""
+	j.FinishedAt = &now
+	s.hub.Publish(j)
+	return j, nil
+}
+
+func (s *Scheduler) releaseAbort(id string) {
+	s.mu.Lock()
+	delete(s.aborting, id)
+	s.mu.Unlock()
 }
 
 // Resume restarts an interrupted, resumable job from its last checkpoint
 // (Q29) — always an explicit call, never automatic. The job's type must
 // still have a RunFunc bound through Registry.Register; a process restart
 // loses nothing here since the registry is rebuilt at startup, not
-// persisted.
+// persisted. The job is read and started under s.mu, so a concurrent
+// Cancel's abort of the same job and this never both run (doc 02 §4
+// UR7). A data-disk upgrade resumed at releasing is not cancellable,
+// decided and persisted before the job is visible to Cancel.
 func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
+	s.mu.Lock()
+	if s.aborting[id] {
+		s.mu.Unlock()
+		return nil, ErrJobAbortInProgress
+	}
 	existing, err := s.store.Get(ctx, id)
 	if err != nil {
+		s.mu.Unlock()
 		return nil, err
 	}
 	if !existing.Resumable {
+		s.mu.Unlock()
 		return nil, ErrJobNotResumable
 	}
 	if existing.Status != StatusInterrupted {
+		s.mu.Unlock()
 		return nil, ErrJobNotInterrupted
 	}
 	entry, ok := s.registry.lookup(existing.Type)
 	if !ok {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("%w: %s", ErrJobTypeNotRegistered, existing.Type)
 	}
-
-	s.mu.Lock()
-	if s.maintenance {
+	if existing.Type == TypeDiskUpgradeData {
+		if !s.maintenance {
+			s.mu.Unlock()
+			return nil, ErrArrayNotStopped
+		}
+	} else if s.maintenance {
 		s.mu.Unlock()
 		return nil, ErrMaintenanceMode
 	}
 	if s.batteryHold && isBatteryHeldType(existing.Type) {
 		s.mu.Unlock()
 		return nil, ErrOnBattery
+	}
+
+	cancellable := entry.cancellable
+	if existing.Type == TypeDiskUpgradeData && diskUpgradeDataCheckpointAtReleasing(existing.Checkpoint) {
+		cancellable = false
+	}
+	if cancellable != existing.Cancellable {
+		if err := s.store.SetCancellable(ctx, id, cancellable); err != nil {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("job: resuming job %s: %w", id, err)
+		}
+		existing.Cancellable = cancellable
 	}
 
 	now := time.Now().UTC()
@@ -274,6 +462,8 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 		existing.StartedAt = &now
 		existing.FinishedAt = nil
 	}
+	existing.ErrorCode = ""
+	existing.ErrorMessage = ""
 
 	if err := s.store.UpdateStatus(ctx, id, existing.Status, existing.Progress, "", "", existing.StartedAt, existing.FinishedAt); err != nil {
 		s.mu.Unlock()
@@ -281,14 +471,15 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 	}
 
 	if existing.Status == StatusQueued {
-		s.queue = append(s.queue, &queuedJob{job: existing, run: entry.run, cancellable: entry.cancellable})
+		s.queue = append(s.queue, &queuedJob{job: existing, run: entry.run, cancellable: cancellable})
 	} else {
-		s.startJobLocked(existing, entry.run, entry.cancellable)
+		s.startJobLocked(existing, entry.run, cancellable)
 	}
+	snapshot := *existing
 	s.mu.Unlock()
 
-	s.hub.Publish(existing)
-	return existing, nil
+	s.hub.Publish(&snapshot)
+	return &snapshot, nil
 }
 
 // EnterMaintenance puts the scheduler in maintenance mode (Q70,
@@ -297,13 +488,16 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 // checkpoint, and every non-resumable running job — and every job that was
 // only queued, never started — is marked interrupted immediately, since
 // neither has a checkpoint worth preserving.
+//
+// Calling it again while already in maintenance mode signals any running
+// job it has not signalled yet — a data-disk upgrade, the one job type
+// maintenance mode admits — so a shutdown's stop sequence stops it at its
+// next checkpoint too (doc 02 §4 E4). Every call clears the "stop
+// sequence completed" state (UR3) until ArraySequence.Stop sets it again.
 func (s *Scheduler) EnterMaintenance(ctx context.Context) error {
 	s.mu.Lock()
-	if s.maintenance {
-		s.mu.Unlock()
-		return nil
-	}
 	s.maintenance = true
+	s.arrayStopped = false
 
 	queue := s.queue
 	s.queue = nil
@@ -326,7 +520,14 @@ func (s *Scheduler) EnterMaintenance(ctx context.Context) error {
 
 	for _, rj := range running {
 		rj.mu.Lock()
-		rj.reason = reasonMaintenance
+		if rj.stopSignalled {
+			rj.mu.Unlock()
+			continue
+		}
+		rj.stopSignalled = true
+		if rj.reason == reasonNone {
+			rj.reason = reasonMaintenance
+		}
 		rj.mu.Unlock()
 		if rj.job.Resumable {
 			close(rj.stopCh)
@@ -367,6 +568,43 @@ func (s *Scheduler) Drain(ctx context.Context) error {
 func (s *Scheduler) ExitMaintenance() {
 	s.mu.Lock()
 	s.maintenance = false
+	s.arrayStopped = false
+	s.mu.Unlock()
+}
+
+// MarkArrayStopped records that ArraySequence.Stop completed every step
+// (doc 02 §4 UR3): the only state that admits a data-disk upgrade.
+func (s *Scheduler) MarkArrayStopped() {
+	s.mu.Lock()
+	s.arrayStopped = s.maintenance
+	s.mu.Unlock()
+}
+
+// BeginArrayStart is ArraySequence.Start's first step: it refuses while a
+// data-disk upgrade is pending (doc 02 §4 E6), and otherwise clears the
+// "stop sequence completed" state under the same lock Submit admits a
+// data-disk upgrade under, so no upgrade is admitted once a start begins.
+// It returns that state as it was, for RestoreArrayStopped.
+func (s *Scheduler) BeginArrayStart(ctx context.Context) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pending, err := s.store.ListPending(ctx, TypeDiskUpgradeData)
+	if err != nil {
+		return false, fmt.Errorf("job: checking for a pending data-disk upgrade: %w", err)
+	}
+	if len(pending) > 0 {
+		return false, fmt.Errorf("%w: job %s — resume it, or cancel it to abort back to the old disk", ErrDiskUpgradeDataPending, pending[0].ID)
+	}
+	was := s.arrayStopped
+	s.arrayStopped = false
+	return was, nil
+}
+
+// RestoreArrayStopped puts back the state BeginArrayStart returned, for a
+// start that failed without leaving anything mounted.
+func (s *Scheduler) RestoreArrayStopped(was bool) {
+	s.mu.Lock()
+	s.arrayStopped = was && s.maintenance
 	s.mu.Unlock()
 }
 
@@ -421,6 +659,11 @@ func (s *Scheduler) PauseForBattery(ctx context.Context) []string {
 	paused := make([]string, 0, len(toStop))
 	for _, rj := range toStop {
 		rj.mu.Lock()
+		if rj.stopSignalled {
+			rj.mu.Unlock()
+			continue
+		}
+		rj.stopSignalled = true
 		rj.reason = reasonBatteryHold
 		rj.mu.Unlock()
 		close(rj.stopCh)
@@ -494,6 +737,22 @@ func (s *Scheduler) WaitForStorageJobs(ctx context.Context) error {
 			return fmt.Errorf("job: waiting for storage jobs: %w", ctx.Err())
 		}
 	}
+}
+
+// PendingDiskUpgradeData returns the oldest data-disk upgrade that is
+// pending — queued, running or interrupted at any checkpoint — or nil
+// (doc 02 §4: pending from submit until succeeded, failed or cancelled).
+// It reads the store, which records a job's end only after runJob has
+// finished it, so a job is still pending until its outcome is written.
+func (s *Scheduler) PendingDiskUpgradeData(ctx context.Context) (*Job, error) {
+	pending, err := s.store.ListPending(ctx, TypeDiskUpgradeData)
+	if err != nil {
+		return nil, fmt.Errorf("job: listing pending data-disk upgrades: %w", err)
+	}
+	if len(pending) == 0 {
+		return nil, nil
+	}
+	return pending[0], nil
 }
 
 // awaitPollInterval is Await's fallback tick: Hub.Publish drops an update
@@ -684,17 +943,19 @@ func (s *Scheduler) startJobLocked(j *Job, run RunFunc, cancellable bool) {
 // dispatch starts every still-queued job that no longer conflicts with
 // what's currently running, in submission order, skipping past (not
 // blocking on) a queued job that still conflicts so an unrelated class
-// isn't held up behind it.
+// isn't held up behind it. In maintenance mode only a data-disk upgrade,
+// the one type it admits, is started (doc 02 §4 E1 Queued).
 func (s *Scheduler) dispatch() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.maintenance {
-		return
-	}
 
 	var remaining []*queuedJob
 	started := make([]*Job, 0, len(s.queue))
 	for _, q := range s.queue {
+		if s.maintenance && q.job.Type != TypeDiskUpgradeData {
+			remaining = append(remaining, q)
+			continue
+		}
 		if s.batteryHold && isBatteryHeldType(q.job.Type) {
 			remaining = append(remaining, q)
 			continue
@@ -752,6 +1013,9 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 		stopRequested: rj.stopCh,
 		out:           out,
 		saveCheckpoint: func(data []byte) error {
+			if rj.job.Type == TypeDiskUpgradeData && diskUpgradeDataCheckpointAtReleasing(data) {
+				return s.saveDiskUpgradeReleasing(rj, data)
+			}
 			return s.store.SaveCheckpoint(context.Background(), rj.job.ID, data)
 		},
 		setProgress: func(pct int) {
@@ -782,11 +1046,25 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 	now := time.Now().UTC()
 	var status Status
 	var errCode, errMessage string
+	var outcome *OutcomeError
+	hasOutcome := errors.As(runErr, &outcome)
 	switch {
+	case hasOutcome && outcome.Status == StatusInterrupted:
+		status = StatusInterrupted
+		errCode = outcome.Code
+		errMessage = runErr.Error()
 	case reason == reasonCancel:
 		status = StatusCancelled
+	case hasOutcome:
+		status = outcome.Status
+		errCode = outcome.Code
+		errMessage = runErr.Error()
 	case reason == reasonMaintenance, reason == reasonBatteryHold:
 		status = StatusInterrupted
+	case errors.Is(runErr, ErrJobNeedsRetry):
+		status = StatusInterrupted
+		errCode = "job_needs_retry"
+		errMessage = runErr.Error()
 	case runErr != nil:
 		status = StatusFailed
 		errCode = "job_failed"
@@ -830,3 +1108,43 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 	s.hub.Publish(&finished)
 	s.dispatch()
 }
+
+// saveDiskUpgradeReleasing saves a data-disk upgrade's releasing
+// checkpoint and makes the job uncancellable, decided under the same
+// locks Cancel takes (doc 02 §4 E3 race row, UR7): if a Cancel came
+// first, nothing is saved and ErrCancelRequested is returned, so Release
+// never runs; otherwise every later Cancel is refused.
+func (s *Scheduler) saveDiskUpgradeReleasing(rj *runningJob, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rj.mu.Lock()
+	defer rj.mu.Unlock()
+	if rj.reason == reasonCancel {
+		return ErrCancelRequested
+	}
+	if err := s.store.SaveCheckpoint(context.Background(), rj.job.ID, data); err != nil {
+		return err
+	}
+	rj.cancellable = false
+	rj.job.Cancellable = false
+	if err := s.store.SetCancellable(context.Background(), rj.job.ID, false); err != nil {
+		log.Printf("job: recording job %s as no longer cancellable: %v", rj.job.ID, err)
+	}
+	return nil
+}
+
+// OutcomeError lets a RunFunc record a specific status and error code.
+// Status is StatusFailed or StatusInterrupted. An interrupted outcome is
+// recorded even over a Cancel: the run could not establish what a
+// cancelled or failed status would claim (doc 02 §4 invariant 3). A
+// failed outcome yields to a Cancel. An AbortFunc may return one to name
+// the error code Cancel records when the abort fails.
+type OutcomeError struct {
+	Status Status
+	Code   string
+	Err    error
+}
+
+func (e *OutcomeError) Error() string { return e.Err.Error() }
+
+func (e *OutcomeError) Unwrap() error { return e.Err }

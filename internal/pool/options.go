@@ -48,6 +48,14 @@ func DefaultOptions() Options {
 	return Options{MinFreeSpace: "50G", Responsiveness: Responsive}
 }
 
+// minFreeSpace is o.MinFreeSpace, or doc 02 §1's default when unset.
+func (o Options) minFreeSpace() string {
+	if o.MinFreeSpace == "" {
+		return DefaultOptions().MinFreeSpace
+	}
+	return o.MinFreeSpace
+}
+
 // render returns o's own comma-separated mergerfs options, in doc 02
 // §1's table order, minus category.create and fsname (added by the
 // caller, which knows the per-mount policy and name). A zero-value
@@ -55,10 +63,7 @@ func DefaultOptions() Options {
 // minfreespace default rather than emitting minfreespace= empty, which
 // mergerfs would reject.
 func (o Options) render() string {
-	minFreeSpace := o.MinFreeSpace
-	if minFreeSpace == "" {
-		minFreeSpace = DefaultOptions().MinFreeSpace
-	}
+	minFreeSpace := o.minFreeSpace()
 	return fmt.Sprintf(
 		"moveonenospc=true,dropcacheonclose=true,minfreespace=%s,cache.files=partial,cache.entry=%d,cache.attr=%d,cache.negative_entry=%d,cache.statfs=0",
 		minFreeSpace, o.Responsiveness.entrySeconds(), o.Responsiveness.entrySeconds(), o.Responsiveness.entrySeconds(),

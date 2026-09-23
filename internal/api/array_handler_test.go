@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -360,7 +361,7 @@ func seqEqual(t *testing.T, got, want []string) {
 
 func attachArraySequence(h *api.Handler, s *job.Scheduler, seq job.ArraySequence) {
 	seq.Scheduler = s
-	h.Array = &seq
+	h.SetArray(&seq)
 }
 
 func confirmStop() *apiv1.StopArrayRequest {
@@ -536,6 +537,43 @@ func TestHandler_StartArray_RefusesWhenGateIsNotReady(t *testing.T) {
 	}
 }
 
+// TestHandler_ArrayStartAndStop_RefusedWhileDiskUpgradeDataIsPending:
+// doc 02 §4 E6 and E7 through the handler — while a data-disk upgrade is
+// pending, StartArray and StopArray are refused with disk_upgrade_pending
+// and nothing is mounted, unmounted or stopped.
+func TestHandler_ArrayStartAndStop_RefusedWhileDiskUpgradeDataIsPending(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	if err := h.Store.Create(ctx, &job.Job{
+		ID: "33333333-3333-3333-3333-333333333333", Type: job.TypeDiskUpgradeData, Class: job.ClassTopology,
+		Status: job.StatusInterrupted, Resumable: true, Cancellable: true, CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var log []string
+	disk1 := &seqLogMount{where: "/mnt/disk1", log: &log}
+	svc := &seqLogService{name: "samba", log: &log}
+	attachArraySequence(h, s, job.ArraySequence{Services: []job.ArrayService{svc}, Disks: []job.ArrayMount{disk1}})
+
+	_, err := h.StartArray(ctx)
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "disk_upgrade_pending" || !strings.Contains(status.Response.Message, "33333333") {
+		t.Fatalf("StartArray = %+v, want 409 disk_upgrade_pending naming the job", status)
+	}
+	_, err = h.StopArray(ctx, confirmStop())
+	status = apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "disk_upgrade_pending" {
+		t.Fatalf("StopArray = %+v, want 409 disk_upgrade_pending", status)
+	}
+	if len(log) != 0 {
+		t.Fatalf("array start/stop acted while a data-disk upgrade was pending: %v", log)
+	}
+}
+
 func TestHandler_StartArray_DoesNotExitMaintenanceOnFailure(t *testing.T) {
 	ctx := context.Background()
 	h, s, _ := newTestHandler(t)
@@ -564,4 +602,41 @@ func TestHandler_StartArray_DoesNotExitMaintenanceOnFailure(t *testing.T) {
 	if !got.MaintenanceMode.Or(false) {
 		t.Fatal("GetStatus: maintenanceMode must stay true after a failed start")
 	}
+}
+
+// TestHandler_SetArray_ConcurrentWithStopStartIsRaceFree is #263's own
+// concurrency regression: a live array creation (#262) calls SetArray from
+// the create-array job's own goroutine while StopArray/StartArray (and
+// cmd/hoservad's own UPS/update shutdown lookups) read the same value from
+// concurrent HTTP request goroutines. Before this fix, Handler.Array was a
+// bare, unsynchronized pointer field written and read directly by both
+// sides — `go test -race` catches that unsynchronized concurrent access
+// here; CurrentArray/SetArray's own arrayMu is what makes this clean.
+func TestHandler_SetArray_ConcurrentWithStopStartIsRaceFree(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+
+	var wg sync.WaitGroup
+	const iterations = 200
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			seq := job.ArraySequence{Scheduler: s}
+			h.SetArray(&seq)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_, _ = h.StopArray(ctx, confirmStop())
+			_, _ = h.StartArray(ctx)
+			_ = h.CurrentArray()
+		}
+	}()
+
+	wg.Wait()
 }
