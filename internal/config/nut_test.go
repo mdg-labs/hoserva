@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -94,6 +97,20 @@ func TestRenderUPSMonConf_NetworkOmitsLocalOnlyOverrides(t *testing.T) {
 	}
 }
 
+// newUPSGenerator resolves the nut group to the test process's own gid,
+// the one group a non-root test can chown a file to.
+func newUPSGenerator(t *testing.T, root string) *Generator {
+	t.Helper()
+	g := NewGenerator(root)
+	g.LookupGroup = func(name string) (int, error) {
+		if name != NUTGroup {
+			return 0, fmt.Errorf("unexpected group %q", name)
+		}
+		return os.Getgid(), nil
+	}
+	return g
+}
+
 func writeUPS(t *testing.T, g *Generator, state UPSState, revision int, now time.Time) {
 	t.Helper()
 	if err := g.WriteUPS(context.Background(), state, "settings ups", revision, now); err != nil {
@@ -106,7 +123,7 @@ func writeUPS(t *testing.T, g *Generator, state UPSState, revision int, now time
 // the doc 01 §2 header plus its own Render output.
 func TestWriteUPS_USBWritesAllFourFiles(t *testing.T) {
 	state := loadUPSState(t, "usb")
-	g := NewGenerator(t.TempDir())
+	g := newUPSGenerator(t, t.TempDir())
 	now := time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC)
 
 	writeUPS(t, g, state, 1, now)
@@ -139,20 +156,30 @@ func TestWriteUPS_USBWritesAllFourFiles(t *testing.T) {
 // ups.conf, which carry no secret, are unaffected.
 func TestWriteUPS_SecretFilesAreRestrictedMode(t *testing.T) {
 	state := loadUPSState(t, "usb")
-	g := NewGenerator(t.TempDir())
+	g := newUPSGenerator(t, t.TempDir())
 	now := time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC)
 
 	writeUPS(t, g, state, 1, now)
 
-	restricted := []string{PathUPSMonConf, PathUPSDUsers}
-	for _, path := range restricted {
-		info, err := os.Stat(filepath.Join(g.Root, path))
-		if err != nil {
-			t.Fatalf("stat %s: %v", path, err)
-		}
-		if got := info.Mode().Perm(); got != secretFileMode {
-			t.Fatalf("%s mode = %o, want %o", path, got, secretFileMode)
-		}
+	info, err := os.Stat(filepath.Join(g.Root, PathUPSMonConf))
+	if err != nil {
+		t.Fatalf("stat %s: %v", PathUPSMonConf, err)
+	}
+	if got := info.Mode().Perm(); got != secretFileMode {
+		t.Fatalf("%s mode = %o, want %o", PathUPSMonConf, got, secretFileMode)
+	}
+
+	// upsd drops to the nut group before reading upsd.users, so a
+	// root-only file would lock the local monitor account out.
+	info, err = os.Stat(filepath.Join(g.Root, PathUPSDUsers))
+	if err != nil {
+		t.Fatalf("stat %s: %v", PathUPSDUsers, err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("%s mode = %o, want 640", PathUPSDUsers, got)
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); !ok || int(st.Gid) != os.Getgid() {
+		t.Fatalf("%s group = %+v, want the nut group's gid %d", PathUPSDUsers, info.Sys(), os.Getgid())
 	}
 
 	unrestricted := []string{PathNUTConf, PathUPSConf}
@@ -167,13 +194,33 @@ func TestWriteUPS_SecretFilesAreRestrictedMode(t *testing.T) {
 	}
 }
 
+// TestWriteUPS_MissingNUTGroupRefusesBeforeWritingAnything: without the
+// nut group (the nut package is not installed) upsd.users cannot get the
+// ownership upsd needs, so a USB configuration is refused up front
+// rather than half-written.
+func TestWriteUPS_MissingNUTGroupRefusesBeforeWritingAnything(t *testing.T) {
+	state := loadUPSState(t, "usb")
+	g := NewGenerator(t.TempDir())
+	g.LookupGroup = func(name string) (int, error) { return 0, user.UnknownGroupError(name) }
+
+	if err := g.CanWriteUPS(context.Background(), state); err == nil {
+		t.Fatal("CanWriteUPS without a nut group = nil, want an error")
+	}
+	if err := g.WriteUPS(context.Background(), state, "settings ups", 1, time.Now()); err == nil {
+		t.Fatal("WriteUPS without a nut group = nil, want an error")
+	}
+	if _, err := os.Stat(filepath.Join(g.Root, PathNUTConf)); !os.IsNotExist(err) {
+		t.Fatalf("%s written despite the refusal (stat err %v)", PathNUTConf, err)
+	}
+}
+
 // TestWriteUPS_NetworkWritesOnlyTwoFiles proves WriteUPS never writes
 // ups.conf/upsd.users for a network NUT server — those files belong to
 // the remote server's own configuration, not Hoserva's (RenderUPSConf's
 // own doc comment).
 func TestWriteUPS_NetworkWritesOnlyTwoFiles(t *testing.T) {
 	state := loadUPSState(t, "network")
-	g := NewGenerator(t.TempDir())
+	g := newUPSGenerator(t, t.TempDir())
 	now := time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC)
 
 	writeUPS(t, g, state, 1, now)
@@ -197,7 +244,7 @@ func TestWriteUPS_NetworkWritesOnlyTwoFiles(t *testing.T) {
 // longer runs a local driver for.
 func TestWriteUPS_SwitchingFromUSBToNetworkRemovesLocalFiles(t *testing.T) {
 	usb := loadUPSState(t, "usb")
-	g := NewGenerator(t.TempDir())
+	g := newUPSGenerator(t, t.TempDir())
 	now := time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC)
 
 	writeUPS(t, g, usb, 1, now)
@@ -225,7 +272,7 @@ func TestWriteUPS_SwitchingFromUSBToNetworkRemovesLocalFiles(t *testing.T) {
 func TestWriteUPS_RefusesControlCharacterInField(t *testing.T) {
 	state := loadUPSState(t, "usb")
 	state.MonitorPassword = "s3cr3t\nSHUTDOWNCMD \"/bin/rm -rf /\""
-	g := NewGenerator(t.TempDir())
+	g := newUPSGenerator(t, t.TempDir())
 
 	err := g.WriteUPS(context.Background(), state, "settings ups", 1, time.Now())
 	if !errors.Is(err, ErrInvalidUPSField) {
@@ -244,7 +291,7 @@ func TestCanWriteUPS_RefusesWhitespaceInField(t *testing.T) {
 	state := loadUPSState(t, "network")
 	state.NetworkUsername = "hoserva admin"
 
-	err := NewGenerator(t.TempDir()).CanWriteUPS(context.Background(), state)
+	err := newUPSGenerator(t, t.TempDir()).CanWriteUPS(context.Background(), state)
 	if !errors.Is(err, ErrInvalidUPSField) {
 		t.Fatalf("CanWriteUPS with a space in network_username = %v, want ErrInvalidUPSField", err)
 	}
@@ -257,7 +304,7 @@ func TestCanWriteUPS_RefusesWhitespaceInField(t *testing.T) {
 func TestCanWriteUPS_RefusesExistingHostFile(t *testing.T) {
 	state := loadUPSState(t, "usb")
 	root := t.TempDir()
-	g := NewGenerator(root)
+	g := newUPSGenerator(t, root)
 
 	full := filepath.Join(root, PathUPSMonConf)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {

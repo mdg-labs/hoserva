@@ -308,7 +308,7 @@ func (s *NetworkService) savePending(p pendingFile) error {
 	if err != nil {
 		return fmt.Errorf("config: encoding pending network change: %w", err)
 	}
-	return atomicWrite(s.pendingPath(), raw, 0o600, false)
+	return atomicWrite(s.pendingPath(), raw, 0o600, -1, false)
 }
 
 func (g *Generator) restoreFile(ctx context.Context, path string, content []byte) error {
@@ -319,7 +319,7 @@ func (g *Generator) restoreFile(ctx context.Context, path string, content []byte
 	if err != nil {
 		return err
 	}
-	if err := atomicWrite(full, content, 0o644, false); err != nil {
+	if err := atomicWrite(full, content, 0o644, -1, false); err != nil {
 		return err
 	}
 	manifest, err := g.loadManifest()
