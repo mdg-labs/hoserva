@@ -556,6 +556,60 @@ func TestCreate_NFSEnabledRequiresHost(t *testing.T) {
 	}
 }
 
+func TestApplyTopology_LeavesUnmanagedSambaAndNFSUntouched(t *testing.T) {
+	for name, leaveUnmanaged := range map[string]bool{
+		"unmanaged":          true,
+		"existing_host_file": false,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx, svc, _, _ := testService(t)
+			smbPath := filepath.Join(svc.Gen.Root, config.PathSamba)
+			exportsPath := filepath.Join(svc.Gen.Root, config.PathNFS)
+			smbOriginal := "[global]\nworkgroup = WORKGROUP\n"
+			exportsOriginal := "/export/media *(ro,sync,no_subtree_check)\n"
+			if err := os.MkdirAll(filepath.Dir(smbPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(smbPath, []byte(smbOriginal), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(exportsPath, []byte(exportsOriginal), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if leaveUnmanaged {
+				if err := svc.Gen.KeepUnmanaged(ctx, config.PathSamba); err != nil {
+					t.Fatalf("KeepUnmanaged smb: %v", err)
+				}
+				if err := svc.Gen.KeepUnmanaged(ctx, config.PathNFS); err != nil {
+					t.Fatalf("KeepUnmanaged exports: %v", err)
+				}
+			}
+
+			if err := svc.ApplyTopology(ctx, false); err != nil {
+				t.Fatalf("ApplyTopology: %v", err)
+			}
+
+			gotSMB, err := os.ReadFile(smbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(gotSMB) != smbOriginal {
+				t.Fatalf("smb.conf changed:\n%s", gotSMB)
+			}
+			gotExports, err := os.ReadFile(exportsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(gotExports) != exportsOriginal {
+				t.Fatalf("exports changed:\n%s", gotExports)
+			}
+			if !generatedFileContains(t, svc.Gen.Root, "Where="+pool.CatchAllPath+"\n") {
+				t.Fatal("catch-all pool mount unit not written")
+			}
+		})
+	}
+}
+
 // TestApplyTopology_AddsTheNewDiskToEveryShare is doc 02 §4 "Adding a
 // disk" step 6: after a disk joins the array, every share's unit carries
 // its branch. Its branch directory is created only when the array is

@@ -681,6 +681,31 @@ func (s *Service) restoreGenerated(ctx context.Context) error {
 	return s.Gen.WriteNFS(ctx, nfs, applyCommand, 1, now)
 }
 
+// shareFileWriteSkippable reports whether ApplyTopology may continue
+// after Samba or NFS refused to write: an unmanaged or unimported host
+// file stays as the user left it (Q76, doc 02 §4 step 6).
+func shareFileWriteSkippable(err error) bool {
+	return errors.Is(err, config.ErrUnmanaged) || errors.Is(err, config.ErrExistingHostFile)
+}
+
+func (s *Service) applyTopologyFiles(ctx context.Context) error {
+	state, smb, nfs, err := s.shareFiles(ctx)
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	if err := s.Gen.WritePoolMounts(ctx, state, applyCommand, 1, now); err != nil {
+		return err
+	}
+	if err := s.Gen.WriteSamba(ctx, smb, applyCommand, 1, now); err != nil && !shareFileWriteSkippable(err) {
+		return err
+	}
+	if err := s.Gen.WriteNFS(ctx, nfs, applyCommand, 1, now); err != nil && !shareFileWriteSkippable(err) {
+		return err
+	}
+	return nil
+}
+
 // ApplyTopology brings every share-dependent file up to date after the
 // array's disks changed (doc 02 §4 "Adding a disk" step 6): every share's
 // mount and mover-target unit gains the new data disk's branch, and
@@ -690,7 +715,7 @@ func (s *Service) restoreGenerated(ctx context.Context) error {
 // live mounts are about to be given exist. It never creates a directory
 // while the array is stopped: an unmounted /mnt/diskN is the boot disk.
 func (s *Service) ApplyTopology(ctx context.Context, live bool) error {
-	if err := s.restoreGenerated(ctx); err != nil {
+	if err := s.applyTopologyFiles(ctx); err != nil {
 		return err
 	}
 	if !live {
