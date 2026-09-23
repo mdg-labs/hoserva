@@ -120,19 +120,19 @@ export function PoolOverviewPage(): React.ReactElement {
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {disks.map((disk) => {
           const size = disk.sizeBytes ?? 0;
-          const diskUsed = disk.usedBytes ?? 0;
-          const percent = size > 0 ? Math.round((diskUsed / size) * 100) : 0;
+          const diskUsed = disk.usedBytes;
+          const percent = diskUsed != null && size > 0 ? Math.round((diskUsed / size) * 100) : null;
           const missing = disk.state === "missing";
           return (
             <MetricTile
               key={`${disk.device || "missing"}-${disk.mountPoint}`}
               title={disk.mountPoint}
               value={disk.device}
-              description={`${disk.role} · ${formatBytes(diskUsed)}`}
+              description={`${disk.role} · ${diskUsed == null ? t("pool.diskUsageUnavailable") : formatBytes(diskUsed)}`}
               progress={percent}
               footer={
                 <StatusBadge tone={disk.state === "failed" || missing ? "error" : "success"}>
-                  {missing ? t("pool.diskState.missing") : disk.state}
+                  {t(`pool.diskState.${disk.state}`)}
                 </StatusBadge>
               }
             />

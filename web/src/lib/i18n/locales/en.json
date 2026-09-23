@@ -221,8 +221,13 @@
     "dataDisks": "Disks in the mergerfs pool",
     "noRebuildNote": "Adding a disk does not require a rebuild — mergerfs includes new branches on the next mount.",
     "diskState": {
-      "missing": "Missing — not detected"
+      "active": "Active",
+      "standby": "Spun down",
+      "spinning_up": "Spinning up",
+      "missing": "Missing — not detected",
+      "failed": "Failed"
     },
+    "diskUsageUnavailable": "Usage unavailable",
     "stopArray": "Stop array",
     "startArray": "Start array",
     "stop": {

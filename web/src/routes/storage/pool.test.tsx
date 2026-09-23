@@ -106,5 +106,13 @@ describe("PoolOverviewPage missing disk", () => {
     // Never the raw enum value — a plain-language label instead.
     expect(screen.queryByText("missing")).not.toBeInTheDocument();
     expect(screen.getByText("Missing — not detected")).toBeInTheDocument();
+
+    // Unknown usage is shown as unknown, never as an empty disk.
+    expect(within(missingTile as HTMLElement).getByText(/Usage unavailable/)).toBeInTheDocument();
+    expect(within(missingTile as HTMLElement).queryByText(/0 B/)).not.toBeInTheDocument();
+
+    // Every state is a catalog label, not the API enum.
+    expect(screen.queryByText("active")).not.toBeInTheDocument();
+    expect(screen.getByText("Active")).toBeInTheDocument();
   });
 });
