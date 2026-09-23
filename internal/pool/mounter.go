@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
@@ -43,6 +45,19 @@ type Mounter struct {
 	// disk (internal/disk's own equivalent check is unexported, so this
 	// package keeps its own copy rather than reaching into it).
 	IsMountpoint func(where string) (bool, error)
+
+	// SetXattr writes one key of a live mount's runtime control file.
+	// Nil means syscall.Setxattr; a test injects a recorder.
+	SetXattr func(path, attr string, value []byte) error
+}
+
+func (m Mounter) setXattr() func(string, string, []byte) error {
+	if m.SetXattr != nil {
+		return m.SetXattr
+	}
+	return func(path, attr string, value []byte) error {
+		return syscall.Setxattr(path, attr, value, 0)
+	}
 }
 
 func (m Mounter) isMountpoint() func(string) (bool, error) {
@@ -73,11 +88,16 @@ func isBusyUnmountError(err error) bool {
 // ordinary wait-for-exit is enough — no foreground process or PID
 // tracking is needed here.
 //
-// mnt.Where already being a mount point is a no-op success, not a second
-// mergerfs stacked on top of the first: a Start called against an
-// already-mounted catch-all or share path (a retried apply, or a Start
-// run without an intervening Stop) must not hide the live mount beneath
-// a new one (#268). The existing mount is only trusted as mnt's own when
+// mnt.Where already being a mount point never stacks a second mergerfs on
+// top of the first: a Start called against an already-mounted catch-all
+// or share path (a retried apply, or a Start run without an intervening
+// Stop) must not hide the live mount beneath a new one (#268). Instead
+// mnt's branches, create policy and minfreespace are applied to the live
+// mount through mergerfs's runtime control file (mergerfs(1) "RUNTIME
+// CONFIG", 2.40.2) — a share update or an added disk takes effect at
+// once, without unmounting a path Samba or NFS may be serving, and
+// re-applying unchanged values is harmless. The existing mount is only
+// trusted as mnt's own when
 // findmnt reports its SOURCE as mnt.FSName — the same fsname doc 02 §1's
 // table says is "recognisable in df and mount listings" precisely so it
 // can be told apart this way — because a wrong mount masquerading as
@@ -97,7 +117,7 @@ func (m Mounter) Mount(ctx context.Context, mnt Mount) error {
 			return fmt.Errorf("pool: %s is already mounted, and its filesystem could not be identified: %w", mnt.Where, err)
 		}
 		if strings.TrimSpace(string(out)) == mnt.FSName {
-			return nil
+			return m.applyRuntime(mnt)
 		}
 		return fmt.Errorf("pool: %s is already mounted by something other than %s", mnt.Where, mnt.FSName)
 	}
@@ -105,6 +125,23 @@ func (m Mounter) Mount(ctx context.Context, mnt Mount) error {
 	argv := mnt.Argv()
 	if _, err := m.Runner.Run(ctx, argv[0], argv[1:]...); err != nil {
 		return fmt.Errorf("pool: mounting %s: %w", mnt.Where, err)
+	}
+	return nil
+}
+
+// applyRuntime sets mnt's runtime-configurable options on the live mount
+// at mnt.Where. Values use the same syntax as the command line.
+func (m Mounter) applyRuntime(mnt Mount) error {
+	ctl := filepath.Join(mnt.Where, ".mergerfs")
+	set := m.setXattr()
+	for _, kv := range [][2]string{
+		{"user.mergerfs.branches", mnt.What},
+		{"user.mergerfs.category.create", string(mnt.CreatePolicy)},
+		{"user.mergerfs.minfreespace", mnt.Options.minFreeSpace()},
+	} {
+		if err := set(ctl, kv[0], []byte(kv[1])); err != nil {
+			return fmt.Errorf("pool: updating %s on the live mount at %s: %w", kv[0], mnt.Where, err)
+		}
 	}
 	return nil
 }

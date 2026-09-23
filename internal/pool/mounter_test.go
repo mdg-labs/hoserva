@@ -290,13 +290,13 @@ func TestMounter_Unmount_DoesNotRetryOnErrorMentioningBusyPath(t *testing.T) {
 	}
 }
 
-// TestMounter_Mount_NoOpWhenAlreadyMountedWithMatchingFSName is #268's
-// central start-side case: a Start called against a path that already
-// has mnt's own mount up (a retried apply, or Start run without an
-// intervening Stop) must not stack a second mergerfs on top of the
-// first. Against the pre-fix Mount, which never checks, this test fails
-// — it would issue a second mergerfs call.
-func TestMounter_Mount_NoOpWhenAlreadyMountedWithMatchingFSName(t *testing.T) {
+// TestMounter_Mount_UpdatesLiveMountWithMatchingFSName is #268's central
+// start-side case: a Start called against a path that already has mnt's
+// own mount up must not stack a second mergerfs on top of the first. It
+// must still apply mnt's branches, create policy and minfreespace to the
+// live mount: a share update (cache mode, create policy) or an added disk
+// calls Mount on the mounted path and relies on it taking effect.
+func TestMounter_Mount_UpdatesLiveMountWithMatchingFSName(t *testing.T) {
 	where := testWhere(t)
 	if err := os.MkdirAll(where, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -304,8 +304,19 @@ func TestMounter_Mount_NoOpWhenAlreadyMountedWithMatchingFSName(t *testing.T) {
 	r := disk.NewFakeRunner()
 	r.Script("findmnt", []string{"-n", "-o", "SOURCE", where}, []byte("hoserva-pool\n"), nil)
 
-	m := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
-	mounter := Mounter{Runner: r, IsMountpoint: func(string) (bool, error) { return true, nil }}
+	m := Mount{Where: where, What: "/mnt/disk1=RW:/mnt/disk2=RW", FSName: "hoserva-pool", CreatePolicy: FillDisksInOrder, Options: Options{MinFreeSpace: "20G"}}
+	set := map[string]string{}
+	mounter := Mounter{
+		Runner:       r,
+		IsMountpoint: func(string) (bool, error) { return true, nil },
+		SetXattr: func(path, attr string, value []byte) error {
+			if path != filepath.Join(where, ".mergerfs") {
+				t.Errorf("SetXattr on %q, want the mount's .mergerfs control file", path)
+			}
+			set[attr] = string(value)
+			return nil
+		},
+	}
 	if err := mounter.Mount(context.Background(), m); err != nil {
 		t.Fatalf("Mount: got %v, want nil (already mounted with matching fsname)", err)
 	}
@@ -313,6 +324,37 @@ func TestMounter_Mount_NoOpWhenAlreadyMountedWithMatchingFSName(t *testing.T) {
 	calls := r.Calls()
 	if len(calls) != 1 || calls[0].Name != "findmnt" {
 		t.Fatalf("Mount: got calls %+v, want exactly one findmnt call and no mergerfs call", calls)
+	}
+	want := map[string]string{
+		"user.mergerfs.branches":        m.What,
+		"user.mergerfs.category.create": string(FillDisksInOrder),
+		"user.mergerfs.minfreespace":    "20G",
+	}
+	for k, v := range want {
+		if set[k] != v {
+			t.Fatalf("live %s = %q, want %q (all set: %v)", k, set[k], v, set)
+		}
+	}
+}
+
+// TestMounter_Mount_LiveUpdateFailureIsReported: a live mount that refuses
+// the new branch list must fail the call, never report a share update as
+// applied while the mount keeps its old branches.
+func TestMounter_Mount_LiveUpdateFailureIsReported(t *testing.T) {
+	where := testWhere(t)
+	if err := os.MkdirAll(where, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	r := disk.NewFakeRunner()
+	r.Script("findmnt", []string{"-n", "-o", "SOURCE", where}, []byte("hoserva-pool\n"), nil)
+	mounter := Mounter{
+		Runner:       r,
+		IsMountpoint: func(string) (bool, error) { return true, nil },
+		SetXattr:     func(string, string, []byte) error { return syscall.EINVAL },
+	}
+	m := Mount{Where: where, What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	if err := mounter.Mount(context.Background(), m); !errors.Is(err, syscall.EINVAL) {
+		t.Fatalf("Mount: got %v, want the control file's EINVAL", err)
 	}
 }
 
