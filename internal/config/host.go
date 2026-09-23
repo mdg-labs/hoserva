@@ -232,36 +232,139 @@ func (inv HostInventory) Found(kind string) bool {
 	}
 }
 
+// SambaShareDetails is one [section] ImportFromHost turns into a shares
+// row: the options RenderSambaConf round-trips (doc 03 §4.2, Q73).
+type SambaShareDetails struct {
+	Name               string
+	Guest              bool
+	ReadOnly           bool
+	Browseable         bool
+	Recycle            bool
+	TimeMachine        bool
+	TimeMachineMaxSize string
+}
+
+// NFSExportDetails is one exports(5) line: Path is the original export
+// path, Name is filepath.Base(Path) for the shares table (D10 regenerates
+// /mnt/user/<name>), plus hosts and squash (doc 03 §4.2).
+type NFSExportDetails struct {
+	Path   string
+	Name   string
+	Hosts  []string
+	Squash string
+}
+
 // ParseSambaShares returns [section] names that are not Samba's own
 // global/printers sections. Comments and include= lines are ignored.
 func ParseSambaShares(raw []byte) ([]string, error) {
-	var shares []string
+	details, err := ParseSambaShareDetails(raw)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(details))
+	for _, d := range details {
+		names = append(names, d.Name)
+	}
+	return names, nil
+}
+
+// ParseSambaShareDetails returns every non-global/printers section with
+// the SMB options Hoserva stores. Unrecognised keys are ignored. Defaults
+// match a new share's SMB slice (browseable, not guest, not read-only)
+// when a key is absent.
+func ParseSambaShareDetails(raw []byte) ([]SambaShareDetails, error) {
+	var (
+		shares  []SambaShareDetails
+		current *SambaShareDetails
+	)
+	flush := func() {
+		if current != nil {
+			shares = append(shares, *current)
+			current = nil
+		}
+	}
 	sc := bufio.NewScanner(strings.NewReader(string(raw)))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
 			continue
 		}
-		if !strings.HasPrefix(line, "[") {
+		if strings.HasPrefix(line, "[") {
+			flush()
+			end := strings.IndexByte(line, ']')
+			if end < 2 {
+				continue
+			}
+			name := line[1:end]
+			switch strings.ToLower(name) {
+			case "global", "printers", "print$":
+				current = nil
+				continue
+			}
+			current = &SambaShareDetails{Name: name, Browseable: true}
 			continue
 		}
-		end := strings.IndexByte(line, ']')
-		if end < 2 {
+		if current == nil {
 			continue
 		}
-		name := line[1:end]
-		switch strings.ToLower(name) {
-		case "global", "printers", "print$":
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
 			continue
 		}
-		shares = append(shares, name)
+		key = strings.ToLower(strings.TrimSpace(key))
+		val = strings.TrimSpace(val)
+		switch key {
+		case "guest ok", "guest only":
+			current.Guest = sambaBool(val)
+		case "read only":
+			current.ReadOnly = sambaBool(val)
+		case "writeable", "writable":
+			current.ReadOnly = !sambaBool(val)
+		case "browseable", "browsable":
+			current.Browseable = sambaBool(val)
+		case "vfs objects":
+			for _, obj := range strings.Fields(val) {
+				if strings.EqualFold(obj, "recycle") {
+					current.Recycle = true
+				}
+			}
+		case "fruit:time machine":
+			current.TimeMachine = sambaBool(val)
+		case "fruit:time machine max size":
+			current.TimeMachineMaxSize = val
+		}
 	}
+	flush()
 	return shares, sc.Err()
+}
+
+func sambaBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "yes", "true", "1":
+		return true
+	default:
+		return false
+	}
 }
 
 // ParseNFSExports returns the exported paths from an /etc/exports file.
 func ParseNFSExports(raw []byte) ([]string, error) {
-	var paths []string
+	details, err := ParseNFSExportDetails(raw)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(details))
+	for _, d := range details {
+		paths = append(paths, d.Path)
+	}
+	return paths, nil
+}
+
+// ParseNFSExportDetails returns every exports(5) line with its share
+// name (filepath.Base of the export path), client hosts, and squash
+// option. A missing squash defaults to root_squash.
+func ParseNFSExportDetails(raw []byte) ([]NFSExportDetails, error) {
+	var out []NFSExportDetails
 	sc := bufio.NewScanner(strings.NewReader(string(raw)))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -272,9 +375,42 @@ func ParseNFSExports(raw []byte) ([]string, error) {
 		if len(fields) == 0 {
 			continue
 		}
-		paths = append(paths, fields[0])
+		path := fields[0]
+		name := filepath.Base(path)
+		hosts := make([]string, 0, len(fields)-1)
+		squash := "root_squash"
+		for _, spec := range fields[1:] {
+			host, opts := splitNFSClient(spec)
+			if host == "" {
+				continue
+			}
+			hosts = append(hosts, host)
+			if s := nfsSquashFromOpts(opts); s != "" {
+				squash = s
+			}
+		}
+		out = append(out, NFSExportDetails{Path: path, Name: name, Hosts: hosts, Squash: squash})
 	}
-	return paths, sc.Err()
+	return out, sc.Err()
+}
+
+func splitNFSClient(spec string) (host, opts string) {
+	if i := strings.IndexByte(spec, '('); i >= 0 {
+		host = spec[:i]
+		opts = strings.TrimSuffix(spec[i+1:], ")")
+		return host, opts
+	}
+	return spec, ""
+}
+
+func nfsSquashFromOpts(opts string) string {
+	for _, o := range strings.Split(opts, ",") {
+		switch strings.TrimSpace(o) {
+		case "root_squash", "no_root_squash", "all_squash":
+			return strings.TrimSpace(o)
+		}
+	}
+	return ""
 }
 
 var fstabSkipTypes = map[string]bool{

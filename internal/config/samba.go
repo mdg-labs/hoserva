@@ -2,15 +2,22 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 )
 
 // SambaCustomInclude is the user-owned escape hatch every generated
-// smb.conf ends with (doc 01 §2). Generator never writes that file.
+// smb.conf ends with (doc 01 §2). Generator never overwrites that file.
 const SambaCustomInclude = "/etc/hoserva/smb.custom.conf"
+
+// PathSambaCustom is SambaCustomInclude relative to Generator.Root
+// (production Root is /etc).
+const PathSambaCustom = "hoserva/smb.custom.conf"
 
 // SambaServiceUnit is Samba's systemd service unit on Debian (doc 01
 // §1's table) — smbd, not nmbd, which nothing in this repo currently
@@ -120,4 +127,26 @@ func (g *Generator) WriteSamba(ctx context.Context, shares []SambaShare, command
 		Command: command,
 		Body:    []byte(RenderSambaConf(shares)),
 	}, revision, now)
+}
+
+// EnsureSambaCustomConf creates an empty PathSambaCustom under Root when
+// missing. An existing file is left untouched (doc 01 §2).
+func (g *Generator) EnsureSambaCustomConf() error {
+	path := filepath.Join(g.Root, PathSambaCustom)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("config: stating %s: %w", PathSambaCustom, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("config: creating %s: %w", filepath.Dir(path), err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return nil
+		}
+		return fmt.Errorf("config: creating %s: %w", PathSambaCustom, err)
+	}
+	return f.Close()
 }

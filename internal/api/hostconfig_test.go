@@ -13,6 +13,7 @@ import (
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/share"
 	"github.com/mdg-labs/hoserva/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -50,9 +51,15 @@ func hostConfigTestEnv(t *testing.T) (*api.Handler, *config.Generator, *sql.DB) 
 	copyHostFixture(t, "host_fstab", filepath.Join(root, config.PathFstab))
 
 	g := config.NewGenerator(root)
+	shareStore := store.NewShareStore(db)
 	h := &api.Handler{
 		Generator:  g,
 		HostConfig: store.NewHostConfigStore(db),
+		Shares: &share.Service{
+			Shares: shareStore,
+			Gen:    g,
+			Now:    func() time.Time { return time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC) },
+		},
 		Docker: config.MemoryDocker{
 			Containers: []config.DockerRef{{ID: "c1", Name: "jellyfin"}},
 			Images:     []config.DockerRef{{ID: "i1", Name: "nginx:latest"}},
@@ -174,6 +181,200 @@ func TestApplyHostConfig_ImportAllowsLaterGenerateAndDoesNotClobberYet(t *testin
 
 	if err := g.Write(ctx, config.File{Path: config.PathSamba, Command: "share create", Body: []byte("[global]\n")}, 1, time.Now()); err != nil {
 		t.Fatalf("Write after import: %v", err)
+	}
+}
+
+// TestApplyHostConfig_ImportIngestsSharesAndSurvivesRegeneration is the
+// Q76 regression: import must put parsed Samba/NFS entries into shares
+// before flipping management mode, so the next generated write keeps
+// them (D4). Without that ingest, regeneration drops every pre-existing
+// section permanently.
+func TestApplyHostConfig_ImportIngestsSharesAndSurvivesRegeneration(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	ctx := context.Background()
+	beforeSamba, err := os.ReadFile(filepath.Join(g.Root, config.PathSamba))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeNFS, err := os.ReadFile(filepath.Join(g.Root, config.PathNFS))
+	if err != nil {
+		t.Fatal(err)
+	}
+	customPath := filepath.Join(g.Root, config.PathSambaCustom)
+	if err := os.MkdirAll(filepath.Dir(customPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(customPath, []byte("# keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.ApplyHostConfig(ctx, &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostSamba, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostNfs, Decision: apiv1.HostConfigDecisionImport},
+	}}); err != nil {
+		t.Fatalf("ApplyHostConfig: %v", err)
+	}
+
+	afterSamba, err := os.ReadFile(filepath.Join(g.Root, config.PathSamba))
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterNFS, err := os.ReadFile(filepath.Join(g.Root, config.PathNFS))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterSamba) != string(beforeSamba) {
+		t.Fatal("import itself overwrote smb.conf")
+	}
+	if string(afterNFS) != string(beforeNFS) {
+		t.Fatal("import itself overwrote exports")
+	}
+	customAfter, err := os.ReadFile(customPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(customAfter) != "# keep me\n" {
+		t.Fatalf("import clobbered existing smb.custom.conf: %q", customAfter)
+	}
+
+	shareStore := store.NewShareStore(db)
+	media, err := shareStore.Get(ctx, "media")
+	if err != nil {
+		t.Fatalf("media row: %v", err)
+	}
+	if !media.SMBEnabled || media.SMBReadOnly || !media.SMBBrowseable {
+		t.Fatalf("media SMB = %+v", media)
+	}
+	if !media.NFSEnabled || len(media.NFSHosts) != 1 || media.NFSHosts[0] != "192.168.1.0/24" {
+		t.Fatalf("media NFS = %+v", media)
+	}
+	homes, err := shareStore.Get(ctx, "homes")
+	if err != nil {
+		t.Fatalf("homes row: %v", err)
+	}
+	if !homes.SMBEnabled || homes.SMBBrowseable || homes.NFSEnabled {
+		t.Fatalf("homes = %+v", homes)
+	}
+	backup, err := shareStore.Get(ctx, "backup")
+	if err != nil {
+		t.Fatalf("backup row: %v", err)
+	}
+	if !backup.NFSEnabled || backup.SMBEnabled {
+		t.Fatalf("backup = %+v", backup)
+	}
+	if len(backup.NFSHosts) != 1 || backup.NFSHosts[0] != "*" || backup.NFSSquash != "root_squash" {
+		t.Fatalf("backup NFS = %+v", backup)
+	}
+
+	rows, err := shareStore.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var smb []config.SambaShare
+	var nfs []config.NFSShare
+	for _, row := range rows {
+		if row.SMBEnabled {
+			smb = append(smb, config.SambaShare{
+				Name:       row.Name,
+				Guest:      row.SMBGuest,
+				ReadOnly:   row.SMBReadOnly,
+				Browseable: row.SMBBrowseable,
+			})
+		}
+		if row.NFSEnabled {
+			nfs = append(nfs, config.NFSShare{
+				Name:   row.Name,
+				Hosts:  append([]string(nil), row.NFSHosts...),
+				Squash: row.NFSSquash,
+			})
+		}
+	}
+	now := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
+	if err := g.WriteSamba(ctx, smb, "share create", 1, now); err != nil {
+		t.Fatalf("WriteSamba: %v", err)
+	}
+	if err := g.WriteNFS(ctx, nfs, "share create", 1, now); err != nil {
+		t.Fatalf("WriteNFS: %v", err)
+	}
+
+	regenSamba, err := os.ReadFile(filepath.Join(g.Root, config.PathSamba))
+	if err != nil {
+		t.Fatal(err)
+	}
+	regenText := string(regenSamba)
+	for _, section := range []string{"[media]", "[homes]"} {
+		if !strings.Contains(regenText, section) {
+			t.Fatalf("regenerated smb.conf missing %s:\n%s", section, regenText)
+		}
+	}
+	if !strings.Contains(regenText, "browseable = no") {
+		t.Fatalf("regenerated smb.conf lost homes browseable=no:\n%s", regenText)
+	}
+	if !strings.Contains(regenText, "path = /mnt/user/media") {
+		t.Fatalf("regenerated smb.conf should use D10 path:\n%s", regenText)
+	}
+
+	regenNFS, err := os.ReadFile(filepath.Join(g.Root, config.PathNFS))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nfsText := string(regenNFS)
+	for _, line := range []string{"/mnt/user/media", "/mnt/user/backup", "192.168.1.0/24", "*("} {
+		if !strings.Contains(nfsText, line) {
+			t.Fatalf("regenerated exports missing %q:\n%s", line, nfsText)
+		}
+	}
+}
+
+func TestApplyHostConfig_SambaImportCreatesEmptyCustomConf(t *testing.T) {
+	h, g := hostConfigTestHandler(t)
+	customPath := filepath.Join(g.Root, config.PathSambaCustom)
+	if _, err := os.Stat(customPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("custom conf should be absent before import: %v", err)
+	}
+	if _, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostSamba, Decision: apiv1.HostConfigDecisionImport},
+	}}); err != nil {
+		t.Fatalf("ApplyHostConfig: %v", err)
+	}
+	info, err := os.Stat(customPath)
+	if err != nil {
+		t.Fatalf("smb.custom.conf missing after samba import: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("new smb.custom.conf size = %d, want 0", info.Size())
+	}
+}
+
+func TestApplyHostConfig_ImportSkipsDuplicateShareNames(t *testing.T) {
+	h, _, db := hostConfigTestEnv(t)
+	ctx := context.Background()
+	shareStore := store.NewShareStore(db)
+	now := time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC)
+	if err := shareStore.Insert(ctx, store.Share{
+		Name: "media", CacheMode: "array-only", CreatePolicy: "mspmfs",
+		SMBEnabled: true, CreatedAt: now, UpdatedAt: now, NFSSquash: "root_squash",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.ApplyHostConfig(ctx, &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostSamba, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostNfs, Decision: apiv1.HostConfigDecisionImport},
+	}}); err != nil {
+		t.Fatalf("ApplyHostConfig: %v", err)
+	}
+	media, err := shareStore.Get(ctx, "media")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if media.NFSEnabled {
+		t.Fatal("duplicate media should have been skipped, not merged with NFS import")
+	}
+	if _, err := shareStore.Get(ctx, "homes"); err != nil {
+		t.Fatalf("homes should still be imported: %v", err)
+	}
+	if _, err := shareStore.Get(ctx, "backup"); err != nil {
+		t.Fatalf("backup should still be imported: %v", err)
 	}
 }
 

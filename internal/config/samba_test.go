@@ -92,3 +92,31 @@ func TestWriteSamba_RefusesExistingHostFile(t *testing.T) {
 		t.Fatalf("WriteSamba changed the existing host file:\n%s", got)
 	}
 }
+
+func TestEnsureSambaCustomConf(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	path := filepath.Join(g.Root, PathSambaCustom)
+	if err := g.EnsureSambaCustomConf(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("size = %d, want 0", info.Size())
+	}
+	if err := os.WriteFile(path, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.EnsureSambaCustomConf(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "keep\n" {
+		t.Fatalf("clobbered existing custom conf: %q", got)
+	}
+}

@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
@@ -69,6 +71,7 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 	rows := make([]store.HostConfig, 0, len(pending))
 	applied := make([]apiv1.HostConfigChoice, 0, len(pending))
 	importDocker := map[string]bool{}
+	var importSamba, importNFS bool
 	for _, p := range pending {
 		if p.path != "" {
 			files = append(files, config.HostFileDecision{Path: p.path, Decision: p.decision})
@@ -77,18 +80,64 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 		if p.kind == config.KindDockerContainers || p.kind == config.KindDockerImages {
 			importDocker[p.kind] = p.decision == config.DecisionImport
 		}
+		if p.decision == config.DecisionImport {
+			switch p.kind {
+			case config.KindSamba:
+				importSamba = true
+			case config.KindNFS:
+				importNFS = true
+			}
+		}
 		applied = append(applied, p.choice)
+	}
+
+	var insertedShares []string
+	if importSamba || importNFS {
+		if h.Shares == nil {
+			return nil, &apiError{code: "not_configured", statusCode: 501, message: "share import is not configured on this daemon"}
+		}
+		if importSamba {
+			if err := h.Generator.EnsureSambaCustomConf(); err != nil {
+				return nil, fmt.Errorf("ensuring smb.custom.conf: %w", err)
+			}
+		}
+		var sambaRaw, nfsRaw []byte
+		if importSamba {
+			sambaRaw, err = os.ReadFile(filepath.Join(h.Generator.Root, config.PathSamba))
+			if err != nil {
+				return nil, fmt.Errorf("reading smb.conf for import: %w", err)
+			}
+		}
+		if importNFS {
+			nfsRaw, err = os.ReadFile(filepath.Join(h.Generator.Root, config.PathNFS))
+			if err != nil {
+				return nil, fmt.Errorf("reading exports for import: %w", err)
+			}
+		}
+		insertedShares, err = h.Shares.ImportFromHost(ctx, sambaRaw, nfsRaw)
+		if err != nil {
+			return nil, fmt.Errorf("importing host shares: %w", err)
+		}
 	}
 
 	restore, err := h.Generator.ApplyHostFileDecisions(ctx, files)
 	if err != nil {
+		if rbErr := h.rollbackImportedShares(ctx, insertedShares); rbErr != nil {
+			return nil, fmt.Errorf("recording host-file decisions: %w (rolling back imported shares: %v)", err, rbErr)
+		}
 		return nil, fmt.Errorf("recording host-file decisions: %w", err)
 	}
 	if err := h.HostConfig.PutAll(ctx, rows); err != nil {
 		if restore != nil {
 			if rerr := restore(); rerr != nil {
+				if rbErr := h.rollbackImportedShares(ctx, insertedShares); rbErr != nil {
+					return nil, fmt.Errorf("persisting host-config: %w (manifest restore: %v; rolling back imported shares: %v)", err, rerr, rbErr)
+				}
 				return nil, fmt.Errorf("persisting host-config: %w (manifest restore: %v)", err, rerr)
 			}
+		}
+		if rbErr := h.rollbackImportedShares(ctx, insertedShares); rbErr != nil {
+			return nil, fmt.Errorf("persisting host-config: %w (rolling back imported shares: %v)", err, rbErr)
 		}
 		return nil, fmt.Errorf("persisting host-config: %w", err)
 	}
@@ -96,6 +145,19 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 	acceptedMove := importDocker[config.KindDockerContainers] && importDocker[config.KindDockerImages]
 	dataRoot := config.DockerDataRoot(inv, acceptedMove, h.hasCacheDisk(ctx))
 	return &apiv1.ApplyHostConfigResult{Files: applied, DockerDataRoot: dataRoot}, nil
+}
+
+func (h *Handler) rollbackImportedShares(ctx context.Context, names []string) error {
+	if h.Shares == nil || h.Shares.Shares == nil || len(names) == 0 {
+		return nil
+	}
+	var first error
+	for i := len(names) - 1; i >= 0; i-- {
+		if err := h.Shares.Shares.Delete(ctx, names[i]); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 func (h *Handler) hasCacheDisk(ctx context.Context) bool {

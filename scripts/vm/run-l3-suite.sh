@@ -229,13 +229,9 @@ array_setup() {
   # share, not only ones with SMB or NFS enabled (D4: the whole file is
   # generated from state) — step 2's own onboarding left both unmanaged
   # (--leave-all, Q76), which refuses that write. Importing here takes
-  # over management, but only flips management mode: it does not read
-  # the pre-existing file into the database first, so the very next
-  # regeneration silently drops whatever seed-existing-host.sh put there
-  # (issue #264, a real product bug, filed and deferred rather than
-  # fixed here). The suite's own "existing host config" check therefore
-  # runs right after onboarding, above, before this import ever touches
-  # the files — not here.
+  # over management and (Q76) ingests pre-existing Samba/NFS entries into
+  # the database first, so regeneration keeps the names seed-existing-
+  # host.sh put there.
   if ! vm_ssh 'sudo hoserva doctor apply-host-config --samba import --nfs import' >/dev/null 2>&1; then
     ARRAY_SETUP_REASON="apply-host-config --samba import --nfs import failed — createShare needs smb.conf and /etc/exports importable"
     return 1
@@ -245,6 +241,19 @@ array_setup() {
   share_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$JOURNEY5_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
   if [[ "$share_result" != *"\"name\":\"$JOURNEY5_SHARE\""* ]]; then
     ARRAY_SETUP_REASON="createShare did not return the expected share: $share_result"
+    return 1
+  fi
+
+  # #264: imported host entries must survive the regeneration createShare
+  # just triggered — grep the on-disk files, not exportfs/testparm, so a
+  # missing DB ingest fails this step rather than only the earlier
+  # "existing host config" check (which runs before this import).
+  if ! vm_ssh 'grep -q "^\[hoserva-existing\]" /etc/samba/smb.conf'; then
+    ARRAY_SETUP_REASON="regenerated smb.conf lost [hoserva-existing] after import + createShare (Q76 / #264)"
+    return 1
+  fi
+  if ! vm_ssh 'grep -q "/mnt/user/hoserva-existing" /etc/exports'; then
+    ARRAY_SETUP_REASON="regenerated /etc/exports lost /mnt/user/hoserva-existing after import + createShare (Q76 / #264)"
     return 1
   fi
 
@@ -791,16 +800,10 @@ else
 fi
 
 # Runs here — right after onboarding and before array setup — because
-# array_setup's own createShare needs smb.conf/exports import (see the
-# comment above array_setup), which regenerates both files from hoservad's
-# database and drops whatever seed-existing-host.sh put there (issue
-# #264: apply-host-config --samba/--nfs import only flips management
-# mode, it never reads the pre-existing file into the database first).
-# Checking survival now, immediately after the one point in the suite
-# where "install and onboarding" (this check's own doc 06 §4/#113
-# contract) has happened and nothing has touched those files yet, is
-# correct regardless of #264; checking after array setup would fail on
-# a real, but separate and already-tracked, product gap.
+# this is the one point in the suite where "install and onboarding"
+# (this check's own doc 06 §4/#113 contract) has happened and nothing
+# has regenerated smb.conf/exports yet. array_setup later imports and
+# createShares; #264's survival assertion lives inside array_setup.
 echo "vm-suite[$HOSERVA_LAB_ID]: === existing host config (Q76) ==="
 if vm_domain_running "$VM_DOMAIN"; then
   if "$script_dir/existing-host-config-check.sh"; then
