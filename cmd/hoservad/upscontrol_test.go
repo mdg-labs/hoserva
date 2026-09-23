@@ -114,6 +114,24 @@ func TestDialUPSControl_UnknownSocketFails(t *testing.T) {
 	}
 }
 
+// TestDialUPSControl_EmptyNotifyTypeIsRefusedBeforeDialing proves an
+// empty NOTIFYTYPE fails the client instead of reaching the daemon.
+// main.go selects client mode from the flag's presence rather than its
+// value, so an empty value exits non-zero here and never falls through
+// to run() against the live daemon's database.
+func TestDialUPSControl_EmptyNotifyTypeIsRefusedBeforeDialing(t *testing.T) {
+	notifier := &recordingUPSNotifier{}
+	controller := &job.UPSController{Scheduler: newRegistryTestScheduler(t, job.NewRegistry()), Notifier: notifier}
+	path := startUPSControlServer(t, controller, &auth.FakeGroupLookup{Group: hoservaGroup, Exists: true}, uint32(os.Getuid()))
+
+	if err := dialUPSControl(context.Background(), path, ""); err == nil {
+		t.Fatal(`dialUPSControl(""): nil error, want a refusal`)
+	}
+	if got := notifier.onBattery(); got != 0 {
+		t.Fatalf("notifier saw %d on-battery notifications, want 0", got)
+	}
+}
+
 // TestAuthorizeUnixPeer_RunAsUserRootIsAdmittedToUPSControlSocket proves
 // the identity NOTIFYCMD's own child actually connects as once
 // RenderUPSMonConf emits "RUN_AS_USER root" (internal/config/nut.go) is

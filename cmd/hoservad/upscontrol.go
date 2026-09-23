@@ -228,6 +228,9 @@ func runUPSControlClient(cfg config, notifyType string) error {
 // sequence actually completing would defeat the whole point of wiring it
 // through job.UPSController in the first place.
 func dialUPSControl(ctx context.Context, socketPath, notifyType string) error {
+	if notifyType == "" {
+		return errors.New("-ups-notify needs a notification type; NOTIFYTYPE was empty")
+	}
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", socketPath)
 	if err != nil {

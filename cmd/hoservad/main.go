@@ -102,6 +102,7 @@ type config struct {
 	dev                 bool
 	applyVerifiedUpdate string
 	upsNotifyType       string
+	upsNotifySet        bool
 	upsShutdown         bool
 }
 
@@ -114,7 +115,7 @@ func main() {
 			os.Exit(1)
 		}
 		return
-	case cfg.upsNotifyType != "":
+	case cfg.upsNotifySet:
 		if err := runUPSControlClient(cfg, cfg.upsNotifyType); err != nil {
 			fmt.Fprintln(os.Stderr, "hoservad:", err)
 			os.Exit(1)
@@ -154,6 +155,11 @@ func parseFlags() config {
 	// the reverse).
 	explicit := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	// An empty -ups-notify must still select client mode: falling through
+	// to run() would open the live daemon's database and mark its running
+	// jobs interrupted before the TCP listener fails (dialUPSControl
+	// refuses the empty value).
+	cfg.upsNotifySet = explicit["ups-notify"]
 
 	if cfg.dev {
 		if !explicit["state-dir"] {

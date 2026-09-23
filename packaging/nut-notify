@@ -8,4 +8,5 @@
 # (cmd/hoservad/upscontrol.go) — never interpolated into a shell command
 # (CLAUDE.md): hoservad parses it as a plain argv value, not shell input.
 set -e
+[ -n "${NOTIFYTYPE:-}" ] || { echo "nut-notify: NOTIFYTYPE is not set" >&2; exit 2; }
 exec /usr/bin/hoservad -ups-notify "$NOTIFYTYPE"
