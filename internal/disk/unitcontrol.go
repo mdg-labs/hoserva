@@ -53,11 +53,15 @@ func (c MountUnitController) Unmount(ctx context.Context) error {
 // host can legitimately have one installed and not the other. Stop and
 // Start each check the unit's LoadState first: `not-found` means the
 // package was never installed, so there is nothing to stop or start and
-// the step is skipped. Any other state runs the real systemctl
-// stop/start, and a query error aborts Stop/Start with that error
-// instead of attempting it — a query error must never be read as
-// "nothing to do", because that would let the array sequence unmount
+// the step is skipped. Stop otherwise always runs the real systemctl
+// stop, and a query error aborts it — a query error must never be read
+// as "nothing to do", because that would let the array sequence unmount
 // storage a service might still be holding open.
+//
+// Start only brings back a service the host wants running: a `masked`
+// unit cannot start and a `disabled` one was turned off on purpose, so
+// both are skipped rather than failing the array start at its last step
+// or re-enabling file sharing the user switched off.
 type ServiceUnitController struct {
 	// ServiceName is what Stop/Start errors and job.ArraySequence's own
 	// wrapping ("job: stopping <name>: …") name — a human label, not the
@@ -78,11 +82,23 @@ func (c ServiceUnitController) Name() string { return c.ServiceName }
 // returned rather than treated as either answer, so it aborts Stop/Start
 // with that error instead of silently skipping the step.
 func (c ServiceUnitController) installed(ctx context.Context) (bool, error) {
-	out, err := c.Runner.Run(ctx, "systemctl", "show", "--property=LoadState", "--value", c.Unit)
+	state, err := c.loadState(ctx)
 	if err != nil {
-		return false, fmt.Errorf("checking %s unit state: %w", c.ServiceName, err)
+		return false, err
 	}
-	return strings.TrimSpace(string(out)) != "not-found", nil
+	return state != "not-found", nil
+}
+
+func (c ServiceUnitController) loadState(ctx context.Context) (string, error) {
+	return c.property(ctx, "LoadState")
+}
+
+func (c ServiceUnitController) property(ctx context.Context, name string) (string, error) {
+	out, err := c.Runner.Run(ctx, "systemctl", "show", "--property="+name, "--value", c.Unit)
+	if err != nil {
+		return "", fmt.Errorf("checking %s unit state: %w", c.ServiceName, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // Stop runs `systemctl stop <unit>`, unless the unit is not installed.
@@ -100,13 +116,21 @@ func (c ServiceUnitController) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Start runs `systemctl start <unit>`, unless the unit is not installed.
+// Start runs `systemctl start <unit>`, unless the unit is not installed,
+// masked, or disabled.
 func (c ServiceUnitController) Start(ctx context.Context) error {
-	present, err := c.installed(ctx)
+	state, err := c.loadState(ctx)
 	if err != nil {
 		return fmt.Errorf("disk: %w", err)
 	}
-	if !present {
+	if state == "not-found" || state == "masked" {
+		return nil
+	}
+	fileState, err := c.property(ctx, "UnitFileState")
+	if err != nil {
+		return fmt.Errorf("disk: %w", err)
+	}
+	if fileState == "disabled" {
 		return nil
 	}
 	if _, err := c.Runner.Run(ctx, "systemctl", "start", c.Unit); err != nil {

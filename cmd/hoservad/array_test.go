@@ -240,7 +240,7 @@ func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
 		t.Fatal("StartArray: maintenanceMode must be false after a successful start")
 	}
 	startCalls := runner.Calls()[len(stopCalls):]
-	if len(startCalls) != 7 {
+	if len(startCalls) != 9 {
 		t.Fatalf("StartArray runner calls = %+v, want both disks, then catch-all, then NFS and Samba's LoadState checked and started (reverse of stop order)", startCalls)
 	}
 	requireArgv(t, startCalls[0], "systemctl", "start", "mnt-parity1.mount")
@@ -252,9 +252,11 @@ func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
 		t.Fatalf("StartArray catch-all argv = %v, want mountpoint %q", startCalls[2].Args, pool.CatchAllPath)
 	}
 	requireArgv(t, startCalls[3], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
-	requireArgv(t, startCalls[4], "systemctl", "start", "nfs-kernel-server.service")
-	requireArgv(t, startCalls[5], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
-	requireArgv(t, startCalls[6], "systemctl", "start", "smbd.service")
+	requireArgv(t, startCalls[4], "systemctl", "show", "--property=UnitFileState", "--value", "nfs-kernel-server.service")
+	requireArgv(t, startCalls[5], "systemctl", "start", "nfs-kernel-server.service")
+	requireArgv(t, startCalls[6], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
+	requireArgv(t, startCalls[7], "systemctl", "show", "--property=UnitFileState", "--value", "smbd.service")
+	requireArgv(t, startCalls[8], "systemctl", "start", "smbd.service")
 }
 
 // TestNewArraySequence_StopAbortsBeforeAnyUnmountWhenSambaFailsToStop is
@@ -392,7 +394,7 @@ func TestNewArraySequence_SharesRejoinStopAndStart(t *testing.T) {
 		t.Fatal("StartArray: maintenanceMode must be false after a successful start")
 	}
 	startCalls := runner.Calls()[len(stopCalls):]
-	if len(startCalls) != 9 {
+	if len(startCalls) != 11 {
 		t.Fatalf("StartArray runner calls = %+v, want both disks, the catch-all, the share mount, its mover target, then NFS and Samba's LoadState checked and started", startCalls)
 	}
 	requireArgv(t, startCalls[0], "systemctl", "start", "mnt-parity1.mount")
@@ -407,9 +409,11 @@ func TestNewArraySequence_SharesRejoinStopAndStart(t *testing.T) {
 		t.Fatalf("StartArray call[4] = %+v, want the mover write target mergerfs mount", startCalls[4])
 	}
 	requireArgv(t, startCalls[5], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
-	requireArgv(t, startCalls[6], "systemctl", "start", "nfs-kernel-server.service")
-	requireArgv(t, startCalls[7], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
-	requireArgv(t, startCalls[8], "systemctl", "start", "smbd.service")
+	requireArgv(t, startCalls[6], "systemctl", "show", "--property=UnitFileState", "--value", "nfs-kernel-server.service")
+	requireArgv(t, startCalls[7], "systemctl", "start", "nfs-kernel-server.service")
+	requireArgv(t, startCalls[8], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
+	requireArgv(t, startCalls[9], "systemctl", "show", "--property=UnitFileState", "--value", "smbd.service")
+	requireArgv(t, startCalls[10], "systemctl", "start", "smbd.service")
 }
 
 // TestNewArraySequence_NilWhenNoArray is the empty-path half of the
@@ -686,13 +690,15 @@ func TestHandler_CreateArray_RefreshesArraySequenceWithoutRestart(t *testing.T) 
 		t.Fatalf("StartArray calls = %+v, want a mergerfs call for the catch-all", startCalls)
 	}
 	after := startCalls[catchAllIdx+1:]
-	if len(after) != 4 {
+	if len(after) != 6 {
 		t.Fatalf("calls after the catch-all mount = %+v, want NFS then Samba's LoadState checked and started (reverse of stop order)", after)
 	}
 	requireArgv(t, after[0], "systemctl", "show", "--property=LoadState", "--value", "nfs-kernel-server.service")
-	requireArgv(t, after[1], "systemctl", "start", "nfs-kernel-server.service")
-	requireArgv(t, after[2], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
-	requireArgv(t, after[3], "systemctl", "start", "smbd.service")
+	requireArgv(t, after[1], "systemctl", "show", "--property=UnitFileState", "--value", "nfs-kernel-server.service")
+	requireArgv(t, after[2], "systemctl", "start", "nfs-kernel-server.service")
+	requireArgv(t, after[3], "systemctl", "show", "--property=LoadState", "--value", "smbd.service")
+	requireArgv(t, after[4], "systemctl", "show", "--property=UnitFileState", "--value", "smbd.service")
+	requireArgv(t, after[5], "systemctl", "start", "smbd.service")
 }
 
 // failOnMountMounter is share.Mounter's Mount fake for

@@ -54,6 +54,7 @@ func TestMountUnitController_PropagatesErrors(t *testing.T) {
 func TestServiceUnitController_StopAndStart(t *testing.T) {
 	r := NewFakeRunner()
 	r.Script("systemctl", []string{"show", "--property=LoadState", "--value", "smbd.service"}, []byte("loaded\n"), nil)
+	r.Script("systemctl", []string{"show", "--property=UnitFileState", "--value", "smbd.service"}, []byte("enabled\n"), nil)
 	r.Script("systemctl", []string{"stop", "smbd.service"}, nil, nil)
 	r.Script("systemctl", []string{"start", "smbd.service"}, nil, nil)
 
@@ -69,8 +70,8 @@ func TestServiceUnitController_StopAndStart(t *testing.T) {
 	}
 
 	calls := r.Calls()
-	if len(calls) != 4 {
-		t.Fatalf("got %d calls, want 4: %+v", len(calls), calls)
+	if len(calls) != 5 {
+		t.Fatalf("got %d calls, want 5: %+v", len(calls), calls)
 	}
 	if calls[0].Name != "systemctl" || calls[0].Args[0] != "show" || calls[0].Args[3] != "smbd.service" {
 		t.Fatalf("first call = %+v, want systemctl show --property=LoadState --value smbd.service", calls[0])
@@ -81,8 +82,50 @@ func TestServiceUnitController_StopAndStart(t *testing.T) {
 	if calls[2].Name != "systemctl" || calls[2].Args[0] != "show" || calls[2].Args[3] != "smbd.service" {
 		t.Fatalf("third call = %+v, want systemctl show --property=LoadState --value smbd.service", calls[2])
 	}
-	if calls[3].Name != "systemctl" || calls[3].Args[0] != "start" || calls[3].Args[1] != "smbd.service" {
-		t.Fatalf("fourth call = %+v, want systemctl start smbd.service", calls[3])
+	if calls[3].Name != "systemctl" || calls[3].Args[1] != "--property=UnitFileState" {
+		t.Fatalf("fourth call = %+v, want systemctl show --property=UnitFileState --value smbd.service", calls[3])
+	}
+	if calls[4].Name != "systemctl" || calls[4].Args[0] != "start" || calls[4].Args[1] != "smbd.service" {
+		t.Fatalf("fifth call = %+v, want systemctl start smbd.service", calls[4])
+	}
+}
+
+// TestServiceUnitController_StartSkipsMaskedAndDisabledUnits: a user who
+// masked nfs-kernel-server (no NFS) must not have every array start fail
+// at its last step with "Unit is masked", and one who disabled smbd must
+// not have file sharing switched back on by an array start. Stop still
+// stops either.
+func TestServiceUnitController_StartSkipsMaskedAndDisabledUnits(t *testing.T) {
+	for _, tc := range []struct{ loadState, fileState string }{
+		{"masked", "masked"},
+		{"loaded", "disabled"},
+	} {
+		r := NewFakeRunner()
+		r.Script("systemctl", []string{"show", "--property=LoadState", "--value", "smbd.service"}, []byte(tc.loadState+"\n"), nil)
+		r.Script("systemctl", []string{"show", "--property=UnitFileState", "--value", "smbd.service"}, []byte(tc.fileState+"\n"), nil)
+		r.Script("systemctl", []string{"stop", "smbd.service"}, nil, nil)
+
+		c := ServiceUnitController{ServiceName: "Samba", Unit: "smbd.service", Runner: r}
+		if err := c.Start(context.Background()); err != nil {
+			t.Fatalf("%s/%s: Start: %v", tc.loadState, tc.fileState, err)
+		}
+		for _, call := range r.Calls() {
+			if call.Args[0] == "start" {
+				t.Fatalf("%s/%s: Start ran %+v, want the unit left alone", tc.loadState, tc.fileState, call)
+			}
+		}
+		if err := c.Stop(context.Background()); err != nil {
+			t.Fatalf("%s/%s: Stop: %v", tc.loadState, tc.fileState, err)
+		}
+		stopped := false
+		for _, call := range r.Calls() {
+			if call.Args[0] == "stop" {
+				stopped = true
+			}
+		}
+		if !stopped {
+			t.Fatalf("%s/%s: Stop did not stop the unit", tc.loadState, tc.fileState)
+		}
 	}
 }
 
