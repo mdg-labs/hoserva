@@ -275,7 +275,7 @@ export function ParityPage(): React.ReactElement {
             <p className="text-muted-foreground">{t("parity.history.empty")}</p>
           ) : (
             parityJobs.map((job) => (
-              <div key={job.id} className="flex items-center justify-between gap-2">
+              <div key={job.id} data-job-id={job.id} className="flex items-center justify-between gap-2">
                 <span>{job.type}</span>
                 <StatusBadge tone={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : "info"}>
                   {job.status}

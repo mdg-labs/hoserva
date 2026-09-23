@@ -26,18 +26,36 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 	settings, arrayDisks := h.arrayTopology(ctx)
 	entries := []apiv1.PoolDiskEntry{}
 	matched := make([]bool, len(arrayDisks))
+	presentDevices := map[string]bool{}
 	if h.Disks != nil {
 		disks, err := h.Disks.List(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("listing disks: %w", err)
 		}
+		var present []disk.Disk
 		for _, d := range disks {
-			if d.Boot {
-				continue
+			if !d.Boot {
+				present = append(present, d)
 			}
+		}
+		// Count claimants per member first: a weak-identity member and a
+		// dd-made clone share a filesystem UUID, and choosing between
+		// them by inventory order would report the wrong disk (or both)
+		// as the member. An ambiguous member is assigned to neither.
+		matchIdx := make([]int, len(present))
+		claimants := make([]int, len(arrayDisks))
+		for i, d := range present {
+			matchIdx[i] = -1
+			if idx, ok := matchArrayDisk(d, arrayDisks); ok {
+				matchIdx[i] = idx
+				claimants[idx]++
+			}
+		}
+		for i, d := range present {
+			presentDevices[d.Device] = true
 			role := apiv1.PoolDiskEntryRoleUnassigned
 			mountPoint := ""
-			if idx, ok := matchArrayDisk(d, arrayDisks); ok {
+			if idx := matchIdx[i]; idx >= 0 && claimants[idx] == 1 {
 				matched[idx] = true
 				role = arrayRoleToAPI(arrayDisks[idx].Role)
 				mountPoint = arrayDisks[idx].Mountpoint
@@ -54,13 +72,18 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 	// Every stored array member with no identity match above is a dead or
 	// pulled drive (doc 02 §4) — reported as its own entry, at its stored
 	// device/role/mountpoint with no size, rather than silently dropped
-	// (#326).
+	// (#326). Its stored /dev path is dropped when a present disk now
+	// holds that path: the pool and disks pages key entries by device.
 	for i, ad := range arrayDisks {
 		if matched[i] {
 			continue
 		}
+		device := ad.Device
+		if presentDevices[device] {
+			device = ""
+		}
 		entries = append(entries, apiv1.PoolDiskEntry{
-			Device:     ad.Device,
+			Device:     device,
 			MountPoint: ad.Mountpoint,
 			Role:       arrayRoleToAPI(ad.Role),
 			State:      apiv1.DiskStateMissing,

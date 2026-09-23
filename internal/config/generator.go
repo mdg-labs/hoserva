@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -59,13 +61,16 @@ const secretFileMode = 0o600
 // `hoserva <command>` line its header names, the rendered body a caller
 // wants written below that header, and the permission it lands with. Mode
 // left zero writes defaultFileMode; a render path whose body embeds a
-// credential (nut.go's upsmon.conf and upsd.users, at present) sets Mode
-// to secretFileMode instead.
+// credential sets Mode to secretFileMode instead (nut.go's upsmon.conf),
+// or a group-readable mode with Group set (nut.go's upsd.users). Group, when set, names the group the file
+// is owned by — for a credential file a service reads after dropping to
+// its own group (upsd.users, read by upsd as nut).
 type File struct {
 	Path    string
 	Command string
 	Body    []byte
 	Mode    os.FileMode
+	Group   string
 }
 
 // Generator writes managed files under Root and records each one's hash
@@ -74,6 +79,29 @@ type File struct {
 // nothing in this package ever writes /etc directly.
 type Generator struct {
 	Root string
+	// LookupGroup resolves File.Group to a gid; nil uses the host's
+	// group database.
+	LookupGroup func(name string) (int, error)
+}
+
+func (g *Generator) groupID(name string) (int, error) {
+	lookup := g.LookupGroup
+	if lookup == nil {
+		lookup = lookupHostGroup
+	}
+	gid, err := lookup(name)
+	if err != nil {
+		return 0, fmt.Errorf("config: resolving group %q: %w", name, err)
+	}
+	return gid, nil
+}
+
+func lookupHostGroup(name string) (int, error) {
+	grp, err := user.LookupGroup(name)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(grp.Gid)
 }
 
 // NewGenerator returns a Generator that writes under root.
@@ -142,8 +170,14 @@ func (g *Generator) Write(ctx context.Context, file File, revision int, now time
 	if mode == 0 {
 		mode = defaultFileMode
 	}
+	gid := -1
+	if file.Group != "" {
+		if gid, err = g.groupID(file.Group); err != nil {
+			return err
+		}
+	}
 	content := Header(file.Command, revision, now) + string(file.Body)
-	if err := atomicWrite(full, []byte(content), mode, untracked); err != nil {
+	if err := atomicWrite(full, []byte(content), mode, gid, untracked); err != nil {
 		if untracked && errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("%w: %s", ErrExistingHostFile, key)
 		}
@@ -174,7 +208,10 @@ func hashContent(b []byte) string {
 // entry — without this, a crash right after a successful Rename can still
 // lose the new file (or leave the old one) despite Write having returned
 // nil.
-func atomicWrite(path string, data []byte, perm os.FileMode, exclusive bool) error {
+// gid -1 leaves the new file's group as created; any other value is
+// applied to the temp file before the rename, so the file never appears
+// at path with the wrong group.
+func atomicWrite(path string, data []byte, perm os.FileMode, gid int, exclusive bool) error {
 	dir := filepath.Dir(path)
 	if err := ensureDirSynced(dir); err != nil {
 		return err
@@ -197,6 +234,11 @@ func atomicWrite(path string, data []byte, perm os.FileMode, exclusive bool) err
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("config: closing %s: %w", tmpPath, err)
+	}
+	if gid >= 0 {
+		if err := os.Chown(tmpPath, -1, gid); err != nil {
+			return fmt.Errorf("config: setting group on %s: %w", tmpPath, err)
+		}
 	}
 	if err := os.Chmod(tmpPath, perm); err != nil {
 		return fmt.Errorf("config: setting permissions on %s: %w", tmpPath, err)

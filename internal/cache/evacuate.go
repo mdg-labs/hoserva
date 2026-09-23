@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // ErrEvacuationNoOtherBranch is PlanEvacuation's refusal for a share that
@@ -26,6 +27,13 @@ var ErrEvacuationNoOtherBranch = errors.New("cache: share has no other branch to
 // the authoritative, per-file one — the real bin-packing this builds can
 // still fail even when that coarser sum-only check passes.
 var ErrEvacuationWontFit = errors.New("cache: remaining disks do not have room to evacuate this disk")
+
+// ErrEvacuationUnsupportedEntry is PlanEvacuation's refusal for an entry
+// the copy path never moves — a symlink, fifo, socket or device node, or
+// a leftover partial copy. EvacuationPostCheck accepts nothing but empty
+// directories, so planning past one would run every copy and sync only to
+// fail the post-check, and fail every retry the same way.
+var ErrEvacuationUnsupportedEntry = errors.New("cache: evacuated disk holds an entry evacuation cannot move")
 
 // PlanEvacuation computes, for every share with a branch on disk, a plan
 // that moves every file on that branch onto the share's other branches
@@ -55,11 +63,15 @@ var ErrEvacuationWontFit = errors.New("cache: remaining disks do not have room t
 func PlanEvacuation(ctx context.Context, disk string, shares []Share, deps Deps) (RebalancePlan, error) {
 	deps = deps.withDefaults()
 	var plan RebalancePlan
+	// Keyed by disk mount: every share's branch on one disk draws on the
+	// same filesystem's free space, so planned moves must be charged
+	// against one shared figure, not one per share.
+	diskUsage := make(map[string]*DiskUsage)
 	for _, s := range shares {
 		if ctx.Err() != nil {
 			return RebalancePlan{}, ctx.Err()
 		}
-		moves, warnings, err := planShareEvacuation(ctx, disk, s, deps)
+		moves, warnings, err := planShareEvacuation(ctx, disk, s, deps, diskUsage)
 		if err != nil {
 			return RebalancePlan{}, fmt.Errorf("cache: plan evacuation of %s for share %q: %w", disk, s.Name, err)
 		}
@@ -75,7 +87,7 @@ func PlanEvacuation(ctx context.Context, disk string, shares []Share, deps Deps)
 // bookkeeping planShareRebalance already uses, just walked once against
 // a single, fixed source branch instead of iteratively against whichever
 // pair of branches is currently most and least full.
-func planShareEvacuation(ctx context.Context, disk string, s Share, deps Deps) ([]RebalanceMove, []RebalanceWarning, error) {
+func planShareEvacuation(ctx context.Context, disk string, s Share, deps Deps, diskUsage map[string]*DiskUsage) ([]RebalanceMove, []RebalanceWarning, error) {
 	var sourceBranch string
 	var remaining []string
 	for _, b := range s.Branches {
@@ -92,15 +104,23 @@ func planShareEvacuation(ctx context.Context, disk string, s Share, deps Deps) (
 		return nil, nil, fmt.Errorf("%w: share %q", ErrEvacuationNoOtherBranch, s.Name)
 	}
 
-	states := make([]*branchState, len(remaining))
+	states := make([]*evacuationTarget, len(remaining))
 	for i, b := range remaining {
-		usage, err := deps.Usage(b)
-		if err != nil {
-			return nil, nil, fmt.Errorf("usage for %q: %w", b, err)
+		u, ok := diskUsage[filepath.Dir(b)]
+		if !ok {
+			usage, err := deps.Usage(b)
+			if err != nil {
+				return nil, nil, fmt.Errorf("usage for %q: %w", b, err)
+			}
+			u = &usage
+			diskUsage[filepath.Dir(b)] = u
 		}
-		states[i] = &branchState{branch: b, usage: usage}
+		states[i] = &evacuationTarget{branch: b, usage: u}
 	}
 
+	if err := refuseUnsupportedEntries(sourceBranch); err != nil {
+		return nil, nil, err
+	}
 	rels, err := enumerateFiles(sourceBranch)
 	if err != nil {
 		return nil, nil, fmt.Errorf("enumerate %q: %w", sourceBranch, err)
@@ -162,6 +182,36 @@ func planShareEvacuation(ctx context.Context, disk string, s Share, deps Deps) (
 	return moves, warnings, nil
 }
 
+// evacuationTarget is one remaining branch; usage is shared with every
+// other branch on the same disk (PlanEvacuation's diskUsage).
+type evacuationTarget struct {
+	branch string
+	usage  *DiskUsage
+}
+
+// refuseUnsupportedEntries fails on the first entry under root that
+// enumerateFiles would skip — anything but a directory or a regular,
+// non-temporary file — so the refusal comes before any copy, with its
+// cause, instead of from EvacuationPostCheck after the whole run.
+func refuseUnsupportedEntries(root string) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !d.Type().IsRegular() || strings.Contains(d.Name(), tempSuffix) {
+			return fmt.Errorf("%w: %s", ErrEvacuationUnsupportedEntry, path)
+		}
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 // pickEvacuationTarget returns the remaining branch with the most free
 // space (after minFreeSpace headroom) that can still hold size — the
 // same most-free-space-first choice pickMovableFile's own least-full
@@ -172,8 +222,8 @@ func planShareEvacuation(ctx context.Context, disk string, s Share, deps Deps) (
 // balancing anything, only placing every file somewhere that fits.
 // Returns nil when no remaining branch has room — the caller turns that
 // into ErrEvacuationWontFit.
-func pickEvacuationTarget(states []*branchState, size, minFreeSpace int64) *branchState {
-	var best *branchState
+func pickEvacuationTarget(states []*evacuationTarget, size, minFreeSpace int64) *evacuationTarget {
+	var best *evacuationTarget
 	for _, st := range states {
 		if st.usage.FreeBytes-minFreeSpace < size {
 			continue

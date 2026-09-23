@@ -3,6 +3,7 @@ package pool
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -70,6 +71,9 @@ func catchAllMount(dataDisks []string, removingDisk string, opts Options) (Mount
 	if len(dataDisks) == 0 {
 		return Mount{}, ErrNoDataDisks
 	}
+	if err := checkRemovingDisk(dataDisks, removingDisk); err != nil {
+		return Mount{}, err
+	}
 	return Mount{
 		Where:             CatchAllPath,
 		What:              rwBranchesRemoving(dataDisks, removingDisk),
@@ -121,6 +125,9 @@ func shareMount(share Share, dataDisks []string, cachePath, removingDisk string,
 		if len(dataDisks) == 0 {
 			return Mount{}, ErrNoDataDisks
 		}
+		if err := checkRemovingDisk(dataDisks, removingDisk); err != nil {
+			return Mount{}, err
+		}
 		branches := append([]string{cachePath + "/" + share.Name + "=RW"}, shareBranchesRemoving(dataDisks, share.Name, "NC", removingDisk)...)
 		what = strings.Join(branches, ":")
 		requires = append(requires, cachePath)
@@ -134,6 +141,9 @@ func shareMount(share Share, dataDisks []string, cachePath, removingDisk string,
 	case ArrayOnly:
 		if len(dataDisks) == 0 {
 			return Mount{}, ErrNoDataDisks
+		}
+		if err := checkRemovingDisk(dataDisks, removingDisk); err != nil {
+			return Mount{}, err
 		}
 		what = strings.Join(shareBranchesRemoving(dataDisks, share.Name, "RW", removingDisk), ":")
 		requires = append(requires, dataDisks...)
@@ -178,6 +188,9 @@ func moverTargetMount(share Share, dataDisks []string, removingDisk string, opts
 	}
 	if len(dataDisks) == 0 {
 		return Mount{}, ErrNoDataDisks
+	}
+	if err := checkRemovingDisk(dataDisks, removingDisk); err != nil {
+		return Mount{}, err
 	}
 	return Mount{
 		Where:             MoverTargetPath(share.Name),
@@ -258,4 +271,16 @@ func shareBranchesRemoving(disks []string, share, mode, removingDisk string) []s
 		branches[i] = d + "/" + share + "=" + m
 	}
 	return branches
+}
+
+// checkRemovingDisk refuses a removingDisk that is not exactly one of
+// dataDisks (a trailing slash, an uncleaned path, a stale list): no
+// branch would be marked NC, so mergerfs would keep placing new files on
+// the disk being evacuated and the post-check would fail only after the
+// whole copy and sync cycle.
+func checkRemovingDisk(dataDisks []string, removingDisk string) error {
+	if removingDisk == "" || slices.Contains(dataDisks, removingDisk) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrDataDiskNotPresent, removingDisk)
 }

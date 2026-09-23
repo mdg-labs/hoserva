@@ -42,7 +42,10 @@ if has_label feat || has_label bug || has_label chore; then
   section 'Out of scope' || reasons+=("no '## Out of scope'")
 fi
 if has_label feat || has_label bug; then
-  grep -qiE 'Reachable via' <<<"$body" || reasons+=("no 'Reachable via:' criterion — nothing says where the capability must be wired")
+  # Only the criteria count: the original report quoting the phrase does
+  # not put the wiring requirement into what the executor must satisfy.
+  criteria=$(awk '/^##[[:space:]]+Acceptance criteria/ {on=1; next} /^##[[:space:]]/ {on=0} on' <<<"$body")
+  grep -qiE 'Reachable via' <<<"$criteria" || reasons+=("no 'Reachable via:' criterion — nothing says where the capability must be wired")
 fi
 
 stale_patterns=(

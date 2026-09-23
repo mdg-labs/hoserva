@@ -208,7 +208,7 @@ func TestAtomicWriteExclusiveRefusesExistingDestination(t *testing.T) {
 	if err := os.WriteFile(dest, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := atomicWrite(dest, []byte("[global]\n"), 0o644, true); !errors.Is(err, os.ErrExist) {
+	if err := atomicWrite(dest, []byte("[global]\n"), 0o644, -1, true); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("exclusive atomicWrite = %v, want os.ErrExist", err)
 	}
 	got, err := os.ReadFile(dest)

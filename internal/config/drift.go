@@ -76,7 +76,7 @@ func (g *Generator) saveManifest(m map[string]record) error {
 	if err != nil {
 		return fmt.Errorf("config: encoding manifest: %w", err)
 	}
-	return atomicWrite(g.manifestPath(), raw, 0o644, false)
+	return atomicWrite(g.manifestPath(), raw, 0o644, -1, false)
 }
 
 // Check reports path's current drift Status against Generator's manifest

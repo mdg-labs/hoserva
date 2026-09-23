@@ -279,6 +279,36 @@ func TestMoverTargetMountRemoving_MarksOnlyTheRemovingDiskNC(t *testing.T) {
 	}
 }
 
+// TestMountRemoving_RefusesADiskNotInDataDisks: a removingDisk that does
+// not exactly match a data disk would mark no branch NC and silently
+// leave the evacuating disk open to new writes.
+func TestMountRemoving_RefusesADiskNotInDataDisks(t *testing.T) {
+	arrayOnly := Share{Name: "backups", CacheMode: ArrayOnly, CreatePolicy: FillDisksInOrder}
+	cached := Share{Name: "movies", CacheMode: CacheThenMove, CreatePolicy: KeepFoldersTogether}
+	for _, removing := range []string{"/mnt/disk2/", "/mnt/disk9"} {
+		builds := map[string]func() error{
+			"catch-all": func() error { _, err := CatchAllMountRemoving(testDisks, removing, DefaultOptions()); return err },
+			"array-only share": func() error {
+				_, err := ShareMountRemoving(arrayOnly, testDisks, "", removing, DefaultOptions())
+				return err
+			},
+			"cache-then-move share": func() error {
+				_, err := ShareMountRemoving(cached, testDisks, "/mnt/cache", removing, DefaultOptions())
+				return err
+			},
+			"mover target": func() error {
+				_, err := MoverTargetMountRemoving(cached, testDisks, removing, DefaultOptions())
+				return err
+			},
+		}
+		for name, build := range builds {
+			if err := build(); !errors.Is(err, ErrDataDiskNotPresent) {
+				t.Errorf("%s removing %q: got %v, want ErrDataDiskNotPresent", name, removing, err)
+			}
+		}
+	}
+}
+
 func TestSharePathAndMoverTargetPath(t *testing.T) {
 	if got := SharePath("movies"); got != "/mnt/user/movies" {
 		t.Fatalf("SharePath(movies) = %q", got)

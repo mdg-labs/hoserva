@@ -237,8 +237,18 @@ func (g *Generator) CanWriteUPS(ctx context.Context, state UPSState) error {
 	if err := g.CanWrite(ctx, PathUPSConf); err != nil {
 		return err
 	}
+	if _, err := g.groupID(NUTGroup); err != nil {
+		return err
+	}
 	return g.CanWrite(ctx, PathUPSDUsers)
 }
+
+// NUTGroup is the group Debian's nut packages run upsd under. upsd reads
+// upsd.users after dropping to it, so the file is root:nut 0640 — NUT's
+// own recommended ownership (upsd.users(5)) — never root-only.
+const NUTGroup = "nut"
+
+const upsdUsersFileMode = 0o640
 
 // WriteUPS renders and writes every NUT config file state's connection
 // calls for: nut.conf and upsmon.conf always, plus ups.conf and
@@ -249,6 +259,11 @@ func (g *Generator) CanWriteUPS(ctx context.Context, state UPSState) error {
 func (g *Generator) WriteUPS(ctx context.Context, state UPSState, command string, revision int, now time.Time) error {
 	if err := validateUPSState(state); err != nil {
 		return err
+	}
+	if state.Connection == UPSConnectionUSB {
+		if _, err := g.groupID(NUTGroup); err != nil {
+			return err
+		}
 	}
 	if err := g.Write(ctx, File{Path: PathNUTConf, Command: command, Body: []byte(RenderNUTConf(state))}, revision, now); err != nil {
 		return err
@@ -262,7 +277,7 @@ func (g *Generator) WriteUPS(ctx context.Context, state UPSState, command string
 	if err := g.Write(ctx, File{Path: PathUPSConf, Command: command, Body: []byte(RenderUPSConf(state))}, revision, now); err != nil {
 		return err
 	}
-	return g.Write(ctx, File{Path: PathUPSDUsers, Command: command, Body: []byte(RenderUPSDUsers(state)), Mode: secretFileMode}, revision, now)
+	return g.Write(ctx, File{Path: PathUPSDUsers, Command: command, Body: []byte(RenderUPSDUsers(state)), Mode: upsdUsersFileMode, Group: NUTGroup}, revision, now)
 }
 
 // reconcileUSBFiles removes ups.conf and upsd.users once the connection

@@ -38,6 +38,10 @@ function catalogString(key: string): string {
   return value;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 interface ParityGuardState {
   wouldBlock: boolean;
   summary?: string;
@@ -102,7 +106,7 @@ test("mass deletion blocks the sync", async ({ page }) => {
   await expect(runDiffDialog).toBeHidden({ timeout: 60_000 });
 
   const removedGroup = page.getByRole("button", {
-    name: new RegExp(catalogString("parity.diff.categories.removed")),
+    name: new RegExp(escapeRegExp(catalogString("parity.diff.categories.removed"))),
   });
   await expect(removedGroup).toBeVisible();
   const removedText = await removedGroup.innerText();
@@ -157,7 +161,9 @@ test("mass deletion blocks the sync", async ({ page }) => {
   // past the baseline.
   await page.reload();
   await expect(page.getByText(catalogString("parity.guard.blocked"), { exact: true })).toBeVisible();
-  await expect(page.getByText("failed", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.locator(`[data-job-id="${refusedJob.id}"]`).getByText("failed", { exact: true }),
+  ).toBeVisible();
 
   const afterResponse = await page.request.get("/api/v1/parity");
   expect(afterResponse.ok()).toBeTruthy();
