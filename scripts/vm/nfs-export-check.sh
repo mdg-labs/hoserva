@@ -59,18 +59,23 @@ systemctl start rpcbind nfs-server
 # exportfs -ra re-processes every entry in /etc/exports and
 # /etc/exports.d, including ones this check did not write (Q76: a
 # pre-existing /etc/exports is imported, never replaced, and array setup
-# leaves its own real shares there too). A FUSE-backed share exported
-# without fsid= — every share RenderNFSExports itself renders today,
-# since /mnt/user/<share> is a mergerfs mount — makes exportfs warn and
-# return non-zero for the whole invocation, even though this check's own
-# plain-directory export still gets installed correctly regardless
-# (confirmed empirically against this exact harness: exportfs -v lists
-# it either way). So the gate here is that this export is actually live
-# afterward, not exportfs's own raw exit status, which reflects entries
-# this check does not own and cannot fix from here (a real defect in
-# RenderNFSExports itself, reported separately — this check's own job is
-# proving its export line mounts, not every other export on the guest).
-exportfs -ra || true
+# leaves its own real shares there too). Before #350, every FUSE-backed
+# share RenderNFSExports rendered (/mnt/user/<share> is a mergerfs
+# mount) had no fsid=, which made exportfs warn and return non-zero for
+# the whole invocation regardless of what this check's own plain-
+# directory export did — so this used to tolerate that with `|| true`
+# and fall back to confirming its own export via exportfs -v. Now that
+# RenderNFSExports carries a name-derived fsid= on every line it emits
+# (#350), and array setup's own NFS import re-renders the seeded
+# existing-host export through it too (run-l3-suite.sh's array_setup
+# step greps the regenerated /etc/exports for the imported share under
+# /mnt/user/<name>), exportfs -ra failing here is a real regression
+# again, not a known, tolerated defect — strict again.
+if ! EXPORTFS_ERR="$(exportfs -ra 2>&1)"; then
+  echo "hoserva-nfs-l3: exportfs -ra failed" >&2
+  printf '%s\n' "$EXPORTFS_ERR" >&2
+  exit 1
+fi
 EXPORTFS_OUT="$(exportfs -v)"
 if ! printf '%s\n' "$EXPORTFS_OUT" | grep -qF "$export_dir"; then
   printf '%s\n' "$EXPORTFS_OUT" >&2

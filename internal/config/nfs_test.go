@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +52,68 @@ func TestRenderNFSExports(t *testing.T) {
 func TestRenderNFSExports_NoShares(t *testing.T) {
 	if got := RenderNFSExports(nil); got != "" {
 		t.Fatalf("empty shares: %q", got)
+	}
+}
+
+// fsidOf extracts the fsid= value the given share's rendered line
+// carries so tests can compare it without depending on the rest of the
+// line's shape.
+func fsidOf(t *testing.T, rendered, name string) string {
+	t.Helper()
+	for _, line := range strings.Split(rendered, "\n") {
+		if !strings.HasPrefix(line, "/mnt/user/"+name+" ") {
+			continue
+		}
+		idx := strings.Index(line, "fsid=")
+		if idx == -1 {
+			t.Fatalf("line for %q has no fsid=: %q", name, line)
+		}
+		rest := line[idx+len("fsid="):]
+		end := strings.IndexAny(rest, ",)")
+		if end == -1 {
+			t.Fatalf("line for %q has an unterminated fsid=: %q", name, line)
+		}
+		return rest[:end]
+	}
+	t.Fatalf("no rendered line for share %q in:\n%s", name, rendered)
+	return ""
+}
+
+// TestRenderNFSExports_FsidDiffersPerShare proves distinct shares get
+// distinct fsid= values (#350) — without it, every share could share one
+// fsid and nfsd would hand out colliding file handles.
+func TestRenderNFSExports_FsidDiffersPerShare(t *testing.T) {
+	shares := []NFSShare{
+		{Name: "alpha", Hosts: []string{"10.0.0.1"}, Squash: "root_squash"},
+		{Name: "beta", Hosts: []string{"10.0.0.1"}, Squash: "root_squash"},
+	}
+	rendered := RenderNFSExports(shares)
+	alpha := fsidOf(t, rendered, "alpha")
+	beta := fsidOf(t, rendered, "beta")
+	if alpha == beta {
+		t.Fatalf("alpha and beta share the same fsid %q", alpha)
+	}
+}
+
+// TestRenderNFSExports_FsidStableAcrossOtherShares proves a share's
+// fsid= depends only on its own name — without it, adding, removing or
+// reordering unrelated shares could change an existing share's fsid and
+// invalidate every client's cached NFS file handles for it across a
+// mergerfs remount (array stop/start, reboot).
+func TestRenderNFSExports_FsidStableAcrossOtherShares(t *testing.T) {
+	alone := []NFSShare{
+		{Name: "media", Hosts: []string{"10.0.0.1"}, Squash: "root_squash"},
+	}
+	withOthers := []NFSShare{
+		{Name: "zeta", Hosts: []string{"10.0.0.1"}, Squash: "root_squash"},
+		{Name: "media", Hosts: []string{"10.0.0.1"}, Squash: "root_squash"},
+		{Name: "alpha", Hosts: []string{"10.0.0.1"}, Squash: "root_squash"},
+	}
+
+	want := fsidOf(t, RenderNFSExports(alone), "media")
+	got := fsidOf(t, RenderNFSExports(withOthers), "media")
+	if got != want {
+		t.Fatalf("media fsid changed when other shares were added/reordered: got %q, want %q", got, want)
 	}
 }
 

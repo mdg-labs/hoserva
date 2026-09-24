@@ -525,7 +525,10 @@ func TestCreate_NFSWritesExports(t *testing.T) {
 		t.Fatalf("reading generated exports: %v", err)
 	}
 	text := string(body)
-	if !strings.Contains(text, "/mnt/user/media") || !strings.Contains(text, "192.168.1.0/24(rw,sync,no_subtree_check,root_squash)") {
+	// #350: /mnt/user is fuse.mergerfs, so every option group carries a
+	// name-derived fsid= — nfsd refuses to export a FUSE filesystem
+	// without one.
+	if !strings.Contains(text, "/mnt/user/media") || !strings.Contains(text, "192.168.1.0/24(rw,sync,no_subtree_check,fsid=") || !strings.Contains(text, ",root_squash)") {
 		t.Fatalf("exports missing share line:\n%s", text)
 	}
 }

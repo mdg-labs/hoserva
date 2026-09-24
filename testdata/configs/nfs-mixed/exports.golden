@@ -1,2 +1,2 @@
-/mnt/user/backup 10.8.0.0/24(rw,sync,no_subtree_check,all_squash) backup.home.arpa(rw,sync,no_subtree_check,all_squash)
-/mnt/user/media 192.168.1.10(rw,sync,no_subtree_check,no_root_squash)
+/mnt/user/backup 10.8.0.0/24(rw,sync,no_subtree_check,fsid=3c674d19-c6af-5aec-b118-39e84316ac62,all_squash) backup.home.arpa(rw,sync,no_subtree_check,fsid=3c674d19-c6af-5aec-b118-39e84316ac62,all_squash)
+/mnt/user/media 192.168.1.10(rw,sync,no_subtree_check,fsid=8eaf4655-d7ed-515a-89cb-bdb69f8209b3,no_root_squash)

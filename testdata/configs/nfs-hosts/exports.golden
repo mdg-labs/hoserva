@@ -1,1 +1,1 @@
-/mnt/user/media 10.0.0.5(rw,sync,no_subtree_check,root_squash) 192.168.1.0/24(rw,sync,no_subtree_check,root_squash)
+/mnt/user/media 10.0.0.5(rw,sync,no_subtree_check,fsid=8eaf4655-d7ed-515a-89cb-bdb69f8209b3,root_squash) 192.168.1.0/24(rw,sync,no_subtree_check,fsid=8eaf4655-d7ed-515a-89cb-bdb69f8209b3,root_squash)

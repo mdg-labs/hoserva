@@ -1,1 +1,1 @@
-/mnt/user/appdata 192.168.1.10(rw,sync,no_subtree_check,no_root_squash)
+/mnt/user/appdata 192.168.1.10(rw,sync,no_subtree_check,fsid=dffc502d-2dfe-5248-b0ff-f5bc132edd09,no_root_squash)
