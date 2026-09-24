@@ -131,12 +131,16 @@ func (s *UPSService) Update(ctx context.Context, input UpdateUPSInput) (UPSView,
 		return UPSView{}, mapUPSGeneratorError(err)
 	}
 
-	row.UpdatedAt = s.now().UTC().Format(timeFormat)
+	// One instant for the row and the generated header. Drift detection
+	// hashes the whole file, including "Generated:", so a later rollback
+	// must rewrite those files with this same timestamp.
+	now := s.now()
+	row.UpdatedAt = now.UTC().Format(timeFormat)
 	if err := s.Store.Upsert(ctx, row); err != nil {
 		return UPSView{}, fmt.Errorf("settings: saving ups config: %w", err)
 	}
 
-	if err := s.Generator.WriteUPS(ctx, state, "settings ups", 1, s.now()); err != nil {
+	if err := s.Generator.WriteUPS(ctx, state, "settings ups", 1, now); err != nil {
 		if rbErr := s.rollbackUPS(previous); rbErr != nil {
 			return UPSView{}, fmt.Errorf("settings: writing nut config: %w (rollback also failed: %v)", mapUPSGeneratorError(err), rbErr)
 		}
@@ -194,7 +198,11 @@ func (s *UPSService) restoreUPSGenerated(ctx context.Context, previous *UPSConfi
 	if err != nil {
 		return err
 	}
-	if err := s.Generator.WriteUPS(ctx, state, "settings ups", 1, s.now()); err != nil {
+	generatedAt, err := time.Parse(timeFormat, previous.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("settings: restoring nut config: %w", err)
+	}
+	if err := s.Generator.WriteUPS(ctx, state, "settings ups", 1, generatedAt); err != nil {
 		return fmt.Errorf("settings: restoring nut config: %w", mapUPSGeneratorError(err))
 	}
 	return nil

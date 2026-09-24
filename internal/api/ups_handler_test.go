@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
@@ -59,6 +60,14 @@ func newUPSTestEnv(t *testing.T) (context.Context, *api.Handler, *api.UPSStore, 
 	nut := &fakeNUTReloader{}
 	storeUPS := api.NewUPSStore(db)
 	svc := api.NewUPSService(storeUPS, fakeSettingsCipher{}, g, nut)
+	// Each call is a new second, so a rollback that stamps files with
+	// "now" cannot accidentally match the prior header.
+	clock := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	svc.Now = func() time.Time {
+		current := clock
+		clock = clock.Add(time.Second)
+		return current
+	}
 	return context.Background(), &api.Handler{UPS: svc, Generator: g}, storeUPS, g, nut
 }
 
