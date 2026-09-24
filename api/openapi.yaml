@@ -77,7 +77,9 @@ tags:
     description: >-
       General installation settings shared by onboarding and `/settings`
       (doc 03 §1, §8.1). The backup passphrase is write-only (Q28): a
-      response never carries it, only whether one is configured. Self-update,
+      response never carries it, only whether one is configured. UPS
+      connection and shutdown thresholds live under `/settings/ups`
+      (doc 03 §8.1, Q77); UPS passwords are write-only (Q28). Self-update,
       rollback and Debian update status live under `/settings/updates`
       (doc 03 §8.6, Q67, Q68). Host networking, TLS certificate expiry,
       LAN-only access scope (Q10) and the listen port live under
@@ -226,7 +228,9 @@ paths:
         data-disk upgrade resumes only in maintenance mode (doc 02 §4
         E5); one resumed at its releasing checkpoint is not cancellable.
         Refused with `job_abort_in_progress` while a cancel of the same
-        job is unwinding it.
+        job is unwinding it. Resuming an interrupted mover job is refused
+        with 409 `on_battery` while the on-battery hold is active
+        (doc 02 §6, Q77).
       tags: [jobs]
       x-hoserva-role: admin
       responses:
@@ -804,6 +808,57 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GeneralSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /settings/ups:
+    get:
+      operationId: getUPSSettings
+      summary: Get UPS / NUT settings
+      description: >-
+        Doc 03 §8.1's UPS card on `/settings` General: connection mode
+        (USB or a network NUT server), driver fields, and USB-only
+        shutdown thresholds (Q77). Passwords are never returned — only
+        `monitorPasswordSet` / `networkPasswordSet` (Q28). When no UPS
+        is configured, `configured` is false and every other field is
+        omitted.
+      tags: [settings]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The current UPS settings, or an empty configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UPSSettings'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: updateUPSSettings
+      summary: Set UPS / NUT settings
+      description: >-
+        Persists UPS settings to SQLite, generates NUT config through
+        `WriteUPS` (D4, Q77), and reloads the NUT units. Passwords are
+        write-only (Q28): omit to keep an existing secret; a first
+        configure must supply the password the connection mode needs.
+        USB-only thresholds are ignored for network mode. Validation
+        failures and `ErrInvalidUPSField` return 400; unmanaged or
+        existing host NUT files and a missing `nut` group return 409.
+      tags: [settings]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUPSSettingsRequest'
+      responses:
+        "200":
+          description: The updated UPS settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UPSSettings'
         default:
           $ref: '#/components/responses/Error'
 
@@ -2118,7 +2173,9 @@ paths:
       description: >-
         Queues a sync job through the threshold guard (doc 02 §2). A
         non-dry-run sync past a tripped guard requires `confirm: true`
-        after reviewing the diff.
+        after reviewing the diff. Refused with 409 `on_battery` while
+        the on-battery hold is active (doc 02 §6, Q77) — scheduled syncs
+        are held until power returns.
       tags: [parity]
       x-hoserva-role: admin
       requestBody:
@@ -2192,7 +2249,9 @@ paths:
       description: >-
         Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger)
         — the same `TypeMover` job the threshold poll and the nightly chain
-        submit; there is no second mover-invocation path.
+        submit; there is no second mover-invocation path. Refused with 409
+        `on_battery` while the on-battery hold is active (doc 02 §6, Q77) —
+        the mover is paused until power returns.
       tags: [mover]
       x-hoserva-role: admin
       responses:
@@ -3639,6 +3698,128 @@ components:
             Write-only. Sets or replaces the backup passphrase (Q28).
             Omitted leaves any existing passphrase unchanged.
 
+    UPSConnection:
+      type: string
+      enum: [usb, network]
+      description: >-
+        Doc 03 §8.1 connection choice-cards: a USB-attached UPS Hoserva
+        drives locally, or a remote NUT server this host monitors (Q77).
+
+    UPSSettings:
+      type: object
+      required: [configured]
+      properties:
+        configured:
+          type: boolean
+          description: >-
+            Whether a UPS configuration row exists. False means the card
+            shows the optional empty state; every other field is omitted.
+        connection:
+          $ref: '#/components/schemas/UPSConnection'
+        driver:
+          type: string
+          description: NUT driver name for a USB UPS (e.g. usbhid-ups).
+        port:
+          type: string
+          description: Driver port for a USB UPS (commonly "auto").
+        monitorPasswordSet:
+          type: boolean
+          description: >-
+            Whether a local monitor password is stored. The password
+            itself is never returned (Q28).
+        networkHost:
+          type: string
+          description: Remote NUT server hostname or address.
+        networkPort:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 65535
+          description: Remote NUT server port (default 3493 when omitted on write).
+        networkUpsName:
+          type: string
+          description: UPS name on the remote NUT server.
+        networkUsername:
+          type: string
+          description: Monitoring username on the remote NUT server.
+        networkPasswordSet:
+          type: boolean
+          description: >-
+            Whether a network monitoring password is stored. The password
+            itself is never returned (Q28).
+        lowBatteryPercent:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: >-
+            USB-only. Charge percent that marks the battery low for a
+            clean shutdown (Q77). Omitted or zero leaves NUT's driver
+            default.
+        runtimeSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: >-
+            USB-only. Estimated runtime seconds remaining that mark the
+            battery low (Q77). Omitted or zero leaves NUT's driver default.
+
+    UpdateUPSSettingsRequest:
+      type: object
+      required: [connection]
+      properties:
+        connection:
+          $ref: '#/components/schemas/UPSConnection'
+        driver:
+          type: string
+          minLength: 1
+          description: Required for USB. NUT driver name (e.g. usbhid-ups).
+        port:
+          type: string
+          minLength: 1
+          description: Required for USB. Driver port (commonly "auto").
+        monitorPassword:
+          type: string
+          minLength: 1
+          description: >-
+            Write-only. Required on first USB configure; omit on later
+            updates to keep the stored secret (Q28).
+        networkHost:
+          type: string
+          minLength: 1
+          description: Required for network. Remote NUT server host.
+        networkPort:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 65535
+          description: Remote NUT port. Defaults to 3493 when omitted.
+        networkUpsName:
+          type: string
+          minLength: 1
+          description: Required for network. UPS name on the remote server.
+        networkUsername:
+          type: string
+          minLength: 1
+          description: Required for network. Monitoring username.
+        networkPassword:
+          type: string
+          minLength: 1
+          description: >-
+            Write-only. Required on first network configure; omit on later
+            updates to keep the stored secret (Q28).
+        lowBatteryPercent:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: USB-only low-battery charge percent (Q77).
+        runtimeSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: USB-only low-battery runtime seconds (Q77).
+
     NetworkBackend:
       type: string
       enum: [ifupdown, networkmanager, systemd-networkd, unknown]
@@ -4986,6 +5167,16 @@ components:
           type: string
           description: NFS squash option (doc 03 §4.2).
           enum: [root_squash, no_root_squash, all_squash]
+        fsid:
+          type: string
+          format: uuid
+          readOnly: true
+          description: >-
+            The fsid= value RenderNFSExports writes for this share's
+            export line (#350, #351). Derived from the share name only;
+            ignored on a create or update request. Always present on a
+            response — a draft preview can use the saved share's fsid
+            because a share cannot be renamed.
 
     ShareDiskUsage:
       type: object

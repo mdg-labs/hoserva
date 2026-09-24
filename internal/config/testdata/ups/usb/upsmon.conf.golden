@@ -1,6 +1,5 @@
 MONITOR hoserva-ups@localhost 1 hoserva-monitor s3cr3t-monitor-pass master
 MINSUPPLIES 1
-RUN_AS_USER root
 SHUTDOWNCMD "/usr/lib/hoserva/nut-shutdown"
 NOTIFYCMD /usr/lib/hoserva/nut-notify
 NOTIFYFLAG ONBATT SYSLOG+EXEC

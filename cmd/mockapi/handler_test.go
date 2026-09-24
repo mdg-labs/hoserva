@@ -13,6 +13,7 @@ import (
 	"github.com/ogen-go/ogen/ogenerrors"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/web/fixtures"
 )
 
@@ -559,6 +560,10 @@ func TestCreateShareNFSEncodes(t *testing.T) {
 	if len(created.Nfs.Hosts) != 0 {
 		t.Fatalf("CreateShare(omit nfs): nfs.hosts = %v, want empty", created.Nfs.Hosts)
 	}
+	wantFsid := config.NFSExportFsid("media")
+	if v, ok := created.Nfs.Fsid.Get(); !ok || v != wantFsid {
+		t.Fatalf("CreateShare(omit nfs): nfs.fsid = %v (ok=%v), want %s", v, ok, wantFsid)
+	}
 
 	got, err := client.GetShare(ctx, apiv1.GetShareParams{Name: created.Name})
 	if err != nil {
@@ -594,6 +599,10 @@ func TestCreateShareNFSEncodes(t *testing.T) {
 	}
 	if len(withNFS.Nfs.Hosts) != 2 {
 		t.Fatalf("CreateShare(with nfs): hosts = %v, want two entries", withNFS.Nfs.Hosts)
+	}
+	wantBackupFsid := config.NFSExportFsid("backup")
+	if v, ok := withNFS.Nfs.Fsid.Get(); !ok || v != wantBackupFsid {
+		t.Fatalf("CreateShare(with nfs): nfs.fsid = %v (ok=%v), want %s", v, ok, wantBackupFsid)
 	}
 
 	updated, err := client.UpdateShare(ctx, &apiv1.UpdateShareRequest{
@@ -632,5 +641,10 @@ func assertShareNFS(t *testing.T, label string, got, want apiv1.ShareNFS) {
 		if got.Hosts[i] != want.Hosts[i] {
 			t.Fatalf("%s: nfs.hosts[%d] = %q, want %q", label, i, got.Hosts[i], want.Hosts[i])
 		}
+	}
+	gotFsid, gotOK := got.Fsid.Get()
+	wantFsid, wantOK := want.Fsid.Get()
+	if gotOK != wantOK || gotFsid != wantFsid {
+		t.Fatalf("%s: nfs.fsid = %v (ok=%v), want %v (ok=%v)", label, gotFsid, gotOK, wantFsid, wantOK)
 	}
 }

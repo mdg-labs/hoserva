@@ -269,6 +269,108 @@ describe("ShareDetailPage danger zone", () => {
   });
 });
 
+describe("ShareDetailPage cache tab", () => {
+  beforeEach(() => {
+    cleanup();
+    mockMatchMedia();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockPatch.mockReset();
+    mockPut.mockReset();
+    mockDelete.mockReset();
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/shares/{name}") {
+        return Promise.resolve({
+          data: {
+            ...share(),
+            cacheMode: "cache-then-move",
+          },
+          response: { ok: true },
+        });
+      }
+      if (path === "/users") {
+        return Promise.resolve({ data: { users: [] }, response: { ok: true } });
+      }
+      if (path === "/user-groups") {
+        return Promise.resolve({ data: { groups: [] }, response: { ok: true } });
+      }
+      if (path === "/shares/{name}/permissions") {
+        return Promise.resolve({ data: { users: [], groups: [] }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+  });
+
+  it("offers relocation when changing cache mode toward array-only", async () => {
+    render(
+      <MemoryRouter initialEntries={["/shares/media?tab=cache"]}>
+        <Routes>
+          <Route path="/shares/:name" element={<ShareDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Cache" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Array only/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Change mode and relocate")).toBeInTheDocument();
+    expect(within(dialog).getByText("Change mode only")).toBeInTheDocument();
+    expect(
+      within(dialog).queryByText(/relocation job to move them is not available/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the relocation dialog open when relocate fails after the mode is saved", async () => {
+    mockPatch.mockResolvedValue({
+      data: { ...share(), cacheMode: "array-only" },
+      response: { ok: true },
+    });
+    mockPost.mockResolvedValue({
+      error: { code: "job_conflict", message: "another array write job is running" },
+      response: { ok: false },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/shares/media?tab=cache"]}>
+        <Routes>
+          <Route path="/shares/:name" element={<ShareDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Cache" }));
+    fireEvent.click(screen.getByRole("radio", { name: /Array only/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change mode and relocate" }));
+
+    expect(await within(dialog).findByText("another array write job is running")).toBeInTheDocument();
+    expect(mockPatch).toHaveBeenCalled();
+    expect(mockPost).toHaveBeenCalledWith("/shares/{name}/relocate", {
+      params: { path: { name: "media" } },
+      body: { to: "array" },
+    });
+
+    // The mode is already saved, but the files are still on the old
+    // tier: the dialog must still offer the relocation to retry it.
+    mockPost.mockResolvedValue({
+      data: { id: "job-relocate-1" },
+      response: { ok: true },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change mode and relocate" }));
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledTimes(2);
+    });
+    expect(mockPost).toHaveBeenLastCalledWith("/shares/{name}/relocate", {
+      params: { path: { name: "media" } },
+      body: { to: "array" },
+    });
+  });
+});
+
 describe("ShareDetailPage general tab", () => {
   beforeEach(() => {
     cleanup();

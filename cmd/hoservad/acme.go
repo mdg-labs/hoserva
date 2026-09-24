@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/mdg-labs/hoserva/internal/acme"
+	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
@@ -34,6 +35,26 @@ func acmeDatabaseSecrets(ctx context.Context, st *acme.Store) ([]backup.Database
 	for _, row := range rows {
 		out = append(out, backup.DatabaseSecret{
 			Table:      "acme_config",
+			Column:     row.Column,
+			RowID:      "1",
+			Ciphertext: row.Ciphertext,
+		})
+	}
+	return out, nil
+}
+
+func upsDatabaseSecrets(ctx context.Context, st *api.UPSStore) ([]backup.DatabaseSecret, error) {
+	if st == nil {
+		return nil, nil
+	}
+	rows, err := st.ListSecrets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]backup.DatabaseSecret, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, backup.DatabaseSecret{
+			Table:      "ups_config",
 			Column:     row.Column,
 			RowID:      "1",
 			Ciphertext: row.Ciphertext,

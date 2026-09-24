@@ -163,6 +163,47 @@ func TestHandler_CreateShareNFS(t *testing.T) {
 	}
 }
 
+// TestHandler_ShareNFSFsidMatchesRenderedExportLine proves GetShare's
+// nfs.fsid is the same fsid= value RenderNFSExports writes into
+// /etc/exports for the same share (#351) — without it, the web UI's
+// export-line preview (built from this field) could show a line that
+// doesn't match what hoservad actually exports.
+func TestHandler_ShareNFSFsidMatchesRenderedExportLine(t *testing.T) {
+	ctx := context.Background()
+	h := newShareTestHandler(t)
+	if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{
+		Name:      "media",
+		CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly),
+		Nfs: apiv1.NewOptShareNFS(apiv1.ShareNFS{
+			Enabled: true,
+			Hosts:   []string{"192.168.1.0/24"},
+			Squash:  apiv1.ShareNFSSquashRootSquash,
+		}),
+	}); err != nil {
+		t.Fatalf("CreateShare: %v", err)
+	}
+
+	got, err := h.GetShare(ctx, apiv1.GetShareParams{Name: "media"})
+	if err != nil {
+		t.Fatalf("GetShare: %v", err)
+	}
+	fsid, ok := got.Nfs.Fsid.Get()
+	if !ok {
+		t.Fatal("GetShare: nfs.fsid not set")
+	}
+
+	rendered := config.RenderNFSExports([]config.NFSShare{
+		{Name: "media", Hosts: []string{"192.168.1.0/24"}, Squash: "root_squash"},
+	})
+	want := config.NFSExportFsid("media").String()
+	if fsid.String() != want {
+		t.Fatalf("nfs.fsid = %s, want %s (derivation)", fsid, want)
+	}
+	if !strings.Contains(rendered, "fsid="+want+",") {
+		t.Fatalf("rendered export line does not contain fsid=%s: %q", want, rendered)
+	}
+}
+
 func TestHandler_InvalidNFSHostIs400(t *testing.T) {
 	ctx := context.Background()
 	h := newShareTestHandler(t)

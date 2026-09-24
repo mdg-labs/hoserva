@@ -1,0 +1,9 @@
+{
+  "shares": [
+    {
+      "name": "media",
+      "hosts": ["::ffff:192.0.2.1"],
+      "squash": "root_squash"
+    }
+  ]
+}

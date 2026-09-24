@@ -407,6 +407,15 @@ type Invoker interface {
 	//
 	// GET /status
 	GetStatus(ctx context.Context) (*SystemStatus, error)
+	// GetUPSSettings invokes getUPSSettings operation.
+	//
+	// Doc 03 §8.1's UPS card on `/settings` General: connection mode (USB or a network NUT server),
+	// driver fields, and USB-only shutdown thresholds (Q77). Passwords are never returned — only
+	// `monitorPasswordSet` / `networkPasswordSet` (Q28). When no UPS is configured, `configured` is false
+	// and every other field is omitted.
+	//
+	// GET /settings/ups
+	GetUPSSettings(ctx context.Context) (*UPSSettings, error)
 	// GetUpdateStatus invokes getUpdateStatus operation.
 	//
 	// Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
@@ -630,7 +639,9 @@ type Invoker interface {
 	// upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
 	// restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
 	// maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-	// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it.
+	// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it. Resuming an
+	// interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02
+	// §6, Q77).
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
@@ -722,7 +733,9 @@ type Invoker interface {
 	// StartMover invokes startMover operation.
 	//
 	// Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
-	// the threshold poll and the nightly chain submit; there is no second mover-invocation path.
+	// the threshold poll and the nightly chain submit; there is no second mover-invocation path. Refused
+	// with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77) — the mover is paused
+	// until power returns.
 	//
 	// POST /mover/run
 	StartMover(ctx context.Context) (*Job, error)
@@ -745,7 +758,8 @@ type Invoker interface {
 	// StartSync invokes startSync operation.
 	//
 	// Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
-	// requires `confirm: true` after reviewing the diff.
+	// requires `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the
+	// on-battery hold is active (doc 02 §6, Q77) — scheduled syncs are held until power returns.
 	//
 	// POST /parity/sync
 	StartSync(ctx context.Context, request *StartSyncRequest) (*Job, error)
@@ -840,6 +854,16 @@ type Invoker interface {
 	//
 	// PUT /shares/{name}/permissions
 	UpdateSharePermissions(ctx context.Context, request *UpdateSharePermissionsRequest, params UpdateSharePermissionsParams) (*SharePermissionsResult, error)
+	// UpdateUPSSettings invokes updateUPSSettings operation.
+	//
+	// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the
+	// NUT units. Passwords are write-only (Q28): omit to keep an existing secret; a first configure must
+	// supply the password the connection mode needs. USB-only thresholds are ignored for network mode.
+	// Validation failures and `ErrInvalidUPSField` return 400; unmanaged or existing host NUT files and a
+	// missing `nut` group return 409.
+	//
+	// PUT /settings/ups
+	UpdateUPSSettings(ctx context.Context, request *UpdateUPSSettingsRequest) (*UPSSettings, error)
 	// UpdateUpdateSettings invokes updateUpdateSettings operation.
 	//
 	// Persists the update channel (stable / beta) and whether the outbound update check is enabled (Q49,
@@ -7299,6 +7323,134 @@ func (c *Client) sendGetStatus(ctx context.Context) (res *SystemStatus, err erro
 	return result, nil
 }
 
+// GetUPSSettings invokes getUPSSettings operation.
+//
+// Doc 03 §8.1's UPS card on `/settings` General: connection mode (USB or a network NUT server),
+// driver fields, and USB-only shutdown thresholds (Q77). Passwords are never returned — only
+// `monitorPasswordSet` / `networkPasswordSet` (Q28). When no UPS is configured, `configured` is false
+// and every other field is omitted.
+//
+// GET /settings/ups
+func (c *Client) GetUPSSettings(ctx context.Context) (*UPSSettings, error) {
+	res, err := c.sendGetUPSSettings(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetUPSSettings(ctx context.Context) (res *UPSSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getUPSSettings"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/settings/ups"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetUPSSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/ups"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetUPSSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetUPSSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetUPSSettingsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetUpdateStatus invokes getUpdateStatus operation.
 //
 // Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
@@ -10716,7 +10868,9 @@ func (c *Client) sendResetUserPassword(ctx context.Context, request *ResetUserPa
 // upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
 // restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
 // maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it.
+// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it. Resuming an
+// interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02
+// §6, Q77).
 //
 // POST /jobs/{jobId}/resume
 func (c *Client) ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error) {
@@ -12241,7 +12395,9 @@ func (c *Client) sendStartFix(ctx context.Context, request *StartFixRequest) (re
 // StartMover invokes startMover operation.
 //
 // Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
-// the threshold poll and the nightly chain submit; there is no second mover-invocation path.
+// the threshold poll and the nightly chain submit; there is no second mover-invocation path. Refused
+// with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77) — the mover is paused
+// until power returns.
 //
 // POST /mover/run
 func (c *Client) StartMover(ctx context.Context) (*Job, error) {
@@ -12649,7 +12805,8 @@ func (c *Client) sendStartShareRelocation(ctx context.Context, request *StartSha
 // StartSync invokes startSync operation.
 //
 // Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
-// requires `confirm: true` after reviewing the diff.
+// requires `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the
+// on-battery hold is active (doc 02 §6, Q77) — scheduled syncs are held until power returns.
 //
 // POST /parity/sync
 func (c *Client) StartSync(ctx context.Context, request *StartSyncRequest) (*Job, error) {
@@ -14335,6 +14492,138 @@ func (c *Client) sendUpdateSharePermissions(ctx context.Context, request *Update
 
 	stage = "DecodeResponse"
 	result, err := decodeUpdateSharePermissionsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateUPSSettings invokes updateUPSSettings operation.
+//
+// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the
+// NUT units. Passwords are write-only (Q28): omit to keep an existing secret; a first configure must
+// supply the password the connection mode needs. USB-only thresholds are ignored for network mode.
+// Validation failures and `ErrInvalidUPSField` return 400; unmanaged or existing host NUT files and a
+// missing `nut` group return 409.
+//
+// PUT /settings/ups
+func (c *Client) UpdateUPSSettings(ctx context.Context, request *UpdateUPSSettingsRequest) (*UPSSettings, error) {
+	res, err := c.sendUpdateUPSSettings(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendUpdateUPSSettings(ctx context.Context, request *UpdateUPSSettingsRequest) (res *UPSSettings, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateUPSSettings"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/settings/ups"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateUPSSettingsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/settings/ups"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateUPSSettingsRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateUPSSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateUPSSettingsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateUPSSettingsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

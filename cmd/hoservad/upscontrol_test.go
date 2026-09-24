@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/auth"
+	cfggen "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 )
@@ -47,7 +48,7 @@ func startUPSControlServer(t *testing.T, controller *job.UPSController, lookup a
 		cancel()
 		_ = ln.Close()
 	})
-	go serveUPSControl(ctx, ln, controller, lookup, daemonUID)
+	go serveUPSControl(ctx, ln, controller, lookup, daemonUID, cfggen.NUTGroup)
 	return path
 }
 
@@ -58,7 +59,7 @@ func startUPSControlServer(t *testing.T, controller *job.UPSController, lookup a
 func TestDialUPSControl_DeliversNotifyToRunningController(t *testing.T) {
 	notifier := &recordingUPSNotifier{}
 	controller := &job.UPSController{Scheduler: newRegistryTestScheduler(t, job.NewRegistry()), Notifier: notifier}
-	path := startUPSControlServer(t, controller, &auth.FakeGroupLookup{Group: hoservaGroup, Exists: true}, uint32(os.Getuid()))
+	path := startUPSControlServer(t, controller, &auth.FakeGroupLookup{Group: cfggen.NUTGroup, Exists: true}, uint32(os.Getuid()))
 
 	if err := dialUPSControl(context.Background(), path, string(job.UPSNotifyOnBattery)); err != nil {
 		t.Fatalf("dialUPSControl(ONBATT): %v", err)
@@ -75,7 +76,7 @@ func TestDialUPSControl_ShutdownRunsArrayStopThenPowerOff(t *testing.T) {
 	scheduler := newRegistryTestScheduler(t, job.NewRegistry())
 	runner := disk.NewFakeRunner()
 	controller := newUPSController(scheduler, nil, nil, runner)
-	path := startUPSControlServer(t, controller, &auth.FakeGroupLookup{Group: hoservaGroup, Exists: true}, uint32(os.Getuid()))
+	path := startUPSControlServer(t, controller, &auth.FakeGroupLookup{Group: cfggen.NUTGroup, Exists: true}, uint32(os.Getuid()))
 
 	if err := dialUPSControl(context.Background(), path, string(job.UPSNotifyLowBattery)); err != nil {
 		t.Fatalf("dialUPSControl(LOWBATT): %v", err)
@@ -92,7 +93,7 @@ func TestDialUPSControl_ShutdownRunsArrayStopThenPowerOff(t *testing.T) {
 // file.
 func TestDialUPSControl_UnauthorizedPeerIsRefused(t *testing.T) {
 	controller := &job.UPSController{Scheduler: newRegistryTestScheduler(t, job.NewRegistry())}
-	lookup := &auth.FakeGroupLookup{Group: hoservaGroup, Exists: true}
+	lookup := &auth.FakeGroupLookup{Group: cfggen.NUTGroup, Exists: true}
 	// A daemon uid that can never match this test process's own uid, and
 	// a lookup that never reports the caller as a group member either.
 	path := startUPSControlServer(t, controller, lookup, uint32(os.Getuid())+1)
@@ -122,7 +123,7 @@ func TestDialUPSControl_UnknownSocketFails(t *testing.T) {
 func TestDialUPSControl_EmptyNotifyTypeIsRefusedBeforeDialing(t *testing.T) {
 	notifier := &recordingUPSNotifier{}
 	controller := &job.UPSController{Scheduler: newRegistryTestScheduler(t, job.NewRegistry()), Notifier: notifier}
-	path := startUPSControlServer(t, controller, &auth.FakeGroupLookup{Group: hoservaGroup, Exists: true}, uint32(os.Getuid()))
+	path := startUPSControlServer(t, controller, &auth.FakeGroupLookup{Group: cfggen.NUTGroup, Exists: true}, uint32(os.Getuid()))
 
 	if err := dialUPSControl(context.Background(), path, ""); err == nil {
 		t.Fatal(`dialUPSControl(""): nil error, want a refusal`)
@@ -132,25 +133,59 @@ func TestDialUPSControl_EmptyNotifyTypeIsRefusedBeforeDialing(t *testing.T) {
 	}
 }
 
-// TestAuthorizeUnixPeer_RunAsUserRootIsAdmittedToUPSControlSocket proves
-// the identity NOTIFYCMD's own child actually connects as once
-// RenderUPSMonConf emits "RUN_AS_USER root" (internal/config/nut.go) is
-// admitted to the ups control socket — not merely a same-uid dev-host
-// coincidence (the other tests in this file dial as the test process's
-// own uid, which happens to equal daemonUID there). daemonUID here is
-// deliberately a non-root value neither identical to nor derived from
-// the caller's uid, so the only reason UID 0 is admitted is
-// authorizeUnixPeer's own root rule — the same rule the ups control
-// socket and the main API socket both apply (Q44) — never a lookup
-// match or a same-uid coincidence.
-func TestAuthorizeUnixPeer_RunAsUserRootIsAdmittedToUPSControlSocket(t *testing.T) {
-	lookup := &auth.FakeGroupLookup{Group: hoservaGroup, Exists: true}
-	authorized, err := authorizeUnixPeer(auth.PeerCredential{UID: 0, GID: 0}, lookup, 1000)
+// TestAuthorizeUnixPeer_NUTGroupPeerIsAdmittedToUPSControlSocket proves
+// the identity NOTIFYCMD's own child actually connects as, once
+// applySocketGroupPermissions widens the ups control socket to the nut
+// group (cmd/hoservad/main.go) — nut is always in its own nut group, so
+// this needs no packaging or admin step at all — is admitted, not a
+// root or same-uid coincidence. daemonUID here is deliberately a
+// non-root value neither identical to nor derived from the peer's own
+// uid, so the only reason this peer is admitted is authorizeUnixPeer's
+// own group-membership rule, checked against the nut group the ups
+// control socket names.
+func TestAuthorizeUnixPeer_NUTGroupPeerIsAdmittedToUPSControlSocket(t *testing.T) {
+	lookup := &auth.FakeGroupLookup{Group: cfggen.NUTGroup, Exists: true, Members: map[uint32]bool{2000: true}}
+	authorized, err := authorizeUnixPeer(auth.PeerCredential{UID: 3000, GID: 2000}, lookup, 1000, cfggen.NUTGroup)
 	if err != nil {
 		t.Fatalf("authorizeUnixPeer: %v", err)
 	}
 	if !authorized {
-		t.Fatal("authorizeUnixPeer(UID 0, ...) = false, want true — RUN_AS_USER root's own NOTIFYCMD/SHUTDOWNCMD child must be admitted to the ups control socket")
+		t.Fatal("authorizeUnixPeer(nut-group peer, nut group) = false, want true — upsmon's unprivileged nut child must be admitted to the ups control socket via the nut group")
+	}
+}
+
+// TestAuthorizeUnixPeer_NUTGroupPeerIsRefusedOnHoservaSocket is the
+// maintainer decision (#340) this issue's second attempt implements: nut
+// never joins the hoserva group, so the same peer admitted to the ups
+// control socket above must be refused on hoserva.sock — membership in
+// hoserva is root-equivalent (Q44, doc 01 §7: it also admits a peer to
+// the admin API, which can format disks), and a parsing bug in upsmon's
+// own unprivileged nut child (this issue's whole reason for existing)
+// must never reach that far.
+func TestAuthorizeUnixPeer_NUTGroupPeerIsRefusedOnHoservaSocket(t *testing.T) {
+	lookup := &auth.FakeGroupLookup{Group: cfggen.NUTGroup, Exists: true, Members: map[uint32]bool{2000: true}}
+	authorized, err := authorizeUnixPeer(auth.PeerCredential{UID: 3000, GID: 2000}, lookup, 1000, hoservaGroup)
+	if err != nil && err != auth.ErrGroupNotFound {
+		t.Fatalf("authorizeUnixPeer: %v", err)
+	}
+	if authorized {
+		t.Fatal("authorizeUnixPeer(nut-group peer, hoserva group) = true, want false — nut must never be admitted to hoserva.sock")
+	}
+}
+
+// TestAuthorizeUnixPeer_UnrelatedNonRootPeerIsRefusedOnUPSControlSocket
+// proves a peer that is neither root, this daemon's own uid, nor a
+// member of the nut group is still refused on the ups control socket —
+// widening that socket to the nut group above must not have widened
+// admission beyond Q44's own rule.
+func TestAuthorizeUnixPeer_UnrelatedNonRootPeerIsRefusedOnUPSControlSocket(t *testing.T) {
+	lookup := &auth.FakeGroupLookup{Group: cfggen.NUTGroup, Exists: true, Members: map[uint32]bool{2000: true}}
+	authorized, err := authorizeUnixPeer(auth.PeerCredential{UID: 3000, GID: 9999}, lookup, 1000, cfggen.NUTGroup)
+	if err != nil {
+		t.Fatalf("authorizeUnixPeer: %v", err)
+	}
+	if authorized {
+		t.Fatal("authorizeUnixPeer(unrelated non-root peer, nut group) = true, want false")
 	}
 }
 

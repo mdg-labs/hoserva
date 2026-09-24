@@ -205,7 +205,7 @@ func TestApplySocketGroupPermissionsDegradesCleanlyWithoutTheGroup(t *testing.T)
 
 	// This dev/test host has no "hoserva" group — applySocketGroupPermissions
 	// must log and return, never panic or error out the caller.
-	applySocketGroupPermissions(path)
+	applySocketGroupPermissions(path, "hoserva")
 }
 
 // TestSetupUnixListenerSetsExplicitOwnerOnlyMode is the review finding

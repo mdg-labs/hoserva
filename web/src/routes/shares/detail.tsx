@@ -3,6 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
+import { toastManager } from "@/components/ui/toast";
+import { jobDetailPath } from "@/hooks/paths";
+
 import { Banner } from "@/components/patterns/banner";
 import { ChoiceCards } from "@/components/patterns/choice-cards";
 import { ConfirmDialog } from "@/components/patterns/confirm";
@@ -37,7 +40,7 @@ import {
 } from "@/hooks/share-detail-tabs";
 import { shareAccessOptions } from "@/hooks/share-access-options";
 import { hoservaClient, type components } from "@/lib/api/client";
-import { isApiError } from "@/lib/api/errors";
+import { shareMutationError, shareRelocationDirection } from "@/routes/shares/cache-mode";
 import { buildNfsExportLine, buildSmbStanza } from "@/routes/shares/config-preview";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
@@ -50,21 +53,10 @@ type ShareAccessLevel = components["schemas"]["ShareAccessLevel"];
 type ShareBrowseEntry = components["schemas"]["ShareBrowseEntry"];
 type ShareDiskUsage = components["schemas"]["ShareDiskUsage"];
 
-function shareMutationError(err: unknown, t: (key: string, options?: Record<string, unknown>) => string): string {
-  if (isApiError(err) && err.code === "maintenance_mode") {
-    return t("shares.errors.maintenanceMode");
-  }
-  if (isApiError(err)) {
-    return err.message;
-  }
-  if (err instanceof Error) {
-    return err.message;
-  }
-  return String(err);
-}
 
 const CREATE_POLICIES: ArrayCreatePolicy[] = ["mspmfs", "mfs", "lfs", "ff"];
 const CACHE_MODES: ShareCacheMode[] = ["cache-then-move", "cache-only", "array-only"];
+
 const SQUASH_OPTIONS: NonNullable<ShareNFS["squash"]>[] = ["root_squash", "no_root_squash", "all_squash"];
 const CREATE_POLICY_FIELD_NAME = "create-policy";
 const CACHE_MODE_FIELD_NAME = "cache-mode";
@@ -102,6 +94,10 @@ export function ShareDetailPage(): React.ReactElement {
 
   const [cacheModeDraft, setCacheModeDraft] = useState<ShareCacheMode>("cache-then-move");
   const [cacheConfirmOpen, setCacheConfirmOpen] = useState(false);
+  // The mode the share had when the dialog opened: saveCacheMode updates
+  // share.cacheMode before the relocate call, so a relocate that then
+  // fails must still be offered (and summarized) from this mode.
+  const [cacheModeFrom, setCacheModeFrom] = useState<ShareCacheMode | null>(null);
   const [savingCache, setSavingCache] = useState(false);
   const [cacheDialogError, setCacheDialogError] = useState<string | null>(null);
 
@@ -213,20 +209,69 @@ export function ShareDetailPage(): React.ReactElement {
     }
   }
 
-  async function handleConfirmCacheMode(): Promise<void> {
+  async function saveCacheMode(): Promise<boolean> {
+    const { data, error: apiError } = await hoservaClient.PATCH("/shares/{name}", {
+      params: { path: { name } },
+      body: { cacheMode: cacheModeDraft },
+    });
+    if (apiError) {
+      setCacheDialogError(shareMutationError(apiError, t));
+      return false;
+    }
+    if (data) {
+      setShare(data);
+    }
+    return true;
+  }
+
+  async function handleSaveCacheModeOnly(): Promise<void> {
     setSavingCache(true);
     setCacheDialogError(null);
     try {
-      const { data, error: apiError } = await hoservaClient.PATCH("/shares/{name}", {
+      const saved = await saveCacheMode();
+      if (saved) {
+        setCacheConfirmOpen(false);
+      }
+    } catch (err: unknown) {
+      setCacheDialogError(shareMutationError(err, t));
+    } finally {
+      setSavingCache(false);
+    }
+  }
+
+  async function handleSaveCacheModeAndRelocate(): Promise<void> {
+    if (!cacheModeFrom) {
+      return;
+    }
+    const direction = shareRelocationDirection(cacheModeFrom, cacheModeDraft);
+    if (!direction) {
+      return;
+    }
+    setSavingCache(true);
+    setCacheDialogError(null);
+    try {
+      const saved = await saveCacheMode();
+      if (!saved) {
+        return;
+      }
+      const { data, error: apiError } = await hoservaClient.POST("/shares/{name}/relocate", {
         params: { path: { name } },
-        body: { cacheMode: cacheModeDraft },
+        body: { to: direction },
       });
       if (apiError) {
         setCacheDialogError(shareMutationError(apiError, t));
         return;
       }
       if (data) {
-        setShare(data);
+        toastManager.add({
+          type: "success",
+          title: t("cache.relocation.queuedTitle"),
+          description: t("cache.relocation.queuedDescription"),
+          actionProps: {
+            children: t("cache.relocation.viewJob"),
+            onClick: () => navigate(jobDetailPath(data.id)),
+          },
+        });
       }
       setCacheConfirmOpen(false);
     } catch (err: unknown) {
@@ -357,6 +402,7 @@ export function ShareDetailPage(): React.ReactElement {
   }
 
   const includedInParity = share ? share.cacheMode !== "cache-only" : false;
+  const cacheRelocationDirection = cacheModeFrom ? shareRelocationDirection(cacheModeFrom, cacheModeDraft) : null;
 
   const permissionColumns: DataTableColumn<PermissionRow>[] = useMemo(
     () => [
@@ -598,7 +644,13 @@ export function ShareDetailPage(): React.ReactElement {
                   />
                 </CardPanel>
                 <CardFooter className="justify-end border-t">
-                  <Button disabled={cacheModeDraft === share.cacheMode} onClick={() => setCacheConfirmOpen(true)}>
+                  <Button
+                    disabled={cacheModeDraft === share.cacheMode}
+                    onClick={() => {
+                      setCacheModeFrom(share.cacheMode);
+                      setCacheConfirmOpen(true);
+                    }}
+                  >
                     {t("shares.detail.save")}
                   </Button>
                 </CardFooter>
@@ -817,20 +869,44 @@ export function ShareDetailPage(): React.ReactElement {
         ]}
       />
 
-      <ConfirmDialog
+      <FormOverlay
         open={cacheConfirmOpen}
         onOpenChange={(open) => {
           setCacheConfirmOpen(open);
           if (!open) {
             setCacheDialogError(null);
+            setCacheModeFrom(null);
           }
         }}
         title={t("shares.detail.cache.confirmTitle")}
         description={t("shares.detail.cache.confirmDescription")}
-        error={cacheDialogError}
-        loading={savingCache}
-        onConfirm={() => void handleConfirmCacheMode()}
-      />
+        footer={
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="outline" disabled={savingCache} onClick={() => setCacheConfirmOpen(false)}>
+              {t("confirm.cancel")}
+            </Button>
+            <Button loading={savingCache} onClick={() => void handleSaveCacheModeOnly()}>
+              {t("shares.detail.cache.changeModeOnly")}
+            </Button>
+            {cacheRelocationDirection ? (
+              <Button loading={savingCache} onClick={() => void handleSaveCacheModeAndRelocate()}>
+                {t("shares.detail.cache.relocateNow")}
+              </Button>
+            ) : null}
+          </div>
+        }
+      >
+        {cacheDialogError ? <Banner tone="error" title={cacheDialogError} /> : null}
+        {share && cacheModeFrom ? (
+          <p className="text-sm text-muted-foreground">
+            {t("shares.detail.cache.modeChangeSummary", {
+              share: share.name,
+              from: t(`shares.cacheModes.${cacheModeFrom}.label`),
+              to: t(`shares.cacheModes.${cacheModeDraft}.label`),
+            })}
+          </p>
+        ) : null}
+      </FormOverlay>
 
       <ConfirmDialog
         open={deleteFileTarget !== null}

@@ -1,0 +1,101 @@
+version:none
+unixtime:1790244474
+time:2026-09-24 10:07:54
+command:status
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/352-a1/snapraid.conf
+argv:3:-l
+argv:4:/lab/352-a1/status_after_kill.log
+argv:5:status
+selftest:
+msg:progress: Self test...
+conf:file:/lab/352-a1/snapraid.conf
+blocksize:262144
+data:disk1:/lab/352-a1/mnt/disk1/
+data:disk2:/lab/352-a1/mnt/disk2/
+data:disk3:/lab/352-a1/mnt/disk3/
+mode:par1
+parity:0:/lab/352-a1/mnt/parity1/snapraid.parity
+filter:exclude *.content*
+filter:exclude /mnt/user/
+content:/lab/352-a1/mnt/parity1/snapraid.content
+msg:progress: Loading state from /lab/352-a1/mnt/parity1/snapraid.content...
+msg:fatal: WARNING! Content file '/lab/352-a1/mnt/parity1/snapraid.content' not found, attempting with another copy...
+content:/lab/352-a1/mnt/disk1/.snapraid.content
+msg:progress: Loading state from /lab/352-a1/mnt/disk1/.snapraid.content...
+msg:fatal: WARNING! Content file '/lab/352-a1/mnt/disk1/.snapraid.content' not found, attempting with another copy...
+content:/lab/352-a1/mnt/disk2/.snapraid.content
+msg:progress: Loading state from /lab/352-a1/mnt/disk2/.snapraid.content...
+msg:fatal: WARNING! Content file '/lab/352-a1/mnt/disk2/.snapraid.content' not found, attempting with another copy...
+content:/lab/352-a1/mnt/disk3/.snapraid.content
+msg:progress: Loading state from /lab/352-a1/mnt/disk3/.snapraid.content...
+msg:fatal: No content file found. Assuming empty.
+memory:used:211308
+memory:block:17
+memory:extent:88
+memory:file:192
+memory:link:88
+memory:dir:80
+msg:progress: Using 0 MiB of memory for the file-system.
+summary:block_size:262144
+summary:parity_block_count:0
+summary:parity_block_total:parity:0
+summary:parity_block_free:parity:0
+summary:parity_block_free_min:0
+summary:disk_file_count:disk1:0
+summary:disk_block_count:disk1:0
+summary:disk_fragmented_file_count:disk1:0
+summary:disk_excess_fragment_count:disk1:0
+summary:disk_zerosubsecond_file_count:disk1:0
+summary:disk_file_size:disk1:0
+summary:disk_block_allocated:disk1:1
+summary:disk_block_total:disk1:0
+summary:disk_block_free:disk1:0
+summary:disk_block_max_by_space:disk1:0
+summary:disk_block_max_by_parity:disk1:0
+summary:disk_block_max:disk1:0
+summary:disk_space_wasted:disk1:0
+summary:disk_file_count:disk2:0
+summary:disk_block_count:disk2:0
+summary:disk_fragmented_file_count:disk2:0
+summary:disk_excess_fragment_count:disk2:0
+summary:disk_zerosubsecond_file_count:disk2:0
+summary:disk_file_size:disk2:0
+summary:disk_block_allocated:disk2:1
+summary:disk_block_total:disk2:0
+summary:disk_block_free:disk2:0
+summary:disk_block_max_by_space:disk2:0
+summary:disk_block_max_by_parity:disk2:0
+summary:disk_block_max:disk2:0
+summary:disk_space_wasted:disk2:0
+summary:disk_file_count:disk3:0
+summary:disk_block_count:disk3:0
+summary:disk_fragmented_file_count:disk3:0
+summary:disk_excess_fragment_count:disk3:0
+summary:disk_zerosubsecond_file_count:disk3:0
+summary:disk_file_size:disk3:0
+summary:disk_block_allocated:disk3:1
+summary:disk_block_total:disk3:0
+summary:disk_block_free:disk3:0
+summary:disk_block_max_by_space:disk3:0
+summary:disk_block_max_by_parity:disk3:0
+summary:disk_block_max:disk3:0
+summary:disk_space_wasted:disk3:0
+summary:file_count:0
+summary:file_block_count:0
+summary:fragmented_file_count:0
+summary:excess_fragment_count:0
+summary:zerosubsecond_file_count:0
+summary:file_size:0
+summary:parity_size:0
+summary:parity_size_max:0
+summary:hash:spooky2
+summary:prev_hash:undefined
+summary:best_hash:spooky2
+block_count:0
+summary:has_unsynced:0
+summary:has_unscrubbed:0
+summary:has_rehash:0
+summary:has_bad:0:0:0
+msg:fatal: The array is empty.

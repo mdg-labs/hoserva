@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/config"
 )
 
 func errShareNotFound(name apiv1.ShareName) error {
@@ -19,15 +20,20 @@ func errShareExists(name apiv1.ShareName) error {
 	return &mockError{code: "share_exists", statusCode: 409, message: fmt.Sprintf("share %s already exists", name)}
 }
 
-func defaultShareNFS() apiv1.ShareNFS {
+// defaultShareNFS and normalizeShareNFS both stamp fsid from name the
+// same way internal/api's shareToAPI does (#351), so the mock's
+// response matches what a real hoservad would return for the same
+// share name.
+func defaultShareNFS(name string) apiv1.ShareNFS {
 	return apiv1.ShareNFS{
 		Enabled: false,
 		Hosts:   []string{},
 		Squash:  apiv1.ShareNFSSquashRootSquash,
+		Fsid:    apiv1.NewOptUUID(config.NFSExportFsid(name)),
 	}
 }
 
-func normalizeShareNFS(n apiv1.ShareNFS) apiv1.ShareNFS {
+func normalizeShareNFS(name string, n apiv1.ShareNFS) apiv1.ShareNFS {
 	hosts := n.Hosts
 	if hosts == nil {
 		hosts = []string{}
@@ -40,6 +46,7 @@ func normalizeShareNFS(n apiv1.ShareNFS) apiv1.ShareNFS {
 		Enabled: n.Enabled,
 		Hosts:   append([]string(nil), hosts...),
 		Squash:  squash,
+		Fsid:    apiv1.NewOptUUID(config.NFSExportFsid(name)),
 	}
 }
 
@@ -86,9 +93,9 @@ func (h *handler) CreateShare(ctx context.Context, req *apiv1.CreateShareRequest
 	if v, ok := req.Smb.Get(); ok {
 		smb = v
 	}
-	nfs := defaultShareNFS()
+	nfs := defaultShareNFS(name)
 	if v, ok := req.Nfs.Get(); ok {
-		nfs = normalizeShareNFS(v)
+		nfs = normalizeShareNFS(name, v)
 	}
 	now := time.Now().UTC()
 	s := apiv1.Share{
@@ -126,7 +133,7 @@ func (h *handler) UpdateShare(ctx context.Context, req *apiv1.UpdateShareRequest
 		s.Smb = v
 	}
 	if v, ok := req.Nfs.Get(); ok {
-		s.Nfs = normalizeShareNFS(v)
+		s.Nfs = normalizeShareNFS(string(params.Name), v)
 	}
 	s.UpdatedAt = time.Now().UTC()
 	h.shares[string(params.Name)] = s

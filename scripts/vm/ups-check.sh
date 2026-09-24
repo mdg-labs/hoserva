@@ -75,12 +75,29 @@ sudo systemctl start hoserva'
 fi
 
 echo "ups-check[$HOSERVA_LAB_ID]: === setup: an admin account, so the CLI's own peer-credential (root) or a session can reach admin-only endpoints ==="
-SETUP_STATUS="$(vm_ssh "curl -sk https://127.0.0.1:8008/api/v1/setup/status" 2>/dev/null || true)"
+# The daemon's own TLS listener can still be opening when this step first
+# runs (right after a fresh install or restart above), so curl can return
+# an empty body well before setup/status is actually reachable — this
+# polls (bounded) for a body that actually names adminExists, rather than
+# ever reading "empty/unreadable" as "an admin already exists".
+SETUP_STATUS=""
+setup_status_seen=false
+for _ in $(seq 1 30); do
+  SETUP_STATUS="$(vm_ssh "curl -sk https://127.0.0.1:8008/api/v1/setup/status" 2>/dev/null || true)"
+  if [[ "$SETUP_STATUS" == *'"adminExists"'* ]]; then
+    setup_status_seen=true
+    break
+  fi
+  sleep 1
+done
+$setup_status_seen || die "setup/status never returned a body containing \"adminExists\" within 30s — last response: '$SETUP_STATUS'"
 if [[ "$SETUP_STATUS" == *'"adminExists":false'* ]]; then
   CREATE_RESULT="$(vm_ssh "curl -sk -X POST https://127.0.0.1:8008/api/v1/setup/admin -H 'Content-Type: application/json' -d '{\"username\":\"$UPS_ADMIN_USER\",\"password\":\"$UPS_ADMIN_PASSWORD\"}'" 2>/dev/null || true)"
   [[ "$CREATE_RESULT" == *"\"username\":\"$UPS_ADMIN_USER\""* ]] || die "createFirstAdmin did not return the expected admin: $CREATE_RESULT"
-else
+elif [[ "$SETUP_STATUS" == *'"adminExists":true'* ]]; then
   echo "ups-check[$HOSERVA_LAB_ID]: an admin already exists (an earlier suite step's own onboarding) — leaving it alone"
+else
+  die "setup/status returned an \"adminExists\" body neither true nor false: $SETUP_STATUS"
 fi
 COOKIE_JAR="/tmp/hoserva-ups-cookiejar"
 LOGIN_RESULT="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$UPS_ADMIN_USER\",\"password\":\"$UPS_ADMIN_PASSWORD\"}'" 2>/dev/null || true)"
@@ -106,7 +123,24 @@ SNAPRAID_CONF
 fi
 
 echo "ups-check[$HOSERVA_LAB_ID]: === setup: NUT with the dummy-ups driver, from hoservad's own real config renderer (never a hand-rolled substitute) ==="
-vm_ssh 'command -v upsc >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq nut)'
+if vm_ssh 'command -v upsc >/dev/null 2>&1'; then
+  echo "ups-check[$HOSERVA_LAB_ID]: nut is already installed (an earlier suite step) — leaving it alone"
+else
+  vm_ssh 'sudo apt-get update -qq && sudo apt-get install -y -qq nut'
+  # #340: upsmon.conf no longer overrides RUN_AS_USER, so upsmon's own
+  # unprivileged child runs as nut (Debian's default) rather than root,
+  # reachable only on the ups control socket's own root:nut 0660
+  # (applySocketGroupPermissions, cmd/hoservad/main.go) — never the
+  # hoserva group, which stays root-equivalent (Q44). nut is only
+  # Recommends:, not Depends:, so this branch always installs it after
+  # hoservad already started (above) and found no nut group to chow the
+  # socket to; restarting hoservad re-runs that same startup chown now
+  # that the group exists (#340) — the production path a settings-ups
+  # save takes instead, UPSService.Update's own Socket.Apply, is
+  # exercised at L1 (internal/api/ups_handler_test.go), not here.
+  vm_ssh 'sudo systemctl restart hoserva'
+  vm_ssh 'sudo systemctl is-active hoserva' >/dev/null || die "hoservad did not come back up after nut was installed"
+fi
 
 render_nut_file() {
   (cd "$VM_REPO_ROOT" && go run ./scripts/vm/nutconfig "$1")
@@ -134,6 +168,33 @@ vm_ssh 'sudo systemctl restart "nut-driver@hoserva-ups.service"'
 vm_ssh 'sudo systemctl restart nut-server.service'
 vm_ssh 'sudo systemctl restart nut-monitor.service'
 
+# upsmon always forks into a small privileged parent (root — the only
+# piece that ever runs SHUTDOWNCMD, per upsmon.conf(5)) plus the bulk
+# worker RUN_AS_USER names; before #340 that worker was itself root
+# (RenderUPSMonConf's own RUN_AS_USER override), so the presence of a
+# nut-owned upsmon process here — not the absence of any root one, which
+# always exists — is what actually distinguishes the fix from a
+# regression back to it.
+echo "ups-check[$HOSERVA_LAB_ID]: === confirming upsmon's own bulk-work process runs as nut, not root (#340) ==="
+nut_child_seen=false
+for _ in $(seq 1 15); do
+  if vm_ssh 'sudo ps -C upsmon -o user= | grep -qx nut'; then
+    nut_child_seen=true
+    break
+  fi
+  sleep 1
+done
+$nut_child_seen || die "no upsmon process is running as nut within 15s of restarting nut-monitor.service — RenderUPSMonConf's own RUN_AS_USER removal did not take effect, or the nut package's default RUN_AS_USER changed"
+
+# applySocketGroupPermissions (cmd/hoservad/main.go) chowns the ups
+# control socket to root:nut 0660 at daemon start (#340) — this is what
+# actually lets the nut-owned upsmon process confirmed above reach it,
+# never the hoserva group (that stays reserved for root-equivalent admin
+# access, Q44).
+echo "ups-check[$HOSERVA_LAB_ID]: === confirming the ups control socket is root:nut 0660 (#340) ==="
+SOCK_STAT="$(vm_ssh 'stat -c "%U:%G %a" /run/hoserva/ups-control.sock')"
+[[ "$SOCK_STAT" == "root:nut 660" ]] || die "ups control socket is '$SOCK_STAT', want 'root:nut 660'"
+
 echo "ups-check[$HOSERVA_LAB_ID]: waiting for upsd to see the dummy-ups driver online"
 ready=false
 for _ in $(seq 1 30); do
@@ -160,9 +221,17 @@ record() { STEP_NAMES+=("$1"); STEP_RESULTS+=("$2"); }
 # before hoservad's real HandleNotify for *this* transition has actually
 # run — confirmed empirically against this exact harness on a
 # second, already-configured run.
+#
+# submit_refused only accepts a refusal that actually carries #356's own
+# on_battery error code (mapAPIErr's generic pass-through prints the
+# server's Error struct into the CLI's stderr as "code 409:
+# {Code:on_battery ...}") — any other nonzero exit, e.g. a generic
+# `internal` error or a same-class conflict, is not proof of the
+# on-battery hold and must not be read as one.
 submit_refused() {
-  local cmd="$1"
-  ! vm_ssh "sudo hoserva $cmd --json" >/dev/null 2>&1
+  local cmd="$1" output
+  output="$(vm_ssh "sudo hoserva $cmd --json" 2>&1)" && return 1
+  [[ "$output" == *'Code:on_battery'* ]]
 }
 submit_accepted() {
   local cmd="$1"
@@ -184,25 +253,17 @@ wait_until_accepted() {
   done
   return 1
 }
-journal_has_on_battery_reason() {
-  vm_ssh "sudo journalctl -u hoserva.service --no-pager --since '$1'" 2>/dev/null \
-    | grep -q 'on battery — the mover is paused and scheduled syncs are held'
-}
 
 echo "ups-check[$HOSERVA_LAB_ID]: === scenario 1/3: on battery — notify, mover paused, syncs held ==="
 SCENARIO1_STATUS=0
-FLIP_TS="$(vm_ssh 'date -u "+%Y-%m-%d %H:%M:%S"')"
 set_battery_state 'ups.status: OB
 battery.charge: 40
 battery.runtime: 900'
 if ! wait_until_refused "mover run"; then
-  echo "ups-check[$HOSERVA_LAB_ID]: 'hoserva mover run' was never refused within 30s of going on battery — Q77's own hold did not take effect" >&2
+  echo "ups-check[$HOSERVA_LAB_ID]: 'hoserva mover run' was never refused with the on_battery error code within 30s of going on battery — Q77's own hold did not take effect" >&2
   SCENARIO1_STATUS=1
 elif ! wait_until_refused "sync --dry-run"; then
-  echo "ups-check[$HOSERVA_LAB_ID]: 'hoserva sync --dry-run' was never refused within 30s of going on battery — Q77's own hold did not take effect" >&2
-  SCENARIO1_STATUS=1
-elif ! journal_has_on_battery_reason "$FLIP_TS"; then
-  echo "ups-check[$HOSERVA_LAB_ID]: both submissions were refused, but hoservad's own log never named job.ErrOnBattery as the reason since $FLIP_TS — see journalctl -u hoserva.service" >&2
+  echo "ups-check[$HOSERVA_LAB_ID]: 'hoserva sync --dry-run' was never refused with the on_battery error code within 30s of going on battery — Q77's own hold did not take effect" >&2
   SCENARIO1_STATUS=1
 fi
 if [[ "$SCENARIO1_STATUS" -eq 0 ]]; then

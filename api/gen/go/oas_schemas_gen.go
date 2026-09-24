@@ -6837,6 +6837,98 @@ func (o OptString) Or(d string) string {
 	return d
 }
 
+// NewOptUPSConnection returns new OptUPSConnection with value set to v.
+func NewOptUPSConnection(v UPSConnection) OptUPSConnection {
+	return OptUPSConnection{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptUPSConnection is optional UPSConnection.
+type OptUPSConnection struct {
+	Value UPSConnection
+	Set   bool
+}
+
+// IsSet returns true if OptUPSConnection was set.
+func (o OptUPSConnection) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptUPSConnection) Reset() {
+	var v UPSConnection
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptUPSConnection) SetTo(v UPSConnection) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptUPSConnection) Get() (v UPSConnection, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptUPSConnection) Or(d UPSConnection) UPSConnection {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptUUID returns new OptUUID with value set to v.
+func NewOptUUID(v uuid.UUID) OptUUID {
+	return OptUUID{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptUUID is optional uuid.UUID.
+type OptUUID struct {
+	Value uuid.UUID
+	Set   bool
+}
+
+// IsSet returns true if OptUUID was set.
+func (o OptUUID) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptUUID) Reset() {
+	var v uuid.UUID
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptUUID) SetTo(v uuid.UUID) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptUUID) Get() (v uuid.UUID, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptUUID) Or(d uuid.UUID) uuid.UUID {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptUpdateChannel returns new OptUpdateChannel with value set to v.
 func NewOptUpdateChannel(v UpdateChannel) OptUpdateChannel {
 	return OptUpdateChannel{
@@ -8681,6 +8773,10 @@ type ShareNFS struct {
 	Hosts []string `json:"hosts"`
 	// NFS squash option (doc 03 §4.2).
 	Squash ShareNFSSquash `json:"squash"`
+	// The fsid= value RenderNFSExports writes for this share's export line (#350, #351). Derived from the
+	// share name only; ignored on a create or update request. Always present on a response — a draft
+	// preview can use the saved share's fsid because a share cannot be renamed.
+	Fsid OptUUID `json:"fsid"`
 }
 
 // GetEnabled returns the value of Enabled.
@@ -8698,6 +8794,11 @@ func (s *ShareNFS) GetSquash() ShareNFSSquash {
 	return s.Squash
 }
 
+// GetFsid returns the value of Fsid.
+func (s *ShareNFS) GetFsid() OptUUID {
+	return s.Fsid
+}
+
 // SetEnabled sets the value of Enabled.
 func (s *ShareNFS) SetEnabled(val bool) {
 	s.Enabled = val
@@ -8711,6 +8812,11 @@ func (s *ShareNFS) SetHosts(val []string) {
 // SetSquash sets the value of Squash.
 func (s *ShareNFS) SetSquash(val ShareNFSSquash) {
 	s.Squash = val
+}
+
+// SetFsid sets the value of Fsid.
+func (s *ShareNFS) SetFsid(val OptUUID) {
+	s.Fsid = val
 }
 
 // NFS squash option (doc 03 §4.2).
@@ -9443,6 +9549,200 @@ func (s *TotpEnrollResponse) SetOtpauthUri(val string) {
 	s.OtpauthUri = val
 }
 
+// Doc 03 §8.1 connection choice-cards: a USB-attached UPS Hoserva drives locally, or a remote NUT
+// server this host monitors (Q77).
+// Ref: #/components/schemas/UPSConnection
+type UPSConnection string
+
+const (
+	UPSConnectionUsb     UPSConnection = "usb"
+	UPSConnectionNetwork UPSConnection = "network"
+)
+
+// AllValues returns all UPSConnection values.
+func (UPSConnection) AllValues() []UPSConnection {
+	return []UPSConnection{
+		UPSConnectionUsb,
+		UPSConnectionNetwork,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s UPSConnection) MarshalText() ([]byte, error) {
+	switch s {
+	case UPSConnectionUsb:
+		return []byte(s), nil
+	case UPSConnectionNetwork:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *UPSConnection) UnmarshalText(data []byte) error {
+	switch UPSConnection(data) {
+	case UPSConnectionUsb:
+		*s = UPSConnectionUsb
+		return nil
+	case UPSConnectionNetwork:
+		*s = UPSConnectionNetwork
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/UPSSettings
+type UPSSettings struct {
+	// Whether a UPS configuration row exists. False means the card shows the optional empty state; every
+	// other field is omitted.
+	Configured bool             `json:"configured"`
+	Connection OptUPSConnection `json:"connection"`
+	// NUT driver name for a USB UPS (e.g. usbhid-ups).
+	Driver OptString `json:"driver"`
+	// Driver port for a USB UPS (commonly "auto").
+	Port OptString `json:"port"`
+	// Whether a local monitor password is stored. The password itself is never returned (Q28).
+	MonitorPasswordSet OptBool `json:"monitorPasswordSet"`
+	// Remote NUT server hostname or address.
+	NetworkHost OptString `json:"networkHost"`
+	// Remote NUT server port (default 3493 when omitted on write).
+	NetworkPort OptInt32 `json:"networkPort"`
+	// UPS name on the remote NUT server.
+	NetworkUpsName OptString `json:"networkUpsName"`
+	// Monitoring username on the remote NUT server.
+	NetworkUsername OptString `json:"networkUsername"`
+	// Whether a network monitoring password is stored. The password itself is never returned (Q28).
+	NetworkPasswordSet OptBool `json:"networkPasswordSet"`
+	// USB-only. Charge percent that marks the battery low for a clean shutdown (Q77). Omitted or zero
+	// leaves NUT's driver default.
+	LowBatteryPercent OptInt32 `json:"lowBatteryPercent"`
+	// USB-only. Estimated runtime seconds remaining that mark the battery low (Q77). Omitted or zero
+	// leaves NUT's driver default.
+	RuntimeSeconds OptInt32 `json:"runtimeSeconds"`
+}
+
+// GetConfigured returns the value of Configured.
+func (s *UPSSettings) GetConfigured() bool {
+	return s.Configured
+}
+
+// GetConnection returns the value of Connection.
+func (s *UPSSettings) GetConnection() OptUPSConnection {
+	return s.Connection
+}
+
+// GetDriver returns the value of Driver.
+func (s *UPSSettings) GetDriver() OptString {
+	return s.Driver
+}
+
+// GetPort returns the value of Port.
+func (s *UPSSettings) GetPort() OptString {
+	return s.Port
+}
+
+// GetMonitorPasswordSet returns the value of MonitorPasswordSet.
+func (s *UPSSettings) GetMonitorPasswordSet() OptBool {
+	return s.MonitorPasswordSet
+}
+
+// GetNetworkHost returns the value of NetworkHost.
+func (s *UPSSettings) GetNetworkHost() OptString {
+	return s.NetworkHost
+}
+
+// GetNetworkPort returns the value of NetworkPort.
+func (s *UPSSettings) GetNetworkPort() OptInt32 {
+	return s.NetworkPort
+}
+
+// GetNetworkUpsName returns the value of NetworkUpsName.
+func (s *UPSSettings) GetNetworkUpsName() OptString {
+	return s.NetworkUpsName
+}
+
+// GetNetworkUsername returns the value of NetworkUsername.
+func (s *UPSSettings) GetNetworkUsername() OptString {
+	return s.NetworkUsername
+}
+
+// GetNetworkPasswordSet returns the value of NetworkPasswordSet.
+func (s *UPSSettings) GetNetworkPasswordSet() OptBool {
+	return s.NetworkPasswordSet
+}
+
+// GetLowBatteryPercent returns the value of LowBatteryPercent.
+func (s *UPSSettings) GetLowBatteryPercent() OptInt32 {
+	return s.LowBatteryPercent
+}
+
+// GetRuntimeSeconds returns the value of RuntimeSeconds.
+func (s *UPSSettings) GetRuntimeSeconds() OptInt32 {
+	return s.RuntimeSeconds
+}
+
+// SetConfigured sets the value of Configured.
+func (s *UPSSettings) SetConfigured(val bool) {
+	s.Configured = val
+}
+
+// SetConnection sets the value of Connection.
+func (s *UPSSettings) SetConnection(val OptUPSConnection) {
+	s.Connection = val
+}
+
+// SetDriver sets the value of Driver.
+func (s *UPSSettings) SetDriver(val OptString) {
+	s.Driver = val
+}
+
+// SetPort sets the value of Port.
+func (s *UPSSettings) SetPort(val OptString) {
+	s.Port = val
+}
+
+// SetMonitorPasswordSet sets the value of MonitorPasswordSet.
+func (s *UPSSettings) SetMonitorPasswordSet(val OptBool) {
+	s.MonitorPasswordSet = val
+}
+
+// SetNetworkHost sets the value of NetworkHost.
+func (s *UPSSettings) SetNetworkHost(val OptString) {
+	s.NetworkHost = val
+}
+
+// SetNetworkPort sets the value of NetworkPort.
+func (s *UPSSettings) SetNetworkPort(val OptInt32) {
+	s.NetworkPort = val
+}
+
+// SetNetworkUpsName sets the value of NetworkUpsName.
+func (s *UPSSettings) SetNetworkUpsName(val OptString) {
+	s.NetworkUpsName = val
+}
+
+// SetNetworkUsername sets the value of NetworkUsername.
+func (s *UPSSettings) SetNetworkUsername(val OptString) {
+	s.NetworkUsername = val
+}
+
+// SetNetworkPasswordSet sets the value of NetworkPasswordSet.
+func (s *UPSSettings) SetNetworkPasswordSet(val OptBool) {
+	s.NetworkPasswordSet = val
+}
+
+// SetLowBatteryPercent sets the value of LowBatteryPercent.
+func (s *UPSSettings) SetLowBatteryPercent(val OptInt32) {
+	s.LowBatteryPercent = val
+}
+
+// SetRuntimeSeconds sets the value of RuntimeSeconds.
+func (s *UPSSettings) SetRuntimeSeconds(val OptInt32) {
+	s.RuntimeSeconds = val
+}
+
 // UnlockUserNoContent is response for UnlockUser operation.
 type UnlockUserNoContent struct{}
 
@@ -10133,6 +10433,142 @@ func (s *UpdateStatus) SetDependencies(val []PackageDependencyStatus) {
 // SetBlockingJob sets the value of BlockingJob.
 func (s *UpdateStatus) SetBlockingJob(val OptBlockingJob) {
 	s.BlockingJob = val
+}
+
+// Ref: #/components/schemas/UpdateUPSSettingsRequest
+type UpdateUPSSettingsRequest struct {
+	Connection UPSConnection `json:"connection"`
+	// Required for USB. NUT driver name (e.g. usbhid-ups).
+	Driver OptString `json:"driver"`
+	// Required for USB. Driver port (commonly "auto").
+	Port OptString `json:"port"`
+	// Write-only. Required on first USB configure; omit on later updates to keep the stored secret (Q28).
+	MonitorPassword OptString `json:"monitorPassword"`
+	// Required for network. Remote NUT server host.
+	NetworkHost OptString `json:"networkHost"`
+	// Remote NUT port. Defaults to 3493 when omitted.
+	NetworkPort OptInt32 `json:"networkPort"`
+	// Required for network. UPS name on the remote server.
+	NetworkUpsName OptString `json:"networkUpsName"`
+	// Required for network. Monitoring username.
+	NetworkUsername OptString `json:"networkUsername"`
+	// Write-only. Required on first network configure; omit on later updates to keep the stored secret
+	// (Q28).
+	NetworkPassword OptString `json:"networkPassword"`
+	// USB-only low-battery charge percent (Q77).
+	LowBatteryPercent OptInt32 `json:"lowBatteryPercent"`
+	// USB-only low-battery runtime seconds (Q77).
+	RuntimeSeconds OptInt32 `json:"runtimeSeconds"`
+}
+
+// GetConnection returns the value of Connection.
+func (s *UpdateUPSSettingsRequest) GetConnection() UPSConnection {
+	return s.Connection
+}
+
+// GetDriver returns the value of Driver.
+func (s *UpdateUPSSettingsRequest) GetDriver() OptString {
+	return s.Driver
+}
+
+// GetPort returns the value of Port.
+func (s *UpdateUPSSettingsRequest) GetPort() OptString {
+	return s.Port
+}
+
+// GetMonitorPassword returns the value of MonitorPassword.
+func (s *UpdateUPSSettingsRequest) GetMonitorPassword() OptString {
+	return s.MonitorPassword
+}
+
+// GetNetworkHost returns the value of NetworkHost.
+func (s *UpdateUPSSettingsRequest) GetNetworkHost() OptString {
+	return s.NetworkHost
+}
+
+// GetNetworkPort returns the value of NetworkPort.
+func (s *UpdateUPSSettingsRequest) GetNetworkPort() OptInt32 {
+	return s.NetworkPort
+}
+
+// GetNetworkUpsName returns the value of NetworkUpsName.
+func (s *UpdateUPSSettingsRequest) GetNetworkUpsName() OptString {
+	return s.NetworkUpsName
+}
+
+// GetNetworkUsername returns the value of NetworkUsername.
+func (s *UpdateUPSSettingsRequest) GetNetworkUsername() OptString {
+	return s.NetworkUsername
+}
+
+// GetNetworkPassword returns the value of NetworkPassword.
+func (s *UpdateUPSSettingsRequest) GetNetworkPassword() OptString {
+	return s.NetworkPassword
+}
+
+// GetLowBatteryPercent returns the value of LowBatteryPercent.
+func (s *UpdateUPSSettingsRequest) GetLowBatteryPercent() OptInt32 {
+	return s.LowBatteryPercent
+}
+
+// GetRuntimeSeconds returns the value of RuntimeSeconds.
+func (s *UpdateUPSSettingsRequest) GetRuntimeSeconds() OptInt32 {
+	return s.RuntimeSeconds
+}
+
+// SetConnection sets the value of Connection.
+func (s *UpdateUPSSettingsRequest) SetConnection(val UPSConnection) {
+	s.Connection = val
+}
+
+// SetDriver sets the value of Driver.
+func (s *UpdateUPSSettingsRequest) SetDriver(val OptString) {
+	s.Driver = val
+}
+
+// SetPort sets the value of Port.
+func (s *UpdateUPSSettingsRequest) SetPort(val OptString) {
+	s.Port = val
+}
+
+// SetMonitorPassword sets the value of MonitorPassword.
+func (s *UpdateUPSSettingsRequest) SetMonitorPassword(val OptString) {
+	s.MonitorPassword = val
+}
+
+// SetNetworkHost sets the value of NetworkHost.
+func (s *UpdateUPSSettingsRequest) SetNetworkHost(val OptString) {
+	s.NetworkHost = val
+}
+
+// SetNetworkPort sets the value of NetworkPort.
+func (s *UpdateUPSSettingsRequest) SetNetworkPort(val OptInt32) {
+	s.NetworkPort = val
+}
+
+// SetNetworkUpsName sets the value of NetworkUpsName.
+func (s *UpdateUPSSettingsRequest) SetNetworkUpsName(val OptString) {
+	s.NetworkUpsName = val
+}
+
+// SetNetworkUsername sets the value of NetworkUsername.
+func (s *UpdateUPSSettingsRequest) SetNetworkUsername(val OptString) {
+	s.NetworkUsername = val
+}
+
+// SetNetworkPassword sets the value of NetworkPassword.
+func (s *UpdateUPSSettingsRequest) SetNetworkPassword(val OptString) {
+	s.NetworkPassword = val
+}
+
+// SetLowBatteryPercent sets the value of LowBatteryPercent.
+func (s *UpdateUPSSettingsRequest) SetLowBatteryPercent(val OptInt32) {
+	s.LowBatteryPercent = val
+}
+
+// SetRuntimeSeconds sets the value of RuntimeSeconds.
+func (s *UpdateUPSSettingsRequest) SetRuntimeSeconds(val OptInt32) {
+	s.RuntimeSeconds = val
 }
 
 // Ref: #/components/schemas/UpdateUpdateSettingsRequest

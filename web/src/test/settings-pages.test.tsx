@@ -57,6 +57,12 @@ describe("Settings pages", () => {
           response: { ok: true },
         });
       }
+      if (path === "/settings/ups") {
+        return Promise.resolve({
+          data: { configured: false },
+          response: { ok: true },
+        });
+      }
       return Promise.resolve({ data: null, response: { ok: false } });
     });
     mockPut.mockResolvedValue({
@@ -68,7 +74,7 @@ describe("Settings pages", () => {
 
     const hostnameInput = await screen.findByDisplayValue("nas");
     fireEvent.change(hostnameInput, { target: { value: "hoserva" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Save changes" })[0]);
 
     await waitFor(() => {
       expect(mockPut).toHaveBeenCalledWith("/settings/general", {
@@ -78,6 +84,128 @@ describe("Settings pages", () => {
         },
       });
     });
+  });
+
+  it("loads the UPS card empty state and saves a USB configuration", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/settings/general") {
+        return Promise.resolve({
+          data: { hostname: "nas", timezone: "UTC", backupPassphraseSet: false },
+          response: { ok: true },
+        });
+      }
+      if (path === "/settings/ups") {
+        return Promise.resolve({
+          data: { configured: false },
+          response: { ok: true },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    mockPut.mockImplementation((path: string) => {
+      if (path === "/settings/ups") {
+        return Promise.resolve({
+          data: {
+            configured: true,
+            connection: "usb",
+            driver: "usbhid-ups",
+            port: "auto",
+            monitorPasswordSet: true,
+            lowBatteryPercent: 20,
+            runtimeSeconds: 300,
+          },
+          response: { ok: true },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderWithToast(<GeneralSettingsPage />);
+
+    expect(
+      await screen.findByText(/A UPS is optional/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("UPS")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Monitor password"), { target: { value: "s3cr3t" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save changes" })[1]);
+
+    await waitFor(() => {
+      expect(mockPut).toHaveBeenCalledWith("/settings/ups", {
+        body: expect.objectContaining({
+          connection: "usb",
+          driver: "usbhid-ups",
+          port: "auto",
+          monitorPassword: "s3cr3t",
+          lowBatteryPercent: 20,
+          runtimeSeconds: 300,
+        }),
+      });
+    });
+  });
+
+  it("omits a UPS password that was typed and then cleared, keeping the stored one", async () => {
+    const saved = {
+      configured: true,
+      connection: "usb",
+      driver: "usbhid-ups",
+      port: "auto",
+      monitorPasswordSet: true,
+      lowBatteryPercent: 20,
+      runtimeSeconds: 300,
+    };
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/settings/general") {
+        return Promise.resolve({
+          data: { hostname: "nas", timezone: "UTC", backupPassphraseSet: false },
+          response: { ok: true },
+        });
+      }
+      if (path === "/settings/ups") {
+        return Promise.resolve({ data: saved, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    mockPut.mockResolvedValue({ data: saved, response: { ok: true } });
+
+    renderWithToast(<GeneralSettingsPage />);
+
+    const password = await screen.findByLabelText("Monitor password");
+    fireEvent.change(password, { target: { value: "typo" } });
+    fireEvent.change(password, { target: { value: "" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save changes" })[1]);
+
+    await waitFor(() => {
+      expect(mockPut).toHaveBeenCalledWith("/settings/ups", expect.anything());
+    });
+    const [, request] = mockPut.mock.calls.find(([path]) => path === "/settings/ups") as [
+      string,
+      { body: Record<string, unknown> },
+    ];
+    expect(request.body).not.toHaveProperty("monitorPassword");
+  });
+
+  it("shows a UPS API error with the settings Banner pattern", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/settings/general") {
+        return Promise.resolve({
+          data: { hostname: "nas", timezone: "UTC", backupPassphraseSet: false },
+          response: { ok: true },
+        });
+      }
+      if (path === "/settings/ups") {
+        return Promise.resolve({
+          error: { message: "nut group is not present on this host" },
+          response: { ok: false },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderWithToast(<GeneralSettingsPage />);
+
+    expect(await screen.findByText("nut group is not present on this host")).toBeInTheDocument();
+    expect(screen.queryByText(/A UPS is optional/i)).not.toBeInTheDocument();
   });
 
   it("loads notifications data and can trigger a test send", async () => {

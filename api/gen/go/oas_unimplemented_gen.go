@@ -532,6 +532,18 @@ func (UnimplementedHandler) GetStatus(ctx context.Context) (r *SystemStatus, _ e
 	return r, ht.ErrNotImplemented
 }
 
+// GetUPSSettings implements getUPSSettings operation.
+//
+// Doc 03 §8.1's UPS card on `/settings` General: connection mode (USB or a network NUT server),
+// driver fields, and USB-only shutdown thresholds (Q77). Passwords are never returned — only
+// `monitorPasswordSet` / `networkPasswordSet` (Q28). When no UPS is configured, `configured` is false
+// and every other field is omitted.
+//
+// GET /settings/ups
+func (UnimplementedHandler) GetUPSSettings(ctx context.Context) (r *UPSSettings, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetUpdateStatus implements getUpdateStatus operation.
 //
 // Current Hoserva version, any newer release on the configured channel, update-check on/off, pending
@@ -833,7 +845,9 @@ func (UnimplementedHandler) ResetUserPassword(ctx context.Context, req *ResetUse
 // upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
 // restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
 // maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it.
+// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it. Resuming an
+// interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02
+// §6, Q77).
 //
 // POST /jobs/{jobId}/resume
 func (UnimplementedHandler) ResumeJob(ctx context.Context, params ResumeJobParams) (r *Job, _ error) {
@@ -958,7 +972,9 @@ func (UnimplementedHandler) StartFix(ctx context.Context, req *StartFixRequest) 
 // StartMover implements startMover operation.
 //
 // Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
-// the threshold poll and the nightly chain submit; there is no second mover-invocation path.
+// the threshold poll and the nightly chain submit; there is no second mover-invocation path. Refused
+// with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77) — the mover is paused
+// until power returns.
 //
 // POST /mover/run
 func (UnimplementedHandler) StartMover(ctx context.Context) (r *Job, _ error) {
@@ -990,7 +1006,8 @@ func (UnimplementedHandler) StartShareRelocation(ctx context.Context, req *Start
 // StartSync implements startSync operation.
 //
 // Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
-// requires `confirm: true` after reviewing the diff.
+// requires `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the
+// on-battery hold is active (doc 02 §6, Q77) — scheduled syncs are held until power returns.
 //
 // POST /parity/sync
 func (UnimplementedHandler) StartSync(ctx context.Context, req *StartSyncRequest) (r *Job, _ error) {
@@ -1118,6 +1135,19 @@ func (UnimplementedHandler) UpdateShare(ctx context.Context, req *UpdateShareReq
 //
 // PUT /shares/{name}/permissions
 func (UnimplementedHandler) UpdateSharePermissions(ctx context.Context, req *UpdateSharePermissionsRequest, params UpdateSharePermissionsParams) (r *SharePermissionsResult, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// UpdateUPSSettings implements updateUPSSettings operation.
+//
+// Persists UPS settings to SQLite, generates NUT config through `WriteUPS` (D4, Q77), and reloads the
+// NUT units. Passwords are write-only (Q28): omit to keep an existing secret; a first configure must
+// supply the password the connection mode needs. USB-only thresholds are ignored for network mode.
+// Validation failures and `ErrInvalidUPSField` return 400; unmanaged or existing host NUT files and a
+// missing `nut` group return 409.
+//
+// PUT /settings/ups
+func (UnimplementedHandler) UpdateUPSSettings(ctx context.Context, req *UpdateUPSSettingsRequest) (r *UPSSettings, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

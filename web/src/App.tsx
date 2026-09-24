@@ -15,6 +15,7 @@ import { ShareDetailPage } from "@/routes/shares/detail";
 import { SharesPage } from "@/routes/shares/index";
 import { DiskDetailPage } from "@/routes/storage/disk-detail";
 import { DisksPage } from "@/routes/storage/disks";
+import { CachePage } from "@/routes/storage/cache";
 import { ParityPage } from "@/routes/storage/parity";
 import { PoolOverviewPage } from "@/routes/storage/pool";
 import { WakeEventsPage } from "@/routes/storage/wake-events";
@@ -76,7 +77,7 @@ function AuthenticatedRoutes(): React.ReactElement {
           <Route path="storage/disks" element={<DisksPage />} />
           <Route path="storage/disks/wake-events" element={<WakeEventsPage />} />
           <Route path="storage/parity" element={<ParityPage />} />
-          <Route path="storage/cache" element={<PlaceholderPage titleKey="storageNav.cache" />} />
+          <Route path="storage/cache" element={<CachePage />} />
           <Route path="storage/setup" element={<StorageSetupPage />} />
         </Route>
         <Route path="storage/disks/:diskId" element={<DiskDetailPage />} />

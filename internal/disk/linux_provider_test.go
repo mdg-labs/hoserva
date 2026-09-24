@@ -194,13 +194,20 @@ func TestLinuxProvider_Format_ExecsMkfsXFS(t *testing.T) {
 
 func TestLinuxProvider_Format_ExecsMkfsExt4(t *testing.T) {
 	p, runner := newTestProvider(t)
-	runner.Script("mkfs.ext4", []string{"-F", "/dev/sdb"}, nil, nil)
+	want := []string{"-F", "-E", "lazy_itable_init=0,lazy_journal_init=0", "/dev/sdb"}
+	runner.Script("mkfs.ext4", want, nil, nil)
 
 	if err := p.Format(context.Background(), "/dev/sdb", EXT4); err != nil {
 		t.Fatalf("Format: %v", err)
 	}
-	if calls := runner.Calls(); len(calls) != 1 || calls[0].Name != "mkfs.ext4" {
+	calls := runner.Calls()
+	if len(calls) != 1 || calls[0].Name != "mkfs.ext4" {
 		t.Fatalf("Calls: got %+v, want one mkfs.ext4 call", calls)
+	}
+	// Lazy init off, or ext4lazyinit keeps writing to the new disk after
+	// Format returns (issue #347).
+	if !equalArgs(calls[0].Args, want) {
+		t.Fatalf("Calls[0].Args = %v, want %v", calls[0].Args, want)
 	}
 }
 

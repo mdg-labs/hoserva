@@ -151,9 +151,10 @@ func TestWriteUPS_USBWritesAllFourFiles(t *testing.T) {
 
 // TestWriteUPS_SecretFilesAreRestrictedMode proves upsmon.conf and
 // upsd.users — the two files that embed the MONITOR/upsd.users password
-// (#260) — land at secretFileMode rather than the world-readable
-// defaultFileMode every other generated file uses, and that nut.conf and
-// ups.conf, which carry no secret, are unaffected.
+// (#260) — land root:nut 0640 (readable by upsmon's and upsd's own
+// unprivileged nut child, never world-readable the way defaultFileMode
+// would leave them), and that nut.conf and ups.conf, which carry no
+// secret, are unaffected.
 func TestWriteUPS_SecretFilesAreRestrictedMode(t *testing.T) {
 	state := loadUPSState(t, "usb")
 	g := newUPSGenerator(t, t.TempDir())
@@ -161,12 +162,18 @@ func TestWriteUPS_SecretFilesAreRestrictedMode(t *testing.T) {
 
 	writeUPS(t, g, state, 1, now)
 
+	// upsmon's own unprivileged child (RUN_AS_USER's Debian default, nut)
+	// re-reads upsmon.conf on reload, so a root-only file would lock it
+	// out — the same reason upsd.users is nut-group readable below.
 	info, err := os.Stat(filepath.Join(g.Root, PathUPSMonConf))
 	if err != nil {
 		t.Fatalf("stat %s: %v", PathUPSMonConf, err)
 	}
-	if got := info.Mode().Perm(); got != secretFileMode {
-		t.Fatalf("%s mode = %o, want %o", PathUPSMonConf, got, secretFileMode)
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("%s mode = %o, want 640", PathUPSMonConf, got)
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); !ok || int(st.Gid) != os.Getgid() {
+		t.Fatalf("%s group = %+v, want the nut group's gid %d", PathUPSMonConf, info.Sys(), os.Getgid())
 	}
 
 	// upsd drops to the nut group before reading upsd.users, so a
@@ -200,6 +207,27 @@ func TestWriteUPS_SecretFilesAreRestrictedMode(t *testing.T) {
 // rather than half-written.
 func TestWriteUPS_MissingNUTGroupRefusesBeforeWritingAnything(t *testing.T) {
 	state := loadUPSState(t, "usb")
+	g := NewGenerator(t.TempDir())
+	g.LookupGroup = func(name string) (int, error) { return 0, user.UnknownGroupError(name) }
+
+	if err := g.CanWriteUPS(context.Background(), state); err == nil {
+		t.Fatal("CanWriteUPS without a nut group = nil, want an error")
+	}
+	if err := g.WriteUPS(context.Background(), state, "settings ups", 1, time.Now()); err == nil {
+		t.Fatal("WriteUPS without a nut group = nil, want an error")
+	}
+	if _, err := os.Stat(filepath.Join(g.Root, PathNUTConf)); !os.IsNotExist(err) {
+		t.Fatalf("%s written despite the refusal (stat err %v)", PathNUTConf, err)
+	}
+}
+
+// TestWriteUPS_NetworkMissingNUTGroupRefusesBeforeWritingAnything proves
+// the same up-front refusal as the USB case above applies in network
+// mode too: upsmon.conf is written root:nut 0640 regardless of
+// connection type, so a missing nut group must refuse before nut.conf
+// (or anything else) is written, not just for a USB configuration.
+func TestWriteUPS_NetworkMissingNUTGroupRefusesBeforeWritingAnything(t *testing.T) {
+	state := loadUPSState(t, "network")
 	g := NewGenerator(t.TempDir())
 	g.LookupGroup = func(name string) (int, error) { return 0, user.UnknownGroupError(name) }
 

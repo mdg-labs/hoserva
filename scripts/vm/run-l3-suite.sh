@@ -54,6 +54,13 @@ ARRAY_ADMIN_USERNAME="hoserva-l3"
 ARRAY_ADMIN_PASSWORD="hoserva-l3-suite-password"
 ARRAY_COOKIE_JAR="/tmp/hoserva-l3-suite-cookies.txt"
 
+# The array's own virtio device names, set once by array_setup (step 3)
+# from the live domain XML and reused by midsync_throttle_devices (step 6,
+# issue #352) — never rediscovered a second time for the same domain.
+ARRAY_PARITY_DEV=""
+ARRAY_DATA1_DEV=""
+ARRAY_DATA2_DEV=""
+
 # Journey 5's own share (doc 06 §4): array-only cache mode (no cache disk
 # is assigned below), seeded with far more files than the threshold
 # guard's default removed-count/percent thresholds (Q16) tolerate, so
@@ -167,6 +174,13 @@ array_setup() {
     return 1
   fi
   echo "vm-suite[$HOSERVA_LAB_ID]: array devices: parity=/dev/$parity_dev data1=/dev/$data1_dev data2=/dev/$data2_dev"
+  # Not local: midsync_throttle_devices (step 6, issue #352) reuses these
+  # same three device names to cap I/O on the guest's own array disks —
+  # rediscovering them from the domain XML a second time there would just
+  # duplicate this parsing loop for no benefit.
+  ARRAY_PARITY_DEV="$parity_dev"
+  ARRAY_DATA1_DEV="$data1_dev"
+  ARRAY_DATA2_DEV="$data2_dev"
 
   if ! array_login; then
     ARRAY_SETUP_REASON="login as the L3 admin failed ahead of createArray"
@@ -418,56 +432,182 @@ FIXTURE
 }
 
 # midsync_destroy (step 5, doc 02 §2, doc 06 §4) proves the "power loss
-# mid-sync" row of doc 02 §6's failure-mode table for real: it creates its
-# own share (array setup's own "massdel" share is journey 5's, seeded only
-# later in step 8, doc 06 §4), seeds it with real bulk data so the very
-# first sync this array ever runs has enough work left that destroying the
-# guest immediately after startSync returns still catches it running, then
-# destroys the guest, boots it back, and asserts (doc 01 §4) that
-# RecoverFromRestart left the job interrupted, that parity reads as not
-# fresh, and that re-running the sync is a genuinely new job through the
-# same guarded startSync path, not an automatic resume. On failure it sets
-# MIDSYNC_REASON and returns 1.
+# mid-sync" row of doc 02 §6's failure-mode table for real: it seeds real
+# bulk data, starts a sync, destroys the guest, boots it back, and asserts
+# (doc 01 §4) that RecoverFromRestart left the job interrupted, that
+# parity reads as not fresh, and that re-running the sync is a genuinely
+# new job through the same guarded startSync path, not an automatic
+# resume.
+#
+# issue #352 (this round): destroying the instant startSync *returns* is
+# not the same as destroying while the sync is genuinely still running,
+# and neither is destroying on any *elapsed-time* signal, however it is
+# derived — including the previous attempt's own "job progress is between
+# 1% and 90%" gate. Root cause of that gate's own failure, confirmed
+# empirically against a real snapraid 12.4-1 binary: this lab's own
+# container-equivalent of the L3 guest's storage (a real sync over 450MB
+# of just-written data, piped to a file exactly like CommandRunner's own
+# os.Pipe, not a tty) ran its entire "Syncing..." pass — the only phase
+# that ever prints a "NN%, MB" tick — from 0% straight to "100% completed"
+# in under a tenth of a second, with the intermediate percentage never
+# once landing in a range a poller could catch. The 6144MB seed already
+# exceeds the guest's own 4096MB RAM (HOSERVA_VM_MEMORY_MIB), which
+# defeats the *guest's* own page cache for enough of the read pass to
+# force it to re-read from its virtio block device — but create-vm.sh
+# never sets `cache=` on the array's qcow2 disks, so QEMU's own default
+# (writeback) still serves that "re-read from the block device" out of
+# the *host* kernel's page cache for the qcow2 backing file, regardless
+# of how large the guest-visible dataset is relative to guest RAM. Sizing
+# past guest RAM was solving the wrong layer's cache. There is also a
+# second, independent reason a percentage window can never be trusted
+# here even with real disk I/O: SnapRAID's own percentage is scoped to
+# the hash/read pass alone ("Syncing..." → "100% completed, NN MB
+# accessed") — the write-parity, "Saving state" and "Verifying" phases
+# that actually decide whether a kill leaves the content file durably
+# rewritten run *after* that percentage already reads 100%, so a window
+# keyed on the percentage can miss the entire span this test cares about
+# even when the percentage pass itself is slow.
+#
+# The fix does not chase a faster or larger dataset (issue #352's own
+# direction: growing it is a race already lost once, to a cache layer
+# this harness does not control the size of). It instead throttles the
+# array's own virtio block devices, from inside the guest
+# (midsync_throttle_devices, a `systemctl set-property --runtime`
+# cgroup io.max cap — transient, never persisted, and cleared the instant
+# the guest's systemd re-execs, which midsync_recover_guest's own destroy
+# does unconditionally), and gates the destroy on the two signals that
+# are true throughout the *entire* run regardless of which phase it is in
+# or how fast the storage under it happens to be: the job's own status is
+# "running", and the snapraid process is actually still alive in the
+# guest.
+#
+# This project's own loop-device-lab-hosted L3 guest (a real Debian 13
+# trixie VM, real snapraid 12.4-1, `make vm-up`) confirmed empirically
+# why a *content-file* signal — this round's own first draft, "unchanged
+# since before this sync started" — cannot be the gate either, even
+# though it sounds like exactly the property getParity's lastSyncAt
+# cares about: SnapRAID rewrites the content file *twice*, not once. A
+# first-ever sync's own "Resizing..." phase (growing the parity file to
+# its new size) is immediately followed by its own "Saving state..."
+# checkpoint — confirmed to land within the first second, before
+# "Syncing..." (the real hash pass) even starts — and only the *second*
+# rewrite, after "Syncing..." actually finishes, is the one a completed
+# run's own `summary:exit:ok` covers. Gating on "the content file has not
+# changed" would therefore almost always see it change within the first
+# second regardless of throttling, and fail to ever confirm mid-flight.
+# What actually matters — confirmed by killing a real snapraid process by
+# PID at both points, then reading `snapraid status -l` for an
+# `info_time` line the same way status_parse.go's own StatusReport does —
+# is that neither rewrite ever produces one: a kill at the early
+# checkpoint (before "Syncing...") and a kill mid-"Syncing..." (after
+# it, for a later iteration reusing an existing content file) both leave
+# `info_time` exactly as it was before this sync started (absent for a
+# true first-ever sync, unchanged at its prior value for a later one).
+# The content file's own mtime is simply not a proxy the guarantee
+# depends on; process-alive plus job-status is both sufficient and the
+# only externally observable signal this harness has that lines up with
+# what getParity itself actually reports afterward.
+#
+# midsync_destroy is called once per entry in MIDSYNC_DESTROY_DELAYS
+# below, at increasing delays past that confirmation, to prove the same
+# property holds "immediately", "about a second after" and "several
+# seconds after" in one run rather than trusting whatever a single run's
+# own timing happens to land on. On failure it sets MIDSYNC_REASON and
+# returns 1.
 MIDSYNC_SHARE="hoserval3midsync"
 MIDSYNC_SHARE_PATH="/mnt/user/$MIDSYNC_SHARE"
-MIDSYNC_FILE_SIZE_MB=512
-MIDSYNC_FILE_COUNT=3
+# 6144MB per iteration: still comfortably past the L3 guest's own default
+# 4096MB (HOSERVA_VM_MEMORY_MIB, create-vm.sh) so the guest's own page
+# cache cannot serve the whole read pass either — kept alongside the
+# throttle below rather than relied on alone (issue #352: the guest's own
+# cache is a real, independent layer from the host's, and every layer
+# that can silently absorb a read has to be accounted for, not just one).
+MIDSYNC_FILE_SIZE_MB=1024
+MIDSYNC_FILE_COUNT=6
+# 16 MB/s on each array device: confirmed in this project's own L3 guest
+# (`make vm-up`) to reliably turn a sub-second cached sync into one that
+# takes tens of seconds — comfortably longer than this harness's own
+# SSH-round-trip poll interval below — without stretching one iteration
+# into minutes.
+MIDSYNC_THROTTLE_RATE="${MIDSYNC_THROTTLE_RATE:-16M}"
+# The exact points doc 06 §4 and issue #352 name: destroy the instant a
+# genuinely in-flight sync is confirmed, about a second after, and several
+# seconds after.
+MIDSYNC_DESTROY_DELAYS="${MIDSYNC_DESTROY_DELAYS:-0 1 5}"
+# What midsync_ensure_synced needs to know about the loop's last
+# iteration: the last sync job it started (to settle before any cleanup
+# sync), and whether that iteration ended on its own verified re-sync.
+# getParity cannot answer the second itself — freshness stays green over
+# an interrupted sync (see midsync_destroy), and lastSyncAt can be an
+# earlier iteration's.
+MIDSYNC_LAST_JOB_ID=""
+MIDSYNC_ARRAY_VERIFIED=0
 
-midsync_destroy() {
-  if ! array_login; then
-    MIDSYNC_REASON="login as the L3 admin failed ahead of the mid-sync destroy test"
-    return 1
-  fi
-  if ! ensure_pool_mounted; then
-    MIDSYNC_REASON="pool is not mounted, cannot seed $MIDSYNC_SHARE"
-    return 1
-  fi
+# midsync_throttle_devices caps IOReadBandwidthMax/IOWriteBandwidthMax on
+# hoserva.service — the unit whose own cgroup the snapraid child process
+# it forks inherits — for every device name passed in, at MIDSYNC_THROTTLE_RATE.
+# --runtime only: never written to disk, and cleared automatically the
+# instant the guest's systemd re-execs (a `virsh destroy` and reboot, or a
+# plain restart), so nothing here can outlive one iteration by accident.
+midsync_throttle_devices() {
+  local props="" dev
+  for dev in "$@"; do
+    props+="'IOReadBandwidthMax=/dev/$dev $MIDSYNC_THROTTLE_RATE' 'IOWriteBandwidthMax=/dev/$dev $MIDSYNC_THROTTLE_RATE' "
+  done
+  vm_ssh "sudo systemctl set-property --runtime hoserva.service $props" >/dev/null 2>&1
+}
 
-  local share_result
-  share_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$MIDSYNC_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
-  if [[ "$share_result" != *"\"name\":\"$MIDSYNC_SHARE\""* ]]; then
-    MIDSYNC_REASON="createShare did not return the expected share: $share_result"
-    return 1
-  fi
+# midsync_clear_throttle undoes midsync_throttle_devices early, for the
+# one path that does not already get it for free from a guest reboot: a
+# failed midsync_wait_mid_flight below, which returns before
+# midsync_recover_guest ever runs. Best-effort (a guest that is
+# unreachable here has bigger problems this step already reports) — never
+# lets a failed clear turn this step's own real failure into a pass.
+midsync_clear_throttle() {
+  vm_ssh 'sudo systemctl set-property --runtime hoserva.service IOReadBandwidthMax= IOWriteBandwidthMax=' >/dev/null 2>&1 || true
+}
 
-  echo "vm-suite[$HOSERVA_LAB_ID]: seeding $((MIDSYNC_FILE_COUNT * MIDSYNC_FILE_SIZE_MB))MB into $MIDSYNC_SHARE_PATH so the first sync below still has real work left the instant we destroy the guest"
-  if ! vm_ssh "sudo mkdir -p '$MIDSYNC_SHARE_PATH' && for i in \$(seq 1 $MIDSYNC_FILE_COUNT); do sudo dd if=/dev/zero of='$MIDSYNC_SHARE_PATH/bulk-\$i.bin' bs=1M count=$MIDSYNC_FILE_SIZE_MB status=none; done"; then
-    MIDSYNC_REASON="seeding bulk files into $MIDSYNC_SHARE_PATH failed"
-    return 1
-  fi
+# midsync_wait_mid_flight polls until the sync is confirmed genuinely
+# still in flight: the job's own status is "running" and a snapraid
+# process is actually alive in the guest — see this section's own header
+# comment for why a content-file signal was tried and rejected. Both
+# checks in one SSH round trip per poll. If the job reaches a terminal
+# status first, that is this run's own precondition failing to hold — the
+# seeded data finished syncing before this step could catch it mid-flight
+# — reported as such, not treated as the safety property under test
+# having passed.
+midsync_wait_mid_flight() {
+  local job_id=$1 timeout_s=$2
+  local deadline=$((SECONDS + timeout_s))
+  local result job_json proc_alive status
+  while (( SECONDS < deadline )); do
+    result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/jobs/$job_id; printf '\\n---MIDSYNC---\\n'; (sudo pgrep -x snapraid >/dev/null 2>&1 && echo yes || echo no)" 2>/dev/null)"
+    job_json="${result%%---MIDSYNC---*}"
+    proc_alive="${result##*---MIDSYNC---}"
+    proc_alive="${proc_alive#$'\n'}"
+    status=""
+    [[ "$job_json" =~ \"status\":\"([^\"]+)\" ]] && status="${BASH_REMATCH[1]}"
+    if [[ "$status" == "running" && "$proc_alive" == "yes" ]]; then
+      return 0
+    fi
+    case "$status" in
+      succeeded | failed | cancelled | interrupted)
+        MIDSYNC_REASON="job $job_id reached a terminal status ('$status') before this check ever confirmed it was genuinely mid-flight (process alive=$proc_alive) — the seeded data finished syncing before this step could catch it mid-flight (this run's own precondition, not the safety property under test)"
+        return 1
+        ;;
+    esac
+    sleep 1
+  done
+  MIDSYNC_REASON="job $job_id never confirmed genuinely mid-flight within ${timeout_s}s (last: status=${status:-unknown}, process alive=$proc_alive)"
+  return 1
+}
 
-  echo "vm-suite[$HOSERVA_LAB_ID]: starting this array's first-ever sync and destroying '$VM_DOMAIN' the instant the job is queued"
-  local sync_result job_id
-  sync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
-  if [[ "$sync_result" =~ \"id\":\"([^\"]+)\" ]]; then
-    job_id="${BASH_REMATCH[1]}"
-  else
-    MIDSYNC_REASON="startSync did not return a job id: $sync_result"
-    return 1
-  fi
-
+# midsync_recover_guest destroys the running guest, boots it back, and
+# waits for SSH, hoservad and the array's own pool mount to come back —
+# the recovery half every midsync_destroy iteration below shares.
+midsync_recover_guest() {
   virsh -c "$VM_CONNECT" destroy "$VM_DOMAIN" >/dev/null
-  echo "vm-suite[$HOSERVA_LAB_ID]: destroyed '$VM_DOMAIN' mid-sync (job $job_id) — booting it back up"
+  echo "vm-suite[$HOSERVA_LAB_ID]: destroyed '$VM_DOMAIN' mid-sync — booting it back up"
   virsh -c "$VM_CONNECT" start "$VM_DOMAIN" >/dev/null
   vm_wait_tcp "$VM_SSH_PORT" 180 || { MIDSYNC_REASON="guest did not open its forwarded SSH port within 180s of the post-destroy boot"; return 1; }
   vm_ssh_wait_ready 180 || { MIDSYNC_REASON="could not SSH into the guest within 180s of the post-destroy boot"; return 1; }
@@ -527,29 +667,116 @@ midsync_destroy() {
     MIDSYNC_REASON="pool did not remount after the post-destroy boot"
     return 1
   fi
+  return 0
+}
+
+# midsync_destroy runs one full destroy/recover cycle at delay_s seconds
+# past the moment the sync is confirmed genuinely mid-flight. iteration 1
+# creates MIDSYNC_SHARE and seeds its very first data, so getParity's own
+# lastSyncAt (internal/parity/status_parse.go's StatusReport.LastActivityAt,
+# which a completed sync's content-file write is what actually creates)
+# must be entirely absent afterward — doc 02 §6's "first-ever sync
+# interrupted" case, unambiguous because there is no earlier sync for it
+# to fall back to. Every later iteration reuses the same share with a
+# fresh batch of files and instead asserts the general form of the same
+# property: lastSyncAt must not move past the last confirmed-good sync
+# (doc 02 §6, "parity stays not fresh") — freshness itself does not
+# reliably move off green for a small interrupted sync (confirmed
+# empirically: ToParityStatus only reads Amber from `snapraid status`'s
+# own has_unsynced count), so lastSyncAt is the one signal both cases can
+# actually rely on.
+midsync_destroy() {
+  local delay_s=$1 iteration=$2
+  MIDSYNC_ARRAY_VERIFIED=0
+  if ! array_login; then
+    MIDSYNC_REASON="login as the L3 admin failed ahead of the mid-sync destroy test (iteration $iteration)"
+    return 1
+  fi
+  if ! ensure_pool_mounted; then
+    MIDSYNC_REASON="pool is not mounted, cannot seed $MIDSYNC_SHARE (iteration $iteration)"
+    return 1
+  fi
+
+  if [[ "$iteration" == "1" ]]; then
+    local share_result
+    share_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/shares -H 'Content-Type: application/json' -d '{\"name\":\"$MIDSYNC_SHARE\",\"cacheMode\":\"array-only\"}'" 2>/dev/null)"
+    if [[ "$share_result" != *"\"name\":\"$MIDSYNC_SHARE\""* ]]; then
+      MIDSYNC_REASON="createShare did not return the expected share: $share_result"
+      return 1
+    fi
+  fi
+
+  local pre_lastsyncat=""
+  if [[ "$iteration" != "1" ]]; then
+    local pre_parity
+    pre_parity="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
+    if [[ "$pre_parity" =~ \"lastSyncAt\":\"([^\"]+)\" ]]; then
+      pre_lastsyncat="${BASH_REMATCH[1]}"
+    else
+      MIDSYNC_REASON="expected a prior successful sync's lastSyncAt ahead of iteration $iteration's own destroy: $pre_parity"
+      return 1
+    fi
+  fi
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: seeding $((MIDSYNC_FILE_COUNT * MIDSYNC_FILE_SIZE_MB))MB into $MIDSYNC_SHARE_PATH (iteration $iteration, destroy delay ${delay_s}s past confirmed mid-flight) so this sync still has real work left when we destroy the guest"
+  if ! vm_ssh "sudo mkdir -p '$MIDSYNC_SHARE_PATH' && for i in \$(seq 1 $MIDSYNC_FILE_COUNT); do sudo dd if=/dev/zero of='$MIDSYNC_SHARE_PATH/bulk-${iteration}-\$i.bin' bs=1M count=$MIDSYNC_FILE_SIZE_MB status=none; done"; then
+    MIDSYNC_REASON="seeding bulk files into $MIDSYNC_SHARE_PATH failed (iteration $iteration)"
+    return 1
+  fi
+
+  # Throttled from here, not from before the seed above: dd's own writes
+  # need to land at full speed (they are not part of what this test
+  # measures), only the sync's own read-back of them needs to be slow
+  # enough to catch (issue #352). A throttle that fails to apply is not
+  # silently ignored — without it, this step is back to racing however
+  # fast this run's own storage happens to be, the exact failure mode
+  # this fix closes.
+  if ! midsync_throttle_devices "$ARRAY_PARITY_DEV" "$ARRAY_DATA1_DEV" "$ARRAY_DATA2_DEV"; then
+    MIDSYNC_REASON="could not throttle the array's own devices ($ARRAY_PARITY_DEV, $ARRAY_DATA1_DEV, $ARRAY_DATA2_DEV) via systemctl set-property --runtime ahead of iteration $iteration's own sync"
+    return 1
+  fi
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: starting this sync and destroying '$VM_DOMAIN' once it is confirmed genuinely mid-flight, ${delay_s}s after that confirmation (iteration $iteration)"
+  local sync_result job_id
+  sync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
+  if [[ "$sync_result" =~ \"id\":\"([^\"]+)\" ]]; then
+    job_id="${BASH_REMATCH[1]}"
+    MIDSYNC_LAST_JOB_ID="$job_id"
+  else
+    midsync_clear_throttle
+    MIDSYNC_REASON="startSync did not return a job id (iteration $iteration): $sync_result"
+    return 1
+  fi
+
+  if ! midsync_wait_mid_flight "$job_id" 90; then
+    midsync_clear_throttle
+    return 1
+  fi
+  if (( delay_s > 0 )); then
+    sleep "$delay_s"
+  fi
+
+  midsync_recover_guest || return 1
 
   wait_job_terminal "$job_id" 30
   if [[ "$job_status" != "interrupted" ]]; then
-    MIDSYNC_REASON="sync job $job_id status after the guest came back = '${job_status:-unknown}', want 'interrupted' (doc 01 §4: RecoverFromRestart marks every job left queued or running interrupted) — $job_result"
+    MIDSYNC_REASON="sync job $job_id status after the guest came back = '${job_status:-unknown}' (iteration $iteration, delay ${delay_s}s), want 'interrupted' (doc 01 §4: RecoverFromRestart marks every job left queued or running interrupted) — $job_result"
     return 1
   fi
 
-  # freshness itself does not reliably move off green for an interrupted
-  # *first-ever* sync (confirmed empirically: status_parse.go's own
-  # ToParityStatus only reads Amber from `snapraid status`'s
-  # has_unsynced count, which read 0 here) — lastSyncAt is the reliable
-  # signal doc 02 §6's "sync marked interrupted... not auto-resumed" row
-  # actually promises: it is only ever set by a *successful* sync, so its
-  # absence after an interrupted one is unambiguous, where a freshness
-  # color is not.
   local parity_result
   parity_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
   if [[ "$parity_result" != *'"dataDisks":'* ]]; then
-    MIDSYNC_REASON="getParity returned an unexpected response after the post-destroy boot: $parity_result"
+    MIDSYNC_REASON="getParity returned an unexpected response after the post-destroy boot (iteration $iteration): $parity_result"
     return 1
   fi
-  if [[ "$parity_result" == *'"lastSyncAt"'* ]]; then
-    MIDSYNC_REASON="getParity reports a lastSyncAt after only an interrupted first-ever sync — parity should not read as ever having synced: $parity_result"
+  if [[ "$iteration" == "1" ]]; then
+    if [[ "$parity_result" == *'"lastSyncAt"'* ]]; then
+      MIDSYNC_REASON="getParity reports a lastSyncAt after only an interrupted first-ever sync (delay ${delay_s}s) — parity should not read as ever having synced. getParity's lastSyncAt reads internal/parity/status_parse.go's StatusReport.LastActivityAt, itself only ever set from a snapraid status log's own info_time lines, which only a completed sync's content-file write creates: $parity_result"
+      return 1
+    fi
+  elif [[ "$parity_result" != *"\"lastSyncAt\":\"$pre_lastsyncat\""* ]]; then
+    MIDSYNC_REASON="getParity's lastSyncAt moved past the last confirmed-good sync ($pre_lastsyncat) after only an interrupted sync (iteration $iteration, delay ${delay_s}s) — doc 02 §6: parity stays not fresh until a sync actually completes: $parity_result"
     return 1
   fi
 
@@ -570,34 +797,119 @@ midsync_destroy() {
   # `parity: snapraid sync: exit "equal"`) — writing one new file first
   # keeps this re-sync a normal, real one instead of exercising that
   # separate, unrelated gap.
-  vm_ssh "sudo mkdir -p '$MIDSYNC_SHARE_PATH' && echo resync-after-interrupt | sudo tee '$MIDSYNC_SHARE_PATH/resync-marker.txt' >/dev/null"
+  vm_ssh "sudo mkdir -p '$MIDSYNC_SHARE_PATH' && echo resync-after-interrupt-${iteration} | sudo tee '$MIDSYNC_SHARE_PATH/resync-marker-${iteration}.txt' >/dev/null"
 
-  echo "vm-suite[$HOSERVA_LAB_ID]: interrupted sync confirmed (job $job_id interrupted, parity has never synced) — re-running the sync through the normal guarded path"
+  echo "vm-suite[$HOSERVA_LAB_ID]: interrupted sync confirmed (job $job_id interrupted, iteration $iteration, delay ${delay_s}s) — re-running the sync through the normal guarded path"
   local resync_result resync_job_id
   resync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
   if [[ "$resync_result" =~ \"id\":\"([^\"]+)\" ]]; then
     resync_job_id="${BASH_REMATCH[1]}"
+    MIDSYNC_LAST_JOB_ID="$resync_job_id"
   else
-    MIDSYNC_REASON="the guarded re-sync after the interrupted one did not return a job id: $resync_result"
+    MIDSYNC_REASON="the guarded re-sync after the interrupted one did not return a job id (iteration $iteration): $resync_result"
     return 1
   fi
   if [[ "$resync_job_id" == "$job_id" ]]; then
-    MIDSYNC_REASON="startSync returned the same job id ($job_id) as the interrupted one — doc 01 §4 requires an interrupted job to never be silently resumed, only explicitly re-run as a new job"
+    MIDSYNC_REASON="startSync returned the same job id ($job_id) as the interrupted one (iteration $iteration) — doc 01 §4 requires an interrupted job to never be silently resumed, only explicitly re-run as a new job"
     return 1
   fi
 
   wait_job_terminal "$resync_job_id" 180
   if [[ "$job_status" != "succeeded" ]]; then
-    MIDSYNC_REASON="the guarded re-sync (job $resync_job_id) did not succeed (status=${job_status:-unknown}): $job_result"
+    MIDSYNC_REASON="the guarded re-sync (job $resync_job_id, iteration $iteration) did not succeed (status=${job_status:-unknown}): $job_result"
     return 1
   fi
 
   parity_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
   if [[ "$parity_result" != *'"lastSyncAt"'* || "$parity_result" != *'"freshness":"green"'* ]]; then
-    MIDSYNC_REASON="getParity does not report a completed sync (freshness=green, lastSyncAt set) after the guarded re-sync succeeded: $parity_result"
+    MIDSYNC_REASON="getParity does not report a completed sync (freshness=green, lastSyncAt set) after the guarded re-sync succeeded (iteration $iteration): $parity_result"
+    return 1
+  fi
+  if [[ "$iteration" != "1" && "$parity_result" == *"\"lastSyncAt\":\"$pre_lastsyncat\""* ]]; then
+    MIDSYNC_REASON="getParity's lastSyncAt did not advance past the pre-iteration value ($pre_lastsyncat) after the guarded re-sync succeeded (iteration $iteration): $parity_result"
     return 1
   fi
 
+  MIDSYNC_ARRAY_VERIFIED=1
+  return 0
+}
+
+# midsync_ensure_synced (issue #352) is step 6's own "finally", called
+# once after the whole midsync_destroy loop regardless of how it ended.
+# The failing CI run this issue's second attempt investigated showed
+# exactly why this matters: an iteration whose own mid-flight check never
+# triggers does not stop at "this run's own precondition failed" the way
+# MIDSYNC_REASON describes it — the sync it seeded keeps running on the
+# guest and completes for real, durably resyncing all of that iteration's
+# bulk data, then midsync_destroy returns 1 without ever reaching its own
+# resync-and-verify tail. Step 6 reported FAIL, correctly, but left the
+# array in whatever state that accidental real sync produced — and
+# journey 5's own baseline sync (step 8, seed_journey5_fixture) then ran
+# against it unconditionally, on the same array, with no check in between
+# that it was starting from a state its own diff logic could make sense
+# of. This never deletes anything (a removal-heavy path here is exactly
+# what the threshold guard exists to question, and this is housekeeping,
+# not a reviewed removal) — unless the loop's last iteration ended on its
+# own verified re-sync, it lets any sync job that iteration left running
+# finish, then runs one more guarded sync. getParity alone cannot tell it
+# the array is clean: freshness stays green over an interrupted sync and
+# lastSyncAt can be an earlier iteration's, so a later iteration's
+# unsynced files would pass for synced. A step that cannot leave its own
+# array clean fails here, rather than silently handing journey 5 a
+# starting state it never asked for.
+midsync_ensure_synced() {
+  midsync_clear_throttle
+  if ! array_login; then
+    MIDSYNC_REASON="login as the L3 admin failed ahead of step 6's own cleanup"
+    return 1
+  fi
+  if ! ensure_pool_mounted; then
+    MIDSYNC_REASON="pool is not mounted, cannot confirm step 6 left the array synced"
+    return 1
+  fi
+
+  if [[ "$MIDSYNC_ARRAY_VERIFIED" == "1" ]]; then
+    return 0
+  fi
+
+  if [[ -n "$MIDSYNC_LAST_JOB_ID" ]]; then
+    wait_job_terminal "$MIDSYNC_LAST_JOB_ID" 180
+    case "$job_status" in
+      succeeded | failed | cancelled | interrupted) ;;
+      *)
+        MIDSYNC_REASON="step 6 cleanup: sync job $MIDSYNC_LAST_JOB_ID did not settle within 180s (status=${job_status:-unknown}): $job_result"
+        return 1
+        ;;
+    esac
+  fi
+
+  local parity_result
+  echo "vm-suite[$HOSERVA_LAB_ID]: step 6 did not end on a verified re-sync — running one cleanup sync so journey 5's own baseline (step 8) starts from a clean array"
+  if ! vm_ssh "sudo mkdir -p '$MIDSYNC_SHARE_PATH' && echo hoserva-352-cleanup | sudo tee '$MIDSYNC_SHARE_PATH/cleanup-marker.txt' >/dev/null"; then
+    MIDSYNC_REASON="step 6 cleanup: could not write a marker file into $MIDSYNC_SHARE_PATH ahead of the cleanup sync"
+    return 1
+  fi
+
+  local sync_result job_id
+  sync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
+  if [[ "$sync_result" =~ \"id\":\"([^\"]+)\" ]]; then
+    job_id="${BASH_REMATCH[1]}"
+  else
+    MIDSYNC_REASON="step 6 cleanup: startSync did not return a job id: $sync_result"
+    return 1
+  fi
+
+  wait_job_terminal "$job_id" 180
+  if [[ "$job_status" != "succeeded" ]]; then
+    MIDSYNC_REASON="step 6 cleanup sync (job $job_id) did not succeed (status=${job_status:-unknown}): $job_result"
+    return 1
+  fi
+
+  parity_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
+  if [[ "$parity_result" != *'"lastSyncAt"'* || "$parity_result" != *'"freshness":"green"'* ]]; then
+    MIDSYNC_REASON="step 6 cleanup sync succeeded but getParity still does not report freshness=green with lastSyncAt set: $parity_result"
+    return 1
+  fi
   return 0
 }
 
@@ -864,10 +1176,35 @@ not_yet "disk yank and reconstruction" "array setup (step 3, #258) now gives thi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 6/13 virsh destroy mid-sync recovery ==="
 if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
-  if midsync_destroy; then
+  midsync_ok=1
+  midsync_iteration=0
+  midsync_last_reason=""
+  for midsync_delay in $MIDSYNC_DESTROY_DELAYS; do
+    midsync_iteration=$((midsync_iteration + 1))
+    if midsync_destroy "$midsync_delay" "$midsync_iteration"; then
+      echo "vm-suite[$HOSERVA_LAB_ID]: virsh destroy mid-sync recovery — iteration $midsync_iteration (destroy delay ${midsync_delay}s past confirmed mid-flight) confirmed"
+    else
+      midsync_ok=0
+      midsync_last_reason="iteration $midsync_iteration (destroy delay ${midsync_delay}s): $MIDSYNC_REASON"
+      break
+    fi
+  done
+  # midsync_ensure_synced (issue #352) always runs, pass or fail: a step
+  # that leaves the array anything but fully synced — including on the
+  # specific failure path that leaves it accidentally, durably resynced
+  # for real (the sync this run seeded simply ran to completion before
+  # midsync_wait_mid_flight ever confirmed it mid-flight) — must not hand
+  # journey 5's own baseline sync (step 8) a starting state that is not a
+  # clean array, since a real sync's own diff there depends on nothing
+  # having changed here that it does not already know about.
+  if ! midsync_ensure_synced; then
+    midsync_ok=0
+    midsync_last_reason="${midsync_last_reason:+$midsync_last_reason; }cleanup: $MIDSYNC_REASON"
+  fi
+  if [[ "$midsync_ok" == "1" ]]; then
     pass "virsh destroy mid-sync recovery"
   else
-    fail "virsh destroy mid-sync recovery" "$MIDSYNC_REASON"
+    fail "virsh destroy mid-sync recovery" "$midsync_last_reason"
   fi
 else
   not_yet "virsh destroy mid-sync recovery" "no active hoservad on the guest (install or array setup above did not complete)"
@@ -955,7 +1292,7 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 11/13 spindown: 30-min flat counters with a running pool ==="
-not_yet "spindown: 30-min flat counters with a running pool" "array setup (step 3, #258) now gives this a real mergerfs/SnapRAID pool with a mounted share to test against — that half of the old gap is closed — but hoservad still does not run internal/disk's SMART poller or internal/parity's change journal on a timer (both exist as Go packages, issue #24, but cmd/hoservad/main.go wires neither into a scheduled job). spindown-check.sh (step 9) already stands in for that missing scheduler by looping the poller's own smartctl command directly against empty array disks; doing the same loop against this step's live pool would still only be standing in for the scheduler, not proving hoservad's own 30-minute window produces zero drive writes with a pool mounted underneath it — re-check once cmd/hoservad/main.go wires the SMART poller and change journal on a timer"
+not_yet "spindown: 30-min flat counters with a running pool" "array setup (step 3, #258) now gives this a real mergerfs/SnapRAID pool with a mounted share to test against — that half of the old gap is closed — but hoservad still does not run internal/disk's SMART poller or internal/parity's change journal on a timer (both exist as Go packages, issue #24, but cmd/hoservad/main.go wires neither into a scheduled job). spindown-check.sh (step 10) already stands in for that missing scheduler by looping the poller's own smartctl command directly against the array's already-mounted disks; doing the same loop against this step's live pool would still only be standing in for the scheduler, not proving hoservad's own 30-minute window produces zero drive writes with a pool mounted underneath it — re-check once cmd/hoservad/main.go wires the SMART poller and change journal on a timer"
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === NFS export mount (issue #47) ==="
 if vm_domain_running "$VM_DOMAIN"; then

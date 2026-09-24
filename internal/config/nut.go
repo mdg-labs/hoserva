@@ -11,9 +11,11 @@ import (
 // Q77 UPS config paths, relative to Generator.Root ("/etc" in production,
 // so these land at /etc/nut/*.conf — the paths Debian's nut package
 // reads). PathUPSMonConf and PathUPSDUsers carry the MONITOR/upsd.users
-// password (WriteUPS below writes both with Mode: secretFileMode);
-// PathNUTConf and PathUPSConf embed nothing secret and write at
-// defaultFileMode.
+// password (WriteUPS below writes both root:nut 0640, Mode:
+// upsmonConfFileMode/upsdUsersFileMode with Group: NUTGroup, so the
+// service that reads each one after dropping to its own account — upsmon
+// as nut, upsd as nut — can still open it); PathNUTConf and PathUPSConf
+// embed nothing secret and write at defaultFileMode.
 const (
 	PathNUTConf    = "nut/nut.conf"
 	PathUPSConf    = "nut/ups.conf"
@@ -182,16 +184,23 @@ func RenderUPSDUsers(state UPSState) string {
 // through — upsmon itself decides when the UPS is on battery or low
 // (D1), Hoserva only names the command it calls back into.
 //
-// upsmon splits into a privileged parent, which alone runs SHUTDOWNCMD,
-// and a child dropped to RUN_AS_USER, which alone runs NOTIFYCMD
-// (upsmon.conf(5)). Debian's nut package default RUN_AS_USER (nut) would
-// leave NOTIFYCMD's child unable to reach the root-owned ups control
-// socket (cmd/hoservad/upscontrol.go) authorizeUnixPeer admits — NUT
-// explicitly supports naming "root" here for exactly this case, and the
-// only capability this hands the child is executing nut-notify/
-// nut-shutdown, which relay nothing but a fixed NUT-controlled enum
-// value (ONBATT/ONLINE/LOWBATT) over that socket, never
-// attacker-controlled data.
+// upsmon splits into a privileged parent, which alone ever runs
+// SHUTDOWNCMD, and an unprivileged child dropped to RUN_AS_USER, which
+// runs everything else: NOTIFYCMD, and — for a network UPS — the upsd
+// protocol client that parses whatever the remote server sends back for
+// "MONITOR ...@<host> ... slave". This omits RUN_AS_USER entirely, so
+// upsmon keeps Debian's nut package default (the nut user) rather than
+// putting that unprivileged majority back under root: the ups control
+// socket NOTIFYCMD/SHUTDOWNCMD's helpers reach
+// (cmd/hoservad/upscontrol.go) is instead root:nut 0660 in its own
+// right (applySocketGroupPermissions, main.go), admitting any nut-group
+// peer on that socket alone — nut never joins the hoserva group, which
+// stays reserved for root-equivalent admin access (Q44, doc 01 §7): a
+// parsing bug in this unprivileged child's own network upsd client,
+// exploited by a malicious remote NUT server, must never reach
+// hoserva.sock. SHUTDOWNCMD still runs in upsmon's own root parent
+// process regardless of RUN_AS_USER (upsmon.conf(5)), so nut-shutdown is
+// unaffected by this.
 func RenderUPSMonConf(state UPSState) string {
 	var b strings.Builder
 	switch state.Connection {
@@ -201,7 +210,6 @@ func RenderUPSMonConf(state UPSState) string {
 		fmt.Fprintf(&b, "MONITOR %s@%s 1 %s %s slave\n", state.NetworkUPSName, networkHostPort(state), state.NetworkUsername, state.NetworkPassword)
 	}
 	b.WriteString("MINSUPPLIES 1\n")
-	b.WriteString("RUN_AS_USER root\n")
 	fmt.Fprintf(&b, "SHUTDOWNCMD \"%s\"\n", UPSShutdownCmd)
 	fmt.Fprintf(&b, "NOTIFYCMD %s\n", UPSNotifyCmd)
 	b.WriteString("NOTIFYFLAG ONBATT SYSLOG+EXEC\n")
@@ -225,6 +233,9 @@ func (g *Generator) CanWriteUPS(ctx context.Context, state UPSState) error {
 	if err := validateUPSState(state); err != nil {
 		return err
 	}
+	if _, err := g.groupID(NUTGroup); err != nil {
+		return err
+	}
 	if err := g.CanWrite(ctx, PathNUTConf); err != nil {
 		return err
 	}
@@ -237,18 +248,18 @@ func (g *Generator) CanWriteUPS(ctx context.Context, state UPSState) error {
 	if err := g.CanWrite(ctx, PathUPSConf); err != nil {
 		return err
 	}
-	if _, err := g.groupID(NUTGroup); err != nil {
-		return err
-	}
 	return g.CanWrite(ctx, PathUPSDUsers)
 }
 
-// NUTGroup is the group Debian's nut packages run upsd under. upsd reads
-// upsd.users after dropping to it, so the file is root:nut 0640 — NUT's
-// own recommended ownership (upsd.users(5)) — never root-only.
+// NUTGroup is the group Debian's nut packages run upsd and upsmon's own
+// unprivileged child under. Both upsd.users and upsmon.conf are read
+// after dropping to it, so each is written root:nut 0640 — NUT's own
+// recommended upsd.users ownership (upsd.users(5)), applied to
+// upsmon.conf for the same reason — never root-only.
 const NUTGroup = "nut"
 
 const upsdUsersFileMode = 0o640
+const upsmonConfFileMode = 0o640
 
 // WriteUPS renders and writes every NUT config file state's connection
 // calls for: nut.conf and upsmon.conf always, plus ups.conf and
@@ -260,15 +271,13 @@ func (g *Generator) WriteUPS(ctx context.Context, state UPSState, command string
 	if err := validateUPSState(state); err != nil {
 		return err
 	}
-	if state.Connection == UPSConnectionUSB {
-		if _, err := g.groupID(NUTGroup); err != nil {
-			return err
-		}
+	if _, err := g.groupID(NUTGroup); err != nil {
+		return err
 	}
 	if err := g.Write(ctx, File{Path: PathNUTConf, Command: command, Body: []byte(RenderNUTConf(state))}, revision, now); err != nil {
 		return err
 	}
-	if err := g.Write(ctx, File{Path: PathUPSMonConf, Command: command, Body: []byte(RenderUPSMonConf(state)), Mode: secretFileMode}, revision, now); err != nil {
+	if err := g.Write(ctx, File{Path: PathUPSMonConf, Command: command, Body: []byte(RenderUPSMonConf(state)), Mode: upsmonConfFileMode, Group: NUTGroup}, revision, now); err != nil {
 		return err
 	}
 	if state.Connection != UPSConnectionUSB {

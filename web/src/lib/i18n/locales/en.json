@@ -467,6 +467,55 @@
       }
     }
   },
+  "cache": {
+    "description": "Cache disk fill, per-share cache modes, and manual mover control.",
+    "disk": {
+      "title": "Cache disk",
+      "none": "No cache disk",
+      "noneDescription": "Assign a cache disk in the setup wizard or pool overview.",
+      "usageUnavailable": "Used space not available"
+    },
+    "shares": {
+      "title": "Per-share cache modes",
+      "empty": "No shares configured yet.",
+      "modeSelect": "Cache mode for {{name}}",
+      "columns": {
+        "name": "Share",
+        "cacheMode": "Cache mode"
+      }
+    },
+    "schedule": {
+      "title": "Mover schedule and threshold",
+      "description": "The mover runs on the nightly maintenance chain, when the cache crosses its usage threshold, or when you run it manually here.",
+      "link": "Open schedules"
+    },
+    "mover": {
+      "run": "Run mover",
+      "queuedTitle": "Mover job queued",
+      "queuedDescription": "Track progress on the job detail page.",
+      "viewJob": "View job"
+    },
+    "relocation": {
+      "queuedTitle": "Relocation job queued",
+      "queuedDescription": "Existing files are being moved to match the new cache mode.",
+      "viewJob": "View job"
+    },
+    "lastRun": {
+      "title": "Last mover run",
+      "empty": "No mover jobs yet.",
+      "timing": "Started {{timing}}",
+    "notStarted": "—",
+    "startedWithDuration": "{{start}} · {{duration}}",
+    "durationMinutes": "{{minutes}}m {{seconds}}s",
+    "durationSeconds": "{{seconds}}s",
+      "statsUnavailable": "Files moved, bytes and skipped-file details appear here once structured mover results are available."
+    },
+    "parityWarning": {
+      "title": "Cache-only data is not covered by parity",
+      "description": "At least one share uses cache-only mode. Back up appdata on the cache disk separately.",
+      "action": "Open backup settings"
+    }
+  },
   "jobs": {
     "refresh": "Refresh list",
     "filters": {
@@ -795,7 +844,45 @@
       "hostname": "Hostname",
       "hostnamePlaceholder": "hoserva",
       "hostnameHint": "Used as the hostname for this Hoserva server.",
-      "timezone": "Timezone"
+      "timezone": "Timezone",
+      "loadFailed": "Could not load general settings",
+      "saveFailed": "Could not save general settings"
+    },
+    "ups": {
+      "title": "UPS",
+      "emptyDescription": "A UPS is optional. Configure one here if you have a USB-attached UPS or a network NUT server, so Hoserva can pause work on battery and shut down cleanly when power is almost gone.",
+      "connection": "Connection",
+      "connectionHint": "USB means Hoserva runs NUT locally against an attached UPS. Network means this host monitors a remote NUT server.",
+      "connectionUsb": "USB",
+      "connectionUsbDescription": "A UPS plugged into this server. Hoserva generates the local NUT driver and monitor configuration.",
+      "connectionNetwork": "Network NUT server",
+      "connectionNetworkDescription": "Monitor a UPS already managed by another NUT server on your network.",
+      "driver": "NUT driver",
+      "driverPlaceholder": "usbhid-ups",
+      "driverHint": "The NUT driver name for your UPS model (for example usbhid-ups). Hoserva does not probe hardware compatibility.",
+      "port": "Driver port",
+      "portPlaceholder": "auto",
+      "monitorPassword": "Monitor password",
+      "monitorPasswordHint": "Password the local NUT monitor uses to talk to the local NUT server. Stored encrypted; never shown again.",
+      "networkHost": "NUT server host",
+      "networkHostPlaceholder": "nut.example.lan",
+      "networkPort": "NUT server port",
+      "portUnit": "port",
+      "networkUpsName": "UPS name",
+      "networkUpsNamePlaceholder": "office-ups",
+      "networkUpsNameHint": "The UPS name configured on that NUT server.",
+      "networkUsername": "Username",
+      "networkPassword": "Password",
+      "passwordPlaceholder": "Enter a password",
+      "passwordKeepPlaceholder": "Leave blank to keep the current password",
+      "lowBatteryPercent": "Shut down at battery charge",
+      "percentUnit": "%",
+      "lowBatteryPercentHint": "When the UPS reports charge at or below this percent, Hoserva starts a clean shutdown. USB only — a network NUT server uses its own threshold.",
+      "runtimeSeconds": "Shut down at remaining runtime",
+      "secondsUnit": "seconds",
+      "runtimeSecondsHint": "When estimated runtime on battery falls to this many seconds, Hoserva starts a clean shutdown. USB only.",
+      "loadFailed": "Could not load UPS settings",
+      "saveFailed": "Could not save UPS settings"
     },
     "network": {
       "title": "Network",
@@ -1159,7 +1246,10 @@
       "cache": {
         "title": "Cache mode",
         "confirmTitle": "Change cache mode?",
-        "confirmDescription": "This changes where new files are placed. Existing files are not moved — a relocation job to move them is not available from this page yet."
+        "confirmDescription": "This changes where new files are placed. Existing files stay where they are unless you choose to relocate them.",
+        "changeModeOnly": "Change mode only",
+        "relocateNow": "Change mode and relocate",
+        "modeChangeSummary": "{{share}}: {{from}} → {{to}}"
       },
       "smb": {
         "title": "SMB",

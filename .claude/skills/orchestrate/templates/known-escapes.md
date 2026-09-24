@@ -25,6 +25,7 @@ existing line by adding its PR number.
 - **partial-failure** — DB row committed before a later side effect (generated file, mount, Samba account, audit row, notification row) that can fail; error returned over a half-applied change, or retry blocked by the leftover row — PR 174, 206, 213, 216, 218, 228
 - **partial-failure** — a compensating delete uses the request context, so a disconnect cancels the rollback and leaves the rows it was supposed to remove — PR 344
 - **partial-failure** — rollback restores the row and files but not the live state (mounts) — PR 218
+- **partial-failure** — rollback restores a snapshot read before an unserialized write window, so a concurrent save that succeeded in between is silently reverted — PR 357
 - **live-state** — change persisted and written to config but never applied to what is running (an idempotency early return keyed on a name that never changes; units written but the live mount left on its old branches) — PR 338
 - **live-state** — a share-list mutation that bypasses Create/Update/Delete never runs PostCommit, so the array sequence keeps the previous share list — PR 344
 - **resume** — a resumed run looks its target up by the key an earlier invocation already moved, or re-checks an identity field the run itself changed (filesystem UUID after its own format), so every resume fails — PR 338
@@ -40,6 +41,7 @@ existing line by adding its PR number.
 - **fail-open** — a skip meant for one step applied to every step (unregistered mover skip also skipping sync/scrub) — PR 201
 - **fail-open** — an input that matches nothing turns a protective change into a silent no-op (a removing disk not in the data-disk list leaves every branch RW) — PR 337
 - **fail-open** — a destructive call treats a missing path as success while the disks are unmounted, so the data is still on disk — PR 344
+- **fail-open** — a cleanup step skipped because a status signal still reads good from an earlier successful run (stale freshness/lastSyncAt), not from the run that just failed — PR 357
 - **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor, a completed-stop flag cleared before the start's fallible checks) — PR 199, 246, 338
 - **errors** — a secondary failure (a usage breakdown, a cancelled job context) discards a result that was already produced — PR 344
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201
@@ -48,14 +50,17 @@ existing line by adding its PR number.
 
 ## Web UI
 - **ui-states** — `openapi-fetch` returns `{ error }` instead of throwing, and can return `error: undefined` on an empty non-OK body; ignoring either turns a failed request into empty, "no array" or success state — PR 187, 193, 199, 216, 228, 344
-- **ui-states** — unhandled rejection or abort from a request inside an effect or a detached `Promise.all`, including a fetch queued in a microtask that cleanup does not cancel — PR 187, 199, 228, 344
+- **ui-states** — unhandled rejection or abort from a request inside an effect, a `void`-called handler with only `try/finally`, or a detached `Promise.all`, including a fetch queued in a microtask that cleanup does not cancel — PR 187, 199, 228, 344, 357
 - **ui-states** — `loading` stays true for a background refetch, so a page that treats it as "no data yet" unmounts dialogs on every poll — PR 344
 - **ui-states** — an error replaces the confirmation text the operator needs in order to retry — PR 344
+- **ui-states** — a dialog derives its options from state its own first step already changed, so a failure in the second step removes the retry (save mode, then relocate) — PR 357
+- **ui-states** — a "touched" flag sends a cleared field as an empty value the schema rejects, instead of omitting it to keep the stored secret — PR 357
+- **drift** — a domain rule (which mode change relocates where) copied between two pages instead of shared from one module — PR 357
 - **ui-states** — stale response overwrites the current selection (open A, open B, A's response lands) — PR 195, 228
 - **ui-states** — error rendered behind an open dialog or overlay — PR 216, 228
 - **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
 - **i18n** — raw API enum shown instead of a catalog label for every value but the one the author tested — PR 337
-- **i18n** — a user-visible fallback written as an English literal instead of a catalog key — PR 344
+- **i18n** — a user-visible fallback or formatted value (duration units, separators) written as an English literal instead of a catalog key — PR 344, 357
 - **a11y** — controls without an accessible name; focus indicator removed with no replacement — PR 187, 199
 
 ## Validation and contracts
@@ -63,6 +68,7 @@ existing line by adding its PR number.
 - **validation** — missing map key read as zero; integer overflow after parsing; empty payload skipping a required `confirm` — PR 150, 177, 236
 - **mock-drift** — `cmd/mockapi` accepts what the production handler rejects, or defaults differently — PR 166, 182, 213, 228
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
+- **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
 - **validation** — mode selected by a flag's non-empty value rather than its presence, so an empty value falls through to the default path (`-ups-notify ""` starting a second daemon) — PR 337
 - **validation** — a required phrase checked anywhere in a document instead of inside the section it must appear in — PR 337
 - **identity** — first match taken when several candidates match (a weak-identity disk and its clone), or a stale path reported beside the disk that now holds it, so one record appears twice — PR 337
@@ -81,6 +87,9 @@ existing line by adding its PR number.
 - **tests** — exact equality between two separately sampled system values — PR 236
 - **tests** — parallel labs compile test binaries into one directory, so one lab replaces another's binary — PR 344
 - **tests** — a restart check treats systemd active as API-ready, so the single login races the listener — PR 344
+- **tests** — a process probe matches any process in `/proc` instead of this test's own child, so an unrelated one triggers the next step early — PR 357
+- **tests** — a readiness gate waits on more than the acceptance criterion measures (the cache disk in an array-disk settle), so unrelated activity fails it — PR 357
+- **tests** — nested mounts torn down in mount-table order (parent before child), so the parent stays busy — PR 357
 
 ## External tool semantics
 - **platform** — systemd unit names need `systemd-escape` (`-` → `\x2d`); `x-systemd.*` options are ignored in a native `.mount` unit — PR 150, 156

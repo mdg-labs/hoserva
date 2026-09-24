@@ -61,10 +61,10 @@ const secretFileMode = 0o600
 // `hoserva <command>` line its header names, the rendered body a caller
 // wants written below that header, and the permission it lands with. Mode
 // left zero writes defaultFileMode; a render path whose body embeds a
-// credential sets Mode to secretFileMode instead (nut.go's upsmon.conf),
-// or a group-readable mode with Group set (nut.go's upsd.users). Group, when set, names the group the file
-// is owned by — for a credential file a service reads after dropping to
-// its own group (upsd.users, read by upsd as nut).
+// credential and is read only by root sets Mode to secretFileMode
+// instead, or a group-readable mode with Group set for a credential file
+// a service reads after dropping to its own group (nut.go's upsmon.conf
+// and upsd.users, each read by their own service as nut).
 type File struct {
 	Path    string
 	Command string
