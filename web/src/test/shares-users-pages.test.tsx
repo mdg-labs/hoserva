@@ -353,6 +353,21 @@ describe("ShareDetailPage cache tab", () => {
       params: { path: { name: "media" } },
       body: { to: "array" },
     });
+
+    // The mode is already saved, but the files are still on the old
+    // tier: the dialog must still offer the relocation to retry it.
+    mockPost.mockResolvedValue({
+      data: { id: "job-relocate-1" },
+      response: { ok: true },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Change mode and relocate" }));
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledTimes(2);
+    });
+    expect(mockPost).toHaveBeenLastCalledWith("/shares/{name}/relocate", {
+      params: { path: { name: "media" } },
+      body: { to: "array" },
+    });
   });
 });
 

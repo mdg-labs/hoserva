@@ -94,6 +94,10 @@ export function ShareDetailPage(): React.ReactElement {
 
   const [cacheModeDraft, setCacheModeDraft] = useState<ShareCacheMode>("cache-then-move");
   const [cacheConfirmOpen, setCacheConfirmOpen] = useState(false);
+  // The mode the share had when the dialog opened: saveCacheMode updates
+  // share.cacheMode before the relocate call, so a relocate that then
+  // fails must still be offered (and summarized) from this mode.
+  const [cacheModeFrom, setCacheModeFrom] = useState<ShareCacheMode | null>(null);
   const [savingCache, setSavingCache] = useState(false);
   const [cacheDialogError, setCacheDialogError] = useState<string | null>(null);
 
@@ -236,10 +240,10 @@ export function ShareDetailPage(): React.ReactElement {
   }
 
   async function handleSaveCacheModeAndRelocate(): Promise<void> {
-    if (!share) {
+    if (!cacheModeFrom) {
       return;
     }
-    const direction = shareRelocationDirection(share.cacheMode, cacheModeDraft);
+    const direction = shareRelocationDirection(cacheModeFrom, cacheModeDraft);
     if (!direction) {
       return;
     }
@@ -398,7 +402,7 @@ export function ShareDetailPage(): React.ReactElement {
   }
 
   const includedInParity = share ? share.cacheMode !== "cache-only" : false;
-  const cacheRelocationDirection = share ? shareRelocationDirection(share.cacheMode, cacheModeDraft) : null;
+  const cacheRelocationDirection = cacheModeFrom ? shareRelocationDirection(cacheModeFrom, cacheModeDraft) : null;
 
   const permissionColumns: DataTableColumn<PermissionRow>[] = useMemo(
     () => [
@@ -640,7 +644,13 @@ export function ShareDetailPage(): React.ReactElement {
                   />
                 </CardPanel>
                 <CardFooter className="justify-end border-t">
-                  <Button disabled={cacheModeDraft === share.cacheMode} onClick={() => setCacheConfirmOpen(true)}>
+                  <Button
+                    disabled={cacheModeDraft === share.cacheMode}
+                    onClick={() => {
+                      setCacheModeFrom(share.cacheMode);
+                      setCacheConfirmOpen(true);
+                    }}
+                  >
                     {t("shares.detail.save")}
                   </Button>
                 </CardFooter>
@@ -865,6 +875,7 @@ export function ShareDetailPage(): React.ReactElement {
           setCacheConfirmOpen(open);
           if (!open) {
             setCacheDialogError(null);
+            setCacheModeFrom(null);
           }
         }}
         title={t("shares.detail.cache.confirmTitle")}
@@ -886,11 +897,11 @@ export function ShareDetailPage(): React.ReactElement {
         }
       >
         {cacheDialogError ? <Banner tone="error" title={cacheDialogError} /> : null}
-        {share ? (
+        {share && cacheModeFrom ? (
           <p className="text-sm text-muted-foreground">
             {t("shares.detail.cache.modeChangeSummary", {
               share: share.name,
-              from: t(`shares.cacheModes.${share.cacheMode}.label`),
+              from: t(`shares.cacheModes.${cacheModeFrom}.label`),
               to: t(`shares.cacheModes.${cacheModeDraft}.label`),
             })}
           </p>
