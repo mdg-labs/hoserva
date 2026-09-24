@@ -262,7 +262,14 @@ func l3UnmountAllMergerfs(t *testing.T, ctx context.Context, r disk.Runner) {
 	if err != nil {
 		return // findmnt exits non-zero when nothing of that type is mounted
 	}
-	for _, target := range strings.Fields(strings.TrimSpace(string(out))) {
+	// Deepest first: each share's /mnt/user/<share> pool is mounted
+	// beneath /mnt/user, and a parent with a child still mounted stays
+	// busy past l3ForceUnmount's deadline.
+	targets := strings.Fields(strings.TrimSpace(string(out)))
+	sort.SliceStable(targets, func(i, j int) bool {
+		return strings.Count(targets[i], "/") > strings.Count(targets[j], "/")
+	})
+	for _, target := range targets {
 		l3ForceUnmount(t, ctx, r, target)
 	}
 }
