@@ -142,12 +142,10 @@ vm_wait_tcp() {
   local port=$1 timeout_s=$2
   local waited=0
   while ! (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; do
-    exec 3>&- 2>/dev/null || true
     waited=$((waited + 1))
     [[ $waited -lt $timeout_s ]] || return 1
     sleep 1
   done
-  exec 3>&- 2>/dev/null || true
   return 0
 }
 
