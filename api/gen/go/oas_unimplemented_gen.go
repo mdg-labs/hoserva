@@ -845,7 +845,9 @@ func (UnimplementedHandler) ResetUserPassword(ctx context.Context, req *ResetUse
 // upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
 // restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
 // maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it.
+// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it. Resuming an
+// interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02
+// §6, Q77).
 //
 // POST /jobs/{jobId}/resume
 func (UnimplementedHandler) ResumeJob(ctx context.Context, params ResumeJobParams) (r *Job, _ error) {
@@ -970,7 +972,9 @@ func (UnimplementedHandler) StartFix(ctx context.Context, req *StartFixRequest) 
 // StartMover implements startMover operation.
 //
 // Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
-// the threshold poll and the nightly chain submit; there is no second mover-invocation path.
+// the threshold poll and the nightly chain submit; there is no second mover-invocation path. Refused
+// with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77) — the mover is paused
+// until power returns.
 //
 // POST /mover/run
 func (UnimplementedHandler) StartMover(ctx context.Context) (r *Job, _ error) {
@@ -1002,7 +1006,8 @@ func (UnimplementedHandler) StartShareRelocation(ctx context.Context, req *Start
 // StartSync implements startSync operation.
 //
 // Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
-// requires `confirm: true` after reviewing the diff.
+// requires `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the
+// on-battery hold is active (doc 02 §6, Q77) — scheduled syncs are held until power returns.
 //
 // POST /parity/sync
 func (UnimplementedHandler) StartSync(ctx context.Context, req *StartSyncRequest) (r *Job, _ error) {

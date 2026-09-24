@@ -241,6 +241,8 @@ func mapSchedulerError(id uuid.UUID, err error) error {
 		return &apiError{code: "job_not_running", statusCode: 409, message: fmt.Sprintf("job %s is not queued or running", id)}
 	case errors.Is(err, job.ErrMaintenanceMode):
 		return &apiError{code: "maintenance_mode", statusCode: 409, message: "maintenance mode is active — no new jobs are accepted"}
+	case errors.Is(err, job.ErrOnBattery):
+		return &apiError{code: "on_battery", statusCode: 409, message: "on battery — the mover is paused and scheduled syncs are held until power returns"}
 	case errors.Is(err, job.ErrArrayNotStopped):
 		return &apiError{code: "array_not_stopped", statusCode: 409, message: "stop the array first (\"hoserva array stop\") — a data-disk upgrade runs only once the array's stop sequence has completed"}
 	case errors.Is(err, job.ErrJobTypeNotRegistered):

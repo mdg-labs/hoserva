@@ -639,7 +639,9 @@ type Invoker interface {
 	// upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
 	// restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
 	// maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-	// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it.
+	// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it. Resuming an
+	// interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02
+	// §6, Q77).
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)
@@ -731,7 +733,9 @@ type Invoker interface {
 	// StartMover invokes startMover operation.
 	//
 	// Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
-	// the threshold poll and the nightly chain submit; there is no second mover-invocation path.
+	// the threshold poll and the nightly chain submit; there is no second mover-invocation path. Refused
+	// with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77) — the mover is paused
+	// until power returns.
 	//
 	// POST /mover/run
 	StartMover(ctx context.Context) (*Job, error)
@@ -754,7 +758,8 @@ type Invoker interface {
 	// StartSync invokes startSync operation.
 	//
 	// Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
-	// requires `confirm: true` after reviewing the diff.
+	// requires `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the
+	// on-battery hold is active (doc 02 §6, Q77) — scheduled syncs are held until power returns.
 	//
 	// POST /parity/sync
 	StartSync(ctx context.Context, request *StartSyncRequest) (*Job, error)
@@ -10863,7 +10868,9 @@ func (c *Client) sendResetUserPassword(ctx context.Context, request *ResetUserPa
 // upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
 // restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
 // maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it.
+// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it. Resuming an
+// interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02
+// §6, Q77).
 //
 // POST /jobs/{jobId}/resume
 func (c *Client) ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error) {
@@ -12388,7 +12395,9 @@ func (c *Client) sendStartFix(ctx context.Context, request *StartFixRequest) (re
 // StartMover invokes startMover operation.
 //
 // Queues a mover job (`hoserva mover run`, doc 09 §2's manual trigger) — the same `TypeMover` job
-// the threshold poll and the nightly chain submit; there is no second mover-invocation path.
+// the threshold poll and the nightly chain submit; there is no second mover-invocation path. Refused
+// with 409 `on_battery` while the on-battery hold is active (doc 02 §6, Q77) — the mover is paused
+// until power returns.
 //
 // POST /mover/run
 func (c *Client) StartMover(ctx context.Context) (*Job, error) {
@@ -12796,7 +12805,8 @@ func (c *Client) sendStartShareRelocation(ctx context.Context, request *StartSha
 // StartSync invokes startSync operation.
 //
 // Queues a sync job through the threshold guard (doc 02 §2). A non-dry-run sync past a tripped guard
-// requires `confirm: true` after reviewing the diff.
+// requires `confirm: true` after reviewing the diff. Refused with 409 `on_battery` while the
+// on-battery hold is active (doc 02 §6, Q77) — scheduled syncs are held until power returns.
 //
 // POST /parity/sync
 func (c *Client) StartSync(ctx context.Context, request *StartSyncRequest) (*Job, error) {
