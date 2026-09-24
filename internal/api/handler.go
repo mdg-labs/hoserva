@@ -50,7 +50,15 @@ type Handler struct {
 	// inventory rather than an error.
 	Disks disk.Provider
 	// Parity is the SnapRAID engine for doctor freshness — nil skips that
-	// check with a warning.
+	// check with a warning. #265: main.go's parityRegistrar sets this
+	// (with ParityGuard, RelocationManifest and RebalanceShares below)
+	// once, either at startup or from the ArrayReady hook after a live
+	// array creation, from the create-array job's own goroutine, while
+	// GetParity/RunParityDiff/RunDoctor/GetStatus and the rebalance/
+	// evacuation handlers read it from concurrent HTTP request
+	// goroutines — every access once the daemon is serving requests goes
+	// through CurrentParity/SetParity, which hold parityMu, never these
+	// fields directly.
 	Parity parity.Engine
 	// ParityGuard evaluates threshold-guard state for run-diff (doc 02 §2).
 	ParityGuard parity.Guard
@@ -63,6 +71,7 @@ type Handler struct {
 	// against nil manifest/removingDisks, matching this handler's own
 	// pre-#194 behaviour.
 	RelocationManifest *parity.RelocationManifestStore
+	parityMu           sync.RWMutex
 	paritySnap         *paritySnapshotStore
 	parityOnce         sync.Once
 	// Backup is the config archive builder for export/import — nil returns
@@ -132,7 +141,10 @@ type Handler struct {
 	// planRebalance/startRebalance and planDiskEvacuation/evacuateDisk
 	// (doc 09 §3-4, #274) — the array's current topology read fresh from
 	// SQLite (D4) each call, the same way MoverDeps.Shares resolves the
-	// mover's own sweep. Nil returns 501 from those operations.
+	// mover's own sweep. Nil returns 501 from those operations. Set
+	// together with Parity/ParityGuard/RelocationManifest above through
+	// SetParity (#265) — read through CurrentParity, never this field
+	// directly, once the daemon is serving requests.
 	RebalanceShares func(ctx context.Context) ([]cache.Share, error)
 }
 

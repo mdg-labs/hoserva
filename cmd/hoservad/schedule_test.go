@@ -91,7 +91,7 @@ func newScheduleHarness(t *testing.T, now func() time.Time, guard job.DiffGuard)
 		runner: &scheduleRunner{
 			Schedules: scheduleService,
 			Scheduler: scheduler,
-			Guard:     guard,
+			Guard:     &diffGuardHolder{guard: guard},
 		},
 	}
 }

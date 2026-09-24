@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/parity"
 )
 
@@ -31,11 +32,37 @@ func (h *Handler) parityStore() *paritySnapshotStore {
 	return h.paritySnap
 }
 
+// CurrentParity returns the daemon's current parity engine, guard,
+// relocation manifest store and rebalance share resolver — the four
+// main.go's parityRegistrar always sets together, either at startup (an
+// array already existed) or, once, from the ArrayReady hook after a live
+// array creation (#265). Safe for concurrent use with SetParity.
+func (h *Handler) CurrentParity() (parity.Engine, parity.Guard, *parity.RelocationManifestStore, func(ctx context.Context) ([]cache.Share, error)) {
+	h.parityMu.RLock()
+	defer h.parityMu.RUnlock()
+	return h.Parity, h.ParityGuard, h.RelocationManifest, h.RebalanceShares
+}
+
+// SetParity replaces the daemon's parity engine, guard, relocation
+// manifest store and rebalance share resolver together. main.go's
+// parityRegistrar is the only caller once the daemon is serving requests
+// (#265) — every read goes through CurrentParity, never these fields
+// directly, from that point on.
+func (h *Handler) SetParity(engine parity.Engine, guard parity.Guard, manifest *parity.RelocationManifestStore, rebalanceShares func(ctx context.Context) ([]cache.Share, error)) {
+	h.parityMu.Lock()
+	defer h.parityMu.Unlock()
+	h.Parity = engine
+	h.ParityGuard = guard
+	h.RelocationManifest = manifest
+	h.RebalanceShares = rebalanceShares
+}
+
 func (h *Handler) GetParity(ctx context.Context) (*apiv1.ParitySnapshot, error) {
-	if engineUnavailable(h.Parity) {
+	engine, _, _, _ := h.CurrentParity()
+	if engineUnavailable(engine) {
 		return nil, &apiError{code: "not_configured", statusCode: 501, message: "parity status is not available on this daemon"}
 	}
-	status, err := h.Parity.Status(ctx)
+	status, err := engine.Status(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("parity status: %w", err)
 	}
@@ -50,26 +77,27 @@ func (h *Handler) GetParity(ctx context.Context) (*apiv1.ParitySnapshot, error) 
 }
 
 func (h *Handler) RunParityDiff(ctx context.Context) (*apiv1.ParityDiffResult, error) {
-	if engineUnavailable(h.Parity) {
+	engine, parityGuard, manifestStore, _ := h.CurrentParity()
+	if engineUnavailable(engine) {
 		return nil, &apiError{code: "not_configured", statusCode: 501, message: "parity diff is not available on this daemon"}
 	}
-	diff, err := h.Parity.Diff(ctx)
+	diff, err := engine.Diff(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("parity diff: %w", err)
 	}
 	var manifest []parity.ManifestEntry
 	var removingDisks map[string]bool
-	if h.RelocationManifest != nil {
-		manifest, removingDisks, err = h.RelocationManifest.Current(ctx)
+	if manifestStore != nil {
+		manifest, removingDisks, err = manifestStore.Current(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("parity diff: loading relocation manifest: %w", err)
 		}
-		manifest, err = parity.ConfirmManifestTargets(ctx, h.Parity, diff, manifest)
+		manifest, err = parity.ConfirmManifestTargets(ctx, engine, diff, manifest)
 		if err != nil {
 			return nil, fmt.Errorf("parity diff: confirming relocation manifest targets: %w", err)
 		}
 	}
-	guard := h.ParityGuard.Evaluate(diff, manifest, removingDisks)
+	guard := parityGuard.Evaluate(diff, manifest, removingDisks)
 	annotated := guard.Diff
 	store := h.parityStore()
 	store.mu.Lock()

@@ -452,11 +452,13 @@ func (h *Handler) detectHost(ctx context.Context) *config.HostInventory {
 }
 
 func (h *Handler) RunDoctor(ctx context.Context) (*apiv1.DoctorReport, error) {
-	return runDoctorChecks(ctx, h.Disks, h.Parity, nil, h.detectHost(ctx)), nil
+	engine, _, _, _ := h.CurrentParity()
+	return runDoctorChecks(ctx, h.Disks, engine, nil, h.detectHost(ctx)), nil
 }
 
 func (h *Handler) GetStatus(ctx context.Context) (*apiv1.SystemStatus, error) {
-	report := runDoctorChecks(ctx, h.Disks, h.Parity, nil, h.detectHost(ctx))
+	engine, _, _, _ := h.CurrentParity()
+	report := runDoctorChecks(ctx, h.Disks, engine, nil, h.detectHost(ctx))
 	healthy := report.Overall != apiv1.DoctorCheckStatusFail
 	summary := "All checks passed"
 	if !healthy {

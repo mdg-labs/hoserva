@@ -73,10 +73,11 @@ func rebalanceWarningsToAPI(warnings []cache.RebalanceWarning) []apiv1.Rebalance
 // before submitting the job, so this preview is never itself trusted at
 // confirm time.
 func (h *Handler) PlanRebalance(ctx context.Context) (*apiv1.RebalancePlan, error) {
-	if h.RebalanceShares == nil {
+	_, _, _, rebalanceShares := h.CurrentParity()
+	if rebalanceShares == nil {
 		return nil, errRebalanceNotConfigured()
 	}
-	shares, err := h.RebalanceShares(ctx)
+	shares, err := rebalanceShares(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("rebalance plan: loading shares: %w", err)
 	}
@@ -98,7 +99,8 @@ func (h *Handler) PlanRebalance(ctx context.Context) (*apiv1.RebalancePlan, erro
 // freshly computed plan as its own payload (RunRebalance then runs
 // exactly that plan, never recomputing it itself).
 func (h *Handler) StartRebalance(ctx context.Context, req *apiv1.StartRebalanceRequest) (*apiv1.Job, error) {
-	if h.RebalanceShares == nil {
+	_, _, _, rebalanceShares := h.CurrentParity()
+	if rebalanceShares == nil {
 		return nil, errRebalanceNotConfigured()
 	}
 	if h.Scheduler == nil {
@@ -107,7 +109,7 @@ func (h *Handler) StartRebalance(ctx context.Context, req *apiv1.StartRebalanceR
 	if req.Confirmation == "" || job.RebalanceConfirmation() != req.Confirmation {
 		return nil, errConfirmRequired
 	}
-	shares, err := h.RebalanceShares(ctx)
+	shares, err := rebalanceShares(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("start rebalance: loading shares: %w", err)
 	}
@@ -147,13 +149,14 @@ func (h *Handler) evacuationDataDisk(ctx context.Context, mountpoint string) (st
 // purely for display: nothing is copied, synced or deleted, and the disk
 // keeps taking new writes.
 func (h *Handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDiskPlanRequest) (*apiv1.EvacuationPlan, error) {
-	if h.RebalanceShares == nil || h.ArrayStore == nil {
+	_, _, _, rebalanceShares := h.CurrentParity()
+	if rebalanceShares == nil || h.ArrayStore == nil {
 		return nil, errRebalanceNotConfigured()
 	}
 	if _, err := h.evacuationDataDisk(ctx, req.Mountpoint); err != nil {
 		return nil, err
 	}
-	shares, err := h.RebalanceShares(ctx)
+	shares, err := rebalanceShares(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("evacuation plan: loading shares: %w", err)
 	}
@@ -174,7 +177,8 @@ func (h *Handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDis
 // planDiskEvacuation returned for this mountpoint, queues
 // job.TypeEvacuation with that freshly computed plan as its own payload.
 func (h *Handler) EvacuateDisk(ctx context.Context, req *apiv1.EvacuateDiskRequest) (*apiv1.Job, error) {
-	if h.RebalanceShares == nil || h.ArrayStore == nil {
+	_, _, _, rebalanceShares := h.CurrentParity()
+	if rebalanceShares == nil || h.ArrayStore == nil {
 		return nil, errRebalanceNotConfigured()
 	}
 	if h.Scheduler == nil {
@@ -186,7 +190,7 @@ func (h *Handler) EvacuateDisk(ctx context.Context, req *apiv1.EvacuateDiskReque
 	if _, err := h.evacuationDataDisk(ctx, req.Mountpoint); err != nil {
 		return nil, err
 	}
-	shares, err := h.RebalanceShares(ctx)
+	shares, err := rebalanceShares(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("evacuate disk: loading shares: %w", err)
 	}

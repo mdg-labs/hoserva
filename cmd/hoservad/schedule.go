@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/acme"
@@ -17,10 +18,34 @@ import (
 // data disk.
 const scheduleTickInterval = time.Minute
 
+// diffGuardHolder holds the maintenance chain's own job.DiffGuard behind
+// a mutex so main.go's parityRegistrar can set it once — either at
+// startup or from the ArrayReady hook after a live array creation, from
+// the create-array job's own goroutine (#265) — while runScheduleLoop's
+// own goroutine reads it on every tick, the same concurrency shape
+// Handler.SetArray/CurrentArray already established for Handler.Array
+// (#263).
+type diffGuardHolder struct {
+	mu    sync.RWMutex
+	guard job.DiffGuard
+}
+
+func (g *diffGuardHolder) set(guard job.DiffGuard) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.guard = guard
+}
+
+func (g *diffGuardHolder) get() job.DiffGuard {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.guard
+}
+
 type scheduleRunner struct {
 	Schedules *api.ScheduleService
 	Scheduler *job.Scheduler
-	Guard     job.DiffGuard
+	Guard     *diffGuardHolder
 	Backup    job.ConfigBackup
 	Notifier  job.ChainNotifier
 	ACME      *acme.Service
@@ -53,6 +78,10 @@ func (r *scheduleRunner) tickChain(ctx context.Context) error {
 	if r == nil || r.Schedules == nil || r.Scheduler == nil || r.Guard == nil {
 		return nil
 	}
+	guard := r.Guard.get()
+	if guard == nil {
+		return nil
+	}
 	claimed, err := r.Schedules.ClaimDueChain(ctx)
 	if err != nil {
 		return err
@@ -63,7 +92,7 @@ func (r *scheduleRunner) tickChain(ctx context.Context) error {
 	weekly := claimed.At.In(claimed.Location).Weekday() == time.Weekday(claimed.Settings.WeeklyScrubDay)
 	chain := &job.MaintenanceChain{
 		Scheduler: r.Scheduler,
-		Guard:     r.Guard,
+		Guard:     guard,
 		Backup:    r.Backup,
 		Notifier:  r.Notifier,
 		Enabled:   claimed.Settings.Enabled,
