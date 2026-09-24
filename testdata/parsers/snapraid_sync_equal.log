@@ -1,0 +1,57 @@
+version:none
+unixtime:1789712933
+time:2026-09-18 06:28:53
+command:sync
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/28-a1/p28/snapraid.conf
+argv:3:-l
+argv:4:/lab/28-a1/p28/sync-noop-l.log
+argv:5:sync
+selftest:
+msg:progress: Self test...
+conf:file:/lab/28-a1/p28/snapraid.conf
+uuid:by-uuid:7:1: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:1: blkid support not compiled in
+uuid:notfound:7:1:
+uuid:by-uuid:7:2: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:2: blkid support not compiled in
+uuid:notfound:7:2:
+uuid:by-uuid:7:3: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:3: blkid support not compiled in
+uuid:notfound:7:3:
+blocksize:262144
+data:d1:/lab/28-a1/mnt/disk1/
+data:d2:/lab/28-a1/mnt/disk2/
+data:d3:/lab/28-a1/mnt/disk3/
+mode:par1
+parity:0:/lab/28-a1/mnt/parity1/snapraid.parity
+content:/lab/28-a1/mnt/parity1/snapraid.content
+msg:progress: Loading state from /lab/28-a1/mnt/parity1/snapraid.content...
+content:/lab/28-a1/mnt/cache/snapraid.content
+uuid:by-uuid:7:0: opendir(/dev/disk/by-uuid) failed, No such file or directory
+uuid:blkid:7:0: blkid support not compiled in
+uuid:notfound:7:0:
+msg:progress: Scanning...
+statfs:xfs: /lab/28-a1/mnt/disk1/
+statfs:xfs: /lab/28-a1/mnt/disk2/
+statfs:xfs: /lab/28-a1/mnt/disk3/
+msg:progress: Scanned d1 in 0 seconds
+msg:progress: Scanned d2 in 0 seconds
+msg:progress: Scanned d3 in 0 seconds
+msg:verbose:        6 equal
+msg:verbose:        0 added
+msg:verbose:        0 removed
+msg:verbose:        0 updated
+msg:verbose:        0 moved
+msg:verbose:        0 copied
+msg:verbose:        0 restored
+summary:equal:6
+summary:added:0
+summary:removed:0
+summary:updated:0
+summary:moved:0
+summary:copied:0
+summary:restored:0
+msg:status: Nothing to do
+summary:exit:equal
