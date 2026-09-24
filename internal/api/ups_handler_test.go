@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -470,5 +471,82 @@ func TestUpdateUPSSettingsMissingNUTGroupIs409(t *testing.T) {
 	}
 	if _, getErr := upsStore.Get(ctx); !errors.Is(getErr, sql.ErrNoRows) {
 		t.Fatalf("row left after nut-group refusal: %v", getErr)
+	}
+}
+
+// blockingNUTReloader fails its second Reload, but only after release is
+// closed, so a test can hold one Update mid-reload while another runs.
+type blockingNUTReloader struct {
+	mu      sync.Mutex
+	calls   int
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (f *blockingNUTReloader) Reload(ctx context.Context, connection config.UPSConnection) error {
+	f.mu.Lock()
+	f.calls++
+	call := f.calls
+	f.mu.Unlock()
+	if call != 2 {
+		return nil
+	}
+	close(f.entered)
+	<-f.release
+	return errors.New("systemctl restart failed")
+}
+
+// TestUpdateUPSSettingsConcurrentRollbackKeepsLaterSave proves a failing
+// save's rollback cannot overwrite a concurrent save that already
+// succeeded: without serialization both read the same previous row, and
+// the failing one's rollback silently restores it over the success.
+func TestUpdateUPSSettingsConcurrentRollbackKeepsLaterSave(t *testing.T) {
+	ctx, h, upsStore, _, _, _ := newUPSTestEnv(t)
+	nut := &blockingNUTReloader{entered: make(chan struct{}), release: make(chan struct{})}
+	h.UPS.NUT = nut
+	save := func(pct int32) error {
+		_, err := h.UpdateUPSSettings(ctx, &apiv1.UpdateUPSSettingsRequest{
+			Connection:        apiv1.UPSConnectionUsb,
+			Driver:            apiv1.NewOptString("usbhid-ups"),
+			Port:              apiv1.NewOptString("auto"),
+			MonitorPassword:   apiv1.NewOptString("pass"),
+			LowBatteryPercent: apiv1.NewOptInt32(pct),
+		})
+		return err
+	}
+	if err := save(20); err != nil {
+		t.Fatalf("initial Update: %v", err)
+	}
+
+	failing := make(chan error, 1)
+	go func() { failing <- save(25) }()
+	<-nut.entered
+
+	succeeding := make(chan error, 1)
+	go func() { succeeding <- save(30) }()
+	select {
+	case err := <-succeeding:
+		// Unserialized: the concurrent save finished while the failing one
+		// was still mid-reload. Release it so its rollback runs after.
+		close(nut.release)
+		if err != nil {
+			t.Fatalf("concurrent Update: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		close(nut.release)
+		if err := <-succeeding; err != nil {
+			t.Fatalf("concurrent Update: %v", err)
+		}
+	}
+	if err := <-failing; err == nil {
+		t.Fatal("expected the blocked Update's reload to fail")
+	}
+
+	row, err := upsStore.Get(ctx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if row.LowBatteryPercent != 30 {
+		t.Fatalf("stored lowBatteryPercent = %d, want 30 — the failed save's rollback overwrote the successful one", row.LowBatteryPercent)
 	}
 }

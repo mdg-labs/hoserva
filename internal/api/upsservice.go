@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/user"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/config"
@@ -50,6 +51,9 @@ type UPSService struct {
 	NUT       NUTReloader
 	Socket    UPSSocketPermissions
 	Now       func() time.Time
+	// mu serializes Update: each save's rollback restores the row it read
+	// first, so an overlapping save must not commit in between.
+	mu sync.Mutex
 }
 
 // NewUPSService wires a UPSService with the real clock.
@@ -121,6 +125,8 @@ func (s *UPSService) Get(ctx context.Context) (UPSView, error) {
 // both rolled back so GET never shows configured:false while live NUT
 // still runs Hoserva-managed config (and vice versa).
 func (s *UPSService) Update(ctx context.Context, input UpdateUPSInput) (UPSView, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.Generator == nil {
 		return UPSView{}, fmt.Errorf("settings: ups generator is not configured")
 	}
