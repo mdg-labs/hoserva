@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -192,6 +192,28 @@ describe("CachePage", () => {
     await vi.waitFor(() => {
       expect(mockPost).toHaveBeenCalledWith("/mover/run");
     });
+  });
+
+  it.each([
+    ["Change mode only", mockPatch],
+    ["Change mode and relocate", mockPatch],
+    ["Change mode and relocate", mockPost],
+  ] as const)("shows a rejected request in the mode dialog (%s, %#)", async (button, rejecting) => {
+    mockSystemData();
+    mockPatch.mockResolvedValue({ data: { name: "media", cacheMode: "array-only" }, response: { ok: true } });
+    rejecting.mockRejectedValue(new Error("network down"));
+
+    renderCachePage();
+    fireEvent.click(await screen.findByRole("combobox", { name: /media/ }));
+    // Base UI's SelectItem commits on the pointer sequence, not on a bare click.
+    const option = await screen.findByRole("option", { name: "Array only" });
+    fireEvent.pointerDown(option, { pointerType: "mouse" });
+    fireEvent.pointerUp(option, { pointerType: "mouse" });
+    fireEvent.click(option);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: button }));
+
+    expect(await within(dialog).findByText("network down")).toBeInTheDocument();
   });
 
   it("shows a load error instead of cache content when /shares fails", async () => {

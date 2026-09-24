@@ -160,6 +160,8 @@ export function CachePage(): React.ReactElement {
         setPendingShare(null);
         setPendingMode(null);
       }
+    } catch (err: unknown) {
+      setModeDialogError(shareMutationError(err, t));
     } finally {
       setModeDialogBusy(false);
     }
@@ -199,6 +201,8 @@ export function CachePage(): React.ReactElement {
       setModeDialogOpen(false);
       setPendingShare(null);
       setPendingMode(null);
+    } catch (err: unknown) {
+      setModeDialogError(shareMutationError(err, t));
     } finally {
       setModeDialogBusy(false);
     }
