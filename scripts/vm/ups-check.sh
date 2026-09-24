@@ -75,12 +75,29 @@ sudo systemctl start hoserva'
 fi
 
 echo "ups-check[$HOSERVA_LAB_ID]: === setup: an admin account, so the CLI's own peer-credential (root) or a session can reach admin-only endpoints ==="
-SETUP_STATUS="$(vm_ssh "curl -sk https://127.0.0.1:8008/api/v1/setup/status" 2>/dev/null || true)"
+# The daemon's own TLS listener can still be opening when this step first
+# runs (right after a fresh install or restart above), so curl can return
+# an empty body well before setup/status is actually reachable — this
+# polls (bounded) for a body that actually names adminExists, rather than
+# ever reading "empty/unreadable" as "an admin already exists".
+SETUP_STATUS=""
+setup_status_seen=false
+for _ in $(seq 1 30); do
+  SETUP_STATUS="$(vm_ssh "curl -sk https://127.0.0.1:8008/api/v1/setup/status" 2>/dev/null || true)"
+  if [[ "$SETUP_STATUS" == *'"adminExists"'* ]]; then
+    setup_status_seen=true
+    break
+  fi
+  sleep 1
+done
+$setup_status_seen || die "setup/status never returned a body containing \"adminExists\" within 30s — last response: '$SETUP_STATUS'"
 if [[ "$SETUP_STATUS" == *'"adminExists":false'* ]]; then
   CREATE_RESULT="$(vm_ssh "curl -sk -X POST https://127.0.0.1:8008/api/v1/setup/admin -H 'Content-Type: application/json' -d '{\"username\":\"$UPS_ADMIN_USER\",\"password\":\"$UPS_ADMIN_PASSWORD\"}'" 2>/dev/null || true)"
   [[ "$CREATE_RESULT" == *"\"username\":\"$UPS_ADMIN_USER\""* ]] || die "createFirstAdmin did not return the expected admin: $CREATE_RESULT"
-else
+elif [[ "$SETUP_STATUS" == *'"adminExists":true'* ]]; then
   echo "ups-check[$HOSERVA_LAB_ID]: an admin already exists (an earlier suite step's own onboarding) — leaving it alone"
+else
+  die "setup/status returned an \"adminExists\" body neither true nor false: $SETUP_STATUS"
 fi
 COOKIE_JAR="/tmp/hoserva-ups-cookiejar"
 LOGIN_RESULT="$(vm_ssh "curl -sk -c $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"$UPS_ADMIN_USER\",\"password\":\"$UPS_ADMIN_PASSWORD\"}'" 2>/dev/null || true)"
@@ -204,9 +221,17 @@ record() { STEP_NAMES+=("$1"); STEP_RESULTS+=("$2"); }
 # before hoservad's real HandleNotify for *this* transition has actually
 # run — confirmed empirically against this exact harness on a
 # second, already-configured run.
+#
+# submit_refused only accepts a refusal that actually carries #356's own
+# on_battery error code (mapAPIErr's generic pass-through prints the
+# server's Error struct into the CLI's stderr as "code 409:
+# {Code:on_battery ...}") — any other nonzero exit, e.g. a generic
+# `internal` error or a same-class conflict, is not proof of the
+# on-battery hold and must not be read as one.
 submit_refused() {
-  local cmd="$1"
-  ! vm_ssh "sudo hoserva $cmd --json" >/dev/null 2>&1
+  local cmd="$1" output
+  output="$(vm_ssh "sudo hoserva $cmd --json" 2>&1)" && return 1
+  [[ "$output" == *'Code:on_battery'* ]]
 }
 submit_accepted() {
   local cmd="$1"
@@ -228,25 +253,17 @@ wait_until_accepted() {
   done
   return 1
 }
-journal_has_on_battery_reason() {
-  vm_ssh "sudo journalctl -u hoserva.service --no-pager --since '$1'" 2>/dev/null \
-    | grep -q 'on battery — the mover is paused and scheduled syncs are held'
-}
 
 echo "ups-check[$HOSERVA_LAB_ID]: === scenario 1/3: on battery — notify, mover paused, syncs held ==="
 SCENARIO1_STATUS=0
-FLIP_TS="$(vm_ssh 'date -u "+%Y-%m-%d %H:%M:%S"')"
 set_battery_state 'ups.status: OB
 battery.charge: 40
 battery.runtime: 900'
 if ! wait_until_refused "mover run"; then
-  echo "ups-check[$HOSERVA_LAB_ID]: 'hoserva mover run' was never refused within 30s of going on battery — Q77's own hold did not take effect" >&2
+  echo "ups-check[$HOSERVA_LAB_ID]: 'hoserva mover run' was never refused with the on_battery error code within 30s of going on battery — Q77's own hold did not take effect" >&2
   SCENARIO1_STATUS=1
 elif ! wait_until_refused "sync --dry-run"; then
-  echo "ups-check[$HOSERVA_LAB_ID]: 'hoserva sync --dry-run' was never refused within 30s of going on battery — Q77's own hold did not take effect" >&2
-  SCENARIO1_STATUS=1
-elif ! journal_has_on_battery_reason "$FLIP_TS"; then
-  echo "ups-check[$HOSERVA_LAB_ID]: both submissions were refused, but hoservad's own log never named job.ErrOnBattery as the reason since $FLIP_TS — see journalctl -u hoserva.service" >&2
+  echo "ups-check[$HOSERVA_LAB_ID]: 'hoserva sync --dry-run' was never refused with the on_battery error code within 30s of going on battery — Q77's own hold did not take effect" >&2
   SCENARIO1_STATUS=1
 fi
 if [[ "$SCENARIO1_STATUS" -eq 0 ]]; then
