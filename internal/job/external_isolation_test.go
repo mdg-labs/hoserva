@@ -56,7 +56,11 @@ func TestApplyArrayFromStore_IgnoresExternalDisks(t *testing.T) {
 		}
 	}
 	layout := layoutFromStore(disks)
-	for _, p := range append(append([]string{}, layout.DataMounts...), layout.ParityMounts...) {
+	var dataMountPaths []string
+	for _, m := range layout.DataMounts {
+		dataMountPaths = append(dataMountPaths, m.Mountpoint)
+	}
+	for _, p := range append(dataMountPaths, layout.ParityMounts...) {
 		if disk.IsExternalMountpoint(p) {
 			t.Fatalf("snapraid layout includes external mount %q", p)
 		}

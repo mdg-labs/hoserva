@@ -51,19 +51,40 @@ var (
 	// before it's ever checked.
 	ErrEmptyMount     = errors.New("parity: a mount path is empty")
 	ErrDuplicateMount = errors.New("parity: the same mount path is assigned more than one role")
+	// ErrInvalidRoleIndex and ErrDuplicateRoleIndex guard the stable
+	// "dN" naming Render depends on (#360): a role_index below 1 cannot
+	// name a data disk, and two data mounts sharing a role_index would
+	// render the same "dN" directive twice, silently merging two
+	// physically distinct disks under one SnapRAID identity.
+	ErrInvalidRoleIndex   = errors.New("parity: a data disk's role_index must be 1 or greater")
+	ErrDuplicateRoleIndex = errors.New("parity: two data disks share the same role_index")
 )
+
+// DataMount is one data disk in a Layout, named by its stable RoleIndex —
+// the N in "/mnt/diskN" — rather than by its position in DataMounts.
+// SnapRAID keys each disk's content-file record by the "dN" label
+// Render derives from RoleIndex, so a role_index gap left by removing a
+// disk (#358, #359) must render unchanged: reusing position would rename
+// every disk after the gap and desynchronize it from its own content
+// file (#360).
+type DataMount struct {
+	RoleIndex  int    `json:"role_index"`
+	Mountpoint string `json:"mountpoint"`
+}
 
 // Layout is the set of mount points array setup assigns before
 // generating snapraid.conf (doc 02 §2, doc 03 §3.1). DataMounts is
 // ordered by content-placement preference — most free space first
 // (Q18); at setup time every disk is either empty or newly adopted, so
 // the caller orders this by disk size descending, free space's own
-// proxy at this point.
+// proxy at this point. That placement order is independent of each
+// mount's RoleIndex, which names the disk in snapraid.conf and never
+// changes just because another disk was placed before or after it.
 type Layout struct {
-	ParityMounts []string `json:"parity_mounts"`
-	DataMounts   []string `json:"data_mounts"`
-	CacheMount   string   `json:"cache_mount,omitempty"`
-	Excludes     []string `json:"excludes,omitempty"`
+	ParityMounts []string    `json:"parity_mounts"`
+	DataMounts   []DataMount `json:"data_mounts"`
+	CacheMount   string      `json:"cache_mount,omitempty"`
+	Excludes     []string    `json:"excludes,omitempty"`
 }
 
 // Validate checks Q19's parity-count rule, that there is at least one data
@@ -101,10 +122,18 @@ func (l Layout) Validate() error {
 			return err
 		}
 	}
+	seenRoleIndex := make(map[int]bool, len(l.DataMounts))
 	for i, m := range l.DataMounts {
-		if err := assign(fmt.Sprintf("data mount %d", i+1), m); err != nil {
+		if err := assign(fmt.Sprintf("data mount %d", i+1), m.Mountpoint); err != nil {
 			return err
 		}
+		if m.RoleIndex < 1 {
+			return fmt.Errorf("%w: data mount %d (%s)", ErrInvalidRoleIndex, i+1, m.Mountpoint)
+		}
+		if seenRoleIndex[m.RoleIndex] {
+			return fmt.Errorf("%w: role_index %d", ErrDuplicateRoleIndex, m.RoleIndex)
+		}
+		seenRoleIndex[m.RoleIndex] = true
 	}
 	if l.CacheMount != "" {
 		if err := assign("cache mount", l.CacheMount); err != nil {
@@ -135,7 +164,7 @@ func (l Layout) ContentPaths() ([]string, error) {
 	}
 
 	for i := 0; i < len(l.DataMounts) && len(paths) < min; i++ {
-		paths = append(paths, filepath.Join(l.DataMounts[i], contentFileName))
+		paths = append(paths, filepath.Join(l.DataMounts[i].Mountpoint, contentFileName))
 	}
 
 	if len(paths) < min {
@@ -181,8 +210,8 @@ func (l Layout) Render() (string, error) {
 	for _, c := range contentPaths {
 		fmt.Fprintf(&b, "content %s\n", c)
 	}
-	for i, mount := range l.DataMounts {
-		fmt.Fprintf(&b, "data d%d %s\n", i+1, ensureTrailingSlash(mount))
+	for _, m := range l.DataMounts {
+		fmt.Fprintf(&b, "data d%d %s\n", m.RoleIndex, ensureTrailingSlash(m.Mountpoint))
 	}
 
 	excludes := l.Excludes

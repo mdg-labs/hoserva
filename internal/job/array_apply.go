@@ -148,7 +148,7 @@ func layoutFromStore(disks []store.ArrayDisk) parity.Layout {
 		case store.ArrayRoleParity:
 			l.ParityMounts = append(l.ParityMounts, d.Mountpoint)
 		case store.ArrayRoleData:
-			l.DataMounts = append(l.DataMounts, d.Mountpoint)
+			l.DataMounts = append(l.DataMounts, parity.DataMount{RoleIndex: d.RoleIndex, Mountpoint: d.Mountpoint})
 		case store.ArrayRoleCache:
 			l.CacheMount = d.Mountpoint
 		}

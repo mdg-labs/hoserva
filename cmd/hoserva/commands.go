@@ -588,7 +588,7 @@ func fixCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm fix (required)")
-	cmd.Flags().Int32Var(&disk, "disk", 0, "SnapRAID disk index")
+	cmd.Flags().Int32Var(&disk, "disk", 0, "Data disk number N (/mnt/diskN)")
 	return cmd
 }
 

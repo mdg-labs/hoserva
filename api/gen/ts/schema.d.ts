@@ -3035,7 +3035,7 @@ export interface components {
             confirm: boolean;
             /**
              * Format: int32
-             * @description SnapRAID disk index (`hoserva fix --disk N`).
+             * @description Data disk number N (`/mnt/diskN`), fixed only on that disk (`hoserva fix --disk N`).
              */
             disk?: number;
         };

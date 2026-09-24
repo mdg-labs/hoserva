@@ -9391,7 +9391,7 @@ func (s *SpinTransitionToState) UnmarshalText(data []byte) error {
 type StartFixRequest struct {
 	// Must be true — fix rewrites data from parity.
 	Confirm bool `json:"confirm"`
-	// SnapRAID disk index (`hoserva fix --disk N`).
+	// Data disk number N (`/mnt/diskN`), fixed only on that disk (`hoserva fix --disk N`).
 	Disk OptInt32 `json:"disk"`
 }
 

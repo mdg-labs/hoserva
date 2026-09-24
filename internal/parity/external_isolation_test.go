@@ -26,7 +26,7 @@ func TestJournal_DoesNotTrackExternalMount(t *testing.T) {
 func TestLayout_RenderOmitsExternalMount(t *testing.T) {
 	l := Layout{
 		ParityMounts: []string{"/mnt/parity1"},
-		DataMounts:   []string{"/mnt/disk1", "/mnt/disk2"},
+		DataMounts:   []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}, {RoleIndex: 2, Mountpoint: "/mnt/disk2"}},
 		CacheMount:   "/mnt/cache",
 	}
 	body, err := l.Render()

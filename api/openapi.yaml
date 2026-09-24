@@ -5326,7 +5326,9 @@ components:
           type: integer
           format: int32
           minimum: 1
-          description: SnapRAID disk index (`hoserva fix --disk N`).
+          description: >-
+            Data disk number N (`/mnt/diskN`), fixed only on that disk
+            (`hoserva fix --disk N`).
 
     StartShareRelocationRequest:
       type: object

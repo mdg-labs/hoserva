@@ -252,16 +252,21 @@ func planMatchesStored(plan disk.TopologyPlan, disks []store.ArrayDisk) bool {
 	return true
 }
 
+// snapraidLayout previews the snapraid.conf a fresh array-create plan
+// would render, before any store.ArrayDisk row exists. Every role_index
+// is contiguous from 1 here — arrayDisksFromPlan assigns the same i+1 to
+// the row it persists right after — so this can never itself introduce a
+// role_index gap; a gap only appears once a disk is later removed (#358).
 func snapraidLayout(plan disk.TopologyPlan) parity.Layout {
 	l := parity.Layout{
 		ParityMounts: make([]string, len(plan.Parity)),
-		DataMounts:   make([]string, len(plan.Data)),
+		DataMounts:   make([]parity.DataMount, len(plan.Data)),
 	}
 	for i := range plan.Parity {
 		l.ParityMounts[i] = fmt.Sprintf("/mnt/parity%d", i+1)
 	}
 	for i := range plan.Data {
-		l.DataMounts[i] = fmt.Sprintf("/mnt/disk%d", i+1)
+		l.DataMounts[i] = parity.DataMount{RoleIndex: i + 1, Mountpoint: fmt.Sprintf("/mnt/disk%d", i+1)}
 	}
 	if plan.Cache != nil {
 		l.CacheMount = "/mnt/cache"
