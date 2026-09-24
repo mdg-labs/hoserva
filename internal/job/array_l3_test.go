@@ -241,6 +241,80 @@ func l3AssertEmptyDir(t *testing.T, where string) {
 	}
 }
 
+// l3UnmountAllMergerfs unmounts every currently mounted fuse.mergerfs
+// pool on this guest, wherever it came from: the suite's own real array
+// (mounted automatically at boot, since disk.StorageGate is not wired
+// into cmd/hoservad's own boot path yet — #146's own "out of scope",
+// root cause of #346) or a pool a previous, unclean run of this same
+// scenario left behind. Called once at the start of each scenario below,
+// before anything tries to Format a device the pool may still be using
+// as a branch: FUSE holds a reference into every branch directory for as
+// long as it is mounted, so unmounting a branch's own physical disk
+// directly while a pool still spans it can fail as busy even with
+// nothing actually open (l3ReleaseDevice, below, only unmounts branches,
+// so this always has to run first). Neither scenario needs any array
+// mounted beforehand, and this step runs last in run-l3-suite.sh's own
+// order but for ups-check.sh, which its own header says needs no
+// configured array either.
+func l3UnmountAllMergerfs(t *testing.T, ctx context.Context, r disk.Runner) {
+	t.Helper()
+	out, err := r.Run(ctx, "findmnt", "-rn", "-t", "fuse.mergerfs", "-o", "TARGET")
+	if err != nil {
+		return // findmnt exits non-zero when nothing of that type is mounted
+	}
+	for _, target := range strings.Fields(strings.TrimSpace(string(out))) {
+		l3ForceUnmount(t, ctx, r, target)
+	}
+}
+
+// l3ReleaseDevice unmounts dev (e.g. "vdc") from wherever it is
+// currently mounted, so l3FormatAndMountUnit's own Format always runs
+// against a genuinely unmounted device — mke2fs's own refusal to format
+// a mounted device is correct, and disk.LinuxProvider.Format does not
+// force this itself; unmount belongs to the test setup (CLAUDE.md), and
+// this is that setup. Covers both the suite's own real array (mounted by
+// production hoservad) and a mount unit the other scenario in this same
+// binary left behind, so neither scenario poisons the other.
+func l3ReleaseDevice(t *testing.T, ctx context.Context, r disk.Runner, dev string) {
+	t.Helper()
+	out, err := r.Run(ctx, "findmnt", "-rn", "-o", "TARGET", "--source", "/dev/"+dev)
+	if err != nil {
+		return // findmnt exits non-zero when dev is not mounted anywhere
+	}
+	for _, target := range strings.Fields(strings.TrimSpace(string(out))) {
+		l3ForceUnmount(t, ctx, r, target)
+	}
+}
+
+// l3ForceUnmount releases target, whether it is a raw mount or a real
+// systemd .mount unit: production and this test's own l3WriteMountUnit
+// both name their unit after disk.UnitFileName(where) (confirmed against
+// production's own golden fixture, internal/pool/testdata/pool-mounts/
+// mnt-user.mount.golden), so stopping that unit first keeps systemd's
+// own view of it consistent — a bare umount would leave a systemd-
+// managed unit "active" with its mount already gone. The unit may not
+// exist at all (a leftover raw mount predating any systemd unit) — that
+// failure is silent, since the umount retried below is what actually has
+// to succeed, and its own failure does gate the test.
+func l3ForceUnmount(t *testing.T, ctx context.Context, r disk.Runner, target string) {
+	t.Helper()
+	_, _ = r.Run(ctx, "systemctl", "stop", disk.UnitFileName(target))
+	deadline := time.Now().Add(5 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if _, err := r.Run(ctx, "mountpoint", "-q", target); err != nil {
+			return // already gone, whether systemctl stop or a previous loop iteration released it
+		}
+		_, err := r.Run(ctx, "umount", target)
+		if err == nil {
+			return
+		}
+		lastErr = err
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("could not unmount %s before this scenario's own Format (last error: %v)", target, lastErr)
+}
+
 // l3WriteMountUnit writes unit's real content to
 // /etc/systemd/system/<UnitFileName> and reloads systemd — the D4
 // content a future config.Generator would write, built and installed
@@ -268,6 +342,7 @@ func l3WriteMountUnit(t *testing.T, ctx context.Context, r disk.Runner, unit dis
 // names as blocked (real physical disk mount/unmount via systemd).
 func l3FormatAndMountUnit(t *testing.T, ctx context.Context, provider *disk.LinuxProvider, r disk.Runner, dev, where string) disk.MountUnitController {
 	t.Helper()
+	l3ReleaseDevice(t, ctx, r, strings.TrimPrefix(dev, "/dev/"))
 	l3MustMkdirAll(t, where)
 	if err := provider.Format(ctx, dev, disk.EXT4); err != nil {
 		t.Fatalf("Format %s: %v", dev, err)
@@ -329,6 +404,7 @@ func TestL3ArraySequence_MissingDiskAtBoot(t *testing.T) {
 	ctx := context.Background()
 	r := disk.CommandRunner{}
 	provider := disk.NewLinuxProvider()
+	l3UnmountAllMergerfs(t, ctx, r)
 
 	mountRoot := mustL3Env(t, "HOSERVA_L3_MOUNT_ROOT")
 	expectedSerials := strings.Fields(mustL3Env(t, "HOSERVA_L3_EXPECTED_SERIALS"))
@@ -609,6 +685,7 @@ func TestL3ArraySequence_ServiceStopsBeforeUnmount(t *testing.T) {
 	ctx := context.Background()
 	r := disk.CommandRunner{}
 	provider := disk.NewLinuxProvider()
+	l3UnmountAllMergerfs(t, ctx, r)
 
 	mountRoot := mustL3Env(t, "HOSERVA_L3_MOUNT_ROOT")
 	presentDevices := presentArrayDevices(t)
