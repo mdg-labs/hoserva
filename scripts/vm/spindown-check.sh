@@ -29,20 +29,62 @@ source "$script_dir/lib.sh"
 vm_require_id
 vm_assert_own_domain "$VM_DOMAIN"
 
+# Everything this script prints goes to stdout, die() and every failure
+# diagnostic included: the step's evidence has to reach the suite log
+# whatever the caller has done with its own stderr. run-l3-suite.sh's
+# fd 2 is /dev/null by the time this step runs (lib.sh's vm_wait_tcp,
+# called by the mid-sync recovery step, runs `exec 3>&- 2>/dev/null` in
+# the caller's shell), so anything written to stderr here would vanish.
+exec 2>&1
+
+# BEFORE/AFTER are filled in below. On any non-zero exit — the verdict
+# loop's own mismatch, die(), or `set -e` aborting — on_exit prints the
+# command that failed (recorded by the ERR trap, which -E carries into
+# functions and subshells) and both snapshots, so a red run always
+# leaves the delta in the log.
+set -E
+BEFORE=""
+AFTER=""
+FAILED_CMD=""
+# shellcheck disable=SC2329 # invoked by the ERR trap below
+on_err() {
+  local i
+  FAILED_CMD="${BASH_SOURCE[1]##*/}:$1: $2 (exit $3)"
+  for ((i = 1; i < ${#FUNCNAME[@]} - 1; i++)); do
+    FAILED_CMD+=" <- ${FUNCNAME[i]} called at ${BASH_SOURCE[i + 1]##*/}:${BASH_LINENO[i]}"
+  done
+}
+# shellcheck disable=SC2329 # invoked by the EXIT trap below
+on_exit() {
+  local rc=$?
+  (( rc != 0 )) || return 0
+  echo "spindown-check[$HOSERVA_LAB_ID]: exiting with status $rc"
+  if [[ -n "$FAILED_CMD" ]]; then
+    echo "spindown-check[$HOSERVA_LAB_ID]: last failed command: $FAILED_CMD"
+  fi
+  echo "spindown-check[$HOSERVA_LAB_ID]: BEFORE snapshot (/sys/block/<dev>/stat):"
+  echo "${BEFORE:-  <not captured>}"
+  echo "spindown-check[$HOSERVA_LAB_ID]: AFTER snapshot (/sys/block/<dev>/stat):"
+  echo "${AFTER:-  <not captured>}"
+}
+trap 'on_err "$LINENO" "$BASH_COMMAND" "$?"' ERR
+trap on_exit EXIT
+
 # Q31's own bar is "30+ minutes"; HOSERVA_SPINDOWN_WINDOW_S exists so a
 # manual run against a fresh VM can shorten it, never so the nightly run
 # silently claims 30 minutes while actually measuring less.
 WINDOW_S="${HOSERVA_SPINDOWN_WINDOW_S:-1800}"
 POLL_INTERVAL_S="${HOSERVA_SPINDOWN_POLL_INTERVAL_S:-60}"
-# The settle gate is deliberately lighter than doc 08 Spike 1's own
-# lab gate (an explicit sync, then unchanged for a full 3 minutes): these
-# are freshly created, empty qcow2 array disks with no write workload of
-# any kind behind them (unlike Spike 1's post-probe-write lab scenario),
-# so two consecutive identical samples is enough evidence nothing is
-# still settling, not a shortcut taken for its own sake.
-SETTLE_INTERVAL_S=15
-SETTLE_STABLE_SAMPLES=2
-SETTLE_TIMEOUT_S=180
+# The settle gate is doc 08 Spike 1's own (Q31): an explicit sync, then
+# every disk's counters unchanged for 180s, sampled every 5s, failing
+# after 900s. By this step the suite has built an array and run journey
+# 5's sync and mass deletion on it, and XFS covers its log in 30s
+# (xfssyncd_centisecs) steps for a minute or more after the last change,
+# so a short gate can pass between two of those steps and let the next
+# one land inside the window.
+SETTLE_INTERVAL_S=5
+SETTLE_QUIET_S=180
+SETTLE_TIMEOUT_S=900
 
 vm_domain_running "$VM_DOMAIN" || die "domain '$VM_DOMAIN' is not running — run 'make vm-up' first"
 
@@ -120,31 +162,31 @@ snapshot_stats() {
 
 ALL_DEVS="${ARRAY_DEVS[*]} ${CACHE_DEVS[*]:-}"
 
-echo "spindown-check[$HOSERVA_LAB_ID]: settle gate (sync, then wait for $SETTLE_STABLE_SAMPLES consecutive stable samples, ${SETTLE_INTERVAL_S}s apart, ${SETTLE_TIMEOUT_S}s bound)"
+echo "spindown-check[$HOSERVA_LAB_ID]: settle gate (sync, then every disk unchanged for ${SETTLE_QUIET_S}s, sampled every ${SETTLE_INTERVAL_S}s, ${SETTLE_TIMEOUT_S}s bound)"
 vm_ssh sync
-prev=""
-stable=0
 settle_start=$SECONDS
-while true; do
-  cur="$(snapshot_stats "$ALL_DEVS")"
-  if [[ "$cur" == "$prev" ]]; then
-    stable=$((stable + 1))
-  else
-    stable=1
-  fi
-  prev="$cur"
-  if (( stable >= SETTLE_STABLE_SAMPLES )); then
-    break
-  fi
+prev="$(snapshot_stats "$ALL_DEVS")"
+last_change=$SECONDS
+while (( SECONDS - last_change < SETTLE_QUIET_S )); do
   if (( SECONDS - settle_start >= SETTLE_TIMEOUT_S )); then
-    die "settle gate did not stabilize within ${SETTLE_TIMEOUT_S}s — array disks are still changing on their own before the measurement window even starts"
+    die "settle gate did not stabilize within ${SETTLE_TIMEOUT_S}s — disks were still changing on their own before the measurement window even started"
   fi
   sleep "$SETTLE_INTERVAL_S"
+  cur="$(snapshot_stats "$ALL_DEVS")"
+  if [[ "$cur" != "$prev" ]]; then
+    last_change=$SECONDS
+    prev="$cur"
+  fi
 done
 echo "spindown-check[$HOSERVA_LAB_ID]: settled after $((SECONDS - settle_start))s"
 
+# No sync between here and the AFTER snapshot: on a mounted ext4 disk,
+# sync(2) sends an empty cache flush even when nothing is dirty, which
+# moves write_ios and flush_ios by one with no sectors written. A block
+# trace of ext4 data disks formatted the way createArray formats them
+# showed exactly that, issued by `sync` itself (the XFS parity disk did
+# not move). The check would be measuring its own harness.
 echo "spindown-check[$HOSERVA_LAB_ID]: BEFORE snapshot"
-vm_ssh sync
 BEFORE="$(snapshot_stats "$ALL_DEVS")"
 
 echo "spindown-check[$HOSERVA_LAB_ID]: polling every ${POLL_INTERVAL_S}s for ${WINDOW_S}s with 'smartctl -j -n standby -a <dev>' (the exact argv internal/disk's LinuxProvider.SMART issues in its default, standby-respecting mode)"
@@ -175,8 +217,23 @@ while (( SECONDS - window_start < WINDOW_S )); do
 done
 echo "spindown-check[$HOSERVA_LAB_ID]: ran $poll_count poll round(s) across ${#ARRAY_DEVS[@]} array disk(s) over $((SECONDS - window_start))s"
 
+# Instead of a sync, wait out the kernel's own writeback before the AFTER
+# snapshot, so a write dirtied in the window's last seconds still reaches
+# the disk and moves its counters: dirty data is written back once it is
+# dirty_expire_centisecs old, on the next dirty_writeback_centisecs pass,
+# and XFS pushes logged metadata every xfssyncd_centisecs (ext4 commits
+# every 5s, well inside that). With no XFS module loaded there is no XFS
+# filesystem to wait for, and its 30s default is used anyway.
+drain_cs="$(vm_ssh 'cat /proc/sys/vm/dirty_expire_centisecs /proc/sys/vm/dirty_writeback_centisecs; cat /proc/sys/fs/xfs/xfssyncd_centisecs 2>/dev/null || echo 3000')"
+drain_s=0
+while IFS= read -r cs; do
+  [[ "$cs" =~ ^[0-9]+$ ]] || die "unexpected writeback sysctl value from the guest: '$cs'"
+  drain_s=$((drain_s + (cs + 99) / 100))
+done <<<"$drain_cs"
+echo "spindown-check[$HOSERVA_LAB_ID]: waiting ${drain_s}s for writeback of anything dirtied during the window (dirty_expire + dirty_writeback + xfssyncd)"
+sleep "$drain_s"
+
 echo "spindown-check[$HOSERVA_LAB_ID]: AFTER snapshot"
-vm_ssh sync
 AFTER="$(snapshot_stats "$ALL_DEVS")"
 
 echo "spindown-check[$HOSERVA_LAB_ID]: per-disk smartctl verdict during the window (informational — see doc 08 for why virtio-blk cannot return real SMART telemetry in this harness):"
@@ -196,11 +253,28 @@ while IFS= read -r line; do
   AFTER_MAP["${line%%:*}"]="${line#*:}"
 done <<<"$AFTER"
 
+# Field names of /sys/block/<dev>/stat, in order (Documentation/block/stat.rst).
+STAT_FIELDS=(read_ios read_merges read_sectors read_ticks write_ios write_merges write_sectors write_ticks in_flight io_ticks time_in_queue discard_ios discard_merges discard_sectors discard_ticks flush_ios flush_ticks)
+
+stat_delta() {
+  local -a b a
+  local i out=""
+  read -r -a b <<<"$1"
+  read -r -a a <<<"$2"
+  for i in "${!STAT_FIELDS[@]}"; do
+    if [[ "${b[i]:-}" != "${a[i]:-}" ]]; then
+      out+=" ${STAT_FIELDS[i]}:${b[i]:-?}->${a[i]:-?}"
+    fi
+  done
+  echo "${out# }"
+}
+
 for dev in "${ARRAY_DEVS[@]}"; do
   if [[ "${BEFORE_MAP[$dev]:-}" != "${AFTER_MAP[$dev]:-}" ]]; then
-    echo "spindown-check[$HOSERVA_LAB_ID]: FAIL — $dev moved during the window" >&2
-    echo "  before:${BEFORE_MAP[$dev]:-}" >&2
-    echo "  after: ${AFTER_MAP[$dev]:-}" >&2
+    echo "spindown-check[$HOSERVA_LAB_ID]: FAIL — $dev moved during the window"
+    echo "  before:${BEFORE_MAP[$dev]:-}"
+    echo "  after: ${AFTER_MAP[$dev]:-}"
+    echo "  moved: $(stat_delta "${BEFORE_MAP[$dev]:-}" "${AFTER_MAP[$dev]:-}")"
     status=1
   fi
 done

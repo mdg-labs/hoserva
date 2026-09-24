@@ -254,12 +254,20 @@ func (p TopologyPlan) assignedDisks() []AssignedDisk {
 // formatCommand returns the argv Format execs for fs — one exec, never
 // a shell (CLAUDE.md) — matching each tool's own manual for "build a
 // fresh filesystem, overwriting any existing one".
+//
+// EXT4 turns off mke2fs's lazy_itable_init and lazy_journal_init
+// defaults. With them on, mke2fs returns before the inode tables and
+// journal are zeroed and the kernel's ext4lazyinit thread does it in the
+// background after the first mount, writing to an otherwise idle array
+// disk for minutes (issue #347; Q31 wants array disks flat once
+// settled). Format is the explicit user action that may write to the
+// disk, so the zeroing happens here instead.
 func formatCommand(dev string, fs FilesystemType) ([]string, error) {
 	switch fs {
 	case XFS:
 		return []string{"mkfs.xfs", "-f", dev}, nil
 	case EXT4:
-		return []string{"mkfs.ext4", "-F", dev}, nil
+		return []string{"mkfs.ext4", "-F", "-E", "lazy_itable_init=0,lazy_journal_init=0", dev}, nil
 	case BTRFS:
 		return []string{"mkfs.btrfs", "-f", dev}, nil
 	default:
