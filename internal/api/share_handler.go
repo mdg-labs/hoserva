@@ -288,6 +288,7 @@ func shareToAPI(s share.Share) apiv1.Share {
 			Enabled: s.NFS.Enabled,
 			Hosts:   append([]string(nil), hosts...),
 			Squash:  squash,
+			Fsid:    apiv1.NewOptUUID(config.NFSExportFsid(s.Name)),
 		},
 		Usage:     shareUsageToAPI(s.Usage),
 		CreatedAt: s.CreatedAt,

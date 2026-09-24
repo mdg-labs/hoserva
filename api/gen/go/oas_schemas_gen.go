@@ -6883,6 +6883,52 @@ func (o OptUPSConnection) Or(d UPSConnection) UPSConnection {
 	return d
 }
 
+// NewOptUUID returns new OptUUID with value set to v.
+func NewOptUUID(v uuid.UUID) OptUUID {
+	return OptUUID{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptUUID is optional uuid.UUID.
+type OptUUID struct {
+	Value uuid.UUID
+	Set   bool
+}
+
+// IsSet returns true if OptUUID was set.
+func (o OptUUID) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptUUID) Reset() {
+	var v uuid.UUID
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptUUID) SetTo(v uuid.UUID) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptUUID) Get() (v uuid.UUID, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptUUID) Or(d uuid.UUID) uuid.UUID {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptUpdateChannel returns new OptUpdateChannel with value set to v.
 func NewOptUpdateChannel(v UpdateChannel) OptUpdateChannel {
 	return OptUpdateChannel{
@@ -8727,6 +8773,10 @@ type ShareNFS struct {
 	Hosts []string `json:"hosts"`
 	// NFS squash option (doc 03 §4.2).
 	Squash ShareNFSSquash `json:"squash"`
+	// The fsid= value RenderNFSExports writes for this share's export line (#350, #351). Derived from the
+	// share name only; ignored on a create or update request. Always present on a response — a draft
+	// preview can use the saved share's fsid because a share cannot be renamed.
+	Fsid OptUUID `json:"fsid"`
 }
 
 // GetEnabled returns the value of Enabled.
@@ -8744,6 +8794,11 @@ func (s *ShareNFS) GetSquash() ShareNFSSquash {
 	return s.Squash
 }
 
+// GetFsid returns the value of Fsid.
+func (s *ShareNFS) GetFsid() OptUUID {
+	return s.Fsid
+}
+
 // SetEnabled sets the value of Enabled.
 func (s *ShareNFS) SetEnabled(val bool) {
 	s.Enabled = val
@@ -8757,6 +8812,11 @@ func (s *ShareNFS) SetHosts(val []string) {
 // SetSquash sets the value of Squash.
 func (s *ShareNFS) SetSquash(val ShareNFSSquash) {
 	s.Squash = val
+}
+
+// SetFsid sets the value of Fsid.
+func (s *ShareNFS) SetFsid(val OptUUID) {
+	s.Fsid = val
 }
 
 // NFS squash option (doc 03 §4.2).

@@ -12669,6 +12669,41 @@ func (s *OptUPSConnection) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes uuid.UUID as json.
+func (o OptUUID) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	json.EncodeUUID(e, o.Value)
+}
+
+// Decode decodes uuid.UUID from json.
+func (o *OptUUID) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptUUID to nil")
+	}
+	o.Set = true
+	v, err := json.DecodeUUID(d)
+	if err != nil {
+		return err
+	}
+	o.Value = v
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptUUID) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptUUID) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes UpdateChannel as json.
 func (o OptUpdateChannel) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -16790,12 +16825,19 @@ func (s *ShareNFS) encodeFields(e *jx.Encoder) {
 		e.FieldStart("squash")
 		s.Squash.Encode(e)
 	}
+	{
+		if s.Fsid.Set {
+			e.FieldStart("fsid")
+			s.Fsid.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfShareNFS = [3]string{
+var jsonFieldsNameOfShareNFS = [4]string{
 	0: "enabled",
 	1: "hosts",
 	2: "squash",
+	3: "fsid",
 }
 
 // Decode decodes ShareNFS from json.
@@ -16848,6 +16890,16 @@ func (s *ShareNFS) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"squash\"")
+			}
+		case "fsid":
+			if err := func() error {
+				s.Fsid.Reset()
+				if err := s.Fsid.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"fsid\"")
 			}
 		default:
 			return d.Skip()

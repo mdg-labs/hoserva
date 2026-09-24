@@ -2957,6 +2957,11 @@ export interface components {
              * @enum {string}
              */
             squash: "root_squash" | "no_root_squash" | "all_squash";
+            /**
+             * Format: uuid
+             * @description The fsid= value RenderNFSExports writes for this share's export line (#350, #351). Derived from the share name only; ignored on a create or update request. Always present on a response — a draft preview can use the saved share's fsid because a share cannot be renamed.
+             */
+            readonly fsid?: string;
         };
         ShareDiskUsage: {
             /** @description Data disk mount point currently holding files for this share. */
