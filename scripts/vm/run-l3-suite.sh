@@ -534,6 +534,14 @@ MIDSYNC_THROTTLE_RATE="${MIDSYNC_THROTTLE_RATE:-16M}"
 # genuinely in-flight sync is confirmed, about a second after, and several
 # seconds after.
 MIDSYNC_DESTROY_DELAYS="${MIDSYNC_DESTROY_DELAYS:-0 1 5}"
+# What midsync_ensure_synced needs to know about the loop's last
+# iteration: the last sync job it started (to settle before any cleanup
+# sync), and whether that iteration ended on its own verified re-sync.
+# getParity cannot answer the second itself — freshness stays green over
+# an interrupted sync (see midsync_destroy), and lastSyncAt can be an
+# earlier iteration's.
+MIDSYNC_LAST_JOB_ID=""
+MIDSYNC_ARRAY_VERIFIED=0
 
 # midsync_throttle_devices caps IOReadBandwidthMax/IOWriteBandwidthMax on
 # hoserva.service — the unit whose own cgroup the snapraid child process
@@ -679,6 +687,7 @@ midsync_recover_guest() {
 # actually rely on.
 midsync_destroy() {
   local delay_s=$1 iteration=$2
+  MIDSYNC_ARRAY_VERIFIED=0
   if ! array_login; then
     MIDSYNC_REASON="login as the L3 admin failed ahead of the mid-sync destroy test (iteration $iteration)"
     return 1
@@ -732,6 +741,7 @@ midsync_destroy() {
   sync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
   if [[ "$sync_result" =~ \"id\":\"([^\"]+)\" ]]; then
     job_id="${BASH_REMATCH[1]}"
+    MIDSYNC_LAST_JOB_ID="$job_id"
   else
     midsync_clear_throttle
     MIDSYNC_REASON="startSync did not return a job id (iteration $iteration): $sync_result"
@@ -794,6 +804,7 @@ midsync_destroy() {
   resync_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/parity/sync -H 'Content-Type: application/json' -d '{\"confirm\":false,\"dryRun\":false}'" 2>/dev/null)"
   if [[ "$resync_result" =~ \"id\":\"([^\"]+)\" ]]; then
     resync_job_id="${BASH_REMATCH[1]}"
+    MIDSYNC_LAST_JOB_ID="$resync_job_id"
   else
     MIDSYNC_REASON="the guarded re-sync after the interrupted one did not return a job id (iteration $iteration): $resync_result"
     return 1
@@ -819,6 +830,7 @@ midsync_destroy() {
     return 1
   fi
 
+  MIDSYNC_ARRAY_VERIFIED=1
   return 0
 }
 
@@ -837,10 +849,14 @@ midsync_destroy() {
 # that it was starting from a state its own diff logic could make sense
 # of. This never deletes anything (a removal-heavy path here is exactly
 # what the threshold guard exists to question, and this is housekeeping,
-# not a reviewed removal) — it only confirms getParity already reports a
-# fully synced array, and if not, runs one more guarded sync to bring it
-# there. A step that cannot leave its own array clean fails here, rather
-# than silently handing journey 5 a starting state it never asked for.
+# not a reviewed removal) — unless the loop's last iteration ended on its
+# own verified re-sync, it lets any sync job that iteration left running
+# finish, then runs one more guarded sync. getParity alone cannot tell it
+# the array is clean: freshness stays green over an interrupted sync and
+# lastSyncAt can be an earlier iteration's, so a later iteration's
+# unsynced files would pass for synced. A step that cannot leave its own
+# array clean fails here, rather than silently handing journey 5 a
+# starting state it never asked for.
 midsync_ensure_synced() {
   midsync_clear_throttle
   if ! array_login; then
@@ -852,13 +868,23 @@ midsync_ensure_synced() {
     return 1
   fi
 
-  local parity_result
-  parity_result="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
-  if [[ "$parity_result" == *'"lastSyncAt"'* && "$parity_result" == *'"freshness":"green"'* ]]; then
+  if [[ "$MIDSYNC_ARRAY_VERIFIED" == "1" ]]; then
     return 0
   fi
 
-  echo "vm-suite[$HOSERVA_LAB_ID]: step 6 did not leave the array synced (freshness=green with lastSyncAt not both present) — running one cleanup sync so journey 5's own baseline (step 8) starts from a clean array: $parity_result"
+  if [[ -n "$MIDSYNC_LAST_JOB_ID" ]]; then
+    wait_job_terminal "$MIDSYNC_LAST_JOB_ID" 180
+    case "$job_status" in
+      succeeded | failed | cancelled | interrupted) ;;
+      *)
+        MIDSYNC_REASON="step 6 cleanup: sync job $MIDSYNC_LAST_JOB_ID did not settle within 180s (status=${job_status:-unknown}): $job_result"
+        return 1
+        ;;
+    esac
+  fi
+
+  local parity_result
+  echo "vm-suite[$HOSERVA_LAB_ID]: step 6 did not end on a verified re-sync — running one cleanup sync so journey 5's own baseline (step 8) starts from a clean array"
   if ! vm_ssh "sudo mkdir -p '$MIDSYNC_SHARE_PATH' && echo hoserva-352-cleanup | sudo tee '$MIDSYNC_SHARE_PATH/cleanup-marker.txt' >/dev/null"; then
     MIDSYNC_REASON="step 6 cleanup: could not write a marker file into $MIDSYNC_SHARE_PATH ahead of the cleanup sync"
     return 1
