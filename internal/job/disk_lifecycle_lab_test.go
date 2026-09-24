@@ -67,6 +67,59 @@ func drainRealProgress(t *testing.T, ch <-chan parity.Progress) parity.Progress 
 	return final
 }
 
+// snapraidFixChildRunning reports whether any process visible in this
+// container's /proc has argv0 basename "snapraid" and a bare "fix"
+// argument — the child RunDiskReplace's Fix step starts via
+// parity.CommandRunner (never a shell). Used only by the mid-fix cancel
+// lab test to know Cancel will land inside that subprocess.
+func snapraidFixChildRunning() bool {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if name == "" || name[0] < '0' || name[0] > '9' {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", name, "cmdline"))
+		if err != nil || len(cmdline) == 0 {
+			continue
+		}
+		args := strings.Split(string(cmdline), "\x00")
+		if len(args) == 0 || filepath.Base(args[0]) != "snapraid" {
+			continue
+		}
+		for _, a := range args {
+			if a == "fix" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// waitUntilSnapraidFixRunning polls until a snapraid fix child is running
+// for the replace job, or fails if the job ends first or bound elapses.
+func waitUntilSnapraidFixRunning(t *testing.T, s *Scheduler, jobID string, bound time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(bound)
+	for time.Now().Before(deadline) {
+		got, err := s.store.Get(context.Background(), jobID)
+		if err != nil {
+			t.Fatalf("Get(%s) while waiting for snapraid fix: %v", jobID, err)
+		}
+		if got.Status.Terminal() {
+			t.Fatalf("disk_replace %s reached %s (%s) before a snapraid fix child appeared — Cancel would miss the mid-fix window", jobID, got.Status, got.ErrorMessage)
+		}
+		if snapraidFixChildRunning() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("snapraid fix child for disk_replace %s never appeared within %s", jobID, bound)
+}
+
 // resetBootContentDir clears and recreates parity.BootContentPath's own
 // directory inside this lab container — never on the host, since this
 // whole file only ever runs there (labDir requires HOSERVA_LAB_ID and the
@@ -379,9 +432,9 @@ func TestLabDiskReplace_CancelledMidFixRecoversViaOrdinaryFix(t *testing.T) {
 	}
 
 	// A real dataset large enough that a real `snapraid fix` over loop
-	// devices takes measurably longer than formatting and persisting the
-	// replacement's topology switch — the margin this test's own
-	// mid-fix cancellation depends on.
+	// devices stays running long enough for Cancel to land after the
+	// waitUntilSnapraidFixRunning poll first sees the child — reconstruct
+	// of a few KiB can finish between that observation and Cancel.
 	const fileCount = 40
 	const fileSize = 1 << 20 // 1 MiB
 	hashesBefore := make([]string, fileCount)
@@ -440,11 +493,11 @@ func TestLabDiskReplace_CancelledMidFixRecoversViaOrdinaryFix(t *testing.T) {
 		t.Fatalf("Submit(disk_replace): %v", err)
 	}
 
-	// Long enough for FormatForAddition (a single mkfs.xfs on a 320M loop
-	// device) and the topology switch to have certainly completed, short
-	// enough that reconstructing 40 MiB through a real `snapraid fix`
-	// has certainly not.
-	time.Sleep(400 * time.Millisecond)
+	// Cancel only once a real `snapraid fix` child is visible in /proc.
+	// A fixed sleep cannot bracket "topology switched, fix still running"
+	// when CI finishes the whole replace — including fix — inside that
+	// window; polling the child is the phase signal.
+	waitUntilSnapraidFixRunning(t, s, rj.ID, 60*time.Second)
 	if _, err := s.Cancel(ctx, rj.ID); err != nil {
 		t.Fatalf("Cancel(%s): %v", rj.ID, err)
 	}
