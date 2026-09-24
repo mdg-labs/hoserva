@@ -504,6 +504,10 @@
       "title": "Last mover run",
       "empty": "No mover jobs yet.",
       "timing": "Started {{timing}}",
+    "notStarted": "—",
+    "startedWithDuration": "{{start}} · {{duration}}",
+    "durationMinutes": "{{minutes}}m {{seconds}}s",
+    "durationSeconds": "{{seconds}}s",
       "statsUnavailable": "Files moved, bytes and skipped-file details appear here once structured mover results are available."
     },
     "parityWarning": {

@@ -145,7 +145,7 @@ describe("CachePage", () => {
     expect(await screen.findByText("Cache & mover")).toBeInTheDocument();
     expect(screen.getByText("/dev/sdc")).toBeInTheDocument();
     expect(screen.getByText("Succeeded")).toBeInTheDocument();
-    expect(screen.getByText(/Started .+ · .+/)).toBeInTheDocument();
+    expect(screen.getByText(/^Started .+ · 9m 55s$/)).toBeInTheDocument();
   });
 
   it("shows the parity warning when a cache-only share exists", async () => {

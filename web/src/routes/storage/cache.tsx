@@ -29,9 +29,13 @@ const CACHE_MODES: ShareCacheMode[] = ["cache-then-move", "cache-only", "array-o
 const SETTINGS_BACKUP_ROUTE = "/settings/backup";
 const SETTINGS_SCHEDULES_ROUTE = "/settings/schedules";
 
-function formatJobTiming(startedAt: string | null | undefined, finishedAt: string | null | undefined): string {
+function formatJobTiming(
+  startedAt: string | null | undefined,
+  finishedAt: string | null | undefined,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
   if (!startedAt) {
-    return "—";
+    return t("cache.lastRun.notStarted");
   }
   const start = new Date(startedAt).toLocaleString();
   if (!finishedAt) {
@@ -44,8 +48,11 @@ function formatJobTiming(startedAt: string | null | undefined, finishedAt: strin
   const seconds = Math.round(durationMs / 1000);
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
-  const duration = minutes > 0 ? `${minutes}m ${remainder}s` : `${seconds}s`;
-  return `${start} · ${duration}`;
+  const duration =
+    minutes > 0
+      ? t("cache.lastRun.durationMinutes", { minutes, seconds: remainder })
+      : t("cache.lastRun.durationSeconds", { seconds });
+  return t("cache.lastRun.startedWithDuration", { start, duration });
 }
 
 function jobStatusTone(status: Job["status"]): "success" | "error" | "info" | "outline" {
@@ -363,7 +370,7 @@ export function CachePage(): React.ReactElement {
               </div>
               <p className="text-muted-foreground">
                 {t("cache.lastRun.timing", {
-                  timing: formatJobTiming(lastMoverJob.startedAt, lastMoverJob.finishedAt),
+                  timing: formatJobTiming(lastMoverJob.startedAt, lastMoverJob.finishedAt, t),
                 })}
               </p>
               <InlineNote description={t("cache.lastRun.statsUnavailable")} />
