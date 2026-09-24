@@ -125,6 +125,34 @@ func TestParseStatus_Clean(t *testing.T) {
 	}
 }
 
+// TestParseStatus_InterruptedFirstSync_NoLastSyncAt is issue #352's own
+// regression: `snapraid status` run against an array whose first-ever
+// sync was killed before it reached "Saving state" (a real `SIGKILL`
+// against a real snapraid 12.4-1 binary mid-scan/mid-hash, over real
+// seeded data, in the loop-device lab — never hand-authored) never
+// writes a content file at all, so the log carries no `info_time` line
+// whatsoever — confirmed against three separate real kills, at 0.5s and
+// 1.0s into the run and mid-"Using 0 MiB of memory" phase. LastActivityAt
+// must stay the zero value here, and ToParityStatus().LastSyncAt with
+// it, exactly like TestParseStatus_EmptyInput's synthetic case, but
+// against a real log this time: getParity's own `lastSyncAt` (doc 02 §6:
+// "sync marked interrupted... parity stays not fresh") reads from
+// LastActivityAt, and it correctly has nothing to report until a sync
+// actually finishes and writes that first content file.
+func TestParseStatus_InterruptedFirstSync_NoLastSyncAt(t *testing.T) {
+	r, err := ParseStatus(readCorpus(t, "snapraid_status_interrupted_first_sync.log"))
+	if err != nil {
+		t.Fatalf("ParseStatus: %v", err)
+	}
+	if !r.LastActivityAt.IsZero() {
+		t.Fatalf("LastActivityAt = %v, want the zero value (no content file was ever written)", r.LastActivityAt)
+	}
+	status := r.ToParityStatus()
+	if !status.LastSyncAt.IsZero() {
+		t.Fatalf("ToParityStatus().LastSyncAt = %v, want the zero value", status.LastSyncAt)
+	}
+}
+
 func TestParseStatus_EmptyInput(t *testing.T) {
 	if _, err := ParseStatus(nil); err == nil {
 		t.Fatal("ParseStatus(nil): got nil error")

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { expect, type APIRequestContext, test } from "@playwright/test";
+import { expect, type APIRequestContext, type Locator, type Page, test } from "@playwright/test";
 
 // Journey 5 (doc 06 §4): "Delete many files → diff shows removals → sync
 // is blocked → warning is visible." Doc 02 §2 calls the threshold guard
@@ -77,6 +77,34 @@ async function waitForJobTerminal(
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error(`job ${jobId} did not reach a terminal status within ${timeoutMs}ms (last seen: ${job.status})`);
+}
+
+// reloadUntilVisible (issue #352) waits for locator to appear after a
+// fresh `page.reload()`, retrying the reload itself rather than just
+// extending one assertion's timeout. This step runs right after a full
+// suite of earlier L3 steps that reboot the guest and destroy/recreate
+// it (doc 06 §4 step 6), so the guest's own hoservad and its API can
+// still be settling in when this journey's own reload fires — a plain
+// `page.reload()` occasionally has to race a still-recovering backend.
+// getParity's own guard field (internal/api/parity_handler.go's
+// paritySnapshotStore) is written synchronously inside RunParityDiff,
+// before that request's own response is sent — there is no async gap
+// once a diff has run, so a retried reload against a genuinely settled
+// backend is the fix here, never a looser assertion: the badge's own
+// text and the `exact: true` match are unchanged.
+async function reloadUntilVisible(page: Page, locator: Locator, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    await page.reload();
+    try {
+      await expect(locator).toBeVisible({ timeout: 5_000 });
+      return;
+    } catch (err) {
+      if (Date.now() >= deadline) {
+        throw err;
+      }
+    }
+  }
 }
 
 test("mass deletion blocks the sync", async ({ page }) => {
@@ -159,8 +187,10 @@ test("mass deletion blocks the sync", async ({ page }) => {
 
   // Step 5: the refusal is visible in the UI, and parity never advanced
   // past the baseline.
-  await page.reload();
-  await expect(page.getByText(catalogString("parity.guard.blocked"), { exact: true })).toBeVisible();
+  await reloadUntilVisible(
+    page,
+    page.getByText(catalogString("parity.guard.blocked"), { exact: true }),
+  );
   await expect(
     page.locator(`[data-job-id="${refusedJob.id}"]`).getByText("failed", { exact: true }),
   ).toBeVisible();
