@@ -40,7 +40,7 @@ import {
 } from "@/hooks/share-detail-tabs";
 import { shareAccessOptions } from "@/hooks/share-access-options";
 import { hoservaClient, type components } from "@/lib/api/client";
-import { isApiError } from "@/lib/api/errors";
+import { shareMutationError, shareRelocationDirection } from "@/routes/shares/cache-mode";
 import { buildNfsExportLine, buildSmbStanza } from "@/routes/shares/config-preview";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
@@ -53,37 +53,10 @@ type ShareAccessLevel = components["schemas"]["ShareAccessLevel"];
 type ShareBrowseEntry = components["schemas"]["ShareBrowseEntry"];
 type ShareDiskUsage = components["schemas"]["ShareDiskUsage"];
 
-function shareMutationError(err: unknown, t: (key: string, options?: Record<string, unknown>) => string): string {
-  if (isApiError(err) && err.code === "maintenance_mode") {
-    return t("shares.errors.maintenanceMode");
-  }
-  if (isApiError(err)) {
-    return err.message;
-  }
-  if (err instanceof Error) {
-    return err.message;
-  }
-  return String(err);
-}
 
 const CREATE_POLICIES: ArrayCreatePolicy[] = ["mspmfs", "mfs", "lfs", "ff"];
 const CACHE_MODES: ShareCacheMode[] = ["cache-then-move", "cache-only", "array-only"];
 
-function shareRelocationDirection(from: ShareCacheMode, to: ShareCacheMode): "cache" | "array" | null {
-  if (from === to) {
-    return null;
-  }
-  if (to === "array-only") {
-    return "array";
-  }
-  if (from === "array-only") {
-    return "cache";
-  }
-  if (from === "cache-then-move" && to === "cache-only") {
-    return "cache";
-  }
-  return null;
-}
 const SQUASH_OPTIONS: NonNullable<ShareNFS["squash"]>[] = ["root_squash", "no_root_squash", "all_squash"];
 const CREATE_POLICY_FIELD_NAME = "create-policy";
 const CACHE_MODE_FIELD_NAME = "cache-mode";

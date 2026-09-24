@@ -16,9 +16,9 @@ import { toastManager } from "@/components/ui/toast";
 import { jobDetailPath } from "@/hooks/paths";
 import { useSystemData } from "@/hooks/use-system-status";
 import { hoservaClient, type components } from "@/lib/api/client";
-import { isApiError } from "@/lib/api/errors";
 import { useApiMutation } from "@/lib/api/use-api-mutation";
 import { useApiQuery } from "@/lib/api/use-api-query";
+import { shareMutationError, shareRelocationDirection } from "@/routes/shares/cache-mode";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
 type Share = components["schemas"]["Share"];
@@ -28,35 +28,6 @@ type Job = components["schemas"]["Job"];
 const CACHE_MODES: ShareCacheMode[] = ["cache-then-move", "cache-only", "array-only"];
 const SETTINGS_BACKUP_ROUTE = "/settings/backup";
 const SETTINGS_SCHEDULES_ROUTE = "/settings/schedules";
-
-function shareRelocationDirection(from: ShareCacheMode, to: ShareCacheMode): "cache" | "array" | null {
-  if (from === to) {
-    return null;
-  }
-  if (to === "array-only") {
-    return "array";
-  }
-  if (from === "array-only") {
-    return "cache";
-  }
-  if (from === "cache-then-move" && to === "cache-only") {
-    return "cache";
-  }
-  return null;
-}
-
-function mutationError(err: unknown, t: (key: string) => string): string {
-  if (isApiError(err) && err.code === "maintenance_mode") {
-    return t("shares.errors.maintenanceMode");
-  }
-  if (isApiError(err)) {
-    return err.message;
-  }
-  if (err instanceof Error) {
-    return err.message;
-  }
-  return String(err);
-}
 
 function formatJobTiming(startedAt: string | null | undefined, finishedAt: string | null | undefined): string {
   if (!startedAt) {
@@ -162,7 +133,7 @@ export function CachePage(): React.ReactElement {
       body: { cacheMode },
     });
     if (apiError) {
-      setModeDialogError(mutationError(apiError, t));
+      setModeDialogError(shareMutationError(apiError, t));
       return false;
     }
     if (data) {
@@ -210,7 +181,7 @@ export function CachePage(): React.ReactElement {
         body: { to: relocationDirection },
       });
       if (apiError) {
-        setModeDialogError(mutationError(apiError, t));
+        setModeDialogError(shareMutationError(apiError, t));
         return;
       }
       if (data) {
