@@ -331,6 +331,25 @@ func run(cfg config) error {
 			Sync:     shareRelocationSyncFunc(parityEngine),
 			Manifest: parityEngine.Relocation,
 		}))
+		rebalanceShares := rebalanceSharesFromStore(shareStore, arrayStore)
+		handler.RebalanceShares = rebalanceShares
+		rebalanceSync := shareRelocationSyncFunc(parityEngine)
+		rebalanceTracked := rebalanceTrackedFileCount(parityEngine)
+		registry.Register(job.TypeRebalance, true, job.RunRebalance(job.RebalanceDeps{
+			Sync:             rebalanceSync,
+			TrackedFileCount: rebalanceTracked,
+		}))
+		registry.Register(job.TypeEvacuation, true, job.RunEvacuation(job.EvacuationDeps{
+			Sync:             evacuationSyncFunc(parityEngine),
+			TrackedFileCount: rebalanceTracked,
+			Shares:           rebalanceShares,
+			Manifest:         parityEngine.Relocation,
+		}))
+		// Cancelling an evacuation that is already StatusInterrupted never
+		// re-enters RunEvacuation, so it needs its own path to clear a
+		// stale removing-disks exemption (job.EvacuationAbort's own doc
+		// comment).
+		registry.RegisterAbort(job.TypeEvacuation, job.EvacuationAbort(parityEngine.Relocation))
 		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}
 	}
 	backupService := newBackupService(ctx, cfg, db, machineKey, settingsService, linuxDisks.Exec)

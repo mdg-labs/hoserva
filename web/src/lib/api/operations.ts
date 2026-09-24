@@ -165,3 +165,19 @@ export function postArrayStop() {
 export function postArrayStart() {
   return hoservaClient.POST("/array/start");
 }
+
+export function postPoolRebalancePlan() {
+  return hoservaClient.POST("/pool/rebalance/plan");
+}
+
+export function postPoolRebalance(body: { confirmation: string }) {
+  return hoservaClient.POST("/pool/rebalance", { body });
+}
+
+export function postDiskEvacuationPlan(body: { mountpoint: string }) {
+  return hoservaClient.POST("/disks/array/evacuate/plan", { body });
+}
+
+export function postDiskEvacuation(body: { mountpoint: string; confirmation: string }) {
+  return hoservaClient.POST("/disks/array/evacuate", { body });
+}

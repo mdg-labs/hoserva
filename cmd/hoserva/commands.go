@@ -55,6 +55,34 @@ func poolCmd() *cobra.Command {
 		Short: "Per-disk pool breakdown",
 		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.GetPool(apiCtx()) }),
 	})
+	cmd.AddCommand(rebalanceCmd())
+	return cmd
+}
+
+// rebalanceCmd is `hoserva pool rebalance` (doc 09 §3): run directly
+// (--confirm with the exact phrase `pool rebalance plan` returned) to
+// queue the job, or `pool rebalance plan` first to preview the moves and
+// confirmation phrase without changing anything.
+func rebalanceCmd() *cobra.Command {
+	var confirm string
+	cmd := &cobra.Command{
+		Use:   "rebalance",
+		Short: "Rebalance the pool, moving files to even out fill levels (doc 09 §3)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if confirm == "" {
+				return fmt.Errorf("pool rebalance requires --confirm with the exact phrase `pool rebalance plan` returned")
+			}
+			req := &apiv1.StartRebalanceRequest{Confirmation: confirm}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.StartRebalance(apiCtx(), req) })(cmd, args)
+		},
+	}
+	cmd.Flags().StringVar(&confirm, "confirm", "", "Exact confirmation phrase from `pool rebalance plan` (required)")
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "plan",
+		Short: "Preview a rebalance: the files it would move and the exact confirmation phrase to type",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.PlanRebalance(apiCtx()) }),
+	})
 	return cmd
 }
 
@@ -69,6 +97,43 @@ func diskCmd() *cobra.Command {
 	cmd.AddCommand(diskAddCmd())
 	cmd.AddCommand(diskReplaceCmd())
 	cmd.AddCommand(diskUpgradeCmd())
+	cmd.AddCommand(diskRemoveCmd())
+	return cmd
+}
+
+// diskRemoveCmd is diskAddCmd's own shape for `hoserva disk remove`
+// (doc 09 §4): evacuates a data disk's files onto the pool's remaining
+// disks. It does not remove the disk from the array's own configuration
+// or unmount it (doc 09 §4 steps 7-9) — those are a separate operation.
+func diskRemoveCmd() *cobra.Command {
+	var mountpoint, confirm string
+	cmd := &cobra.Command{
+		Use:   "remove",
+		Short: "Evacuate a data disk's files before physically removing it (doc 09 §4)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if confirm == "" {
+				return fmt.Errorf("disk remove requires --confirm with the exact phrase `disk remove plan` returned")
+			}
+			req := &apiv1.EvacuateDiskRequest{Mountpoint: mountpoint, Confirmation: confirm}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.EvacuateDisk(apiCtx(), req) })(cmd, args)
+		},
+	}
+	cmd.Flags().StringVar(&mountpoint, "mountpoint", "", "The data disk slot to evacuate, e.g. /mnt/disk3 (required)")
+	cmd.Flags().StringVar(&confirm, "confirm", "", "Exact confirmation phrase from `disk remove plan` (required)")
+	_ = cmd.MarkFlagRequired("mountpoint")
+
+	plan := &cobra.Command{
+		Use:   "plan",
+		Short: "Preview evacuating a disk: the files it would move and the exact confirmation phrase to type",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := &apiv1.EvacuateDiskPlanRequest{Mountpoint: mountpoint}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.PlanDiskEvacuation(apiCtx(), req) })(cmd, args)
+		},
+	}
+	plan.Flags().StringVar(&mountpoint, "mountpoint", "", "The data disk slot to evacuate, e.g. /mnt/disk3 (required)")
+	_ = plan.MarkFlagRequired("mountpoint")
+	cmd.AddCommand(plan)
+
 	return cmd
 }
 

@@ -253,6 +253,20 @@ func encodeEnrollTotpRequest(
 	return nil
 }
 
+func encodeEvacuateDiskRequest(
+	req *EvacuateDiskRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeFormatExternalDiskRequest(
 	req *FormatExternalDiskRequest,
 	r *http.Request,
@@ -331,6 +345,20 @@ func encodeMarkNotificationsReadRequest(
 
 func encodePlanDiskAddRequest(
 	req *AddDiskPlanRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodePlanDiskEvacuationRequest(
+	req *EvacuateDiskPlanRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"
@@ -471,6 +499,20 @@ func encodeSetUserPasswordRequest(
 
 func encodeStartFixRequest(
 	req *StartFixRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeStartRebalanceRequest(
+	req *StartRebalanceRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"

@@ -330,6 +330,19 @@ func encodeEnrollTotpResponse(response *TotpEnrollResponse, w http.ResponseWrite
 	return nil
 }
 
+func encodeEvacuateDiskResponse(response *Job, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeExportConfigResponse(response ExportConfigOK, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/zstd")
 	w.WriteHeader(200)
@@ -880,6 +893,19 @@ func encodePlanDiskAddResponse(response *AddDiskPlan, w http.ResponseWriter, spa
 	return nil
 }
 
+func encodePlanDiskEvacuationResponse(response *EvacuationPlan, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodePlanDiskReplaceResponse(response *ReplaceDiskPlan, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -894,6 +920,19 @@ func encodePlanDiskReplaceResponse(response *ReplaceDiskPlan, w http.ResponseWri
 }
 
 func encodePlanDiskUpgradeResponse(response *DiskUpgradePlan, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodePlanRebalanceResponse(response *RebalancePlan, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 
@@ -1087,6 +1126,19 @@ func encodeStartFixResponse(response *Job, w http.ResponseWriter, span trace.Spa
 }
 
 func encodeStartMoverResponse(response *Job, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodeStartRebalanceResponse(response *Job, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 

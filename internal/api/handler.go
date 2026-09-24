@@ -128,6 +128,12 @@ type Handler struct {
 	// UPS is #249's UPS / NUT settings (doc 03 §8.1, Q77). Nil returns an
 	// internal error from those operations.
 	UPS *UPSService
+	// RebalanceShares resolves every configured share into cache.Share for
+	// planRebalance/startRebalance and planDiskEvacuation/evacuateDisk
+	// (doc 09 §3-4, #274) — the array's current topology read fresh from
+	// SQLite (D4) each call, the same way MoverDeps.Shares resolves the
+	// mover's own sweep. Nil returns 501 from those operations.
+	RebalanceShares func(ctx context.Context) ([]cache.Share, error)
 }
 
 var _ apiv1.Handler = (*Handler)(nil)

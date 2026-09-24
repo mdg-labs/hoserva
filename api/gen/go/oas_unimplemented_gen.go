@@ -329,6 +329,28 @@ func (UnimplementedHandler) EnrollTotp(ctx context.Context, req *TotpEnrollReque
 	return r, ht.ErrNotImplemented
 }
 
+// EvacuateDisk implements evacuateDisk operation.
+//
+// Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one,
+// `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching
+// `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job that runs it through
+// `cache.RunRebalance` unchanged: copy and verify every batch, sync through the threshold guard (each
+// such sync naming this disk in the guard's own doc 09 §4 step 2 zero-files exemption, Q15, since the
+// batch that finally empties it would otherwise trip that rule), delete the batch's sources, sync
+// again (Q14) — then, once the whole plan finishes without being interrupted,
+// `cache.EvacuationPostCheck` confirms the disk's own share branches hold nothing but empty
+// directories (doc 09 §4 step 6) before the job reports success. A wrong or missing confirmation is
+// refused (`confirmation_required`) before anything runs. This operation does not put the disk into
+// step 2's own `removing`/no-create state, so it can still receive new writes for as long as this job
+// is running; success here means the disk's data as this job saw it is safely off it, not that the
+// disk is empty or safe to physically remove: step 2 and doc 09 §4 steps 7-9 (mergerfs branch-list
+// removal, SnapRAID removal, unmount) are not performed by this operation.
+//
+// POST /disks/array/evacuate
+func (UnimplementedHandler) EvacuateDisk(ctx context.Context, req *EvacuateDiskRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ExportConfig implements exportConfig operation.
 //
 // Builds and returns doc 10 §1's `hoserva-config-*.tar.zst` archive.
@@ -746,6 +768,28 @@ func (UnimplementedHandler) PlanDiskAdd(ctx context.Context, req *AddDiskPlanReq
 	return r, ht.ErrNotImplemented
 }
 
+// PlanDiskEvacuation implements planDiskEvacuation operation.
+//
+// Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically
+// a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from
+// that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed
+// confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no
+// other branch to evacuate onto, when an entry on the disk is something the evacuation copy path
+// cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room
+// even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or
+// deleted. This operation does not put the disk into doc 09 §4 step 2's own `removing`/no-create
+// state, so the disk keeps taking new writes for as long as its own create policy routes them there
+// — including while `evacuateDisk` is itself running, not only until it starts; a repeat evacuation
+// or a rebalance can be needed to pick up anything that lands there in the meantime. This operation
+// carries out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected
+// through the threshold guard, Q14); step 2 (no-create) and the mergerfs branch-list removal, SnapRAID
+// removal and unmount in steps 7-9 are not performed by it.
+//
+// POST /disks/array/evacuate/plan
+func (UnimplementedHandler) PlanDiskEvacuation(ctx context.Context, req *EvacuateDiskPlanRequest) (r *EvacuationPlan, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // PlanDiskReplace implements planDiskReplace operation.
 //
 // Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity
@@ -777,6 +821,18 @@ func (UnimplementedHandler) PlanDiskReplace(ctx context.Context, req *ReplaceDis
 //
 // POST /disks/array/upgrade/plan
 func (UnimplementedHandler) PlanDiskUpgrade(ctx context.Context, req *DiskUpgradePlanRequest) (r *DiskUpgradePlan, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// PlanRebalance implements planRebalance operation.
+//
+// Computes the rebalance plan (doc 09 §3): for every share with at least two branches, the files
+// `cache.PlanRebalance` would move from that share's own most-full disk to its own least-full disk to
+// bring them within the skew tolerance, plus any path-preserving warnings, and the exact typed
+// confirmation `startRebalance` requires. Read-only: nothing is copied, synced or deleted.
+//
+// POST /pool/rebalance/plan
+func (UnimplementedHandler) PlanRebalance(ctx context.Context) (r *RebalancePlan, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -978,6 +1034,21 @@ func (UnimplementedHandler) StartFix(ctx context.Context, req *StartFixRequest) 
 //
 // POST /mover/run
 func (UnimplementedHandler) StartMover(ctx context.Context) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// StartRebalance implements startRebalance operation.
+//
+// Recomputes the rebalance plan (never trusting a client-supplied one — a stale plan can only omit
+// or skip files at run time, never misdirect a copy or delete) and, once `confirmation` matches the
+// exact phrase the matching `planRebalance` call returned, queues a resumable `job.TypeRebalance` job
+// that runs it through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the
+// threshold guard, delete the batch's sources, sync again (Q14), batched so no trailing sync this run
+// makes can ever trip the guard after sources are already gone (doc 09 §3). A wrong or missing
+// confirmation is refused (`confirmation_required`) before anything runs.
+//
+// POST /pool/rebalance
+func (UnimplementedHandler) StartRebalance(ctx context.Context, req *StartRebalanceRequest) (r *Job, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

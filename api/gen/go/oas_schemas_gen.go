@@ -2266,6 +2266,99 @@ func (s *ErrorStatusCode) SetResponse(val Error) {
 	s.Response = val
 }
 
+// Ref: #/components/schemas/EvacuateDiskPlanRequest
+type EvacuateDiskPlanRequest struct {
+	// The data disk slot to evacuate, e.g. `/mnt/disk3`.
+	Mountpoint string `json:"mountpoint"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *EvacuateDiskPlanRequest) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *EvacuateDiskPlanRequest) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// Ref: #/components/schemas/EvacuateDiskRequest
+type EvacuateDiskRequest struct {
+	Mountpoint string `json:"mountpoint"`
+	// Exact typed confirmation from the matching `planDiskEvacuation` call. A wrong or missing string is
+	// refused and nothing runs.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *EvacuateDiskRequest) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *EvacuateDiskRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *EvacuateDiskRequest) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *EvacuateDiskRequest) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
+// Ref: #/components/schemas/EvacuationPlan
+type EvacuationPlan struct {
+	Mountpoint string             `json:"mountpoint"`
+	Moves      []RebalanceMove    `json:"moves"`
+	Warnings   []RebalanceWarning `json:"warnings"`
+	// Exact typed confirmation `evacuateDisk` requires for this plan (`REMOVE <mountpoint>`).
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *EvacuationPlan) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetMoves returns the value of Moves.
+func (s *EvacuationPlan) GetMoves() []RebalanceMove {
+	return s.Moves
+}
+
+// GetWarnings returns the value of Warnings.
+func (s *EvacuationPlan) GetWarnings() []RebalanceWarning {
+	return s.Warnings
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *EvacuationPlan) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *EvacuationPlan) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetMoves sets the value of Moves.
+func (s *EvacuationPlan) SetMoves(val []RebalanceMove) {
+	s.Moves = val
+}
+
+// SetWarnings sets the value of Warnings.
+func (s *EvacuationPlan) SetWarnings(val []RebalanceWarning) {
+	s.Warnings = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *EvacuationPlan) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
 type ExportConfigOK struct {
 	Data io.Reader
 }
@@ -7780,6 +7873,134 @@ func (s *PoolStatus) SetLargestDiskPath(val OptNilString) {
 	s.LargestDiskPath = val
 }
 
+// One file a rebalance or evacuation plan moves (doc 09 §3-4).
+// Ref: #/components/schemas/RebalanceMove
+type RebalanceMove struct {
+	Share string `json:"share"`
+	// Path relative to the share root.
+	RelPath string `json:"relPath"`
+	// The share-scoped branch directory the file currently lives on, e.g. `/mnt/disk1/media`.
+	SourceBranch string `json:"sourceBranch"`
+	TargetBranch string `json:"targetBranch"`
+	SizeBytes    int64  `json:"sizeBytes"`
+}
+
+// GetShare returns the value of Share.
+func (s *RebalanceMove) GetShare() string {
+	return s.Share
+}
+
+// GetRelPath returns the value of RelPath.
+func (s *RebalanceMove) GetRelPath() string {
+	return s.RelPath
+}
+
+// GetSourceBranch returns the value of SourceBranch.
+func (s *RebalanceMove) GetSourceBranch() string {
+	return s.SourceBranch
+}
+
+// GetTargetBranch returns the value of TargetBranch.
+func (s *RebalanceMove) GetTargetBranch() string {
+	return s.TargetBranch
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *RebalanceMove) GetSizeBytes() int64 {
+	return s.SizeBytes
+}
+
+// SetShare sets the value of Share.
+func (s *RebalanceMove) SetShare(val string) {
+	s.Share = val
+}
+
+// SetRelPath sets the value of RelPath.
+func (s *RebalanceMove) SetRelPath(val string) {
+	s.RelPath = val
+}
+
+// SetSourceBranch sets the value of SourceBranch.
+func (s *RebalanceMove) SetSourceBranch(val string) {
+	s.SourceBranch = val
+}
+
+// SetTargetBranch sets the value of TargetBranch.
+func (s *RebalanceMove) SetTargetBranch(val string) {
+	s.TargetBranch = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *RebalanceMove) SetSizeBytes(val int64) {
+	s.SizeBytes = val
+}
+
+// Ref: #/components/schemas/RebalancePlan
+type RebalancePlan struct {
+	Moves    []RebalanceMove    `json:"moves"`
+	Warnings []RebalanceWarning `json:"warnings"`
+	// Exact typed confirmation `startRebalance` requires for this plan (`REBALANCE`).
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMoves returns the value of Moves.
+func (s *RebalancePlan) GetMoves() []RebalanceMove {
+	return s.Moves
+}
+
+// GetWarnings returns the value of Warnings.
+func (s *RebalancePlan) GetWarnings() []RebalanceWarning {
+	return s.Warnings
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *RebalancePlan) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMoves sets the value of Moves.
+func (s *RebalancePlan) SetMoves(val []RebalanceMove) {
+	s.Moves = val
+}
+
+// SetWarnings sets the value of Warnings.
+func (s *RebalancePlan) SetWarnings(val []RebalanceWarning) {
+	s.Warnings = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *RebalancePlan) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
+// A condition a rebalance or evacuation plan surfaces for review before it runs (doc 09 §3's
+// path-preserving caveat) — never something the plan itself acts on.
+// Ref: #/components/schemas/RebalanceWarning
+type RebalanceWarning struct {
+	Share  string `json:"share"`
+	Reason string `json:"reason"`
+}
+
+// GetShare returns the value of Share.
+func (s *RebalanceWarning) GetShare() string {
+	return s.Share
+}
+
+// GetReason returns the value of Reason.
+func (s *RebalanceWarning) GetReason() string {
+	return s.Reason
+}
+
+// SetShare sets the value of Share.
+func (s *RebalanceWarning) SetShare(val string) {
+	s.Share = val
+}
+
+// SetReason sets the value of Reason.
+func (s *RebalanceWarning) SetReason(val string) {
+	s.Reason = val
+}
+
 // Ref: #/components/schemas/RegisterExternalDiskRequest
 type RegisterExternalDiskRequest struct {
 	Device            string            `json:"device"`
@@ -9192,6 +9413,23 @@ func (s *StartFixRequest) SetConfirm(val bool) {
 // SetDisk sets the value of Disk.
 func (s *StartFixRequest) SetDisk(val OptInt32) {
 	s.Disk = val
+}
+
+// Ref: #/components/schemas/StartRebalanceRequest
+type StartRebalanceRequest struct {
+	// Exact typed confirmation from the matching `planRebalance` call (`REBALANCE`). A wrong or missing
+	// string is refused and nothing runs.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *StartRebalanceRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *StartRebalanceRequest) SetConfirmation(val string) {
+	s.Confirmation = val
 }
 
 // Ref: #/components/schemas/StartScrubRequest

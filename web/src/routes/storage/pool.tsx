@@ -23,6 +23,10 @@ import {
   postArrayStop,
   postArrayUpgrade,
   postArrayUpgradePlan,
+  postDiskEvacuation,
+  postDiskEvacuationPlan,
+  postPoolRebalance,
+  postPoolRebalancePlan,
 } from "@/lib/api/operations";
 import { useApiMutation } from "@/lib/api/use-api-mutation";
 import type { components } from "@/lib/api/client";
@@ -32,6 +36,8 @@ import type { TFunction } from "i18next";
 type AddDiskPlan = components["schemas"]["AddDiskPlan"];
 type ReplaceDiskPlan = components["schemas"]["ReplaceDiskPlan"];
 type DiskUpgradePlan = components["schemas"]["DiskUpgradePlan"];
+type RebalancePlan = components["schemas"]["RebalancePlan"];
+type EvacuationPlan = components["schemas"]["EvacuationPlan"];
 type ArrayDiskFilesystem = components["schemas"]["ArrayDiskFilesystem"];
 type PoolDiskEntry = components["schemas"]["PoolDiskEntry"];
 
@@ -77,6 +83,19 @@ function slotLabel(t: TFunction, entry: PoolDiskEntry): string {
 // the list mixes both.
 function upgradeSlotLabel(entry: PoolDiskEntry): string {
   return `${entry.mountPoint} (${entry.role}, ${entry.device})`;
+}
+
+// rebalancePlanItems renders a RebalancePlan or EvacuationPlan's own
+// moves and warnings (doc 09 §3-4) as the TypedConfirm item list: a plain
+// count/size summary first, since the exact per-file list can run into
+// the hundreds, then every path-preserving warning the plan carries.
+function rebalancePlanItems(t: TFunction, plan: Pick<RebalancePlan, "moves" | "warnings">): string[] {
+  const totalBytes = plan.moves.reduce((sum, move) => sum + (move.sizeBytes ?? 0), 0);
+  const items = [t("pool.planItems.summaryItem", { count: plan.moves.length, size: formatBytes(totalBytes) })];
+  for (const warning of plan.warnings) {
+    items.push(t("pool.planItems.warningItem", { share: warning.share, reason: warning.reason }));
+  }
+  return items;
 }
 
 export function PoolOverviewPage(): React.ReactElement {
@@ -125,12 +144,30 @@ export function PoolOverviewPage(): React.ReactElement {
   const [upgradePending, setUpgradePending] = useState(false);
   const upgradeSelectionGen = useRef(0);
 
+  const [rebalanceOpen, setRebalanceOpen] = useState(false);
+  const [rebalancePlan, setRebalancePlan] = useState<RebalancePlan | null>(null);
+  const [rebalanceConfirmValue, setRebalanceConfirmValue] = useState("");
+  const [rebalanceError, setRebalanceError] = useState<string | null>(null);
+  const [rebalancePending, setRebalancePending] = useState(false);
+
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeMountpoint, setRemoveMountpoint] = useState("");
+  const [removePlan, setRemovePlan] = useState<EvacuationPlan | null>(null);
+  const [removeConfirmValue, setRemoveConfirmValue] = useState("");
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removePending, setRemovePending] = useState(false);
+  const removeSelectionGen = useRef(0);
+
   const addPlanMutation = useApiMutation({ mutationFn: postArrayAddPlan });
   const addMutation = useApiMutation({ mutationFn: postArrayAdd });
   const replacePlanMutation = useApiMutation({ mutationFn: postArrayReplacePlan });
   const replaceMutation = useApiMutation({ mutationFn: postArrayReplace });
   const upgradePlanMutation = useApiMutation({ mutationFn: postArrayUpgradePlan });
   const upgradeMutation = useApiMutation({ mutationFn: postArrayUpgrade });
+  const rebalancePlanMutation = useApiMutation({ mutationFn: postPoolRebalancePlan });
+  const rebalanceMutation = useApiMutation({ mutationFn: postPoolRebalance });
+  const removePlanMutation = useApiMutation({ mutationFn: postDiskEvacuationPlan });
+  const removeMutation = useApiMutation({ mutationFn: postDiskEvacuation });
   const stopMutation = useApiMutation({ mutationFn: postArrayStop });
   const startMutation = useApiMutation({ mutationFn: postArrayStart });
 
@@ -316,6 +353,99 @@ export function PoolOverviewPage(): React.ReactElement {
     setUpgradePending(false);
   }
 
+  function resetRebalanceDialog(): void {
+    setRebalancePlan(null);
+    setRebalanceConfirmValue("");
+    setRebalanceError(null);
+    setRebalancePending(false);
+  }
+
+  // previewRebalance runs as soon as the Rebalance dialog opens — unlike
+  // Add/Replace/Upgrade, there is no selection to make first (doc 09 §3
+  // computes the plan from the pool's own current state alone).
+  async function previewRebalance(): Promise<void> {
+    setRebalancePending(true);
+    setRebalanceError(null);
+    const result = await rebalancePlanMutation.mutate(undefined);
+    if (!result.ok) {
+      setRebalanceError(result.error);
+      setRebalancePending(false);
+      return;
+    }
+    setRebalancePlan(result.data ?? null);
+    setRebalanceConfirmValue("");
+    setRebalancePending(false);
+  }
+
+  async function submitRebalance(): Promise<void> {
+    if (!rebalancePlan) return;
+    setRebalancePending(true);
+    setRebalanceError(null);
+    const result = await rebalanceMutation.mutate({ confirmation: rebalanceConfirmValue });
+    if (!result.ok) {
+      setRebalanceError(result.error);
+      setRebalancePending(false);
+      return;
+    }
+    setRebalanceOpen(false);
+    resetRebalanceDialog();
+    await refresh();
+    setRebalancePending(false);
+  }
+
+  function resetRemovePlan(): void {
+    setRemovePlan(null);
+    setRemoveConfirmValue("");
+    setRemoveError(null);
+    // See resetAddPlan: an in-flight preview for the old selection is
+    // already stale (removeSelectionGen), so Preview should not stay
+    // disabled waiting for it.
+    setRemovePending(false);
+  }
+
+  function resetRemoveDialog(): void {
+    resetRemovePlan();
+    setRemoveMountpoint("");
+  }
+
+  async function previewRemoveDisk(): Promise<void> {
+    if (!removeMountpoint) return;
+    removeSelectionGen.current += 1;
+    const gen = removeSelectionGen.current;
+    const mountpoint = removeMountpoint;
+    setRemovePending(true);
+    setRemoveError(null);
+    const result = await removePlanMutation.mutate({ mountpoint });
+    if (removeSelectionGen.current !== gen) return;
+    if (!result.ok) {
+      setRemoveError(result.error);
+      setRemovePending(false);
+      return;
+    }
+    setRemovePlan(result.data ?? null);
+    setRemoveConfirmValue("");
+    if (removeSelectionGen.current === gen) setRemovePending(false);
+  }
+
+  async function submitRemoveDisk(): Promise<void> {
+    if (!removePlan) return;
+    setRemovePending(true);
+    setRemoveError(null);
+    const result = await removeMutation.mutate({
+      mountpoint: removePlan.mountpoint,
+      confirmation: removeConfirmValue,
+    });
+    if (!result.ok) {
+      setRemoveError(result.error);
+      setRemovePending(false);
+      return;
+    }
+    setRemoveOpen(false);
+    resetRemoveDialog();
+    await refresh();
+    setRemovePending(false);
+  }
+
   const handleStop = async (): Promise<void> => {
     setPending(true);
     const result = await stopMutation.mutate(undefined);
@@ -403,6 +533,19 @@ export function PoolOverviewPage(): React.ReactElement {
               upgrade — is shown inside the dialog. */}
           <Button variant="outline" onClick={() => setUpgradeOpen(true)}>
             {t("pool.upgradeDisk")}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={maintenance}
+            onClick={() => {
+              setRebalanceOpen(true);
+              void previewRebalance();
+            }}
+          >
+            {t("pool.rebalance")}
+          </Button>
+          <Button variant="outline" disabled={maintenance} onClick={() => setRemoveOpen(true)}>
+            {t("pool.removeDisk")}
           </Button>
           {maintenance ? (
             <Button variant="default" onClick={() => setStartOpen(true)}>
@@ -738,6 +881,95 @@ export function PoolOverviewPage(): React.ReactElement {
                 : []),
               ...upgradePlan.steps.map((step) => t("pool.upgrade.stepItem", { step })),
             ]}
+          />
+        ) : null}
+      </FormOverlay>
+      <FormOverlay
+        open={rebalanceOpen}
+        onOpenChange={(open) => {
+          setRebalanceOpen(open);
+          if (!open) resetRebalanceDialog();
+        }}
+        title={t("pool.rebalanceDialog.title")}
+        description={t("pool.rebalanceDialog.description")}
+        footer={
+          rebalancePlan && rebalancePlan.moves.length > 0 ? (
+            <Button
+              variant="default"
+              disabled={rebalancePending || rebalanceConfirmValue !== rebalancePlan.confirmation}
+              onClick={() => void submitRebalance()}
+            >
+              {t("pool.rebalanceDialog.submit")}
+            </Button>
+          ) : undefined
+        }
+      >
+        {rebalanceError ? <Banner tone="error" title={rebalanceError} /> : null}
+        {rebalancePending && !rebalancePlan ? <LoadingBlock /> : null}
+        {rebalancePlan && rebalancePlan.moves.length === 0 ? (
+          <InlineNote description={t("pool.rebalanceDialog.alreadyBalanced")} />
+        ) : null}
+        {rebalancePlan && rebalancePlan.moves.length > 0 ? (
+          <TypedConfirm
+            phrase={rebalancePlan.confirmation}
+            value={rebalanceConfirmValue}
+            onChange={setRebalanceConfirmValue}
+            title={t("pool.rebalanceDialog.confirmTitle")}
+            description={t("pool.rebalanceDialog.confirmDescription")}
+            items={rebalancePlanItems(t, rebalancePlan)}
+          />
+        ) : null}
+      </FormOverlay>
+      <FormOverlay
+        open={removeOpen}
+        onOpenChange={(open) => {
+          setRemoveOpen(open);
+          if (!open) resetRemoveDialog();
+        }}
+        title={t("pool.remove.title")}
+        description={t("pool.remove.description")}
+        footer={
+          removePlan ? (
+            <Button
+              variant="destructive"
+              disabled={removePending || removeConfirmValue !== removePlan.confirmation}
+              onClick={() => void submitRemoveDisk()}
+            >
+              {t("pool.remove.submit")}
+            </Button>
+          ) : (
+            <Button
+              variant="default"
+              disabled={!removeMountpoint || removePending}
+              onClick={() => void previewRemoveDisk()}
+            >
+              {t("pool.remove.preview")}
+            </Button>
+          )
+        }
+      >
+        {removeError ? <Banner tone="error" title={removeError} /> : null}
+        <Field>
+          <FieldLabel>{t("pool.remove.slotLabel")}</FieldLabel>
+          <SelectFilter
+            value={removeMountpoint}
+            onChange={(value) => {
+              removeSelectionGen.current += 1;
+              setRemoveMountpoint(value);
+              resetRemovePlan();
+            }}
+            placeholder={t("pool.remove.slotPlaceholder")}
+            options={dataDisks.map((disk) => ({ value: disk.mountPoint, label: slotLabel(t, disk) }))}
+          />
+        </Field>
+        {removePlan ? (
+          <TypedConfirm
+            phrase={removePlan.confirmation}
+            value={removeConfirmValue}
+            onChange={setRemoveConfirmValue}
+            title={t("pool.remove.confirmTitle", { mountpoint: removePlan.mountpoint })}
+            description={t("pool.remove.confirmDescription")}
+            items={rebalancePlanItems(t, removePlan)}
           />
         ) : null}
       </FormOverlay>
