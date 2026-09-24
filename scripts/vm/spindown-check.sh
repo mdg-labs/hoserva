@@ -76,7 +76,7 @@ trap on_exit EXIT
 WINDOW_S="${HOSERVA_SPINDOWN_WINDOW_S:-1800}"
 POLL_INTERVAL_S="${HOSERVA_SPINDOWN_POLL_INTERVAL_S:-60}"
 # The settle gate is doc 08 Spike 1's own (Q31): an explicit sync, then
-# every disk's counters unchanged for 180s, sampled every 5s, failing
+# every array disk's counters unchanged for 180s, sampled every 5s, failing
 # after 900s. By this step the suite has built an array and run journey
 # 5's sync and mass deletion on it, and XFS covers its log in 30s
 # (xfssyncd_centisecs) steps for a minute or more after the last change,
@@ -162,17 +162,20 @@ snapshot_stats() {
 
 ALL_DEVS="${ARRAY_DEVS[*]} ${CACHE_DEVS[*]:-}"
 
-echo "spindown-check[$HOSERVA_LAB_ID]: settle gate (sync, then every disk unchanged for ${SETTLE_QUIET_S}s, sampled every ${SETTLE_INTERVAL_S}s, ${SETTLE_TIMEOUT_S}s bound)"
+# The settle gate watches the array disks only: the cache disk is not
+# part of the acceptance criterion below (doc 02 §1), so its own writes
+# must not keep resetting the array's quiet period.
+echo "spindown-check[$HOSERVA_LAB_ID]: settle gate (sync, then every array disk unchanged for ${SETTLE_QUIET_S}s, sampled every ${SETTLE_INTERVAL_S}s, ${SETTLE_TIMEOUT_S}s bound)"
 vm_ssh sync
 settle_start=$SECONDS
-prev="$(snapshot_stats "$ALL_DEVS")"
+prev="$(snapshot_stats "${ARRAY_DEVS[*]}")"
 last_change=$SECONDS
 while (( SECONDS - last_change < SETTLE_QUIET_S )); do
   if (( SECONDS - settle_start >= SETTLE_TIMEOUT_S )); then
-    die "settle gate did not stabilize within ${SETTLE_TIMEOUT_S}s — disks were still changing on their own before the measurement window even started"
+    die "settle gate did not stabilize within ${SETTLE_TIMEOUT_S}s — array disks were still changing on their own before the measurement window even started"
   fi
   sleep "$SETTLE_INTERVAL_S"
-  cur="$(snapshot_stats "$ALL_DEVS")"
+  cur="$(snapshot_stats "${ARRAY_DEVS[*]}")"
   if [[ "$cur" != "$prev" ]]; then
     last_change=$SECONDS
     prev="$cur"
