@@ -144,6 +144,47 @@ describe("Settings pages", () => {
     });
   });
 
+  it("omits a UPS password that was typed and then cleared, keeping the stored one", async () => {
+    const saved = {
+      configured: true,
+      connection: "usb",
+      driver: "usbhid-ups",
+      port: "auto",
+      monitorPasswordSet: true,
+      lowBatteryPercent: 20,
+      runtimeSeconds: 300,
+    };
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/settings/general") {
+        return Promise.resolve({
+          data: { hostname: "nas", timezone: "UTC", backupPassphraseSet: false },
+          response: { ok: true },
+        });
+      }
+      if (path === "/settings/ups") {
+        return Promise.resolve({ data: saved, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    mockPut.mockResolvedValue({ data: saved, response: { ok: true } });
+
+    renderWithToast(<GeneralSettingsPage />);
+
+    const password = await screen.findByLabelText("Monitor password");
+    fireEvent.change(password, { target: { value: "typo" } });
+    fireEvent.change(password, { target: { value: "" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save changes" })[1]);
+
+    await waitFor(() => {
+      expect(mockPut).toHaveBeenCalledWith("/settings/ups", expect.anything());
+    });
+    const [, request] = mockPut.mock.calls.find(([path]) => path === "/settings/ups") as [
+      string,
+      { body: Record<string, unknown> },
+    ];
+    expect(request.body).not.toHaveProperty("monitorPassword");
+  });
+
   it("shows a UPS API error with the settings Banner pattern", async () => {
     mockGet.mockImplementation((path: string) => {
       if (path === "/settings/general") {

@@ -228,7 +228,7 @@ export function GeneralSettingsPage(): React.ReactElement {
       if (upsForm.connection === "usb") {
         body.driver = upsForm.driver;
         body.port = upsForm.port;
-        if (passwordTouched.monitor || !upsSaved?.monitorPasswordSet) {
+        if (upsForm.monitorPassword !== "") {
           body.monitorPassword = upsForm.monitorPassword;
         }
         body.lowBatteryPercent = upsForm.lowBatteryPercent;
@@ -238,7 +238,7 @@ export function GeneralSettingsPage(): React.ReactElement {
         body.networkPort = upsForm.networkPort;
         body.networkUpsName = upsForm.networkUpsName;
         body.networkUsername = upsForm.networkUsername;
-        if (passwordTouched.network || !upsSaved?.networkPasswordSet) {
+        if (upsForm.networkPassword !== "") {
           body.networkPassword = upsForm.networkPassword;
         }
       }
