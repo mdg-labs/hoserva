@@ -74,6 +74,17 @@ describe("buildNfsExportLine", () => {
     expect(got).toBe(wantLine);
   });
 
+  it("matches RenderNFSExports for an IPv4-mapped IPv6 host, left unbracketed (nfs-ipv4-mapped)", () => {
+    const { share, wantLine, fsid } = loadShare("nfs-ipv4-mapped", "media");
+    const got = buildNfsExportLine("/mnt/user/media", {
+      enabled: true,
+      hosts: share.hosts,
+      squash: share.squash,
+      fsid,
+    });
+    expect(got).toBe(wantLine);
+  });
+
   it("matches RenderNFSExports for a DNS hostname client (nfs-mixed, backup)", () => {
     const { share, wantLine, fsid } = loadShare("nfs-mixed", "backup");
     const got = buildNfsExportLine("/mnt/user/backup", {

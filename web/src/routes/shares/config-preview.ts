@@ -144,13 +144,19 @@ function canonicalIPv6(addr: string): string | null {
 // nfsClientToken runs through net.ParseCIDR + ip.String() before
 // bracketing; a stored host typed in non-canonical form (pasted
 // uncompressed, no "::" shorthand) would otherwise still render
-// differently here than in /etc/exports.
+// differently here than in /etc/exports. Both branches leave an
+// IPv4-mapped address (which Go's To4() treats as IPv4) and anything
+// net.ParseIP rejects unbracketed, as Go does.
 function nfsClientToken(host: string): string {
   if (!host.includes(":")) {
     return host;
   }
   const slash = host.lastIndexOf("/");
   if (slash === -1) {
+    const groups = parseIPv6Groups(host);
+    if (groups === null || isIPv4Mapped(groups)) {
+      return host;
+    }
     return `[${host}]`;
   }
   const addr = host.slice(0, slash);
