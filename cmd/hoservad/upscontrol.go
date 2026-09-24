@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/mdg-labs/hoserva/internal/auth"
+	cfggen "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
@@ -31,6 +32,22 @@ const upsControlSocketName = "ups-control.sock"
 // resolves to next to apiSocketPath.
 func upsControlSocketPath(apiSocketPath string) string {
 	return filepath.Join(filepath.Dir(apiSocketPath), upsControlSocketName)
+}
+
+// upsSocketPermissions is api.UPSSocketPermissions' real implementation
+// (internal/api/upsservice.go): UPSService.Update calls Apply after every
+// successful WriteUPS. run()'s own startup call to
+// applySocketGroupPermissions (main.go) chowns the ups control socket
+// exactly once, at daemon start — nut being installed afterward (it is
+// only Recommends:, not Depends:) is picked up only here, the next time
+// UPS settings are saved, not by anything on its own (#340).
+type upsSocketPermissions struct {
+	path string
+}
+
+func (p upsSocketPermissions) Apply(context.Context) error {
+	applySocketGroupPermissions(p.path, cfggen.NUTGroup)
+	return nil
 }
 
 // systemctlPowerOff is job.PowerOff's real implementation (doc 02 §6,
@@ -129,7 +146,7 @@ func newUPSController(scheduler *job.Scheduler, currentArray func() *job.ArraySe
 // in-memory jobs at all (job.Scheduler.Drain waits on channels only the
 // daemon's own goroutines hold), so both hooks must reach this same
 // process, never a standalone one.
-func serveUPSControl(ctx context.Context, ln net.Listener, controller *job.UPSController, lookup auth.GroupLookup, daemonUID uint32) {
+func serveUPSControl(ctx context.Context, ln net.Listener, controller *job.UPSController, lookup auth.GroupLookup, daemonUID uint32, group string) {
 	var warnMissingGroupOnce sync.Once
 	for {
 		conn, err := ln.Accept()
@@ -140,7 +157,7 @@ func serveUPSControl(ctx context.Context, ln net.Listener, controller *job.UPSCo
 			log.Printf("hoservad: ups control socket accept: %v", err)
 			continue
 		}
-		go handleUPSControlConn(ctx, conn, controller, lookup, daemonUID, &warnMissingGroupOnce)
+		go handleUPSControlConn(ctx, conn, controller, lookup, daemonUID, group, &warnMissingGroupOnce)
 	}
 }
 
@@ -152,7 +169,7 @@ func serveUPSControl(ctx context.Context, ln net.Listener, controller *job.UPSCo
 // LOWBATT notification makes, so both of upsmon's independent shutdown
 // triggers run the identical, single-in-flight-run sequence (job/ups.go's
 // own shutdownRun) rather than racing.
-func handleUPSControlConn(ctx context.Context, conn net.Conn, controller *job.UPSController, lookup auth.GroupLookup, daemonUID uint32, warnMissingGroupOnce *sync.Once) {
+func handleUPSControlConn(ctx context.Context, conn net.Conn, controller *job.UPSController, lookup auth.GroupLookup, daemonUID uint32, group string, warnMissingGroupOnce *sync.Once) {
 	defer func() { _ = conn.Close() }()
 
 	uc, ok := conn.(*net.UnixConn)
@@ -165,19 +182,19 @@ func handleUPSControlConn(ctx context.Context, conn net.Conn, controller *job.UP
 		return
 	}
 
-	authorized, err := authorizeUnixPeer(cred, lookup, daemonUID)
+	authorized, err := authorizeUnixPeer(cred, lookup, daemonUID, group)
 	switch {
 	case err == nil:
 	case errors.Is(err, auth.ErrGroupNotFound):
 		warnMissingGroupOnce.Do(func() {
-			log.Printf("hoservad: group %q does not exist — the ups control socket accepts only root and this daemon's own user until it is created (Q44)", hoservaGroup)
+			log.Printf("hoservad: group %q does not exist — the ups control socket accepts only root and this daemon's own user until it is created (#340)", group)
 		})
 	default:
 		replyLine(conn, "ERROR: checking authorization: %v", err)
 		return
 	}
 	if !authorized {
-		replyLine(conn, "ERROR: forbidden: connect as root, this daemon's own user, or a member of the hoserva group")
+		replyLine(conn, "ERROR: forbidden: connect as root, this daemon's own user, or a member of the %s group", group)
 		return
 	}
 

@@ -106,7 +106,24 @@ SNAPRAID_CONF
 fi
 
 echo "ups-check[$HOSERVA_LAB_ID]: === setup: NUT with the dummy-ups driver, from hoservad's own real config renderer (never a hand-rolled substitute) ==="
-vm_ssh 'command -v upsc >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq nut)'
+if vm_ssh 'command -v upsc >/dev/null 2>&1'; then
+  echo "ups-check[$HOSERVA_LAB_ID]: nut is already installed (an earlier suite step) — leaving it alone"
+else
+  vm_ssh 'sudo apt-get update -qq && sudo apt-get install -y -qq nut'
+  # #340: upsmon.conf no longer overrides RUN_AS_USER, so upsmon's own
+  # unprivileged child runs as nut (Debian's default) rather than root,
+  # reachable only on the ups control socket's own root:nut 0660
+  # (applySocketGroupPermissions, cmd/hoservad/main.go) — never the
+  # hoserva group, which stays root-equivalent (Q44). nut is only
+  # Recommends:, not Depends:, so this branch always installs it after
+  # hoservad already started (above) and found no nut group to chow the
+  # socket to; restarting hoservad re-runs that same startup chown now
+  # that the group exists (#340) — the production path a settings-ups
+  # save takes instead, UPSService.Update's own Socket.Apply, is
+  # exercised at L1 (internal/api/ups_handler_test.go), not here.
+  vm_ssh 'sudo systemctl restart hoserva'
+  vm_ssh 'sudo systemctl is-active hoserva' >/dev/null || die "hoservad did not come back up after nut was installed"
+fi
 
 render_nut_file() {
   (cd "$VM_REPO_ROOT" && go run ./scripts/vm/nutconfig "$1")
@@ -133,6 +150,33 @@ vm_ssh 'sudo systemctl restart nut-driver-enumerator.service'
 vm_ssh 'sudo systemctl restart "nut-driver@hoserva-ups.service"'
 vm_ssh 'sudo systemctl restart nut-server.service'
 vm_ssh 'sudo systemctl restart nut-monitor.service'
+
+# upsmon always forks into a small privileged parent (root — the only
+# piece that ever runs SHUTDOWNCMD, per upsmon.conf(5)) plus the bulk
+# worker RUN_AS_USER names; before #340 that worker was itself root
+# (RenderUPSMonConf's own RUN_AS_USER override), so the presence of a
+# nut-owned upsmon process here — not the absence of any root one, which
+# always exists — is what actually distinguishes the fix from a
+# regression back to it.
+echo "ups-check[$HOSERVA_LAB_ID]: === confirming upsmon's own bulk-work process runs as nut, not root (#340) ==="
+nut_child_seen=false
+for _ in $(seq 1 15); do
+  if vm_ssh 'sudo ps -C upsmon -o user= | grep -qx nut'; then
+    nut_child_seen=true
+    break
+  fi
+  sleep 1
+done
+$nut_child_seen || die "no upsmon process is running as nut within 15s of restarting nut-monitor.service — RenderUPSMonConf's own RUN_AS_USER removal did not take effect, or the nut package's default RUN_AS_USER changed"
+
+# applySocketGroupPermissions (cmd/hoservad/main.go) chowns the ups
+# control socket to root:nut 0660 at daemon start (#340) — this is what
+# actually lets the nut-owned upsmon process confirmed above reach it,
+# never the hoserva group (that stays reserved for root-equivalent admin
+# access, Q44).
+echo "ups-check[$HOSERVA_LAB_ID]: === confirming the ups control socket is root:nut 0660 (#340) ==="
+SOCK_STAT="$(vm_ssh 'stat -c "%U:%G %a" /run/hoserva/ups-control.sock')"
+[[ "$SOCK_STAT" == "root:nut 660" ]] || die "ups control socket is '$SOCK_STAT', want 'root:nut 660'"
 
 echo "ups-check[$HOSERVA_LAB_ID]: waiting for upsd to see the dummy-ups driver online"
 ready=false

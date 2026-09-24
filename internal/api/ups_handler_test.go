@@ -29,7 +29,21 @@ func (f *fakeNUTReloader) Reload(ctx context.Context, connection config.UPSConne
 	return f.err
 }
 
-func newUPSTestEnv(t *testing.T) (context.Context, *api.Handler, *api.UPSStore, *config.Generator, *fakeNUTReloader) {
+// fakeUPSSocketPermissions is api.UPSSocketPermissions' own fake (#340):
+// tests assert Apply ran (or, for the failure-path test, that a returned
+// error still refuses before any lasting state changes) without a real
+// ups control socket or a real nut group on this host.
+type fakeUPSSocketPermissions struct {
+	calls int
+	err   error
+}
+
+func (f *fakeUPSSocketPermissions) Apply(ctx context.Context) error {
+	f.calls++
+	return f.err
+}
+
+func newUPSTestEnv(t *testing.T) (context.Context, *api.Handler, *api.UPSStore, *config.Generator, *fakeNUTReloader, *fakeUPSSocketPermissions) {
 	t.Helper()
 	migrations, err := store.Load()
 	if err != nil {
@@ -58,8 +72,9 @@ func newUPSTestEnv(t *testing.T) (context.Context, *api.Handler, *api.UPSStore, 
 		return os.Getgid(), nil
 	}
 	nut := &fakeNUTReloader{}
+	socket := &fakeUPSSocketPermissions{}
 	storeUPS := api.NewUPSStore(db)
-	svc := api.NewUPSService(storeUPS, fakeSettingsCipher{}, g, nut)
+	svc := api.NewUPSService(storeUPS, fakeSettingsCipher{}, g, nut, socket)
 	// Each call is a new second, so a rollback that stamps files with
 	// "now" cannot accidentally match the prior header.
 	clock := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
@@ -68,11 +83,11 @@ func newUPSTestEnv(t *testing.T) (context.Context, *api.Handler, *api.UPSStore, 
 		clock = clock.Add(time.Second)
 		return current
 	}
-	return context.Background(), &api.Handler{UPS: svc, Generator: g}, storeUPS, g, nut
+	return context.Background(), &api.Handler{UPS: svc, Generator: g}, storeUPS, g, nut, socket
 }
 
 func TestGetUPSSettingsEmpty(t *testing.T) {
-	ctx, h, _, _, _ := newUPSTestEnv(t)
+	ctx, h, _, _, _, _ := newUPSTestEnv(t)
 	got, err := h.GetUPSSettings(ctx)
 	if err != nil {
 		t.Fatalf("GetUPSSettings: %v", err)
@@ -90,7 +105,7 @@ func TestGetUPSSettingsEmpty(t *testing.T) {
 }
 
 func TestUpdateUPSSettingsUSBNeverReturnsPassword(t *testing.T) {
-	ctx, h, upsStore, g, nut := newUPSTestEnv(t)
+	ctx, h, upsStore, g, nut, _ := newUPSTestEnv(t)
 	pwd := "s3cr3t-monitor-pass"
 	got, err := h.UpdateUPSSettings(ctx, &apiv1.UpdateUPSSettingsRequest{
 		Connection:        apiv1.UPSConnectionUsb,
@@ -136,7 +151,7 @@ func TestUpdateUPSSettingsUSBNeverReturnsPassword(t *testing.T) {
 }
 
 func TestUpdateUPSSettingsOmittingPasswordKeepsSecret(t *testing.T) {
-	ctx, h, _, _, _ := newUPSTestEnv(t)
+	ctx, h, _, _, _, _ := newUPSTestEnv(t)
 	if _, err := h.UpdateUPSSettings(ctx, &apiv1.UpdateUPSSettingsRequest{
 		Connection:      apiv1.UPSConnectionUsb,
 		Driver:          apiv1.NewOptString("usbhid-ups"),
@@ -164,7 +179,7 @@ func TestUpdateUPSSettingsOmittingPasswordKeepsSecret(t *testing.T) {
 }
 
 func TestUpdateUPSSettingsMissingDriverIs400(t *testing.T) {
-	ctx, h, upsStore, _, _ := newUPSTestEnv(t)
+	ctx, h, upsStore, _, _, _ := newUPSTestEnv(t)
 	_, err := h.UpdateUPSSettings(ctx, &apiv1.UpdateUPSSettingsRequest{
 		Connection:      apiv1.UPSConnectionUsb,
 		Port:            apiv1.NewOptString("auto"),
@@ -183,7 +198,7 @@ func TestUpdateUPSSettingsMissingDriverIs400(t *testing.T) {
 }
 
 func TestUpdateUPSSettingsUnmanagedConfigIs409(t *testing.T) {
-	ctx, h, upsStore, g, _ := newUPSTestEnv(t)
+	ctx, h, upsStore, g, _, _ := newUPSTestEnv(t)
 	hostFile := filepath.Join(g.Root, config.PathUPSMonConf)
 	if err := os.WriteFile(hostFile, []byte("MODE=none\n"), 0o644); err != nil {
 		t.Fatalf("seed host file: %v", err)
@@ -212,7 +227,7 @@ func TestUpdateUPSSettingsUnmanagedConfigIs409(t *testing.T) {
 }
 
 func TestUpdateUPSSettingsReloadFailureRollsBackDB(t *testing.T) {
-	ctx, h, upsStore, g, nut := newUPSTestEnv(t)
+	ctx, h, upsStore, g, nut, _ := newUPSTestEnv(t)
 	nut.err = errors.New("systemctl restart failed")
 	_, err := h.UpdateUPSSettings(ctx, &apiv1.UpdateUPSSettingsRequest{
 		Connection:      apiv1.UPSConnectionUsb,
@@ -238,8 +253,61 @@ func TestUpdateUPSSettingsReloadFailureRollsBackDB(t *testing.T) {
 	}
 }
 
+// TestUpdateUPSSettingsAppliesSocketPermissions proves Update calls
+// UPSSocketPermissions.Apply after every successful WriteUPS (#340) —
+// the only point that re-applies the ups control socket's nut-group
+// ownership when nut is installed after this daemon started, since
+// CanWriteUPS already guarantees the nut group exists by the time this
+// runs.
+func TestUpdateUPSSettingsAppliesSocketPermissions(t *testing.T) {
+	ctx, h, _, _, _, socket := newUPSTestEnv(t)
+	if _, err := h.UpdateUPSSettings(ctx, &apiv1.UpdateUPSSettingsRequest{
+		Connection:      apiv1.UPSConnectionUsb,
+		Driver:          apiv1.NewOptString("usbhid-ups"),
+		Port:            apiv1.NewOptString("auto"),
+		MonitorPassword: apiv1.NewOptString("pass"),
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if socket.calls != 1 {
+		t.Fatalf("socket.Apply called %d times, want 1", socket.calls)
+	}
+}
+
+// TestUpdateUPSSettingsSocketPermissionsFailureRollsBackDB mirrors
+// TestUpdateUPSSettingsReloadFailureRollsBackDB above: a failure
+// applying the ups control socket's permissions is treated exactly like
+// a reload failure — the row and every generated file it wrote are
+// rolled back, never left half-applied.
+func TestUpdateUPSSettingsSocketPermissionsFailureRollsBackDB(t *testing.T) {
+	ctx, h, upsStore, g, _, socket := newUPSTestEnv(t)
+	socket.err = errors.New("chown ups-control.sock failed")
+	_, err := h.UpdateUPSSettings(ctx, &apiv1.UpdateUPSSettingsRequest{
+		Connection:      apiv1.UPSConnectionUsb,
+		Driver:          apiv1.NewOptString("usbhid-ups"),
+		Port:            apiv1.NewOptString("auto"),
+		MonitorPassword: apiv1.NewOptString("pass"),
+	})
+	if err == nil {
+		t.Fatal("expected socket permissions error")
+	}
+	if _, getErr := upsStore.Get(ctx); !errors.Is(getErr, sql.ErrNoRows) {
+		t.Fatalf("row left after socket permissions failure: %v", getErr)
+	}
+	for _, path := range []string{
+		config.PathNUTConf,
+		config.PathUPSMonConf,
+		config.PathUPSConf,
+		config.PathUPSDUsers,
+	} {
+		if _, err := os.Stat(filepath.Join(g.Root, path)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("generated %s left after first-configure socket permissions failure: %v", path, err)
+		}
+	}
+}
+
 func TestUpdateUPSSettingsReloadFailureRestoresPriorFiles(t *testing.T) {
-	ctx, h, upsStore, g, nut := newUPSTestEnv(t)
+	ctx, h, upsStore, g, nut, _ := newUPSTestEnv(t)
 	firstPass := "first-monitor-pass"
 	if _, err := h.UpdateUPSSettings(ctx, &apiv1.UpdateUPSSettingsRequest{
 		Connection:        apiv1.UPSConnectionUsb,
@@ -292,7 +360,7 @@ func TestUpdateUPSSettingsReloadFailureRestoresPriorFiles(t *testing.T) {
 }
 
 func TestUpdateUPSSettingsWriteUPSFailureRestoresPriorFiles(t *testing.T) {
-	ctx, h, upsStore, g, _ := newUPSTestEnv(t)
+	ctx, h, upsStore, g, _, _ := newUPSTestEnv(t)
 	firstPass := "kept-monitor-pass"
 	if _, err := h.UpdateUPSSettings(ctx, &apiv1.UpdateUPSSettingsRequest{
 		Connection:        apiv1.UPSConnectionUsb,
@@ -359,7 +427,7 @@ func TestUpdateUPSSettingsWriteUPSFailureRestoresPriorFiles(t *testing.T) {
 }
 
 func TestUpdateUPSSettingsNetwork(t *testing.T) {
-	ctx, h, _, g, nut := newUPSTestEnv(t)
+	ctx, h, _, g, nut, _ := newUPSTestEnv(t)
 	got, err := h.UpdateUPSSettings(ctx, &apiv1.UpdateUPSSettingsRequest{
 		Connection:      apiv1.UPSConnectionNetwork,
 		NetworkHost:     apiv1.NewOptString("nut.example.lan"),
@@ -383,7 +451,7 @@ func TestUpdateUPSSettingsNetwork(t *testing.T) {
 }
 
 func TestUpdateUPSSettingsMissingNUTGroupIs409(t *testing.T) {
-	ctx, h, upsStore, g, _ := newUPSTestEnv(t)
+	ctx, h, upsStore, g, _, _ := newUPSTestEnv(t)
 	g.LookupGroup = func(name string) (int, error) {
 		return 0, errors.New("no such group")
 	}

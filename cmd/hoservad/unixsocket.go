@@ -81,26 +81,27 @@ func removeStaleSocket(path string) error {
 	return nil
 }
 
-// applySocketGroupPermissions chowns the socket to hoservaGroup and chmods
-// it 0660 (Q44) — production-only in practice, since it needs the group
-// to exist, and degrades cleanly (one log line, no error) when it
-// doesn't, which is always true in dev (CLAUDE.md: never create a system
-// group from here) — setupUnixListener has already left the socket at
-// 0600 in that case, so the log line below is accurate regardless of
-// whether this daemon runs as root or as a non-root dev user.
-func applySocketGroupPermissions(path string) {
-	g, err := user.LookupGroup(hoservaGroup)
+// applySocketGroupPermissions chowns the socket to group and chmods it
+// 0660 (Q44's hoserva.sock; #340's root:nut ups-control.sock) —
+// production-only in practice, since it needs the group to exist, and
+// degrades cleanly (one log line, no error) when it doesn't, which is
+// always true in dev (CLAUDE.md: never create a system group from
+// here) — setupUnixListener has already left the socket at 0600 in
+// that case, so the log line below is accurate regardless of whether
+// this daemon runs as root or as a non-root dev user.
+func applySocketGroupPermissions(path, group string) {
+	g, err := user.LookupGroup(group)
 	if err != nil {
-		log.Printf("hoservad: group %q does not exist — leaving the Unix socket owner-only (0600); root and this daemon's own user can still use it (Q44)", hoservaGroup)
+		log.Printf("hoservad: group %q does not exist — leaving the Unix socket owner-only (0600); root and this daemon's own user can still use it (Q44)", group)
 		return
 	}
 	gid, err := strconv.Atoi(g.Gid)
 	if err != nil {
-		log.Printf("hoservad: could not parse gid for group %q: %v", hoservaGroup, err)
+		log.Printf("hoservad: could not parse gid for group %q: %v", group, err)
 		return
 	}
 	if err := os.Chown(path, -1, gid); err != nil {
-		log.Printf("hoservad: could not chown %s to group %q: %v", path, hoservaGroup, err)
+		log.Printf("hoservad: could not chown %s to group %q: %v", path, group, err)
 		return
 	}
 	if err := os.Chmod(path, 0o660); err != nil {
@@ -126,16 +127,21 @@ func unixConnContext(ctx context.Context, c net.Conn) context.Context {
 }
 
 // authorizeUnixPeer applies Q44's own admission rule — uid 0, this
-// daemon's own uid, or a member of hoservaGroup — shared by every Unix
-// socket hoservad serves (the main API socket, below, and the ups
-// control socket, cmd/hoservad/upscontrol.go). err is only ever
+// daemon's own uid, or a member of group — to whichever Unix socket the
+// caller is checking. Every socket hoservad serves shares this same
+// rule, but not the same group: the main API socket (below) always
+// checks hoservaGroup, root-equivalent by design (Q44, doc 01 §7); the
+// ups control socket (cmd/hoservad/upscontrol.go) checks the nut group
+// instead (#340), deliberately never hoservaGroup, so upsmon's
+// unprivileged nut child is never admitted to hoserva.sock by the same
+// membership that admits it to the ups control socket. err is only ever
 // auth.ErrGroupNotFound (the caller logs that case once, degrading to
 // root-and-daemon-uid-only) or a real lookup failure.
-func authorizeUnixPeer(cred auth.PeerCredential, lookup auth.GroupLookup, daemonUID uint32) (bool, error) {
+func authorizeUnixPeer(cred auth.PeerCredential, lookup auth.GroupLookup, daemonUID uint32, group string) (bool, error) {
 	if cred.UID == 0 || cred.UID == daemonUID {
 		return true, nil
 	}
-	return lookup.IsMember(cred, hoservaGroup)
+	return lookup.IsMember(cred, group)
 }
 
 // unixSocketAuthMiddleware refuses any request whose connection's peer
@@ -162,7 +168,7 @@ func unixSocketAuthMiddleware(next http.Handler, lookup auth.GroupLookup, daemon
 			return
 		}
 
-		authorized, err := authorizeUnixPeer(cred, lookup, daemonUID)
+		authorized, err := authorizeUnixPeer(cred, lookup, daemonUID, hoservaGroup)
 		switch {
 		case err == nil:
 		case errors.Is(err, auth.ErrGroupNotFound):

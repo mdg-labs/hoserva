@@ -28,24 +28,38 @@ type NUTReloader interface {
 	Reload(ctx context.Context, connection config.UPSConnection) error
 }
 
+// UPSSocketPermissions re-applies the ups control socket's nut-group
+// ownership (#340) on every UPS settings save. cmd/hoservad's own
+// daemon-startup chown is one-shot: nut is only Recommends:, not
+// Depends:, so it can be installed after hoservad already started and
+// found no group to chow to. This is the only later point the daemon
+// re-checks, covering that case without a timer walking anything
+// (CLAUDE.md). cmd/hoservad implements this; tests inject a fake.
+type UPSSocketPermissions interface {
+	Apply(ctx context.Context) error
+}
+
 // UPSService is UPS settings business logic (#249): persist to SQLite,
-// generate NUT config through Generator.WriteUPS (D4, Q77), and reload
-// NUT units. Passwords are encrypted at rest (Q28).
+// generate NUT config through Generator.WriteUPS (D4, Q77), reload NUT
+// units, and re-apply the ups control socket's nut-group ownership.
+// Passwords are encrypted at rest (Q28).
 type UPSService struct {
 	Store     *UPSStore
 	Cipher    SettingsCipher
 	Generator *config.Generator
 	NUT       NUTReloader
+	Socket    UPSSocketPermissions
 	Now       func() time.Time
 }
 
 // NewUPSService wires a UPSService with the real clock.
-func NewUPSService(store *UPSStore, cipher SettingsCipher, generator *config.Generator, nut NUTReloader) *UPSService {
+func NewUPSService(store *UPSStore, cipher SettingsCipher, generator *config.Generator, nut NUTReloader, socket UPSSocketPermissions) *UPSService {
 	return &UPSService{
 		Store:     store,
 		Cipher:    cipher,
 		Generator: generator,
 		NUT:       nut,
+		Socket:    socket,
 		Now:       time.Now,
 	}
 }
@@ -145,6 +159,18 @@ func (s *UPSService) Update(ctx context.Context, input UpdateUPSInput) (UPSView,
 			return UPSView{}, fmt.Errorf("settings: writing nut config: %w (rollback also failed: %v)", mapUPSGeneratorError(err), rbErr)
 		}
 		return UPSView{}, mapUPSGeneratorError(err)
+	}
+
+	// Before NUT.Reload below restarts nut-monitor: upsmon's own nut
+	// child must find the ups control socket already reachable the
+	// moment it (re)starts, not moments later.
+	if s.Socket != nil {
+		if err := s.Socket.Apply(ctx); err != nil {
+			if rbErr := s.rollbackUPS(previous); rbErr != nil {
+				return UPSView{}, fmt.Errorf("settings: applying ups control socket permissions: %w (rollback also failed: %v)", err, rbErr)
+			}
+			return UPSView{}, fmt.Errorf("settings: applying ups control socket permissions: %w", err)
+		}
 	}
 
 	if s.NUT != nil {

@@ -422,7 +422,7 @@ func run(cfg config) error {
 	handler.Notify = notifyService
 	handler.Settings = settingsService
 	handler.Schedules = scheduleService
-	handler.UPS = api.NewUPSService(upsStore, machineKey, generator, newNUTReloader(linuxDisks.Exec))
+	handler.UPS = api.NewUPSService(upsStore, machineKey, generator, newNUTReloader(linuxDisks.Exec), upsSocketPermissions{path: upsControlSocketPath(cfg.socketPath)})
 	handler.Disks = disks
 	handler.Metrics = metricsStore
 	handler.Parity = parityEngine
@@ -545,12 +545,13 @@ func run(cfg config) error {
 	if err != nil {
 		return fmt.Errorf("starting Unix socket listener: %w", err)
 	}
-	applySocketGroupPermissions(cfg.socketPath)
+	applySocketGroupPermissions(cfg.socketPath, hoservaGroup)
 	upsControlListener, err := setupUnixListener(upsControlSocketPath(cfg.socketPath))
 	if err != nil {
 		return fmt.Errorf("starting ups control socket listener: %w", err)
 	}
-	go serveUPSControl(ctx, upsControlListener, upsController, auth.OSGroupLookup{}, uint32(os.Getuid()))
+	applySocketGroupPermissions(upsControlSocketPath(cfg.socketPath), cfggen.NUTGroup)
+	go serveUPSControl(ctx, upsControlListener, upsController, auth.OSGroupLookup{}, uint32(os.Getuid()), cfggen.NUTGroup)
 
 	pruneOnce(ctx, jobStore, logs, authStore, history)
 	go runDailyPrune(ctx, jobStore, logs, authStore, history)

@@ -57,8 +57,8 @@ func TestWriteDefaultsToWorldReadableMode(t *testing.T) {
 }
 
 // TestWriteHonorsExplicitMode proves a File that sets Mode overrides
-// defaultFileMode — the mechanism nut.go's WriteUPS uses to land
-// upsmon.conf and upsd.users at secretFileMode instead (#260).
+// defaultFileMode — the mechanism a caller with a credential to protect
+// uses to land a file at a restricted mode instead (#260).
 func TestWriteHonorsExplicitMode(t *testing.T) {
 	g := NewGenerator(t.TempDir())
 	file := testFile()

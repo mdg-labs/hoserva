@@ -1,6 +1,5 @@
 MONITOR office-ups@nut.example.lan:3493 1 hoserva s3cr3t-network-pass slave
 MINSUPPLIES 1
-RUN_AS_USER root
 SHUTDOWNCMD "/usr/lib/hoserva/nut-shutdown"
 NOTIFYCMD /usr/lib/hoserva/nut-notify
 NOTIFYFLAG ONBATT SYSLOG+EXEC
