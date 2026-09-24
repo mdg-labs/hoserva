@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -67,12 +68,16 @@ func drainRealProgress(t *testing.T, ch <-chan parity.Progress) parity.Progress 
 	return final
 }
 
-// snapraidFixChildRunning reports whether any process visible in this
-// container's /proc has argv0 basename "snapraid" and a bare "fix"
-// argument — the child RunDiskReplace's Fix step starts via
-// parity.CommandRunner (never a shell). Used only by the mid-fix cancel
-// lab test to know Cancel will land inside that subprocess.
+// snapraidFixChildRunning reports whether a direct child of this test
+// process has argv0 basename "snapraid" and a bare "fix" argument — the
+// child RunDiskReplace's Fix step starts in-process via
+// parity.CommandRunner (exec, never a shell). Matching on the parent pid
+// keeps an unrelated snapraid fix elsewhere in the container from
+// triggering Cancel before this job's own fix has started. Used only by
+// the mid-fix cancel lab test to know Cancel will land inside that
+// subprocess.
 func snapraidFixChildRunning() bool {
+	self := strconv.Itoa(os.Getpid())
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return false
@@ -90,6 +95,9 @@ func snapraidFixChildRunning() bool {
 		if len(args) == 0 || filepath.Base(args[0]) != "snapraid" {
 			continue
 		}
+		if procParentPID(name) != self {
+			continue
+		}
 		for _, a := range args {
 			if a == "fix" {
 				return true
@@ -97,6 +105,21 @@ func snapraidFixChildRunning() bool {
 		}
 	}
 	return false
+}
+
+// procParentPID returns the PPid field of /proc/<pid>/status, or "" if
+// it cannot be read (the process already exited).
+func procParentPID(pid string) string {
+	status, err := os.ReadFile(filepath.Join("/proc", pid, "status"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(status), "\n") {
+		if ppid, ok := strings.CutPrefix(line, "PPid:"); ok {
+			return strings.TrimSpace(ppid)
+		}
+	}
+	return ""
 }
 
 // waitUntilSnapraidFixRunning polls until a snapraid fix child is running
