@@ -131,7 +131,14 @@ func RunEvacuation(d EvacuationDeps) RunFunc {
 			return err
 		}
 		if relErr := releaseRemovalState(context.WithoutCancel(ctx), d.Store, d.ArrayReady, p.Mountpoint, rc.JobID()); relErr != nil {
-			return combineEvacuationErr(err, "releasing the removal state after cancel", relErr)
+			// The removal state itself may already be released (the
+			// database now says RW) even though this specific failure is
+			// in re-applying that to the live pool — runJob still records
+			// the job cancelled (the user's cancel is honoured either
+			// way), but must never silently drop a failure that can leave
+			// the database and the live mounts disagreeing about whether
+			// this disk takes writes (#364).
+			return &CancelCleanupError{Code: "evacuation_cancel_reapply_failed", Err: combineEvacuationErr(err, "releasing the removal state after cancel", relErr)}
 		}
 		return err
 	}

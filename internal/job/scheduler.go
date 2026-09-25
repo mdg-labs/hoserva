@@ -110,8 +110,8 @@ type runningJob struct {
 	stopCh chan struct{}
 	done   chan struct{}
 
-	// mu guards cancellable, reason and stopSignalled. Lock order is
-	// Scheduler.mu, then mu.
+	// mu guards cancellable, reason, stopSignalled and finished. Lock
+	// order is Scheduler.mu, then mu.
 	mu sync.Mutex
 	// cancellable is decided with a cancel under mu: runJob's
 	// saveCheckpoint clears it, and never sets it again, when a
@@ -120,6 +120,20 @@ type runningJob struct {
 	cancellable   bool
 	reason        stopReason
 	stopSignalled bool
+	// finished is set true by runJob, under mu, the instant rj.run
+	// returns — before runJob does anything else, including reading
+	// reason for its own status decision. A job still appears in
+	// s.running until runJob later deletes it, so without this a Cancel
+	// racing in after rj.run has already returned (but before that
+	// delete) could still find the job here and treat it as live: it
+	// would mutate reason to reasonCancel too late to change what the
+	// run actually did, silently misreporting the job's real,
+	// already-decided outcome as cancelled and never invoking the job
+	// type's AbortFunc, orphaning whatever job-owned state that outcome
+	// legitimately kept (#364). Cancel checks finished under the same
+	// lock and refuses once it is set, rather than racing to overwrite
+	// reason.
+	finished bool
 }
 
 type queuedJob struct {
@@ -165,6 +179,12 @@ type Scheduler struct {
 	// cannot mkdir on a disk after that disk is gone.
 	shareMutations int
 	shareWaiters   []chan struct{}
+	// settleHook, when non-nil, is called synchronously by runJob once a
+	// job's rj.finished has just been set true — after its RunFunc has
+	// returned, but before the job is removed from s.running — so a test
+	// can deterministically land a Cancel call inside that exact window
+	// instead of racing the real clock (#364). Never set outside a test.
+	settleHook func(jobID string)
 }
 
 // NewScheduler wires a Scheduler to its persistence, log capture, event
@@ -310,10 +330,26 @@ func (s *Scheduler) admitEvacuationLocked(ctx context.Context) error {
 // abort's error recorded, and the error is returned. For a data-disk
 // upgrade that abort is its Unwind (doc 02 §4 E3). A running job's
 // outcome is recorded by runJob once its run returns.
+//
+// A job still appears in s.running for a short window after its RunFunc
+// has already returned — runJob only deletes it once its own outcome is
+// fully decided (#364). A Cancel landing in that window finds rj.finished
+// already set and is refused with ErrJobNotRunning rather than mutating
+// reason: the run's real outcome is already fixed by then, so silently
+// relabelling it cancelled would both misreport what actually happened
+// and skip the AbortFunc a genuinely queued-or-interrupted cancel would
+// have run, orphaning whatever job-owned state that outcome legitimately
+// kept (e.g. #274/#359's evacuation manifest and no-create exemption for
+// a resumable stop).
 func (s *Scheduler) Cancel(ctx context.Context, id string) (*Job, error) {
 	s.mu.Lock()
 	if rj, ok := s.running[id]; ok {
 		rj.mu.Lock()
+		if rj.finished {
+			rj.mu.Unlock()
+			s.mu.Unlock()
+			return nil, fmt.Errorf("%w: job %s has already finished running", ErrJobNotRunning, id)
+		}
 		if !rj.cancellable {
 			rj.mu.Unlock()
 			s.mu.Unlock()
@@ -1120,15 +1156,31 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 
 	runErr := rj.run(ctx, rc)
 
+	// rj.finished is set, and reason captured, the instant run returns —
+	// ahead of everything else below, including closing the log — so a
+	// Cancel racing in from here on (the job is still in s.running; the
+	// delete below hasn't run yet) finds finished already true and
+	// refuses instead of mutating reason too late to affect an outcome
+	// that has already, in fact, happened (#364). Whichever of this lock
+	// or Cancel's own rj.mu.Lock happens to land first is what settles
+	// the linearized order between "this run finished" and "a Cancel
+	// call arrived" — there is no other way to order two truly
+	// independent goroutines — but once it is set, no later Cancel can
+	// ever again change what gets recorded.
+	rj.mu.Lock()
+	rj.finished = true
+	reason := rj.reason
+	rj.mu.Unlock()
+
+	if s.settleHook != nil {
+		s.settleHook(rj.job.ID)
+	}
+
 	if closer != nil {
 		if err := closer.Close(); err != nil {
 			log.Printf("job: closing log for job %s: %v", rj.job.ID, err)
 		}
 	}
-
-	rj.mu.Lock()
-	reason := rj.reason
-	rj.mu.Unlock()
 
 	now := time.Now().UTC()
 	var status Status
@@ -1141,7 +1193,25 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 		errCode = outcome.Code
 		errMessage = runErr.Error()
 	case reason == reasonCancel:
+		// Cancel is the definitive outcome here regardless of what runErr
+		// otherwise says — including a plain, non-outcome error a RunFunc
+		// returns for its own internal control flow around losing a race
+		// to Cancel (TypeDiskUpgradeData's own ErrJobNeedsRetry/
+		// ErrCancelRequested interplay is exactly this: not a failure,
+		// just a signal that Cancel got there first). A RunFunc that
+		// instead wants a genuine problem in its own post-cancel cleanup
+		// surfaced — never silently dropped under a status that claims
+		// the job simply ended cancelled — opts in explicitly by
+		// returning a *CancelCleanupError (e.g. RunEvacuation's own
+		// release-then-reapply after a cancel, which can itself fail a
+		// live remount and leave the database saying RW while the mounts
+		// stay no-create).
 		status = StatusCancelled
+		var cleanup *CancelCleanupError
+		if errors.As(runErr, &cleanup) {
+			errCode = cleanup.Code
+			errMessage = cleanup.Error()
+		}
 	case hasOutcome:
 		status = outcome.Status
 		errCode = outcome.Code
@@ -1235,3 +1305,19 @@ type OutcomeError struct {
 func (e *OutcomeError) Error() string { return e.Err.Error() }
 
 func (e *OutcomeError) Unwrap() error { return e.Err }
+
+// CancelCleanupError lets a RunFunc report that a Cancel it accepted
+// (runJob's own reason == reasonCancel) went through — the job still ends
+// StatusCancelled, exactly as a plain return would record it — but its own
+// cleanup afterward hit a problem that must be recorded, not silently
+// dropped (#364). Unlike OutcomeError, this never changes the recorded
+// status: Cancel stays the definitive, deliberate outcome; Code and the
+// wrapped error's message are only carried alongside it.
+type CancelCleanupError struct {
+	Code string
+	Err  error
+}
+
+func (e *CancelCleanupError) Error() string { return e.Err.Error() }
+
+func (e *CancelCleanupError) Unwrap() error { return e.Err }
