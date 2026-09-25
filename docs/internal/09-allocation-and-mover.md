@@ -165,7 +165,7 @@ Distinct from the mover: redistributes files *between array disks* to even out f
 Removing a disk from the pool. Mechanically a rebalance targeting one specific source disk, with stricter requirements:
 
 1. **Pre-check:** remaining disks must fit everything, with `minfreespace` respected on each
-2. Put the disk in `removing` state: set its branches to no-create (`NC`) in every mount, so nothing new lands on it; the zero-files guard rule is suspended for this disk only (Q15). The state is persisted with the job that set it, so the generated units keep `NC` across a restart and a resume re-applies it to the running pool. If the running pool cannot be switched, the job fails before copying anything. Cancelling that job clears the state; a failed job leaves it, until the disk is evacuated again or that run is cancelled. Only one evacuation is pending at a time
+2. Put the disk in `evacuating` state: set its branches to no-create (`NC`) in every mount, so nothing new lands on it; the zero-files guard rule is suspended for this disk only (Q15). The state is persisted with the job that set it, so the generated units keep `NC` across a restart and a resume re-applies it to the running pool. If the running pool cannot be switched, the job fails before copying anything. Cancelling that job clears the state; a failed job leaves it, until the disk is evacuated again or that run is cancelled. Only one evacuation is pending at a time
 3. Enumerate everything on the source, record total count and bytes
 4. Copy and verify each file to the remaining disks; record each in the relocation manifest
 5. Sync parity through the threshold guard — the copies are protected before anything is deleted (Q14)
