@@ -113,6 +113,10 @@ export function UsersPage(): React.ReactElement {
   const shares = sharesQuery.data?.shares ?? [];
 
   const [actionError, setActionError] = useState<string | null>(null);
+  // Errors from an action started inside the create/edit panel (role,
+  // permissions, group membership) render inside that panel, not the page
+  // banner behind it, which an open SidePanel hides (#375).
+  const [panelError, setPanelError] = useState<string | null>(null);
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserSummary | null>(null);
@@ -203,7 +207,7 @@ export function UsersPage(): React.ReactElement {
     setPasswordDraft("");
     setGroupIdsDraft([]);
     setSharePermissionsDraft({});
-    setActionError(null);
+    setPanelError(null);
     setPanelOpen(true);
   }
 
@@ -215,7 +219,7 @@ export function UsersPage(): React.ReactElement {
     setPasswordDraft("");
     setGroupIdsDraft((groups ?? []).filter((group) => group.memberUserIds.includes(user.id)).map((group) => group.id));
     setSharePermissionsDraft({});
-    setActionError(null);
+    setPanelError(null);
     setPanelOpen(true);
   }
 
@@ -250,30 +254,30 @@ export function UsersPage(): React.ReactElement {
     // screen — saving it would wipe that user's permissions (issue #271
     // finding 2).
     if (editingUser && (permissionsQuery.refreshing || permissionsQuery.error)) {
-      setActionError(permissionsQuery.error ?? t("users.errors.permissionsLoadFailed"));
+      setPanelError(permissionsQuery.error ?? t("users.errors.permissionsLoadFailed"));
       return;
     }
     setPanelBusy(true);
-    setActionError(null);
+    setPanelError(null);
     try {
       let userId = editingUser?.id;
       if (editingUser) {
         if (editingUser.role !== "admin") {
           const result = await saveRoleMutation.mutate({ userId: editingUser.id, role: roleDraft });
           if (!result.ok) {
-            if (!result.aborted) setActionError(result.error);
+            if (!result.aborted) setPanelError(result.error);
             return;
           }
         }
       } else {
         const name = usernameDraft.trim();
         if (name.length === 0) {
-          setActionError(t("users.errors.usernameRequired"));
+          setPanelError(t("users.errors.usernameRequired"));
           return;
         }
         const result = await createUserMutation.mutate({ username: name, role: roleDraft });
         if (!result.ok) {
-          if (!result.aborted) setActionError(result.error);
+          if (!result.aborted) setPanelError(result.error);
           return;
         }
         userId = result.data?.id;
@@ -284,14 +288,14 @@ export function UsersPage(): React.ReactElement {
       if (smbAccessDraft && passwordDraft.length > 0) {
         const result = await setPasswordMutation.mutate({ userId, password: passwordDraft });
         if (!result.ok) {
-          if (!result.aborted) setActionError(result.error);
+          if (!result.aborted) setPanelError(result.error);
           return;
         }
       }
 
       const groupSyncError = await syncGroupMembership(userId);
       if (groupSyncError) {
-        setActionError(groupSyncError);
+        setPanelError(groupSyncError);
         return;
       }
 
@@ -301,7 +305,7 @@ export function UsersPage(): React.ReactElement {
           .map(([shareName, access]) => ({ shareName, access }));
         const result = await sharePermissionsMutation.mutate({ userId, permissions });
         if (!result.ok) {
-          if (!result.aborted) setActionError(result.error);
+          if (!result.aborted) setPanelError(result.error);
           return;
         }
       }
@@ -639,6 +643,7 @@ export function UsersPage(): React.ReactElement {
           </div>
         }
       >
+        {panelError ? <Banner tone="error" title={panelError} /> : null}
         {!editingUser ? (
           <Field>
             <FieldLabel>{t("users.panel.username")}</FieldLabel>

@@ -150,6 +150,7 @@ export function ShareDetailPage(): React.ReactElement {
   const [removeDialogError, setRemoveDialogError] = useState<string | null>(null);
   const [deleteDataOpen, setDeleteDataOpen] = useState(false);
   const [deleteDataConfirm, setDeleteDataConfirm] = useState("");
+  const [deleteDataError, setDeleteDataError] = useState<string | null>(null);
 
   // Adjusts state when the loaded share changes, rather than in an effect
   // (react-hooks/set-state-in-effect).
@@ -419,9 +420,10 @@ export function ShareDetailPage(): React.ReactElement {
   }
 
   async function handleDeleteData(): Promise<void> {
+    setDeleteDataError(null);
     const result = await deleteDataMutation.mutate(deleteDataConfirm);
     if (!result.ok) {
-      if (!result.aborted) setSaveError(result.error);
+      if (!result.aborted) setDeleteDataError(result.error);
       return;
     }
     setDeleteDataOpen(false);
@@ -560,6 +562,7 @@ export function ShareDetailPage(): React.ReactElement {
       actionLabel: t("shares.detail.danger.deleteDataAction"),
       onAction: () => {
         setDeleteDataConfirm("");
+        setDeleteDataError(null);
         setDeleteDataOpen(true);
       },
     },
@@ -909,6 +912,12 @@ export function ShareDetailPage(): React.ReactElement {
       <FormOverlay
         open={cacheConfirmOpen}
         onOpenChange={(open) => {
+          // Same rule as the disabled Cancel button: Escape and a backdrop
+          // click both come through here as onOpenChange(false), so a busy
+          // handler must ignore them too, not just the button (#375).
+          if (!open && cacheDialogBusy) {
+            return;
+          }
           setCacheConfirmOpen(open);
           if (!open) {
             setCacheDialogError(null);
@@ -983,6 +992,7 @@ export function ShareDetailPage(): React.ReactElement {
           if (!open) {
             setDeleteDataOpen(false);
             setDeleteDataConfirm("");
+            setDeleteDataError(null);
           }
         }}
         title={t("shares.detail.danger.deleteDataConfirmTitle")}
@@ -998,6 +1008,7 @@ export function ShareDetailPage(): React.ReactElement {
           </Button>
         }
       >
+        {deleteDataError ? <Banner tone="error" title={deleteDataError} /> : null}
         <TypedConfirm
           phrase={share.name}
           value={deleteDataConfirm}

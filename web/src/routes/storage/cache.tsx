@@ -398,6 +398,12 @@ export function CachePage(): React.ReactElement {
       <FormOverlay
         open={modeDialogOpen}
         onOpenChange={(open) => {
+          // Same rule as the disabled Cancel button: Escape and a backdrop
+          // click both come through here as onOpenChange(false), so a busy
+          // handler must ignore them too, not just the button (#375).
+          if (!open && modeDialogBusy) {
+            return;
+          }
           if (!open) {
             closeModeDialog();
           }
