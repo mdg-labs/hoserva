@@ -6,6 +6,9 @@
 //
 // Regression tests for issue #376, the same two patterns on the remaining
 // /shares/:name dialogs and the /users group/token creation overlays.
+//
+// Regression test for issue #377, the same dismiss-while-busy pattern on the
+// browse tab's per-file delete dialog.
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -611,5 +614,73 @@ describe("issue #376 — users group/token creation overlays show their own erro
     pendingPost.release?.();
     expect(await within(dialog).findByText("token create failed")).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+});
+
+describe("issue #377 — browse-tab delete-file dialog ignores Escape while busy", () => {
+  beforeEach(resetMocks);
+
+  it("does not close the per-file delete dialog on Escape while the delete request is pending", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/shares/{name}") {
+        return Promise.resolve({ data: share({ cacheMode: "cache-then-move" }), response: { ok: true } });
+      }
+      if (path === "/shares/{name}/browse") {
+        return Promise.resolve({
+          data: { entries: [{ name: "movie.mkv", type: "file", sizeBytes: 1_000_000, disk: "disk1" }] },
+          response: { ok: true },
+        });
+      }
+      if (path === "/users") {
+        return Promise.resolve({ data: { users: [] }, response: { ok: true } });
+      }
+      if (path === "/user-groups") {
+        return Promise.resolve({ data: { groups: [] }, response: { ok: true } });
+      }
+      if (path === "/shares/{name}/permissions") {
+        return Promise.resolve({ data: { users: [], groups: [] }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    const pendingDelete: { release: (() => void) | null } = { release: null };
+    mockDelete.mockImplementation((path: string) => {
+      if (path === "/shares/{name}/browse") {
+        return new Promise((resolve) => {
+          pendingDelete.release = () => resolve({ data: null, response: { ok: true } });
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/shares/media?tab=browse"]}>
+        <Routes>
+          <Route path="/shares/:name" element={<ShareDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Browse" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Browse files" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Delete movie.mkv" }));
+
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+
+    // The busy button's accessible name gains the spinner's "Loading" text
+    // once it's disabled, so match it loosely from here on.
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: /Confirm/ })).toBeDisabled());
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    // Still open, and still busy — a real dismiss would have unmounted the
+    // dialog and its Confirm button entirely, and the delete would proceed
+    // with the operator believing they cancelled it.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Confirm/ })).toBeDisabled();
+
+    pendingDelete.release?.();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 });

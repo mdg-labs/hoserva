@@ -957,6 +957,13 @@ export function ShareDetailPage(): React.ReactElement {
       <ConfirmDialog
         open={deleteFileTarget !== null}
         onOpenChange={(open) => {
+          // Same rule as the cache-mode, delete-data and remove-definition
+          // dialogs: Escape and a backdrop click both come through here as
+          // onOpenChange(false), so a busy handler must ignore them too
+          // (#375, #376).
+          if (!open && deleteFileMutation.pending) {
+            return;
+          }
           if (!open) setDeleteFileTarget(null);
         }}
         title={t("shares.detail.browse.deleteConfirmTitle")}
