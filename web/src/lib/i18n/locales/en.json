@@ -304,7 +304,7 @@
     },
     "remove": {
       "title": "Remove a disk",
-      "description": "Evacuates a data disk's files onto the pool's remaining disks before you physically remove it (doc 09 §4). This does not unmount the disk or remove it from the array's configuration.",
+      "description": "Moves a data disk's files onto the pool's remaining disks — the first step of removing it (doc 09 §4). The disk is not ready to pull afterwards: it stays in the pool and in parity until you finish its removal with `hoserva disk remove finish`.",
       "slotLabel": "Disk to remove",
       "slotPlaceholder": "Select a slot",
       "preview": "Preview",

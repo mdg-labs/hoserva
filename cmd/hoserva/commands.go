@@ -109,7 +109,7 @@ func diskRemoveCmd() *cobra.Command {
 	var mountpoint, confirm string
 	cmd := &cobra.Command{
 		Use:   "remove",
-		Short: "Evacuate a data disk's files before physically removing it (doc 09 §4)",
+		Short: "Evacuate a data disk's files — the first step of removing it; `disk remove finish` completes it (doc 09 §4)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if confirm == "" {
 				return fmt.Errorf("disk remove requires --confirm with the exact phrase `disk remove plan` returned")
