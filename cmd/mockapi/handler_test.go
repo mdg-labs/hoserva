@@ -402,7 +402,7 @@ func TestShares_RefusedInMaintenanceMode(t *testing.T) {
 	client := newTestClient(t, "healthy")
 	ctx := context.Background()
 
-	if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media"}); err != nil {
+	if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
 		t.Fatalf("CreateShare(media) before stop: %v", err)
 	}
 	if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
@@ -616,7 +616,7 @@ func TestJobSubmission_RefusedInMaintenanceMode(t *testing.T) {
 
 	t.Run("StartShareRelocation", func(t *testing.T) {
 		client := newTestClient(t, "healthy")
-		if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media"}); err != nil {
+		if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
 			t.Fatalf("CreateShare: %v", err)
 		}
 		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {

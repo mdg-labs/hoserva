@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -126,7 +128,51 @@ func (h *handler) RegenerateTLSCertificate(context.Context) (*apiv1.NetworkSetti
 	return &out, nil
 }
 
+// errNetworkInvalidInput mirrors internal/api's own mapNetworkError/
+// mapACMEError mapping of config.ErrNetworkInvalid/acme.ErrInvalidSetup
+// (network_handler.go): a bad domain or DNS-01 setup is refused the same
+// way production refuses it, not silently accepted.
+func errNetworkInvalidInput(msg string) error {
+	return &mockError{code: "network_invalid_input", statusCode: 400, message: msg}
+}
+
+// mockValidateACMEDomain mirrors internal/acme's own normalizeDomain
+// (client.go): the same character/dot checks, so a request that fails
+// domain validation on production fails it here too.
+func mockValidateACMEDomain(domain string) error {
+	d := strings.TrimSpace(strings.ToLower(domain))
+	d = strings.TrimSuffix(d, ".")
+	if d == "" {
+		return errNetworkInvalidInput("domain is required")
+	}
+	if strings.ContainsAny(d, " /:\\*") || strings.Contains(d, "..") {
+		return errNetworkInvalidInput(fmt.Sprintf("%q is not a DNS-01 hostname", domain))
+	}
+	if strings.Count(d, ".") < 1 {
+		return errNetworkInvalidInput(fmt.Sprintf("%q is not a DNS-01 hostname", domain))
+	}
+	return nil
+}
+
 func (h *handler) ConfigureLetsEncrypt(_ context.Context, req *apiv1.ConfigureLetsEncryptRequest) (*apiv1.Job, error) {
+	if err := mockValidateACMEDomain(req.GetDomain()); err != nil {
+		return nil, err
+	}
+	switch req.GetProvider() {
+	case apiv1.DNS01ProviderCloudflare:
+		if v, ok := req.GetCloudflareAPIToken().Get(); !ok || strings.TrimSpace(v) == "" {
+			return nil, errNetworkInvalidInput("a DNS credential is required")
+		}
+	case apiv1.DNS01ProviderRfc2136:
+		nameserver, _ := req.GetRfc2136Nameserver().Get()
+		keyName, _ := req.GetRfc2136TsigKeyName().Get()
+		if strings.TrimSpace(nameserver) == "" || strings.TrimSpace(keyName) == "" {
+			return nil, errNetworkInvalidInput("RFC 2136 nameserver and TSIG key name are required")
+		}
+	default:
+		return nil, errNetworkInvalidInput("provider must be cloudflare or rfc2136")
+	}
+
 	h.notifyMu.Lock()
 	h.network.LetsEncrypt = apiv1.LetsEncryptStatus{
 		Configured: true,

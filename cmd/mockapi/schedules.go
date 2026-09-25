@@ -2,11 +2,36 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/job"
 )
+
+func errScheduleInvalidInput(msg string) error {
+	return &mockError{code: "schedule_invalid_input", statusCode: 400, message: msg}
+}
+
+// mockValidateClock and mockValidFrequency mirror internal/api's own
+// unexported validateClock/validFrequency (scheduleservice.go): a
+// schedule input the daemon rejects must be rejected here too, not
+// silently accepted.
+func mockValidateClock(value string) error {
+	if _, _, err := job.ParseClock(value); err != nil {
+		return errScheduleInvalidInput(err.Error())
+	}
+	return nil
+}
+
+func mockValidFrequency(freq apiv1.ScheduleFrequency) bool {
+	switch job.Frequency(freq) {
+	case job.FrequencyDaily, job.FrequencyWeekly, job.FrequencyMonthly:
+		return true
+	default:
+		return false
+	}
+}
 
 func (h *handler) GetSchedules(ctx context.Context) (*apiv1.Schedules, error) {
 	h.notifyMu.Lock()
@@ -19,9 +44,15 @@ func (h *handler) UpdateMaintenanceChainSchedule(ctx context.Context, req *apiv1
 	defer h.notifyMu.Unlock()
 
 	if start, ok := req.StartTime.Get(); ok {
+		if err := mockValidateClock(start); err != nil {
+			return nil, err
+		}
 		h.schedules.Chain.StartTime = start
 	}
 	if day, ok := req.WeeklyScrubDay.Get(); ok {
+		if day < 0 || day > 6 {
+			return nil, errScheduleInvalidInput("weeklyScrubDay must be 0-6")
+		}
 		h.schedules.Chain.WeeklyScrubDay = day
 	}
 	for _, step := range req.Steps {
@@ -48,9 +79,15 @@ func (h *handler) UpdateScheduledJob(ctx context.Context, req *apiv1.UpdateSched
 			h.schedules.OtherJobs[i].Enabled = enabled
 		}
 		if freq, ok := req.Frequency.Get(); ok {
+			if !mockValidFrequency(freq) {
+				return nil, errScheduleInvalidInput(fmt.Sprintf("unknown frequency %q", freq))
+			}
 			h.schedules.OtherJobs[i].Frequency = freq
 		}
 		if t, ok := req.Time.Get(); ok {
+			if err := mockValidateClock(t); err != nil {
+				return nil, err
+			}
 			h.schedules.OtherJobs[i].Time = t
 		}
 		recomputeMockSchedules(&h.schedules)

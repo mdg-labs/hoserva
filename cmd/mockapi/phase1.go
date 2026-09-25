@@ -299,7 +299,39 @@ func (h *handler) RunDoctor(ctx context.Context) (*apiv1.DoctorReport, error) {
 	return mockDoctorReport(h.scenario), nil
 }
 
+// errInvalidHostConfig mirrors internal/api's own errInvalidHostConfig
+// (hostconfig.go): an unknown host-config id, a duplicate choice for the
+// same one, or a decision that isn't import/leave is refused the same
+// way production refuses it, not silently accepted.
+func errInvalidHostConfig(msg string) error {
+	return &mockError{code: "invalid_host_config", statusCode: 400, message: msg}
+}
+
+// mockHostConfigKinds mirrors internal/config's own KindFromCheckID
+// whitelist (host.go) closely enough for this mock's own fixed check ids
+// (phase1.go's mockDoctorReport): every id RunDoctor ever reports here.
+var mockHostConfigKinds = map[string]bool{
+	"host_samba":             true,
+	"host_nfs":               true,
+	"host_fstab":             true,
+	"host_docker_containers": true,
+	"host_docker_images":     true,
+}
+
 func (h *handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfigRequest) (*apiv1.ApplyHostConfigResult, error) {
+	seen := map[apiv1.HostConfigID]struct{}{}
+	for _, choice := range req.Files {
+		if !mockHostConfigKinds[string(choice.ID)] {
+			return nil, errInvalidHostConfig(fmt.Sprintf("unknown host-config id %q", choice.ID))
+		}
+		if _, dup := seen[choice.ID]; dup {
+			return nil, errInvalidHostConfig(fmt.Sprintf("duplicate choice for %s", choice.ID))
+		}
+		seen[choice.ID] = struct{}{}
+		if choice.Decision != apiv1.HostConfigDecisionImport && choice.Decision != apiv1.HostConfigDecisionLeave {
+			return nil, errInvalidHostConfig(fmt.Sprintf("decision for %s must be import or leave", choice.ID))
+		}
+	}
 	return &apiv1.ApplyHostConfigResult{
 		Files:          req.Files,
 		DockerDataRoot: "/var/lib/docker",
