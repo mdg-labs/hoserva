@@ -16,8 +16,12 @@ import { Input } from "@/components/ui/input";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { SHARE_TAB_BROWSE } from "@/hooks/share-detail-tabs";
 import { shareDetailPath } from "@/hooks/paths";
-import { hoservaClient, type components } from "@/lib/api/client";
+import type { components } from "@/lib/api/client";
 import { isApiError } from "@/lib/api/errors";
+import { deleteShare, getSharePermissions, getShares, postShare } from "@/lib/api/operations";
+import { parseClientResult } from "@/lib/api/request";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
 type Share = components["schemas"]["Share"];
@@ -56,104 +60,86 @@ function accessSummary(permissions: SharePermissionsResult | undefined, t: (key:
 export function SharesPage(): React.ReactElement {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [shares, setShares] = useState<Share[] | null>(null);
+  const sharesQuery = useApiQuery<{ shares: Share[] }>({
+    queryKey: "shares",
+    queryFn: (signal) => getShares(signal),
+    fallbackError: t("shares.list.loadFailed"),
+  });
+  const shares = sharesQuery.data?.shares ?? null;
   const [permissionsByShare, setPermissionsByShare] = useState<Record<string, SharePermissionsResult>>({});
-  const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
-  const [createBusy, setCreateBusy] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Share | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
-  const [deleteBusy, setDeleteBusy] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  function load(signal?: AbortSignal): void {
-    hoservaClient
-      .GET("/shares", { signal })
-      .then(({ data, error: apiError }) => {
-        if (signal?.aborted) return;
-        if (apiError) {
-          setError(apiError.message);
-          return;
-        }
-        setError(null);
-        const list = data?.shares ?? [];
-        setShares(list);
-        return Promise.all(
-          list.map((share) =>
-            hoservaClient
-              .GET("/shares/{name}/permissions", { params: { path: { name: share.name } }, signal })
-              .then((result) => [share.name, result] as const),
-          ),
-        ).then((entries) => {
-          if (signal?.aborted) return;
-          const next: Record<string, SharePermissionsResult> = {};
-          for (const [name, result] of entries) {
-            if (result.data) {
-              next[name] = result.data;
-            }
-          }
-          setPermissionsByShare(next);
-        });
-      })
-      .catch((err: unknown) => {
-        if (!signal?.aborted) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      });
-  }
+  const createMutation = useApiMutation<string, Share>({
+    mutationFn: async (name) => {
+      const result = await postShare(name);
+      if (result.error) {
+        return { ...result, error: { ...result.error, message: shareMutationError(result.error, t) } };
+      }
+      return result;
+    },
+  });
+  const deleteMutation = useApiMutation<string, unknown>({
+    mutationFn: async (name) => {
+      const result = await deleteShare(name);
+      if (result.error) {
+        return { ...result, error: { ...result.error, message: shareMutationError(result.error, t) } };
+      }
+      return result;
+    },
+  });
 
   useEffect(() => {
+    const list = sharesQuery.data?.shares;
+    if (!list) {
+      return;
+    }
     const controller = new AbortController();
-    load(controller.signal);
+    Promise.all(
+      list.map((share) =>
+        getSharePermissions(share.name, controller.signal).then((entry) => [share.name, entry] as const),
+      ),
+    )
+      .then((entries) => {
+        if (controller.signal.aborted) return;
+        const next: Record<string, SharePermissionsResult> = {};
+        for (const [name, entry] of entries) {
+          const data = parseClientResult(entry).data;
+          if (data) {
+            next[name] = data;
+          }
+        }
+        setPermissionsByShare(next);
+      })
+      .catch(() => undefined);
     return () => controller.abort();
-  }, []);
+  }, [sharesQuery.data]);
 
   async function handleCreate(): Promise<void> {
     const name = createName.trim();
     if (name.length === 0) {
       return;
     }
-    setCreateBusy(true);
-    setCreateError(null);
-    try {
-      const { error: apiError } = await hoservaClient.POST("/shares", { body: { name } });
-      if (apiError) {
-        setCreateError(shareMutationError(apiError, t));
-        return;
-      }
-      setCreateOpen(false);
-      setCreateName("");
-      load();
-    } catch (err: unknown) {
-      setCreateError(shareMutationError(err, t));
-    } finally {
-      setCreateBusy(false);
+    const result = await createMutation.mutate(name);
+    if (!result.ok) {
+      return;
     }
+    setCreateOpen(false);
+    setCreateName("");
+    await sharesQuery.refresh();
   }
 
   async function handleDelete(): Promise<void> {
     if (!deleteTarget) return;
-    setDeleteBusy(true);
-    setDeleteError(null);
-    try {
-      const { error: apiError } = await hoservaClient.DELETE("/shares/{name}", {
-        params: { path: { name: deleteTarget.name } },
-        body: { confirm: true },
-      });
-      if (apiError) {
-        setDeleteError(shareMutationError(apiError, t));
-        return;
-      }
-      setDeleteTarget(null);
-      setDeleteConfirm("");
-      load();
-    } catch (err: unknown) {
-      setDeleteError(shareMutationError(err, t));
-    } finally {
-      setDeleteBusy(false);
+    const result = await deleteMutation.mutate(deleteTarget.name);
+    if (!result.ok) {
+      return;
     }
+    setDeleteTarget(null);
+    setDeleteConfirm("");
+    await sharesQuery.refresh();
   }
 
   const columns: DataTableColumn<Share>[] = [
@@ -227,7 +213,7 @@ export function SharesPage(): React.ReactElement {
               className="text-destructive-foreground"
               onClick={() => {
                 setDeleteConfirm("");
-                setDeleteError(null);
+                deleteMutation.reset();
                 setDeleteTarget(share);
               }}
             >
@@ -238,6 +224,12 @@ export function SharesPage(): React.ReactElement {
       ),
     },
   ];
+
+  const error = sharesQuery.error;
+  const createError = createMutation.error;
+  const createBusy = createMutation.pending;
+  const deleteError = deleteMutation.error;
+  const deleteBusy = deleteMutation.pending;
 
   if (shares === null && !error) {
     return <LoadingBlock />;
@@ -252,7 +244,7 @@ export function SharesPage(): React.ReactElement {
         </div>
         <Button
           onClick={() => {
-            setCreateError(null);
+            createMutation.reset();
             setCreateOpen(true);
           }}
         >
@@ -269,7 +261,7 @@ export function SharesPage(): React.ReactElement {
           action={
             <Button
               onClick={() => {
-                setCreateError(null);
+                createMutation.reset();
                 setCreateOpen(true);
               }}
             >
@@ -287,7 +279,7 @@ export function SharesPage(): React.ReactElement {
         onOpenChange={(open) => {
           setCreateOpen(open);
           if (!open) {
-            setCreateError(null);
+            createMutation.reset();
             setCreateName("");
           }
         }}
@@ -317,7 +309,7 @@ export function SharesPage(): React.ReactElement {
           if (!open) {
             setDeleteTarget(null);
             setDeleteConfirm("");
-            setDeleteError(null);
+            deleteMutation.reset();
           }
         }}
         title={t("shares.list.deleteTitle")}

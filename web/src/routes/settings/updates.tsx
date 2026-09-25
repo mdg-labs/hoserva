@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
@@ -12,7 +12,16 @@ import { StatusBadge } from "@/components/patterns/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { hoservaClient, type components } from "@/lib/api/client";
+import type { components } from "@/lib/api/client";
+import {
+  getUpdateStatus,
+  postUpdateApply,
+  postUpdateReboot,
+  postUpdateRollback,
+  putUpdateSettings,
+} from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
 
 type ConfirmAction = "update" | "rollback" | "reboot" | null;
 type UpdateStatus = components["schemas"]["UpdateStatus"];
@@ -25,69 +34,42 @@ const CONFIRM_UPDATE = "update";
 const CONFIRM_ROLLBACK = "rollback";
 const CONFIRM_REBOOT = "reboot";
 
-const CONFIRM_PATH: Record<Exclude<ConfirmAction, null>, "/settings/updates/apply" | "/settings/updates/rollback" | "/settings/updates/reboot"> = {
-  update: "/settings/updates/apply",
-  rollback: "/settings/updates/rollback",
-  reboot: "/settings/updates/reboot",
+const CONFIRM_ACTION: Record<Exclude<ConfirmAction, null>, () => ReturnType<typeof postUpdateApply>> = {
+  update: postUpdateApply,
+  rollback: postUpdateRollback,
+  reboot: postUpdateReboot,
 };
 
 export function UpdatesSettingsPage(): React.ReactElement {
   const { t } = useTranslation();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<UpdateStatus | null>(null);
-  const [channel, setChannel] = useState<UpdateChannel>(UPDATE_CHANNEL_STABLE);
-  const [updateCheckEnabled, setUpdateCheckEnabled] = useState(true);
+  const statusQuery = useApiQuery<UpdateStatus>({
+    queryKey: "update-status",
+    queryFn: (signal) => getUpdateStatus(signal),
+    fallbackError: t("settings.updates.loadFailed"),
+  });
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
-  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  function applyStatus(next: UpdateStatus): void {
-    setStatus(next);
-    setChannel(next.channel);
-    setUpdateCheckEnabled(next.checkEnabled);
-  }
-
-  useEffect(() => {
-    const controller = new AbortController();
-    hoservaClient
-      .GET("/settings/updates", { signal: controller.signal })
-      .then(({ data, error: apiError }) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        if (apiError) {
-          setError(apiError.message);
-          return;
-        }
-        if (data) {
-          applyStatus(data);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
-      });
-    return () => {
-      controller.abort();
-    };
-  }, []);
+  const status = statusQuery.data;
+  const settingsMutation = useApiMutation<{ channel?: UpdateChannel; checkEnabled?: boolean }, UpdateStatus>({
+    mutationFn: (body) => putUpdateSettings(body),
+    fallbackError: t("settings.updates.loadFailed"),
+  });
+  const actionMutation = useApiMutation<Exclude<ConfirmAction, null>, UpdateStatus>({
+    mutationFn: (action) => CONFIRM_ACTION[action](),
+    fallbackError: t("settings.updates.actionFailed"),
+  });
 
   async function persistSettings(body: { channel?: UpdateChannel; checkEnabled?: boolean }): Promise<void> {
-    setError(null);
-    const { data, error: apiError } = await hoservaClient.PUT("/settings/updates", { body });
-    if (apiError) {
-      setError(apiError.message);
+    setActionError(null);
+    const result = await settingsMutation.mutate(body);
+    if (!result.ok) {
+      if (!result.aborted) {
+        setActionError(result.error);
+      }
       return;
     }
-    if (data) {
-      applyStatus(data);
-    }
+    await statusQuery.refresh();
   }
 
   async function handleConfirmedAction(): Promise<void> {
@@ -96,42 +78,39 @@ export function UpdatesSettingsPage(): React.ReactElement {
     if (!action) {
       return;
     }
-    setActionLoading(true);
-    setError(null);
-    try {
-      const { data, error: apiError } = await hoservaClient.POST(CONFIRM_PATH[action], {
-        body: { confirm: true },
-      });
-      if (apiError) {
-        setError(apiError.message);
+    setActionError(null);
+    const result = await actionMutation.mutate(action);
+    if (!result.ok) {
+      if (!result.aborted) {
+        setActionError(result.error);
         showFeedbackToast({
           type: "error",
           title: t("settings.updates.actionFailed"),
-          description: apiError.message,
+          description: result.error,
         });
-        return;
       }
-      if (data) {
-        applyStatus(data);
-      }
-      showFeedbackToast({
-        type: "success",
-        title: t(`settings.updates.queued.${action}`),
-      });
-    } finally {
-      setActionLoading(false);
+      return;
     }
+    await statusQuery.refresh();
+    showFeedbackToast({
+      type: "success",
+      title: t(`settings.updates.queued.${action}`),
+    });
   }
 
-  if (loading) {
+  if (statusQuery.loading) {
     return <LoadingBlock />;
   }
 
+  const error = statusQuery.error ?? actionError;
+  const channel = status?.channel ?? UPDATE_CHANNEL_STABLE;
+  const updateCheckEnabled = status?.checkEnabled ?? true;
   const available = status?.availableVersion;
   const previous = status?.previousVersion;
   const rebootRequired = Boolean(status?.rebootRequired);
   const pending = status?.pendingDebianUpdates ?? [];
   const dependencies = status?.dependencies ?? [];
+  const actionLoading = actionMutation.pending || settingsMutation.pending;
 
   return (
     <div className="flex flex-col gap-4">
@@ -172,7 +151,6 @@ export function UpdatesSettingsPage(): React.ReactElement {
               value={channel}
               onChange={(value) => {
                 const next = value === UPDATE_CHANNEL_BETA ? UPDATE_CHANNEL_BETA : UPDATE_CHANNEL_STABLE;
-                setChannel(next);
                 void persistSettings({ channel: next });
               }}
               options={[
@@ -185,10 +163,7 @@ export function UpdatesSettingsPage(): React.ReactElement {
             label={t("settings.updates.updateCheck")}
             description={t("settings.updates.updateCheckDescription")}
             checked={updateCheckEnabled}
-            onCheckedChange={(checked) => {
-              setUpdateCheckEnabled(checked);
-              void persistSettings({ checkEnabled: checked });
-            }}
+            onCheckedChange={(checked) => void persistSettings({ checkEnabled: checked })}
           />
         </CardPanel>
       </Card>

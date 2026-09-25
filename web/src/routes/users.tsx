@@ -1,5 +1,5 @@
 import { MoreHorizontal, Plus, Users as UsersIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
@@ -36,7 +36,28 @@ import { Input } from "@/components/ui/input";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SHARE_ACCESS_NONE, shareAccessOptions } from "@/hooks/share-access-options";
-import { hoservaClient, type components } from "@/lib/api/client";
+import type { components } from "@/lib/api/client";
+import {
+  deleteApiToken,
+  deleteSession,
+  deleteUser,
+  deleteUserGroup,
+  getApiTokens,
+  getSessions,
+  getShares,
+  getUserGroups,
+  getUsers,
+  getUserSharePermissions,
+  patchUser,
+  postUser,
+  postUserGroup,
+  postUserPassword,
+  postUserToken,
+  putUserGroupMembers,
+  putUserSharePermissions,
+} from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
 
 type UserSummary = components["schemas"]["UserSummary"];
 type UserGroup = components["schemas"]["UserGroup"];
@@ -59,12 +80,38 @@ interface PendingRevoke {
 
 export function UsersPage(): React.ReactElement {
   const { t } = useTranslation();
-  const [users, setUsers] = useState<UserSummary[] | null>(null);
-  const [groups, setGroups] = useState<UserGroup[] | null>(null);
-  const [sessions, setSessions] = useState<Session[] | null>(null);
-  const [tokens, setTokens] = useState<ApiTokenSummary[] | null>(null);
-  const [shares, setShares] = useState<Share[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const usersQuery = useApiQuery<{ users: UserSummary[] }>({
+    queryKey: "users",
+    queryFn: (signal) => getUsers(signal),
+    fallbackError: t("users.errors.loadFailed"),
+  });
+  const groupsQuery = useApiQuery<{ groups: UserGroup[] }>({
+    queryKey: "user-groups",
+    queryFn: (signal) => getUserGroups(signal),
+    fallbackError: t("users.errors.groupsLoadFailed"),
+  });
+  const sessionsQuery = useApiQuery<{ sessions: Session[] }>({
+    queryKey: "sessions",
+    queryFn: (signal) => getSessions(signal),
+    fallbackError: t("users.errors.sessionsLoadFailed"),
+  });
+  const tokensQuery = useApiQuery<{ tokens: ApiTokenSummary[] }>({
+    queryKey: "api-tokens",
+    queryFn: (signal) => getApiTokens(signal),
+    fallbackError: t("users.errors.tokensLoadFailed"),
+  });
+  const sharesQuery = useApiQuery<{ shares: Share[] }>({
+    queryKey: "users-shares",
+    queryFn: (signal) => getShares(signal),
+    fallbackError: t("users.errors.sharesLoadFailed"),
+  });
+
+  const users = usersQuery.data?.users ?? null;
+  const groups = groupsQuery.data?.groups ?? null;
+  const sessions = sessionsQuery.data?.sessions ?? null;
+  const tokens = tokensQuery.data?.tokens ?? null;
+  const shares = sharesQuery.data?.shares ?? [];
+
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [panelOpen, setPanelOpen] = useState(false);
@@ -75,60 +122,78 @@ export function UsersPage(): React.ReactElement {
   const [passwordDraft, setPasswordDraft] = useState("");
   const [groupIdsDraft, setGroupIdsDraft] = useState<string[]>([]);
   const [sharePermissionsDraft, setSharePermissionsDraft] = useState<Record<string, ShareAccessLevel>>({});
-  // The user id openEditPanel's own permissions fetch is for — checked when
-  // that fetch resolves so a slow response for a panel the user has since
-  // closed or reopened for someone else can never overwrite that other
-  // user's draft (#228 CodeRabbit finding).
-  const editingPermissionsForRef = useRef<string | null>(null);
   const [panelBusy, setPanelBusy] = useState(false);
 
   const [groupFormOpen, setGroupFormOpen] = useState(false);
   const [groupNameDraft, setGroupNameDraft] = useState("");
-  const [groupBusy, setGroupBusy] = useState(false);
 
   const [tokenFormOpen, setTokenFormOpen] = useState(false);
   const [tokenUsername, setTokenUsername] = useState("");
   const [tokenName, setTokenName] = useState("");
   const [tokenRole, setTokenRole] = useState<ApiTokenRole>("viewer");
-  const [tokenBusy, setTokenBusy] = useState(false);
   const [createdToken, setCreatedToken] = useState<ApiTokenCreated | null>(null);
 
   const [pendingRevoke, setPendingRevoke] = useState<PendingRevoke | null>(null);
-  const [revokeBusy, setRevokeBusy] = useState(false);
 
-  function load(signal?: AbortSignal): void {
-    Promise.all([
-      hoservaClient.GET("/users", { signal }),
-      hoservaClient.GET("/user-groups", { signal }),
-      hoservaClient.GET("/sessions", { signal }),
-      hoservaClient.GET("/api-tokens", { signal }),
-      hoservaClient.GET("/shares", { signal }),
-    ])
-      .then(([usersResult, groupsResult, sessionsResult, tokensResult, sharesResult]) => {
-        if (signal?.aborted) return;
-        if (usersResult.error) {
-          setError(usersResult.error.message);
-          return;
-        }
-        setError(null);
-        setUsers(usersResult.data?.users ?? []);
-        setGroups(groupsResult.data?.groups ?? []);
-        setSessions(sessionsResult.data?.sessions ?? []);
-        setTokens(tokensResult.data?.tokens ?? []);
-        setShares(sharesResult.data?.shares ?? []);
-      })
-      .catch((err: unknown) => {
-        if (!signal?.aborted) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      });
+  // Keyed on the editing user's id so switching users (or closing and
+  // reopening for someone else) resets and refetches through the hook's
+  // own stale-response guard, rather than a hand-rolled ref (#228).
+  const permissionsQuery = useApiQuery<{ permissions: { shareName: string; access: ShareAccessLevel }[] }>({
+    queryKey: ["user-permissions", editingUser?.id ?? null],
+    queryFn: (signal) => {
+      if (!editingUser) {
+        return Promise.resolve({ data: undefined, response: { ok: true } });
+      }
+      return getUserSharePermissions(editingUser.id, signal);
+    },
+    enabled: panelOpen && editingUser !== null,
+    fallbackError: t("users.errors.permissionsLoadFailed"),
+  });
+
+  // Adjusts the draft when the permissions query's data changes, rather
+  // than in an effect (react-hooks/set-state-in-effect).
+  const [seenPermissionsData, setSeenPermissionsData] = useState<typeof permissionsQuery.data>(null);
+  if (panelOpen && editingUser && permissionsQuery.data && permissionsQuery.data !== seenPermissionsData) {
+    setSeenPermissionsData(permissionsQuery.data);
+    const draft: Record<string, ShareAccessLevel> = {};
+    for (const entry of permissionsQuery.data.permissions ?? []) {
+      draft[entry.shareName] = entry.access;
+    }
+    setSharePermissionsDraft(draft);
   }
 
-  useEffect(() => {
-    const controller = new AbortController();
-    load(controller.signal);
-    return () => controller.abort();
-  }, []);
+  const saveRoleMutation = useApiMutation<{ userId: string; role: EditableRole }, UserSummary>({
+    mutationFn: ({ userId, role }) => patchUser(userId, { role }),
+  });
+  const createUserMutation = useApiMutation<{ username: string; role: EditableRole }, UserSummary>({
+    mutationFn: (body) => postUser(body),
+  });
+  const setPasswordMutation = useApiMutation<{ userId: string; password: string }, unknown>({
+    mutationFn: ({ userId, password }) => postUserPassword(userId, password),
+  });
+  const groupMembersMutation = useApiMutation<{ groupId: string; userIds: string[] }, unknown>({
+    mutationFn: ({ groupId, userIds }) => putUserGroupMembers(groupId, userIds),
+  });
+  const sharePermissionsMutation = useApiMutation<
+    { userId: string; permissions: { shareName: string; access: ShareAccessLevel }[] },
+    unknown
+  >({
+    mutationFn: ({ userId, permissions }) => putUserSharePermissions(userId, { permissions }),
+  });
+  const createGroupMutation = useApiMutation<string, UserGroup>({
+    mutationFn: (name) => postUserGroup(name),
+  });
+  const createTokenMutation = useApiMutation<{ username: string; name: string; role: ApiTokenRole }, ApiTokenCreated>({
+    mutationFn: ({ username, name, role }) => postUserToken(username, { name, role }),
+  });
+  const revokeMutation = useApiMutation<PendingRevoke, unknown>({
+    mutationFn: (target) => {
+      if (target.kind === "session") return deleteSession(target.id);
+      if (target.kind === "token") return deleteApiToken(target.id);
+      if (target.kind === "user") return deleteUser(target.id);
+      return deleteUserGroup(target.id);
+    },
+  });
 
   function openCreatePanel(): void {
     setEditingUser(null);
@@ -138,8 +203,8 @@ export function UsersPage(): React.ReactElement {
     setPasswordDraft("");
     setGroupIdsDraft([]);
     setSharePermissionsDraft({});
+    setActionError(null);
     setPanelOpen(true);
-    editingPermissionsForRef.current = null;
   }
 
   function openEditPanel(user: UserSummary): void {
@@ -150,21 +215,11 @@ export function UsersPage(): React.ReactElement {
     setPasswordDraft("");
     setGroupIdsDraft((groups ?? []).filter((group) => group.memberUserIds.includes(user.id)).map((group) => group.id));
     setSharePermissionsDraft({});
+    setActionError(null);
     setPanelOpen(true);
-    editingPermissionsForRef.current = user.id;
-    void hoservaClient
-      .GET("/users/{userId}/permissions", { params: { path: { userId: user.id } } })
-      .then(({ data }) => {
-        if (editingPermissionsForRef.current !== user.id) return;
-        const draft: Record<string, ShareAccessLevel> = {};
-        for (const entry of data?.permissions ?? []) {
-          draft[entry.shareName] = entry.access;
-        }
-        setSharePermissionsDraft(draft);
-      });
   }
 
-  async function syncGroupMembership(userId: string): Promise<void> {
+  async function syncGroupMembership(userId: string): Promise<string | null> {
     const currentGroupIds = new Set(
       (groups ?? []).filter((group) => group.memberUserIds.includes(userId)).map((group) => group.id),
     );
@@ -179,26 +234,34 @@ export function UsersPage(): React.ReactElement {
       } else {
         memberSet.delete(userId);
       }
-      await hoservaClient.PUT("/user-groups/{groupId}/members", {
-        params: { path: { groupId: group.id } },
-        body: { userIds: [...memberSet] },
-      });
+      const result = await groupMembersMutation.mutate({ groupId: group.id, userIds: [...memberSet] });
+      if (!result.ok) {
+        return result.aborted ? null : result.error;
+      }
     }
+    return null;
   }
 
   async function handleSaveUser(): Promise<void> {
+    // `refreshing`, not `loading`: reopening the panel for the same user
+    // keeps the previous fetch's `data` (the query key is unchanged), so
+    // `loading` (which requires `data === null`) would stay false while a
+    // stale draft that was never re-seeded for this opening is still on
+    // screen — saving it would wipe that user's permissions (issue #271
+    // finding 2).
+    if (editingUser && (permissionsQuery.refreshing || permissionsQuery.error)) {
+      setActionError(permissionsQuery.error ?? t("users.errors.permissionsLoadFailed"));
+      return;
+    }
     setPanelBusy(true);
     setActionError(null);
     try {
       let userId = editingUser?.id;
       if (editingUser) {
         if (editingUser.role !== "admin") {
-          const { error: apiError } = await hoservaClient.PATCH("/users/{userId}", {
-            params: { path: { userId: editingUser.id } },
-            body: { role: roleDraft },
-          });
-          if (apiError) {
-            setActionError(apiError.message);
+          const result = await saveRoleMutation.mutate({ userId: editingUser.id, role: roleDraft });
+          if (!result.ok) {
+            if (!result.aborted) setActionError(result.error);
             return;
           }
         }
@@ -208,47 +271,43 @@ export function UsersPage(): React.ReactElement {
           setActionError(t("users.errors.usernameRequired"));
           return;
         }
-        const { data, error: apiError } = await hoservaClient.POST("/users", {
-          body: { username: name, role: roleDraft },
-        });
-        if (apiError) {
-          setActionError(apiError.message);
+        const result = await createUserMutation.mutate({ username: name, role: roleDraft });
+        if (!result.ok) {
+          if (!result.aborted) setActionError(result.error);
           return;
         }
-        userId = data?.id;
+        userId = result.data?.id;
       }
 
       if (!userId) return;
 
       if (smbAccessDraft && passwordDraft.length > 0) {
-        const { error: apiError } = await hoservaClient.POST("/users/{userId}/password", {
-          params: { path: { userId } },
-          body: { password: passwordDraft },
-        });
-        if (apiError) {
-          setActionError(apiError.message);
+        const result = await setPasswordMutation.mutate({ userId, password: passwordDraft });
+        if (!result.ok) {
+          if (!result.aborted) setActionError(result.error);
           return;
         }
       }
 
-      await syncGroupMembership(userId);
+      const groupSyncError = await syncGroupMembership(userId);
+      if (groupSyncError) {
+        setActionError(groupSyncError);
+        return;
+      }
 
       if (editingUser) {
         const permissions = Object.entries(sharePermissionsDraft)
           .filter(([, access]) => access !== "none")
           .map(([shareName, access]) => ({ shareName, access }));
-        const { error: apiError } = await hoservaClient.PUT("/users/{userId}/permissions", {
-          params: { path: { userId } },
-          body: { permissions },
-        });
-        if (apiError) {
-          setActionError(apiError.message);
+        const result = await sharePermissionsMutation.mutate({ userId, permissions });
+        if (!result.ok) {
+          if (!result.aborted) setActionError(result.error);
           return;
         }
       }
 
       setPanelOpen(false);
-      load();
+      await Promise.all([usersQuery.refresh(), groupsQuery.refresh()]);
     } finally {
       setPanelBusy(false);
     }
@@ -257,92 +316,65 @@ export function UsersPage(): React.ReactElement {
   async function handleCreateGroup(): Promise<void> {
     const name = groupNameDraft.trim();
     if (name.length === 0) return;
-    setGroupBusy(true);
-    try {
-      const { error: apiError } = await hoservaClient.POST("/user-groups", { body: { name } });
-      if (apiError) {
-        setActionError(apiError.message);
-        return;
-      }
-      setGroupFormOpen(false);
-      setGroupNameDraft("");
-      load();
-    } finally {
-      setGroupBusy(false);
+    const result = await createGroupMutation.mutate(name);
+    if (!result.ok) {
+      if (!result.aborted) setActionError(result.error);
+      return;
     }
+    setGroupFormOpen(false);
+    setGroupNameDraft("");
+    await groupsQuery.refresh();
   }
 
   async function handleCreateToken(): Promise<void> {
     const name = tokenName.trim();
     if (name.length === 0 || tokenUsername.length === 0) return;
-    setTokenBusy(true);
-    try {
-      const { data, error: apiError } = await hoservaClient.POST("/users/{username}/tokens", {
-        params: { path: { username: tokenUsername } },
-        body: { name, role: tokenRole },
-      });
-      if (apiError) {
-        setActionError(apiError.message);
-        return;
-      }
-      if (data) {
-        setCreatedToken(data);
-      }
-      setTokenFormOpen(false);
-      setTokenName("");
-      load();
-    } finally {
-      setTokenBusy(false);
+    const result = await createTokenMutation.mutate({ username: tokenUsername, name, role: tokenRole });
+    if (!result.ok) {
+      if (!result.aborted) setActionError(result.error);
+      return;
     }
+    if (result.data) {
+      setCreatedToken(result.data);
+    }
+    setTokenFormOpen(false);
+    setTokenName("");
+    await tokensQuery.refresh();
   }
 
   function requestDeleteUser(user: UserSummary): void {
+    setActionError(null);
     setPendingRevoke({ kind: "user", id: user.id, label: user.username });
   }
 
   function requestDeleteGroup(group: UserGroup): void {
+    setActionError(null);
     setPendingRevoke({ kind: "group", id: group.id, label: group.name });
   }
 
   function requestRevokeSession(session: Session): void {
+    setActionError(null);
     setPendingRevoke({ kind: "session", id: session.id, label: session.username });
   }
 
   function requestRevokeToken(token: ApiTokenSummary): void {
+    setActionError(null);
     setPendingRevoke({ kind: "token", id: token.id, label: token.name });
   }
 
   async function handleRevoke(): Promise<void> {
     if (!pendingRevoke) return;
-    setRevokeBusy(true);
-    try {
-      let apiError: { message: string } | undefined;
-      if (pendingRevoke.kind === "session") {
-        ({ error: apiError } = await hoservaClient.DELETE("/sessions/{sessionId}", {
-          params: { path: { sessionId: pendingRevoke.id } },
-        }));
-      } else if (pendingRevoke.kind === "token") {
-        ({ error: apiError } = await hoservaClient.DELETE("/api-tokens/{tokenId}", {
-          params: { path: { tokenId: pendingRevoke.id } },
-        }));
-      } else if (pendingRevoke.kind === "user") {
-        ({ error: apiError } = await hoservaClient.DELETE("/users/{userId}", {
-          params: { path: { userId: pendingRevoke.id } },
-        }));
-      } else {
-        ({ error: apiError } = await hoservaClient.DELETE("/user-groups/{groupId}", {
-          params: { path: { groupId: pendingRevoke.id } },
-        }));
-      }
-      if (apiError) {
-        setActionError(apiError.message);
-        return;
-      }
-      setPendingRevoke(null);
-      load();
-    } finally {
-      setRevokeBusy(false);
+    const result = await revokeMutation.mutate(pendingRevoke);
+    if (!result.ok) {
+      if (!result.aborted) setActionError(result.error);
+      return;
     }
+    const kind = pendingRevoke.kind;
+    setPendingRevoke(null);
+    if (kind === "session") await sessionsQuery.refresh();
+    else if (kind === "token") await tokensQuery.refresh();
+    else if (kind === "user") await usersQuery.refresh();
+    else await groupsQuery.refresh();
   }
 
   const userColumns: DataTableColumn<UserSummary>[] = [
@@ -503,6 +535,8 @@ export function UsersPage(): React.ReactElement {
     },
   ];
 
+  const error = usersQuery.error;
+
   if (users === null && !error) {
     return <LoadingBlock />;
   }
@@ -537,7 +571,9 @@ export function UsersPage(): React.ReactElement {
           </Button>
         </CardHeader>
         <CardPanel>
-          {(groups ?? []).length === 0 ? (
+          {groupsQuery.error ? (
+            <Banner tone="error" title={groupsQuery.error} />
+          ) : (groups ?? []).length === 0 ? (
             <p className="text-muted-foreground text-sm">{t("users.groups.empty")}</p>
           ) : (
             <DataTable columns={groupColumns} rows={groups ?? []} getRowKey={(group) => group.id} />
@@ -550,7 +586,9 @@ export function UsersPage(): React.ReactElement {
           <CardTitle>{t("users.sessions.title")}</CardTitle>
         </CardHeader>
         <CardPanel>
-          {(sessions ?? []).length === 0 ? (
+          {sessionsQuery.error ? (
+            <Banner tone="error" title={sessionsQuery.error} />
+          ) : (sessions ?? []).length === 0 ? (
             <p className="text-muted-foreground text-sm">{t("users.sessions.empty")}</p>
           ) : (
             <DataTable columns={sessionColumns} rows={sessions ?? []} getRowKey={(session) => session.id} />
@@ -567,7 +605,9 @@ export function UsersPage(): React.ReactElement {
           </Button>
         </CardHeader>
         <CardPanel>
-          {(tokens ?? []).length === 0 ? (
+          {tokensQuery.error ? (
+            <Banner tone="error" title={tokensQuery.error} />
+          ) : (tokens ?? []).length === 0 ? (
             <p className="text-muted-foreground text-sm">{t("users.tokens.empty")}</p>
           ) : (
             <DataTable columns={tokenColumns} rows={tokens ?? []} getRowKey={(token) => token.id} />
@@ -589,7 +629,11 @@ export function UsersPage(): React.ReactElement {
             <Button variant="outline" onClick={() => setPanelOpen(false)}>
               {t("confirm.cancel")}
             </Button>
-            <Button loading={panelBusy} onClick={() => void handleSaveUser()}>
+            <Button
+              loading={panelBusy}
+              disabled={Boolean(editingUser) && (permissionsQuery.refreshing || Boolean(permissionsQuery.error))}
+              onClick={() => void handleSaveUser()}
+            >
               {t("shares.detail.save")}
             </Button>
           </div>
@@ -674,7 +718,13 @@ export function UsersPage(): React.ReactElement {
         {editingUser ? (
           <div className="flex flex-col gap-2">
             <p className="font-medium text-sm">{t("users.panel.permissions.title")}</p>
-            {shares.length === 0 ? (
+            {permissionsQuery.error ? (
+              <Banner tone="error" title={permissionsQuery.error} />
+            ) : permissionsQuery.loading ? (
+              <LoadingBlock rows={2} />
+            ) : sharesQuery.error ? (
+              <Banner tone="error" title={sharesQuery.error} />
+            ) : shares.length === 0 ? (
               <p className="text-muted-foreground text-sm">{t("users.panel.permissions.empty")}</p>
             ) : (
               <DataTable columns={sharePermissionColumns} rows={shares} getRowKey={(share) => share.name} />
@@ -688,7 +738,7 @@ export function UsersPage(): React.ReactElement {
         onOpenChange={setGroupFormOpen}
         title={t("users.groups.create")}
         footer={
-          <Button loading={groupBusy} disabled={groupNameDraft.trim().length === 0} onClick={() => void handleCreateGroup()}>
+          <Button loading={createGroupMutation.pending} disabled={groupNameDraft.trim().length === 0} onClick={() => void handleCreateGroup()}>
             {t("users.groups.create")}
           </Button>
         }
@@ -705,7 +755,7 @@ export function UsersPage(): React.ReactElement {
         title={t("users.tokens.create")}
         footer={
           <Button
-            loading={tokenBusy}
+            loading={createTokenMutation.pending}
             disabled={tokenUsername.length === 0 || tokenName.trim().length === 0}
             onClick={() => void handleCreateToken()}
           >
@@ -773,7 +823,7 @@ export function UsersPage(): React.ReactElement {
             : ""
         }
         destructive
-        loading={revokeBusy}
+        loading={revokeMutation.pending}
         onConfirm={() => void handleRevoke()}
       />
     </div>

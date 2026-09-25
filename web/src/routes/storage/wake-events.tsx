@@ -1,12 +1,14 @@
 import { Activity } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DataTable, type DataTableColumn } from "@/components/patterns/data-table";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { InlineNote } from "@/components/patterns/inline-note";
 import { LoadingBlock } from "@/components/patterns/loading";
-import { hoservaClient, type components } from "@/lib/api/client";
+import type { components } from "@/lib/api/client";
+import { getWakeEvents } from "@/lib/api/operations";
+import { useApiQuery } from "@/lib/api/use-api-query";
 
 type WakeEventRow = {
   device: string;
@@ -96,32 +98,19 @@ function buildWakeEventRows(
   return rows.sort((a, b) => a.device.localeCompare(b.device));
 }
 
+type WakeEventsResponse = components["schemas"]["WakeEventsResponse"];
+
 export function WakeEventsPage(): React.ReactElement {
   const { t } = useTranslation();
-  const [rows, setRows] = useState<WakeEventRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const wakeEventsQuery = useApiQuery<WakeEventsResponse>({
+    queryKey: "wake-events",
+    queryFn: (signal) => getWakeEvents(signal),
+  });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    hoservaClient
-      .GET("/disks/wake-events", { signal: controller.signal })
-      .then((result) => {
-        if (result.error) {
-          setError(result.error.message);
-          return;
-        }
-        const events = result.data?.events ?? [];
-        const dailyWakeCounts = result.data?.dailyWakeCounts ?? [];
-        setRows(buildWakeEventRows(events, dailyWakeCounts, t));
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      });
-    return () => controller.abort();
-  }, [t]);
-
+  const rows = wakeEventsQuery.data
+    ? buildWakeEventRows(wakeEventsQuery.data.events ?? [], wakeEventsQuery.data.dailyWakeCounts ?? [], t)
+    : null;
+  const error = wakeEventsQuery.error;
   const tableRows = useMemo(() => rows ?? [], [rows]);
 
   return (

@@ -15,7 +15,8 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "@/c
 import { toastManager } from "@/components/ui/toast";
 import { jobDetailPath } from "@/hooks/paths";
 import { useSystemData } from "@/hooks/use-system-status";
-import { hoservaClient, type components } from "@/lib/api/client";
+import type { components } from "@/lib/api/client";
+import { getShares, patchShare, postMoverRun, postShareRelocate } from "@/lib/api/operations";
 import { useApiMutation } from "@/lib/api/use-api-mutation";
 import { useApiQuery } from "@/lib/api/use-api-query";
 import { shareMutationError, shareRelocationDirection } from "@/routes/shares/cache-mode";
@@ -76,10 +77,28 @@ export function CachePage(): React.ReactElement {
   const { pool, jobs, loading: systemLoading, error: systemError, refresh } = useSystemData();
   const sharesQuery = useApiQuery<{ shares: Share[] }>({
     queryKey: "cache-shares",
-    queryFn: (signal) => hoservaClient.GET("/shares", { signal }),
+    queryFn: (signal) => getShares(signal),
   });
   const moverMutation = useApiMutation({
-    mutationFn: () => hoservaClient.POST("/mover/run"),
+    mutationFn: postMoverRun,
+  });
+  const cacheModeMutation = useApiMutation<{ shareName: string; cacheMode: ShareCacheMode }, Share>({
+    mutationFn: async ({ shareName, cacheMode }) => {
+      const result = await patchShare(shareName, { cacheMode });
+      if (result.error) {
+        return { ...result, error: { ...result.error, message: shareMutationError(result.error, t) } };
+      }
+      return result;
+    },
+  });
+  const relocateMutation = useApiMutation<{ shareName: string; direction: "cache" | "array" }, components["schemas"]["Job"] | undefined>({
+    mutationFn: async ({ shareName, direction }) => {
+      const result = await postShareRelocate(shareName, direction);
+      if (result.error) {
+        return { ...result, error: { ...result.error, message: shareMutationError(result.error, t) } };
+      }
+      return result;
+    },
   });
 
   const [modeDrafts, setModeDrafts] = useState<Record<string, ShareCacheMode>>({});
@@ -87,8 +106,15 @@ export function CachePage(): React.ReactElement {
   const [pendingMode, setPendingMode] = useState<ShareCacheMode | null>(null);
   const [modeDialogOpen, setModeDialogOpen] = useState(false);
   const [modeDialogError, setModeDialogError] = useState<string | null>(null);
-  const [modeDialogBusy, setModeDialogBusy] = useState(false);
   const [moverError, setMoverError] = useState<string | null>(null);
+  // Set at each handler's entry and cleared in `finally` so the dialog
+  // stays busy across every awaited step, not just the mutations' own
+  // `pending` flags — those go back to false while `sharesQuery.refresh()`
+  // or the top-level `refresh()` between the patch and the relocate call is
+  // still in flight, which would let Cancel close the dialog mid-handler
+  // and still let a queued relocate go through (issue #271 finding).
+  const [modeDialogHandlerBusy, setModeDialogHandlerBusy] = useState(false);
+  const modeDialogBusy = modeDialogHandlerBusy || cacheModeMutation.pending || relocateMutation.pending;
 
   const shares = sharesQuery.data?.shares ?? null;
   const loadError = systemError ?? sharesQuery.error;
@@ -135,22 +161,17 @@ export function CachePage(): React.ReactElement {
   }
 
   async function saveShareCacheMode(shareName: string, cacheMode: ShareCacheMode): Promise<boolean> {
-    const { data, error: apiError } = await hoservaClient.PATCH("/shares/{name}", {
-      params: { path: { name: shareName } },
-      body: { cacheMode },
-    });
-    if (apiError) {
-      setModeDialogError(shareMutationError(apiError, t));
+    const result = await cacheModeMutation.mutate({ shareName, cacheMode });
+    if (!result.ok) {
+      if (!result.aborted) setModeDialogError(result.error);
       return false;
     }
-    if (data) {
-      await sharesQuery.refresh();
-      setModeDrafts((current) => {
-        const next = { ...current };
-        delete next[shareName];
-        return next;
-      });
-    }
+    await sharesQuery.refresh();
+    setModeDrafts((current) => {
+      const next = { ...current };
+      delete next[shareName];
+      return next;
+    });
     return true;
   }
 
@@ -158,7 +179,7 @@ export function CachePage(): React.ReactElement {
     if (!pendingShare || !pendingMode) {
       return;
     }
-    setModeDialogBusy(true);
+    setModeDialogHandlerBusy(true);
     setModeDialogError(null);
     try {
       const saved = await saveShareCacheMode(pendingShare.name, pendingMode);
@@ -167,10 +188,8 @@ export function CachePage(): React.ReactElement {
         setPendingShare(null);
         setPendingMode(null);
       }
-    } catch (err: unknown) {
-      setModeDialogError(shareMutationError(err, t));
     } finally {
-      setModeDialogBusy(false);
+      setModeDialogHandlerBusy(false);
     }
   }
 
@@ -178,29 +197,27 @@ export function CachePage(): React.ReactElement {
     if (!pendingShare || !pendingMode || !relocationDirection) {
       return;
     }
-    setModeDialogBusy(true);
+    setModeDialogHandlerBusy(true);
     setModeDialogError(null);
     try {
       const saved = await saveShareCacheMode(pendingShare.name, pendingMode);
       if (!saved) {
         return;
       }
-      const { data, error: apiError } = await hoservaClient.POST("/shares/{name}/relocate", {
-        params: { path: { name: pendingShare.name } },
-        body: { to: relocationDirection },
-      });
-      if (apiError) {
-        setModeDialogError(shareMutationError(apiError, t));
+      const relocateResult = await relocateMutation.mutate({ shareName: pendingShare.name, direction: relocationDirection });
+      if (!relocateResult.ok) {
+        if (!relocateResult.aborted) setModeDialogError(relocateResult.error);
         return;
       }
-      if (data) {
+      const relocatedJob = relocateResult.data;
+      if (relocatedJob) {
         toastManager.add({
           type: "success",
           title: t("cache.relocation.queuedTitle"),
           description: t("cache.relocation.queuedDescription"),
           actionProps: {
             children: t("cache.relocation.viewJob"),
-            onClick: () => navigate(jobDetailPath(data.id)),
+            onClick: () => navigate(jobDetailPath(relocatedJob.id)),
           },
         });
         await refresh();
@@ -208,10 +225,8 @@ export function CachePage(): React.ReactElement {
       setModeDialogOpen(false);
       setPendingShare(null);
       setPendingMode(null);
-    } catch (err: unknown) {
-      setModeDialogError(shareMutationError(err, t));
     } finally {
-      setModeDialogBusy(false);
+      setModeDialogHandlerBusy(false);
     }
   }
 

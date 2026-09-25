@@ -10,8 +10,9 @@ import { Card, CardDescription, CardHeader, CardPanel, CardTitle } from "@/compo
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/api/auth-context";
-import { hoservaClient } from "@/lib/api/client";
 import { isApiError } from "@/lib/api/errors";
+import { postAuthLogin } from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
 
 const USERNAME_AUTOCOMPLETE = "username";
 const CURRENT_PASSWORD_AUTOCOMPLETE = "current-password";
@@ -25,49 +26,45 @@ export function LoginPage(): React.ReactElement {
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [showTotp, setShowTotp] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+
+  const loginMutation = useApiMutation({
+    mutationFn: async (body: { username: string; password: string; totpCode?: string }) => {
+      const result = await postAuthLogin(body);
+      if (result.error && isApiError(result.error)) {
+        if (result.error.code === "totp_required") {
+          setShowTotp(true);
+          return { ...result, error: { ...result.error, message: t("login.errors.totpRequired") } };
+        }
+        if (result.error.code === "totp_invalid") {
+          setShowTotp(true);
+          return { ...result, error: { ...result.error, message: t("login.errors.totpInvalid") } };
+        }
+        if (result.error.code === "rate_limited") {
+          return {
+            ...result,
+            error: { ...result.error, message: t("login.errors.rateLimited", { message: result.error.message }) },
+          };
+        }
+      }
+      return result;
+    },
+  });
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    setError(null);
-    setLoading(true);
-    try {
-      const { data, error: apiError } = await hoservaClient.POST("/auth/login", {
-        body: {
-          username: username.trim(),
-          password,
-          totpCode: showTotp && totpCode.length > 0 ? totpCode : undefined,
-        },
-      });
-      if (apiError) {
-        if (isApiError(apiError)) {
-          if (apiError.code === "totp_required") {
-            setShowTotp(true);
-            setError(t("login.errors.totpRequired"));
-            return;
-          }
-          if (apiError.code === "totp_invalid") {
-            setShowTotp(true);
-            setError(t("login.errors.totpInvalid"));
-            return;
-          }
-          if (apiError.code === "rate_limited") {
-            setError(t("login.errors.rateLimited", { message: apiError.message }));
-            return;
-          }
-        }
-        setError(apiError.message);
-        return;
-      }
-      if (data) {
-        acceptSession(data);
-      }
-      await refresh();
-      navigate("/");
-    } finally {
-      setLoading(false);
+    const result = await loginMutation.mutate({
+      username: username.trim(),
+      password,
+      totpCode: showTotp && totpCode.length > 0 ? totpCode : undefined,
+    });
+    if (!result.ok) {
+      return;
     }
+    if (result.data) {
+      acceptSession(result.data);
+    }
+    await refresh();
+    navigate("/");
   }
 
   return (
@@ -78,7 +75,7 @@ export function LoginPage(): React.ReactElement {
       </CardHeader>
       <CardPanel>
         <form className="flex flex-col gap-4" onSubmit={(event) => void handleSubmit(event)}>
-          {error ? <Banner tone="error" title={error} /> : null}
+          {loginMutation.error ? <Banner tone="error" title={loginMutation.error} /> : null}
           <Field>
             <FieldLabel>{t("login.fields.username")}</FieldLabel>
             <Input
@@ -99,11 +96,11 @@ export function LoginPage(): React.ReactElement {
           {showTotp ? (
             <Field>
               <FieldLabel>{t("login.fields.totp")}</FieldLabel>
-              <TotpInput value={totpCode} onChange={setTotpCode} aria-invalid={Boolean(error)} />
+              <TotpInput value={totpCode} onChange={setTotpCode} aria-invalid={Boolean(loginMutation.error)} />
               <FieldDescription>{t("login.fields.totpHint")}</FieldDescription>
             </Field>
           ) : null}
-          <Button type="submit" loading={loading} className="w-full">
+          <Button type="submit" loading={loginMutation.pending} className="w-full">
             {t("login.submit")}
           </Button>
         </form>

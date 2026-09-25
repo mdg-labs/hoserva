@@ -706,7 +706,8 @@
       "passwordTooShort": "The password must be at least 12 characters.",
       "totpEnrollFailed": "Could not start authenticator enrolment.",
       "totpConfirmRequired": "Enter the six-digit code from your authenticator app.",
-      "storageBlocked": "Fix the failed storage dependency checks before continuing."
+      "storageBlocked": "Fix the failed storage dependency checks before continuing.",
+      "doctorLoadFailed": "Could not run the storage dependency checks."
     }
   },
   "common": {
@@ -981,6 +982,7 @@
       "portRestart": "Restart Hoserva to listen on the new port."
     },
     "notifications": {
+      "loadFailed": "Could not load notification settings.",
       "channelsTitle": "Notification channels",
       "addChannel": "Add channel",
       "addChannelDescription": "Configure a channel for alerts. Untested notification config is the same as no notification config.",
@@ -1086,6 +1088,7 @@
       }
     },
     "updates": {
+      "loadFailed": "Could not load update status",
       "apiNote": "Security updates install unattended. Hoserva never reboots on its own — reboot is always your action (Q68).",
       "versionTitle": "Hoserva version",
       "currentVersion": "Installed version",
@@ -1183,6 +1186,7 @@
     },
     "list": {
       "description": "Every configured share, with cache mode, SMB and NFS status.",
+      "loadFailed": "Could not load shares",
       "create": "Create share",
       "edit": "Edit",
       "browse": "Browse",
@@ -1221,6 +1225,7 @@
     "detail": {
       "save": "Save changes",
       "notFound": "Share {{name}} was not found.",
+      "loadFailed": "Could not load this share",
       "tabs": {
         "general": "General",
         "allocation": "Allocation",
@@ -1368,7 +1373,13 @@
       "description": "Create an account to give someone UI access, SMB/NFS access, or both."
     },
     "errors": {
-      "usernameRequired": "Enter a username."
+      "usernameRequired": "Enter a username.",
+      "loadFailed": "Could not load accounts",
+      "groupsLoadFailed": "Could not load groups",
+      "sessionsLoadFailed": "Could not load sessions",
+      "tokensLoadFailed": "Could not load API tokens",
+      "sharesLoadFailed": "Could not load shares",
+      "permissionsLoadFailed": "Could not load this account's share permissions"
     },
     "panel": {
       "createTitle": "Create account",

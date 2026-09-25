@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
@@ -16,7 +16,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardFooter, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { hoservaClient, type components } from "@/lib/api/client";
+import type { components } from "@/lib/api/client";
+import {
+  deleteNetworkLetsEncrypt,
+  getNetworkSettings,
+  postNetworkCertificateRegen,
+  postNetworkLetsEncrypt,
+  postNetworkSettingsConfirm,
+  putNetworkSettings,
+} from "@/lib/api/operations";
+import { parseClientResult, type ClientResult } from "@/lib/api/request";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
 
 type NetworkSettings = components["schemas"]["NetworkSettings"];
 type NetworkInterface = components["schemas"]["NetworkInterface"];
@@ -53,9 +64,11 @@ function certTone(daysRemaining: number): "success" | "warning" | "error" {
 
 export function NetworkSettingsPage(): React.ReactElement {
   const { t } = useTranslation();
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const networkQuery = useApiQuery<NetworkSettings>({
+    queryKey: "network-settings",
+    queryFn: (signal) => getNetworkSettings(signal),
+    fallbackError: t("settings.network.loadFailed"),
+  });
   const [settings, setSettings] = useState<NetworkSettings | null>(null);
   const [selected, setSelected] = useState("");
   const [method, setMethod] = useState<string>(METHOD_DHCP);
@@ -66,15 +79,15 @@ export function NetworkSettingsPage(): React.ReactElement {
   const [port, setPort] = useState(8008);
   const [allowAllOpen, setAllowAllOpen] = useState(false);
   const [leOpen, setLeOpen] = useState(false);
-  const [leBusy, setLeBusy] = useState(false);
   const [leDomain, setLeDomain] = useState("");
   const [leProvider, setLeProvider] = useState<DNS01Provider>(PROVIDER_CLOUDFLARE);
   const [leToken, setLeToken] = useState("");
   const [leNameserver, setLeNameserver] = useState("");
   const [leTsigKey, setLeTsigKey] = useState("");
   const [leTsigSecret, setLeTsigSecret] = useState("");
-  const [leError, setLeError] = useState<string | null>(null);
-  const formSeeded = useRef(false);
+  const [leValidationError, setLeValidationError] = useState<string | null>(null);
+  const [formSeeded, setFormSeeded] = useState(false);
+  const [seenNetworkData, setSeenNetworkData] = useState<NetworkSettings | null>(null);
 
   const seedForm = (data: NetworkSettings): void => {
     const ifaces = data.interfaces ?? [];
@@ -90,63 +103,55 @@ export function NetworkSettingsPage(): React.ReactElement {
     setPort(data.listenPort);
   };
 
-  const load = useCallback((signal?: AbortSignal) => {
-    return hoservaClient.GET("/settings/network", { signal }).then(({ data, error: apiError }) => {
-      if (signal?.aborted) {
-        return;
-      }
-      if (apiError) {
-        setError(apiError.message);
-        return;
-      }
-      if (data) {
-        setError(null);
-        setSettings(data);
-        if (!formSeeded.current) {
-          formSeeded.current = true;
-          const ifaces = data.interfaces ?? [];
-          const current = ifaces[0];
-          if (current) {
-            setSelected(current.name);
-            setMethod(current.method);
-            setAddress(current.address ?? "");
-            setPrefix(current.prefix ?? 24);
-            setGateway(current.gateway ?? "");
-            setDns(dnsToDraft(current.dns));
-          }
-          setPort(data.listenPort);
-        } else {
-          setPort(data.listenPort);
-        }
-      }
-    });
-  }, []);
+  // Adjusts state when the query's loaded object changes, rather than in
+  // an effect (react-hooks/set-state-in-effect): the first load seeds the
+  // whole form, a later one (a mutation's own refresh() — the silent
+  // background poll below writes `settings` directly and never touches
+  // the query) only refreshes the port so it doesn't clobber the
+  // interface the user is mid-editing. `seenNetworkData` tracks the last
+  // query object this has already applied, independently of `settings`
+  // itself, since the poll also writes `settings` from outside the query.
+  if (networkQuery.data && networkQuery.data !== seenNetworkData) {
+    const data = networkQuery.data;
+    setSeenNetworkData(data);
+    setSettings(data);
+    if (!formSeeded) {
+      setFormSeeded(true);
+      seedForm(data);
+    } else {
+      setPort(data.listenPort);
+    }
+  }
 
-  useEffect(() => {
-    const controller = new AbortController();
-    load(controller.signal)
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
-      });
-    return () => controller.abort();
-  }, [load]);
-
+  // Background poll while a change is confirming (Q46-style two-phase
+  // apply). Kept outside the shared hook and deliberately silent on
+  // failure: the pending banner already gives the user their own retry
+  // (Confirm), so surfacing a dropped poll tick as a page error would be
+  // noise, not signal — the next tick, or an explicit action, recovers.
   useEffect(() => {
     if (!settings?.pending) {
       return;
     }
+    let cancelled = false;
     const id = window.setInterval(() => {
-      void load().catch(() => undefined);
+      getNetworkSettings()
+        .then((result) => {
+          if (cancelled) {
+            return;
+          }
+          const parsed = parseClientResult(result);
+          if (parsed.data) {
+            setSettings(parsed.data);
+            setPort(parsed.data.listenPort);
+          }
+        })
+        .catch(() => undefined);
     }, 1000);
-    return () => window.clearInterval(id);
-  }, [settings?.pending, load]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [settings?.pending]);
 
   const selectedIface = useMemo(
     () => (settings?.interfaces ?? []).find((iface) => iface.name === selected),
@@ -162,102 +167,78 @@ export function NetworkSettingsPage(): React.ReactElement {
     setDns(dnsToDraft(iface.dns));
   }
 
-  async function handleApplyAddressing(): Promise<void> {
-    setError(null);
-    setSaving(true);
-    try {
-      const { data, error: apiError } = await hoservaClient.PUT("/settings/network", {
-        body: {
-          interface: selected,
-          method: method === METHOD_STATIC ? METHOD_STATIC : METHOD_DHCP,
-          address: method === METHOD_STATIC ? address : undefined,
-          prefix: method === METHOD_STATIC ? prefix : undefined,
-          gateway: method === METHOD_STATIC ? gateway : undefined,
-          dns: parseDns(dns),
-        },
-      });
-      if (apiError) {
-        setError(apiError.message);
-        return;
-      }
-      if (data) {
-        setSettings(data);
-        seedForm(data);
-      }
-    } finally {
-      setSaving(false);
+  const settingsMutation = useApiMutation<() => Promise<ClientResult<NetworkSettings>>, NetworkSettings>({
+    mutationFn: (thunk) => thunk(),
+    fallbackError: t("settings.network.saveFailed"),
+  });
+  const leMutation = useApiMutation<Parameters<typeof postNetworkLetsEncrypt>[0], components["schemas"]["Job"]>({
+    mutationFn: (body) => postNetworkLetsEncrypt(body),
+    fallbackError: t("settings.network.saveFailed"),
+  });
+
+  async function applySettingsChange(thunk: () => Promise<ClientResult<NetworkSettings>>): Promise<boolean> {
+    const result = await settingsMutation.mutate(thunk);
+    if (!result.ok) {
+      return false;
     }
+    if (result.data) {
+      setSettings(result.data);
+      seedForm(result.data);
+    }
+    return true;
+  }
+
+  async function handleApplyAddressing(): Promise<void> {
+    await applySettingsChange(() =>
+      putNetworkSettings({
+        interface: selected,
+        method: method === METHOD_STATIC ? METHOD_STATIC : METHOD_DHCP,
+        address: method === METHOD_STATIC ? address : undefined,
+        prefix: method === METHOD_STATIC ? prefix : undefined,
+        gateway: method === METHOD_STATIC ? gateway : undefined,
+        dns: parseDns(dns),
+      }),
+    );
   }
 
   async function handleConfirm(): Promise<void> {
-    setError(null);
-    const { data, error: apiError } = await hoservaClient.POST("/settings/network/confirm", {});
-    if (apiError) {
-      setError(apiError.message);
-      return;
-    }
-      if (data) {
-        setSettings(data);
-        seedForm(data);
-      }
+    await applySettingsChange(() => postNetworkSettingsConfirm());
   }
 
   async function handleRegen(): Promise<void> {
-    setError(null);
-    const { data, error: apiError } = await hoservaClient.POST("/settings/network/certificate", {});
-    if (apiError) {
-      setError(apiError.message);
-      return;
-    }
-    if (data) {
-      setSettings(data);
-      seedForm(data);
+    const ok = await applySettingsChange(() => postNetworkCertificateRegen());
+    if (ok) {
       showFeedbackToast({ type: "success", title: t("settings.network.regenDone") });
     }
   }
 
   async function handleLetsEncrypt(): Promise<void> {
     if (leDomain.trim().length === 0) {
-      setLeError(t("settings.network.leDomainRequired"));
+      setLeValidationError(t("settings.network.leDomainRequired"));
       return;
     }
-    setLeError(null);
-    setLeBusy(true);
-    try {
-      const { error: apiError } = await hoservaClient.POST("/settings/network/lets-encrypt", {
-        body: {
-          domain: leDomain.trim(),
-          provider: leProvider,
-          cloudflareAPIToken: leProvider === PROVIDER_CLOUDFLARE ? leToken || undefined : undefined,
-          rfc2136Nameserver: leProvider === PROVIDER_RFC2136 ? leNameserver || undefined : undefined,
-          rfc2136TsigKeyName: leProvider === PROVIDER_RFC2136 ? leTsigKey || undefined : undefined,
-          rfc2136TsigSecret: leProvider === PROVIDER_RFC2136 ? leTsigSecret || undefined : undefined,
-        },
-      });
-      if (apiError) {
-        setLeError(apiError.message);
-        return;
-      }
-      setLeOpen(false);
-      setLeToken("");
-      setLeTsigSecret("");
-      showFeedbackToast({ type: "success", title: t("settings.network.leQueued") });
-      await load();
-    } finally {
-      setLeBusy(false);
+    setLeValidationError(null);
+    const result = await leMutation.mutate({
+      domain: leDomain.trim(),
+      provider: leProvider,
+      cloudflareAPIToken: leProvider === PROVIDER_CLOUDFLARE ? leToken || undefined : undefined,
+      rfc2136Nameserver: leProvider === PROVIDER_RFC2136 ? leNameserver || undefined : undefined,
+      rfc2136TsigKeyName: leProvider === PROVIDER_RFC2136 ? leTsigKey || undefined : undefined,
+      rfc2136TsigSecret: leProvider === PROVIDER_RFC2136 ? leTsigSecret || undefined : undefined,
+    });
+    if (!result.ok) {
+      return;
     }
+    setLeOpen(false);
+    setLeToken("");
+    setLeTsigSecret("");
+    showFeedbackToast({ type: "success", title: t("settings.network.leQueued") });
+    await networkQuery.refresh();
   }
 
   async function handleDisableLetsEncrypt(): Promise<void> {
-    setError(null);
-    const { data, error: apiError } = await hoservaClient.DELETE("/settings/network/lets-encrypt", {});
-    if (apiError) {
-      setError(apiError.message);
-      return;
-    }
-    if (data) {
-      setSettings(data);
-      seedForm(data);
+    const ok = await applySettingsChange(() => deleteNetworkLetsEncrypt());
+    if (ok) {
       showFeedbackToast({ type: "success", title: t("settings.network.leDisabled") });
     }
   }
@@ -271,44 +252,21 @@ export function NetworkSettingsPage(): React.ReactElement {
   }
 
   async function persistAccess(allowAllSources: boolean): Promise<void> {
-    setError(null);
-    const { data, error: apiError } = await hoservaClient.PUT("/settings/network", {
-      body: { allowAllSources },
-    });
-    if (apiError) {
-      setError(apiError.message);
-      return;
-    }
-      if (data) {
-        setSettings(data);
-        seedForm(data);
-      }
+    await applySettingsChange(() => putNetworkSettings({ allowAllSources }));
   }
 
   async function handlePortSave(): Promise<void> {
-    setError(null);
-    setSaving(true);
-    try {
-      const { data, error: apiError } = await hoservaClient.PUT("/settings/network", {
-        body: { listenPort: port },
-      });
-      if (apiError) {
-        setError(apiError.message);
-        return;
-      }
-      if (data) {
-        setSettings(data);
-        seedForm(data);
-      }
-    } finally {
-      setSaving(false);
-    }
+    await applySettingsChange(() => putNetworkSettings({ listenPort: port }));
   }
 
-  if (loading) {
+  if (networkQuery.loading) {
     return <LoadingBlock />;
   }
 
+  const error = networkQuery.error ?? settingsMutation.error;
+  const saving = settingsMutation.pending;
+  const leBusy = leMutation.pending;
+  const leError = leValidationError ?? leMutation.error;
   const editable = settings?.editable === true;
   const pending = settings?.pending;
   const columns: DataTableColumn<NetworkInterface>[] = [
@@ -493,7 +451,8 @@ export function NetworkSettingsPage(): React.ReactElement {
             onClick={() => {
               setLeDomain(settings?.letsEncrypt.domain ?? "");
               setLeProvider(settings?.letsEncrypt.provider === PROVIDER_RFC2136 ? PROVIDER_RFC2136 : PROVIDER_CLOUDFLARE);
-              setLeError(null);
+              setLeValidationError(null);
+              leMutation.reset();
               setLeOpen(true);
             }}
           >
@@ -558,7 +517,8 @@ export function NetworkSettingsPage(): React.ReactElement {
         onOpenChange={(open) => {
           setLeOpen(open);
           if (open) {
-            setLeError(null);
+            setLeValidationError(null);
+            leMutation.reset();
           }
         }}
         title={t("settings.network.leSetup")}

@@ -64,6 +64,25 @@ const noDirectHttp = {
       selector: `CallExpression[callee.name='require'][arguments.0.value=/^(${HTTP_LIBRARIES.join("|")})$/]`,
       message: "Call the API through hoservaClient (src/lib/api); a require() of an HTTP library bypasses D18.",
     },
+    // D18 (doc 12 §2, #271): hoservaClient itself is only ever called from
+    // src/lib/api/ — the shared useApiQuery/useApiMutation hooks and the
+    // thin operations.ts wrappers they call are the one path a route or
+    // component takes to the API, so every call site gets the same abort,
+    // stale-response and error-parsing behaviour instead of a hand-rolled
+    // copy. The MemberExpression selector catches every call shape
+    // (`hoservaClient.GET(...)`, a destructured method, a reference passed
+    // elsewhere); the ImportSpecifier selector also catches importing the
+    // binding without yet calling it.
+    {
+      selector: "MemberExpression[object.name='hoservaClient']",
+      message:
+        "Call the API through the shared request hook (src/lib/api/use-api-query.ts, use-api-mutation.ts) or an src/lib/api/operations.ts wrapper — routes and components may not call hoservaClient directly (D18).",
+    },
+    {
+      selector: "ImportSpecifier[imported.name='hoservaClient']",
+      message:
+        "hoservaClient may only be imported inside src/lib/api/ — call the API through the shared request hook instead (D18).",
+    },
   ],
 };
 

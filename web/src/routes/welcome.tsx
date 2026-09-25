@@ -31,13 +31,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAuth } from "@/lib/api/auth-context";
-import { hoservaClient, type components } from "@/lib/api/client";
+import type { components } from "@/lib/api/client";
 import {
   markOnboardingComplete,
   markOnboardingIncomplete,
   readOnboardingStep,
   writeOnboardingStep,
 } from "@/lib/api/onboarding";
+import {
+  getDoctor,
+  postAuthTotpConfirm,
+  postAuthTotpEnroll,
+  postDoctorHostConfig,
+  postNotificationChannel,
+  postSetupAdmin,
+  putGeneralSettings,
+} from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
 
 type DoctorCheck = components["schemas"]["DoctorCheck"];
 type NotificationChannelType = components["schemas"]["NotificationChannelType"];
@@ -78,7 +89,6 @@ export function WelcomePage(): React.ReactElement {
 
   const [step, setStep] = useState(() => readOnboardingStep());
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -88,8 +98,63 @@ export function WelcomePage(): React.ReactElement {
   const [otpauthUri, setOtpauthUri] = useState<string | null>(null);
   const [totpConfirmCode, setTotpConfirmCode] = useState("");
 
-  const [doctorChecks, setDoctorChecks] = useState<DoctorCheck[] | null>(null);
+  const doctorQuery = useApiQuery<{ checks: DoctorCheck[] }>({
+    queryKey: "welcome-doctor",
+    queryFn: (signal) => getDoctor(signal),
+    enabled: step === 1,
+    fallbackError: t("welcome.errors.doctorLoadFailed"),
+  });
+  const doctorChecks = doctorQuery.data?.checks ?? null;
   const [q76Choices, setQ76Choices] = useState<Record<string, "import" | "leave">>({});
+
+  // Every welcome-flow mutation goes through useApiMutation so a dropped
+  // connection during admin creation, TOTP enrol/confirm, the doctor
+  // host-config decision or the basics save surfaces as an error instead of
+  // an unhandled rejection (issue #271 finding 1).
+  const setupAdminMutation = useApiMutation<
+    { username: string; password: string },
+    components["schemas"]["User"]
+  >({
+    mutationFn: postSetupAdmin,
+  });
+  const totpEnrollMutation = useApiMutation<undefined, { secret: string; otpauthUri: string }>({
+    mutationFn: () => postAuthTotpEnroll(),
+  });
+  const totpConfirmMutation = useApiMutation<string, unknown>({
+    mutationFn: (code) => postAuthTotpConfirm(code),
+  });
+  const doctorHostConfigMutation = useApiMutation<components["schemas"]["ApplyHostConfigRequest"], unknown>({
+    mutationFn: postDoctorHostConfig,
+  });
+  const notificationChannelMutation = useApiMutation<
+    { name: string; type: NotificationChannelType; enabled: boolean; secret?: string },
+    unknown
+  >({
+    mutationFn: postNotificationChannel,
+  });
+  const generalSettingsMutation = useApiMutation<
+    components["schemas"]["UpdateGeneralSettingsRequest"],
+    unknown
+  >({
+    mutationFn: putGeneralSettings,
+  });
+
+  // Set at each step handler's entry and cleared in `finally`, so Next
+  // stays disabled across the whole handler — not just while a mutation's
+  // own `pending` flag is true. handleAdminStep awaits `refresh()` after
+  // setupAdminMutation resolves; without this, `loading` would drop back to
+  // false during that gap and a second Next click would re-post
+  // /setup/admin before `adminCreated` is set (issue #271 finding).
+  const [stepBusy, setStepBusy] = useState(false);
+
+  const loading =
+    stepBusy ||
+    setupAdminMutation.pending ||
+    totpEnrollMutation.pending ||
+    totpConfirmMutation.pending ||
+    doctorHostConfigMutation.pending ||
+    notificationChannelMutation.pending ||
+    generalSettingsMutation.pending;
 
   const [hostname, setHostname] = useState("");
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -105,26 +170,6 @@ export function WelcomePage(): React.ReactElement {
   useEffect(() => {
     writeOnboardingStep(step);
   }, [step]);
-
-  useEffect(() => {
-    if (step !== 1 || doctorChecks !== null) {
-      return;
-    }
-    let cancelled = false;
-    hoservaClient.GET("/doctor", {}).then(({ data, error: apiError }) => {
-      if (cancelled) {
-        return;
-      }
-      if (apiError) {
-        setError(apiError.message);
-        return;
-      }
-      setDoctorChecks(data?.checks ?? []);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [step, doctorChecks]);
 
   const q76Panels = useMemo(
     () =>
@@ -155,76 +200,62 @@ export function WelcomePage(): React.ReactElement {
   ][step];
 
   async function enrollTotp(): Promise<boolean> {
-    const enroll = await hoservaClient.POST("/auth/totp/enroll", { body: {} });
-    if (enroll.error) {
-      setError(enroll.error.message);
+    const result = await totpEnrollMutation.mutate(undefined);
+    if (!result.ok) {
+      if (!result.aborted) setError(result.error);
       return false;
     }
-    if (!enroll.data) {
+    if (!result.data) {
       setError(t("welcome.errors.totpEnrollFailed"));
       return false;
     }
-    setTotpSecret(enroll.data.secret);
-    setOtpauthUri(enroll.data.otpauthUri);
+    setTotpSecret(result.data.secret);
+    setOtpauthUri(result.data.otpauthUri);
     return true;
   }
 
   async function handleAdminStep(): Promise<void> {
-    if (adminCreated && enableTotp) {
-      if (!totpSecret) {
-        setError(null);
-        setLoading(true);
-        try {
+    setStepBusy(true);
+    try {
+      if (adminCreated && enableTotp) {
+        if (!totpSecret) {
+          setError(null);
           await enrollTotp();
-        } finally {
-          setLoading(false);
+          return;
         }
-        return;
-      }
-      if (totpConfirmCode.length < 6) {
-        setError(t("welcome.errors.totpConfirmRequired"));
-        return;
-      }
-      setError(null);
-      setLoading(true);
-      try {
-        const confirm = await hoservaClient.POST("/auth/totp/confirm", {
-          body: { code: totpConfirmCode },
-        });
-        if (confirm.error) {
-          setError(confirm.error.message);
+        if (totpConfirmCode.length < 6) {
+          setError(t("welcome.errors.totpConfirmRequired"));
+          return;
+        }
+        setError(null);
+        const result = await totpConfirmMutation.mutate(totpConfirmCode);
+        if (!result.ok) {
+          if (!result.aborted) setError(result.error);
           return;
         }
         setStep(1);
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    if (username.trim().length === 0) {
-      setError(t("welcome.errors.usernameRequired"));
-      return;
-    }
-    if (password.length < 12) {
-      setError(t("welcome.errors.passwordTooShort"));
-      return;
-    }
-    setError(null);
-    setLoading(true);
-    try {
-      const { data, error: apiError } = await hoservaClient.POST("/setup/admin", {
-        body: { username: username.trim(), password },
-      });
-      if (apiError) {
-        setError(apiError.message);
         return;
       }
-      if (!data) {
+
+      if (username.trim().length === 0) {
+        setError(t("welcome.errors.usernameRequired"));
+        return;
+      }
+      if (password.length < 12) {
+        setError(t("welcome.errors.passwordTooShort"));
+        return;
+      }
+      setError(null);
+      const result = await setupAdminMutation.mutate({ username: username.trim(), password });
+      if (!result.ok) {
+        if (!result.aborted) setError(result.error);
+        return;
+      }
+      if (!result.data) {
         return;
       }
       markOnboardingIncomplete();
-      acceptSession(data);
+      acceptSession(result.data);
       await refresh();
       setAdminCreated(true);
 
@@ -235,13 +266,13 @@ export function WelcomePage(): React.ReactElement {
 
       setStep(1);
     } finally {
-      setLoading(false);
+      setStepBusy(false);
     }
   }
 
   async function handleDoctorNext(): Promise<void> {
+    setStepBusy(true);
     setError(null);
-    setLoading(true);
     try {
       const files = q76Panels
         .filter((panel) => panel.check)
@@ -250,35 +281,31 @@ export function WelcomePage(): React.ReactElement {
           decision: q76Choices[panel.id] ?? Q76_LEAVE,
         }));
       if (files.length > 0) {
-        const { error: applyError } = await hoservaClient.POST("/doctor/host-config", {
-          body: { files },
-        });
-        if (applyError) {
-          setError(applyError.message);
+        const result = await doctorHostConfigMutation.mutate({ files });
+        if (!result.ok) {
+          if (!result.aborted) setError(result.error);
           return;
         }
       }
       setStep(2);
     } finally {
-      setLoading(false);
+      setStepBusy(false);
     }
   }
 
   async function handleBasicsNext(): Promise<void> {
+    setStepBusy(true);
     setError(null);
-    setLoading(true);
     try {
       if (!skipNotification && channelName.trim().length > 0) {
-        const { error: channelError } = await hoservaClient.POST("/notifications/channels", {
-          body: {
-            name: channelName.trim(),
-            type: channelType,
-            enabled: true,
-            secret: channelSecret || undefined,
-          },
+        const channelResult = await notificationChannelMutation.mutate({
+          name: channelName.trim(),
+          type: channelType,
+          enabled: true,
+          secret: channelSecret || undefined,
         });
-        if (channelError) {
-          setError(channelError.message);
+        if (!channelResult.ok) {
+          if (!channelResult.aborted) setError(channelResult.error);
           return;
         }
       }
@@ -296,17 +323,15 @@ export function WelcomePage(): React.ReactElement {
       if (!skipBackupPassphrase && backupPassphrase.length > 0) {
         settingsBody.backupPassphrase = backupPassphrase;
       }
-      const { error: settingsError } = await hoservaClient.PUT("/settings/general", {
-        body: settingsBody,
-      });
-      if (settingsError) {
-        setError(settingsError.message);
+      const settingsResult = await generalSettingsMutation.mutate(settingsBody);
+      if (!settingsResult.ok) {
+        if (!settingsResult.aborted) setError(settingsResult.error);
         return;
       }
 
       setStep(3);
     } finally {
-      setLoading(false);
+      setStepBusy(false);
     }
   }
 
@@ -425,7 +450,8 @@ export function WelcomePage(): React.ReactElement {
 
       {step === 1 ? (
         <div className="flex flex-col gap-4">
-          {doctorChecks === null ? (
+          {doctorQuery.error ? <Banner tone="error" title={doctorQuery.error} /> : null}
+          {doctorChecks === null && !doctorQuery.error ? (
             <p className="text-muted-foreground text-sm">{t("loading.label")}</p>
           ) : null}
           {doctorChecks ? (
