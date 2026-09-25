@@ -43,16 +43,20 @@ func (h *handler) UpdateMaintenanceChainSchedule(ctx context.Context, req *apiv1
 	h.notifyMu.Lock()
 	defer h.notifyMu.Unlock()
 
-	if start, ok := req.StartTime.Get(); ok {
+	start, hasStart := req.StartTime.Get()
+	if hasStart {
 		if err := mockValidateClock(start); err != nil {
 			return nil, err
 		}
+	}
+	day, hasDay := req.WeeklyScrubDay.Get()
+	if hasDay && (day < 0 || day > 6) {
+		return nil, errScheduleInvalidInput("weeklyScrubDay must be 0-6")
+	}
+	if hasStart {
 		h.schedules.Chain.StartTime = start
 	}
-	if day, ok := req.WeeklyScrubDay.Get(); ok {
-		if day < 0 || day > 6 {
-			return nil, errScheduleInvalidInput("weeklyScrubDay must be 0-6")
-		}
+	if hasDay {
 		h.schedules.Chain.WeeklyScrubDay = day
 	}
 	for _, step := range req.Steps {
@@ -75,21 +79,23 @@ func (h *handler) UpdateScheduledJob(ctx context.Context, req *apiv1.UpdateSched
 		if h.schedules.OtherJobs[i].ID != params.JobId {
 			continue
 		}
+		j := h.schedules.OtherJobs[i]
 		if enabled, ok := req.Enabled.Get(); ok {
-			h.schedules.OtherJobs[i].Enabled = enabled
+			j.Enabled = enabled
 		}
 		if freq, ok := req.Frequency.Get(); ok {
 			if !mockValidFrequency(freq) {
 				return nil, errScheduleInvalidInput(fmt.Sprintf("unknown frequency %q", freq))
 			}
-			h.schedules.OtherJobs[i].Frequency = freq
+			j.Frequency = freq
 		}
 		if t, ok := req.Time.Get(); ok {
 			if err := mockValidateClock(t); err != nil {
 				return nil, err
 			}
-			h.schedules.OtherJobs[i].Time = t
+			j.Time = t
 		}
+		h.schedules.OtherJobs[i] = j
 		recomputeMockSchedules(&h.schedules)
 		return cloneSchedules(h.schedules), nil
 	}

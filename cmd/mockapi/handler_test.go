@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -333,6 +334,48 @@ func TestUpdateGeneralSettings_RejectsUnknownTimezone(t *testing.T) {
 	}
 	if code := errorCode(t, err); code != "settings_invalid_input" {
 		t.Fatalf("UpdateGeneralSettings(unknown timezone): code = %q, want settings_invalid_input", code)
+	}
+}
+
+// TestScheduleUpdates_RefusedRequestChangesNothing proves a 400 from
+// either schedule write leaves every field it named untouched — a valid
+// field listed before the invalid one is not applied on its own. It calls
+// the handler directly: ogen's own request decoding already refuses a
+// weekday of 9 over HTTP, but the handler must not rely on that.
+func TestScheduleUpdates_RefusedRequestChangesNothing(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatalf("newHandler(healthy): %v", err)
+	}
+	refused := func(op string, err error) {
+		t.Helper()
+		var me *mockError
+		if !errors.As(err, &me) || me.code != "schedule_invalid_input" {
+			t.Fatalf("%s = %v, want schedule_invalid_input", op, err)
+		}
+	}
+	ctx := context.Background()
+
+	before, err := h.GetSchedules(ctx)
+	if err != nil {
+		t.Fatalf("GetSchedules: %v", err)
+	}
+	_, err = h.UpdateMaintenanceChainSchedule(ctx, &apiv1.UpdateMaintenanceChainScheduleRequest{
+		StartTime:      apiv1.NewOptString("03:17"),
+		WeeklyScrubDay: apiv1.NewOptWeekday(9),
+	})
+	refused("UpdateMaintenanceChainSchedule(valid time, bad day)", err)
+	_, err = h.UpdateScheduledJob(ctx, &apiv1.UpdateScheduledJobRequest{
+		Enabled:   apiv1.NewOptBool(false),
+		Frequency: apiv1.NewOptScheduleFrequency("hourly"),
+	}, apiv1.UpdateScheduledJobParams{JobId: apiv1.OtherScheduleJobIdSmartSelfTest})
+	refused("UpdateScheduledJob(enabled, bad frequency)", err)
+	after, err := h.GetSchedules(ctx)
+	if err != nil {
+		t.Fatalf("GetSchedules: %v", err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("schedules changed after two refused writes:\nbefore %+v\nafter  %+v", before, after)
 	}
 }
 
