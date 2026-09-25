@@ -3,6 +3,9 @@
 // backdrop click while their save/relocate handler was still running, and
 // several action errors rendered in a page-level banner hidden behind an
 // open panel or overlay instead of inside it.
+//
+// Regression tests for issue #376, the same two patterns on the remaining
+// /shares/:name dialogs and the /users group/token creation overlays.
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -16,6 +19,7 @@ const mockGet = vi.fn();
 const mockPost = vi.fn();
 const mockPatch = vi.fn();
 const mockPut = vi.fn();
+const mockDelete = vi.fn();
 
 vi.mock("@/lib/api/client", () => ({
   hoservaClient: {
@@ -23,7 +27,7 @@ vi.mock("@/lib/api/client", () => ({
     POST: (...args: unknown[]) => mockPost(...args),
     PATCH: (...args: unknown[]) => mockPatch(...args),
     PUT: (...args: unknown[]) => mockPut(...args),
-    DELETE: () => Promise.resolve({ data: null, response: { ok: false } }),
+    DELETE: (...args: unknown[]) => mockDelete(...args),
   },
 }));
 
@@ -99,6 +103,39 @@ function resetMocks(): void {
   mockPost.mockReset();
   mockPatch.mockReset();
   mockPut.mockReset();
+  mockDelete.mockReset();
+  mockDelete.mockImplementation(() => Promise.resolve({ data: null, response: { ok: false } }));
+}
+
+function mockUsersData(): void {
+  mockGet.mockImplementation((path: string) => {
+    if (path === "/users") {
+      return Promise.resolve({
+        data: {
+          users: [
+            { id: "u1", username: "alice", role: "viewer", totpEnrolled: false, createdAt: "2026-01-01T00:00:00Z" },
+          ],
+        },
+        response: { ok: true },
+      });
+    }
+    if (path === "/user-groups") {
+      return Promise.resolve({ data: { groups: [] }, response: { ok: true } });
+    }
+    if (path === "/sessions") {
+      return Promise.resolve({ data: { sessions: [] }, response: { ok: true } });
+    }
+    if (path === "/api-tokens") {
+      return Promise.resolve({ data: { tokens: [] }, response: { ok: true } });
+    }
+    if (path === "/shares") {
+      return Promise.resolve({ data: { shares: [] }, response: { ok: true } });
+    }
+    if (path === "/users/{userId}/permissions") {
+      return Promise.resolve({ data: { permissions: [] }, response: { ok: true } });
+    }
+    return Promise.resolve({ data: null, response: { ok: false } });
+  });
 }
 
 describe("issue #375 — cache-mode dialogs ignore Escape while busy", () => {
@@ -258,37 +295,6 @@ describe("issue #375 — share detail delete-data overlay shows its own error", 
 describe("issue #375 — users panel shows its own action errors", () => {
   beforeEach(resetMocks);
 
-  function mockUsersData(): void {
-    mockGet.mockImplementation((path: string) => {
-      if (path === "/users") {
-        return Promise.resolve({
-          data: {
-            users: [
-              { id: "u1", username: "alice", role: "viewer", totpEnrolled: false, createdAt: "2026-01-01T00:00:00Z" },
-            ],
-          },
-          response: { ok: true },
-        });
-      }
-      if (path === "/user-groups") {
-        return Promise.resolve({ data: { groups: [] }, response: { ok: true } });
-      }
-      if (path === "/sessions") {
-        return Promise.resolve({ data: { sessions: [] }, response: { ok: true } });
-      }
-      if (path === "/api-tokens") {
-        return Promise.resolve({ data: { tokens: [] }, response: { ok: true } });
-      }
-      if (path === "/shares") {
-        return Promise.resolve({ data: { shares: [] }, response: { ok: true } });
-      }
-      if (path === "/users/{userId}/permissions") {
-        return Promise.resolve({ data: { permissions: [] }, response: { ok: true } });
-      }
-      return Promise.resolve({ data: null, response: { ok: false } });
-    });
-  }
-
   it("shows a role-save failure inside the open edit panel, not the page banner", async () => {
     mockUsersData();
     mockPatch.mockImplementation((path: string) => {
@@ -351,5 +357,259 @@ describe("issue #375 — users panel shows its own action errors", () => {
 
     expect(await within(panel).findByText("permissions save failed")).toBeInTheDocument();
     expect(screen.getAllByText("permissions save failed")).toHaveLength(1);
+  });
+});
+
+describe("issue #376 — remaining share-detail dialogs ignore Escape while busy", () => {
+  beforeEach(resetMocks);
+
+  function mockShareDetailData(): void {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/shares/{name}") {
+        return Promise.resolve({ data: share({ cacheMode: "cache-then-move" }), response: { ok: true } });
+      }
+      if (path === "/users") {
+        return Promise.resolve({ data: { users: [] }, response: { ok: true } });
+      }
+      if (path === "/user-groups") {
+        return Promise.resolve({ data: { groups: [] }, response: { ok: true } });
+      }
+      if (path === "/shares/{name}/permissions") {
+        return Promise.resolve({ data: { users: [], groups: [] }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+  }
+
+  it("does not close the remove-share-definition dialog on Escape while the delete request is pending", async () => {
+    mockShareDetailData();
+    const pendingDelete: { release: (() => void) | null } = { release: null };
+    mockDelete.mockImplementation((path: string) => {
+      if (path === "/shares/{name}") {
+        return new Promise((resolve) => {
+          pendingDelete.release = () => resolve({ data: null, response: { ok: true } });
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/shares/media?tab=danger"]}>
+        <Routes>
+          <Route path="/shares/:name" element={<ShareDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Danger zone" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove definition" }));
+
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+
+    // The busy button's accessible name gains the spinner's "Loading" text
+    // once it's disabled, so match it loosely from here on.
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: /Confirm/ })).toBeDisabled());
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    // Still open, and still busy — a real dismiss would have unmounted the
+    // dialog and its Confirm button entirely.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Confirm/ })).toBeDisabled();
+
+    pendingDelete.release?.();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("does not close the delete-data overlay on Escape while the delete request is pending", async () => {
+    mockShareDetailData();
+    const pendingPost: { release: (() => void) | null } = { release: null };
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/shares/{name}/data/delete") {
+        return new Promise((resolve) => {
+          pendingPost.release = () => resolve({ data: null, response: { ok: true } });
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/shares/media?tab=danger"]}>
+        <Routes>
+          <Route path="/shares/:name" element={<ShareDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Danger zone" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete data" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const input = within(dialog).getByRole("textbox", { name: "Type the confirmation phrase" });
+    fireEvent.change(input, { target: { value: "media" } });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete data" }));
+
+    // Same spinner-name caveat as the remove-share-definition dialog above.
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: /Delete data/ })).toBeDisabled());
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    // Still open and still busy — a real dismiss would have unmounted the
+    // overlay and its typed confirmation with it.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(input).toHaveValue("media");
+
+    pendingPost.release?.();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+});
+
+describe("issue #376 — users group/token creation overlays show their own errors", () => {
+  beforeEach(resetMocks);
+
+  it("shows a failed group creation inside its open overlay, which stays open", async () => {
+    mockUsersData();
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/user-groups") {
+        return Promise.resolve({
+          error: { code: "internal_error", message: "group create failed" },
+          response: { ok: false },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <UsersPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create group" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Group name" }), {
+      target: { value: "movies" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create group" }));
+
+    expect(await within(dialog).findByText("group create failed")).toBeInTheDocument();
+    // Still open, and the error is not duplicated as a page-level banner
+    // behind the overlay.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getAllByText("group create failed")).toHaveLength(1);
+  });
+
+  it("shows a failed API-token creation inside its open overlay, which stays open", async () => {
+    mockUsersData();
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/users/{username}/tokens") {
+        return Promise.resolve({
+          error: { code: "internal_error", message: "token create failed" },
+          response: { ok: false },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <UsersPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create token" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Account" }));
+    fireEvent.click(await screen.findByRole("option", { name: "alice" }));
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Token name" }), {
+      target: { value: "backup-script" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create token" }));
+
+    expect(await within(dialog).findByText("token create failed")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getAllByText("token create failed")).toHaveLength(1);
+  });
+
+  it("does not close the group creation overlay on Escape while the create request is pending, and still shows its failure", async () => {
+    mockUsersData();
+    const pendingPost: { release: (() => void) | null } = { release: null };
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/user-groups") {
+        return new Promise((resolve) => {
+          pendingPost.release = () =>
+            resolve({ error: { code: "internal_error", message: "group create failed" }, response: { ok: false } });
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <UsersPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create group" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Group name" }), {
+      target: { value: "movies" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create group" }));
+
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: /Create group/ })).toBeDisabled());
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    // Still open and still busy — a real dismiss would have unmounted the
+    // overlay before the failure had anywhere to render.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Create group/ })).toBeDisabled();
+
+    pendingPost.release?.();
+    expect(await within(dialog).findByText("group create failed")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("does not close the token creation overlay on Escape while the create request is pending, and still shows its failure", async () => {
+    mockUsersData();
+    const pendingPost: { release: (() => void) | null } = { release: null };
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/users/{username}/tokens") {
+        return new Promise((resolve) => {
+          pendingPost.release = () =>
+            resolve({ error: { code: "internal_error", message: "token create failed" }, response: { ok: false } });
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <UsersPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create token" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Account" }));
+    fireEvent.click(await screen.findByRole("option", { name: "alice" }));
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Token name" }), {
+      target: { value: "backup-script" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create token" }));
+
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: /Create token/ })).toBeDisabled());
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Create token/ })).toBeDisabled();
+
+    pendingPost.release?.();
+    expect(await within(dialog).findByText("token create failed")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });

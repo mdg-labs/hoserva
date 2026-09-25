@@ -130,11 +130,16 @@ export function UsersPage(): React.ReactElement {
 
   const [groupFormOpen, setGroupFormOpen] = useState(false);
   const [groupNameDraft, setGroupNameDraft] = useState("");
+  // A failed group creation renders inside this still-open overlay, not the
+  // page banner behind it, the same rule as the create/edit panel (#375,
+  // #376).
+  const [groupFormError, setGroupFormError] = useState<string | null>(null);
 
   const [tokenFormOpen, setTokenFormOpen] = useState(false);
   const [tokenUsername, setTokenUsername] = useState("");
   const [tokenName, setTokenName] = useState("");
   const [tokenRole, setTokenRole] = useState<ApiTokenRole>("viewer");
+  const [tokenFormError, setTokenFormError] = useState<string | null>(null);
   const [createdToken, setCreatedToken] = useState<ApiTokenCreated | null>(null);
 
   const [pendingRevoke, setPendingRevoke] = useState<PendingRevoke | null>(null);
@@ -320,9 +325,10 @@ export function UsersPage(): React.ReactElement {
   async function handleCreateGroup(): Promise<void> {
     const name = groupNameDraft.trim();
     if (name.length === 0) return;
+    setGroupFormError(null);
     const result = await createGroupMutation.mutate(name);
     if (!result.ok) {
-      if (!result.aborted) setActionError(result.error);
+      if (!result.aborted) setGroupFormError(result.error);
       return;
     }
     setGroupFormOpen(false);
@@ -333,9 +339,10 @@ export function UsersPage(): React.ReactElement {
   async function handleCreateToken(): Promise<void> {
     const name = tokenName.trim();
     if (name.length === 0 || tokenUsername.length === 0) return;
+    setTokenFormError(null);
     const result = await createTokenMutation.mutate({ username: tokenUsername, name, role: tokenRole });
     if (!result.ok) {
-      if (!result.aborted) setActionError(result.error);
+      if (!result.aborted) setTokenFormError(result.error);
       return;
     }
     if (result.data) {
@@ -569,7 +576,13 @@ export function UsersPage(): React.ReactElement {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <CardTitle>{t("users.groups.title")}</CardTitle>
-          <Button size="sm" onClick={() => setGroupFormOpen(true)}>
+          <Button
+            size="sm"
+            onClick={() => {
+              setGroupFormError(null);
+              setGroupFormOpen(true);
+            }}
+          >
             <Plus aria-hidden="true" />
             {t("users.groups.create")}
           </Button>
@@ -603,7 +616,13 @@ export function UsersPage(): React.ReactElement {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <CardTitle>{t("users.tokens.title")}</CardTitle>
-          <Button size="sm" onClick={() => setTokenFormOpen(true)}>
+          <Button
+            size="sm"
+            onClick={() => {
+              setTokenFormError(null);
+              setTokenFormOpen(true);
+            }}
+          >
             <Plus aria-hidden="true" />
             {t("users.tokens.create")}
           </Button>
@@ -740,7 +759,15 @@ export function UsersPage(): React.ReactElement {
 
       <FormOverlay
         open={groupFormOpen}
-        onOpenChange={setGroupFormOpen}
+        onOpenChange={(open) => {
+          // Same rule as the share dialogs: Escape and a backdrop click both
+          // come through here as onOpenChange(false), so a busy handler must
+          // ignore them too (#375, #376).
+          if (!open && createGroupMutation.pending) {
+            return;
+          }
+          setGroupFormOpen(open);
+        }}
         title={t("users.groups.create")}
         footer={
           <Button loading={createGroupMutation.pending} disabled={groupNameDraft.trim().length === 0} onClick={() => void handleCreateGroup()}>
@@ -748,6 +775,7 @@ export function UsersPage(): React.ReactElement {
           </Button>
         }
       >
+        {groupFormError ? <Banner tone="error" title={groupFormError} /> : null}
         <Field>
           <FieldLabel>{t("users.groups.name")}</FieldLabel>
           <Input value={groupNameDraft} onChange={(event) => setGroupNameDraft(event.target.value)} />
@@ -756,7 +784,15 @@ export function UsersPage(): React.ReactElement {
 
       <FormOverlay
         open={tokenFormOpen}
-        onOpenChange={setTokenFormOpen}
+        onOpenChange={(open) => {
+          // Same rule as the share dialogs: Escape and a backdrop click both
+          // come through here as onOpenChange(false), so a busy handler must
+          // ignore them too (#375, #376).
+          if (!open && createTokenMutation.pending) {
+            return;
+          }
+          setTokenFormOpen(open);
+        }}
         title={t("users.tokens.create")}
         footer={
           <Button
@@ -768,6 +804,7 @@ export function UsersPage(): React.ReactElement {
           </Button>
         }
       >
+        {tokenFormError ? <Banner tone="error" title={tokenFormError} /> : null}
         <Field>
           <FieldLabel>{t("users.tokens.account")}</FieldLabel>
           <Select value={tokenUsername} onValueChange={(value) => value && setTokenUsername(value)}>

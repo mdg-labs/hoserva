@@ -973,6 +973,12 @@ export function ShareDetailPage(): React.ReactElement {
       <ConfirmDialog
         open={removeOpen}
         onOpenChange={(open) => {
+          // Same rule as the cache-mode and delete-data dialogs: Escape and
+          // a backdrop click both come through here as onOpenChange(false),
+          // so a busy handler must ignore them too (#375, #376).
+          if (!open && removeMutation.pending) {
+            return;
+          }
           setRemoveOpen(open);
           if (!open) {
             setRemoveDialogError(null);
@@ -989,6 +995,13 @@ export function ShareDetailPage(): React.ReactElement {
       <FormOverlay
         open={deleteDataOpen}
         onOpenChange={(open) => {
+          // Same rule as the cache-mode and remove-definition dialogs:
+          // Escape and a backdrop click both come through here as
+          // onOpenChange(false), so a busy handler must ignore them too
+          // (#375, #376).
+          if (!open && deleteDataMutation.pending) {
+            return;
+          }
           if (!open) {
             setDeleteDataOpen(false);
             setDeleteDataConfirm("");
