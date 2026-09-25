@@ -280,6 +280,21 @@ func p358Sha(t *testing.T, path string) string {
 // first sync. disk2 is then evacuated through evacuateDisk.
 func p358Setup(t *testing.T, name string) *p358Env {
 	t.Helper()
+	return p369SetupWithOutsideShareFile(t, name, false)
+}
+
+// p369SetupWithOutsideShareFile is p358Setup's own setup; when
+// outsideShareFile is set, it also writes one extra file directly at
+// disk2's own root, outside p358share entirely — finding 1's own vector
+// (the catch-all pool, or a share whose definition was deleted but its
+// files kept) — before the initial sync, so SnapRAID tracks it. The
+// evacuation that follows moves only p358share's own branch, and its
+// post-check (cache.EvacuationPostCheck) only ever inspects that same
+// branch, so this file is never touched and survives the evacuation
+// untouched: disk2 reaches "evacuated" with SnapRAID still recording one
+// file on it.
+func p369SetupWithOutsideShareFile(t *testing.T, name string, outsideShareFile bool) *p358Env {
+	t.Helper()
 	lab := shareRelocLabDir(t)
 	ctx := context.Background()
 	exec := disk.CommandRunner{}
@@ -361,6 +376,13 @@ func p358Setup(t *testing.T, name string) *p358Env {
 				env.files[path] = p358Sha(t, path)
 			}
 		}
+	}
+	if outsideShareFile {
+		// Written directly at disk2's own root, never under p358share:
+		// the evacuation plan below only ever moves each share's own
+		// branch, and cache.EvacuationPostCheck only ever inspects that
+		// same branch, so this file is untouched by both.
+		shareRelocLabWriteFile(t, filepath.Join(p358Disk2, "orphan-outside-share.bin"), 100_000)
 	}
 	env.sync(t, false)
 
@@ -690,4 +712,137 @@ func TestLabDiskRemove_StoppedAfterTheSync_RestartedAndFinished(t *testing.T) {
 		t.Fatalf("syncs started %d -> %d, succeeded %d during the removal — the re-run synced again", syncsStarted, now, after-before)
 	}
 	e.requireRemoved(t)
+}
+
+// p369DetachDiskLoop stops disk2's real mount and detaches its own loop
+// device — never the whole lab's, per doc 06 §3 — the way a drive that
+// died would leave it: gone from the kernel, its mountpoint reverted to
+// an ordinary, empty directory on the lab's own filesystem. Unlike a real
+// disk, /mnt/disk2 is a slot this container's whole test binary shares
+// across every test that runs in it, with nothing to remount over it and
+// hide whatever a run leaves there once it is unmounted for good — so a
+// cleanup empties it back out once this test is done, whether it wrote a
+// stray file on purpose or the finish job's own sync wrote a real content
+// file to it before recording the disk empty.
+func p369DetachDiskLoop(ctx context.Context, t *testing.T, e *p358Env) {
+	t.Helper()
+	row, err := e.d.arrays.GetDataDiskByMountpoint(ctx, p358Disk2)
+	if err != nil {
+		t.Fatalf("GetDataDiskByMountpoint(%s): %v", p358Disk2, err)
+	}
+	exec := disk.CommandRunner{}
+	p265UnmountIfMounted(exec, p358Disk2)
+	if _, err := exec.Run(ctx, "losetup", "-d", row.Device); err != nil {
+		t.Fatalf("losetup -d %s: %v", row.Device, err)
+	}
+	if mounted, err := disk.IsMountpoint(p358Disk2); err != nil || mounted {
+		t.Fatalf("disk2 mounted = (%v, %v), want unmounted once its loop device is detached", mounted, err)
+	}
+	t.Cleanup(func() {
+		entries, err := os.ReadDir(p358Disk2)
+		if err != nil {
+			return
+		}
+		for _, entry := range entries {
+			_ = os.RemoveAll(filepath.Join(p358Disk2, entry.Name()))
+		}
+	})
+}
+
+// TestLabDiskRemove_LoopDeviceDetachedWhileEvacuated_FinishesFromDiffAlone
+// is #369's own scenario: disk2's own loop device is detached — the drive
+// died — while its removal state is "evacuated", before finishDiskRemoval
+// has ever run. A finish still completes, using only a fresh SnapRAID
+// diff to confirm the disk holds nothing, and requireRemoved's end state
+// holds for the surviving disks. disk2's own mountpoint — an ordinary
+// directory on the lab's own filesystem once its loop device is gone —
+// must also be left with nothing in it: snapraid.conf still names that
+// path as one of its own content-file copies (Q18) right up until it is
+// regenerated without disk2, so the real step-8 sync writes a content
+// file there, and it must not survive the finish.
+func TestLabDiskRemove_LoopDeviceDetachedWhileEvacuated_FinishesFromDiffAlone(t *testing.T) {
+	ctx := context.Background()
+	e := p358Setup(t, "p369detach")
+	p369DetachDiskLoop(ctx, t, e)
+
+	j := e.d.finish(t)
+	if j.Status != job.StatusSucceeded {
+		t.Fatalf("disk_remove = %s (%s), want succeeded", j.Status, j.ErrorMessage)
+	}
+	e.requireRemoved(t)
+	entries, err := os.ReadDir(p358Disk2)
+	if err != nil {
+		t.Fatalf("reading disk2's own mountpoint after the finish: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("disk2's mountpoint still holds %v after the finish — a stray content file was left on the boot filesystem", entries)
+	}
+}
+
+// TestLabDiskRemove_LoopDeviceDetachedButSnapraidStillTracksAFile_StillRefused
+// proves an unmounted disk's fresh SnapRAID diff, not the fact that it is
+// unmounted, is what decides whether finishDiskRemoval may advance it: a
+// file written directly at disk2's mountpoint after its loop device is
+// detached — the only way anything can be written there once the disk
+// itself is gone — is picked up by the real step-8 sync and keeps the
+// removal refused, with disk2 still listed in snapraid.conf.
+func TestLabDiskRemove_LoopDeviceDetachedButSnapraidStillTracksAFile_StillRefused(t *testing.T) {
+	ctx := context.Background()
+	e := p358Setup(t, "p369dirty")
+	p369DetachDiskLoop(ctx, t, e)
+	// disk2 is unmounted at this point: this writes straight to the lab's
+	// own host directory at that path, not to any loop-backed filesystem
+	// — the only way anything can be written there once the disk itself
+	// is gone. p369DetachDiskLoop's own cleanup empties it back out once
+	// this test ends.
+	if err := os.WriteFile(filepath.Join(p358Disk2, "stray.bin"), []byte("still here"), 0o644); err != nil {
+		t.Fatalf("writing a stray file at the detached disk's mountpoint: %v", err)
+	}
+	confBefore := e.snapraidConf(t)
+
+	j := e.d.finish(t)
+	if j.Status != job.StatusFailed || !strings.Contains(j.ErrorMessage, "still records") {
+		t.Fatalf("disk_remove = %s (%s), want failed on SnapRAID still recording a file", j.Status, j.ErrorMessage)
+	}
+	if state := e.d.removalState(t, p358Disk2); state != store.RemovalStateUnpooled {
+		t.Fatalf("disk2 after the refusal = %q, want unpooled", state)
+	}
+	if e.snapraidConf(t) != confBefore {
+		t.Fatal("snapraid.conf dropped disk2 while SnapRAID still tracks a file on it")
+	}
+}
+
+// TestLabDiskRemove_LoopDeviceDetachedWithFileOutsideEveryShare_StillRefused
+// is finding 1's own regression from #369's first fix round: a file
+// outside every share, present on disk2 since before it was evacuated —
+// the catch-all pool, or a share whose definition was deleted but its
+// files kept — is a case the evacuation's own post-check never inspects
+// (cache.EvacuationPostCheck only ever looks at each share's own
+// branch), so disk2 reaches "evacuated" with SnapRAID still recording it
+// there. Its loop device is then detached exactly as in the clean
+// scenario above. The finish must still refuse: a fresh diff, read
+// before step 8's own sync ever runs, still shows that file on disk2,
+// and no sync may run at all — a --force-empty sync that ran first would
+// itself become the new "before" a later diff reads, silently recording
+// the file's loss as success instead of refusing it.
+func TestLabDiskRemove_LoopDeviceDetachedWithFileOutsideEveryShare_StillRefused(t *testing.T) {
+	ctx := context.Background()
+	e := p369SetupWithOutsideShareFile(t, "p369orphan", true)
+	beforeStarted, beforeOK := e.counter.counts()
+	confBefore := e.snapraidConf(t)
+	p369DetachDiskLoop(ctx, t, e)
+
+	j := e.d.finish(t)
+	if j.Status != job.StatusFailed || !strings.Contains(j.ErrorMessage, "still records") {
+		t.Fatalf("disk_remove = %s (%s), want failed on SnapRAID still recording a file outside every share", j.Status, j.ErrorMessage)
+	}
+	if state := e.d.removalState(t, p358Disk2); state != store.RemovalStateUnpooled {
+		t.Fatalf("disk2 after the refusal = %q, want unpooled", state)
+	}
+	if e.snapraidConf(t) != confBefore {
+		t.Fatal("snapraid.conf dropped disk2 while SnapRAID still tracks a file outside every share on it")
+	}
+	if afterStarted, afterOK := e.counter.counts(); afterStarted != beforeStarted || afterOK != beforeOK {
+		t.Fatalf("syncs started %d -> %d, succeeded %d -> %d during the refused finish, want none: the pre-sync diff must refuse before step 8 ever syncs, not after", beforeStarted, afterStarted, beforeOK, afterOK)
+	}
 }

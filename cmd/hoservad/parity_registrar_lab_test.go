@@ -91,8 +91,20 @@ func p265CreateLoopImage(ctx context.Context, t *testing.T, r disk.Runner, lab, 
 	// Registered as soon as losetup --find --show returns successfully —
 	// before either check below, which can itself t.Fatalf — so a loop
 	// device this call actually attached is never leaked because a later
-	// validation failed.
+	// validation failed. Loop device numbers are host-global, and #369's
+	// own lab tests detach a disk's own loop device mid-test: by the
+	// time this cleanup runs, dev may already have been freed and
+	// reclaimed by an unrelated lab running concurrently. Detaching it
+	// unconditionally would then tear down that other lab's own device
+	// (CLAUDE.md: "detach only the ones backed by your own lab's image
+	// files"), so this re-checks — the same `losetup -j` query the
+	// attach itself is validated with below — that dev still backs img
+	// by name before ever calling losetup -d, and skips otherwise.
 	t.Cleanup(func() {
+		out, err := r.Run(context.Background(), "losetup", "-j", img, "--output", "NAME", "--noheadings")
+		if err != nil || strings.TrimSpace(string(out)) != dev {
+			return
+		}
 		_, _ = r.Run(context.Background(), "losetup", "-d", dev)
 	})
 	if !strings.HasPrefix(dev, "/dev/loop") {

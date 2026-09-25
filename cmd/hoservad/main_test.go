@@ -254,8 +254,12 @@ func TestParityRegistrar_WiresJobTypesAndHandlerFieldsAfterLiveArrayCreation(t *
 // is 501 until the array exists, and once a live array creation has
 // registered the parity job types it queues the disk_remove job
 // parityRegistrar.register bound — this test registers no RunFunc of its
-// own. The disk is evacuated in the store but nothing is mounted, so the
-// real job refuses before changing anything, which is what proves it ran.
+// own. Disk2 is evacuated in the store, but something else is mounted at
+// its slot: the real job's own mountedAs check refuses that outright,
+// unconditionally and before touching parity — a refusal #369 leaves
+// unchanged (only whether the slot is mounted at all, not a UUID
+// mismatch, gained a way forward there) — which is what proves the real
+// job ran, without needing a real snapraid binary on this host.
 func TestFinishDiskRemoval_ReachesTheJobParityRegistrarRegisters(t *testing.T) {
 	ctx, env := newParityRegistrationEnv(t)
 	h := env.handler
@@ -297,6 +301,11 @@ func TestFinishDiskRemoval_ReachesTheJobParityRegistrarRegisters(t *testing.T) {
 	if err := h.ArrayStore.SetRemovalState(ctx, "/mnt/disk2", store.RemovalStateEvacuated, "evac-1"); err != nil {
 		t.Fatalf("SetRemovalState: %v", err)
 	}
+	fakeMounts, ok := env.parityReg.mounts.(*job.FakeMountTable)
+	if !ok {
+		t.Fatalf("parityReg.mounts is %T, want *job.FakeMountTable", env.parityReg.mounts)
+	}
+	fakeMounts.Preload("/mnt/disk2", "uuid-someone-else")
 
 	j, err := h.FinishDiskRemoval(ctx, req)
 	if err != nil {
@@ -309,8 +318,8 @@ func TestFinishDiskRemoval_ReachesTheJobParityRegistrarRegisters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Await(disk_remove): %v", err)
 	}
-	if finished.Status != job.StatusFailed || !strings.Contains(finished.ErrorMessage, "/mnt/disk2 is not mounted, so it cannot be confirmed empty") {
-		t.Fatalf("disk_remove = %s (%s), want the registered job's own refusal of an unmounted disk", finished.Status, finished.ErrorMessage)
+	if finished.Status != job.StatusFailed || !strings.Contains(finished.ErrorMessage, "uuid-someone-else") {
+		t.Fatalf("disk_remove = %s (%s), want the registered job's own refusal of the wrong filesystem mounted at the slot", finished.Status, finished.ErrorMessage)
 	}
 	if d, err := h.ArrayStore.GetDataDiskByMountpoint(ctx, "/mnt/disk2"); err != nil || d.RemovalState != store.RemovalStateEvacuated {
 		t.Fatalf("disk2 after the refusal = (%+v, %v), want still evacuated", d, err)
