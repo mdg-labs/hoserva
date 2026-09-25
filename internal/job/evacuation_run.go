@@ -62,6 +62,15 @@ type EvacuationDeps struct {
 	// failure before the first copy fails the job before anything is
 	// copied (doc 09 §4 step 2). Required.
 	ArrayReady func(ctx context.Context) error
+	// beforeManifestClearReturnHook, when non-nil, is called synchronously
+	// by d.run's own post-copy manifest/exemption clear, once that clear
+	// has already failed and its combined error is already built, right
+	// before returning it — the narrowest point #379's own verification
+	// showed a Cancel can still land relative to this function's return.
+	// A test uses it to land a Cancel exactly there and confirm the
+	// failure is still recorded rather than sampling ctx.Err() and hoping
+	// the timing lines up. Never set outside a test.
+	beforeManifestClearReturnHook func(jobID string)
 }
 
 // removalStateStore is the subset of *store.ArrayStore RunEvacuation and
@@ -266,19 +275,25 @@ func (d EvacuationDeps) run(ctx context.Context, rc *RunContext, p EvacuationPar
 		clearCtx := context.WithoutCancel(ctx)
 		if clearErr := d.Manifest.Replace(clearCtx, nil, nil); clearErr != nil {
 			combined := combineEvacuationErr(err, "clearing relocation manifest", clearErr)
-			// ctx.Err() != nil here means this non-resumable ending is an
-			// explicit Cancel (the doc comment on RunEvacuation's own
-			// outer ctx.Err() check: only Scheduler.Cancel of a running
-			// evacuation ever cancels this ctx). runJob's own reasonCancel
-			// branch keeps only a *CancelCleanupError under a cancelled
-			// outcome and drops anything else — a plain error here would
-			// leave this failed clear silently unrecorded even though the
-			// removing-disks exemption it tried to release may still be
-			// persisted (#378).
-			if ctx.Err() != nil {
-				return &CancelCleanupError{Code: "evacuation_cancel_manifest_clear_failed", Err: combined}
+			// Always wrapped, never conditioned on ctx.Err() here (#379):
+			// a Cancel can land at any point relative to this function's
+			// own return, including in the instant between a ctx.Err()
+			// sample taken right here and the return statement below —
+			// there is no sampling point close enough to this return to
+			// close that race by timing. Wrapping unconditionally removes
+			// the race instead of narrowing it: whenever a Cancel is involved,
+			// runJob's own reasonCancel branch always recognizes a
+			// *CancelCleanupError and keeps both its code and message, so
+			// this failed clear — and the removing-disks exemption it could
+			// not release — is never silently dropped (#378). Without a
+			// Cancel, that branch is never reached at all: the job is
+			// recorded Failed with the generic job_failed code, keeping only
+			// this error's own message (runJob's runErr != nil case), exactly
+			// as any other plain failure of this clear would.
+			if d.beforeManifestClearReturnHook != nil {
+				d.beforeManifestClearReturnHook(rc.JobID())
 			}
-			return combined
+			return &CancelCleanupError{Code: "evacuation_cancel_manifest_clear_failed", Err: combined}
 		}
 	}
 	if err != nil {
@@ -317,11 +332,13 @@ func (d EvacuationDeps) run(ctx context.Context, rc *RunContext, p EvacuationPar
 // persisted removing-disks set still names exactly this job's own
 // mountpoint. Uses a non-cancellable context, the same reasoning as
 // d.run's own later clear: a Cancel landing during either failure must
-// not leave the exemption stranded. A cancel whose clear itself fails is
-// reported as a *CancelCleanupError (runJob's own doc comment on why: a
-// plain error under a cancelled outcome is otherwise dropped); an
-// ordinary failure's clear failure is folded into the same error instead,
-// so the Failed job's recorded error names both.
+// not leave the exemption stranded. A clear failure is always reported as
+// a *CancelCleanupError (runJob's own doc comment on why), never
+// conditioned on ctx.Err() (#379): its Error() carries the same message
+// either way, so a plain failed clear with no cancel involved at all
+// still reaches a Failed job's recorded error unchanged, and a clear that
+// fails while racing a Cancel can never be silently dropped no matter
+// when the two land relative to each other.
 func (d EvacuationDeps) earlyReturnErr(ctx context.Context, mountpoint string, runErr error) error {
 	if d.Manifest == nil {
 		return runErr
@@ -332,10 +349,7 @@ func (d EvacuationDeps) earlyReturnErr(ctx context.Context, mountpoint string, r
 		return runErr
 	}
 	combined := combineEvacuationErr(runErr, "clearing relocation manifest", clearErr)
-	if ctx.Err() != nil {
-		return &CancelCleanupError{Code: "evacuation_cancel_manifest_clear_failed", Err: combined}
-	}
-	return combined
+	return &CancelCleanupError{Code: "evacuation_cancel_manifest_clear_failed", Err: combined}
 }
 
 // releaseRemovalState releases the removal state jobID holds on

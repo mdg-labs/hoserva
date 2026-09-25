@@ -129,6 +129,44 @@ func TestDeliverFinalAfterCancel_SucceedsImmediatelyWhenBufferIsEmpty(t *testing
 	}
 }
 
+// TestSnapraidEngine_RunStream_KilledProcessErrorWrapsCtxErr is #379's own
+// engine-level proof for scheduler.go's identity classification
+// (isCancellationDerived): a process this ctx's own cancellation killed
+// reports a real, non-nil exit error through accept — Scrub's own
+// completedNormally check rejects a bare "signal: killed" the same way a
+// real killed snapraid process's waitErr would — so runStream must still
+// fold ctx.Err() into that error rather than only substituting it when
+// accept returned nil, so errors.Is(finalErr, context.Canceled) stays
+// true and runJob's own classification recognizes this as the RunFunc's
+// own reaction to the cancellation it was asked to stop for, not a
+// newly-surfaced genuine failure a raced Cancel must not erase.
+func TestSnapraidEngine_RunStream_KilledProcessErrorWrapsCtxErr(t *testing.T) {
+	dir := t.TempDir()
+	killErr := errors.New("signal: killed")
+	r := &scriptedRunner{t: t, script: []scriptedResult{
+		{logBody: string(readCorpus(t, "snapraid_scrub_data_errors.log")), err: killErr},
+	}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ch, err := e.Scrub(ctx, 100, 0)
+	if err != nil {
+		t.Fatalf("Scrub: %v", err)
+	}
+	final := drain(t, ch)
+	if final.Err == nil {
+		t.Fatal("Scrub final Progress.Err = nil, want the killed process's own error wrapped with ctx.Err()")
+	}
+	if !errors.Is(final.Err, context.Canceled) {
+		t.Fatalf("Scrub final Progress.Err = %v, want errors.Is(..., context.Canceled) so a raced Cancel classifies this as cancellation-derived", final.Err)
+	}
+	if !strings.Contains(final.Err.Error(), killErr.Error()) {
+		t.Fatalf("Scrub final Progress.Err = %q, want it to still name the killed process's own error, not just context.Canceled", final.Err.Error())
+	}
+}
+
 func drain(t *testing.T, ch <-chan Progress) Progress {
 	t.Helper()
 	var last Progress

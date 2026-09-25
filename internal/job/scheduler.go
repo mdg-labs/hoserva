@@ -196,6 +196,16 @@ type Scheduler struct {
 	// KeepForResume is never reached at all in that case. Never set
 	// outside a test.
 	resumableDecisionHook func(jobID string)
+	// beforeFinishedHook, when non-nil, is called synchronously by runJob
+	// right after a job's RunFunc has returned but before runJob takes
+	// rj.mu to set rj.finished and read rj.reason — the window #379
+	// reports: a Cancel landing here is still accepted (rj.finished is
+	// not yet set, so Scheduler.Cancel's own finished check does not
+	// refuse it), even though the RunFunc has already committed to
+	// whatever runErr it returned. A test can land a Cancel call
+	// deterministically inside that exact window instead of racing the
+	// real clock. Never set outside a test.
+	beforeFinishedHook func(jobID string)
 }
 
 // NewScheduler wires a Scheduler to its persistence, log capture, event
@@ -1122,6 +1132,26 @@ func (s *Scheduler) dispatch() {
 	s.queue = remaining
 }
 
+// isCancellationDerived reports whether err is itself a RunFunc's own
+// reaction to observing ctx's cancellation — never a genuine, unrelated
+// failure that merely happened to return after a raced Cancel (#379).
+// context.Canceled and context.DeadlineExceeded cover a RunFunc that
+// returns ctx.Err() itself, or blocks on ctx.Done() until a killed
+// subprocess's own wrapped exit error comes back (runStream,
+// internal/parity/snapraid_engine.go). ErrCancelRequested and
+// ErrJobNeedsRetry cover TypeDiskUpgradeData's own releasing-save/
+// resumable-checkpoint race (#364). runJob's reasonCancel branch silences
+// only these; every other plain error is recorded rather than erased,
+// since there is no race-free way to tell "the RunFunc reacted to this
+// cancel" from "an unrelated failure happened to return microseconds
+// after one landed" by timing alone.
+func isCancellationDerived(err error) bool {
+	return errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, ErrCancelRequested) ||
+		errors.Is(err, ErrJobNeedsRetry)
+}
+
 // runJob executes rj.run to completion, records the outcome, and hands off
 // to dispatch() so anything waiting behind rj's class can start.
 func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
@@ -1192,6 +1222,10 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 
 	runErr := rj.run(ctx, rc)
 
+	if s.beforeFinishedHook != nil {
+		s.beforeFinishedHook(rj.job.ID)
+	}
+
 	// rj.finished is set, and reason captured, the instant run returns —
 	// ahead of everything else below, including closing the log — so a
 	// Cancel racing in from here on (the job is still in s.running; the
@@ -1229,24 +1263,34 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 		errCode = outcome.Code
 		errMessage = runErr.Error()
 	case reason == reasonCancel:
-		// Cancel is the definitive outcome here regardless of what runErr
-		// otherwise says — including a plain, non-outcome error a RunFunc
-		// returns for its own internal control flow around losing a race
-		// to Cancel (TypeDiskUpgradeData's own ErrJobNeedsRetry/
-		// ErrCancelRequested interplay is exactly this: not a failure,
-		// just a signal that Cancel got there first). A RunFunc that
-		// instead wants a genuine problem in its own post-cancel cleanup
-		// surfaced — never silently dropped under a status that claims
-		// the job simply ended cancelled — opts in explicitly by
-		// returning a *CancelCleanupError (e.g. RunEvacuation's own
-		// release-then-reapply after a cancel, which can itself fail a
-		// live remount and leave the database saying RW while the mounts
-		// stay no-create).
+		// Cancel is the definitive status here regardless of what runErr
+		// otherwise says — but the status is the only thing a Cancel is
+		// ever allowed to override. An explicit *CancelCleanupError or
+		// *OutcomeError is always surfaced — a RunFunc that returns either
+		// has already, itself, decided this needs reporting beyond the
+		// cancel. A plain error is classified by identity, not by timing
+		// (#379): isCancellationDerived silences only an error that is
+		// itself the RunFunc's own reaction to observing ctx's
+		// cancellation, so nothing further is reported beyond the cancel
+		// itself. Every other plain error survived its own last
+		// cancellation check and returned a genuine, unrelated failure — a
+		// raced Cancel landing microseconds later must not erase it, so it
+		// is named through a generic code instead of silently dropped
+		// under a bare, errorless Cancelled.
 		status = StatusCancelled
 		var cleanup *CancelCleanupError
-		if errors.As(runErr, &cleanup) {
+		switch {
+		case runErr == nil:
+		case errors.As(runErr, &cleanup):
 			errCode = cleanup.Code
 			errMessage = cleanup.Error()
+		case hasOutcome:
+			errCode = outcome.Code
+			errMessage = runErr.Error()
+		case isCancellationDerived(runErr):
+		default:
+			errCode = "job_failed_before_cancel"
+			errMessage = runErr.Error()
 		}
 	case hasOutcome:
 		status = outcome.Status
