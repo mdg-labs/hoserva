@@ -139,6 +139,11 @@ func (h *handler) ConfigureLetsEncrypt(_ context.Context, req *apiv1.ConfigureLe
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	job := apiv1.Job{
 		ID:          uuid.New(),

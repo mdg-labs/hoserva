@@ -102,6 +102,11 @@ func (h *handler) StartRebalance(ctx context.Context, req *apiv1.StartRebalanceR
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
 		ID:          uuid.New(),
@@ -159,6 +164,11 @@ func (h *handler) EvacuateDisk(ctx context.Context, req *apiv1.EvacuateDiskReque
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	if err := refuseIfEvacuationPending(h.jobs); err != nil {
 		return nil, err
 	}

@@ -260,7 +260,13 @@ func mockSystemStatus(scenario string, activeJobs int32, maintenance bool) *apiv
 	return status
 }
 
+// submitParityJob is called with h.mu already held. Production's
+// Scheduler.Submit refuses every job type but TypeDiskUpgradeData while
+// maintenance mode is active (Q70).
 func (h *handler) submitParityJob(jobType apiv1.JobType, cancellable bool) (*apiv1.Job, error) {
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	job := apiv1.Job{
 		ID:          uuid.New(),
@@ -328,6 +334,11 @@ func (h *handler) StartFix(ctx context.Context, req *apiv1.StartFixRequest) (*ap
 func (h *handler) StartMover(ctx context.Context) (*apiv1.Job, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	job := apiv1.Job{
 		ID:          uuid.New(),
@@ -372,6 +383,11 @@ func (h *handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	job := apiv1.Job{
 		ID:          uuid.New(),

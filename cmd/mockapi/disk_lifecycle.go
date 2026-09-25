@@ -250,6 +250,11 @@ func (h *handler) AddDisk(ctx context.Context, req *apiv1.AddDiskRequest) (*apiv
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
 		ID:        uuid.New(),
@@ -333,6 +338,11 @@ func (h *handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
 		ID:        uuid.New(),
@@ -581,6 +591,11 @@ func (h *handler) FinishDiskRemoval(ctx context.Context, req *apiv1.FinishDiskRe
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	j := apiv1.Job{
 		ID:        uuid.New(),
 		Type:      apiv1.JobTypeDiskRemove,

@@ -196,6 +196,11 @@ func (h *handler) StartShareRelocation(ctx context.Context, req *apiv1.StartShar
 	if _, ok := h.shares[string(params.Name)]; !ok {
 		return nil, errShareNotFound(params.Name)
 	}
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
 		ID:          uuid.New(),
