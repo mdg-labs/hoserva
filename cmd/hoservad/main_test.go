@@ -38,6 +38,8 @@ type parityRegistrationEnv struct {
 	configRoot string
 	provider   *disk.FakeProvider
 	runner     *disk.FakeRunner
+	db         *sql.DB
+	shareStore *store.ShareStore
 }
 
 func newParityRegistrationEnv(t *testing.T) (context.Context, *parityRegistrationEnv) {
@@ -123,6 +125,8 @@ func newParityRegistrationEnv(t *testing.T) (context.Context, *parityRegistratio
 		configRoot: configRoot,
 		provider:   provider,
 		runner:     fakeRunner,
+		db:         db,
+		shareStore: shares,
 	}
 }
 
