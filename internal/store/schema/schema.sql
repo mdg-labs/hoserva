@@ -344,9 +344,11 @@ CREATE TABLE array_settings (
 -- removal. All four are declared now, in one column, because SQLite
 -- cannot widen a CHECK constraint without rebuilding the table, which
 -- D16 forbids outside an expand/contract change. removal_job_id is the
--- id of the evacuation job that set removal_state: cancelling that job
--- clears the state, cancelling any other job never does. It is NULL
--- whenever removal_state is.
+-- id of the job that last set removal_state: the evacuation job for
+-- 'evacuating' and 'evacuated', the disk_remove job for 'unpooled' and
+-- 'unlisted'. Cancelling the evacuation job that holds an 'evacuating'
+-- disk clears the state; cancelling any other job never does. It is
+-- NULL whenever removal_state is.
 -- UNIQUE(device) and UNIQUE(fs_uuid) are a second, database-level guard
 -- against one physical disk (or one filesystem) holding two roles.
 -- Identities (wwn/serial/by_id_name/weak_identity) are copied from the

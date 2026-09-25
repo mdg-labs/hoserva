@@ -486,3 +486,41 @@ func TestHandler_UpgradeDisk_Parity_WrongNewMountpointRefused(t *testing.T) {
 		t.Fatal("a stale newMountpoint formatted the replacement disk anyway")
 	}
 }
+
+// TestHandler_UpgradeDisk_Data_RefusesADiskInRemoval proves #366's
+// refusal: with the array stopped, so nothing else refuses first,
+// planDiskUpgrade and upgradeDisk answer 409 disk_leaving_array for a
+// data disk in any removal state, and no upgrade job is queued.
+func TestHandler_UpgradeDisk_Data_RefusesADiskInRemoval(t *testing.T) {
+	for _, state := range []string{store.RemovalStateEvacuating, store.RemovalStateEvacuated, store.RemovalStateUnpooled, store.RemovalStateUnlisted} {
+		t.Run(state, func(t *testing.T) {
+			ctx := context.Background()
+			oldWhere := t.TempDir()
+			h, _, p, st, _, _ := newDiskUpgradeHandler(t, t.TempDir())
+			seedUpgradeArray(t, st, p, oldWhere, 10*disk.TB)
+			markRemoval(t, st, oldWhere, state)
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				t.Fatalf("StopArray: %v", err)
+			}
+
+			_, err := h.PlanDiskUpgrade(ctx, &apiv1.DiskUpgradePlanRequest{Mountpoint: oldWhere, Device: "/dev/sdz"})
+			if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_leaving_array" {
+				t.Fatalf("PlanDiskUpgrade(%s disk) = %+v, want 409 disk_leaving_array", state, status)
+			}
+			replacement := disk.AssignedDisk{Device: "/dev/sdz", Filesystem: disk.XFS}
+			_, err = h.UpgradeDisk(ctx, &apiv1.UpgradeDiskRequest{Mountpoint: oldWhere, Device: "/dev/sdz", Confirmation: job.SingleDiskConfirmation(replacement)})
+			if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_leaving_array" {
+				t.Fatalf("UpgradeDisk(%s disk) = %+v, want 409 disk_leaving_array", state, status)
+			}
+			jobs, err := h.Store.List(ctx, job.ListFilter{})
+			if err != nil {
+				t.Fatalf("listing jobs: %v", err)
+			}
+			for _, j := range jobs {
+				if j.Type == job.TypeDiskUpgradeData {
+					t.Fatalf("a refused upgrade queued job %s", j.ID)
+				}
+			}
+		})
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/google/uuid"
 
@@ -67,17 +68,58 @@ func rebalanceWarningsToAPI(warnings []cache.RebalanceWarning) []apiv1.Rebalance
 	return out
 }
 
+// sharesOffLeavingDisks loads the array's share layout through load and
+// drops every branch on a data disk leaving the array
+// (store.ArrayDisk.LeavingArray, #366) other than keep: a rebalance
+// neither reads from nor writes to a disk in removal, and an
+// evacuation's plan needs the disk it evacuates, whatever its removal
+// state, as its source. keep is "" for a rebalance. A branch's disk is
+// filepath.Dir(branch), the "<disk>/<share>" shape every cache.Share
+// branch has.
+func (h *Handler) sharesOffLeavingDisks(ctx context.Context, load func(ctx context.Context) ([]cache.Share, error), keep string) ([]cache.Share, error) {
+	_, disks, err := h.ArrayStore.GetArray(ctx)
+	if err != nil && !errors.Is(err, store.ErrNoArray) {
+		return nil, fmt.Errorf("reading the array's disks: %w", err)
+	}
+	leaving := make(map[string]bool)
+	for _, d := range disks {
+		if d.Role == store.ArrayRoleData && d.LeavingArray() && d.Mountpoint != keep {
+			leaving[d.Mountpoint] = true
+		}
+	}
+	shares, err := load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(leaving) == 0 {
+		return shares, nil
+	}
+	out := make([]cache.Share, 0, len(shares))
+	for _, s := range shares {
+		branches := make([]string, 0, len(s.Branches))
+		for _, b := range s.Branches {
+			if !leaving[filepath.Dir(b)] {
+				branches = append(branches, b)
+			}
+		}
+		s.Branches = branches
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 // PlanRebalance computes the rebalance plan (doc 09 §3) from the array's
 // current share layout, purely for display: nothing is copied, synced or
 // deleted. startRebalance recomputes this same plan fresh immediately
 // before submitting the job, so this preview is never itself trusted at
-// confirm time.
+// confirm time. Disks leaving the array are not part of the plan
+// (sharesOffLeavingDisks).
 func (h *Handler) PlanRebalance(ctx context.Context) (*apiv1.RebalancePlan, error) {
 	_, _, _, rebalanceShares := h.CurrentParity()
-	if rebalanceShares == nil {
+	if rebalanceShares == nil || h.ArrayStore == nil {
 		return nil, errRebalanceNotConfigured()
 	}
-	shares, err := rebalanceShares(ctx)
+	shares, err := h.sharesOffLeavingDisks(ctx, rebalanceShares, "")
 	if err != nil {
 		return nil, fmt.Errorf("rebalance plan: loading shares: %w", err)
 	}
@@ -100,7 +142,7 @@ func (h *Handler) PlanRebalance(ctx context.Context) (*apiv1.RebalancePlan, erro
 // exactly that plan, never recomputing it itself).
 func (h *Handler) StartRebalance(ctx context.Context, req *apiv1.StartRebalanceRequest) (*apiv1.Job, error) {
 	_, _, _, rebalanceShares := h.CurrentParity()
-	if rebalanceShares == nil {
+	if rebalanceShares == nil || h.ArrayStore == nil {
 		return nil, errRebalanceNotConfigured()
 	}
 	if h.Scheduler == nil {
@@ -109,7 +151,7 @@ func (h *Handler) StartRebalance(ctx context.Context, req *apiv1.StartRebalanceR
 	if req.Confirmation == "" || job.RebalanceConfirmation() != req.Confirmation {
 		return nil, errConfirmRequired
 	}
-	shares, err := rebalanceShares(ctx)
+	shares, err := h.sharesOffLeavingDisks(ctx, rebalanceShares, "")
 	if err != nil {
 		return nil, fmt.Errorf("start rebalance: loading shares: %w", err)
 	}
@@ -128,9 +170,20 @@ func (h *Handler) StartRebalance(ctx context.Context, req *apiv1.StartRebalanceR
 	return jobToAPI(j)
 }
 
+// errDiskLeavingArray is the 409 for an operation on a data disk that is
+// already leaving the array (#366): an evacuation of a disk that has
+// left the pool, and a replace or upgrade of a disk in removal.
+func errDiskLeavingArray(mountpoint, state string) error {
+	return &apiError{code: "disk_leaving_array", statusCode: 409, message: fmt.Sprintf("disk %s is being removed from the array (%s)", mountpoint, state)}
+}
+
 // evacuationDataDisk confirms req's mountpoint currently names a data
 // disk slot, the same doc 02 §4 restriction PlanDiskReplace already
-// applies — evacuation only ever makes sense for a data disk.
+// applies — evacuation only ever makes sense for a data disk — and
+// refuses (errDiskLeavingArray) a disk that has already left the pool
+// (store.ArrayDisk.LeftPool): only finishDiskRemoval takes it further.
+// An "evacuating" or "evacuated" disk passes, so evacuating it again
+// resumes or repeats its evacuation.
 func (h *Handler) evacuationDataDisk(ctx context.Context, mountpoint string) (store.ArrayDisk, error) {
 	existing, err := h.ArrayStore.GetDataDiskByMountpoint(ctx, mountpoint)
 	if err != nil {
@@ -138,6 +191,9 @@ func (h *Handler) evacuationDataDisk(ctx context.Context, mountpoint string) (st
 			return store.ArrayDisk{}, errDiskSlotNotFound(mountpoint)
 		}
 		return store.ArrayDisk{}, err
+	}
+	if existing.LeftPool() {
+		return store.ArrayDisk{}, errDiskLeavingArray(mountpoint, existing.RemovalState)
 	}
 	return existing, nil
 }
@@ -185,7 +241,7 @@ func (h *Handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDis
 	if err := h.refuseIfAnotherDiskRemoving(ctx, req.Mountpoint); err != nil {
 		return nil, err
 	}
-	shares, err := rebalanceShares(ctx)
+	shares, err := h.sharesOffLeavingDisks(ctx, rebalanceShares, req.Mountpoint)
 	if err != nil {
 		return nil, fmt.Errorf("evacuation plan: loading shares: %w", err)
 	}
@@ -222,7 +278,7 @@ func (h *Handler) EvacuateDisk(ctx context.Context, req *apiv1.EvacuateDiskReque
 	if err := h.refuseIfAnotherDiskRemoving(ctx, req.Mountpoint); err != nil {
 		return nil, err
 	}
-	shares, err := rebalanceShares(ctx)
+	shares, err := h.sharesOffLeavingDisks(ctx, rebalanceShares, req.Mountpoint)
 	if err != nil {
 		return nil, fmt.Errorf("evacuate disk: loading shares: %w", err)
 	}

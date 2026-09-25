@@ -805,3 +805,38 @@ func TestHandler_FinishDiskRemoval_StoreFailureIsInternal(t *testing.T) {
 		t.Fatalf("FinishDiskRemoval with a failing store = %+v, want an opaque 500", status)
 	}
 }
+
+// TestHandler_ReplaceDisk_RefusesADiskInRemoval proves #366's refusal:
+// store.ReplaceDataDisk keeps a slot's removal state, so planDiskReplace
+// and replaceDisk answer 409 disk_leaving_array for a disk in any removal
+// state, and nothing is formatted or queued.
+func TestHandler_ReplaceDisk_RefusesADiskInRemoval(t *testing.T) {
+	for _, state := range []string{store.RemovalStateEvacuating, store.RemovalStateEvacuated, store.RemovalStateUnpooled, store.RemovalStateUnlisted} {
+		t.Run(state, func(t *testing.T) {
+			ctx := context.Background()
+			h, _, p, st, _, _ := newDiskLifecycleHandler(t)
+			seedHandlerArray(t, st, p)
+			p.AddDisk("/dev/sdz", disk.Disk{Size: 4 * disk.TB})
+			markRemoval(t, st, "/mnt/disk1", state)
+
+			_, err := h.PlanDiskReplace(ctx, &apiv1.ReplaceDiskPlanRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdz"})
+			if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_leaving_array" {
+				t.Fatalf("PlanDiskReplace(%s disk) = %+v, want 409 disk_leaving_array", state, status)
+			}
+			_, err = h.ReplaceDisk(ctx, &apiv1.ReplaceDiskRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdz", Confirmation: "ERASE /dev/sdz"})
+			if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_leaving_array" {
+				t.Fatalf("ReplaceDisk(%s disk) = %+v, want 409 disk_leaving_array", state, status)
+			}
+			if _, ok := p.FormattedAs("/dev/sdz"); ok {
+				t.Fatal("a refused replace formatted /dev/sdz")
+			}
+			jobs, err := h.Store.List(ctx, job.ListFilter{})
+			if err != nil {
+				t.Fatalf("listing jobs: %v", err)
+			}
+			if len(jobs) != 0 {
+				t.Fatalf("a refused replace submitted %d job(s), want none", len(jobs))
+			}
+		})
+	}
+}

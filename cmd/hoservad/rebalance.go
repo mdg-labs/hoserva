@@ -19,7 +19,11 @@ import (
 // and evacuation only ever move files between array branches, regardless
 // of a share's cache mode, and need no cache disk to exist at all. No
 // array yet (store.ErrNoArray) resolves to no shares, the same "nothing
-// to do yet" moverSharesFromStore treats it as.
+// to do yet" moverSharesFromStore treats it as. Every data disk is a
+// branch here, including one leaving the array: the evacuation job's
+// post-check needs the disk it evacuates. Before planning a rebalance or
+// an evacuation the handler drops every leaving disk except the one
+// being evacuated (api.Handler.sharesOffLeavingDisks, #366).
 func rebalanceSharesFromStore(shares *store.ShareStore, arrays *store.ArrayStore) func(ctx context.Context) ([]cache.Share, error) {
 	return func(ctx context.Context) ([]cache.Share, error) {
 		settings, disks, err := arrays.GetArray(ctx)

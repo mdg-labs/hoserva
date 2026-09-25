@@ -108,6 +108,22 @@ type ArrayDisk struct {
 	RemovalJobID string
 }
 
+// LeavingArray reports whether d is in removal: from the moment an
+// evacuation marks it until the disk_remove job deletes its row (#366).
+// Nothing may be placed on a leaving disk, and no disk operation other
+// than its own removal may act on it.
+func (d ArrayDisk) LeavingArray() bool {
+	return d.RemovalState != ""
+}
+
+// LeftPool reports whether d's removal is past its evacuation: it is
+// unpooled or unlisted, out of every pool mount, and only the
+// disk_remove job may take it further (#358). A new evacuation of it is
+// refused.
+func (d ArrayDisk) LeftPool() bool {
+	return d.RemovalState == RemovalStateUnpooled || d.RemovalState == RemovalStateUnlisted
+}
+
 // ArrayStore persists create-array topology in the central SQLite
 // database (D4) through the sqlc-generated internal/store/db package.
 // PutArray is the only write: it inserts the singleton settings row and
@@ -378,7 +394,7 @@ func (s *ArrayStore) SetRemovalState(ctx context.Context, mountpoint, state, job
 	if err == nil && current.Mountpoint != mountpoint {
 		return fmt.Errorf("%w: %s", ErrAnotherDiskRemoving, current.Mountpoint)
 	}
-	if err == nil && (current.RemovalState.String == RemovalStateUnpooled || current.RemovalState.String == RemovalStateUnlisted) {
+	if err == nil && (ArrayDisk{RemovalState: current.RemovalState.String}).LeftPool() {
 		return fmt.Errorf("%w: %s is %s", ErrDiskLeavingArray, mountpoint, current.RemovalState.String)
 	}
 

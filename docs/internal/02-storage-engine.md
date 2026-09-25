@@ -217,7 +217,7 @@ Because "cache only" data is outside parity, Hoserva ships a built-in scheduled 
 
 Full procedure in doc 09 §4. The ordering is SnapRAID-driven (Q14): files are copied to the remaining disks and verified, parity is synced so the copies are protected, and only then are the originals deleted and the disk removed from the configuration — deleting first would weaken recovery of *other* disks until the next sync.
 
-Long-running, interruptible, resumable on user action (Q29). Progress in files and bytes.
+Two jobs. The evacuation (doc 09 §4 steps 1–6) is long-running, interruptible and resumable on user action (Q29), with progress in files and bytes. Finishing the removal (steps 7–9) is a separate, short job that is re-run rather than resumed: each run carries on from the last step the disk's persisted removal state records.
 
 ### Upgrading a disk to a larger one
 

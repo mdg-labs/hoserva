@@ -19,6 +19,28 @@ func errDiskRemovalInProgress(mountpoint string) error {
 	return &mockError{code: "disk_removal_in_progress", statusCode: 409, message: fmt.Sprintf("disk %s is already being removed", mountpoint)}
 }
 
+// errDiskLeavingArray mirrors production's disk_leaving_array refusal
+// (#366): an evacuation of a disk that has left the pool, and a replace
+// or upgrade of a disk in removal.
+func errDiskLeavingArray(mountpoint, state string) error {
+	return &mockError{code: "disk_leaving_array", statusCode: 409, message: fmt.Sprintf("disk %s is being removed from the array (%s)", mountpoint, state)}
+}
+
+// mockEvacuationDataDisk mirrors internal/api's own
+// Handler.evacuationDataDisk against this mock's fixed mockArrayDisks
+// state: disk_slot_not_found for no data disk at mountpoint, then
+// disk_leaving_array for a disk that has left the pool.
+func mockEvacuationDataDisk(disks []store.ArrayDisk, mountpoint string) error {
+	d, ok := mockDataDiskAt(disks, mountpoint)
+	if !ok {
+		return errDiskSlotNotFound(mountpoint)
+	}
+	if d.LeftPool() {
+		return errDiskLeavingArray(mountpoint, d.RemovalState)
+	}
+	return nil
+}
+
 // refuseIfAnotherDiskRemoving mirrors internal/api's own
 // Handler.refuseIfAnotherDiskRemoving against this mock's fixed
 // mockArrayDisks state.
@@ -95,15 +117,16 @@ func (h *handler) StartRebalance(ctx context.Context, req *apiv1.StartRebalanceR
 }
 
 // PlanDiskEvacuation mirrors internal/api's own PlanDiskEvacuation against
-// this mock's fixed inventory: the same disk-slot-not-found refusal, and
-// the same honestly empty plan mockRebalancePlan returns.
+// this mock's fixed inventory: the same disk_slot_not_found,
+// disk_leaving_array and disk_removal_in_progress refusals, in the same
+// order, and the same honestly empty plan mockRebalancePlan returns.
 func (h *handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDiskPlanRequest) (*apiv1.EvacuationPlan, error) {
 	disks, _, err := h.mockArrayState()
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := mockDataDiskAt(disks, req.Mountpoint); !ok {
-		return nil, errDiskSlotNotFound(req.Mountpoint)
+	if err := mockEvacuationDataDisk(disks, req.Mountpoint); err != nil {
+		return nil, err
 	}
 	if err := refuseIfAnotherDiskRemoving(disks, req.Mountpoint); err != nil {
 		return nil, err
@@ -116,21 +139,23 @@ func (h *handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDis
 	}, nil
 }
 
-// EvacuateDisk mirrors internal/api's own EvacuateDisk, with production's
-// own confirmation check (job.EvacuationConfirmation).
+// EvacuateDisk mirrors internal/api's own EvacuateDisk and its check
+// order: production's own confirmation check (job.EvacuationConfirmation),
+// then disk_slot_not_found, disk_leaving_array and
+// disk_removal_in_progress.
 func (h *handler) EvacuateDisk(ctx context.Context, req *apiv1.EvacuateDiskRequest) (*apiv1.Job, error) {
 	disks, _, err := h.mockArrayState()
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := mockDataDiskAt(disks, req.Mountpoint); !ok {
-		return nil, errDiskSlotNotFound(req.Mountpoint)
+	if req.Confirmation == "" || job.EvacuationConfirmation(req.Mountpoint) != req.Confirmation {
+		return nil, errConfirmRequired()
+	}
+	if err := mockEvacuationDataDisk(disks, req.Mountpoint); err != nil {
+		return nil, err
 	}
 	if err := refuseIfAnotherDiskRemoving(disks, req.Mountpoint); err != nil {
 		return nil, err
-	}
-	if req.Confirmation == "" || job.EvacuationConfirmation(req.Mountpoint) != req.Confirmation {
-		return nil, errConfirmRequired()
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()

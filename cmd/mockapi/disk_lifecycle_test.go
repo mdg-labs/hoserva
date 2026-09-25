@@ -32,3 +32,34 @@ func TestFinishDiskRemoval_MirrorsProductionRefusals(t *testing.T) {
 		}
 	}
 }
+
+// TestReplaceAndUpgrade_RefuseADiskInRemoval proves the mock mirrors
+// production's disk_leaving_array refusal (#366) for the degraded
+// scenario's evacuating disk3, ahead of every later check, while the
+// same requests against disk1 get past it.
+func TestReplaceAndUpgrade_RefuseADiskInRemoval(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t, "degraded")
+
+	_, err := client.PlanDiskReplace(ctx, &apiv1.ReplaceDiskPlanRequest{Mountpoint: "/mnt/disk3", Device: "/dev/sdf"})
+	if got := errorCode(t, err); got != "disk_leaving_array" {
+		t.Fatalf("PlanDiskReplace(/mnt/disk3) = %s, want disk_leaving_array", got)
+	}
+	_, err = client.ReplaceDisk(ctx, &apiv1.ReplaceDiskRequest{Mountpoint: "/mnt/disk3", Device: "/dev/sdf", Confirmation: "ERASE /dev/sdf"})
+	if got := errorCode(t, err); got != "disk_leaving_array" {
+		t.Fatalf("ReplaceDisk(/mnt/disk3) = %s, want disk_leaving_array", got)
+	}
+	_, err = client.PlanDiskUpgrade(ctx, &apiv1.DiskUpgradePlanRequest{Mountpoint: "/mnt/disk3", Device: "/dev/sdf"})
+	if got := errorCode(t, err); got != "disk_leaving_array" {
+		t.Fatalf("PlanDiskUpgrade(/mnt/disk3) = %s, want disk_leaving_array", got)
+	}
+	_, err = client.UpgradeDisk(ctx, &apiv1.UpgradeDiskRequest{Mountpoint: "/mnt/disk3", Device: "/dev/sdf", Confirmation: "ERASE /dev/sdf"})
+	if got := errorCode(t, err); got != "disk_leaving_array" {
+		t.Fatalf("UpgradeDisk(/mnt/disk3) = %s, want disk_leaving_array", got)
+	}
+
+	_, err = client.PlanDiskReplace(ctx, &apiv1.ReplaceDiskPlanRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdf"})
+	if got := errorCode(t, err); got == "disk_leaving_array" {
+		t.Fatal("PlanDiskReplace(/mnt/disk1) = disk_leaving_array, want disk1 (not in removal) past that check")
+	}
+}

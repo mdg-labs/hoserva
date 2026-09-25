@@ -272,6 +272,9 @@ func (h *handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 	if !ok {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
 	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
+	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, mockInventoryAsDisks(listed)); err != nil {
 		return nil, errSlotDiskPresent(err)
 	}
@@ -311,6 +314,9 @@ func (h *handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 	existing, ok := mockDataDiskAt(disks, req.Mountpoint)
 	if !ok {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
+	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, mockInventoryAsDisks(listed)); err != nil {
 		return nil, errSlotDiskPresent(err)
@@ -416,6 +422,9 @@ func (h *handler) PlanDiskUpgrade(ctx context.Context, req *apiv1.DiskUpgradePla
 	if !ok || (existing.Role != store.ArrayRoleData && existing.Role != store.ArrayRoleParity) {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
 	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
+	}
 	assigned, err := mockResolveAssignedDisk(req.Device, req.Filesystem, apiv1.OptBool{}, listed)
 	if err != nil {
 		return nil, err
@@ -468,6 +477,9 @@ func (h *handler) UpgradeDisk(ctx context.Context, req *apiv1.UpgradeDiskRequest
 	existing, ok := mockArrayDiskAt(disks, req.Mountpoint)
 	if !ok || (existing.Role != store.ArrayRoleData && existing.Role != store.ArrayRoleParity) {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
+	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	assigned, err := mockResolveAssignedDisk(req.Device, req.Filesystem, apiv1.OptBool{}, listed)
 	if err != nil {

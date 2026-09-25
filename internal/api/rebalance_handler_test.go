@@ -362,3 +362,81 @@ func TestHandler_PlanDiskEvacuation_ThenEvacuateDisk_RunsThroughRealJob(t *testi
 		t.Fatalf("evacuated share branch still has entries = %+v, want empty (EvacuationPostCheck should have run and passed)", entries)
 	}
 }
+
+// markRemoval puts the data disk at mountpoint into removal state state
+// through the same store calls the evacuation job (SetRemovalState) and
+// the disk_remove job (AdvanceRemovalState) make.
+func markRemoval(t *testing.T, st *store.ArrayStore, mountpoint, state string) {
+	t.Helper()
+	ctx := context.Background()
+	switch state {
+	case store.RemovalStateEvacuating, store.RemovalStateEvacuated:
+		if err := st.SetRemovalState(ctx, mountpoint, state, "evacuation-job"); err != nil {
+			t.Fatalf("marking %s %s: %v", mountpoint, state, err)
+		}
+		return
+	}
+	if err := st.SetRemovalState(ctx, mountpoint, store.RemovalStateEvacuated, "evacuation-job"); err != nil {
+		t.Fatalf("marking %s evacuated: %v", mountpoint, err)
+	}
+	if err := st.AdvanceRemovalState(ctx, mountpoint, store.RemovalStateEvacuated, store.RemovalStateUnpooled, "disk-remove-job"); err != nil {
+		t.Fatalf("marking %s unpooled: %v", mountpoint, err)
+	}
+	if state == store.RemovalStateUnlisted {
+		if err := st.AdvanceRemovalState(ctx, mountpoint, store.RemovalStateUnpooled, store.RemovalStateUnlisted, "disk-remove-job"); err != nil {
+			t.Fatalf("marking %s unlisted: %v", mountpoint, err)
+		}
+	}
+}
+
+// TestHandler_Evacuation_RefusesADiskThatLeftThePool proves #366's
+// synchronous refusal: planDiskEvacuation and evacuateDisk answer 409
+// disk_leaving_array for a disk already unpooled or unlisted, and no job
+// is queued.
+func TestHandler_Evacuation_RefusesADiskThatLeftThePool(t *testing.T) {
+	for _, state := range []string{store.RemovalStateUnpooled, store.RemovalStateUnlisted} {
+		t.Run(state, func(t *testing.T) {
+			ctx := context.Background()
+			h, _, _, disk1, _ := newRebalanceTestHandler(t)
+			markRemoval(t, h.ArrayStore, disk1, state)
+
+			_, err := h.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: disk1})
+			if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_leaving_array" {
+				t.Fatalf("PlanDiskEvacuation(%s disk) = %+v, want 409 disk_leaving_array", state, status)
+			}
+			_, err = h.EvacuateDisk(ctx, &apiv1.EvacuateDiskRequest{Mountpoint: disk1, Confirmation: job.EvacuationConfirmation(disk1)})
+			if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_leaving_array" {
+				t.Fatalf("EvacuateDisk(%s disk) = %+v, want 409 disk_leaving_array", state, status)
+			}
+			jobs, err := h.Store.List(ctx, job.ListFilter{})
+			if err != nil {
+				t.Fatalf("listing jobs: %v", err)
+			}
+			if len(jobs) != 0 {
+				t.Fatalf("a refused evacuation submitted %d job(s), want none", len(jobs))
+			}
+		})
+	}
+}
+
+// TestHandler_PlanDiskEvacuation_KeepsItsOwnDiskInRemoval proves that
+// leaving disks in removal out of the plan never leaves out the disk
+// being evacuated: re-planning an "evacuating" or "evacuated" disk still
+// plans its file off it.
+func TestHandler_PlanDiskEvacuation_KeepsItsOwnDiskInRemoval(t *testing.T) {
+	for _, state := range []string{store.RemovalStateEvacuating, store.RemovalStateEvacuated} {
+		t.Run(state, func(t *testing.T) {
+			ctx := context.Background()
+			h, _, share, disk1, _ := newRebalanceTestHandler(t)
+			markRemoval(t, h.ArrayStore, disk1, state)
+
+			plan, err := h.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: disk1})
+			if err != nil {
+				t.Fatalf("PlanDiskEvacuation(%s disk): %v", state, err)
+			}
+			if len(plan.Moves) != 1 || plan.Moves[0].SourceBranch != share.Branches[0] || plan.Moves[0].TargetBranch != share.Branches[1] {
+				t.Fatalf("PlanDiskEvacuation(%s disk) moves = %+v, want movie.mkv from %s to %s", state, plan.Moves, share.Branches[0], share.Branches[1])
+			}
+		})
+	}
+}

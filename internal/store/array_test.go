@@ -474,3 +474,27 @@ func TestArrayStore_DeleteUnlistedDataDisk_OnlyOnceUnlisted(t *testing.T) {
 		t.Fatalf("RemovingDisk after the delete = (%q, %v), want none", mp, err)
 	}
 }
+
+// TestArrayDisk_LeavingArrayAndLeftPool pins which removal states count
+// as leaving the array (every one) and as out of the pool (only the
+// disk_remove job's own, #366).
+func TestArrayDisk_LeavingArrayAndLeftPool(t *testing.T) {
+	for _, c := range []struct {
+		state             string
+		leaving, leftPool bool
+	}{
+		{"", false, false},
+		{RemovalStateEvacuating, true, false},
+		{RemovalStateEvacuated, true, false},
+		{RemovalStateUnpooled, true, true},
+		{RemovalStateUnlisted, true, true},
+	} {
+		d := ArrayDisk{Role: ArrayRoleData, RemovalState: c.state}
+		if got := d.LeavingArray(); got != c.leaving {
+			t.Errorf("removal state %q: LeavingArray = %t, want %t", c.state, got, c.leaving)
+		}
+		if got := d.LeftPool(); got != c.leftPool {
+			t.Errorf("removal state %q: LeftPool = %t, want %t", c.state, got, c.leftPool)
+		}
+	}
+}

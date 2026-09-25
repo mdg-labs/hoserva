@@ -257,7 +257,8 @@ type Handler interface {
 	// plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share
 	// branches hold nothing but empty directories (doc 09 §4 step 6) and the job marks the disk
 	// `evacuated` before reporting success. A wrong or missing confirmation is refused
-	// (`confirmation_required`) before anything runs, a second disk is refused
+	// (`confirmation_required`) before anything runs, a disk already `unpooled` or `unlisted` is refused
+	// (`disk_leaving_array`, 409) as `planDiskEvacuation` refuses it, a second disk is refused
 	// (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused
 	// (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal
 	// state belongs to the job that set it: cancelling that job — queued, running or interrupted —
@@ -603,11 +604,14 @@ type Handler interface {
 	// deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own
 	// `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
 	// disk keeps taking new writes only until that job starts, never for as long as it runs. Refused
-	// (`disk_removal_in_progress`) while a different disk is already in removal. This operation carries
-	// out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through
-	// the threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by
-	// this preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are
-	// not performed by either.
+	// (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
+	// `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is
+	// already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed
+	// or repeated evacuation. No other disk in removal is ever a target. This operation carries out doc 09
+	// §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the
+	// threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this
+	// preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not
+	// performed by either.
 	//
 	// POST /disks/array/evacuate/plan
 	PlanDiskEvacuation(ctx context.Context, req *EvacuateDiskPlanRequest) (*EvacuationPlan, error)
@@ -619,8 +623,9 @@ type Handler interface {
 	// `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is
 	// genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
 	// §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
-	// replacement that would leave a parity disk smaller than the array's largest data disk. Read-only:
-	// nothing is formatted or persisted.
+	// replacement that would leave a parity disk smaller than the array's largest data disk. Refuses
+	// (`disk_leaving_array`, 409) a slot whose disk is in removal (any `removalState`): the replacement
+	// would inherit that state. Read-only: nothing is formatted or persisted.
 	//
 	// POST /disks/array/replace/plan
 	PlanDiskReplace(ctx context.Context, req *ReplaceDiskPlanRequest) (*ReplaceDiskPlan, error)
@@ -635,7 +640,9 @@ type Handler interface {
 	// rule `disk.DataDiskUpgradeExceedsParity` checks — and any of `planDiskReplace`'s own
 	// Q19/Q20/Q21/Q23 checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new
 	// disk will be formatted, mounted and verified at independently of the old one (Q71) — never the old
-	// disk's own mountpoint. Read-only: nothing is formatted or persisted.
+	// disk's own mountpoint. Refuses (`disk_leaving_array`, 409) a data disk in removal (any
+	// `removalState`): the new disk would inherit that state. Read-only: nothing is formatted or
+	// persisted.
 	//
 	// POST /disks/array/upgrade/plan
 	PlanDiskUpgrade(ctx context.Context, req *DiskUpgradePlanRequest) (*DiskUpgradePlan, error)
@@ -644,7 +651,9 @@ type Handler interface {
 	// Computes the rebalance plan (doc 09 §3): for every share with at least two branches, the files
 	// `cache.PlanRebalance` would move from that share's own most-full disk to its own least-full disk to
 	// bring them within the skew tolerance, plus any path-preserving warnings, and the exact typed
-	// confirmation `startRebalance` requires. Read-only: nothing is copied, synced or deleted.
+	// confirmation `startRebalance` requires. A data disk in removal (any `removalState`) is left out of
+	// every share's branches: the plan neither moves a file off it nor onto it. Read-only: nothing is
+	// copied, synced or deleted.
 	//
 	// POST /pool/rebalance/plan
 	PlanRebalance(ctx context.Context) (*RebalancePlan, error)
@@ -679,9 +688,9 @@ type Handler interface {
 	// to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
 	// disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
 	// (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
-	// or still present by identity. The confirmation must be the exact string the matching
-	// `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and
-	// formats nothing.
+	// or still present by identity, and (`disk_leaving_array`, 409) a slot whose disk is in removal. The
+	// confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or
+	// missing one is refused with `confirmation_required` and formats nothing.
 	//
 	// POST /disks/array/replace
 	ReplaceDisk(ctx context.Context, req *ReplaceDiskRequest) (*Job, error)
@@ -805,8 +814,9 @@ type Handler interface {
 	// exact phrase the matching `planRebalance` call returned, queues a resumable `job.TypeRebalance` job
 	// that runs it through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the
 	// threshold guard, delete the batch's sources, sync again (Q14), batched so no trailing sync this run
-	// makes can ever trip the guard after sources are already gone (doc 09 §3). A wrong or missing
-	// confirmation is refused (`confirmation_required`) before anything runs.
+	// makes can ever trip the guard after sources are already gone (doc 09 §3). The recomputed plan
+	// leaves out a data disk in removal the same way `planRebalance` does. A wrong or missing confirmation
+	// is refused (`confirmation_required`) before anything runs.
 	//
 	// POST /pool/rebalance
 	StartRebalance(ctx context.Context, req *StartRebalanceRequest) (*Job, error)
@@ -961,9 +971,10 @@ type Handler interface {
 	//
 	// Starts a resumable Topology job (`job.TypeDiskUpgradeData` or `job.TypeDiskUpgradeParity`, resolved
 	// from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call
-	// returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A
-	// data-disk upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has
-	// completed (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
+	// returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A data
+	// disk in removal is refused (`disk_leaving_array`, 409) as `planDiskUpgrade` refuses it. A data-disk
+	// upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has completed
+	// (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
 	// `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies
 	// and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to
 	// show no removed or updated files, and only then names the new disk in SQLite; the array stays
