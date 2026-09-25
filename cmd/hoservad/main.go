@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -319,19 +320,22 @@ func run(cfg config) error {
 	if err != nil {
 		return fmt.Errorf("opening snapraid.conf: %w", err)
 	}
-	var chainGuard job.DiffGuard
+	chainGuard := &diffGuardHolder{}
+	parityReg := &parityRegistrar{
+		configRoot: configRoot,
+		stateDir:   cfg.stateDir,
+		db:         db,
+		registry:   registry,
+		handler:    handler,
+		shareStore: shareStore,
+		arrayStore: arrayStore,
+		chainGuard: chainGuard,
+		generator:  generator,
+		diskUnits:  disk.SystemdMounter{Runner: linuxDisks.Exec},
+		mounts:     disk.KernelMounts{Runner: linuxDisks.Exec},
+	}
 	if parityEngine != nil {
-		parityEngine.Usage = parity.NewUsageStore(db)
-		parityEngine.Relocation = parity.NewRelocationManifestStore(db)
-		registry.Register(job.TypeSync, false, job.RunSync(parityEngine))
-		registry.Register(job.TypeScrub, false, job.RunScrub(parityEngine))
-		registry.Register(job.TypeFix, false, job.RunFix(parityEngine))
-		registry.Register(job.TypeShareRelocation, true, job.RunShareRelocation(job.ShareRelocationDeps{
-			Share:    shareRelocationShareFromStore(shareStore, arrayStore),
-			Sync:     shareRelocationSyncFunc(parityEngine),
-			Manifest: parityEngine.Relocation,
-		}))
-		chainGuard = job.EngineDiffGuard{Engine: parityEngine, Guard: parityEngine.Guard}
+		parityReg.register(parityEngine)
 	}
 	backupService := newBackupService(ctx, cfg, db, machineKey, settingsService, linuxDisks.Exec)
 	acmeStore := acme.NewStore(db)
@@ -366,10 +370,6 @@ func run(cfg config) error {
 	if err := networkSvc.Recover(ctx); err != nil {
 		log.Printf("hoservad: restoring unconfirmed network change: %v", err)
 	}
-	var shareUsages share.UsageReader
-	if parityEngine != nil {
-		shareUsages = parityEngine.Usage
-	}
 	// rebuildArraySequence is also the ArrayReady hook job.TypeDiskFormat/
 	// DiskAdd/DiskReplace call below, moved up here (from its previous
 	// position right after this point) so shareService can already close
@@ -389,32 +389,13 @@ func run(cfg config) error {
 		handler.SetArray(seq)
 		return nil
 	}
-	shareService := newShareService(shareStore, arrayStore, generator, pool.SystemdMounter{Runner: linuxDisks.Exec}, shareUsages)
+	shareService := newShareService(shareStore, arrayStore, generator, pool.SystemdMounter{Runner: linuxDisks.Exec}, parity.NewUsageStore(db))
 	shareService.PostCommit = rebuildArraySequence
-	// topologyChanged is the disk-topology jobs' ArrayReady hook. Those
-	// jobs write only the catch-all's unit, so share.Service rewrites
-	// every share's units with the new branch list first; then the
-	// rebuilt sequence is applied to a pool that is already running, so
-	// an added disk's capacity is available at once (doc 02 §4 "Adding a
-	// disk" step 6) rather than at the next array start. The live update
-	// runs after the topology is committed: its failure is logged, not
-	// returned, because the job cannot be retried once the disk is a
-	// member, and the next array start applies the same mounts.
-	topologyChanged := func(ctx context.Context) error {
-		live := pool.IsMounted(pool.CatchAllPath)
-		if err := shareService.ApplyTopology(ctx, live); err != nil {
-			return fmt.Errorf("regenerating share configuration: %w", err)
-		}
-		if err := rebuildArraySequence(ctx); err != nil {
-			return err
-		}
-		if seq := handler.CurrentArray(); seq != nil {
-			if err := seq.RefreshLive(ctx, live); err != nil {
-				log.Printf("hoservad: the running pool did not pick up the new disk topology: %v — stop and start the array to apply it", err)
-			}
-		}
-		return nil
-	}
+	// topologyChanged is the disk-topology jobs' ArrayReady hook, built by
+	// wireTopologyHooks below so the lab tests (parity_registrar_lab_test.go,
+	// #265; evacuation_removal_state_lab_test.go, #359) build the identical
+	// hooks from the same function rather than reimplementing them.
+	topologyChanged := wireTopologyHooks(shareService, rebuildArraySequence, parityReg, handler)
 	handler.Scheduler = scheduler
 	handler.Store = jobStore
 	handler.Logs = logs
@@ -425,7 +406,6 @@ func run(cfg config) error {
 	handler.UPS = api.NewUPSService(upsStore, machineKey, generator, newNUTReloader(linuxDisks.Exec), upsSocketPermissions{path: upsControlSocketPath(cfg.socketPath)})
 	handler.Disks = disks
 	handler.Metrics = metricsStore
-	handler.Parity = parityEngine
 	handler.History = history
 	handler.Updates = updateEngine
 	handler.Generator = generator
@@ -436,10 +416,6 @@ func run(cfg config) error {
 	handler.ACME = acmeService
 	handler.Shares = shareService
 	handler.MoverResults = moverResults
-	if parityEngine != nil {
-		handler.ParityGuard = parityEngine.Guard
-		handler.RelocationManifest = parityEngine.Relocation
-	}
 
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
 		Provider:   disks,
@@ -457,18 +433,10 @@ func run(cfg config) error {
 		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
 		ArrayReady: topologyChanged,
 	}))
-	// replaceParityEngine is left a true nil interface, not a non-nil
-	// interface wrapping a nil *parity.SnapraidEngine, when snapraid.conf
-	// doesn't exist yet (no array created): RunDiskReplace's own
-	// dependency check (d.Parity == nil) only catches the former, and its
-	// GetArray call already fails closed with ErrNoArray in that case
-	// before ever reaching Parity — this is only extra safety against
-	// arrayStore and snapraid.conf ever disagreeing about whether an
-	// array exists.
-	var replaceParityEngine parity.Engine
-	if parityEngine != nil {
-		replaceParityEngine = parityEngine
-	}
+	// The replace and upgrade jobs resolve the parity engine per call: a
+	// daemon started with no array only gets one from a live array
+	// creation (#265).
+	replaceParityEngine := currentParityEngine{handler: handler}
 	// TypeDiskReplace's own snapraid fix step genuinely honors context
 	// cancellation (exec.CommandContext kills the subprocess, #288's own
 	// lab test proves this), so it is registered cancellable — a stuck or
@@ -609,6 +577,216 @@ func run(cfg config) error {
 	_ = upsControlListener.Close()
 	networkSvc.Close()
 	return runErr
+}
+
+// liveUpdateFailure is what a topology hook does when the running pool
+// does not take the regenerated mounts.
+type liveUpdateFailure int
+
+const (
+	// logLiveUpdateFailure logs it and succeeds: the disk-topology jobs
+	// cannot be retried once the disk is a member, and the next array
+	// start applies the same mounts.
+	logLiveUpdateFailure liveUpdateFailure = iota
+	// failOnLiveUpdateFailure returns it: an evacuation must not copy
+	// anything while its disk still takes new writes in a live mount
+	// (doc 09 §4 step 2, #359), and a disk removal must not take a disk
+	// out of SnapRAID while it is still a branch of a live mount (step 7,
+	// #358).
+	failOnLiveUpdateFailure
+)
+
+// wireTopologyHooks builds both topology hooks run() uses and returns
+// topologyChanged, the disk-topology jobs' ArrayReady hook, which only
+// logs a failed live update. It binds parityReg's arrayReady — the hook
+// job.TypeEvacuation's run and abort and job.TypeDiskRemove call — to the
+// variant that returns that failure instead, before either can run.
+func wireTopologyHooks(shareService *share.Service, rebuildArraySequence func(ctx context.Context) error, parityReg *parityRegistrar, handler *api.Handler) func(ctx context.Context) error {
+	parityReg.arrayReady = newTopologyChangedHook(shareService, rebuildArraySequence, parityReg, handler, failOnLiveUpdateFailure)
+	return newTopologyChangedHook(shareService, rebuildArraySequence, parityReg, handler, logLiveUpdateFailure)
+}
+
+// newTopologyChangedHook builds an ArrayReady hook: shareService.
+// ApplyTopology rewrites every pool mount unit and share file from the
+// store (the disk-topology jobs themselves write only the catch-all's
+// unit); then rebuildArraySequence rebuilds Handler's ArraySequence from
+// the same store; then parityReg.ensure notices when a live `POST
+// /disks/array` has just written snapraid.conf where nothing existed at
+// startup and wires TypeSync/TypeScrub/TypeFix/TypeShareRelocation/
+// TypeRebalance/TypeEvacuation and Handler's own parity-derived fields
+// the same way startup does, so none of them need a restart (#265) — a
+// no-op once parity is already wired. Last, when the catch-all is
+// mounted, the rebuilt sequence is applied to the running pool, so an
+// added disk's capacity is available at once (doc 02 §4 "Adding a disk"
+// step 6) and a disk in removal is no-create at once (doc 09 §4 step 2).
+// onLiveFailure decides whether a failure of that last step is logged or
+// returned.
+func newTopologyChangedHook(shareService *share.Service, rebuildArraySequence func(ctx context.Context) error, parityReg *parityRegistrar, handler *api.Handler, onLiveFailure liveUpdateFailure) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		live := pool.IsMounted(pool.CatchAllPath)
+		if err := shareService.ApplyTopology(ctx, live); err != nil {
+			return fmt.Errorf("regenerating share configuration: %w", err)
+		}
+		if err := rebuildArraySequence(ctx); err != nil {
+			return err
+		}
+		if err := parityReg.ensure(ctx); err != nil {
+			return fmt.Errorf("wiring the parity engine: %w", err)
+		}
+		if seq := handler.CurrentArray(); seq != nil {
+			if err := seq.RefreshLive(ctx, live); err != nil {
+				if onLiveFailure == failOnLiveUpdateFailure {
+					return fmt.Errorf("applying the new pool mounts to the running pool: %w", err)
+				}
+				log.Printf("hoservad: the running pool did not pick up the new disk topology: %v — stop and start the array to apply it", err)
+			}
+		}
+		return nil
+	}
+}
+
+// parityRegistrar wires every parity-dependent job type
+// (TypeSync/TypeScrub/TypeFix/TypeShareRelocation/TypeRebalance/
+// TypeEvacuation/TypeDiskRemove) and Handler's own parity-derived fields
+// (Handler.SetParity) against a *parity.SnapraidEngine, exactly once: at
+// startup, when an array already exists, or — since #265 — the first
+// time topologyChanged's ArrayReady hook observes that a live `POST
+// /disks/array` has just written snapraid.conf where nothing existed
+// before. job.Registry.Register panics on a second registration for the
+// same type (its own doc comment), so ensure's mu serializes it against a
+// concurrent ArrayReady call trying to run it a second time, the same
+// concurrency shape Handler.SetArray/CurrentArray already established for
+// Handler.Array (#263).
+type parityRegistrar struct {
+	mu         sync.Mutex
+	done       bool
+	configRoot string
+	stateDir   string
+	db         *sql.DB
+	registry   *job.Registry
+	handler    *api.Handler
+	shareStore *store.ShareStore
+	arrayStore *store.ArrayStore
+	chainGuard *diffGuardHolder
+	// arrayReady is the topology hook that returns a failed live update
+	// (wireTopologyHooks), set after both it and p are constructed —
+	// register below only captures p.callArrayReady, a method value that
+	// reads this field at call time, since register can run (at startup,
+	// when an array already exists) before the hook exists at all (#359).
+	arrayReady func(ctx context.Context) error
+	// generator, diskUnits and mounts are TypeDiskRemove's own: the
+	// config generator every array file is written through, what stops
+	// a data disk's own mount unit (disk.SystemdMounter), and the kernel
+	// mount table (disk.KernelMounts).
+	generator *cfggen.Generator
+	diskUnits disk.UnitMounter
+	mounts    job.MountTable
+}
+
+// shareNamesFromStore lists every share's name: TypeDiskRemove's
+// post-check looks at each one's branch on the disk being removed.
+func shareNamesFromStore(shares *store.ShareStore) func(ctx context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		rows, err := shares.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(rows))
+		for _, r := range rows {
+			names = append(names, r.Name)
+		}
+		return names, nil
+	}
+}
+
+// callArrayReady is job.EvacuationDeps.ArrayReady/EvacuationAbort's and
+// job.DiskRemoveDeps.ArrayReady's own dependency: a stable method value
+// register can capture before p.arrayReady is wired, since none of them
+// ever runs before startup finishes wiring it (this type's own field doc
+// comment).
+func (p *parityRegistrar) callArrayReady(ctx context.Context) error {
+	if p.arrayReady == nil {
+		return fmt.Errorf("hoservad: the array-ready hook is not wired yet")
+	}
+	return p.arrayReady(ctx)
+}
+
+// register wires engine's job types and Handler's own parity-derived
+// fields and marks p done. Callers must already know engine is non-nil
+// and that registration has not happened yet — main's own startup call
+// runs before any listener or ArrayReady hook can race it, and ensure
+// below is what makes both true for every later call.
+func (p *parityRegistrar) register(engine *parity.SnapraidEngine) {
+	engine.Usage = parity.NewUsageStore(p.db)
+	engine.Relocation = parity.NewRelocationManifestStore(p.db)
+
+	p.registry.Register(job.TypeSync, false, job.RunSync(engine))
+	p.registry.Register(job.TypeScrub, false, job.RunScrub(engine))
+	p.registry.Register(job.TypeFix, false, job.RunFix(engine))
+	p.registry.Register(job.TypeShareRelocation, true, job.RunShareRelocation(job.ShareRelocationDeps{
+		Share:    shareRelocationShareFromStore(p.shareStore, p.arrayStore),
+		Sync:     shareRelocationSyncFunc(engine),
+		Manifest: engine.Relocation,
+	}))
+	rebalanceShares := rebalanceSharesFromStore(p.shareStore, p.arrayStore)
+	rebalanceTracked := rebalanceTrackedFileCount(engine)
+	p.registry.Register(job.TypeRebalance, true, job.RunRebalance(job.RebalanceDeps{
+		Sync:             shareRelocationSyncFunc(engine),
+		TrackedFileCount: rebalanceTracked,
+		Store:            p.arrayStore,
+	}))
+	p.registry.Register(job.TypeEvacuation, true, job.RunEvacuation(job.EvacuationDeps{
+		Sync:             evacuationSyncFunc(engine),
+		TrackedFileCount: rebalanceTracked,
+		Shares:           rebalanceShares,
+		Manifest:         engine.Relocation,
+		Store:            p.arrayStore,
+		ArrayReady:       p.callArrayReady,
+	}))
+	// Cancelling an evacuation that is already StatusInterrupted never
+	// re-enters RunEvacuation, so it needs its own path to clear a
+	// stale removing-disks exemption and removal state (job.EvacuationAbort's
+	// own doc comment).
+	p.registry.RegisterAbort(job.TypeEvacuation, job.EvacuationAbort(engine.Relocation, p.arrayStore, p.callArrayReady))
+	// Finishing a disk's removal (doc 09 §4 steps 7-9, #358). Not
+	// cancellable: each step is short and recorded in the disk's removal
+	// state, and a failed or interrupted run is finished by running it
+	// again, never undone half-way.
+	p.registry.Register(job.TypeDiskRemove, false, job.RunDiskRemove(job.DiskRemoveDeps{
+		Store:      p.arrayStore,
+		Generator:  p.generator,
+		Mounts:     p.mounts,
+		Unmounter:  p.diskUnits,
+		Parity:     engine,
+		ShareNames: shareNamesFromStore(p.shareStore),
+		ArrayReady: p.callArrayReady,
+	}))
+
+	p.handler.SetParity(engine, engine.Guard, engine.Relocation, rebalanceShares)
+	p.chainGuard.set(job.EngineDiffGuard{Engine: engine, Guard: engine.Guard})
+	p.done = true
+}
+
+// ensure is topologyChanged's own ArrayReady hook: a no-op once parity is
+// already wired (whether that happened at startup or from an earlier
+// live array creation), and otherwise opens snapraid.conf fresh — the
+// live CreateArray job's own Generator has already written it by the
+// time ArrayReady runs — and calls register on what it finds.
+func (p *parityRegistrar) ensure(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.done {
+		return nil
+	}
+	engine, err := newSnapraidEngine(p.configRoot, p.stateDir, nil)
+	if err != nil {
+		return fmt.Errorf("opening snapraid.conf: %w", err)
+	}
+	if engine == nil {
+		return nil
+	}
+	p.register(engine)
+	return nil
 }
 
 func openDatabase(stateDir string) (*sql.DB, error) {

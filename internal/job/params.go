@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/parity"
 )
@@ -117,6 +118,36 @@ type DiskAddParams struct {
 	Sizes        map[string]int64  `json:"sizes"`
 }
 
+// RebalanceParams is startRebalance's persisted job payload: the exact
+// plan `planRebalance`/`startRebalance` most recently computed with
+// `cache.PlanRebalance` immediately before this job was submitted (doc 09
+// §3) — RunRebalance takes it as a value rather than recomputing it
+// (cache.RebalancePlan's own doc comment), so what this job runs is
+// exactly what the confirming request most recently saw, never a plan a
+// client supplied directly (which could name branches this job has no
+// business touching).
+type RebalanceParams struct {
+	Plan cache.RebalancePlan `json:"plan"`
+}
+
+// EvacuationParams is evacuateDisk's persisted job payload: the disk
+// being evacuated and the exact plan `planDiskEvacuation`/`evacuateDisk`
+// most recently computed for it with `cache.PlanEvacuation` (doc 09 §4),
+// the same "the job runs the plan as a value, never recomputes or trusts
+// a client-supplied one" shape RebalanceParams uses.
+type EvacuationParams struct {
+	Mountpoint string              `json:"mountpoint"`
+	Plan       cache.RebalancePlan `json:"plan"`
+}
+
+// DiskRemoveParams is finishDiskRemoval's persisted Topology-job payload
+// (doc 09 §4 steps 7-9, #358): the evacuated data disk's slot and the
+// typed confirmation, which RunDiskRemove checks again itself.
+type DiskRemoveParams struct {
+	Mountpoint   string `json:"mountpoint"`
+	Confirmation string `json:"confirmation"`
+}
+
 // DiskReplaceParams is replaceDisk's persisted Topology-job payload
 // (doc 02 §4 "Replacing a failed disk"): the existing data-disk slot being
 // replaced, the replacement disk, the typed confirmation planDiskReplace's
@@ -157,6 +188,15 @@ func ValidateParams(t Type, params []byte) error {
 		if t == TypeDiskUpgradeParity {
 			return fmt.Errorf("job: disk_upgrade_parity params require confirmation")
 		}
+		if t == TypeRebalance {
+			return fmt.Errorf("job: rebalance params require a plan")
+		}
+		if t == TypeEvacuation {
+			return fmt.Errorf("job: evacuation params require a mountpoint and a plan")
+		}
+		if t == TypeDiskRemove {
+			return fmt.Errorf("job: disk_remove params require a mountpoint and confirmation")
+		}
 		return nil
 	}
 	switch t {
@@ -178,6 +218,9 @@ func ValidateParams(t Type, params []byte) error {
 	case TypeDiskReplace:
 		_, err := decodeDiskReplaceParams(params)
 		return err
+	case TypeDiskRemove:
+		_, err := decodeDiskRemoveParams(params)
+		return err
 	case TypeDiskUpgradeData:
 		_, err := decodeDiskUpgradeDataParams(params)
 		return err
@@ -186,6 +229,12 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeShareRelocation:
 		_, err := decodeShareRelocationParams(params)
+		return err
+	case TypeRebalance:
+		_, err := decodeRebalanceParams(params)
+		return err
+	case TypeEvacuation:
+		_, err := decodeEvacuationParams(params)
 		return err
 	case TypeACMEIssue:
 		_, err := decodeACMEIssueParams(params)
@@ -379,6 +428,45 @@ func decodeShareRelocationParams(params []byte) (ShareRelocationParams, error) {
 	}
 	if p.To != shareRelocationToArray && p.To != shareRelocationToCache {
 		return ShareRelocationParams{}, fmt.Errorf("job: share_relocation params require to to be %q or %q", shareRelocationToCache, shareRelocationToArray)
+	}
+	return p, nil
+}
+
+func decodeRebalanceParams(params []byte) (RebalanceParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return RebalanceParams{}, fmt.Errorf("job: rebalance params require a plan")
+	}
+	var p RebalanceParams
+	if err := decodeJSON(params, &p); err != nil {
+		return RebalanceParams{}, err
+	}
+	return p, nil
+}
+
+func decodeDiskRemoveParams(params []byte) (DiskRemoveParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return DiskRemoveParams{}, fmt.Errorf("job: disk_remove params require a mountpoint and confirmation")
+	}
+	var p DiskRemoveParams
+	if err := decodeJSON(params, &p); err != nil {
+		return DiskRemoveParams{}, err
+	}
+	if p.Mountpoint == "" || p.Confirmation == "" {
+		return DiskRemoveParams{}, fmt.Errorf("job: disk_remove params require a mountpoint and confirmation")
+	}
+	return p, nil
+}
+
+func decodeEvacuationParams(params []byte) (EvacuationParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return EvacuationParams{}, fmt.Errorf("job: evacuation params require a mountpoint and a plan")
+	}
+	var p EvacuationParams
+	if err := decodeJSON(params, &p); err != nil {
+		return EvacuationParams{}, err
+	}
+	if p.Mountpoint == "" {
+		return EvacuationParams{}, fmt.Errorf("job: evacuation params require a mountpoint")
 	}
 	return p, nil
 }

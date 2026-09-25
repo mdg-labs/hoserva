@@ -1,0 +1,7 @@
+{
+  "parity_mounts": ["/mnt/parity1"],
+  "data_mounts": [
+    {"role_index": 1, "mountpoint": "/mnt/disk1"},
+    {"role_index": 3, "mountpoint": "/mnt/disk3"}
+  ]
+}

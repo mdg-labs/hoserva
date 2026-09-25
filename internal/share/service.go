@@ -782,6 +782,7 @@ func (s *Service) shareFiles(ctx context.Context) (config.PoolState, []config.Sa
 		CachePath:    cache,
 		CreatePolicy: pool.CreatePolicy(settings.CreatePolicy),
 		Options:      pool.Options{MinFreeSpace: settings.MinFreeSpace},
+		RemovingDisk: removingDataDisk(disks),
 	}
 	var smb []config.SambaShare
 	var nfs []config.NFSShare
@@ -841,13 +842,25 @@ func (s *Service) apply(ctx context.Context, latest Share, mountLatest bool, pre
 	return nil
 }
 
+// syncLiveMounts applies latest's own share and mover-target mounts to
+// the live pool, choosing pool's *MountRemoving builder over its plain
+// counterpart exactly when state.RemovingDisk is set (#359, doc 09 §4
+// step 2) — a share update reached while a disk is being evacuated must
+// not remount that disk back onto RW.
 func (s *Service) syncLiveMounts(ctx context.Context, latest Share, dropMover bool, state config.PoolState) error {
 	opts := pool.Options{MinFreeSpace: state.Options.MinFreeSpace}
-	mnt, err := pool.ShareMount(pool.Share{
+	sh := pool.Share{
 		Name:         latest.Name,
 		CacheMode:    latest.CacheMode,
 		CreatePolicy: latest.CreatePolicy,
-	}, state.DataDisks, state.CachePath, opts)
+	}
+	var mnt pool.Mount
+	var err error
+	if state.RemovingDisk == "" {
+		mnt, err = pool.ShareMount(sh, state.DataDisks, state.CachePath, opts)
+	} else {
+		mnt, err = pool.ShareMountRemoving(sh, state.DataDisks, state.CachePath, state.RemovingDisk, opts)
+	}
 	if err != nil {
 		return err
 	}
@@ -855,11 +868,12 @@ func (s *Service) syncLiveMounts(ctx context.Context, latest Share, dropMover bo
 		return err
 	}
 	if latest.CacheMode != pool.CacheOnly {
-		mover, err := pool.MoverTargetMount(pool.Share{
-			Name:         latest.Name,
-			CacheMode:    latest.CacheMode,
-			CreatePolicy: latest.CreatePolicy,
-		}, state.DataDisks, opts)
+		var mover pool.Mount
+		if state.RemovingDisk == "" {
+			mover, err = pool.MoverTargetMount(sh, state.DataDisks, opts)
+		} else {
+			mover, err = pool.MoverTargetMountRemoving(sh, state.DataDisks, state.RemovingDisk, opts)
+		}
 		if err != nil {
 			return err
 		}
@@ -882,10 +896,16 @@ func (s *Service) array(ctx context.Context) (store.ArraySettings, []store.Array
 	return settings, disks, nil
 }
 
+// splitDisks leaves out a data disk whose removal has taken it out of
+// the pool (unpooled or unlisted, #358, doc 09 §4 step 7): no share mount
+// branches onto it and no share directory is created on it.
 func splitDisks(disks []store.ArrayDisk) (data []string, cache, parity string) {
 	for _, d := range disks {
 		switch d.Role {
 		case store.ArrayRoleData:
+			if d.LeftPool() {
+				continue
+			}
 			data = append(data, d.Mountpoint)
 		case store.ArrayRoleCache:
 			cache = d.Mountpoint
@@ -894,6 +914,24 @@ func splitDisks(disks []store.ArrayDisk) (data []string, cache, parity string) {
 		}
 	}
 	return data, cache, parity
+}
+
+// removingDataDisk returns the mountpoint of the one data disk whose
+// removal_state is 'evacuating' or 'evacuated' (#359, doc 09 §4 step 2:
+// both states keep the disk no-create in every mount), or "" when no
+// disk is in removal. store.ArrayStore.SetRemovalState refuses a second
+// disk while one already has a non-NULL state, so at most one match is
+// ever possible.
+func removingDataDisk(disks []store.ArrayDisk) string {
+	for _, d := range disks {
+		if d.Role != store.ArrayRoleData {
+			continue
+		}
+		if d.RemovalState == store.RemovalStateEvacuating || d.RemovalState == store.RemovalStateEvacuated {
+			return d.Mountpoint
+		}
+	}
+	return ""
 }
 
 func shareFromStore(row store.Share) Share {

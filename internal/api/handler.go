@@ -50,7 +50,15 @@ type Handler struct {
 	// inventory rather than an error.
 	Disks disk.Provider
 	// Parity is the SnapRAID engine for doctor freshness — nil skips that
-	// check with a warning.
+	// check with a warning. #265: main.go's parityRegistrar sets this
+	// (with ParityGuard, RelocationManifest and RebalanceShares below)
+	// once, either at startup or from the ArrayReady hook after a live
+	// array creation, from the create-array job's own goroutine, while
+	// GetParity/RunParityDiff/RunDoctor/GetStatus and the rebalance/
+	// evacuation handlers read it from concurrent HTTP request
+	// goroutines — every access once the daemon is serving requests goes
+	// through CurrentParity/SetParity, which hold parityMu, never these
+	// fields directly.
 	Parity parity.Engine
 	// ParityGuard evaluates threshold-guard state for run-diff (doc 02 §2).
 	ParityGuard parity.Guard
@@ -63,6 +71,7 @@ type Handler struct {
 	// against nil manifest/removingDisks, matching this handler's own
 	// pre-#194 behaviour.
 	RelocationManifest *parity.RelocationManifestStore
+	parityMu           sync.RWMutex
 	paritySnap         *paritySnapshotStore
 	parityOnce         sync.Once
 	// Backup is the config archive builder for export/import — nil returns
@@ -128,6 +137,15 @@ type Handler struct {
 	// UPS is #249's UPS / NUT settings (doc 03 §8.1, Q77). Nil returns an
 	// internal error from those operations.
 	UPS *UPSService
+	// RebalanceShares resolves every configured share into cache.Share for
+	// planRebalance/startRebalance and planDiskEvacuation/evacuateDisk
+	// (doc 09 §3-4, #274) — the array's current topology read fresh from
+	// SQLite (D4) each call, the same way MoverDeps.Shares resolves the
+	// mover's own sweep. Nil returns 501 from those operations. Set
+	// together with Parity/ParityGuard/RelocationManifest above through
+	// SetParity (#265) — read through CurrentParity, never this field
+	// directly, once the daemon is serving requests.
+	RebalanceShares func(ctx context.Context) ([]cache.Share, error)
 }
 
 var _ apiv1.Handler = (*Handler)(nil)
@@ -233,6 +251,8 @@ func mapSchedulerError(id uuid.UUID, err error) error {
 		return &apiError{code: "disk_upgrade_cleanup_failed", statusCode: 409, message: err.Error()}
 	case errors.Is(err, job.ErrDiskUpgradeDataPending):
 		return &apiError{code: "disk_upgrade_pending", statusCode: 409, message: err.Error() + " — resume it, or cancel it to abort back to the old disk"}
+	case errors.Is(err, job.ErrEvacuationPending):
+		return &apiError{code: "evacuation_pending", statusCode: 409, message: err.Error() + " — resume it, or cancel it, before starting another"}
 	case errors.Is(err, job.ErrJobNotResumable):
 		return &apiError{code: "job_not_resumable", statusCode: 409, message: fmt.Sprintf("job %s is not a resumable job type (Q29)", id)}
 	case errors.Is(err, job.ErrJobNotInterrupted):

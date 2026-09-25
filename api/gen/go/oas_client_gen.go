@@ -264,12 +264,63 @@ type Invoker interface {
 	//
 	// POST /auth/totp/enroll
 	EnrollTotp(ctx context.Context, request *TotpEnrollRequest) (*TotpEnrollResponse, error)
+	// EvacuateDisk invokes evacuateDisk operation.
+	//
+	// Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one,
+	// `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching
+	// `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job. Before copying
+	// anything — and again on every resume — the job marks the disk `evacuating` (persisted in SQLite,
+	// D4) and applies no-create to its own branch in every pool mount, live (doc 09 §4 step 2); a failure
+	// to apply that fails the job before any copy. It then runs the plan through `cache.RunRebalance`
+	// unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this
+	// disk in the guard's own zero-files exemption, Q15, since the batch that finally empties it would
+	// otherwise trip that rule), delete the batch's sources, sync again (Q14) — then, once the whole
+	// plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share
+	// branches hold nothing but empty directories (doc 09 §4 step 6) and the job marks the disk
+	// `evacuated` before reporting success. A wrong or missing confirmation is refused
+	// (`confirmation_required`) before anything runs, a disk already `unpooled` or `unlisted` is refused
+	// (`disk_leaving_array`, 409) as `planDiskEvacuation` refuses it, a second disk is refused
+	// (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused
+	// (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal
+	// state belongs to the job that set it: cancelling that job — queued, running or interrupted —
+	// clears it and puts the disk back to taking writes, and cancelling any other job never does. A job
+	// that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling
+	// that run clears it. Success here means the disk's data as this job saw it is safely off it and it is
+	// no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09
+	// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are `finishDiskRemoval`'s.
+	//
+	// POST /disks/array/evacuate
+	EvacuateDisk(ctx context.Context, request *EvacuateDiskRequest) (*Job, error)
 	// ExportConfig invokes exportConfig operation.
 	//
 	// Builds and returns doc 10 §1's `hoserva-config-*.tar.zst` archive.
 	//
 	// POST /config/export
 	ExportConfig(ctx context.Context) (ExportConfigOK, error)
+	// FinishDiskRemoval invokes finishDiskRemoval operation.
+	//
+	// Queues a `job.TypeDiskRemove` Topology job that takes an evacuated data disk out of the array (doc
+	// 09 §4 steps 7-9). The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation`
+	// returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies
+	// `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or
+	// `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when
+	// the daemon has no parity engine. Before changing anything the job checks all of that again, that the
+	// array without the disk still has a data disk and room for every content-file copy (Q18), that the
+	// disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own
+	// content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every
+	// pool mount, live (step 7; a failed live update fails the job); removes the empty directories the
+	// evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold
+	// guard with only this disk exempt from the zero-files rule, while its data line is still in
+	// snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates
+	// snapraid.conf without it and checks SnapRAID accepts the result (step 8); then stops its mount unit,
+	// removes the unit file and deletes the disk from the array (step 9). The job's result names the disk
+	// as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted
+	// leaves the disk in the last state it reached, and running this operation again carries on from there
+	// — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed
+	// and mounted, with nothing synced.
+	//
+	// POST /disks/array/remove/finish
+	FinishDiskRemoval(ctx context.Context, request *FinishDiskRemovalRequest) (*Job, error)
 	// FormatExternalDisk invokes formatExternalDisk operation.
 	//
 	// Formats the disk after the same typed confirmation array setup uses
@@ -362,7 +413,8 @@ type Invoker interface {
 	GetParity(ctx context.Context) (*ParitySnapshot, error)
 	// GetPool invokes getPool operation.
 	//
-	// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
+	// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3), including each disk's own
+	// `removalState` (doc 09 §4 step 2, #359) where one is in progress.
 	//
 	// GET /pool
 	GetPool(ctx context.Context) (*PoolStatus, error)
@@ -561,6 +613,29 @@ type Invoker interface {
 	//
 	// POST /disks/array/add/plan
 	PlanDiskAdd(ctx context.Context, request *AddDiskPlanRequest) (*AddDiskPlan, error)
+	// PlanDiskEvacuation invokes planDiskEvacuation operation.
+	//
+	// Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically
+	// a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from
+	// that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed
+	// confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no
+	// other branch to evacuate onto, when an entry on the disk is something the evacuation copy path
+	// cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room
+	// even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or
+	// deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own
+	// `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
+	// disk keeps taking new writes only until that job starts, never for as long as it runs. Refused
+	// (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
+	// `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is
+	// already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed
+	// or repeated evacuation. No other disk in removal is ever a target. This operation carries out doc 09
+	// §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the
+	// threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this
+	// preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not
+	// performed by either.
+	//
+	// POST /disks/array/evacuate/plan
+	PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (*EvacuationPlan, error)
 	// PlanDiskReplace invokes planDiskReplace operation.
 	//
 	// Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity
@@ -569,8 +644,9 @@ type Invoker interface {
 	// `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is
 	// genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
 	// §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
-	// replacement that would leave a parity disk smaller than the array's largest data disk. Read-only:
-	// nothing is formatted or persisted.
+	// replacement that would leave a parity disk smaller than the array's largest data disk. Refuses
+	// (`disk_leaving_array`, 409) a slot whose disk is in removal (any `removalState`): the replacement
+	// would inherit that state. Read-only: nothing is formatted or persisted.
 	//
 	// POST /disks/array/replace/plan
 	PlanDiskReplace(ctx context.Context, request *ReplaceDiskPlanRequest) (*ReplaceDiskPlan, error)
@@ -585,10 +661,23 @@ type Invoker interface {
 	// rule `disk.DataDiskUpgradeExceedsParity` checks — and any of `planDiskReplace`'s own
 	// Q19/Q20/Q21/Q23 checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new
 	// disk will be formatted, mounted and verified at independently of the old one (Q71) — never the old
-	// disk's own mountpoint. Read-only: nothing is formatted or persisted.
+	// disk's own mountpoint. Refuses (`disk_leaving_array`, 409) a data disk in removal (any
+	// `removalState`): the new disk would inherit that state. Read-only: nothing is formatted or
+	// persisted.
 	//
 	// POST /disks/array/upgrade/plan
 	PlanDiskUpgrade(ctx context.Context, request *DiskUpgradePlanRequest) (*DiskUpgradePlan, error)
+	// PlanRebalance invokes planRebalance operation.
+	//
+	// Computes the rebalance plan (doc 09 §3): for every share with at least two branches, the files
+	// `cache.PlanRebalance` would move from that share's own most-full disk to its own least-full disk to
+	// bring them within the skew tolerance, plus any path-preserving warnings, and the exact typed
+	// confirmation `startRebalance` requires. A data disk in removal (any `removalState`) is left out of
+	// every share's branches: the plan neither moves a file off it nor onto it. Read-only: nothing is
+	// copied, synced or deleted.
+	//
+	// POST /pool/rebalance/plan
+	PlanRebalance(ctx context.Context) (*RebalancePlan, error)
 	// RebootHost invokes rebootHost operation.
 	//
 	// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -620,9 +709,9 @@ type Invoker interface {
 	// to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
 	// disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
 	// (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
-	// or still present by identity. The confirmation must be the exact string the matching
-	// `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and
-	// formats nothing.
+	// or still present by identity, and (`disk_leaving_array`, 409) a slot whose disk is in removal. The
+	// confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or
+	// missing one is refused with `confirmation_required` and formats nothing.
 	//
 	// POST /disks/array/replace
 	ReplaceDisk(ctx context.Context, request *ReplaceDiskRequest) (*Job, error)
@@ -739,6 +828,19 @@ type Invoker interface {
 	//
 	// POST /mover/run
 	StartMover(ctx context.Context) (*Job, error)
+	// StartRebalance invokes startRebalance operation.
+	//
+	// Recomputes the rebalance plan (never trusting a client-supplied one — a stale plan can only omit
+	// or skip files at run time, never misdirect a copy or delete) and, once `confirmation` matches the
+	// exact phrase the matching `planRebalance` call returned, queues a resumable `job.TypeRebalance` job
+	// that runs it through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the
+	// threshold guard, delete the batch's sources, sync again (Q14), batched so no trailing sync this run
+	// makes can ever trip the guard after sources are already gone (doc 09 §3). The recomputed plan
+	// leaves out a data disk in removal the same way `planRebalance` does. A wrong or missing confirmation
+	// is refused (`confirmation_required`) before anything runs.
+	//
+	// POST /pool/rebalance
+	StartRebalance(ctx context.Context, request *StartRebalanceRequest) (*Job, error)
 	// StartScrub invokes startScrub operation.
 	//
 	// Queues a scrub job (`hoserva scrub`, doc 01 §3).
@@ -890,9 +992,10 @@ type Invoker interface {
 	//
 	// Starts a resumable Topology job (`job.TypeDiskUpgradeData` or `job.TypeDiskUpgradeParity`, resolved
 	// from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call
-	// returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A
-	// data-disk upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has
-	// completed (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
+	// returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A data
+	// disk in removal is refused (`disk_leaving_array`, 409) as `planDiskUpgrade` refuses it. A data-disk
+	// upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has completed
+	// (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
 	// `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies
 	// and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to
 	// show no removed or updated files, and only then names the new disk in SQLite; the array stays
@@ -4659,6 +4762,155 @@ func (c *Client) sendEnrollTotp(ctx context.Context, request *TotpEnrollRequest)
 	return result, nil
 }
 
+// EvacuateDisk invokes evacuateDisk operation.
+//
+// Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one,
+// `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching
+// `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job. Before copying
+// anything — and again on every resume — the job marks the disk `evacuating` (persisted in SQLite,
+// D4) and applies no-create to its own branch in every pool mount, live (doc 09 §4 step 2); a failure
+// to apply that fails the job before any copy. It then runs the plan through `cache.RunRebalance`
+// unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this
+// disk in the guard's own zero-files exemption, Q15, since the batch that finally empties it would
+// otherwise trip that rule), delete the batch's sources, sync again (Q14) — then, once the whole
+// plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share
+// branches hold nothing but empty directories (doc 09 §4 step 6) and the job marks the disk
+// `evacuated` before reporting success. A wrong or missing confirmation is refused
+// (`confirmation_required`) before anything runs, a disk already `unpooled` or `unlisted` is refused
+// (`disk_leaving_array`, 409) as `planDiskEvacuation` refuses it, a second disk is refused
+// (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused
+// (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal
+// state belongs to the job that set it: cancelling that job — queued, running or interrupted —
+// clears it and puts the disk back to taking writes, and cancelling any other job never does. A job
+// that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling
+// that run clears it. Success here means the disk's data as this job saw it is safely off it and it is
+// no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09
+// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are `finishDiskRemoval`'s.
+//
+// POST /disks/array/evacuate
+func (c *Client) EvacuateDisk(ctx context.Context, request *EvacuateDiskRequest) (*Job, error) {
+	res, err := c.sendEvacuateDisk(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendEvacuateDisk(ctx context.Context, request *EvacuateDiskRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("evacuateDisk"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array/evacuate"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, EvacuateDiskOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array/evacuate"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeEvacuateDiskRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, EvacuateDiskOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, EvacuateDiskOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeEvacuateDiskResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ExportConfig invokes exportConfig operation.
 //
 // Builds and returns doc 10 §1's `hoserva-config-*.tar.zst` archive.
@@ -4777,6 +5029,152 @@ func (c *Client) sendExportConfig(ctx context.Context) (res ExportConfigOK, err 
 
 	stage = "DecodeResponse"
 	result, err := decodeExportConfigResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// FinishDiskRemoval invokes finishDiskRemoval operation.
+//
+// Queues a `job.TypeDiskRemove` Topology job that takes an evacuated data disk out of the array (doc
+// 09 §4 steps 7-9). The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation`
+// returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies
+// `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or
+// `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when
+// the daemon has no parity engine. Before changing anything the job checks all of that again, that the
+// array without the disk still has a data disk and room for every content-file copy (Q18), that the
+// disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own
+// content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every
+// pool mount, live (step 7; a failed live update fails the job); removes the empty directories the
+// evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold
+// guard with only this disk exempt from the zero-files rule, while its data line is still in
+// snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates
+// snapraid.conf without it and checks SnapRAID accepts the result (step 8); then stops its mount unit,
+// removes the unit file and deletes the disk from the array (step 9). The job's result names the disk
+// as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted
+// leaves the disk in the last state it reached, and running this operation again carries on from there
+// — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed
+// and mounted, with nothing synced.
+//
+// POST /disks/array/remove/finish
+func (c *Client) FinishDiskRemoval(ctx context.Context, request *FinishDiskRemovalRequest) (*Job, error) {
+	res, err := c.sendFinishDiskRemoval(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendFinishDiskRemoval(ctx context.Context, request *FinishDiskRemovalRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("finishDiskRemoval"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array/remove/finish"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, FinishDiskRemovalOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array/remove/finish"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeFinishDiskRemovalRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, FinishDiskRemovalOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, FinishDiskRemovalOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeFinishDiskRemovalResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -6447,7 +6845,8 @@ func (c *Client) sendGetParity(ctx context.Context) (res *ParitySnapshot, err er
 
 // GetPool invokes getPool operation.
 //
-// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
+// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3), including each disk's own
+// `removalState` (doc 09 §4 step 2, #359) where one is in progress.
 //
 // GET /pool
 func (c *Client) GetPool(ctx context.Context) (*PoolStatus, error) {
@@ -9920,6 +10319,151 @@ func (c *Client) sendPlanDiskAdd(ctx context.Context, request *AddDiskPlanReques
 	return result, nil
 }
 
+// PlanDiskEvacuation invokes planDiskEvacuation operation.
+//
+// Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically
+// a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from
+// that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed
+// confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no
+// other branch to evacuate onto, when an entry on the disk is something the evacuation copy path
+// cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room
+// even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or
+// deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own
+// `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
+// disk keeps taking new writes only until that job starts, never for as long as it runs. Refused
+// (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
+// `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is
+// already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed
+// or repeated evacuation. No other disk in removal is ever a target. This operation carries out doc 09
+// §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the
+// threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this
+// preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not
+// performed by either.
+//
+// POST /disks/array/evacuate/plan
+func (c *Client) PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (*EvacuationPlan, error) {
+	res, err := c.sendPlanDiskEvacuation(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendPlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (res *EvacuationPlan, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("planDiskEvacuation"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array/evacuate/plan"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PlanDiskEvacuationOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array/evacuate/plan"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodePlanDiskEvacuationRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, PlanDiskEvacuationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, PlanDiskEvacuationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodePlanDiskEvacuationResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // PlanDiskReplace invokes planDiskReplace operation.
 //
 // Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity
@@ -9928,8 +10472,9 @@ func (c *Client) sendPlanDiskAdd(ctx context.Context, request *AddDiskPlanReques
 // `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is
 // genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
 // §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
-// replacement that would leave a parity disk smaller than the array's largest data disk. Read-only:
-// nothing is formatted or persisted.
+// replacement that would leave a parity disk smaller than the array's largest data disk. Refuses
+// (`disk_leaving_array`, 409) a slot whose disk is in removal (any `removalState`): the replacement
+// would inherit that state. Read-only: nothing is formatted or persisted.
 //
 // POST /disks/array/replace/plan
 func (c *Client) PlanDiskReplace(ctx context.Context, request *ReplaceDiskPlanRequest) (*ReplaceDiskPlan, error) {
@@ -10066,7 +10611,9 @@ func (c *Client) sendPlanDiskReplace(ctx context.Context, request *ReplaceDiskPl
 // rule `disk.DataDiskUpgradeExceedsParity` checks — and any of `planDiskReplace`'s own
 // Q19/Q20/Q21/Q23 checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new
 // disk will be formatted, mounted and verified at independently of the old one (Q71) — never the old
-// disk's own mountpoint. Read-only: nothing is formatted or persisted.
+// disk's own mountpoint. Refuses (`disk_leaving_array`, 409) a data disk in removal (any
+// `removalState`): the new disk would inherit that state. Read-only: nothing is formatted or
+// persisted.
 //
 // POST /disks/array/upgrade/plan
 func (c *Client) PlanDiskUpgrade(ctx context.Context, request *DiskUpgradePlanRequest) (*DiskUpgradePlan, error) {
@@ -10185,6 +10732,136 @@ func (c *Client) sendPlanDiskUpgrade(ctx context.Context, request *DiskUpgradePl
 
 	stage = "DecodeResponse"
 	result, err := decodePlanDiskUpgradeResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// PlanRebalance invokes planRebalance operation.
+//
+// Computes the rebalance plan (doc 09 §3): for every share with at least two branches, the files
+// `cache.PlanRebalance` would move from that share's own most-full disk to its own least-full disk to
+// bring them within the skew tolerance, plus any path-preserving warnings, and the exact typed
+// confirmation `startRebalance` requires. A data disk in removal (any `removalState`) is left out of
+// every share's branches: the plan neither moves a file off it nor onto it. Read-only: nothing is
+// copied, synced or deleted.
+//
+// POST /pool/rebalance/plan
+func (c *Client) PlanRebalance(ctx context.Context) (*RebalancePlan, error) {
+	res, err := c.sendPlanRebalance(ctx)
+	return res, err
+}
+
+func (c *Client) sendPlanRebalance(ctx context.Context) (res *RebalancePlan, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("planRebalance"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/pool/rebalance/plan"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PlanRebalanceOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/pool/rebalance/plan"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, PlanRebalanceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, PlanRebalanceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodePlanRebalanceResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -10586,9 +11263,9 @@ func (c *Client) sendRegisterExternalDisk(ctx context.Context, request *Register
 // to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
 // disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
 // (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
-// or still present by identity. The confirmation must be the exact string the matching
-// `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and
-// formats nothing.
+// or still present by identity, and (`disk_leaving_array`, 409) a slot whose disk is in removal. The
+// confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or
+// missing one is refused with `confirmation_required` and formats nothing.
 //
 // POST /disks/array/replace
 func (c *Client) ReplaceDisk(ctx context.Context, request *ReplaceDiskRequest) (*Job, error) {
@@ -12513,6 +13190,141 @@ func (c *Client) sendStartMover(ctx context.Context) (res *Job, err error) {
 
 	stage = "DecodeResponse"
 	result, err := decodeStartMoverResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// StartRebalance invokes startRebalance operation.
+//
+// Recomputes the rebalance plan (never trusting a client-supplied one — a stale plan can only omit
+// or skip files at run time, never misdirect a copy or delete) and, once `confirmation` matches the
+// exact phrase the matching `planRebalance` call returned, queues a resumable `job.TypeRebalance` job
+// that runs it through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the
+// threshold guard, delete the batch's sources, sync again (Q14), batched so no trailing sync this run
+// makes can ever trip the guard after sources are already gone (doc 09 §3). The recomputed plan
+// leaves out a data disk in removal the same way `planRebalance` does. A wrong or missing confirmation
+// is refused (`confirmation_required`) before anything runs.
+//
+// POST /pool/rebalance
+func (c *Client) StartRebalance(ctx context.Context, request *StartRebalanceRequest) (*Job, error) {
+	res, err := c.sendStartRebalance(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendStartRebalance(ctx context.Context, request *StartRebalanceRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startRebalance"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/pool/rebalance"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartRebalanceOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/pool/rebalance"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeStartRebalanceRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartRebalanceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartRebalanceOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartRebalanceResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -15060,9 +15872,10 @@ func (c *Client) sendUpdateUserSharePermissions(ctx context.Context, request *Up
 //
 // Starts a resumable Topology job (`job.TypeDiskUpgradeData` or `job.TypeDiskUpgradeParity`, resolved
 // from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call
-// returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A
-// data-disk upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has
-// completed (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
+// returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A data
+// disk in removal is refused (`disk_leaving_array`, 409) as `planDiskUpgrade` refuses it. A data-disk
+// upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has completed
+// (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise
 // `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies
 // and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to
 // show no removed or updated files, and only then names the new disk in SQLite; the array stays

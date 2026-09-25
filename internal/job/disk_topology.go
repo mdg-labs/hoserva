@@ -232,25 +232,20 @@ func dataMountRoleIndex(mountpoint string) (int, error) {
 	return n, nil
 }
 
-// DataDiskLabelForMountpoint returns the SnapRAID "dN" label a rendered
-// snapraid.conf currently assigns the data disk at mountpoint — the same
-// position-based numbering parity.Layout.Render uses (data disks in
-// role_index order, "dN" by position) — for display in a replace plan
-// preview only (internal/api's planDiskReplace). RunDiskReplace never
-// trusts this: it resolves the real label fresh from a live
+// DataDiskLabelForMountpoint returns the SnapRAID "dN" label
+// parity.Layout.Render assigns the data disk at mountpoint — its stable
+// role_index, the same name Render itself derives (#360) — for display in
+// a replace plan preview (internal/api's planDiskReplace). RunDiskReplace
+// never trusts this: it resolves the real label fresh from a live
 // parity.ParityStatus once the replacement's own config has been
-// regenerated, so a mismatch here (only possible after an earlier disk
-// removal has left a role_index gap, #274) affects nothing but the plan's
-// own preview text.
+// regenerated.
 func DataDiskLabelForMountpoint(disks []store.ArrayDisk, mountpoint string) (string, error) {
-	i := 0
 	for _, d := range disks {
 		if d.Role != store.ArrayRoleData {
 			continue
 		}
-		i++
 		if d.Mountpoint == mountpoint {
-			return fmt.Sprintf("d%d", i), nil
+			return fmt.Sprintf("d%d", d.RoleIndex), nil
 		}
 	}
 	return "", fmt.Errorf("job: no data disk at %s", mountpoint)

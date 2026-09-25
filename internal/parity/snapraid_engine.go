@@ -392,7 +392,7 @@ func (e *SnapraidEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progre
 			if s.Exit == "ok" || s.Exit == "diff" {
 				return nil
 			}
-			return fmt.Errorf("parity: snapraid diff (dry-run sync): unexpected exit %q: %w", s.Exit, waitErr)
+			return exitErr("snapraid diff (dry-run sync)", "unexpected exit", s.Exit, waitErr)
 		})
 	}
 
@@ -423,11 +423,24 @@ func (e *SnapraidEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progre
 	}
 	return e.runStream(ctx, logPath, syncArgv(anyDiskEmptied(diff)), func(s RunSummary, waitErr error) error {
 		defer cleanup()
-		if s.Exit == "ok" && waitErr == nil {
+		if waitErr == nil && (s.Exit == "ok" || s.Exit == "equal") {
 			return nil
 		}
-		return fmt.Errorf("parity: snapraid sync: exit %q: %w", s.Exit, waitErr)
+		return exitErr("snapraid sync", "exit", s.Exit, waitErr)
 	})
+}
+
+// exitErr reports an operation's summary:exit value as a failure, wrapping
+// waitErr with %w only when it is non-nil — SnapRAID reports a real
+// summary:exit value on every completed run, including ones the process
+// itself exited 0 for (Sync's own "equal" case, #267), so formatting
+// unconditionally with %w produced a malformed "%!w(<nil>)" whenever an
+// unrecognized Exit coincided with a nil waitErr.
+func exitErr(op, verb, exit string, waitErr error) error {
+	if waitErr != nil {
+		return fmt.Errorf("parity: %s: %s %q: %w", op, verb, exit, waitErr)
+	}
+	return fmt.Errorf("parity: %s: %s %q", op, verb, exit)
 }
 
 // Scrub runs a real scrub (doc 02 §2). Finding data errors (SnapRAID's

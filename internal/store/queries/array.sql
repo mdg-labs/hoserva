@@ -28,7 +28,7 @@ INSERT INTO array_disks (
 -- name: ListArrayDisks :many
 SELECT
     id, role, role_index, device, filesystem, fs_uuid, size_bytes,
-    wwn, serial, by_id_name, weak_identity, mountpoint
+    wwn, serial, by_id_name, weak_identity, mountpoint, removal_state, removal_job_id
 FROM array_disks
 ORDER BY
     CASE role
@@ -42,7 +42,7 @@ ORDER BY
 -- name: GetArrayDataDiskByMountpoint :one
 SELECT
     id, role, role_index, device, filesystem, fs_uuid, size_bytes,
-    wwn, serial, by_id_name, weak_identity, mountpoint
+    wwn, serial, by_id_name, weak_identity, mountpoint, removal_state, removal_job_id
 FROM array_disks WHERE mountpoint = ? AND role = 'data';
 
 -- name: ReplaceArrayDataDiskIdentity :execrows
@@ -57,3 +57,21 @@ SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
     wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?,
     mountpoint = sqlc.arg(new_mountpoint)
 WHERE mountpoint = sqlc.arg(old_mountpoint) AND role = 'parity';
+
+-- name: GetRemovingArrayDisk :one
+SELECT mountpoint, removal_state FROM array_disks WHERE removal_state IS NOT NULL LIMIT 1;
+
+-- name: SetArrayDiskRemovalState :execrows
+UPDATE array_disks SET removal_state = ?, removal_job_id = ? WHERE mountpoint = ? AND role = 'data';
+
+-- name: ReleaseArrayDiskRemovalState :execrows
+UPDATE array_disks SET removal_state = NULL, removal_job_id = NULL
+WHERE mountpoint = ? AND role = 'data' AND removal_state = 'evacuating' AND removal_job_id = ?;
+
+-- name: AdvanceArrayDiskRemovalState :execrows
+UPDATE array_disks SET removal_state = sqlc.arg(to_state), removal_job_id = sqlc.arg(job_id)
+WHERE mountpoint = sqlc.arg(mountpoint) AND role = 'data'
+    AND removal_state IN (sqlc.arg(from_state), sqlc.arg(same_state));
+
+-- name: DeleteUnlistedArrayDataDisk :execrows
+DELETE FROM array_disks WHERE mountpoint = ? AND role = 'data' AND removal_state = 'unlisted';

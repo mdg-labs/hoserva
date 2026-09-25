@@ -55,18 +55,20 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 			presentDevices[d.Device] = true
 			role := apiv1.PoolDiskEntryRoleUnassigned
 			mountPoint := ""
-			if idx := matchIdx[i]; idx >= 0 && claimants[idx] == 1 {
-				matched[idx] = true
-				role = arrayRoleToAPI(arrayDisks[idx].Role)
-				mountPoint = arrayDisks[idx].Mountpoint
-			}
-			entries = append(entries, apiv1.PoolDiskEntry{
+			entry := apiv1.PoolDiskEntry{
 				Device:     d.Device,
 				MountPoint: mountPoint,
 				Role:       role,
 				State:      apiv1.DiskStateActive,
 				SizeBytes:  apiv1.NewOptNilInt64(d.Size),
-			})
+			}
+			if idx := matchIdx[i]; idx >= 0 && claimants[idx] == 1 {
+				matched[idx] = true
+				entry.Role = arrayRoleToAPI(arrayDisks[idx].Role)
+				entry.MountPoint = arrayDisks[idx].Mountpoint
+				entry.RemovalState = removalStateToAPI(arrayDisks[idx].RemovalState)
+			}
+			entries = append(entries, entry)
 		}
 	}
 	// Every stored array member with no identity match above is a dead or
@@ -83,10 +85,11 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 			device = ""
 		}
 		entries = append(entries, apiv1.PoolDiskEntry{
-			Device:     device,
-			MountPoint: ad.Mountpoint,
-			Role:       arrayRoleToAPI(ad.Role),
-			State:      apiv1.DiskStateMissing,
+			Device:       device,
+			MountPoint:   ad.Mountpoint,
+			Role:         arrayRoleToAPI(ad.Role),
+			RemovalState: removalStateToAPI(ad.RemovalState),
+			State:        apiv1.DiskStateMissing,
 		})
 	}
 	mounted, err := pathIsMountpoint(pool.CatchAllPath)
@@ -156,6 +159,16 @@ func arrayRoleToAPI(role string) apiv1.PoolDiskEntryRole {
 	default:
 		return apiv1.PoolDiskEntryRoleUnassigned
 	}
+}
+
+// removalStateToAPI mirrors state (a store.RemovalState* constant, or ""
+// for a disk not in removal, #359) into PoolDiskEntry's own nullable
+// removalState field.
+func removalStateToAPI(state string) apiv1.OptNilDiskRemovalState {
+	if state == "" {
+		return apiv1.OptNilDiskRemovalState{}
+	}
+	return apiv1.NewOptNilDiskRemovalState(apiv1.DiskRemovalState(state))
 }
 
 // populatePoolSpace fills status's pool-free, largest-single-disk-free and

@@ -199,7 +199,7 @@ func TestRunParityUpgrade_ResumeAtEachLaterPhase_OldFileNeverTouched(t *testing.
 
 			calls := &upgradeFakeCalls{}
 			deps := newUpgradeDeps(t, calls, nil)
-			spec := ParityUpgradeSpec{OldParityPath: oldPath, NewParityPath: newPath, NewLayout: Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []string{"/mnt/disk1"}}}
+			spec := ParityUpgradeSpec{OldParityPath: oldPath, NewParityPath: newPath, NewLayout: Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}}}}
 
 			cp, err := marshalUpgradeCheckpoint(ParityUpgradeCheckpoint{Phase: phase})
 			if err != nil {

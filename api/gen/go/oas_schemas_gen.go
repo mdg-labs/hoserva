@@ -1768,6 +1768,70 @@ func (s *DiskInventoryEntry) SetLooksLikeUnraid(val OptBool) {
 	s.LooksLikeUnraid = val
 }
 
+// Doc 09 §4's own disk-removal state machine (#359, #358): `evacuating` from before an evacuation's
+// first copy until its post-check passes — every pool mount marks this disk no-create for the whole
+// time (step 2); `evacuated` once that copy and post-check finish, but the disk is still in every
+// mergerfs branch list, SnapRAID layout and mount table (steps 7-9 have not run yet, still no-create);
+// `unpooled` once `finishDiskRemoval`'s job has taken it out of every pool mount (step 7) — still in
+// snapraid.conf and mounted; `unlisted` once a sync has recorded it empty and it is out of
+// snapraid.conf too (step 8) — only its unmount and removal from the array are left. A disk that
+// finished leaves the pool and the array altogether.
+// Ref: #/components/schemas/DiskRemovalState
+type DiskRemovalState string
+
+const (
+	DiskRemovalStateEvacuating DiskRemovalState = "evacuating"
+	DiskRemovalStateEvacuated  DiskRemovalState = "evacuated"
+	DiskRemovalStateUnpooled   DiskRemovalState = "unpooled"
+	DiskRemovalStateUnlisted   DiskRemovalState = "unlisted"
+)
+
+// AllValues returns all DiskRemovalState values.
+func (DiskRemovalState) AllValues() []DiskRemovalState {
+	return []DiskRemovalState{
+		DiskRemovalStateEvacuating,
+		DiskRemovalStateEvacuated,
+		DiskRemovalStateUnpooled,
+		DiskRemovalStateUnlisted,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s DiskRemovalState) MarshalText() ([]byte, error) {
+	switch s {
+	case DiskRemovalStateEvacuating:
+		return []byte(s), nil
+	case DiskRemovalStateEvacuated:
+		return []byte(s), nil
+	case DiskRemovalStateUnpooled:
+		return []byte(s), nil
+	case DiskRemovalStateUnlisted:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *DiskRemovalState) UnmarshalText(data []byte) error {
+	switch DiskRemovalState(data) {
+	case DiskRemovalStateEvacuating:
+		*s = DiskRemovalStateEvacuating
+		return nil
+	case DiskRemovalStateEvacuated:
+		*s = DiskRemovalStateEvacuated
+		return nil
+	case DiskRemovalStateUnpooled:
+		*s = DiskRemovalStateUnpooled
+		return nil
+	case DiskRemovalStateUnlisted:
+		*s = DiskRemovalStateUnlisted
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/DiskState
 type DiskState string
 
@@ -2266,6 +2330,99 @@ func (s *ErrorStatusCode) SetResponse(val Error) {
 	s.Response = val
 }
 
+// Ref: #/components/schemas/EvacuateDiskPlanRequest
+type EvacuateDiskPlanRequest struct {
+	// The data disk slot to evacuate, e.g. `/mnt/disk3`.
+	Mountpoint string `json:"mountpoint"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *EvacuateDiskPlanRequest) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *EvacuateDiskPlanRequest) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// Ref: #/components/schemas/EvacuateDiskRequest
+type EvacuateDiskRequest struct {
+	Mountpoint string `json:"mountpoint"`
+	// Exact typed confirmation from the matching `planDiskEvacuation` call. A wrong or missing string is
+	// refused and nothing runs.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *EvacuateDiskRequest) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *EvacuateDiskRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *EvacuateDiskRequest) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *EvacuateDiskRequest) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
+// Ref: #/components/schemas/EvacuationPlan
+type EvacuationPlan struct {
+	Mountpoint string             `json:"mountpoint"`
+	Moves      []RebalanceMove    `json:"moves"`
+	Warnings   []RebalanceWarning `json:"warnings"`
+	// Exact typed confirmation `evacuateDisk` requires for this plan (`REMOVE <mountpoint>`).
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *EvacuationPlan) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetMoves returns the value of Moves.
+func (s *EvacuationPlan) GetMoves() []RebalanceMove {
+	return s.Moves
+}
+
+// GetWarnings returns the value of Warnings.
+func (s *EvacuationPlan) GetWarnings() []RebalanceWarning {
+	return s.Warnings
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *EvacuationPlan) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *EvacuationPlan) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetMoves sets the value of Moves.
+func (s *EvacuationPlan) SetMoves(val []RebalanceMove) {
+	s.Moves = val
+}
+
+// SetWarnings sets the value of Warnings.
+func (s *EvacuationPlan) SetWarnings(val []RebalanceWarning) {
+	s.Warnings = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *EvacuationPlan) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
 type ExportConfigOK struct {
 	Data io.Reader
 }
@@ -2422,6 +2579,35 @@ func (s *ExternalDisk) SetSerial(val OptString) {
 }
 
 type ExternalDiskLabel string
+
+// Ref: #/components/schemas/FinishDiskRemovalRequest
+type FinishDiskRemovalRequest struct {
+	// The evacuated data disk's slot, e.g. `/mnt/disk3`.
+	Mountpoint string `json:"mountpoint"`
+	// `REMOVE <mountpoint>` — the phrase `planDiskEvacuation` returned for this disk. A wrong or missing
+	// string is refused and nothing runs.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *FinishDiskRemovalRequest) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *FinishDiskRemovalRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *FinishDiskRemovalRequest) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *FinishDiskRemovalRequest) SetConfirmation(val string) {
+	s.Confirmation = val
+}
 
 // Ref: #/components/schemas/FormatExternalDiskRequest
 type FormatExternalDiskRequest struct {
@@ -6197,6 +6383,74 @@ func (o OptNilDateTime) Or(d time.Time) time.Time {
 	return d
 }
 
+// NewOptNilDiskRemovalState returns new OptNilDiskRemovalState with value set to v.
+func NewOptNilDiskRemovalState(v DiskRemovalState) OptNilDiskRemovalState {
+	return OptNilDiskRemovalState{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilDiskRemovalState is optional nullable DiskRemovalState.
+type OptNilDiskRemovalState struct {
+	Value DiskRemovalState
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilDiskRemovalState was set.
+func (o OptNilDiskRemovalState) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilDiskRemovalState) Reset() {
+	var v DiskRemovalState
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilDiskRemovalState) SetTo(v DiskRemovalState) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilDiskRemovalState) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilDiskRemovalState) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v DiskRemovalState
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilDiskRemovalState) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilDiskRemovalState) Get() (v DiskRemovalState, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilDiskRemovalState) Or(d DiskRemovalState) DiskRemovalState {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptNilError returns new OptNilError with value set to v.
 func NewOptNilError(v Error) OptNilError {
 	return OptNilError{
@@ -7564,6 +7818,9 @@ type PoolDiskEntry struct {
 	// the point mergerfs itself excludes it from create-policy placement. Omitted when freeBytes is not
 	// being reported for this disk.
 	NearMinFreeSpace OptBool `json:"nearMinFreeSpace"`
+	// Doc 09 §4 step 2's own removal state (#359) for this disk. Null for a disk that is not currently in
+	// removal.
+	RemovalState OptNilDiskRemovalState `json:"removalState"`
 }
 
 // GetDevice returns the value of Device.
@@ -7606,6 +7863,11 @@ func (s *PoolDiskEntry) GetNearMinFreeSpace() OptBool {
 	return s.NearMinFreeSpace
 }
 
+// GetRemovalState returns the value of RemovalState.
+func (s *PoolDiskEntry) GetRemovalState() OptNilDiskRemovalState {
+	return s.RemovalState
+}
+
 // SetDevice sets the value of Device.
 func (s *PoolDiskEntry) SetDevice(val string) {
 	s.Device = val
@@ -7644,6 +7906,11 @@ func (s *PoolDiskEntry) SetFreeBytes(val OptNilInt64) {
 // SetNearMinFreeSpace sets the value of NearMinFreeSpace.
 func (s *PoolDiskEntry) SetNearMinFreeSpace(val OptBool) {
 	s.NearMinFreeSpace = val
+}
+
+// SetRemovalState sets the value of RemovalState.
+func (s *PoolDiskEntry) SetRemovalState(val OptNilDiskRemovalState) {
+	s.RemovalState = val
 }
 
 type PoolDiskEntryRole string
@@ -7778,6 +8045,134 @@ func (s *PoolStatus) SetLargestDiskFreeBytes(val OptNilInt64) {
 // SetLargestDiskPath sets the value of LargestDiskPath.
 func (s *PoolStatus) SetLargestDiskPath(val OptNilString) {
 	s.LargestDiskPath = val
+}
+
+// One file a rebalance or evacuation plan moves (doc 09 §3-4).
+// Ref: #/components/schemas/RebalanceMove
+type RebalanceMove struct {
+	Share string `json:"share"`
+	// Path relative to the share root.
+	RelPath string `json:"relPath"`
+	// The share-scoped branch directory the file currently lives on, e.g. `/mnt/disk1/media`.
+	SourceBranch string `json:"sourceBranch"`
+	TargetBranch string `json:"targetBranch"`
+	SizeBytes    int64  `json:"sizeBytes"`
+}
+
+// GetShare returns the value of Share.
+func (s *RebalanceMove) GetShare() string {
+	return s.Share
+}
+
+// GetRelPath returns the value of RelPath.
+func (s *RebalanceMove) GetRelPath() string {
+	return s.RelPath
+}
+
+// GetSourceBranch returns the value of SourceBranch.
+func (s *RebalanceMove) GetSourceBranch() string {
+	return s.SourceBranch
+}
+
+// GetTargetBranch returns the value of TargetBranch.
+func (s *RebalanceMove) GetTargetBranch() string {
+	return s.TargetBranch
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *RebalanceMove) GetSizeBytes() int64 {
+	return s.SizeBytes
+}
+
+// SetShare sets the value of Share.
+func (s *RebalanceMove) SetShare(val string) {
+	s.Share = val
+}
+
+// SetRelPath sets the value of RelPath.
+func (s *RebalanceMove) SetRelPath(val string) {
+	s.RelPath = val
+}
+
+// SetSourceBranch sets the value of SourceBranch.
+func (s *RebalanceMove) SetSourceBranch(val string) {
+	s.SourceBranch = val
+}
+
+// SetTargetBranch sets the value of TargetBranch.
+func (s *RebalanceMove) SetTargetBranch(val string) {
+	s.TargetBranch = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *RebalanceMove) SetSizeBytes(val int64) {
+	s.SizeBytes = val
+}
+
+// Ref: #/components/schemas/RebalancePlan
+type RebalancePlan struct {
+	Moves    []RebalanceMove    `json:"moves"`
+	Warnings []RebalanceWarning `json:"warnings"`
+	// Exact typed confirmation `startRebalance` requires for this plan (`REBALANCE`).
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMoves returns the value of Moves.
+func (s *RebalancePlan) GetMoves() []RebalanceMove {
+	return s.Moves
+}
+
+// GetWarnings returns the value of Warnings.
+func (s *RebalancePlan) GetWarnings() []RebalanceWarning {
+	return s.Warnings
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *RebalancePlan) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMoves sets the value of Moves.
+func (s *RebalancePlan) SetMoves(val []RebalanceMove) {
+	s.Moves = val
+}
+
+// SetWarnings sets the value of Warnings.
+func (s *RebalancePlan) SetWarnings(val []RebalanceWarning) {
+	s.Warnings = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *RebalancePlan) SetConfirmation(val string) {
+	s.Confirmation = val
+}
+
+// A condition a rebalance or evacuation plan surfaces for review before it runs (doc 09 §3's
+// path-preserving caveat) — never something the plan itself acts on.
+// Ref: #/components/schemas/RebalanceWarning
+type RebalanceWarning struct {
+	Share  string `json:"share"`
+	Reason string `json:"reason"`
+}
+
+// GetShare returns the value of Share.
+func (s *RebalanceWarning) GetShare() string {
+	return s.Share
+}
+
+// GetReason returns the value of Reason.
+func (s *RebalanceWarning) GetReason() string {
+	return s.Reason
+}
+
+// SetShare sets the value of Share.
+func (s *RebalanceWarning) SetShare(val string) {
+	s.Share = val
+}
+
+// SetReason sets the value of Reason.
+func (s *RebalanceWarning) SetReason(val string) {
+	s.Reason = val
 }
 
 // Ref: #/components/schemas/RegisterExternalDiskRequest
@@ -9170,7 +9565,7 @@ func (s *SpinTransitionToState) UnmarshalText(data []byte) error {
 type StartFixRequest struct {
 	// Must be true — fix rewrites data from parity.
 	Confirm bool `json:"confirm"`
-	// SnapRAID disk index (`hoserva fix --disk N`).
+	// Data disk number N (`/mnt/diskN`), fixed only on that disk (`hoserva fix --disk N`).
 	Disk OptInt32 `json:"disk"`
 }
 
@@ -9192,6 +9587,23 @@ func (s *StartFixRequest) SetConfirm(val bool) {
 // SetDisk sets the value of Disk.
 func (s *StartFixRequest) SetDisk(val OptInt32) {
 	s.Disk = val
+}
+
+// Ref: #/components/schemas/StartRebalanceRequest
+type StartRebalanceRequest struct {
+	// Exact typed confirmation from the matching `planRebalance` call (`REBALANCE`). A wrong or missing
+	// string is refused and nothing runs.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *StartRebalanceRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *StartRebalanceRequest) SetConfirmation(val string) {
+	s.Confirmation = val
 }
 
 // Ref: #/components/schemas/StartScrubRequest

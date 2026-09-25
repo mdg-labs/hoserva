@@ -35,6 +35,9 @@ import (
 // update reboot) gets the same ordering because they all run this one
 // sequence.
 //
+// A data disk that has left the pool (unpooled, #358) is in no pool
+// mount's branch list; an unlisted one is not part of the sequence at all.
+//
 // The readiness gate also reports not ready while a data-disk upgrade is
 // pending (doc 02 §4 UR2), and Start confirms every mounted array disk
 // against the filesystem UUID SQLite names before anything above the
@@ -52,10 +55,20 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 	diskMounts := make([]job.ArrayMount, 0, len(assigned))
 	var dataMounts []string
 	var cachePath string
+	var removingDisk string
+	var checked []disk.MountUnit
 	for _, d := range assigned {
 		if d.Mountpoint == "" {
 			return nil, fmt.Errorf("array disk %s has no mountpoint", d.Device)
 		}
+		// An unlisted disk is out of every pool mount and out of
+		// snapraid.conf (#358, doc 09 §4 steps 7-8); only its own
+		// unmount and row deletion are left. The array neither waits
+		// for it nor mounts it, so pulling it early never blocks a start.
+		if d.RemovalState == store.RemovalStateUnlisted {
+			continue
+		}
+		checked = append(checked, disk.MountUnit{Where: d.Mountpoint, UUID: d.FSUUID})
 		expected = append(expected, disk.ExpectedDisk{
 			Identity: disk.Identity{
 				WWN:          d.WWN,
@@ -76,7 +89,13 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		})
 		switch d.Role {
 		case store.ArrayRoleData:
+			if d.LeftPool() {
+				continue
+			}
 			dataMounts = append(dataMounts, d.Mountpoint)
+			if d.RemovalState == store.RemovalStateEvacuating || d.RemovalState == store.RemovalStateEvacuated {
+				removingDisk = d.Mountpoint
+			}
 		case store.ArrayRoleCache:
 			cachePath = d.Mountpoint
 		}
@@ -103,10 +122,6 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		gate.Evaluate(present)
 	}
 
-	var checked []disk.MountUnit
-	for _, d := range assigned {
-		checked = append(checked, disk.MountUnit{Where: d.Mountpoint, UUID: d.FSUUID})
-	}
 	seq := &job.ArraySequence{
 		Scheduler: scheduler,
 		Gate:      job.PendingUpgradeGate{Gate: gate, Scheduler: scheduler},
@@ -121,7 +136,12 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		return seq, nil
 	}
 
-	catchAll, err := pool.CatchAllMount(dataMounts, pool.Options{MinFreeSpace: settings.MinFreeSpace})
+	var catchAll pool.Mount
+	if removingDisk == "" {
+		catchAll, err = pool.CatchAllMount(dataMounts, pool.Options{MinFreeSpace: settings.MinFreeSpace})
+	} else {
+		catchAll, err = pool.CatchAllMountRemoving(dataMounts, removingDisk, pool.Options{MinFreeSpace: settings.MinFreeSpace})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("building catch-all pool mount: %w", err)
 	}
@@ -148,7 +168,12 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 			CacheMode:    pool.CacheMode(row.CacheMode),
 			CreatePolicy: pool.CreatePolicy(row.CreatePolicy),
 		}
-		shareMount, err := pool.ShareMount(sh, dataMounts, cachePath, opts)
+		var shareMount pool.Mount
+		if removingDisk == "" {
+			shareMount, err = pool.ShareMount(sh, dataMounts, cachePath, opts)
+		} else {
+			shareMount, err = pool.ShareMountRemoving(sh, dataMounts, cachePath, removingDisk, opts)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("building share mount for %q: %w", sh.Name, err)
 		}
@@ -159,7 +184,12 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		if sh.CacheMode == pool.CacheOnly {
 			continue
 		}
-		moverMount, err := pool.MoverTargetMount(sh, dataMounts, opts)
+		var moverMount pool.Mount
+		if removingDisk == "" {
+			moverMount, err = pool.MoverTargetMount(sh, dataMounts, opts)
+		} else {
+			moverMount, err = pool.MoverTargetMountRemoving(sh, dataMounts, removingDisk, opts)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("building mover target mount for %q: %w", sh.Name, err)
 		}

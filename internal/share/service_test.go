@@ -651,6 +651,65 @@ func TestApplyTopology_AddsTheNewDiskToEveryShare(t *testing.T) {
 	}
 }
 
+// TestApplyTopology_RemovingDiskMarksOnlyThatDiskNC is #359's own
+// acceptance test for doc 09 §4 step 2's mount-generation half: with a
+// data disk in removal_state 'evacuating', every share unit
+// ApplyTopology writes must carry that disk's own branch as NC and every
+// other data disk RW.
+func TestApplyTopology_RemovingDiskMarksOnlyThatDiskNC(t *testing.T) {
+	ctx, svc, layout, _ := testService(t)
+	if err := svc.Array.SetRemovalState(ctx, layout.dataDisks[0], store.RemovalStateEvacuating, "job-1"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+	if _, err := svc.Create(ctx, CreateInput{Name: "media", CacheMode: pool.ArrayOnly}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	wantNC := layout.dataDisks[0] + "/media=NC"
+	wantRW := layout.dataDisks[1] + "/media=RW"
+	if !generatedFileContains(t, svc.Gen.Root, "Where="+pool.SharePath("media")+"\n", wantNC) {
+		t.Fatalf("media's generated unit does not mark %s NC", layout.dataDisks[0])
+	}
+	if !generatedFileContains(t, svc.Gen.Root, "Where="+pool.SharePath("media")+"\n", wantRW) {
+		t.Fatalf("media's generated unit does not keep %s RW", layout.dataDisks[1])
+	}
+}
+
+// TestSyncLiveMounts_RemovingDiskMarksOnlyThatDiskNC proves the live half
+// of the same invariant: Service.Create's own live remount (syncLiveMounts,
+// reached through s.apply) applies the *MountRemoving builders to both the
+// share and its mover-target mount, not only the generated unit files.
+func TestSyncLiveMounts_RemovingDiskMarksOnlyThatDiskNC(t *testing.T) {
+	ctx, svc, layout, mounter := testService(t)
+	if err := svc.Array.SetRemovalState(ctx, layout.dataDisks[0], store.RemovalStateEvacuating, "job-1"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+	if _, err := svc.Create(ctx, CreateInput{Name: "media", CacheMode: pool.ArrayOnly}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var shareMount, moverMount *pool.Mount
+	for i, m := range mounter.mounted {
+		switch m.Where {
+		case pool.SharePath("media"):
+			shareMount = &mounter.mounted[i]
+		case pool.MoverTargetPath("media"):
+			moverMount = &mounter.mounted[i]
+		}
+	}
+	if shareMount == nil || moverMount == nil {
+		t.Fatalf("mounted = %+v, want both the share and mover-target mounts for media", mounter.mounted)
+	}
+	wantNC := layout.dataDisks[0] + "/media=NC"
+	wantRW := layout.dataDisks[1] + "/media=RW"
+	if !strings.Contains(shareMount.What, wantNC) || !strings.Contains(shareMount.What, wantRW) {
+		t.Fatalf("live share mount What = %q, want %q and %q", shareMount.What, wantNC, wantRW)
+	}
+	if !strings.Contains(moverMount.What, wantNC) {
+		t.Fatalf("live mover-target mount What = %q, want %q", moverMount.What, wantNC)
+	}
+}
+
 func generatedFileContains(t *testing.T, root string, all ...string) bool {
 	t.Helper()
 	found := false

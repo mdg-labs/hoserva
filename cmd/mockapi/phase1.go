@@ -137,6 +137,9 @@ func mockPoolStatus(scenario string) *apiv1.PoolStatus {
 	}
 	if scenario == "degraded" {
 		disks[1].State = apiv1.DiskStateFailed
+		// disk3 mirrors mockArrayDisks's own "degraded" scenario (#359,
+		// doc 09 §4 step 2): mid-evacuation, no-create.
+		disks[2].RemovalState = apiv1.NewOptNilDiskRemovalState(apiv1.DiskRemovalStateEvacuating)
 		// A stored array member with no identity match in inventory at
 		// all (#326) — the literal "failed disk" scenario doc 02 §4
 		// describes, mirroring production GetPool's shape: stored

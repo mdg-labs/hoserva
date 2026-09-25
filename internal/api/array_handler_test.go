@@ -12,9 +12,11 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
+	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/parity"
 	"github.com/mdg-labs/hoserva/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -639,4 +641,202 @@ func TestHandler_SetArray_ConcurrentWithStopStartIsRaceFree(t *testing.T) {
 	}()
 
 	wg.Wait()
+}
+
+// newDiskRemoveTestHandler wires a *api.Handler to a real SQLite array
+// (two data disks) and job.Scheduler, with a parity engine set and
+// job.TypeDiskRemove registered to a RunFunc that only records the params
+// it was queued with — these tests are about finishDiskRemoval's own
+// refusals and what it submits; internal/job's own tests and the lab
+// cover the job. withParity false leaves the engine unset.
+func newDiskRemoveTestHandler(t *testing.T, withParity bool) (h *api.Handler, disk1, disk2 string, queued chan []byte) {
+	t.Helper()
+	migrations, err := store.Load()
+	if err != nil {
+		t.Fatalf("loading embedded migrations: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "disk-remove-api-test.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("opening test database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, _, err := (&store.Runner{DB: db, Migrations: migrations, SnapshotDir: t.TempDir()}).Apply(context.Background()); err != nil {
+		t.Fatalf("applying migrations: %v", err)
+	}
+	disk1, disk2 = "/mnt/disk1", "/mnt/disk2"
+	arrayStore := store.NewArrayStore(db)
+	if err := arrayStore.PutArray(context.Background(), store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "10G", CreatedAt: time.Now().UTC()}, []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/loop9", Filesystem: "xfs", FSUUID: "uuid-p1", Mountpoint: "/mnt/parity1"},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/loop0", Filesystem: "xfs", FSUUID: "uuid-d1", Mountpoint: disk1},
+		{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/loop1", Filesystem: "xfs", FSUUID: "uuid-d2", Mountpoint: disk2},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	jobStore := job.NewStore(db)
+	registry := job.NewRegistry()
+	queued = make(chan []byte, 4)
+	registry.Register(job.TypeDiskRemove, false, func(ctx context.Context, rc *job.RunContext) error {
+		queued <- rc.Params()
+		return nil
+	})
+	h = &api.Handler{
+		Scheduler:  job.NewScheduler(jobStore, job.NewLogStore(t.TempDir()), job.NewHub(), registry),
+		Store:      jobStore,
+		ArrayStore: arrayStore,
+	}
+	if withParity {
+		h.SetParity(parity.NewFakeEngine(), parity.Guard{}, nil, func(context.Context) ([]cache.Share, error) { return nil, nil })
+	}
+	return h, disk1, disk2, queued
+}
+
+// TestHandler_FinishDiskRemoval_RefusalsInOrder is the acceptance
+// criterion's status mapping: 501 without a parity engine, 404 for a slot
+// with no data disk, 409 disk_not_evacuated for a disk not evacuated or
+// further along, 409 confirmation_required — and no job for any of them.
+func TestHandler_FinishDiskRemoval_RefusalsInOrder(t *testing.T) {
+	ctx := context.Background()
+
+	unconfigured, _, _, _ := newDiskRemoveTestHandler(t, false)
+	if _, err := unconfigured.FinishDiskRemoval(ctx, &apiv1.FinishDiskRemovalRequest{Mountpoint: "/mnt/disk1", Confirmation: "REMOVE /mnt/disk1"}); err == nil {
+		t.Fatal("FinishDiskRemoval with no parity engine = nil, want 501")
+	} else if status := apiError(t, unconfigured, err); status.StatusCode != 501 || status.Response.Code != "not_configured" {
+		t.Fatalf("FinishDiskRemoval with no parity engine = %+v, want 501 not_configured", status)
+	}
+
+	h, disk1, disk2, queued := newDiskRemoveTestHandler(t, true)
+	if err := h.ArrayStore.SetRemovalState(ctx, disk2, store.RemovalStateEvacuating, "evac-1"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+	for _, tc := range []struct {
+		name       string
+		mountpoint string
+		confirm    string
+		status     int
+		code       string
+	}{
+		{name: "unknown slot", mountpoint: "/mnt/disk9", confirm: "REMOVE /mnt/disk9", status: 404, code: "disk_slot_not_found"},
+		{name: "not in removal, wrong confirmation too", mountpoint: disk1, confirm: "nope", status: 409, code: "disk_not_evacuated"},
+		{name: "still evacuating", mountpoint: disk2, confirm: job.EvacuationConfirmation(disk2), status: 409, code: "disk_not_evacuated"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := h.FinishDiskRemoval(ctx, &apiv1.FinishDiskRemovalRequest{Mountpoint: tc.mountpoint, Confirmation: tc.confirm})
+			if status := apiError(t, h, err); status.StatusCode != tc.status || status.Response.Code != tc.code {
+				t.Fatalf("FinishDiskRemoval = %+v, want %d %s", status, tc.status, tc.code)
+			}
+		})
+	}
+
+	if err := h.ArrayStore.SetRemovalState(ctx, disk2, store.RemovalStateEvacuated, "evac-1"); err != nil {
+		t.Fatalf("SetRemovalState(evacuated): %v", err)
+	}
+	for _, confirm := range []string{"", "REMOVE " + disk1, "nope"} {
+		_, err := h.FinishDiskRemoval(ctx, &apiv1.FinishDiskRemovalRequest{Mountpoint: disk2, Confirmation: confirm})
+		if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "confirmation_required" {
+			t.Fatalf("FinishDiskRemoval(confirmation %q) = %+v, want 409 confirmation_required", confirm, status)
+		}
+	}
+	jobs, err := h.Store.List(ctx, job.ListFilter{})
+	if err != nil {
+		t.Fatalf("listing jobs: %v", err)
+	}
+	if len(jobs) != 0 || len(queued) != 0 {
+		t.Fatalf("a refused finishDiskRemoval submitted %d jobs", len(jobs))
+	}
+}
+
+// TestHandler_FinishDiskRemoval_QueuesTheJob proves an evacuated disk,
+// and one a failed earlier run left unpooled or unlisted, each queue a
+// disk_remove job carrying the slot and the confirmation.
+func TestHandler_FinishDiskRemoval_QueuesTheJob(t *testing.T) {
+	ctx := context.Background()
+	h, _, disk2, queued := newDiskRemoveTestHandler(t, true)
+	if err := h.ArrayStore.SetRemovalState(ctx, disk2, store.RemovalStateEvacuated, "evac-1"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+	steps := []struct{ from, to string }{
+		{"", ""},
+		{store.RemovalStateEvacuated, store.RemovalStateUnpooled},
+		{store.RemovalStateUnpooled, store.RemovalStateUnlisted},
+	}
+	for _, step := range steps {
+		if step.to != "" {
+			if err := h.ArrayStore.AdvanceRemovalState(ctx, disk2, step.from, step.to, "rm-1"); err != nil {
+				t.Fatalf("AdvanceRemovalState(%s): %v", step.to, err)
+			}
+		}
+		j, err := h.FinishDiskRemoval(ctx, &apiv1.FinishDiskRemovalRequest{Mountpoint: disk2, Confirmation: job.EvacuationConfirmation(disk2)})
+		if err != nil {
+			t.Fatalf("FinishDiskRemoval (%q): %v", step.to, err)
+		}
+		if j.Type != apiv1.JobTypeDiskRemove || j.Class != apiv1.JobClassTopology {
+			t.Fatalf("queued job = %s/%s, want disk_remove/topology", j.Type, j.Class)
+		}
+		waitForStatus(t, h.Store, j.ID.String(), job.StatusSucceeded)
+		params := <-queued
+		if want := `{"mountpoint":"` + disk2 + `","confirmation":"` + job.EvacuationConfirmation(disk2) + `"}`; string(params) != want {
+			t.Fatalf("params = %s, want %s", params, want)
+		}
+	}
+}
+
+// TestHandler_FinishDiskRemoval_StoreFailureIsInternal proves an I/O
+// failure reading the array is an opaque 500, never a 4xx that would tell
+// the caller the request was wrong.
+func TestHandler_FinishDiskRemoval_StoreFailureIsInternal(t *testing.T) {
+	ctx := context.Background()
+	migrations, err := store.Load()
+	if err != nil {
+		t.Fatalf("loading migrations: %v", err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "closed.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("opening database: %v", err)
+	}
+	if _, _, err := (&store.Runner{DB: db, Migrations: migrations, SnapshotDir: t.TempDir()}).Apply(ctx); err != nil {
+		t.Fatalf("applying migrations: %v", err)
+	}
+	h, _, _, _ := newDiskRemoveTestHandler(t, true)
+	h.ArrayStore = store.NewArrayStore(db)
+	_ = db.Close()
+
+	_, err = h.FinishDiskRemoval(ctx, &apiv1.FinishDiskRemovalRequest{Mountpoint: "/mnt/disk2", Confirmation: "REMOVE /mnt/disk2"})
+	if status := apiError(t, h, err); status.StatusCode != 500 || status.Response.Code != "internal" {
+		t.Fatalf("FinishDiskRemoval with a failing store = %+v, want an opaque 500", status)
+	}
+}
+
+// TestHandler_ReplaceDisk_RefusesADiskInRemoval proves #366's refusal:
+// store.ReplaceDataDisk keeps a slot's removal state, so planDiskReplace
+// and replaceDisk answer 409 disk_leaving_array for a disk in any removal
+// state, and nothing is formatted or queued.
+func TestHandler_ReplaceDisk_RefusesADiskInRemoval(t *testing.T) {
+	for _, state := range []string{store.RemovalStateEvacuating, store.RemovalStateEvacuated, store.RemovalStateUnpooled, store.RemovalStateUnlisted} {
+		t.Run(state, func(t *testing.T) {
+			ctx := context.Background()
+			h, _, p, st, _, _ := newDiskLifecycleHandler(t)
+			seedHandlerArray(t, st, p)
+			p.AddDisk("/dev/sdz", disk.Disk{Size: 4 * disk.TB})
+			markRemoval(t, st, "/mnt/disk1", state)
+
+			_, err := h.PlanDiskReplace(ctx, &apiv1.ReplaceDiskPlanRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdz"})
+			if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_leaving_array" {
+				t.Fatalf("PlanDiskReplace(%s disk) = %+v, want 409 disk_leaving_array", state, status)
+			}
+			_, err = h.ReplaceDisk(ctx, &apiv1.ReplaceDiskRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdz", Confirmation: "ERASE /dev/sdz"})
+			if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_leaving_array" {
+				t.Fatalf("ReplaceDisk(%s disk) = %+v, want 409 disk_leaving_array", state, status)
+			}
+			if _, ok := p.FormattedAs("/dev/sdz"); ok {
+				t.Fatal("a refused replace formatted /dev/sdz")
+			}
+			jobs, err := h.Store.List(ctx, job.ListFilter{})
+			if err != nil {
+				t.Fatalf("listing jobs: %v", err)
+			}
+			if len(jobs) != 0 {
+				t.Fatalf("a refused replace submitted %d job(s), want none", len(jobs))
+			}
+		})
+	}
 }

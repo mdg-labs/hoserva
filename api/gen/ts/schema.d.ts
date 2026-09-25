@@ -806,11 +806,51 @@ export interface paths {
         };
         /**
          * Pool status
-         * @description Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
+         * @description Per-disk pool breakdown for `hoserva pool status` (doc 01 §3), including each disk's own `removalState` (doc 09 §4 step 2, #359) where one is in progress.
          */
         get: operations["getPool"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pool/rebalance/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview rebalancing the pool
+         * @description Computes the rebalance plan (doc 09 §3): for every share with at least two branches, the files `cache.PlanRebalance` would move from that share's own most-full disk to its own least-full disk to bring them within the skew tolerance, plus any path-preserving warnings, and the exact typed confirmation `startRebalance` requires. A data disk in removal (any `removalState`) is left out of every share's branches: the plan neither moves a file off it nor onto it. Read-only: nothing is copied, synced or deleted.
+         */
+        post: operations["planRebalance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pool/rebalance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rebalance the pool
+         * @description Recomputes the rebalance plan (never trusting a client-supplied one — a stale plan can only omit or skip files at run time, never misdirect a copy or delete) and, once `confirmation` matches the exact phrase the matching `planRebalance` call returned, queues a resumable `job.TypeRebalance` job that runs it through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the threshold guard, delete the batch's sources, sync again (Q14), batched so no trailing sync this run makes can ever trip the guard after sources are already gone (doc 09 §3). The recomputed plan leaves out a data disk in removal the same way `planRebalance` does. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs.
+         */
+        post: operations["startRebalance"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1190,7 +1230,7 @@ export interface paths {
         put?: never;
         /**
          * Preview replacing a data disk
-         * @description Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that reconstructs the slot's contents after it is formatted, and the exact typed confirmation `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02 §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a replacement that would leave a parity disk smaller than the array's largest data disk. Read-only: nothing is formatted or persisted.
+         * @description Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that reconstructs the slot's contents after it is formatted, and the exact typed confirmation `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02 §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a replacement that would leave a parity disk smaller than the array's largest data disk. Refuses (`disk_leaving_array`, 409) a slot whose disk is in removal (any `removalState`): the replacement would inherit that state. Read-only: nothing is formatted or persisted.
          */
         post: operations["planDiskReplace"];
         delete?: never;
@@ -1210,7 +1250,7 @@ export interface paths {
         put?: never;
         /**
          * Replace a data disk
-         * @description Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix` to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted or still present by identity. The confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
+         * @description Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix` to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted or still present by identity, and (`disk_leaving_array`, 409) a slot whose disk is in removal. The confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
          */
         post: operations["replaceDisk"];
         delete?: never;
@@ -1230,7 +1270,7 @@ export interface paths {
         put?: never;
         /**
          * Preview upgrading a data or parity disk to a larger one
-         * @description Computes the upgrade plan (doc 02 §4 "Larger data disk"/"Larger parity disk") for the existing array slot at `mountpoint`, whichever role it holds: the replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the copy/verify/remount steps a data-disk upgrade runs or the copy/verify/switch/check steps a parity-disk upgrade runs, and the exact typed confirmation `upgradeDisk` requires. For a data disk, refuses (`invalid_plan`) a replacement that would leave a parity disk smaller than it (Q20) — offering the parity upgrade flow first, the same rule `disk.DataDiskUpgradeExceedsParity` checks — and any of `planDiskReplace`'s own Q19/Q20/Q21/Q23 checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new disk will be formatted, mounted and verified at independently of the old one (Q71) — never the old disk's own mountpoint. Read-only: nothing is formatted or persisted.
+         * @description Computes the upgrade plan (doc 02 §4 "Larger data disk"/"Larger parity disk") for the existing array slot at `mountpoint`, whichever role it holds: the replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the copy/verify/remount steps a data-disk upgrade runs or the copy/verify/switch/check steps a parity-disk upgrade runs, and the exact typed confirmation `upgradeDisk` requires. For a data disk, refuses (`invalid_plan`) a replacement that would leave a parity disk smaller than it (Q20) — offering the parity upgrade flow first, the same rule `disk.DataDiskUpgradeExceedsParity` checks — and any of `planDiskReplace`'s own Q19/Q20/Q21/Q23 checks. For a parity disk, `newMountpoint` is the fresh `/mnt/parityN` slot the new disk will be formatted, mounted and verified at independently of the old one (Q71) — never the old disk's own mountpoint. Refuses (`disk_leaving_array`, 409) a data disk in removal (any `removalState`): the new disk would inherit that state. Read-only: nothing is formatted or persisted.
          */
         post: operations["planDiskUpgrade"];
         delete?: never;
@@ -1250,9 +1290,69 @@ export interface paths {
         put?: never;
         /**
          * Upgrade a data or parity disk to a larger one
-         * @description Starts a resumable Topology job (`job.TypeDiskUpgradeData` or `job.TypeDiskUpgradeParity`, resolved from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A data-disk upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has completed (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to show no removed or updated files, and only then names the new disk in SQLite; the array stays stopped until the user starts it. A parity-disk upgrade runs with the array started (refused with `maintenance_mode` while it is stopped): it copies the parity file, verifies it byte for byte, switches the configuration and passes `snapraid check` before releasing the old parity disk (Q71). The old disk is never written to or released until its verification gate passes.
+         * @description Starts a resumable Topology job (`job.TypeDiskUpgradeData` or `job.TypeDiskUpgradeParity`, resolved from the slot's role). The confirmation must be the exact string the matching `planDiskUpgrade` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing. A data disk in removal is refused (`disk_leaving_array`, 409) as `planDiskUpgrade` refuses it. A data-disk upgrade follows doc 02 §4's state machine: it is admitted only once `stopArray` has completed (otherwise `array_not_stopped`) and while no other data-disk upgrade is pending (otherwise `disk_upgrade_pending`, naming it). It requires a clean `snapraid diff` before formatting, copies and verifies the old disk, mounts the new one at the same mountpoint, requires `snapraid diff` to show no removed or updated files, and only then names the new disk in SQLite; the array stays stopped until the user starts it. A parity-disk upgrade runs with the array started (refused with `maintenance_mode` while it is stopped): it copies the parity file, verifies it byte for byte, switches the configuration and passes `snapraid check` before releasing the old parity disk (Q71). The old disk is never written to or released until its verification gate passes.
          */
         post: operations["upgradeDisk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/disks/array/evacuate/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview evacuating a data disk before removal
+         * @description Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no other branch to evacuate onto, when an entry on the disk is something the evacuation copy path cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the disk keeps taking new writes only until that job starts, never for as long as it runs. Refused (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed or repeated evacuation. No other disk in removal is ever a target. This operation carries out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not performed by either.
+         */
+        post: operations["planDiskEvacuation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/disks/array/evacuate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Evacuate a data disk before removal
+         * @description Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one, `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job. Before copying anything — and again on every resume — the job marks the disk `evacuating` (persisted in SQLite, D4) and applies no-create to its own branch in every pool mount, live (doc 09 §4 step 2); a failure to apply that fails the job before any copy. It then runs the plan through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this disk in the guard's own zero-files exemption, Q15, since the batch that finally empties it would otherwise trip that rule), delete the batch's sources, sync again (Q14) — then, once the whole plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share branches hold nothing but empty directories (doc 09 §4 step 6) and the job marks the disk `evacuated` before reporting success. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs, a disk already `unpooled` or `unlisted` is refused (`disk_leaving_array`, 409) as `planDiskEvacuation` refuses it, a second disk is refused (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal state belongs to the job that set it: cancelling that job — queued, running or interrupted — clears it and puts the disk back to taking writes, and cancelling any other job never does. A job that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling that run clears it. Success here means the disk's data as this job saw it is safely off it and it is no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09 §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are `finishDiskRemoval`'s.
+         */
+        post: operations["evacuateDisk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/disks/array/remove/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finish removing an evacuated data disk
+         * @description Queues a `job.TypeDiskRemove` Topology job that takes an evacuated data disk out of the array (doc 09 §4 steps 7-9). The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation` returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when the daemon has no parity engine. Before changing anything the job checks all of that again, that the array without the disk still has a data disk and room for every content-file copy (Q18), that the disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every pool mount, live (step 7; a failed live update fails the job); removes the empty directories the evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold guard with only this disk exempt from the zero-files rule, while its data line is still in snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates snapraid.conf without it and checks SnapRAID accepts the result (step 8); then stops its mount unit, removes the unit file and deletes the disk from the array (step 9). The job's result names the disk as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted leaves the disk in the last state it reached, and running this operation again carries on from there — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed and mounted, with nothing synced.
+         */
+        post: operations["finishDiskRemoval"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1971,6 +2071,11 @@ export interface components {
         };
         /** @enum {string} */
         DiskState: "active" | "standby" | "spinning_up" | "missing" | "failed";
+        /**
+         * @description doc 09 §4's own disk-removal state machine (#359, #358): `evacuating` from before an evacuation's first copy until its post-check passes — every pool mount marks this disk no-create for the whole time (step 2); `evacuated` once that copy and post-check finish, but the disk is still in every mergerfs branch list, SnapRAID layout and mount table (steps 7-9 have not run yet, still no-create); `unpooled` once `finishDiskRemoval`'s job has taken it out of every pool mount (step 7) — still in snapraid.conf and mounted; `unlisted` once a sync has recorded it empty and it is out of snapraid.conf too (step 8) — only its unmount and removal from the array are left. A disk that finished leaves the pool and the array altogether.
+         * @enum {string}
+         */
+        DiskRemovalState: "evacuating" | "evacuated" | "unpooled" | "unlisted";
         /** @enum {string} */
         ContainerState: "running" | "stopped" | "restarting" | "exited" | "paused";
         /** @enum {string} */
@@ -2576,6 +2681,8 @@ export interface components {
             freeBytes?: number | null;
             /** @description True once this disk's free space is at or below the pool's configured minfreespace (doc 09 §1) — the point mergerfs itself excludes it from create-policy placement. Omitted when freeBytes is not being reported for this disk. */
             nearMinFreeSpace?: boolean;
+            /** @description doc 09 §4 step 2's own removal state (#359) for this disk. Null for a disk that is not currently in removal. */
+            removalState?: components["schemas"]["DiskRemovalState"] | null;
         };
         PoolStatus: {
             mounted: boolean;
@@ -2825,6 +2932,54 @@ export interface components {
             /** @description Exact typed confirmation from the matching `planDiskUpgrade` call. A wrong or missing string is refused and formats nothing. */
             confirmation: string;
         };
+        /** @description One file a rebalance or evacuation plan moves (doc 09 §3-4). */
+        RebalanceMove: {
+            share: string;
+            /** @description Path relative to the share root. */
+            relPath: string;
+            /** @description The share-scoped branch directory the file currently lives on, e.g. `/mnt/disk1/media`. */
+            sourceBranch: string;
+            targetBranch: string;
+            /** Format: int64 */
+            sizeBytes: number;
+        };
+        /** @description A condition a rebalance or evacuation plan surfaces for review before it runs (doc 09 §3's path-preserving caveat) — never something the plan itself acts on. */
+        RebalanceWarning: {
+            share: string;
+            reason: string;
+        };
+        RebalancePlan: {
+            moves: components["schemas"]["RebalanceMove"][];
+            warnings: components["schemas"]["RebalanceWarning"][];
+            /** @description Exact typed confirmation `startRebalance` requires for this plan (`REBALANCE`). */
+            confirmation: string;
+        };
+        StartRebalanceRequest: {
+            /** @description Exact typed confirmation from the matching `planRebalance` call (`REBALANCE`). A wrong or missing string is refused and nothing runs. */
+            confirmation: string;
+        };
+        EvacuationPlan: {
+            mountpoint: string;
+            moves: components["schemas"]["RebalanceMove"][];
+            warnings: components["schemas"]["RebalanceWarning"][];
+            /** @description Exact typed confirmation `evacuateDisk` requires for this plan (`REMOVE <mountpoint>`). */
+            confirmation: string;
+        };
+        EvacuateDiskPlanRequest: {
+            /** @description The data disk slot to evacuate, e.g. `/mnt/disk3`. */
+            mountpoint: string;
+        };
+        FinishDiskRemovalRequest: {
+            /** @description The evacuated data disk's slot, e.g. `/mnt/disk3`. */
+            mountpoint: string;
+            /** @description `REMOVE <mountpoint>` — the phrase `planDiskEvacuation` returned for this disk. A wrong or missing string is refused and nothing runs. */
+            confirmation: string;
+        };
+        EvacuateDiskRequest: {
+            mountpoint: string;
+            /** @description Exact typed confirmation from the matching `planDiskEvacuation` call. A wrong or missing string is refused and nothing runs. */
+            confirmation: string;
+        };
         /**
          * @description Parity age from `snapraid status` (doc 02 §2).
          * @enum {string}
@@ -2913,7 +3068,7 @@ export interface components {
             confirm: boolean;
             /**
              * Format: int32
-             * @description SnapRAID disk index (`hoserva fix --disk N`).
+             * @description Data disk number N (`/mnt/diskN`), fixed only on that disk (`hoserva fix --disk N`).
              */
             disk?: number;
         };
@@ -4341,6 +4496,52 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    planRebalance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rebalance plan. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RebalancePlan"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startRebalance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRebalanceRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued, resumable rebalance job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listShares: {
         parameters: {
             query?: never;
@@ -4976,6 +5177,81 @@ export interface operations {
         };
         responses: {
             /** @description The queued, resumable Topology job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    planDiskEvacuation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvacuateDiskPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description The evacuation plan. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvacuationPlan"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    evacuateDisk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvacuateDiskRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued, resumable evacuation job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    finishDiskRemoval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FinishDiskRemovalRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued disk-removal job. */
             200: {
                 headers: {
                     [name: string]: unknown;

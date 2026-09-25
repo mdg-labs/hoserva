@@ -398,8 +398,10 @@ func (h *Handler) AddDisk(ctx context.Context, req *apiv1.AddDiskRequest) (*apiv
 // and refused (slot_disk_present) unless the slot's own recorded disk is
 // genuinely gone (job.ConfirmReplacementTargetAbsent, doc 02 §4 steps
 // 1-2) — a disk that has not actually failed or been removed goes through
-// the upgrade flow instead (#289), never replace. Read-only — nothing is
-// formatted or persisted.
+// the upgrade flow instead (#289), never replace. A disk in removal is
+// refused (disk_leaving_array, #366): store.ReplaceDataDisk keeps the
+// slot's removal state, so the replacement would inherit it. Read-only —
+// nothing is formatted or persisted.
 func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPlanRequest) (*apiv1.ReplaceDiskPlan, error) {
 	if h.Disks == nil || h.ArrayStore == nil {
 		return nil, errArrayDisksNotConfigured()
@@ -414,6 +416,9 @@ func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 			return nil, errDiskSlotNotFound(req.Mountpoint)
 		}
 		return nil, err
+	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, listed); err != nil {
 		return nil, errSlotDiskPresent(err)
@@ -450,7 +455,9 @@ func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 // re-validating the same Q19/Q20/Q21 checks, the slot-disk-absent check
 // and typed confirmation planDiskReplace already computed — a stale or
 // forged confirmation is refused (confirmation_required) before anything
-// is submitted, and the queued job re-validates all of this again itself.
+// is submitted, and the queued job re-validates the slot, identity and
+// topology checks again itself. A disk in removal is refused
+// (disk_leaving_array) as planDiskReplace refuses it.
 func (h *Handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest) (*apiv1.Job, error) {
 	if h.Disks == nil || h.ArrayStore == nil {
 		return nil, errArrayDisksNotConfigured()
@@ -468,6 +475,9 @@ func (h *Handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 			return nil, errDiskSlotNotFound(req.Mountpoint)
 		}
 		return nil, err
+	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, listed); err != nil {
 		return nil, errSlotDiskPresent(err)
@@ -488,6 +498,56 @@ func (h *Handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 		return nil, fmt.Errorf("encoding disk_replace params: %w", err)
 	}
 	j, err := h.Scheduler.Submit(ctx, job.TypeDiskReplace, nil, body)
+	if err != nil {
+		return nil, mapSchedulerError(uuid.Nil, err)
+	}
+	return jobToAPI(j)
+}
+
+func errDiskRemovalNotConfigured() error {
+	return &apiError{code: "not_configured", statusCode: 501, message: "disk removal is not configured on this daemon — it needs the array's parity engine"}
+}
+
+func errDiskNotEvacuated(mountpoint, state string) error {
+	if state == "" {
+		state = "not in removal"
+	}
+	return &apiError{code: "disk_not_evacuated", statusCode: 409, message: fmt.Sprintf("disk %s is %s — evacuate it before finishing its removal", mountpoint, state)}
+}
+
+// FinishDiskRemoval queues a Topology job (job.TypeDiskRemove) that
+// finishes removing an evacuated data disk (doc 09 §4 steps 7-9, #358).
+// It refuses synchronously, in this order: no parity engine (501), no
+// data disk at the slot (404), a disk not evacuated or further along
+// (409 disk_not_evacuated), a wrong confirmation (409). The job checks
+// every one of these again itself, and everything else it needs.
+func (h *Handler) FinishDiskRemoval(ctx context.Context, req *apiv1.FinishDiskRemovalRequest) (*apiv1.Job, error) {
+	if engine, _, _, _ := h.CurrentParity(); engine == nil || h.ArrayStore == nil {
+		return nil, errDiskRemovalNotConfigured()
+	}
+	if h.Scheduler == nil {
+		return nil, fmt.Errorf("job scheduler not configured")
+	}
+	existing, err := h.ArrayStore.GetDataDiskByMountpoint(ctx, req.Mountpoint)
+	if err != nil {
+		if errors.Is(err, store.ErrArrayDiskNotFound) {
+			return nil, errDiskSlotNotFound(req.Mountpoint)
+		}
+		return nil, fmt.Errorf("finish disk removal: loading %s: %w", req.Mountpoint, err)
+	}
+	switch existing.RemovalState {
+	case store.RemovalStateEvacuated, store.RemovalStateUnpooled, store.RemovalStateUnlisted:
+	default:
+		return nil, errDiskNotEvacuated(req.Mountpoint, existing.RemovalState)
+	}
+	if req.Confirmation == "" || job.EvacuationConfirmation(req.Mountpoint) != req.Confirmation {
+		return nil, errConfirmRequired
+	}
+	body, err := json.Marshal(job.DiskRemoveParams{Mountpoint: req.Mountpoint, Confirmation: req.Confirmation})
+	if err != nil {
+		return nil, fmt.Errorf("encoding disk_remove params: %w", err)
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeDiskRemove, nil, body)
 	if err != nil {
 		return nil, mapSchedulerError(uuid.Nil, err)
 	}

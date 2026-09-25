@@ -86,7 +86,9 @@ func parityBytesFrom(disks []store.ArrayDisk, sizes map[string]int64) []int64 {
 // disk — a refusal (invalid_plan) when the replacement would leave a
 // parity disk smaller than it (Q20, disk.DataDiskUpgradeExceedsParity), or
 // — for a parity disk — the fresh /mnt/parityN slot the new disk will
-// occupy (Q71). Read-only: nothing is formatted or persisted.
+// occupy (Q71). A data disk in removal is refused (disk_leaving_array,
+// #366): store.ReplaceDataDisk keeps the slot's removal state, so the new
+// disk would inherit it. Read-only: nothing is formatted or persisted.
 func (h *Handler) PlanDiskUpgrade(ctx context.Context, req *apiv1.DiskUpgradePlanRequest) (*apiv1.DiskUpgradePlan, error) {
 	if h.Disks == nil || h.ArrayStore == nil {
 		return nil, errArrayDisksNotConfigured()
@@ -98,6 +100,9 @@ func (h *Handler) PlanDiskUpgrade(ctx context.Context, req *apiv1.DiskUpgradePla
 	existing, ok := arrayDiskAtMountpoint(disks, req.Mountpoint)
 	if !ok || (existing.Role != store.ArrayRoleData && existing.Role != store.ArrayRoleParity) {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
+	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 
 	assigned, err := resolveAssignedDisk(req.Device, req.Filesystem, apiv1.OptBool{}, listed)
@@ -150,7 +155,8 @@ func (h *Handler) PlanDiskUpgrade(ctx context.Context, req *apiv1.DiskUpgradePla
 // after re-validating the same checks planDiskUpgrade already computed. A
 // stale or forged confirmation is refused (confirmation_required) before
 // anything is submitted, and the queued job re-validates all of this
-// again itself (doc 03 §3.2, #289).
+// again itself (doc 03 §3.2, #289). A data disk in removal is refused
+// (disk_leaving_array) as planDiskUpgrade refuses it.
 func (h *Handler) UpgradeDisk(ctx context.Context, req *apiv1.UpgradeDiskRequest) (*apiv1.Job, error) {
 	if h.Disks == nil || h.ArrayStore == nil {
 		return nil, errArrayDisksNotConfigured()
@@ -165,6 +171,9 @@ func (h *Handler) UpgradeDisk(ctx context.Context, req *apiv1.UpgradeDiskRequest
 	existing, ok := arrayDiskAtMountpoint(disks, req.Mountpoint)
 	if !ok || (existing.Role != store.ArrayRoleData && existing.Role != store.ArrayRoleParity) {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
+	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 
 	assigned, err := resolveAssignedDisk(req.Device, req.Filesystem, apiv1.OptBool{}, listed)

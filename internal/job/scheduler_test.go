@@ -203,8 +203,8 @@ func TestScheduler_ArrayWriteDifferentDisksRunConcurrently(t *testing.T) {
 	}
 	<-aStarted
 
-	bStarted, bRelease := registerBlocking(s, TypeRebalance, false)
-	b, err := s.Submit(ctx, TypeRebalance, []string{"disk-2"}, nil)
+	bStarted, bRelease := registerBlocking(s, TypeVMDiskRelocation, false)
+	b, err := s.Submit(ctx, TypeVMDiskRelocation, []string{"disk-2"}, nil)
 	if err != nil {
 		t.Fatalf("Submit b: %v", err)
 	}
@@ -229,8 +229,8 @@ func TestScheduler_ArrayWriteSameDiskQueues(t *testing.T) {
 	}
 	<-aStarted
 
-	bStarted, bRelease := registerBlocking(s, TypeEvacuation, false)
-	b, err := s.Submit(ctx, TypeEvacuation, []string{"disk-1"}, nil)
+	bStarted, bRelease := registerBlocking(s, TypeVMDiskRelocation, false)
+	b, err := s.Submit(ctx, TypeVMDiskRelocation, []string{"disk-1"}, nil)
 	if err != nil {
 		t.Fatalf("Submit b: %v", err)
 	}
@@ -582,7 +582,7 @@ func TestScheduler_ResumeContinuesFromCheckpoint(t *testing.T) {
 	secondRunSawCheckpoint := make(chan []byte, 1)
 	block := make(chan struct{})
 	callCount := 0
-	s.registry.Register(TypeRebalance, false, func(ctx context.Context, rc *RunContext) error {
+	s.registry.Register(TypeMover, false, func(ctx context.Context, rc *RunContext) error {
 		callCount++
 		if callCount == 1 {
 			firstRunSawCheckpoint <- rc.InitialCheckpoint()
@@ -596,7 +596,7 @@ func TestScheduler_ResumeContinuesFromCheckpoint(t *testing.T) {
 		return nil
 	})
 
-	j, err := s.Submit(ctx, TypeRebalance, nil, nil)
+	j, err := s.Submit(ctx, TypeMover, nil, nil)
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -1178,8 +1178,8 @@ func TestScheduler_ResumeFromBattery_DispatchesJobQueuedBeforeTheHold(t *testing
 
 	// Occupies ClassArrayWrite so the mover submission below queues
 	// instead of running immediately.
-	aStarted, aRelease := registerBlocking(s, TypeRebalance, false)
-	a, err := s.Submit(ctx, TypeRebalance, nil, nil)
+	aStarted, aRelease := registerBlocking(s, TypeVMDiskRelocation, false)
+	a, err := s.Submit(ctx, TypeVMDiskRelocation, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1191,7 +1191,7 @@ func TestScheduler_ResumeFromBattery_DispatchesJobQueuedBeforeTheHold(t *testing
 		t.Fatalf("Submit(TypeMover): %v", err)
 	}
 	if b.Status != StatusQueued {
-		t.Fatalf("b.Status = %s, want queued (class-conflicted with the running rebalance)", b.Status)
+		t.Fatalf("b.Status = %s, want queued (class-conflicted with the running array-write job)", b.Status)
 	}
 
 	s.PauseForBattery(ctx)

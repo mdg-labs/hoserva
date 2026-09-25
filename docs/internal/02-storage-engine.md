@@ -138,7 +138,7 @@ The thresholds are configurable but cannot be disabled entirely; the minimum is 
 
 **The guard applies to every sync, whatever triggered it** — the nightly chain, adding a disk, the sync inside an evacuation, or a manual click.
 
-**Hoserva's own relocations are accounted, not exempted** (Q15). Rebalance, evacuation and share relocation write a manifest of every file they move (relative path, size, mtime, source and target disk). A removal that matches a manifest entry *and* reappears on the recorded target disk in the same diff is shown as its own "moved by Hoserva" group and does not count toward thresholds; every other removal counts as before. A disk in `removing` state (doc 09 §4) is exempt from the zero-files rule, and only that disk is synced with `--force-empty`.
+**Hoserva's own relocations are accounted, not exempted** (Q15). Rebalance, evacuation and share relocation write a manifest of every file they move (relative path, size, mtime, source and target disk). A removal that matches a manifest entry *and* reappears on the recorded target disk in the same diff is shown as its own "moved by Hoserva" group and does not count toward thresholds; every other removal counts as before. A disk in removal (doc 09 §4) is exempt from the zero-files rule, and only that disk is synced with `--force-empty`.
 
 This is what SnapRAID's `--force-empty` and friends exist for, and what almost nobody configures correctly when rolling their own cron job. Shipping it correctly by default is a large part of the product's value.
 
@@ -217,7 +217,7 @@ Because "cache only" data is outside parity, Hoserva ships a built-in scheduled 
 
 Full procedure in doc 09 §4. The ordering is SnapRAID-driven (Q14): files are copied to the remaining disks and verified, parity is synced so the copies are protected, and only then are the originals deleted and the disk removed from the configuration — deleting first would weaken recovery of *other* disks until the next sync.
 
-Long-running, interruptible, resumable on user action (Q29). Progress in files and bytes.
+Two jobs. The evacuation (doc 09 §4 steps 1–6) is long-running, interruptible and resumable on user action (Q29), with progress in files and bytes. Finishing the removal (steps 7–9) is a separate, short job that is re-run rather than resumed: each run carries on from the last step the disk's persisted removal state records.
 
 ### Upgrading a disk to a larger one
 

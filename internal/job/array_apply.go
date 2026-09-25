@@ -122,13 +122,22 @@ func diskMountDescription(d store.ArrayDisk) string {
 	}
 }
 
+// poolStateFromStore leaves a disk that has left the pool out of every
+// branch list.
 func poolStateFromStore(settings store.ArraySettings, disks []store.ArrayDisk) config.PoolState {
 	var dataDisks []string
 	var cachePath string
+	var removingDisk string
 	for _, d := range disks {
 		switch d.Role {
 		case store.ArrayRoleData:
+			if d.LeftPool() {
+				continue
+			}
 			dataDisks = append(dataDisks, d.Mountpoint)
+			if d.RemovalState == store.RemovalStateEvacuating || d.RemovalState == store.RemovalStateEvacuated {
+				removingDisk = d.Mountpoint
+			}
 		case store.ArrayRoleCache:
 			cachePath = d.Mountpoint
 		}
@@ -138,9 +147,14 @@ func poolStateFromStore(settings store.ArraySettings, disks []store.ArrayDisk) c
 		CachePath:    cachePath,
 		CreatePolicy: pool.CreatePolicy(settings.CreatePolicy),
 		Options:      pool.Options{MinFreeSpace: settings.MinFreeSpace},
+		RemovingDisk: removingDisk,
 	}
 }
 
+// layoutFromStore leaves an unlisted disk out of snapraid.conf (#358,
+// doc 09 §4 step 8). An unpooled disk stays listed: SnapRAID must record
+// it empty in a sync while its data line is still there, or every later
+// status, diff and sync refuses.
 func layoutFromStore(disks []store.ArrayDisk) parity.Layout {
 	var l parity.Layout
 	for _, d := range disks {
@@ -148,7 +162,10 @@ func layoutFromStore(disks []store.ArrayDisk) parity.Layout {
 		case store.ArrayRoleParity:
 			l.ParityMounts = append(l.ParityMounts, d.Mountpoint)
 		case store.ArrayRoleData:
-			l.DataMounts = append(l.DataMounts, d.Mountpoint)
+			if d.RemovalState == store.RemovalStateUnlisted {
+				continue
+			}
+			l.DataMounts = append(l.DataMounts, parity.DataMount{RoleIndex: d.RoleIndex, Mountpoint: d.Mountpoint})
 		case store.ArrayRoleCache:
 			l.CacheMount = d.Mountpoint
 		}

@@ -495,3 +495,157 @@ describe("Pool overview page — add/replace disk (#288)", () => {
     );
   });
 });
+
+describe("Pool overview page — rebalance and remove disk (#274)", () => {
+  beforeEach(() => {
+    cleanup();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockMatchMedia();
+    mockStatusAndJobs(mockGet, mountedPool());
+  });
+
+  it("previews the rebalance plan as soon as the dialog opens, and shows a failed preview's error inside it", async () => {
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/pool/rebalance/plan") {
+        return Promise.resolve({ error: { message: "rebalance plan unavailable" }, response: { ok: false } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Rebalance" }));
+    const dialog = await screen.findByRole("dialog");
+
+    expect(await within(dialog).findByText("rebalance plan unavailable")).toBeInTheDocument();
+    // The plan call failed, so no typed-confirm field or submit button
+    // ever appear — never a false "success" state (ui-states known escape).
+    expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalledWith("/pool/rebalance", expect.anything());
+  });
+
+  it("requires the rebalance dialog's own typed confirmation before enabling submit, and posts confirmation alone", async () => {
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/pool/rebalance/plan") {
+        return Promise.resolve({
+          data: {
+            moves: [{ share: "media", relPath: "movie.mkv", sourceBranch: "/mnt/disk1/media", targetBranch: "/mnt/disk2/media", sizeBytes: 1_000_000 }],
+            warnings: [],
+            confirmation: "REBALANCE",
+          },
+          response: { ok: true },
+        });
+      }
+      if (path === "/pool/rebalance") {
+        return Promise.resolve({ data: { id: "job-1", type: "rebalance", class: "array_write", status: "queued" }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Rebalance" }));
+    const dialog = await screen.findByRole("dialog");
+
+    const submit = await within(dialog).findByRole("button", { name: "Rebalance" });
+    expect(submit).toBeDisabled();
+    expect(within(dialog).getByText(/^1 file, .+ total$/)).toBeInTheDocument();
+
+    const confirmInput = within(dialog).getByRole("textbox");
+    fireEvent.change(confirmInput, { target: { value: "wrong" } });
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(confirmInput, { target: { value: "REBALANCE" } });
+    expect(submit).not.toBeDisabled();
+
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith("/pool/rebalance", expect.objectContaining({ body: { confirmation: "REBALANCE" } })),
+    );
+  });
+
+  it("shows an already-balanced pool with no moves and never offers a submit button for it", async () => {
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/pool/rebalance/plan") {
+        return Promise.resolve({ data: { moves: [], warnings: [], confirmation: "REBALANCE" }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Rebalance" }));
+    const dialog = await screen.findByRole("dialog");
+
+    expect(await within(dialog).findByText(/already balanced/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("shows a remove-disk plan error inside the dialog rather than closing it or starting a job", async () => {
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/disks/array/evacuate/plan") {
+        return Promise.resolve({ error: { message: "remaining disks do not have room to evacuate this disk" }, response: { ok: false } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Remove disk" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Disk to remove" }));
+    fireEvent.click(await screen.findByRole("option", { name: "/mnt/disk1 (/dev/sdb)" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Preview" }));
+
+    expect(await within(dialog).findByText("remaining disks do not have room to evacuate this disk")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalledWith("/disks/array/evacuate", expect.anything());
+  });
+
+  it("requires the remove-disk dialog's own typed confirmation before enabling submit, and posts the plan's own mountpoint", async () => {
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/disks/array/evacuate/plan") {
+        return Promise.resolve({
+          data: {
+            mountpoint: "/mnt/disk1",
+            moves: [{ share: "media", relPath: "movie.mkv", sourceBranch: "/mnt/disk1/media", targetBranch: "/mnt/disk2/media", sizeBytes: 1_000_000 }],
+            warnings: [],
+            confirmation: "REMOVE /mnt/disk1",
+          },
+          response: { ok: true },
+        });
+      }
+      if (path === "/disks/array/evacuate") {
+        return Promise.resolve({ data: { id: "job-1", type: "evacuation", class: "array_write", status: "queued" }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Remove disk" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Disk to remove" }));
+    fireEvent.click(await screen.findByRole("option", { name: "/mnt/disk1 (/dev/sdb)" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Preview" }));
+
+    expect(await within(dialog).findByText("Confirm evacuating /mnt/disk1")).toBeInTheDocument();
+    const submit = within(dialog).getByRole("button", { name: "Evacuate disk" });
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "wrong" } });
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "REMOVE /mnt/disk1" } });
+    expect(submit).not.toBeDisabled();
+
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith(
+        "/disks/array/evacuate",
+        expect.objectContaining({ body: { mountpoint: "/mnt/disk1", confirmation: "REMOVE /mnt/disk1" } }),
+      ),
+    );
+  });
+});

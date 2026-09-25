@@ -445,3 +445,35 @@ func TestSyncOptsFromParams_ConfirmDoesNotSkipGuardFields(t *testing.T) {
 		t.Fatalf("Confirm must not skip evaluation via Manifest/RemovingDisks: %+v", opts)
 	}
 }
+
+// TestFixOptsFromParams_AgreesWithRenderAcrossARoleIndexGap is #360's own
+// acceptance criterion: --disk N must resolve to the same "dN" label
+// parity.Layout.Render assigns the data disk whose role_index is N, even
+// when an earlier disk removal (#358) has left role_index 2 missing. A
+// positional label (fmt.Sprintf("d%d", i+1)) would put "d3" on the disk
+// that is actually role_index 3's neighbour by position, not by identity.
+func TestFixOptsFromParams_AgreesWithRenderAcrossARoleIndexGap(t *testing.T) {
+	layout := parity.Layout{
+		ParityMounts: []string{"/mnt/parity1"},
+		DataMounts: []parity.DataMount{
+			{RoleIndex: 1, Mountpoint: "/mnt/disk1"},
+			{RoleIndex: 3, Mountpoint: "/mnt/disk3"},
+		},
+	}
+	rendered, err := layout.Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+
+	disk3 := 3
+	opts, err := FixOptsFromParams(mustJSON(t, FixParams{Confirm: true, Disk: &disk3}))
+	if err != nil {
+		t.Fatalf("FixOptsFromParams: %v", err)
+	}
+	if opts.Disk != "d3" {
+		t.Fatalf("FixOptsFromParams(--disk 3) = %q, want d3", opts.Disk)
+	}
+	if !strings.Contains(rendered, "data "+opts.Disk+" /mnt/disk3/\n") {
+		t.Fatalf("Render() = %q, does not name /mnt/disk3 as %s the way FixOptsFromParams resolved it", rendered, opts.Disk)
+	}
+}

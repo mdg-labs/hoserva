@@ -18,7 +18,14 @@ import (
 // for exactly one share, and without moverSharesFromStore's
 // cache-then-move filter, since relocation moves any one share between
 // cache and array regardless of its current mode (doc 09 §2: "when a
-// share's cache mode changes").
+// share's cache mode changes"). A data disk leaving the array
+// (store.ArrayDisk.LeavingArray, #366) is left out of Branches, except
+// one still "evacuating": a relocation to cache reads the share's files
+// from Branches, and an evacuating disk can still hold some of them. A
+// disk only gets past "evacuating" once the evacuation's post-check has
+// found nothing but empty directories in its share branches. The cost
+// is that a relocation to the array counts an evacuating disk's free
+// space in its room pre-check, although mergerfs creates nothing there.
 func shareRelocationShareFromStore(shares *store.ShareStore, arrays *store.ArrayStore) func(ctx context.Context, name string) (cache.Share, error) {
 	return func(ctx context.Context, name string) (cache.Share, error) {
 		rec, err := shares.Get(ctx, name)
@@ -38,7 +45,9 @@ func shareRelocationShareFromStore(shares *store.ShareStore, arrays *store.Array
 			case store.ArrayRoleCache:
 				cachePath = d.Mountpoint
 			case store.ArrayRoleData:
-				dataDisks = append(dataDisks, d.Mountpoint)
+				if !d.LeavingArray() || d.RemovalState == store.RemovalStateEvacuating {
+					dataDisks = append(dataDisks, d.Mountpoint)
+				}
 			}
 		}
 		if cachePath == "" {

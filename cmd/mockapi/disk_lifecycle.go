@@ -36,6 +36,12 @@ func mockArrayDisks(scenario string) []store.ArrayDisk {
 	}
 	if scenario == "degraded" {
 		disks = append(disks, store.ArrayDisk{Role: store.ArrayRoleData, RoleIndex: 4, Device: "/dev/sdx", Filesystem: "xfs", Mountpoint: "/mnt/disk4"})
+		// disk3 is mid-evacuation in this scenario (#359, doc 09 §4 step
+		// 2), the same way disk2 (below) is already marked failed —
+		// PlanDiskEvacuation/EvacuateDisk mirror production's own
+		// disk_removal_in_progress refusal for every mountpoint but this
+		// one.
+		disks[2].RemovalState = store.RemovalStateEvacuating
 	}
 	return disks
 }
@@ -266,6 +272,9 @@ func (h *handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 	if !ok {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
 	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
+	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, mockInventoryAsDisks(listed)); err != nil {
 		return nil, errSlotDiskPresent(err)
 	}
@@ -305,6 +314,9 @@ func (h *handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 	existing, ok := mockDataDiskAt(disks, req.Mountpoint)
 	if !ok {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
+	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, mockInventoryAsDisks(listed)); err != nil {
 		return nil, errSlotDiskPresent(err)
@@ -410,6 +422,9 @@ func (h *handler) PlanDiskUpgrade(ctx context.Context, req *apiv1.DiskUpgradePla
 	if !ok || (existing.Role != store.ArrayRoleData && existing.Role != store.ArrayRoleParity) {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
 	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
+	}
 	assigned, err := mockResolveAssignedDisk(req.Device, req.Filesystem, apiv1.OptBool{}, listed)
 	if err != nil {
 		return nil, err
@@ -462,6 +477,9 @@ func (h *handler) UpgradeDisk(ctx context.Context, req *apiv1.UpgradeDiskRequest
 	existing, ok := mockArrayDiskAt(disks, req.Mountpoint)
 	if !ok || (existing.Role != store.ArrayRoleData && existing.Role != store.ArrayRoleParity) {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
+	}
+	if existing.LeavingArray() {
+		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	assigned, err := mockResolveAssignedDisk(req.Device, req.Filesystem, apiv1.OptBool{}, listed)
 	if err != nil {
@@ -529,6 +547,46 @@ func (h *handler) UpgradeDisk(ctx context.Context, req *apiv1.UpgradeDiskRequest
 		Resumable:   true,
 		Cancellable: true,
 		CreatedAt:   now,
+	}
+	h.jobs[j.ID] = j
+	return &j, nil
+}
+
+// FinishDiskRemoval mirrors internal/api's own FinishDiskRemoval and its
+// validation order against this mock's fixed array: not_configured with
+// no array (production has no parity engine then), disk_slot_not_found,
+// disk_not_evacuated unless the disk is evacuated or further along, then
+// confirmation_required (job.EvacuationConfirmation). No scenario has an
+// evacuated disk, so every scenario refuses.
+func (h *handler) FinishDiskRemoval(ctx context.Context, req *apiv1.FinishDiskRemovalRequest) (*apiv1.Job, error) {
+	disks := mockArrayDisks(h.scenario)
+	if disks == nil {
+		return nil, &mockError{code: "not_configured", statusCode: 501, message: "disk removal is not configured on this daemon — it needs the array's parity engine"}
+	}
+	d, ok := mockDataDiskAt(disks, req.Mountpoint)
+	if !ok {
+		return nil, errDiskSlotNotFound(req.Mountpoint)
+	}
+	switch d.RemovalState {
+	case store.RemovalStateEvacuated, store.RemovalStateUnpooled, store.RemovalStateUnlisted:
+	default:
+		state := d.RemovalState
+		if state == "" {
+			state = "not in removal"
+		}
+		return nil, &mockError{code: "disk_not_evacuated", statusCode: 409, message: fmt.Sprintf("disk %s is %s — evacuate it before finishing its removal", req.Mountpoint, state)}
+	}
+	if req.Confirmation == "" || job.EvacuationConfirmation(req.Mountpoint) != req.Confirmation {
+		return nil, errConfirmRequired()
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	j := apiv1.Job{
+		ID:        uuid.New(),
+		Type:      apiv1.JobTypeDiskRemove,
+		Class:     apiv1.JobClassTopology,
+		Status:    apiv1.JobStatusQueued,
+		CreatedAt: time.Now().UTC(),
 	}
 	h.jobs[j.ID] = j
 	return &j, nil

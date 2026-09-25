@@ -11,6 +11,7 @@ import (
 // checkpoint/progress hooks that make its execution observable (Q29, Q74,
 // doc 01 §5).
 type RunContext struct {
+	id            string
 	ctx           context.Context
 	checkpoint    []byte
 	params        []byte
@@ -20,6 +21,10 @@ type RunContext struct {
 	saveCheckpoint func(data []byte) error
 	setProgress    func(pct int)
 }
+
+// JobID is the id of the job this run belongs to — the same id on every
+// resume of it.
+func (rc *RunContext) JobID() string { return rc.id }
 
 // Context is the job's own context: cancelled when the job is cancelled,
 // or forcibly for a non-resumable job caught running when maintenance mode

@@ -113,6 +113,111 @@ func TestRunDiskAdd_AddsANewDataDiskAndRegeneratesConfig(t *testing.T) {
 	}
 }
 
+// TestRunDiskAdd_IntoAGapLeavesEveryExistingDiskNameUnchanged is #360's
+// own acceptance criterion: an array with role_index 2 already removed
+// (the shape #358 produces) fills the gap by mounting the new disk at
+// /mnt/disk2, but its "dN" name in snapraid.conf is that mountpoint's own
+// role_index — 2 — never a renumbering of role_index 3's own "d3" into
+// "d2" or vice versa. A positional renderer would instead relabel
+// /mnt/disk3 the moment a disk is added, desynchronizing it from its own
+// SnapRAID content file. The test proves this by rendering the pre-add
+// layout through the job's own layoutFromStore, against the store's own
+// rows (role_index 1 and 3, only two data mounts), and asserting the
+// post-add snapraid.conf the job writes carries those same two "dN"
+// lines, unchanged, alongside the new disk's "d2".
+func TestRunDiskAdd_IntoAGapLeavesEveryExistingDiskNameUnchanged(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	st := store.NewArrayStore(newTestDB(t))
+	genRoot := t.TempDir()
+	mounter := disk.NewFakeMounter()
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sdd", disk.Disk{Size: 4 * disk.TB})
+	p.AddDisk("/dev/sde", disk.Disk{Size: 4 * disk.TB})
+	r := disk.NewFakeRunner()
+	scriptFilesystemUUID(r, "/dev/sde", "uuid-d2")
+
+	if err := st.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", Mountpoint: "/mnt/parity1"},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", Mountpoint: "/mnt/disk1"},
+		// role_index 2 is already gone — #358's own removal shape — so
+		// disk3 is the array's only other data disk, still named "d3".
+		{Role: store.ArrayRoleData, RoleIndex: 3, Device: "/dev/sdd", Filesystem: "xfs", FSUUID: "uuid-d3", Mountpoint: "/mnt/disk3"},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	registerDiskAdd(t, s, p, r, st, genRoot, mounter)
+
+	// Render the array's snapraid.conf as it stood before the add, using
+	// the exact same rows the job itself reads (st.GetArray) and the
+	// exact same renderer the job itself calls (layoutFromStore, from
+	// writeArrayFromStore): only two data mounts, role_index 1 and 3.
+	// This is what a stable "dN" naming must reproduce unchanged for d1
+	// and d3 once the gap at role_index 2 is filled — a positional
+	// renderer would instead have named /mnt/disk3 "d2" here, and would
+	// rename it to "d3" as soon as the add fills the gap.
+	_, seededDisks, err := st.GetArray(ctx)
+	if err != nil {
+		t.Fatalf("GetArray (pre-add): %v", err)
+	}
+	beforeConf, err := layoutFromStore(seededDisks).Render()
+	if err != nil {
+		t.Fatalf("rendering pre-add layout: %v", err)
+	}
+	const wantD1 = "data d1 /mnt/disk1/\n"
+	const wantD3 = "data d3 /mnt/disk3/\n"
+	if !strings.Contains(beforeConf, wantD1) || !strings.Contains(beforeConf, wantD3) {
+		t.Fatalf("pre-add snapraid.conf = %q, want it to contain %q and %q", beforeConf, wantD1, wantD3)
+	}
+
+	newDisk := disk.AssignedDisk{Device: "/dev/sde", Filesystem: disk.XFS}
+	params := DiskAddParams{
+		Confirmation: SingleDiskConfirmation(newDisk),
+		Disk:         newDisk,
+		Sizes:        map[string]int64{"/dev/sda": 8 * disk.TB, "/dev/sdb": 4 * disk.TB, "/dev/sdd": 4 * disk.TB, "/dev/sde": 4 * disk.TB},
+	}
+	j, err := s.Submit(ctx, TypeDiskAdd, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+
+	_, disks, err := st.GetArray(ctx)
+	if err != nil {
+		t.Fatalf("GetArray: %v", err)
+	}
+	var added *store.ArrayDisk
+	for i := range disks {
+		if disks[i].Mountpoint == "/mnt/disk2" {
+			added = &disks[i]
+		}
+	}
+	if added == nil || added.RoleIndex != 2 {
+		t.Fatalf("added disk = %+v, want role_index 2 at /mnt/disk2", added)
+	}
+
+	body, err := os.ReadFile(filepath.Join(genRoot, "snapraid.conf"))
+	if err != nil {
+		t.Fatalf("reading snapraid.conf: %v", err)
+	}
+	if !strings.Contains(string(body), wantD1) || !strings.Contains(string(body), wantD3) {
+		t.Fatalf("post-add snapraid.conf = %q, want it to still contain the pre-add lines %q and %q unchanged", body, wantD1, wantD3)
+	}
+	if !strings.Contains(string(body), "data d2 /mnt/disk2/\n") {
+		t.Fatalf("post-add snapraid.conf = %q, want it to contain %q for the newly added disk", body, "data d2 /mnt/disk2/\n")
+	}
+}
+
 // TestRunDiskAdd_KeepsEveryShareMountUnit: a disk-topology job knows the
 // array's disks but not its shares. Regenerating the pool units from that
 // share-less state reconciled away every share's mount and mover-target

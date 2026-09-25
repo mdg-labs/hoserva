@@ -19,7 +19,10 @@ import (
 // up without a restart. No array yet (store.ErrNoArray) resolves to no
 // shares, the same "nothing to do yet" the array sequence itself treats it
 // as (newArraySequence, array.go) — the mover has nothing to relocate
-// before create-array has ever run.
+// before create-array has ever run. A data disk leaving the array
+// (store.ArrayDisk.LeavingArray, #366) is left out of Branches: mergerfs
+// creates nothing on it, so the room pre-check must not count its free
+// space.
 func moverSharesFromStore(shares *store.ShareStore, arrays *store.ArrayStore) func(ctx context.Context) ([]cache.Share, error) {
 	return func(ctx context.Context) ([]cache.Share, error) {
 		settings, disks, err := arrays.GetArray(ctx)
@@ -37,7 +40,9 @@ func moverSharesFromStore(shares *store.ShareStore, arrays *store.ArrayStore) fu
 			case store.ArrayRoleCache:
 				cachePath = d.Mountpoint
 			case store.ArrayRoleData:
-				dataDisks = append(dataDisks, d.Mountpoint)
+				if !d.LeavingArray() {
+					dataDisks = append(dataDisks, d.Mountpoint)
+				}
 			}
 		}
 

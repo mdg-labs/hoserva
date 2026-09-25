@@ -19,7 +19,9 @@ var ErrRunParse = errors.New("parity: could not parse snapraid run output")
 // callers decide that. RunSummary only carries what the log said.
 type RunSummary struct {
 	// Exit is `summary:exit`'s own value: "ok", "diff", "error",
-	// "recovered", confirmed against a real snapraid 12.4-1 binary.
+	// "recovered", confirmed against a real snapraid 12.4-1 binary, and
+	// "equal" — sync's own outcome when a fresh diff finds nothing to
+	// sync, field-reported against a real daemon (#267).
 	Exit string
 	// FileErrors, IOErrors and DataErrors are sync/scrub's own
 	// `summary:error_file`/`_io`/`_data`.

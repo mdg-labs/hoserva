@@ -142,6 +142,55 @@ func TestMoverSharesFromStore_NoCacheDiskIsAnError(t *testing.T) {
 	}
 }
 
+// markTestRemoval puts the data disk at mountpoint into removal state
+// state through the same store calls the evacuation job
+// (SetRemovalState) and the disk_remove job (AdvanceRemovalState) make.
+func markTestRemoval(t *testing.T, arrays *store.ArrayStore, mountpoint, state string) {
+	t.Helper()
+	ctx := context.Background()
+	if state == store.RemovalStateEvacuating || state == store.RemovalStateEvacuated {
+		if err := arrays.SetRemovalState(ctx, mountpoint, state, "evacuation-job"); err != nil {
+			t.Fatalf("marking %s %s: %v", mountpoint, state, err)
+		}
+		return
+	}
+	if err := arrays.SetRemovalState(ctx, mountpoint, store.RemovalStateEvacuated, "evacuation-job"); err != nil {
+		t.Fatalf("marking %s evacuated: %v", mountpoint, err)
+	}
+	if err := arrays.AdvanceRemovalState(ctx, mountpoint, store.RemovalStateEvacuated, store.RemovalStateUnpooled, "disk-remove-job"); err != nil {
+		t.Fatalf("marking %s unpooled: %v", mountpoint, err)
+	}
+	if state == store.RemovalStateUnlisted {
+		if err := arrays.AdvanceRemovalState(ctx, mountpoint, store.RemovalStateUnpooled, store.RemovalStateUnlisted, "disk-remove-job"); err != nil {
+			t.Fatalf("marking %s unlisted: %v", mountpoint, err)
+		}
+	}
+}
+
+var allRemovalStates = []string{store.RemovalStateEvacuating, store.RemovalStateEvacuated, store.RemovalStateUnpooled, store.RemovalStateUnlisted}
+
+// TestMoverSharesFromStore_LeavesOutADiskInRemoval proves #366's mover
+// half: a data disk in any removal state is not one of the mover's
+// Branches, so its room pre-check never counts that disk's free space.
+func TestMoverSharesFromStore_LeavesOutADiskInRemoval(t *testing.T) {
+	for _, state := range allRemovalStates {
+		t.Run(state, func(t *testing.T) {
+			shares, arrays := newMoverTestStores(t)
+			putMoverTestArray(t, arrays, "20G")
+			insertMoverTestShare(t, shares, "movies", string(pool.CacheThenMove))
+			markTestRemoval(t, arrays, "/mnt/disk2", state)
+
+			got, err := moverSharesFromStore(shares, arrays)(context.Background())
+			if err != nil {
+				t.Fatalf("resolver: %v", err)
+			}
+			if len(got) != 1 || len(got[0].Branches) != 1 || got[0].Branches[0] != "/mnt/disk1/movies" {
+				t.Fatalf("resolved shares = %+v, want movies with only /mnt/disk1/movies", got)
+			}
+		})
+	}
+}
+
 func TestParseMinFreeSpaceBytes(t *testing.T) {
 	cases := []struct {
 		in      string

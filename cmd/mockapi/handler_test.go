@@ -14,6 +14,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/web/fixtures"
 )
 
@@ -538,6 +539,38 @@ func TestUpgradeDisk_DataMirrorsProductionAdmission(t *testing.T) {
 	}
 }
 
+// TestEvacuateDisk_MirrorsProductionAdmission proves the mock refuses a
+// new evacuation while one is pending, as job.Scheduler does (#359), and
+// admits one again once the pending job is cancelled.
+func TestEvacuateDisk_MirrorsProductionAdmission(t *testing.T) {
+	client := newTestClient(t, "healthy")
+	ctx := context.Background()
+
+	req := func(mountpoint string) *apiv1.EvacuateDiskRequest {
+		plan, err := client.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: mountpoint})
+		if err != nil {
+			t.Fatalf("PlanDiskEvacuation(%s): %v", mountpoint, err)
+		}
+		return &apiv1.EvacuateDiskRequest{Mountpoint: mountpoint, Confirmation: plan.Confirmation}
+	}
+	queued, err := client.EvacuateDisk(ctx, req("/mnt/disk1"))
+	if err != nil {
+		t.Fatalf("EvacuateDisk: %v", err)
+	}
+	if _, err := client.EvacuateDisk(ctx, req("/mnt/disk1")); errorCode(t, err) != "evacuation_pending" {
+		t.Fatalf("second EvacuateDisk for the same disk: %v, want evacuation_pending", err)
+	}
+	if _, err := client.EvacuateDisk(ctx, req("/mnt/disk2")); errorCode(t, err) != "evacuation_pending" {
+		t.Fatalf("EvacuateDisk for another disk while one is pending: %v, want evacuation_pending", err)
+	}
+	if _, err := client.CancelJob(ctx, apiv1.CancelJobParams{JobId: queued.ID}); err != nil {
+		t.Fatalf("CancelJob: %v", err)
+	}
+	if _, err := client.EvacuateDisk(ctx, req("/mnt/disk1")); err != nil {
+		t.Fatalf("EvacuateDisk after the pending one was cancelled: %v", err)
+	}
+}
+
 func TestCreateShareNFSEncodes(t *testing.T) {
 	client := newTestClient(t, "fresh-install")
 	ctx := context.Background()
@@ -646,5 +679,43 @@ func assertShareNFS(t *testing.T, label string, got, want apiv1.ShareNFS) {
 	wantFsid, wantOK := want.Fsid.Get()
 	if gotOK != wantOK || gotFsid != wantFsid {
 		t.Fatalf("%s: nfs.fsid = %v (ok=%v), want %v (ok=%v)", label, gotFsid, gotOK, wantFsid, wantOK)
+	}
+}
+
+// TestMockEvacuationDataDisk_RefusesADiskThatLeftThePool proves the mock
+// mirrors production's evacuationDataDisk (#366): disk_slot_not_found
+// first, then disk_leaving_array for an unpooled or unlisted disk, while
+// an evacuating or evacuated disk passes as the resume path. No fixture
+// scenario has a disk past its evacuation, so the check runs against a
+// constructed array.
+func TestMockEvacuationDataDisk_RefusesADiskThatLeftThePool(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		code  string
+	}{
+		{"", ""},
+		{store.RemovalStateEvacuating, ""},
+		{store.RemovalStateEvacuated, ""},
+		{store.RemovalStateUnpooled, "disk_leaving_array"},
+		{store.RemovalStateUnlisted, "disk_leaving_array"},
+	} {
+		disks := []store.ArrayDisk{{Role: store.ArrayRoleData, RoleIndex: 1, Mountpoint: "/mnt/disk1", RemovalState: tc.state}}
+		err := mockEvacuationDataDisk(disks, "/mnt/disk1")
+		got := ""
+		if err != nil {
+			var me *mockError
+			if !errors.As(err, &me) {
+				t.Fatalf("state %q: error %v is not a mockError", tc.state, err)
+			}
+			got = me.code
+		}
+		if got != tc.code {
+			t.Fatalf("state %q: mockEvacuationDataDisk = %q, want %q", tc.state, got, tc.code)
+		}
+	}
+	err := mockEvacuationDataDisk([]store.ArrayDisk{{Role: store.ArrayRoleData, RoleIndex: 1, Mountpoint: "/mnt/disk1", RemovalState: store.RemovalStateUnlisted}}, "/mnt/disk9")
+	var me *mockError
+	if !errors.As(err, &me) || me.code != "disk_slot_not_found" {
+		t.Fatalf("unknown mountpoint = %v, want disk_slot_not_found", err)
 	}
 }

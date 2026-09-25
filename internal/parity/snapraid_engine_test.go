@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -229,6 +230,79 @@ func TestSnapraidEngine_Sync_FailsWhenProcessDidNotRun(t *testing.T) {
 	if final.Err == nil {
 		t.Fatal("Sync final Progress.Err = nil, want a wrapped failure")
 	}
+}
+
+// TestSnapraidEngine_Sync_SucceedsWhenNothingToSync is #267's own
+// reproduction: a second sync run back-to-back with no changes in between
+// gets `summary:exit:equal` from a real snapraid binary (a legitimate,
+// undocumented outcome distinct from "ok") while the process itself still
+// exits 0 (waitErr == nil). Before the fix, that combination fell into
+// Sync's error branch and rendered a malformed `%!w(<nil>)` instead of
+// succeeding.
+func TestSnapraidEngine_Sync_SucceedsWhenNothingToSync(t *testing.T) {
+	dir := t.TempDir()
+	r := &scriptedRunner{t: t, script: []scriptedResult{
+		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))}, // status (first sync)
+		{logBody: noChangeDiffLog},                                    // diff (first sync)
+		{logBody: string(readCorpus(t, "snapraid_sync_ok.log"))},      // sync (first sync)
+		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))}, // status (second sync)
+		{logBody: noChangeDiffLog},                                    // diff (second sync)
+		{logBody: string(readCorpus(t, "snapraid_sync_equal.log"))},   // sync (second sync): summary:exit:equal
+	}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r}
+
+	ch, err := e.Sync(context.Background(), SyncOpts{})
+	if err != nil {
+		t.Fatalf("first Sync: %v", err)
+	}
+	if final := drain(t, ch); final.Err != nil {
+		t.Fatalf("first Sync final Progress.Err = %v, want nil", final.Err)
+	}
+
+	ch, err = e.Sync(context.Background(), SyncOpts{})
+	if err != nil {
+		t.Fatalf("second Sync: %v", err)
+	}
+	final := drain(t, ch)
+	if final.Err != nil {
+		t.Fatalf("second Sync (nothing to sync) final Progress.Err = %v, want nil", final.Err)
+	}
+	if len(r.calls) != 6 {
+		t.Fatalf("got %d snapraid calls, want 6 (status, diff, sync twice over): %v", len(r.calls), r.calls)
+	}
+}
+
+// TestSnapraidEngine_Sync_FailsLoudlyOnUnrecognizedExitWithNilWaitErr
+// guards #267's general fix: an Exit value Sync doesn't recognize as
+// success must still fail — never silently succeed — and its error must
+// never render the malformed `%!w(<nil>)` %w-on-nil formatting produced
+// before the fix.
+func TestSnapraidEngine_Sync_FailsLoudlyOnUnrecognizedExitWithNilWaitErr(t *testing.T) {
+	dir := t.TempDir()
+	unrecognizedExitLog := string(readCorpus(t, "snapraid_sync_equal.log"))
+	unrecognizedExitLog = replaceExit(unrecognizedExitLog, "bogus")
+	r := &scriptedRunner{t: t, script: []scriptedResult{
+		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))},
+		{logBody: noChangeDiffLog},
+		{logBody: unrecognizedExitLog},
+	}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r}
+
+	ch, err := e.Sync(context.Background(), SyncOpts{})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	final := drain(t, ch)
+	if final.Err == nil {
+		t.Fatal("Sync final Progress.Err = nil, want a failure for an unrecognized exit value")
+	}
+	if got := final.Err.Error(); strings.Contains(got, "%!w") {
+		t.Fatalf("Sync final Progress.Err = %q, contains malformed %%w-on-nil formatting", got)
+	}
+}
+
+func replaceExit(log, exit string) string {
+	return strings.Replace(log, "summary:exit:equal", "summary:exit:"+exit, 1)
 }
 
 func TestSnapraidEngine_Status(t *testing.T) {

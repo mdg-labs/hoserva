@@ -7,14 +7,14 @@ import (
 )
 
 func TestLayout_Validate_NoParity(t *testing.T) {
-	l := Layout{DataMounts: []string{"/mnt/disk1"}}
+	l := Layout{DataMounts: []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}}}
 	if err := l.Validate(); !errors.Is(err, ErrNoParityDisks) {
 		t.Fatalf("Validate: got %v, want ErrNoParityDisks", err)
 	}
 }
 
 func TestLayout_Validate_TooManyParity(t *testing.T) {
-	l := Layout{ParityMounts: []string{"/mnt/parity1", "/mnt/parity2", "/mnt/parity3"}, DataMounts: []string{"/mnt/disk1"}}
+	l := Layout{ParityMounts: []string{"/mnt/parity1", "/mnt/parity2", "/mnt/parity3"}, DataMounts: []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}}}
 	if err := l.Validate(); !errors.Is(err, ErrTooManyParityDisks) {
 		t.Fatalf("Validate: got %v, want ErrTooManyParityDisks", err)
 	}
@@ -28,14 +28,14 @@ func TestLayout_Validate_NoData(t *testing.T) {
 }
 
 func TestLayout_Validate_RejectsDuplicateDataMount(t *testing.T) {
-	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []string{"/mnt/disk1", "/mnt/disk1"}}
+	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}, {RoleIndex: 2, Mountpoint: "/mnt/disk1"}}}
 	if err := l.Validate(); !errors.Is(err, ErrDuplicateMount) {
 		t.Fatalf("Validate: got %v, want ErrDuplicateMount", err)
 	}
 }
 
 func TestLayout_Validate_RejectsDuplicateParityMount(t *testing.T) {
-	l := Layout{ParityMounts: []string{"/mnt/parity1", "/mnt/parity1"}, DataMounts: []string{"/mnt/disk1"}}
+	l := Layout{ParityMounts: []string{"/mnt/parity1", "/mnt/parity1"}, DataMounts: []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}}}
 	if err := l.Validate(); !errors.Is(err, ErrDuplicateMount) {
 		t.Fatalf("Validate: got %v, want ErrDuplicateMount", err)
 	}
@@ -46,21 +46,21 @@ func TestLayout_Validate_RejectsDuplicateParityMount(t *testing.T) {
 // exercises Validate's filepath.Clean normalization, not a byte-for-byte
 // comparison a caller could dodge by accident.
 func TestLayout_Validate_RejectsEquivalentSpellingsOfTheSameMount(t *testing.T) {
-	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []string{"/mnt/disk1/", "/mnt/disk1"}}
+	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1/"}, {RoleIndex: 2, Mountpoint: "/mnt/disk1"}}}
 	if err := l.Validate(); !errors.Is(err, ErrDuplicateMount) {
 		t.Fatalf("Validate: got %v, want ErrDuplicateMount", err)
 	}
 }
 
 func TestLayout_Validate_RejectsRoleOverlapWithCacheMount(t *testing.T) {
-	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []string{"/mnt/disk1"}, CacheMount: "/mnt/disk1"}
+	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}}, CacheMount: "/mnt/disk1"}
 	if err := l.Validate(); !errors.Is(err, ErrDuplicateMount) {
 		t.Fatalf("Validate: got %v, want ErrDuplicateMount", err)
 	}
 }
 
 func TestLayout_Validate_RejectsEmptyMount(t *testing.T) {
-	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []string{""}}
+	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []DataMount{{RoleIndex: 1, Mountpoint: ""}}}
 	if err := l.Validate(); !errors.Is(err, ErrEmptyMount) {
 		t.Fatalf("Validate: got %v, want ErrEmptyMount", err)
 	}
@@ -73,14 +73,14 @@ func TestLayout_Validate_RejectsEmptyMount(t *testing.T) {
 // must refuse this layout rather than emit a config that risks losing
 // every content file.
 func TestLayout_ContentPaths_RefusesTooFewDistinctDevices(t *testing.T) {
-	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []string{"/mnt/disk1"}}
+	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}}}
 	if _, err := l.ContentPaths(); !errors.Is(err, ErrContentPlacement) {
 		t.Fatalf("ContentPaths: got %v, want ErrContentPlacement", err)
 	}
 }
 
 func TestLayout_ContentPaths_SucceedsAtExactlyThreeDevices(t *testing.T) {
-	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []string{"/mnt/disk1", "/mnt/disk2"}}
+	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}, {RoleIndex: 2, Mountpoint: "/mnt/disk2"}}}
 	got, err := l.ContentPaths()
 	if err != nil {
 		t.Fatalf("ContentPaths: %v", err)
@@ -94,7 +94,7 @@ func TestLayout_ContentPaths_SucceedsAtExactlyThreeDevices(t *testing.T) {
 func TestLayout_ContentPaths_PrefersCacheBeforeData(t *testing.T) {
 	l := Layout{
 		ParityMounts: []string{"/mnt/parity1"},
-		DataMounts:   []string{"/mnt/disk1", "/mnt/disk2", "/mnt/disk3"},
+		DataMounts:   []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}, {RoleIndex: 2, Mountpoint: "/mnt/disk2"}, {RoleIndex: 3, Mountpoint: "/mnt/disk3"}},
 		CacheMount:   "/mnt/cache",
 	}
 	got, err := l.ContentPaths()
@@ -112,14 +112,14 @@ func TestLayout_ContentPaths_PrefersCacheBeforeData(t *testing.T) {
 func TestLayout_ContentPaths_TwoParityNeedsFourCopies(t *testing.T) {
 	l := Layout{
 		ParityMounts: []string{"/mnt/parity1", "/mnt/parity2"},
-		DataMounts:   []string{"/mnt/disk1", "/mnt/disk2"},
+		DataMounts:   []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}, {RoleIndex: 2, Mountpoint: "/mnt/disk2"}},
 	}
 	// min = 2 + 2 = 4, but only boot + 2 data disks (3) are available.
 	if _, err := l.ContentPaths(); !errors.Is(err, ErrContentPlacement) {
 		t.Fatalf("ContentPaths: got %v, want ErrContentPlacement", err)
 	}
 
-	l.DataMounts = append(l.DataMounts, "/mnt/disk3")
+	l.DataMounts = append(l.DataMounts, DataMount{RoleIndex: 3, Mountpoint: "/mnt/disk3"})
 	got, err := l.ContentPaths()
 	if err != nil {
 		t.Fatalf("ContentPaths: %v", err)
@@ -130,10 +130,58 @@ func TestLayout_ContentPaths_TwoParityNeedsFourCopies(t *testing.T) {
 	}
 }
 
+// TestLayout_Validate_RejectsInvalidRoleIndex is #360's own safety
+// property: a role_index below 1 cannot name a "dN" directive.
+func TestLayout_Validate_RejectsInvalidRoleIndex(t *testing.T) {
+	l := Layout{ParityMounts: []string{"/mnt/parity1"}, DataMounts: []DataMount{{RoleIndex: 0, Mountpoint: "/mnt/disk1"}}}
+	if err := l.Validate(); !errors.Is(err, ErrInvalidRoleIndex) {
+		t.Fatalf("Validate: got %v, want ErrInvalidRoleIndex", err)
+	}
+}
+
+// TestLayout_Validate_RejectsDuplicateRoleIndex is #360's own safety
+// property: two data mounts sharing a role_index would render the same
+// "dN" directive twice, silently merging two distinct disks under one
+// SnapRAID identity.
+func TestLayout_Validate_RejectsDuplicateRoleIndex(t *testing.T) {
+	l := Layout{
+		ParityMounts: []string{"/mnt/parity1"},
+		DataMounts:   []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}, {RoleIndex: 1, Mountpoint: "/mnt/disk2"}},
+	}
+	if err := l.Validate(); !errors.Is(err, ErrDuplicateRoleIndex) {
+		t.Fatalf("Validate: got %v, want ErrDuplicateRoleIndex", err)
+	}
+}
+
+// TestLayout_Render_NamesDataDisksByRoleIndexAcrossAGap is #360's core
+// acceptance criterion: a role_index gap (here, role_index 2 missing —
+// the shape a middle-disk removal, #358, leaves behind) must render
+// "d1" and "d3", never renumber the surviving disk down to "d2". A
+// positional renderer (fmt.Sprintf("data d%d", i+1)) would instead
+// produce "d1" and "d2" here, silently renaming /mnt/disk3.
+func TestLayout_Render_NamesDataDisksByRoleIndexAcrossAGap(t *testing.T) {
+	l := Layout{
+		ParityMounts: []string{"/mnt/parity1"},
+		DataMounts:   []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}, {RoleIndex: 3, Mountpoint: "/mnt/disk3"}},
+	}
+	got, err := l.Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	for _, want := range []string{"data d1 /mnt/disk1/\n", "data d3 /mnt/disk3/\n"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Render() = %q, want it to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, "data d2 ") {
+		t.Fatalf("Render() = %q, must not renumber the gap's survivor to d2", got)
+	}
+}
+
 func TestLayout_Render_TwoParityDirectiveNames(t *testing.T) {
 	l := Layout{
 		ParityMounts: []string{"/mnt/parity1", "/mnt/parity2"},
-		DataMounts:   []string{"/mnt/disk1", "/mnt/disk2", "/mnt/disk3"},
+		DataMounts:   []DataMount{{RoleIndex: 1, Mountpoint: "/mnt/disk1"}, {RoleIndex: 2, Mountpoint: "/mnt/disk2"}, {RoleIndex: 3, Mountpoint: "/mnt/disk3"}},
 	}
 	got, err := l.Render()
 	if err != nil {

@@ -16,9 +16,10 @@ var ErrJobTypeNotRegistered = fmt.Errorf("job: this job type has no registered i
 // interrupted job: most types need none — a plain status flip to Cancelled
 // is enough. TypeDiskUpgradeData registers its Unwind (doc 02 §4 E3), so
 // Cancel records cancelled only once nothing the upgrade touched is still
-// mounted. params is the job's persisted Params, the same payload the
-// RunFunc decodes.
-type AbortFunc func(ctx context.Context, params []byte) error
+// mounted. id is the job's own id, the same RunContext.JobID its runs
+// saw; params is the job's persisted Params, the same payload the RunFunc
+// decodes.
+type AbortFunc func(ctx context.Context, id string, params []byte) error
 
 type registryEntry struct {
 	run         RunFunc
