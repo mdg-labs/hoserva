@@ -24,7 +24,8 @@ existing line by adding its PR number.
 
 ## Partial failure and atomicity
 - **partial-failure** — DB row committed before a later side effect (generated file, mount, Samba account, audit row, notification row) that can fail; error returned over a half-applied change, or retry blocked by the leftover row — PR 174, 206, 213, 216, 218, 228
-- **partial-failure** — a compensating delete uses the request context, so a disconnect cancels the rollback and leaves the rows it was supposed to remove — PR 344
+- **partial-failure** — a compensating delete, or a live apply that must follow an already-committed row, uses the request context, so a disconnect cancels it and leaves DB and live state disagreeing — PR 344, 382
+- **partial-failure** — validation interleaved with writes, so a refused 400 still leaves the fields before the failing one applied — PR 382
 - **partial-failure** — rollback restores the row and files but not the live state (mounts) — PR 218
 - **partial-failure** — rollback restores a snapshot read before an unserialized write window, so a concurrent save that succeeded in between is silently reverted — PR 357
 - **live-state** — change persisted and written to config but never applied to what is running (an idempotency early return keyed on a name that never changes; units written but the live mount left on its old branches) — PR 338
@@ -35,6 +36,7 @@ existing line by adding its PR number.
 - **durability** — `rename` without an fsync of the directory; truncate-then-write of a settings file or certificate; archive written in place with `O_TRUNC`; a certificate and key replaced as two renames with no recovery if the process stops between them — PR 150, 174, 213, 236, 344
 - **atomicity** — read-modify-write of a whole row lets concurrent partial updates overwrite each other — PR 182, 199
 - **atomicity** — check-then-act on a path (validate, then re-resolve by name) — PR 228, 236
+- **atomicity** — a conditional clear keyed only on the row, not on the state and holder the caller checked, so a transition that lands between read and write is wiped — PR 382
 - **atomicity** — a maintenance check that returns before the mutation, so array stop can unmount while the mutation is still writing under the mountpoint — PR 344
 
 ## Fail-open and error handling
@@ -59,7 +61,8 @@ existing line by adding its PR number.
 - **ui-states** — a "touched" flag sends a cleared field as an empty value the schema rejects, instead of omitting it to keep the stored secret — PR 357
 - **drift** — a domain rule (which mode change relocates where, which removal states leave the pool) copied between pages or packages instead of shared from one definition — PR 357, 370
 - **ui-states** — stale response overwrites the current selection (open A, open B, A's response lands) — PR 195, 228
-- **ui-states** — error rendered behind an open dialog or overlay — PR 216, 228
+- **ui-states** — error rendered behind an open dialog or overlay — PR 216, 228, 382
+- **ui-states** — a dialog, overlay or panel dismissable (Escape, backdrop, Cancel) while its request runs, so the later failure lands on a closed surface — PR 382
 - **ui-copy** — help text implies an operation leaves the system ready for a physical step (pull the disk) when a further required step remains — PR 370
 - **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
 - **i18n** — raw API enum shown instead of a catalog label for every value but the one the author tested — PR 337
@@ -70,7 +73,7 @@ existing line by adding its PR number.
 ## Validation and contracts
 - **validation** — duplicate entries accepted (same device in two roles, repeated mount path, duplicate grant ids) — PR 150, 221
 - **validation** — missing map key read as zero; integer overflow after parsing; empty payload skipping a required `confirm` — PR 150, 177, 236
-- **mock-drift** — `cmd/mockapi` accepts what the production handler rejects, or defaults differently — PR 166, 182, 213, 228
+- **mock-drift** — `cmd/mockapi` accepts what the production handler rejects, or defaults differently — PR 166, 182, 213, 228, 382
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
 - **doc-drift** — a design doc names a state or identifier the code never persists — PR 370
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
@@ -104,4 +107,5 @@ existing line by adding its PR number.
 - **platform** — a daemon that drops privileges reads its config as its own group; a root-only generated file locks it out (upsd.users needs root:nut 0640) — PR 337
 - **platform** — systemd: a masked unit cannot start, and a disabled one was switched off on purpose — never start either — PR 338
 - **platform** — exports(5) default-options field (`-opts`) stored as a client host — PR 344
+- **platform** — `[[ -e path ]]` is false for a dangling symlink, so a script that then creates the path fails on it; test `-L` too — PR 382
 - **platform** — systemd `systemctl stop` of a busy mount reports a failed job without EBUSY text, so a retry that matches only strerror never runs — PR 344
