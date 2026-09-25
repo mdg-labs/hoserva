@@ -188,10 +188,10 @@ Before 1.0 only opt-in beta users run Hoserva, and GitHub Releases keeps every v
 `apt update` refreshes every source on the host — an outbound request per source the user never asked Hoserva to make — and changes what the next unrelated upgrade does. One static index keeps the GitHub API's unauthenticated rate limit out of the picture and describes both channels in one file. There are no down migrations (D16), so rollback is only safe as "previous package plus its snapshot", which GitHub Releases keeping every version makes possible.
 
 ### Q68 — Debian updates and reboots
-**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §6, doc 03 §8.6
+**Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §6, doc 03 §8.6, doc 02 §4
 
-**Default: the `.deb` recommends `unattended-upgrades`, configured for Debian security updates only. Hoserva never reboots on its own: `/settings/updates` shows pending Debian updates and whether a reboot is required, and a reboot the user starts waits for Parity, Array-write and Topology jobs, then runs the clean shutdown sequence (Q70).**
-A home server that falls behind on security updates is a real risk for the target user, and unattended security updates are Debian's own mechanism for it. An unplanned reboot mid-sync or mid-evacuation is worse than a delayed kernel update, so the reboot stays the user's action.
+**Default: the `.deb` recommends `unattended-upgrades`, configured for Debian security updates only. Hoserva never reboots on its own: `/settings/updates` shows pending Debian updates and whether a reboot is required, and a reboot the user starts waits for a running Parity, Array-write or Topology job — except a data-disk upgrade (doc 02 §4), which the clean shutdown sequence (Q70) stops at its next checkpoint instead of the reboot waiting for it — then runs that sequence.**
+A home server that falls behind on security updates is a real risk for the target user, and unattended security updates are Debian's own mechanism for it. An unplanned reboot mid-sync or mid-evacuation is worse than a delayed kernel update, so the reboot stays the user's action. A data-disk upgrade is the one exception: it is resumable and the array is already stopped for it, so waiting hours for the whole copy buys nothing a checkpoint stop doesn't already give for free.
 
 ### Q74 — Metrics, job logs and history retention
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 01 §4, §6, doc 03 §2, §3.4, doc 10 §1

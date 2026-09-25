@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
@@ -353,11 +354,18 @@ func (e *Engine) snapshotDir() string {
 }
 
 // Reboot waits for storage jobs, runs the Q70 sequence, then reboots.
-// Nothing else on Engine calls Host.Reboot.
+// A running data-disk upgrade is the one exception (Q68 vs doc 02 §4 E4):
+// it is resumable and the array is already stopped for it, so the Q70
+// sequence's own maintenance-mode entry stops it at its next checkpoint
+// instead of Reboot waiting hours for the whole copy to finish. Every
+// other Parity, Array-write or Topology job still blocks Reboot until it
+// finishes. Nothing else on Engine calls Host.Reboot.
 func (e *Engine) Reboot(ctx context.Context) error {
 	if e.Jobs != nil {
-		if err := e.Jobs.WaitForStorageJobs(ctx); err != nil {
-			return err
+		if blocking := e.Jobs.BlockingStorageJob(); blocking == nil || blocking.Type != job.TypeDiskUpgradeData {
+			if err := e.Jobs.WaitForStorageJobs(ctx); err != nil {
+				return err
+			}
 		}
 	}
 	if e.Shutdown != nil {
