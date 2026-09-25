@@ -370,10 +370,6 @@ func run(cfg config) error {
 	if err := networkSvc.Recover(ctx); err != nil {
 		log.Printf("hoservad: restoring unconfirmed network change: %v", err)
 	}
-	var shareUsages share.UsageReader
-	if parityEngine != nil {
-		shareUsages = parityEngine.Usage
-	}
 	// rebuildArraySequence is also the ArrayReady hook job.TypeDiskFormat/
 	// DiskAdd/DiskReplace call below, moved up here (from its previous
 	// position right after this point) so shareService can already close
@@ -393,7 +389,7 @@ func run(cfg config) error {
 		handler.SetArray(seq)
 		return nil
 	}
-	shareService := newShareService(shareStore, arrayStore, generator, pool.SystemdMounter{Runner: linuxDisks.Exec}, shareUsages)
+	shareService := newShareService(shareStore, arrayStore, generator, pool.SystemdMounter{Runner: linuxDisks.Exec}, parity.NewUsageStore(db))
 	shareService.PostCommit = rebuildArraySequence
 	// topologyChanged is the disk-topology jobs' ArrayReady hook, built by
 	// wireTopologyHooks below so the lab tests (parity_registrar_lab_test.go,
@@ -437,18 +433,10 @@ func run(cfg config) error {
 		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
 		ArrayReady: topologyChanged,
 	}))
-	// replaceParityEngine is left a true nil interface, not a non-nil
-	// interface wrapping a nil *parity.SnapraidEngine, when snapraid.conf
-	// doesn't exist yet (no array created): RunDiskReplace's own
-	// dependency check (d.Parity == nil) only catches the former, and its
-	// GetArray call already fails closed with ErrNoArray in that case
-	// before ever reaching Parity — this is only extra safety against
-	// arrayStore and snapraid.conf ever disagreeing about whether an
-	// array exists.
-	var replaceParityEngine parity.Engine
-	if parityEngine != nil {
-		replaceParityEngine = parityEngine
-	}
+	// The replace and upgrade jobs resolve the parity engine per call: a
+	// daemon started with no array only gets one from a live array
+	// creation (#265).
+	replaceParityEngine := currentParityEngine{handler: handler}
 	// TypeDiskReplace's own snapraid fix step genuinely honors context
 	// cancellation (exec.CommandContext kills the subprocess, #288's own
 	// lab test proves this), so it is registered cancellable — a stuck or
