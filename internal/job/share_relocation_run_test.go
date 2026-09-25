@@ -592,6 +592,122 @@ func TestRunShareRelocation_ToCache_PersistsManifestOnce_NotPerCheckpoint(t *tes
 	}
 }
 
+// TestRunShareRelocation_ToCache_CancelBetweenFinalSyncAndClear_ClearSurvives
+// is #381's own regression test: a Cancel landing the instant the
+// relocation's own trailing sync succeeds — before RunShareRelocation's own
+// clear runs — must not leave the clear itself failing with
+// context.Canceled, since cache.RelocateToCache never checks ctx again
+// after that sync call returns (internal/cache/relocate.go). A clear that
+// failed that way would be indistinguishable from the RunFunc's own
+// reaction to the cancel (isCancellationDerived, scheduler.go) and silently
+// dropped, stranding the manifest so it could wrongly exempt a later,
+// unrelated removal at the same disk+path from the guard (doc 02 §4, Q15).
+// Reuses contextCheckingManifestStore (evacuation_run_test.go), which fails
+// Replace exactly the way the real store's BeginTx(ctx) would on an
+// already-cancelled context, so this fails on the pre-fix code — which
+// clears on the job's own cancellable ctx and leaves the manifest
+// persisted — and passes once the clear runs on context.WithoutCancel, the
+// same fix #378 made for evacuation.
+func TestRunShareRelocation_ToCache_CancelBetweenFinalSyncAndClear_ClearSurvives(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	share := newShareRelocationShare(t, "docs")
+	src := filepath.Join(share.Branches[0], "report.pdf")
+	mustWriteFile(t, src, "report bytes")
+
+	manifestStore := contextCheckingManifestStore{&fakeRelocationManifestStore{}}
+
+	var calls int
+	sync := func(context.Context, []parity.ManifestEntry) error {
+		calls++
+		if calls == 2 {
+			// The second call is the trailing sync (RelocatePhaseFinalSync,
+			// after the delete phase). RelocateToCache never checks ctx
+			// again once this call returns, so a Cancel landing exactly
+			// here reaches RunShareRelocation's own clear with err == nil,
+			// report.Interrupted == false — precisely the race #381
+			// describes.
+			cancel()
+		}
+		return nil
+	}
+
+	fn := RunShareRelocation(ShareRelocationDeps{
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     sync,
+		Manifest: manifestStore,
+	})
+
+	rc := &RunContext{
+		ctx:            ctx,
+		out:            &bytes.Buffer{},
+		params:         mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}),
+		stopRequested:  make(chan struct{}),
+		saveCheckpoint: func([]byte) error { return nil },
+		setProgress:    func(int) {},
+	}
+
+	if err := fn(ctx, rc); err != nil {
+		t.Fatalf("relocation with a cancel landing right after its trailing sync succeeded: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected exactly 2 sync calls (pre-delete, trailing), got %d", calls)
+	}
+
+	_, manifest, removingDisks := manifestStore.snapshot()
+	if manifest != nil || removingDisks != nil {
+		t.Fatalf("manifest after a cancel landing between the trailing sync and the clear = %+v/%+v, want cleared despite the cancel", manifest, removingDisks)
+	}
+}
+
+// TestRunShareRelocation_ToCache_ClearFailure_SurfacesAsPlainFailure proves
+// #381's acceptance criterion that a clear failing for a genuine, unrelated
+// reason (no cancel involved at all) is still recorded on the job rather
+// than dropped: moving the clear onto context.WithoutCancel(ctx) must not
+// stop a plain clear failure from surfacing — runJob's own plain-failure
+// path (reason != reasonCancel, "job_failed") keeps this error's message
+// unchanged, exactly as TestScheduler_ShareRelocationCancelRace_BeforeReturn_ManifestClearFailureIsNotErased
+// (scheduler_cancel_race_test.go, #379) already proves for the raced-Cancel
+// case via runJob's own identity-based isCancellationDerived classification
+// — this fix leaves that plain-error shape unchanged.
+func TestRunShareRelocation_ToCache_ClearFailure_SurfacesAsPlainFailure(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	share := newShareRelocationShare(t, "docs")
+	src := filepath.Join(share.Branches[0], "report.pdf")
+	mustWriteFile(t, src, "report bytes")
+
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+
+	manifestStore := failClearManifestStore{
+		fakeRelocationManifestStore: &fakeRelocationManifestStore{},
+		err:                         errors.New("disk full"),
+	}
+
+	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
+		Sync:     syncFuncFromEngine(eng),
+		Manifest: manifestStore,
+	}))
+
+	j, err := s.Submit(ctx, TypeShareRelocation, nil, mustJSON(t, ShareRelocationParams{Share: "docs", To: "cache"}))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("status = %s, want failed — the relocation itself succeeded, only its own clear failed", finished.Status)
+	}
+	if finished.ErrorCode != "job_failed" {
+		t.Fatalf("ErrorCode = %q, want %q", finished.ErrorCode, "job_failed")
+	}
+	if !strings.Contains(finished.ErrorMessage, "disk full") {
+		t.Fatalf("ErrorMessage = %q, want it to surface the failed clear rather than dropping it", finished.ErrorMessage)
+	}
+}
+
 // TestRunShareRelocation_UnknownShareFailsTheJob proves a share the
 // caller cannot resolve fails the job rather than relocating nothing
 // silently — mirroring TestRunMover_SharesErrorFailsTheJob.

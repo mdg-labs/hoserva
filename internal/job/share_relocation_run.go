@@ -92,7 +92,25 @@ func RunShareRelocation(d ShareRelocationDeps) RunFunc {
 			// this run made — a persisted manifest that outlived this
 			// point would wrongly exempt a later, unrelated removal at the
 			// same disk+path from a future sync's own guard evaluation.
-			if clearErr := d.Manifest.Replace(ctx, nil, nil); clearErr != nil {
+			// Uses a non-cancellable context: cache.RelocateToCache never
+			// checks ctx again once that trailing sync call returns
+			// (internal/cache/relocate.go), so a Cancel landing in exactly
+			// that instant must not make this clear itself fail with
+			// context.Canceled — that failure would be indistinguishable
+			// from the RunFunc's own reaction to the cancel
+			// (isCancellationDerived, scheduler.go) and silently dropped
+			// under a bare, errorless Cancelled, stranding the manifest so
+			// it could wrongly exempt a later, unrelated removal from the
+			// guard (#381). The same fix #378 made for evacuation's own
+			// clear. A clear that still fails for another, genuine reason
+			// stays a plain wrapped error, exactly as before: #379 already
+			// closed the fail-open at runJob's own classification layer
+			// (isCancellationDerived) rather than in this RunFunc, so a
+			// plain error here — never itself context.Canceled once this
+			// runs on clearCtx — is recorded under any raced Cancel just as
+			// it always was.
+			clearCtx := context.WithoutCancel(ctx)
+			if clearErr := d.Manifest.Replace(clearCtx, nil, nil); clearErr != nil {
 				return fmt.Errorf("job: share relocation: clearing relocation manifest: %w", clearErr)
 			}
 		}
