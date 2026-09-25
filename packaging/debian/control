@@ -30,7 +30,17 @@ Architecture: any
 # preinst writes a durable drop-in before smartmontools' own postinst
 # starts its smartd service, and postinst masks/stops it as cleanup —
 # see each script's own comment for why.
-Depends: adduser, mergerfs (>= 2.40.2), snapraid (>= 12.4), smartmontools, hdparm, ${misc:Depends}
+#
+# samba and nfs-kernel-server are hard Depends, not Recommends: the
+# one-.deb promise holds "the way it already does for Samba and NFS"
+# (doc 14 §7), and doc 03 §1 Step 2's onboarding system check says a
+# missing storage dependency "should be impossible, they are .deb
+# dependencies" (D9). internal/config generates smb.conf and exports
+# for both the moment a share is created, and the array stop sequence
+# stops smbd.service and nfs-kernel-server.service — Hoserva owns
+# whether either daemon runs; installing the package must never leave
+# generated config pointed at a daemon that was never installed.
+Depends: adduser, mergerfs (>= 2.40.2), snapraid (>= 12.4), smartmontools, hdparm, samba, nfs-kernel-server, ${misc:Depends}
 # Optional off-box backup destinations (Q41, doc 10 §1) — local
 # destinations work without it, and the UI offers the install command
 # the first time a remote one is configured. Docker is deliberately not
