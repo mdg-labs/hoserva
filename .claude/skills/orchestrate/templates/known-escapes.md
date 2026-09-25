@@ -13,6 +13,7 @@ existing line by adding its PR number.
 ## Wiring and missing scope
 - **wiring** — service, store or engine built but never constructed or assigned in `cmd/hoservad/main.go`, so the handler field stays nil and every operation `501`s or returns empty data — PR 195 (metrics), 236 (share usage), 246 (relocation manifest), #261 (shares)
 - **wiring** — job type implemented but never registered with the scheduler, so `Submit` rejects it — PR 177 (sync/scrub/fix), #244, #245
+- **wiring** — a dependency captured once at startup from a value a live reconfiguration later supplies (parity engine, usage reader after a live array creation), so jobs and services wired from the snapshot keep nil until a restart — PR 370
 - **wiring** — publisher or alert function with no production call site — PR 236 (space alerts)
 - **wiring** — settings persisted but nothing reads them at runtime (schedules, create policy) — PR 182, 199
 - **wiring** — a second, independent path bypasses the one Hoserva owns (NUT `SHUTDOWNCMD` skipping the clean array stop) — PR 254
@@ -29,6 +30,7 @@ existing line by adding its PR number.
 - **live-state** — change persisted and written to config but never applied to what is running (an idempotency early return keyed on a name that never changes; units written but the live mount left on its old branches) — PR 338
 - **live-state** — a share-list mutation that bypasses Create/Update/Delete never runs PostCommit, so the array sequence keeps the previous share list — PR 344
 - **resume** — a resumed run looks its target up by the key an earlier invocation already moved, or re-checks an identity field the run itself changed (filesystem UUID after its own format), so every resume fails — PR 338
+- **resume** — a resumed job runs a plan persisted before a state change (a disk entering removal) without re-validating it against current state, so it writes where the plan is no longer allowed to — PR 370
 - **reconcile** — regenerate-and-reconcile from a partial state (disks but no shares) deletes files another subsystem owns — PR 338
 - **durability** — `rename` without an fsync of the directory; truncate-then-write of a settings file or certificate; archive written in place with `O_TRUNC`; a certificate and key replaced as two renames with no recovery if the process stops between them — PR 150, 174, 213, 236, 344
 - **atomicity** — read-modify-write of a whole row lets concurrent partial updates overwrite each other — PR 182, 199
@@ -55,12 +57,14 @@ existing line by adding its PR number.
 - **ui-states** — an error replaces the confirmation text the operator needs in order to retry — PR 344
 - **ui-states** — a dialog derives its options from state its own first step already changed, so a failure in the second step removes the retry (save mode, then relocate) — PR 357
 - **ui-states** — a "touched" flag sends a cleared field as an empty value the schema rejects, instead of omitting it to keep the stored secret — PR 357
-- **drift** — a domain rule (which mode change relocates where) copied between two pages instead of shared from one module — PR 357
+- **drift** — a domain rule (which mode change relocates where, which removal states leave the pool) copied between pages or packages instead of shared from one definition — PR 357, 370
 - **ui-states** — stale response overwrites the current selection (open A, open B, A's response lands) — PR 195, 228
 - **ui-states** — error rendered behind an open dialog or overlay — PR 216, 228
+- **ui-copy** — help text implies an operation leaves the system ready for a physical step (pull the disk) when a further required step remains — PR 370
 - **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
 - **i18n** — raw API enum shown instead of a catalog label for every value but the one the author tested — PR 337
 - **i18n** — a user-visible fallback or formatted value (duration units, separators) written as an English literal instead of a catalog key — PR 344, 357
+- **i18n** — a count-bearing catalog key with no `_one`/`_other` forms, so a count of one reads "1 files" — PR 370
 - **a11y** — controls without an accessible name; focus indicator removed with no replacement — PR 187, 199
 
 ## Validation and contracts
@@ -68,6 +72,7 @@ existing line by adding its PR number.
 - **validation** — missing map key read as zero; integer overflow after parsing; empty payload skipping a required `confirm` — PR 150, 177, 236
 - **mock-drift** — `cmd/mockapi` accepts what the production handler rejects, or defaults differently — PR 166, 182, 213, 228
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
+- **doc-drift** — a design doc names a state or identifier the code never persists — PR 370
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
 - **validation** — mode selected by a flag's non-empty value rather than its presence, so an empty value falls through to the default path (`-ups-notify ""` starting a second daemon) — PR 337
 - **validation** — a required phrase checked anywhere in a document instead of inside the section it must appear in — PR 337
