@@ -125,10 +125,14 @@ func diskMountDescription(d store.ArrayDisk) string {
 func poolStateFromStore(settings store.ArraySettings, disks []store.ArrayDisk) config.PoolState {
 	var dataDisks []string
 	var cachePath string
+	var removingDisk string
 	for _, d := range disks {
 		switch d.Role {
 		case store.ArrayRoleData:
 			dataDisks = append(dataDisks, d.Mountpoint)
+			if d.RemovalState == store.RemovalStateEvacuating || d.RemovalState == store.RemovalStateEvacuated {
+				removingDisk = d.Mountpoint
+			}
 		case store.ArrayRoleCache:
 			cachePath = d.Mountpoint
 		}
@@ -138,6 +142,7 @@ func poolStateFromStore(settings store.ArraySettings, disks []store.ArrayDisk) c
 		CachePath:    cachePath,
 		CreatePolicy: pool.CreatePolicy(settings.CreatePolicy),
 		Options:      pool.Options{MinFreeSpace: settings.MinFreeSpace},
+		RemovingDisk: removingDisk,
 	}
 }
 

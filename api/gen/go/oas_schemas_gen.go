@@ -1768,6 +1768,67 @@ func (s *DiskInventoryEntry) SetLooksLikeUnraid(val OptBool) {
 	s.LooksLikeUnraid = val
 }
 
+// Doc 09 §4's own disk-removal state machine (#359, #358): `evacuating` from before an evacuation's
+// first copy until its post-check passes — every pool mount marks this disk no-create for the whole
+// time (step 2); `evacuated` once that copy and post-check finish, but the disk is still in every
+// mergerfs branch list, SnapRAID layout and mount table (steps 7-9 have not run yet, still no-create);
+// `unpooled` and `unlisted` are #358's own later steps of that same removal.
+// Ref: #/components/schemas/DiskRemovalState
+type DiskRemovalState string
+
+const (
+	DiskRemovalStateEvacuating DiskRemovalState = "evacuating"
+	DiskRemovalStateEvacuated  DiskRemovalState = "evacuated"
+	DiskRemovalStateUnpooled   DiskRemovalState = "unpooled"
+	DiskRemovalStateUnlisted   DiskRemovalState = "unlisted"
+)
+
+// AllValues returns all DiskRemovalState values.
+func (DiskRemovalState) AllValues() []DiskRemovalState {
+	return []DiskRemovalState{
+		DiskRemovalStateEvacuating,
+		DiskRemovalStateEvacuated,
+		DiskRemovalStateUnpooled,
+		DiskRemovalStateUnlisted,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s DiskRemovalState) MarshalText() ([]byte, error) {
+	switch s {
+	case DiskRemovalStateEvacuating:
+		return []byte(s), nil
+	case DiskRemovalStateEvacuated:
+		return []byte(s), nil
+	case DiskRemovalStateUnpooled:
+		return []byte(s), nil
+	case DiskRemovalStateUnlisted:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *DiskRemovalState) UnmarshalText(data []byte) error {
+	switch DiskRemovalState(data) {
+	case DiskRemovalStateEvacuating:
+		*s = DiskRemovalStateEvacuating
+		return nil
+	case DiskRemovalStateEvacuated:
+		*s = DiskRemovalStateEvacuated
+		return nil
+	case DiskRemovalStateUnpooled:
+		*s = DiskRemovalStateUnpooled
+		return nil
+	case DiskRemovalStateUnlisted:
+		*s = DiskRemovalStateUnlisted
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/DiskState
 type DiskState string
 
@@ -6290,6 +6351,74 @@ func (o OptNilDateTime) Or(d time.Time) time.Time {
 	return d
 }
 
+// NewOptNilDiskRemovalState returns new OptNilDiskRemovalState with value set to v.
+func NewOptNilDiskRemovalState(v DiskRemovalState) OptNilDiskRemovalState {
+	return OptNilDiskRemovalState{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilDiskRemovalState is optional nullable DiskRemovalState.
+type OptNilDiskRemovalState struct {
+	Value DiskRemovalState
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilDiskRemovalState was set.
+func (o OptNilDiskRemovalState) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilDiskRemovalState) Reset() {
+	var v DiskRemovalState
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilDiskRemovalState) SetTo(v DiskRemovalState) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilDiskRemovalState) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilDiskRemovalState) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v DiskRemovalState
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilDiskRemovalState) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilDiskRemovalState) Get() (v DiskRemovalState, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilDiskRemovalState) Or(d DiskRemovalState) DiskRemovalState {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptNilError returns new OptNilError with value set to v.
 func NewOptNilError(v Error) OptNilError {
 	return OptNilError{
@@ -7657,6 +7786,9 @@ type PoolDiskEntry struct {
 	// the point mergerfs itself excludes it from create-policy placement. Omitted when freeBytes is not
 	// being reported for this disk.
 	NearMinFreeSpace OptBool `json:"nearMinFreeSpace"`
+	// Doc 09 §4 step 2's own removal state (#359) for this disk. Null for a disk that is not currently in
+	// removal.
+	RemovalState OptNilDiskRemovalState `json:"removalState"`
 }
 
 // GetDevice returns the value of Device.
@@ -7699,6 +7831,11 @@ func (s *PoolDiskEntry) GetNearMinFreeSpace() OptBool {
 	return s.NearMinFreeSpace
 }
 
+// GetRemovalState returns the value of RemovalState.
+func (s *PoolDiskEntry) GetRemovalState() OptNilDiskRemovalState {
+	return s.RemovalState
+}
+
 // SetDevice sets the value of Device.
 func (s *PoolDiskEntry) SetDevice(val string) {
 	s.Device = val
@@ -7737,6 +7874,11 @@ func (s *PoolDiskEntry) SetFreeBytes(val OptNilInt64) {
 // SetNearMinFreeSpace sets the value of NearMinFreeSpace.
 func (s *PoolDiskEntry) SetNearMinFreeSpace(val OptBool) {
 	s.NearMinFreeSpace = val
+}
+
+// SetRemovalState sets the value of RemovalState.
+func (s *PoolDiskEntry) SetRemovalState(val OptNilDiskRemovalState) {
+	s.RemovalState = val
 }
 
 type PoolDiskEntryRole string

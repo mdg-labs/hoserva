@@ -36,6 +36,12 @@ func mockArrayDisks(scenario string) []store.ArrayDisk {
 	}
 	if scenario == "degraded" {
 		disks = append(disks, store.ArrayDisk{Role: store.ArrayRoleData, RoleIndex: 4, Device: "/dev/sdx", Filesystem: "xfs", Mountpoint: "/mnt/disk4"})
+		// disk3 is mid-evacuation in this scenario (#359, doc 09 §4 step
+		// 2), the same way disk2 (below) is already marked failed —
+		// PlanDiskEvacuation/EvacuateDisk mirror production's own
+		// disk_removal_in_progress refusal for every mountpoint but this
+		// one.
+		disks[2].RemovalState = store.RemovalStateEvacuating
 	}
 	return disks
 }

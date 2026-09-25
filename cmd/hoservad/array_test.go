@@ -416,6 +416,70 @@ func TestNewArraySequence_SharesRejoinStopAndStart(t *testing.T) {
 	requireArgv(t, startCalls[10], "systemctl", "start", "smbd.service")
 }
 
+// TestNewArraySequence_RemovingDiskMarksOnlyThatDiskNC is #359's own
+// acceptance test for newArraySequence: with a data disk's own
+// removal_state set (SetRemovalState, as RunEvacuation's ArrayReady
+// dependency triggers via topologyChanged), the in-memory ArraySequence
+// it builds — the catch-all and every share mount, including its mover
+// write target — carries that disk's own branch NC and every other data
+// disk RW. With no disk in removal, this stays exactly what
+// TestNewArraySequence_SharesRejoinStopAndStart already proves.
+func TestNewArraySequence_RemovingDiskMarksOnlyThatDiskNC(t *testing.T) {
+	ctx, h, arrays, shares, disks, runner := newArrayTestEnv(t)
+	twoDataDisks := []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", Mountpoint: "/mnt/parity1"},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", Mountpoint: "/mnt/disk1"},
+		{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-d2", Mountpoint: "/mnt/disk2"},
+	}
+	if err := arrays.PutArray(ctx, store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "20G", CreatedAt: time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)}, twoDataDisks); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	if err := arrays.SetRemovalState(ctx, "/mnt/disk1", store.RemovalStateEvacuating, "job-1"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+	now := time.Date(2026, 9, 25, 12, 5, 0, 0, time.UTC)
+	if err := shares.Insert(ctx, store.Share{
+		Name:         "media",
+		CacheMode:    "array-only",
+		CreatePolicy: "mfs",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}); err != nil {
+		t.Fatalf("Insert share: %v", err)
+	}
+
+	attachDaemonArray(t, ctx, h, arrays, shares, disks, runner)
+	if h.Array == nil {
+		t.Fatal("Handler.Array is nil with a persisted topology")
+	}
+
+	catchAll, ok := h.Array.CatchAll.(pool.MountController)
+	if !ok {
+		t.Fatalf("CatchAll is %T, want pool.MountController", h.Array.CatchAll)
+	}
+	if !strings.Contains(catchAll.Mnt.What, "/mnt/disk1=NC") || !strings.Contains(catchAll.Mnt.What, "/mnt/disk2=RW") {
+		t.Fatalf("catch-all What = %q, want /mnt/disk1=NC and /mnt/disk2=RW", catchAll.Mnt.What)
+	}
+
+	if len(h.Array.ShareMounts) != 2 {
+		t.Fatalf("ShareMounts = %d, want 2 (media's own mount and its mover write target)", len(h.Array.ShareMounts))
+	}
+	shareMount, ok := h.Array.ShareMounts[0].(pool.MountController)
+	if !ok {
+		t.Fatalf("ShareMounts[0] is %T, want pool.MountController", h.Array.ShareMounts[0])
+	}
+	if !strings.Contains(shareMount.Mnt.What, "/mnt/disk1/media=NC") || !strings.Contains(shareMount.Mnt.What, "/mnt/disk2/media=RW") {
+		t.Fatalf("share mount What = %q, want /mnt/disk1/media=NC and /mnt/disk2/media=RW", shareMount.Mnt.What)
+	}
+	moverMount, ok := h.Array.ShareMounts[1].(pool.MountController)
+	if !ok {
+		t.Fatalf("ShareMounts[1] is %T, want pool.MountController", h.Array.ShareMounts[1])
+	}
+	if !strings.Contains(moverMount.Mnt.What, "/mnt/disk1/media=NC") {
+		t.Fatalf("mover-target mount What = %q, want /mnt/disk1/media=NC", moverMount.Mnt.What)
+	}
+}
+
 // TestNewArraySequence_NilWhenNoArray is the empty-path half of the
 // data-loss scenario: with no persisted topology, Array stays nil so
 // stop/start 501 rather than unmounting an empty path.

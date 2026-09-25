@@ -333,18 +333,26 @@ func (UnimplementedHandler) EnrollTotp(ctx context.Context, req *TotpEnrollReque
 //
 // Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one,
 // `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching
-// `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job that runs it through
-// `cache.RunRebalance` unchanged: copy and verify every batch, sync through the threshold guard (each
-// such sync naming this disk in the guard's own doc 09 §4 step 2 zero-files exemption, Q15, since the
-// batch that finally empties it would otherwise trip that rule), delete the batch's sources, sync
-// again (Q14) — then, once the whole plan finishes without being interrupted,
-// `cache.EvacuationPostCheck` confirms the disk's own share branches hold nothing but empty
-// directories (doc 09 §4 step 6) before the job reports success. A wrong or missing confirmation is
-// refused (`confirmation_required`) before anything runs. This operation does not put the disk into
-// step 2's own `removing`/no-create state, so it can still receive new writes for as long as this job
-// is running; success here means the disk's data as this job saw it is safely off it, not that the
-// disk is empty or safe to physically remove: step 2 and doc 09 §4 steps 7-9 (mergerfs branch-list
-// removal, SnapRAID removal, unmount) are not performed by this operation.
+// `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job. Before copying
+// anything — and again on every resume — the job marks the disk `evacuating` (persisted in SQLite,
+// D4) and applies no-create to its own branch in every pool mount, live (doc 09 §4 step 2); a failure
+// to apply that fails the job before any copy. It then runs the plan through `cache.RunRebalance`
+// unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this
+// disk in the guard's own zero-files exemption, Q15, since the batch that finally empties it would
+// otherwise trip that rule), delete the batch's sources, sync again (Q14) — then, once the whole
+// plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share
+// branches hold nothing but empty directories (doc 09 §4 step 6) and the job marks the disk
+// `evacuated` before reporting success. A wrong or missing confirmation is refused
+// (`confirmation_required`) before anything runs, a second disk is refused
+// (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused
+// (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal
+// state belongs to the job that set it: cancelling that job — queued, running or interrupted —
+// clears it and puts the disk back to taking writes, and cancelling any other job never does. A job
+// that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling
+// that run clears it. Success here means the disk's data as this job saw it is safely off it and it is
+// no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09
+// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are not performed by this
+// operation.
 //
 // POST /disks/array/evacuate
 func (UnimplementedHandler) EvacuateDisk(ctx context.Context, req *EvacuateDiskRequest) (r *Job, _ error) {
@@ -488,7 +496,8 @@ func (UnimplementedHandler) GetParity(ctx context.Context) (r *ParitySnapshot, _
 
 // GetPool implements getPool operation.
 //
-// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
+// Per-disk pool breakdown for `hoserva pool status` (doc 01 §3), including each disk's own
+// `removalState` (doc 09 §4 step 2, #359) where one is in progress.
 //
 // GET /pool
 func (UnimplementedHandler) GetPool(ctx context.Context) (r *PoolStatus, _ error) {
@@ -777,13 +786,14 @@ func (UnimplementedHandler) PlanDiskAdd(ctx context.Context, req *AddDiskPlanReq
 // other branch to evacuate onto, when an entry on the disk is something the evacuation copy path
 // cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room
 // even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or
-// deleted. This operation does not put the disk into doc 09 §4 step 2's own `removing`/no-create
-// state, so the disk keeps taking new writes for as long as its own create policy routes them there
-// — including while `evacuateDisk` is itself running, not only until it starts; a repeat evacuation
-// or a rebalance can be needed to pick up anything that lands there in the meantime. This operation
-// carries out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected
-// through the threshold guard, Q14); step 2 (no-create) and the mergerfs branch-list removal, SnapRAID
-// removal and unmount in steps 7-9 are not performed by it.
+// deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own
+// `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
+// disk keeps taking new writes only until that job starts, never for as long as it runs. Refused
+// (`disk_removal_in_progress`) while a different disk is already in removal. This operation carries
+// out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through
+// the threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by
+// this preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are
+// not performed by either.
 //
 // POST /disks/array/evacuate/plan
 func (UnimplementedHandler) PlanDiskEvacuation(ctx context.Context, req *EvacuateDiskPlanRequest) (r *EvacuationPlan, _ error) {

@@ -95,6 +95,13 @@ func newRebalanceTestHandler(t *testing.T) (h *api.Handler, scheduler *job.Sched
 		Sync:             noopEvacuationSync,
 		TrackedFileCount: trackedCount,
 		Shares:           sharesFn,
+		Store:            arrayStore,
+		// No live pool is mounted in this handler-level test (its own
+		// TestHandler_PlanDiskEvacuation_ThenEvacuateDisk_RunsThroughRealJob
+		// doc comment: only the API-layer wiring, not a real mount) — a
+		// no-op stands in the way newRebalanceTestHandler's own noopSync
+		// stands in for a real snapraid sync.
+		ArrayReady: func(context.Context) error { return nil },
 	}))
 
 	h = &api.Handler{
@@ -184,6 +191,108 @@ func TestHandler_EvacuateDisk_WrongConfirmationRefused(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("a wrong confirmation must never submit a job, got %d", len(jobs))
 	}
+}
+
+// TestHandler_PlanDiskEvacuation_RefusesWhileAnotherDiskIsRemoving proves
+// #359's own 409 refusal: while a different disk is already in removal,
+// planDiskEvacuation must refuse before computing anything, naming the
+// disk that is already removing. Re-planning the disk that is already in
+// removal — the "resume" case — must not be refused.
+func TestHandler_PlanDiskEvacuation_RefusesWhileAnotherDiskIsRemoving(t *testing.T) {
+	ctx := context.Background()
+	h, _, _, disk1, disk2 := newRebalanceTestHandler(t)
+
+	if err := h.ArrayStore.SetRemovalState(ctx, disk1, store.RemovalStateEvacuating, "job-1"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+
+	_, err := h.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: disk2})
+	if err == nil {
+		t.Fatal("PlanDiskEvacuation(a second disk) = nil, want disk_removal_in_progress")
+	}
+	if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_removal_in_progress" {
+		t.Fatalf("PlanDiskEvacuation(a second disk) = %+v, want 409 disk_removal_in_progress", status)
+	}
+
+	// Re-planning disk1 itself — already the one removing — must not be
+	// refused by this same check.
+	if _, err := h.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: disk1}); err != nil {
+		t.Fatalf("PlanDiskEvacuation(the disk already removing) = %v, want no refusal", err)
+	}
+}
+
+// TestHandler_EvacuateDisk_RefusesWhileAnotherDiskIsRemoving is the
+// evacuateDisk half of the same refusal.
+func TestHandler_EvacuateDisk_RefusesWhileAnotherDiskIsRemoving(t *testing.T) {
+	ctx := context.Background()
+	h, _, _, disk1, disk2 := newRebalanceTestHandler(t)
+
+	if err := h.ArrayStore.SetRemovalState(ctx, disk1, store.RemovalStateEvacuating, "job-1"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+
+	_, err := h.EvacuateDisk(ctx, &apiv1.EvacuateDiskRequest{Mountpoint: disk2, Confirmation: job.EvacuationConfirmation(disk2)})
+	if err == nil {
+		t.Fatal("EvacuateDisk(a second disk) = nil, want disk_removal_in_progress")
+	}
+	if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_removal_in_progress" {
+		t.Fatalf("EvacuateDisk(a second disk) = %+v, want 409 disk_removal_in_progress", status)
+	}
+	jobs, err := h.Store.List(ctx, job.ListFilter{})
+	if err != nil {
+		t.Fatalf("listing jobs: %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("a refused second disk must never submit a job, got %d", len(jobs))
+	}
+}
+
+// TestHandler_EvacuateDisk_RefusedWhileAnEvacuationIsPending proves
+// evacuateDisk surfaces job.Scheduler's evacuation admission (#359) as a
+// 409 evacuation_pending, submitting nothing, while an earlier evacuation
+// of the same disk sits interrupted — and accepts the disk again once that
+// job is cancelled.
+func TestHandler_EvacuateDisk_RefusedWhileAnEvacuationIsPending(t *testing.T) {
+	ctx := context.Background()
+	h, scheduler, _, disk1, _ := newRebalanceTestHandler(t)
+
+	finished := time.Now().UTC()
+	interrupted := &job.Job{
+		ID:          "11111111-1111-1111-1111-111111111111",
+		Type:        job.TypeEvacuation,
+		Class:       job.ClassArrayWrite,
+		Status:      job.StatusInterrupted,
+		Resumable:   true,
+		Cancellable: true,
+		Params:      []byte(`{"mountpoint":"` + disk1 + `","plan":{"moves":[]}}`),
+		CreatedAt:   finished,
+		FinishedAt:  &finished,
+	}
+	if err := h.Store.Create(ctx, interrupted); err != nil {
+		t.Fatalf("creating the interrupted evacuation: %v", err)
+	}
+
+	req := &apiv1.EvacuateDiskRequest{Mountpoint: disk1, Confirmation: job.EvacuationConfirmation(disk1)}
+	_, err := h.EvacuateDisk(ctx, req)
+	if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "evacuation_pending" {
+		t.Fatalf("EvacuateDisk while an evacuation is interrupted = %+v, want 409 evacuation_pending", status)
+	}
+	jobs, err := h.Store.List(ctx, job.ListFilter{})
+	if err != nil {
+		t.Fatalf("listing jobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("a refused evacuation must never submit a job, got %d jobs", len(jobs))
+	}
+
+	if _, err := scheduler.Cancel(ctx, interrupted.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	j, err := h.EvacuateDisk(ctx, req)
+	if err != nil {
+		t.Fatalf("EvacuateDisk after the interrupted one was cancelled: %v", err)
+	}
+	waitForStatus(t, h.Store, j.ID.String(), job.StatusSucceeded)
 }
 
 // TestHandler_PlanDiskEvacuation_IOErrorIsInternal is this round's own

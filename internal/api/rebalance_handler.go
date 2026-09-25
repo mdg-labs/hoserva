@@ -142,6 +142,32 @@ func (h *Handler) evacuationDataDisk(ctx context.Context, mountpoint string) (st
 	return existing, nil
 }
 
+// errDiskRemovalInProgress is refuseIfAnotherDiskRemoving's own 409: only
+// one disk is ever in removal at a time (doc 09 §4's own Open questions,
+// #359) — the *Removing mount builders each take a single removingDisk.
+func errDiskRemovalInProgress(mountpoint string) error {
+	return &apiError{code: "disk_removal_in_progress", statusCode: 409, message: fmt.Sprintf("disk %s is already being removed", mountpoint)}
+}
+
+// refuseIfAnotherDiskRemoving refuses (errDiskRemovalInProgress) when a
+// data disk other than mountpoint is already in removal (#359): both
+// PlanDiskEvacuation and EvacuateDisk call this before computing a plan,
+// so a second evacuation can never even preview against a pool topology
+// that a different evacuation's own no-create switch is still changing.
+// mountpoint itself is never refused: a repeat plan or evacuate call for
+// the disk already in removal is exactly the "resume" case, not a second
+// disk entering it.
+func (h *Handler) refuseIfAnotherDiskRemoving(ctx context.Context, mountpoint string) error {
+	removing, _, err := h.ArrayStore.RemovingDisk(ctx)
+	if err != nil {
+		return fmt.Errorf("checking for a disk already in removal: %w", err)
+	}
+	if removing != "" && removing != mountpoint {
+		return errDiskRemovalInProgress(removing)
+	}
+	return nil
+}
+
 // PlanDiskEvacuation computes the evacuation plan for the data disk at
 // req.Mountpoint (doc 09 §4 steps 1 and 3 — the fit pre-check and
 // enumerating what would move; step 2's no-create switch is not applied by
@@ -154,6 +180,9 @@ func (h *Handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDis
 		return nil, errRebalanceNotConfigured()
 	}
 	if _, err := h.evacuationDataDisk(ctx, req.Mountpoint); err != nil {
+		return nil, err
+	}
+	if err := h.refuseIfAnotherDiskRemoving(ctx, req.Mountpoint); err != nil {
 		return nil, err
 	}
 	shares, err := rebalanceShares(ctx)
@@ -188,6 +217,9 @@ func (h *Handler) EvacuateDisk(ctx context.Context, req *apiv1.EvacuateDiskReque
 		return nil, errConfirmRequired
 	}
 	if _, err := h.evacuationDataDisk(ctx, req.Mountpoint); err != nil {
+		return nil, err
+	}
+	if err := h.refuseIfAnotherDiskRemoving(ctx, req.Mountpoint); err != nil {
 		return nil, err
 	}
 	shares, err := rebalanceShares(ctx)

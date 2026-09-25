@@ -12,19 +12,19 @@ func TestRegistry_RegisterAbort_PanicsForUnregisteredType(t *testing.T) {
 			t.Fatal("RegisterAbort(unregistered type) did not panic")
 		}
 	}()
-	r.RegisterAbort(TypeDiskUpgradeData, func(context.Context, []byte) error { return nil })
+	r.RegisterAbort(TypeDiskUpgradeData, func(context.Context, string, []byte) error { return nil })
 }
 
 func TestRegistry_RegisterAbort_PanicsOnDoubleRegistration(t *testing.T) {
 	r := NewRegistry()
 	r.Register(TypeDiskUpgradeData, true, func(context.Context, *RunContext) error { return nil })
-	r.RegisterAbort(TypeDiskUpgradeData, func(context.Context, []byte) error { return nil })
+	r.RegisterAbort(TypeDiskUpgradeData, func(context.Context, string, []byte) error { return nil })
 	defer func() {
 		if recover() == nil {
 			t.Fatal("RegisterAbort called twice for the same type did not panic")
 		}
 	}()
-	r.RegisterAbort(TypeDiskUpgradeData, func(context.Context, []byte) error { return nil })
+	r.RegisterAbort(TypeDiskUpgradeData, func(context.Context, string, []byte) error { return nil })
 }
 
 func TestRegistry_LookupAbort_FalseWhenNoneRegistered(t *testing.T) {
@@ -39,7 +39,7 @@ func TestRegistry_LookupAbort_ReturnsRegisteredFunc(t *testing.T) {
 	r := NewRegistry()
 	r.Register(TypeDiskUpgradeData, true, func(context.Context, *RunContext) error { return nil })
 	called := false
-	r.RegisterAbort(TypeDiskUpgradeData, func(context.Context, []byte) error {
+	r.RegisterAbort(TypeDiskUpgradeData, func(context.Context, string, []byte) error {
 		called = true
 		return nil
 	})
@@ -47,7 +47,7 @@ func TestRegistry_LookupAbort_ReturnsRegisteredFunc(t *testing.T) {
 	if !ok {
 		t.Fatal("lookupAbort(TypeDiskUpgradeData) = false, want true")
 	}
-	if err := abort(context.Background(), nil); err != nil {
+	if err := abort(context.Background(), "job-1", nil); err != nil {
 		t.Fatalf("abort: %v", err)
 	}
 	if !called {

@@ -1064,6 +1064,21 @@ func (s *DailyWakeCount) Validate() error {
 	return nil
 }
 
+func (s DiskRemovalState) Validate() error {
+	switch s {
+	case "evacuating":
+		return nil
+	case "evacuated":
+		return nil
+	case "unpooled":
+		return nil
+	case "unlisted":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
 func (s DiskState) Validate() error {
 	switch s {
 	case "active":
@@ -3446,6 +3461,24 @@ func (s *PoolDiskEntry) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "state",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.RemovalState.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "removalState",
 			Error: err,
 		})
 	}

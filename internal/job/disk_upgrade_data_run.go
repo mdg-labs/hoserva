@@ -647,7 +647,7 @@ func (d DiskUpgradeDataDeps) noticeIfNewDiskMissing(ctx context.Context, rc *Run
 // interrupted data-disk upgrade (doc 02 §4 E3): Unwind. Cancel records
 // cancelled only once it succeeded.
 func AbortDiskUpgradeData(d DiskUpgradeDataDeps) AbortFunc {
-	return func(ctx context.Context, rawParams []byte) error {
+	return func(ctx context.Context, _ string, rawParams []byte) error {
 		params, err := decodeDiskUpgradeDataParams(rawParams)
 		if err != nil {
 			return fmt.Errorf("job: decoding disk_upgrade_data params to abort it: %w", err)

@@ -35,6 +35,13 @@ type PoolState struct {
 	// CreatePolicy, when set, is the catch-all pool's mergerfs create
 	// policy from array setup. Empty keeps CatchAllMount's default (Q11).
 	CreatePolicy pool.CreatePolicy `json:"create_policy,omitempty"`
+	// RemovingDisk, when non-empty, is the one data disk doc 09 §4 step 2
+	// marks no-create in every mount this state builds — the catch-all,
+	// every share mount and every non-cache-only share's mover write
+	// target — via the matching pool.*MountRemoving builder instead of
+	// the plain one (#359). Empty keeps every path byte-identical to
+	// before this field existed: the plain builders, same as always.
+	RemovingDisk string `json:"removing_disk,omitempty"`
 }
 
 // unitFileName is pool.UnitFileName — kept as a local alias so this
@@ -85,21 +92,41 @@ func poolMounts(state PoolState) ([]pool.Mount, error) {
 	mounts := []pool.Mount{catchAll}
 	for _, s := range state.Shares {
 		share := pool.Share{Name: s.Name, CacheMode: s.CacheMode, CreatePolicy: s.CreatePolicy}
-		shareMount, err := pool.ShareMount(share, state.DataDisks, state.CachePath, state.Options)
+		sm, err := shareMount(share, state)
 		if err != nil {
 			return nil, fmt.Errorf("config: building share mount for %q: %w", s.Name, err)
 		}
-		mounts = append(mounts, shareMount)
+		mounts = append(mounts, sm)
 		if s.CacheMode == pool.CacheOnly {
 			continue
 		}
-		moverMount, err := pool.MoverTargetMount(share, state.DataDisks, state.Options)
+		mm, err := moverTargetMount(share, state)
 		if err != nil {
 			return nil, fmt.Errorf("config: building mover target mount for %q: %w", s.Name, err)
 		}
-		mounts = append(mounts, moverMount)
+		mounts = append(mounts, mm)
 	}
 	return mounts, nil
+}
+
+// shareMount and moverTargetMount pick pool's own *MountRemoving builder
+// over its plain counterpart exactly when state.RemovingDisk is set
+// (#359, doc 09 §4 step 2) — every PoolState-driven mount-generation path
+// (WritePoolMounts, share.Service's own live mounts) goes through these
+// so the same disk is marked no-create everywhere at once, never in only
+// some of them.
+func shareMount(share pool.Share, state PoolState) (pool.Mount, error) {
+	if state.RemovingDisk == "" {
+		return pool.ShareMount(share, state.DataDisks, state.CachePath, state.Options)
+	}
+	return pool.ShareMountRemoving(share, state.DataDisks, state.CachePath, state.RemovingDisk, state.Options)
+}
+
+func moverTargetMount(share pool.Share, state PoolState) (pool.Mount, error) {
+	if state.RemovingDisk == "" {
+		return pool.MoverTargetMount(share, state.DataDisks, state.Options)
+	}
+	return pool.MoverTargetMountRemoving(share, state.DataDisks, state.RemovingDisk, state.Options)
 }
 
 // CanWriteShareFiles preflights every path a share apply writes: pool
@@ -122,7 +149,13 @@ func (g *Generator) CanWriteShareFiles(ctx context.Context, state PoolState) err
 }
 
 func catchAllMount(state PoolState) (pool.Mount, error) {
-	catchAll, err := pool.CatchAllMount(state.DataDisks, state.Options)
+	var catchAll pool.Mount
+	var err error
+	if state.RemovingDisk == "" {
+		catchAll, err = pool.CatchAllMount(state.DataDisks, state.Options)
+	} else {
+		catchAll, err = pool.CatchAllMountRemoving(state.DataDisks, state.RemovingDisk, state.Options)
+	}
 	if err != nil {
 		return pool.Mount{}, fmt.Errorf("config: building catch-all pool mount: %w", err)
 	}

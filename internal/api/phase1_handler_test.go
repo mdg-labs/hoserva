@@ -193,6 +193,64 @@ func TestHandler_GetPool_ReportsAssignedDiskRoleAndMountPoint(t *testing.T) {
 	}
 }
 
+// TestHandler_GetPool_ReportsRemovalState is #359's own acceptance
+// criterion: getPool surfaces removalState for a disk currently in
+// removal, and leaves it unset (null, never a zero-value placeholder)
+// for every other disk — both for a matched (present-in-inventory) entry
+// and for a stored member with no identity match (#326's own "missing"
+// shape).
+func TestHandler_GetPool_ReportsRemovalState(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-sdc"})
+	h.Disks = p
+
+	dataDir := t.TempDir()
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-sdc", WWN: "wwn-sdc", Mountpoint: dataDir},
+		{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdx", Filesystem: "xfs", FSUUID: "uuid-sdx", Mountpoint: "/mnt/disk2"},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	if err := arrayStore.SetRemovalState(ctx, dataDir, store.RemovalStateEvacuating, "job-1"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+	h.ArrayStore = arrayStore
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	byMount := make(map[string]apiv1.PoolDiskEntry, len(got.Disks))
+	for _, e := range got.Disks {
+		byMount[e.MountPoint] = e
+	}
+	removing, ok := byMount[dataDir]
+	if !ok {
+		t.Fatalf("Disks = %+v, missing the removing disk at %s", got.Disks, dataDir)
+	}
+	if !removing.RemovalState.Set || removing.RemovalState.Null || removing.RemovalState.Value != apiv1.DiskRemovalStateEvacuating {
+		t.Fatalf("removing disk RemovalState = %+v, want set to evacuating", removing.RemovalState)
+	}
+	// sdx is a stored member with no identity match in inventory at all
+	// (#326's own "missing" shape) — RemovalState must still round-trip
+	// for that path.
+	missing, ok := byMount["/mnt/disk2"]
+	if !ok {
+		t.Fatalf("Disks = %+v, missing the stored-only disk at /mnt/disk2", got.Disks)
+	}
+	if missing.RemovalState.Set {
+		t.Fatalf("missing disk RemovalState = %+v, want unset (not in removal)", missing.RemovalState)
+	}
+}
+
 // TestHandler_GetPool_MatchesRenumberedDiskByIdentity is #326: GetPool must
 // match a stored array member to inventory by its WWN (Q21), not by the
 // /dev/sdX path recorded at create-array time. A member that renumbered

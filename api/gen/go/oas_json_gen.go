@@ -4185,6 +4185,50 @@ func (s *DiskInventoryEntry) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes DiskRemovalState as json.
+func (s DiskRemovalState) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes DiskRemovalState from json.
+func (s *DiskRemovalState) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode DiskRemovalState to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch DiskRemovalState(v) {
+	case DiskRemovalStateEvacuating:
+		*s = DiskRemovalStateEvacuating
+	case DiskRemovalStateEvacuated:
+		*s = DiskRemovalStateEvacuated
+	case DiskRemovalStateUnpooled:
+		*s = DiskRemovalStateUnpooled
+	case DiskRemovalStateUnlisted:
+		*s = DiskRemovalStateUnlisted
+	default:
+		*s = DiskRemovalState(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s DiskRemovalState) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *DiskRemovalState) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes DiskState as json.
 func (s DiskState) Encode(e *jx.Encoder) {
 	e.Str(string(s))
@@ -12543,6 +12587,55 @@ func (s *OptNilDateTime) UnmarshalJSON(data []byte) error {
 	return s.Decode(d, json.DecodeDateTime)
 }
 
+// Encode encodes DiskRemovalState as json.
+func (o OptNilDiskRemovalState) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	if o.Null {
+		e.Null()
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes DiskRemovalState from json.
+func (o *OptNilDiskRemovalState) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptNilDiskRemovalState to nil")
+	}
+	if d.Next() == jx.Null {
+		if err := d.Null(); err != nil {
+			return err
+		}
+
+		var v DiskRemovalState
+		o.Value = v
+		o.Set = true
+		o.Null = true
+		return nil
+	}
+	o.Set = true
+	o.Null = false
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptNilDiskRemovalState) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptNilDiskRemovalState) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes Error as json.
 func (o OptNilError) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -14302,9 +14395,15 @@ func (s *PoolDiskEntry) encodeFields(e *jx.Encoder) {
 			s.NearMinFreeSpace.Encode(e)
 		}
 	}
+	{
+		if s.RemovalState.Set {
+			e.FieldStart("removalState")
+			s.RemovalState.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfPoolDiskEntry = [8]string{
+var jsonFieldsNameOfPoolDiskEntry = [9]string{
 	0: "device",
 	1: "mountPoint",
 	2: "role",
@@ -14313,6 +14412,7 @@ var jsonFieldsNameOfPoolDiskEntry = [8]string{
 	5: "usedBytes",
 	6: "freeBytes",
 	7: "nearMinFreeSpace",
+	8: "removalState",
 }
 
 // Decode decodes PoolDiskEntry from json.
@@ -14320,7 +14420,7 @@ func (s *PoolDiskEntry) Decode(d *jx.Decoder) error {
 	if s == nil {
 		return errors.New("invalid: unable to decode PoolDiskEntry to nil")
 	}
-	var requiredBitSet [1]uint8
+	var requiredBitSet [2]uint8
 
 	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
 		switch string(k) {
@@ -14408,6 +14508,16 @@ func (s *PoolDiskEntry) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"nearMinFreeSpace\"")
 			}
+		case "removalState":
+			if err := func() error {
+				s.RemovalState.Reset()
+				if err := s.RemovalState.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"removalState\"")
+			}
 		default:
 			return d.Skip()
 		}
@@ -14417,8 +14527,9 @@ func (s *PoolDiskEntry) Decode(d *jx.Decoder) error {
 	}
 	// Validate required fields.
 	var failures []validate.FieldError
-	for i, mask := range [1]uint8{
+	for i, mask := range [2]uint8{
 		0b00001111,
+		0b00000000,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.

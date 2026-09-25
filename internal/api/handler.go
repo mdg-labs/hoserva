@@ -251,6 +251,8 @@ func mapSchedulerError(id uuid.UUID, err error) error {
 		return &apiError{code: "disk_upgrade_cleanup_failed", statusCode: 409, message: err.Error()}
 	case errors.Is(err, job.ErrDiskUpgradeDataPending):
 		return &apiError{code: "disk_upgrade_pending", statusCode: 409, message: err.Error() + " — resume it, or cancel it to abort back to the old disk"}
+	case errors.Is(err, job.ErrEvacuationPending):
+		return &apiError{code: "evacuation_pending", statusCode: 409, message: err.Error() + " — resume it, or cancel it, before starting another"}
 	case errors.Is(err, job.ErrJobNotResumable):
 		return &apiError{code: "job_not_resumable", statusCode: 409, message: fmt.Sprintf("job %s is not a resumable job type (Q29)", id)}
 	case errors.Is(err, job.ErrJobNotInterrupted):

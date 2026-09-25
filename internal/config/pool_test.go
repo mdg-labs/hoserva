@@ -128,6 +128,64 @@ func TestWritePoolMounts_ForwardsCatchAllCreatePolicy(t *testing.T) {
 	}
 }
 
+// TestWritePoolMounts_RemovingDiskMarksOnlyThatDiskNC is #359's own
+// acceptance test for the catch-all and mover-target halves of doc 09 §4
+// step 2: with state.RemovingDisk set, every mount WritePoolMounts writes
+// must carry that disk's own branch as NC, and every other disk RW —
+// proven against the exact units the generator wrote, not against the
+// pool.*MountRemoving builders directly (internal/pool/topology_test.go
+// already covers those in isolation). movies is cache-then-move, so its
+// own share unit's data-disk branches are already NC regardless of
+// RemovingDisk (ShareMountRemoving's own doc comment) — its mover target
+// is the one unit this fixture can show the switch on.
+func TestWritePoolMounts_RemovingDiskMarksOnlyThatDiskNC(t *testing.T) {
+	state := loadPoolState(t)
+	state.RemovingDisk = "/mnt/disk1"
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	now := time.Date(2026, 9, 14, 10, 33, 12, 0, time.UTC)
+
+	if err := g.WritePoolMounts(ctx, state, "array start", 1, now); err != nil {
+		t.Fatalf("WritePoolMounts: %v", err)
+	}
+
+	catchAll, err := os.ReadFile(filepath.Join(g.Root, mountUnitPath(pool.CatchAllPath)))
+	if err != nil {
+		t.Fatalf("reading catch-all unit: %v", err)
+	}
+	if !strings.Contains(string(catchAll), "/mnt/disk1=NC") {
+		t.Fatalf("catch-all unit missing /mnt/disk1=NC:\n%s", catchAll)
+	}
+	if !strings.Contains(string(catchAll), "/mnt/disk2=RW") {
+		t.Fatalf("catch-all unit's other disk must stay RW:\n%s", catchAll)
+	}
+
+	mover, err := os.ReadFile(filepath.Join(g.Root, mountUnitPath(pool.MoverTargetPath("movies"))))
+	if err != nil {
+		t.Fatalf("reading movies mover-target unit: %v", err)
+	}
+	if !strings.Contains(string(mover), "/mnt/disk1/movies=NC") {
+		t.Fatalf("movies mover-target unit missing /mnt/disk1/movies=NC:\n%s", mover)
+	}
+	if !strings.Contains(string(mover), "/mnt/disk2/movies=RW") {
+		t.Fatalf("movies mover-target unit's other disk must stay RW:\n%s", mover)
+	}
+}
+
+// TestWritePoolMounts_NoRemovingDisk_MatchesGoldenFiles proves the flip
+// side of the test above: with RemovingDisk left empty — every existing
+// caller before #359 — WritePoolMounts's own output is unaffected. This
+// is TestWritePoolMounts itself, so a regression here already fails that
+// test's own golden comparison; this test exists only to name the
+// invariant explicitly for anyone reading this file for #359's own
+// change.
+func TestWritePoolMounts_NoRemovingDisk_MatchesGoldenFiles(t *testing.T) {
+	state := loadPoolState(t)
+	if state.RemovingDisk != "" {
+		t.Fatalf("fixture state.json unexpectedly sets removing_disk = %q", state.RemovingDisk)
+	}
+}
+
 // TestUnitFileName_EscapesLiteralHyphens is systemd's own path-escaping
 // rule (systemd-escape --path): ValidateShareName allows a hyphen in a
 // share name, so a share mounted at "/mnt/user/tv-shows" must not collide

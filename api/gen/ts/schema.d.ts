@@ -806,7 +806,7 @@ export interface paths {
         };
         /**
          * Pool status
-         * @description Per-disk pool breakdown for `hoserva pool status` (doc 01 §3).
+         * @description Per-disk pool breakdown for `hoserva pool status` (doc 01 §3), including each disk's own `removalState` (doc 09 §4 step 2, #359) where one is in progress.
          */
         get: operations["getPool"];
         put?: never;
@@ -1310,7 +1310,7 @@ export interface paths {
         put?: never;
         /**
          * Preview evacuating a data disk before removal
-         * @description Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no other branch to evacuate onto, when an entry on the disk is something the evacuation copy path cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or deleted. This operation does not put the disk into doc 09 §4 step 2's own `removing`/no-create state, so the disk keeps taking new writes for as long as its own create policy routes them there — including while `evacuateDisk` is itself running, not only until it starts; a repeat evacuation or a rebalance can be needed to pick up anything that lands there in the meantime. This operation carries out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the threshold guard, Q14); step 2 (no-create) and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not performed by it.
+         * @description Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no other branch to evacuate onto, when an entry on the disk is something the evacuation copy path cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the disk keeps taking new writes only until that job starts, never for as long as it runs. Refused (`disk_removal_in_progress`) while a different disk is already in removal. This operation carries out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not performed by either.
          */
         post: operations["planDiskEvacuation"];
         delete?: never;
@@ -1330,7 +1330,7 @@ export interface paths {
         put?: never;
         /**
          * Evacuate a data disk before removal
-         * @description Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one, `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job that runs it through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this disk in the guard's own doc 09 §4 step 2 zero-files exemption, Q15, since the batch that finally empties it would otherwise trip that rule), delete the batch's sources, sync again (Q14) — then, once the whole plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share branches hold nothing but empty directories (doc 09 §4 step 6) before the job reports success. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs. This operation does not put the disk into step 2's own `removing`/no-create state, so it can still receive new writes for as long as this job is running; success here means the disk's data as this job saw it is safely off it, not that the disk is empty or safe to physically remove: step 2 and doc 09 §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are not performed by this operation.
+         * @description Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one, `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job. Before copying anything — and again on every resume — the job marks the disk `evacuating` (persisted in SQLite, D4) and applies no-create to its own branch in every pool mount, live (doc 09 §4 step 2); a failure to apply that fails the job before any copy. It then runs the plan through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this disk in the guard's own zero-files exemption, Q15, since the batch that finally empties it would otherwise trip that rule), delete the batch's sources, sync again (Q14) — then, once the whole plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share branches hold nothing but empty directories (doc 09 §4 step 6) and the job marks the disk `evacuated` before reporting success. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs, a second disk is refused (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal state belongs to the job that set it: cancelling that job — queued, running or interrupted — clears it and puts the disk back to taking writes, and cancelling any other job never does. A job that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling that run clears it. Success here means the disk's data as this job saw it is safely off it and it is no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09 §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are not performed by this operation.
          */
         post: operations["evacuateDisk"];
         delete?: never;
@@ -2051,6 +2051,11 @@ export interface components {
         };
         /** @enum {string} */
         DiskState: "active" | "standby" | "spinning_up" | "missing" | "failed";
+        /**
+         * @description doc 09 §4's own disk-removal state machine (#359, #358): `evacuating` from before an evacuation's first copy until its post-check passes — every pool mount marks this disk no-create for the whole time (step 2); `evacuated` once that copy and post-check finish, but the disk is still in every mergerfs branch list, SnapRAID layout and mount table (steps 7-9 have not run yet, still no-create); `unpooled` and `unlisted` are #358's own later steps of that same removal.
+         * @enum {string}
+         */
+        DiskRemovalState: "evacuating" | "evacuated" | "unpooled" | "unlisted";
         /** @enum {string} */
         ContainerState: "running" | "stopped" | "restarting" | "exited" | "paused";
         /** @enum {string} */
@@ -2656,6 +2661,8 @@ export interface components {
             freeBytes?: number | null;
             /** @description True once this disk's free space is at or below the pool's configured minfreespace (doc 09 §1) — the point mergerfs itself excludes it from create-policy placement. Omitted when freeBytes is not being reported for this disk. */
             nearMinFreeSpace?: boolean;
+            /** @description doc 09 §4 step 2's own removal state (#359) for this disk. Null for a disk that is not currently in removal. */
+            removalState?: components["schemas"]["DiskRemovalState"] | null;
         };
         PoolStatus: {
             mounted: boolean;

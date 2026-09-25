@@ -52,6 +52,7 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 	diskMounts := make([]job.ArrayMount, 0, len(assigned))
 	var dataMounts []string
 	var cachePath string
+	var removingDisk string
 	for _, d := range assigned {
 		if d.Mountpoint == "" {
 			return nil, fmt.Errorf("array disk %s has no mountpoint", d.Device)
@@ -77,6 +78,9 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		switch d.Role {
 		case store.ArrayRoleData:
 			dataMounts = append(dataMounts, d.Mountpoint)
+			if d.RemovalState == store.RemovalStateEvacuating || d.RemovalState == store.RemovalStateEvacuated {
+				removingDisk = d.Mountpoint
+			}
 		case store.ArrayRoleCache:
 			cachePath = d.Mountpoint
 		}
@@ -121,7 +125,12 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		return seq, nil
 	}
 
-	catchAll, err := pool.CatchAllMount(dataMounts, pool.Options{MinFreeSpace: settings.MinFreeSpace})
+	var catchAll pool.Mount
+	if removingDisk == "" {
+		catchAll, err = pool.CatchAllMount(dataMounts, pool.Options{MinFreeSpace: settings.MinFreeSpace})
+	} else {
+		catchAll, err = pool.CatchAllMountRemoving(dataMounts, removingDisk, pool.Options{MinFreeSpace: settings.MinFreeSpace})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("building catch-all pool mount: %w", err)
 	}
@@ -148,7 +157,12 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 			CacheMode:    pool.CacheMode(row.CacheMode),
 			CreatePolicy: pool.CreatePolicy(row.CreatePolicy),
 		}
-		shareMount, err := pool.ShareMount(sh, dataMounts, cachePath, opts)
+		var shareMount pool.Mount
+		if removingDisk == "" {
+			shareMount, err = pool.ShareMount(sh, dataMounts, cachePath, opts)
+		} else {
+			shareMount, err = pool.ShareMountRemoving(sh, dataMounts, cachePath, removingDisk, opts)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("building share mount for %q: %w", sh.Name, err)
 		}
@@ -159,7 +173,12 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		if sh.CacheMode == pool.CacheOnly {
 			continue
 		}
-		moverMount, err := pool.MoverTargetMount(sh, dataMounts, opts)
+		var moverMount pool.Mount
+		if removingDisk == "" {
+			moverMount, err = pool.MoverTargetMount(sh, dataMounts, opts)
+		} else {
+			moverMount, err = pool.MoverTargetMountRemoving(sh, dataMounts, removingDisk, opts)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("building mover target mount for %q: %w", sh.Name, err)
 		}

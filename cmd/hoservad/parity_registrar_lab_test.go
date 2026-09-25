@@ -15,7 +15,7 @@
 // mounts at the documented /mnt/parity1, /mnt/disk1, /mnt/disk2 (doc 01
 // §6, the same mountpoint convention internal/job/disk_run_lab_test.go
 // already mounts real loop devices at) — whose ArrayReady hook is built
-// by newTopologyChangedHook (main.go), the exact function main.go's own
+// by wireTopologyHooks (main.go), the exact function main.go's own
 // run() builds topologyChanged from, wrapped only to rewrite
 // snapraid.conf onto lab-safe content paths (this file's own
 // p265WriteLabSnapraidConf, below) before the wrapped hook's own
@@ -204,7 +204,7 @@ func TestLabParityRegistrar_LiveArrayCreationReachesRealSyncAndMaintenanceChain(
 		chainGuard: chainGuard,
 	}
 
-	// shareService and rebuildArraySequence are newTopologyChangedHook's
+	// shareService and rebuildArraySequence are wireTopologyHooks's
 	// (main.go) other two dependencies, built the same way run() builds
 	// them: a real share.Service — Mounter and Usages left nil, since
 	// ApplyTopology never dereferences either while the pool.CatchAllPath
@@ -222,7 +222,7 @@ func TestLabParityRegistrar_LiveArrayCreationReachesRealSyncAndMaintenanceChain(
 		handler.SetArray(seq)
 		return nil
 	}
-	hook := newTopologyChangedHook(shareService, rebuildArraySequence, parityReg, handler)
+	hook := wireTopologyHooks(shareService, rebuildArraySequence, parityReg, handler)
 
 	// Before any array exists: parityEngine is nil at "startup" exactly as
 	// it is on a freshly onboarded daemon (main.go's own `if parityEngine
@@ -240,7 +240,7 @@ func TestLabParityRegistrar_LiveArrayCreationReachesRealSyncAndMaintenanceChain(
 		Store:     arrays,
 		Generator: generator,
 		Mounter:   disk.DirectMounter{Runner: exec},
-		// hook is newTopologyChangedHook's own return value — the exact
+		// hook is wireTopologyHooks's own return value — the exact
 		// ArrayReady hook main.go's run() builds topologyChanged from —
 		// wrapped only to rewrite snapraid.conf onto lab-safe content
 		// paths before hook's own parityReg.ensure call opens it; see

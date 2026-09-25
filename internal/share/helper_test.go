@@ -24,6 +24,7 @@ type testLayout struct {
 
 type recordingMounter struct {
 	mounts     []string
+	mounted    []pool.Mount
 	unmounts   []string
 	mountErr   error
 	unmountErr error
@@ -39,6 +40,7 @@ func (m *recordingMounter) Mount(_ context.Context, mnt pool.Mount) error {
 		return m.mountErr
 	}
 	m.mounts = append(m.mounts, mnt.Where)
+	m.mounted = append(m.mounted, mnt)
 	return nil
 }
 

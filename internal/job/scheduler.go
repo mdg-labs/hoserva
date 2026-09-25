@@ -67,6 +67,10 @@ var (
 	// (doc 02 §4 E3, UR7): the checkpoint is not saved and Release never
 	// runs.
 	ErrCancelRequested = errors.New("job: cancel requested before the release decision was saved")
+	// ErrEvacuationPending refuses a new evacuation while another one
+	// is queued, running or interrupted (#359). Callers wrap it with the
+	// pending job's id.
+	ErrEvacuationPending = errors.New("job: an evacuation is already pending")
 	// ErrJobNeedsRetry is a RunFunc's own signal that it stopped cleanly
 	// at a resumable checkpoint on its own decision — never through a
 	// Cancel or EnterMaintenance stop — and wants the scheduler to record
@@ -221,6 +225,12 @@ func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, pa
 		s.mu.Unlock()
 		return nil, ErrOnBattery
 	}
+	if t == TypeEvacuation {
+		if err := s.admitEvacuationLocked(ctx); err != nil {
+			s.mu.Unlock()
+			return nil, err
+		}
+	}
 
 	now := time.Now().UTC()
 	j := &Job{
@@ -271,6 +281,24 @@ func (s *Scheduler) admitDiskUpgradeDataLocked(ctx context.Context) error {
 	}
 	if !s.maintenance || !s.arrayStopped {
 		return ErrArrayNotStopped
+	}
+	return nil
+}
+
+// admitEvacuationLocked refuses a new evacuation while another one is
+// pending — queued, running or interrupted (#359). Only one disk is in
+// removal at a time, and an evacuation's removal state belongs to the
+// job that set it: a second evacuation of the same disk alongside an
+// interrupted one would hold the state the first one's cancel releases.
+// Callers must hold s.mu, so the check and the job's creation are one
+// step.
+func (s *Scheduler) admitEvacuationLocked(ctx context.Context) error {
+	pending, err := s.store.ListPending(ctx, TypeEvacuation)
+	if err != nil {
+		return fmt.Errorf("job: checking for a pending evacuation: %w", err)
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("%w: job %s", ErrEvacuationPending, pending[0].ID)
 	}
 	return nil
 }
@@ -365,7 +393,7 @@ func (s *Scheduler) Cancel(ctx context.Context, id string) (*Job, error) {
 func (s *Scheduler) abortAndCancel(ctx context.Context, j *Job, abort AbortFunc) (*Job, error) {
 	ctx = context.WithoutCancel(ctx)
 	if abort != nil {
-		if err := abort(ctx, j.Params); err != nil {
+		if err := abort(ctx, j.ID, j.Params); err != nil {
 			code := "job_abort_failed"
 			var oe *OutcomeError
 			if errors.As(err, &oe) && oe.Code != "" {
@@ -1065,6 +1093,7 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 	}
 
 	rc := &RunContext{
+		id:            rj.job.ID,
 		ctx:           ctx,
 		checkpoint:    rj.job.Checkpoint,
 		params:        rj.job.Params,

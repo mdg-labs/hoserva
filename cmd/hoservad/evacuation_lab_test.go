@@ -47,6 +47,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/parity"
+	"github.com/mdg-labs/hoserva/internal/store"
 
 	_ "modernc.org/sqlite"
 )
@@ -109,6 +110,12 @@ func TestLabEvacuation_FullEvacuation_RunsThroughRealRegistryAndSync(t *testing.
 		Sync:             evacuationSyncFunc(engine),
 		TrackedFileCount: rebalanceTrackedFileCount(engine),
 		Shares:           rebalanceShares,
+		Store:            arrays,
+		// No live pool is mounted by this test (its own file header: it
+		// covers the guard/sync wiring, not doc 09 §4 step 2's live
+		// no-create switch — evacuation_removal_state_lab_test.go covers
+		// that).
+		ArrayReady: func(context.Context) error { return nil },
 	}))
 	scheduler := shareRelocLabScheduler(t, registry)
 
@@ -258,6 +265,8 @@ func TestLabEvacuation_FailedRun_ClearsRemovingDisksExemption(t *testing.T) {
 		TrackedFileCount: rebalanceTrackedFileCount(engine),
 		Shares:           rebalanceShares,
 		Manifest:         engine.Relocation,
+		Store:            arrays,
+		ArrayReady:       func(context.Context) error { return nil },
 	}))
 	registry.Register(job.TypeSync, false, job.RunSync(engine))
 
@@ -289,6 +298,15 @@ func TestLabEvacuation_FailedRun_ClearsRemovingDisksExemption(t *testing.T) {
 	}
 	if manifest != nil || removingDisks != nil {
 		t.Fatalf("after the failed (non-resumable) run, store = (manifest=%+v, removingDisks=%+v), want both cleared", manifest, removingDisks)
+	}
+	// Unlike the guard's own exemption above, a plain failure (as opposed
+	// to an explicit Cancel) must leave the disk's own removal_state
+	// exactly as it was — still "evacuating" — so a later resume or
+	// retry still finds it no-create (#359, doc 09 §4 step 2).
+	if _, state, err := arrays.RemovingDisk(ctx); err != nil {
+		t.Fatalf("RemovingDisk: %v", err)
+	} else if state != store.RemovalStateEvacuating {
+		t.Fatalf("removal_state after a failed (non-cancelled) run = %q, want still %q", state, store.RemovalStateEvacuating)
 	}
 
 	// Disk1 now legitimately empties through unrelated, ordinary use —

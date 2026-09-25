@@ -334,6 +334,19 @@ CREATE TABLE array_settings (
 -- (Q21), recorded after FormatPlan succeeds — a failed format never
 -- inserts a row. size_bytes is capacity at join time (Q21 weak-identity
 -- match); NULL for rows written before that column existed.
+-- removal_state is doc 09 §4's own disk-removal state machine (#359,
+-- #358): NULL for a disk not in removal; 'evacuating' from before an
+-- evacuation's first copy until its post-check passes (step 2, every
+-- pool mount marks this disk NC); 'evacuated' once that copy and
+-- post-check finish but the disk is still in every mergerfs branch list,
+-- SnapRAID layout and mount table (steps 7-9 have not run yet);
+-- 'unpooled' and 'unlisted' are #358's own later steps of that same
+-- removal. All four are declared now, in one column, because SQLite
+-- cannot widen a CHECK constraint without rebuilding the table, which
+-- D16 forbids outside an expand/contract change. removal_job_id is the
+-- id of the evacuation job that set removal_state: cancelling that job
+-- clears the state, cancelling any other job never does. It is NULL
+-- whenever removal_state is.
 -- UNIQUE(device) and UNIQUE(fs_uuid) are a second, database-level guard
 -- against one physical disk (or one filesystem) holding two roles.
 -- Identities (wwn/serial/by_id_name/weak_identity) are copied from the
@@ -351,6 +364,8 @@ CREATE TABLE array_disks (
     by_id_name TEXT,
     weak_identity INTEGER NOT NULL DEFAULT 0 CHECK (weak_identity IN (0, 1)),
     mountpoint TEXT NOT NULL,
+    removal_state TEXT CHECK (removal_state IS NULL OR removal_state IN ('evacuating', 'evacuated', 'unpooled', 'unlisted')),
+    removal_job_id TEXT,
     UNIQUE (role, role_index),
     UNIQUE (device),
     UNIQUE (fs_uuid),

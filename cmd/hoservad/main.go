@@ -393,10 +393,10 @@ func run(cfg config) error {
 	shareService := newShareService(shareStore, arrayStore, generator, pool.SystemdMounter{Runner: linuxDisks.Exec}, shareUsages)
 	shareService.PostCommit = rebuildArraySequence
 	// topologyChanged is the disk-topology jobs' ArrayReady hook, built by
-	// newTopologyChangedHook below so this issue's own lab test
-	// (parity_registrar_lab_test.go, #265) can build the identical hook
-	// from the same function rather than reimplementing it.
-	topologyChanged := newTopologyChangedHook(shareService, rebuildArraySequence, parityReg, handler)
+	// wireTopologyHooks below so the lab tests (parity_registrar_lab_test.go,
+	// #265; evacuation_removal_state_lab_test.go, #359) build the identical
+	// hooks from the same function rather than reimplementing them.
+	topologyChanged := wireTopologyHooks(shareService, rebuildArraySequence, parityReg, handler)
 	handler.Scheduler = scheduler
 	handler.Store = jobStore
 	handler.Logs = logs
@@ -588,27 +588,47 @@ func run(cfg config) error {
 	return runErr
 }
 
-// newTopologyChangedHook builds the disk-topology jobs' ArrayReady hook
-// (job.DiskFormatDeps.ArrayReady and its DiskAdd/DiskReplace/
-// DiskUpgradeData siblings, run() wires it below): those jobs write only
-// the catch-all's unit, so shareService.ApplyTopology rewrites every
-// share's units with the new branch list first; then rebuildArraySequence
-// applies the rebuilt sequence to a pool that is already running, so an
+// liveUpdateFailure is what a topology hook does when the running pool
+// does not take the regenerated mounts.
+type liveUpdateFailure int
+
+const (
+	// logLiveUpdateFailure logs it and succeeds: the disk-topology jobs
+	// cannot be retried once the disk is a member, and the next array
+	// start applies the same mounts.
+	logLiveUpdateFailure liveUpdateFailure = iota
+	// failOnLiveUpdateFailure returns it: an evacuation must not copy
+	// anything while its disk still takes new writes in a live mount
+	// (doc 09 §4 step 2, #359).
+	failOnLiveUpdateFailure
+)
+
+// wireTopologyHooks builds both topology hooks run() uses and returns
+// topologyChanged, the disk-topology jobs' ArrayReady hook, which only
+// logs a failed live update. It binds parityReg's arrayReady — the hook
+// job.TypeEvacuation's run and abort call — to the variant that returns
+// that failure instead, before any evacuation can run.
+func wireTopologyHooks(shareService *share.Service, rebuildArraySequence func(ctx context.Context) error, parityReg *parityRegistrar, handler *api.Handler) func(ctx context.Context) error {
+	parityReg.arrayReady = newTopologyChangedHook(shareService, rebuildArraySequence, parityReg, handler, failOnLiveUpdateFailure)
+	return newTopologyChangedHook(shareService, rebuildArraySequence, parityReg, handler, logLiveUpdateFailure)
+}
+
+// newTopologyChangedHook builds an ArrayReady hook: shareService.
+// ApplyTopology rewrites every pool mount unit and share file from the
+// store (the disk-topology jobs themselves write only the catch-all's
+// unit); then rebuildArraySequence rebuilds Handler's ArraySequence from
+// the same store; then parityReg.ensure notices when a live `POST
+// /disks/array` has just written snapraid.conf where nothing existed at
+// startup and wires TypeSync/TypeScrub/TypeFix/TypeShareRelocation/
+// TypeRebalance/TypeEvacuation and Handler's own parity-derived fields
+// the same way startup does, so none of them need a restart (#265) — a
+// no-op once parity is already wired. Last, when the catch-all is
+// mounted, the rebuilt sequence is applied to the running pool, so an
 // added disk's capacity is available at once (doc 02 §4 "Adding a disk"
-// step 6) rather than at the next array start; then parityReg.ensure
-// notices when a live `POST /disks/array` has just written snapraid.conf
-// where nothing existed at startup and wires
-// TypeSync/TypeScrub/TypeFix/TypeShareRelocation/TypeRebalance/
-// TypeEvacuation and Handler's own parity-derived fields the same way
-// startup does, so none of them need a restart (#265) — a no-op once
-// parity is already wired, whether that happened here or at startup. The
-// live pool update runs last and its failure is only logged, not
-// returned, because the job cannot be retried once the disk is a member,
-// and the next array start applies the same mounts. run() and this
-// issue's own lab test (parity_registrar_lab_test.go) both build the hook
-// from this function, so the lab test exercises this exact body rather
-// than a reimplementation of it.
-func newTopologyChangedHook(shareService *share.Service, rebuildArraySequence func(ctx context.Context) error, parityReg *parityRegistrar, handler *api.Handler) func(ctx context.Context) error {
+// step 6) and a disk in removal is no-create at once (doc 09 §4 step 2).
+// onLiveFailure decides whether a failure of that last step is logged or
+// returned.
+func newTopologyChangedHook(shareService *share.Service, rebuildArraySequence func(ctx context.Context) error, parityReg *parityRegistrar, handler *api.Handler, onLiveFailure liveUpdateFailure) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		live := pool.IsMounted(pool.CatchAllPath)
 		if err := shareService.ApplyTopology(ctx, live); err != nil {
@@ -622,6 +642,9 @@ func newTopologyChangedHook(shareService *share.Service, rebuildArraySequence fu
 		}
 		if seq := handler.CurrentArray(); seq != nil {
 			if err := seq.RefreshLive(ctx, live); err != nil {
+				if onLiveFailure == failOnLiveUpdateFailure {
+					return fmt.Errorf("applying the new pool mounts to the running pool: %w", err)
+				}
 				log.Printf("hoservad: the running pool did not pick up the new disk topology: %v — stop and start the array to apply it", err)
 			}
 		}
@@ -652,6 +675,23 @@ type parityRegistrar struct {
 	shareStore *store.ShareStore
 	arrayStore *store.ArrayStore
 	chainGuard *diffGuardHolder
+	// arrayReady is the topology hook that returns a failed live update
+	// (wireTopologyHooks), set after both it and p are constructed —
+	// register below only captures p.callArrayReady, a method value that
+	// reads this field at call time, since register can run (at startup,
+	// when an array already exists) before the hook exists at all (#359).
+	arrayReady func(ctx context.Context) error
+}
+
+// callArrayReady is job.EvacuationDeps.ArrayReady/EvacuationAbort's own
+// dependency: a stable method value register can capture before
+// p.arrayReady is wired, since neither ever runs before startup finishes
+// wiring it (this type's own field doc comment).
+func (p *parityRegistrar) callArrayReady(ctx context.Context) error {
+	if p.arrayReady == nil {
+		return fmt.Errorf("hoservad: the array-ready hook is not wired yet")
+	}
+	return p.arrayReady(ctx)
 }
 
 // register wires engine's job types and Handler's own parity-derived
@@ -682,12 +722,14 @@ func (p *parityRegistrar) register(engine *parity.SnapraidEngine) {
 		TrackedFileCount: rebalanceTracked,
 		Shares:           rebalanceShares,
 		Manifest:         engine.Relocation,
+		Store:            p.arrayStore,
+		ArrayReady:       p.callArrayReady,
 	}))
 	// Cancelling an evacuation that is already StatusInterrupted never
 	// re-enters RunEvacuation, so it needs its own path to clear a
-	// stale removing-disks exemption (job.EvacuationAbort's own doc
-	// comment).
-	p.registry.RegisterAbort(job.TypeEvacuation, job.EvacuationAbort(engine.Relocation))
+	// stale removing-disks exemption and removal state (job.EvacuationAbort's
+	// own doc comment).
+	p.registry.RegisterAbort(job.TypeEvacuation, job.EvacuationAbort(engine.Relocation, p.arrayStore, p.callArrayReady))
 
 	p.handler.SetParity(engine, engine.Guard, engine.Relocation, rebalanceShares)
 	p.chainGuard.set(job.EngineDiffGuard{Engine: engine, Guard: engine.Guard})

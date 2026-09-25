@@ -538,6 +538,38 @@ func TestUpgradeDisk_DataMirrorsProductionAdmission(t *testing.T) {
 	}
 }
 
+// TestEvacuateDisk_MirrorsProductionAdmission proves the mock refuses a
+// new evacuation while one is pending, as job.Scheduler does (#359), and
+// admits one again once the pending job is cancelled.
+func TestEvacuateDisk_MirrorsProductionAdmission(t *testing.T) {
+	client := newTestClient(t, "healthy")
+	ctx := context.Background()
+
+	req := func(mountpoint string) *apiv1.EvacuateDiskRequest {
+		plan, err := client.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: mountpoint})
+		if err != nil {
+			t.Fatalf("PlanDiskEvacuation(%s): %v", mountpoint, err)
+		}
+		return &apiv1.EvacuateDiskRequest{Mountpoint: mountpoint, Confirmation: plan.Confirmation}
+	}
+	queued, err := client.EvacuateDisk(ctx, req("/mnt/disk1"))
+	if err != nil {
+		t.Fatalf("EvacuateDisk: %v", err)
+	}
+	if _, err := client.EvacuateDisk(ctx, req("/mnt/disk1")); errorCode(t, err) != "evacuation_pending" {
+		t.Fatalf("second EvacuateDisk for the same disk: %v, want evacuation_pending", err)
+	}
+	if _, err := client.EvacuateDisk(ctx, req("/mnt/disk2")); errorCode(t, err) != "evacuation_pending" {
+		t.Fatalf("EvacuateDisk for another disk while one is pending: %v, want evacuation_pending", err)
+	}
+	if _, err := client.CancelJob(ctx, apiv1.CancelJobParams{JobId: queued.ID}); err != nil {
+		t.Fatalf("CancelJob: %v", err)
+	}
+	if _, err := client.EvacuateDisk(ctx, req("/mnt/disk1")); err != nil {
+		t.Fatalf("EvacuateDisk after the pending one was cancelled: %v", err)
+	}
+}
+
 func TestCreateShareNFSEncodes(t *testing.T) {
 	client := newTestClient(t, "fresh-install")
 	ctx := context.Background()

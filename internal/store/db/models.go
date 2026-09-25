@@ -41,6 +41,8 @@ type ArrayDisk struct {
 	ByIDName     sql.NullString `json:"by_id_name"`
 	WeakIdentity int64          `json:"weak_identity"`
 	Mountpoint   string         `json:"mountpoint"`
+	RemovalState sql.NullString `json:"removal_state"`
+	RemovalJobID sql.NullString `json:"removal_job_id"`
 }
 
 type ArraySetting struct {

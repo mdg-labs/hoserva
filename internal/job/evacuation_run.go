@@ -7,6 +7,7 @@ import (
 
 	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/parity"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // EvacuationSyncFunc is cache.SyncFunc's shape plus the disk currently
@@ -46,6 +47,28 @@ type EvacuationDeps struct {
 	// below on why). Optional: nil means no store is wired, and
 	// RunEvacuation simply never calls it.
 	Manifest relocationManifestStore
+	// Store persists the disk's own removal state (doc 09 §4 step 2,
+	// #359), held by this job's id: "evacuating" before this run's first
+	// copy and on every resume, "evacuated" once the run finishes and its
+	// post-check passes, and released only when this job is cancelled. A
+	// plain failure keeps the disk "evacuating", so nothing new lands on
+	// it until it is evacuated again or that run is cancelled. Required.
+	Store removalStateStore
+	// ArrayReady regenerates every pool mount from the store and applies
+	// it to the running pool — cmd/hoservad wires the topology hook that
+	// returns a failed live update rather than logging it — so a Store
+	// change reaches the running mounts, not only the unit files. A
+	// failure before the first copy fails the job before anything is
+	// copied (doc 09 §4 step 2). Required.
+	ArrayReady func(ctx context.Context) error
+}
+
+// removalStateStore is the subset of *store.ArrayStore RunEvacuation and
+// EvacuationAbort use to hold and release doc 09 §4 step 2's removal
+// state (#359).
+type removalStateStore interface {
+	SetRemovalState(ctx context.Context, mountpoint, state, jobID string) error
+	ReleaseRemovalState(ctx context.Context, mountpoint, jobID string) (bool, error)
 }
 
 // relocationManifestStore is the subset of *parity.RelocationManifestStore
@@ -87,133 +110,200 @@ func RunEvacuation(d EvacuationDeps) RunFunc {
 		if d.Sync == nil {
 			return fmt.Errorf("job: evacuation: Deps.Sync is required")
 		}
-		// removingDisks names exactly the disk this job was submitted to
-		// evacuate — never recomputed or widened — so every batch sync
-		// this run makes exempts that one disk's own zero-files trip and
-		// no other (doc 09 §4 step 2, Q15).
-		removingDisks := map[string]bool{p.Mountpoint: true}
-		sync := func(ctx context.Context, manifest []parity.ManifestEntry) error {
-			return d.Sync(ctx, manifest, removingDisks)
+		if d.Store == nil {
+			return fmt.Errorf("job: evacuation: Deps.Store is required")
 		}
-		saveCheckpoint := rc.SaveCheckpoint
-		if d.Manifest != nil {
-			saveCheckpoint = persistEvacuationManifestOnCheckpoint(ctx, rc.SaveCheckpoint, d.Manifest, removingDisks)
+		if d.ArrayReady == nil {
+			return fmt.Errorf("job: evacuation: Deps.ArrayReady is required")
 		}
-		hooks := cache.RunHooks{
-			StopRequested:  rc.StopRequested(),
-			SaveCheckpoint: saveCheckpoint,
-			SetProgress:    rc.SetProgress,
-			Log: func(format string, args ...any) {
-				_, _ = fmt.Fprintf(rc.Output(), format+"\n", args...)
-			},
+		if rc.JobID() == "" {
+			return fmt.Errorf("job: evacuation: the run has no job id to hold the removal state")
 		}
-		report, err := cache.RunRebalance(ctx, p.Plan, d.Config, cache.Deps{Sync: sync, TrackedFileCount: d.TrackedFileCount}, hooks, rc.InitialCheckpoint())
-		if !report.StartedAt.IsZero() {
-			_, _ = fmt.Fprintln(rc.Output(), report.Summary())
-		}
-		// resumable is Q29's own test for this run: only a graceful
-		// stop — maintenance mode or an on-battery pause closing
-		// rc.StopRequested(), never a hard ctx cancel — leaves a
-		// checkpoint Resume can continue from (ErrJobNotInterrupted:
-		// "only an interrupted job can be resumed"). Scheduler.Cancel of a
-		// *running* job always calls rj.cancel() regardless of
-		// resumability, so ctx.Err() != nil is exactly the signal that this
-		// stop is not one of those two and the job will end failed or
-		// cancelled, neither of which Resume ever revisits.
-		resumable := err == nil && report.Interrupted && ctx.Err() == nil
-		if d.Manifest != nil && !resumable {
-			// Every non-resumable ending — a clean finish, a failure, or an
-			// explicit Cancel — clears the whole persisted relocation state,
-			// both the manifest and the removing-disks exemption. It is not
-			// enough to clear only the exemption and leave the manifest, as
-			// an earlier round of this fix did: matchManifest
-			// (internal/parity/guard.go) accounts a manifest entry once its
-			// SourceDisk/RelPath pair appears as *any* removal in a later
-			// diff — it has no way to tell this run's own delete from an
-			// unrelated later removal of the same path — so a stale entry
-			// left behind by a run that never reached that delete could
-			// wrongly exempt a later, unrelated deletion of that same file
-			// from the guard's removed-count and percent thresholds.
-			// Clearing everything only makes the guard stricter: a delete
-			// that did happen but whose post-delete sync never ran is simply
-			// counted as an ordinary removal at the next sync, and past a
-			// threshold that sync blocks until a human confirms — the safe
-			// direction (Q14). A run that fails and is later retried starts
-			// a fresh evacuation from a new plan, which persists its own
-			// manifest from scratch. Uses a non-cancellable context: a
-			// Cancel landing between the run's last action and this clear
-			// must not leave the exemption stranded — the job is not
-			// interrupted at this point (a clean finish never was; a
-			// failure or Cancel no longer is), so EvacuationAbort is never
-			// reached to clear it later. The resumable case (a graceful
-			// maintenance/battery stop) is untouched here: Resume continues
-			// the same run, so its manifest and exemption must survive.
-			clearCtx := context.WithoutCancel(ctx)
-			if clearErr := d.Manifest.Replace(clearCtx, nil, nil); clearErr != nil {
-				return combineEvacuationErr(err, fmt.Errorf("job: evacuation: clearing relocation manifest: %w", clearErr))
-			}
-		}
-		if err != nil {
+		err = d.run(ctx, rc, p)
+		// Only Scheduler.Cancel of this running job cancels its ctx:
+		// startJobLocked roots it at context.Background, and a
+		// maintenance or battery stop of a resumable job closes
+		// StopRequested instead. The user chose not to remove this disk
+		// now, so whatever removal state this job holds is released and
+		// the pool re-applied, wherever the cancel landed — including
+		// during the pre-copy ArrayReady.
+		if ctx.Err() == nil {
 			return err
 		}
-		if report.Interrupted {
-			return nil
+		if relErr := releaseRemovalState(context.WithoutCancel(ctx), d.Store, d.ArrayReady, p.Mountpoint, rc.JobID()); relErr != nil {
+			return combineEvacuationErr(err, "releasing the removal state after cancel", relErr)
 		}
-		shares, err := d.Shares(ctx)
-		if err != nil {
-			return fmt.Errorf("job: evacuation: loading shares for post-check: %w", err)
+		return err
+	}
+}
+
+func (d EvacuationDeps) run(ctx context.Context, rc *RunContext, p EvacuationParams) error {
+	// doc 09 §4 step 2: the disk stops taking new writes before this
+	// run's first copy, and again on every resume (Resume re-enters this
+	// same RunFunc). A failure of either step fails the job before any
+	// copy runs.
+	if err := d.Store.SetRemovalState(ctx, p.Mountpoint, store.RemovalStateEvacuating, rc.JobID()); err != nil {
+		return fmt.Errorf("job: evacuation: marking %s removing: %w", p.Mountpoint, err)
+	}
+	if err := d.ArrayReady(ctx); err != nil {
+		return fmt.Errorf("job: evacuation: applying no-create to the live pool: %w", err)
+	}
+	// removingDisks names exactly the disk this job was submitted to
+	// evacuate — never recomputed or widened — so every batch sync
+	// this run makes exempts that one disk's own zero-files trip and
+	// no other (doc 09 §4 step 2, Q15).
+	removingDisks := map[string]bool{p.Mountpoint: true}
+	sync := func(ctx context.Context, manifest []parity.ManifestEntry) error {
+		return d.Sync(ctx, manifest, removingDisks)
+	}
+	saveCheckpoint := rc.SaveCheckpoint
+	if d.Manifest != nil {
+		saveCheckpoint = persistEvacuationManifestOnCheckpoint(ctx, rc.SaveCheckpoint, d.Manifest, removingDisks)
+	}
+	hooks := cache.RunHooks{
+		StopRequested:  rc.StopRequested(),
+		SaveCheckpoint: saveCheckpoint,
+		SetProgress:    rc.SetProgress,
+		Log: func(format string, args ...any) {
+			_, _ = fmt.Fprintf(rc.Output(), format+"\n", args...)
+		},
+	}
+	report, err := cache.RunRebalance(ctx, p.Plan, d.Config, cache.Deps{Sync: sync, TrackedFileCount: d.TrackedFileCount}, hooks, rc.InitialCheckpoint())
+	if !report.StartedAt.IsZero() {
+		_, _ = fmt.Fprintln(rc.Output(), report.Summary())
+	}
+	// resumable is Q29's own test for this run: only a graceful
+	// stop — maintenance mode or an on-battery pause closing
+	// rc.StopRequested(), never a hard ctx cancel — leaves a
+	// checkpoint Resume can continue from (ErrJobNotInterrupted:
+	// "only an interrupted job can be resumed"). Scheduler.Cancel of a
+	// *running* job always calls rj.cancel() regardless of
+	// resumability, so ctx.Err() != nil is exactly the signal that this
+	// stop is not one of those two and the job will end failed or
+	// cancelled, neither of which Resume ever revisits.
+	resumable := err == nil && report.Interrupted && ctx.Err() == nil
+	if d.Manifest != nil && !resumable {
+		// Every non-resumable ending — a clean finish, a failure, or an
+		// explicit Cancel — clears the whole persisted relocation state,
+		// both the manifest and the removing-disks exemption. It is not
+		// enough to clear only the exemption and leave the manifest, as
+		// an earlier round of this fix did: matchManifest
+		// (internal/parity/guard.go) accounts a manifest entry once its
+		// SourceDisk/RelPath pair appears as *any* removal in a later
+		// diff — it has no way to tell this run's own delete from an
+		// unrelated later removal of the same path — so a stale entry
+		// left behind by a run that never reached that delete could
+		// wrongly exempt a later, unrelated deletion of that same file
+		// from the guard's removed-count and percent thresholds.
+		// Clearing everything only makes the guard stricter: a delete
+		// that did happen but whose post-delete sync never ran is simply
+		// counted as an ordinary removal at the next sync, and past a
+		// threshold that sync blocks until a human confirms — the safe
+		// direction (Q14). A run that fails and is later retried starts
+		// a fresh evacuation from a new plan, which persists its own
+		// manifest from scratch. Uses a non-cancellable context: a
+		// Cancel landing between the run's last action and this clear
+		// must not leave the exemption stranded — the job is not
+		// interrupted at this point (a clean finish never was; a
+		// failure or Cancel no longer is), so EvacuationAbort is never
+		// reached to clear it later. The resumable case (a graceful
+		// maintenance/battery stop) is untouched here: Resume continues
+		// the same run, so its manifest and exemption must survive.
+		clearCtx := context.WithoutCancel(ctx)
+		if clearErr := d.Manifest.Replace(clearCtx, nil, nil); clearErr != nil {
+			return combineEvacuationErr(err, "clearing relocation manifest", clearErr)
 		}
-		if err := cache.EvacuationPostCheck(p.Mountpoint, shares); err != nil {
-			return fmt.Errorf("job: evacuation: %w", err)
-		}
+	}
+	if err != nil {
+		return err
+	}
+	if report.Interrupted {
 		return nil
 	}
+	shares, err := d.Shares(ctx)
+	if err != nil {
+		return fmt.Errorf("job: evacuation: loading shares for post-check: %w", err)
+	}
+	if err := cache.EvacuationPostCheck(p.Mountpoint, shares); err != nil {
+		return fmt.Errorf("job: evacuation: %w", err)
+	}
+	// The copy and its post-check both succeeded: the disk stays
+	// no-create (steps 7-9, #358, have not run yet) but is no longer
+	// mid-copy.
+	if err := d.Store.SetRemovalState(ctx, p.Mountpoint, store.RemovalStateEvacuated, rc.JobID()); err != nil {
+		return fmt.Errorf("job: evacuation: marking %s evacuated: %w", p.Mountpoint, err)
+	}
+	return nil
+}
+
+// releaseRemovalState releases the removal state jobID holds on
+// mountpoint and, when there was one, re-applies the pool so the disk
+// takes writes again. A state some other job holds is left alone.
+func releaseRemovalState(ctx context.Context, removal removalStateStore, arrayReady func(ctx context.Context) error, mountpoint, jobID string) error {
+	released, err := removal.ReleaseRemovalState(ctx, mountpoint, jobID)
+	if err != nil {
+		return err
+	}
+	if !released {
+		return nil
+	}
+	if err := arrayReady(ctx); err != nil {
+		return fmt.Errorf("reapplying the live pool: %w", err)
+	}
+	return nil
 }
 
 // combineEvacuationErr reports the run's own failure, if any, as the
 // primary error — the one that determines the job's error message and
-// code — while still surfacing a subsequent failure to clean up the
-// removing-disks exemption rather than silently dropping it. A cleanup
-// failure never displaces the run's own error, only annotates it.
-func combineEvacuationErr(runErr, cleanupErr error) error {
+// code — while still surfacing a subsequent cleanup failure (clearing the
+// relocation manifest or the removal state) rather than silently dropping
+// it. A cleanup failure never displaces the run's own error, only
+// annotates it.
+func combineEvacuationErr(runErr error, cleanupDescription string, cleanupErr error) error {
 	if runErr == nil {
-		return cleanupErr
+		return fmt.Errorf("job: evacuation: %s: %w", cleanupDescription, cleanupErr)
 	}
-	return fmt.Errorf("%w (also failed clearing the relocation manifest: %v)", runErr, cleanupErr)
+	return fmt.Errorf("%w (also failed %s: %v)", runErr, cleanupDescription, cleanupErr)
 }
 
 // EvacuationAbort is the AbortFunc hoservad registers for
-// job.TypeEvacuation (doc 09 §4, #274): RunEvacuation itself clears the
-// whole persisted relocation state — manifest and removing-disks exemption
-// together — on every non-resumable ending its own run can reach (its own
-// doc comment above), but Scheduler.Cancel of a job that is already
-// StatusInterrupted never re-enters RunEvacuation at all (abortAndCancel
-// goes straight from interrupted to cancelled), so without this the state
-// from that job's last checkpoint would survive indefinitely, permanently
-// exempting its disk from the guard's zero-files rule and letting a stale
-// manifest entry exempt a later, unrelated removal of the same path
-// (matchManifest, internal/parity/guard.go). Clears only when the
-// persisted removing-disks set still names exactly this job's own
-// mountpoint and nothing else — never blind — because the store holds one
-// shared slot and, by the time Cancel runs, a different array-write job
-// (doc 01 §4's mutual exclusion only ever excludes a *running* job of the
-// same class, never an interrupted one) could already have claimed it for
-// an unrelated relocation.
-func EvacuationAbort(store relocationManifestStore) AbortFunc {
-	return func(ctx context.Context, params []byte) error {
+// job.TypeEvacuation (doc 09 §4, #274, #359): Scheduler.Cancel of a
+// queued or interrupted evacuation never re-enters RunEvacuation, so this
+// is where that cancel releases what the job left behind.
+//
+// The relocation manifest and its removing-disks exemption (#274) are
+// cleared only when the persisted removing-disks set still names exactly
+// this job's own mountpoint and nothing else — never blind — because the
+// manifest store holds one shared slot and, by the time Cancel runs, a
+// different array-write job (doc 01 §4's mutual exclusion only ever
+// excludes a *running* job of the same class, never an interrupted one)
+// could already have claimed it for an unrelated relocation. Without the
+// clear, a stale exemption would keep exempting the disk from the
+// guard's zero-files rule, and a stale manifest entry could exempt a
+// later, unrelated removal of the same path (matchManifest,
+// internal/parity/guard.go).
+//
+// The disk's removal state (#359) is released by the job that holds it,
+// id, whether or not a manifest was ever persisted — an evacuation
+// stopped during its first batch's copy has none — and never when some
+// other job holds it.
+func EvacuationAbort(manifest relocationManifestStore, removal removalStateStore, arrayReady func(ctx context.Context) error) AbortFunc {
+	return func(ctx context.Context, id string, params []byte) error {
 		p, err := decodeEvacuationParams(params)
 		if err != nil {
 			return err
 		}
-		_, removingDisks, err := store.Current(ctx)
+		_, removingDisks, err := manifest.Current(ctx)
 		if err != nil {
 			return fmt.Errorf("job: evacuation: reading relocation manifest: %w", err)
 		}
-		if len(removingDisks) != 1 || !removingDisks[p.Mountpoint] {
-			return nil
+		if len(removingDisks) == 1 && removingDisks[p.Mountpoint] {
+			if err := manifest.Replace(ctx, nil, nil); err != nil {
+				return fmt.Errorf("job: evacuation: clearing relocation manifest: %w", err)
+			}
 		}
-		if err := store.Replace(ctx, nil, nil); err != nil {
-			return fmt.Errorf("job: evacuation: clearing relocation manifest: %w", err)
+		if err := releaseRemovalState(ctx, removal, arrayReady, p.Mountpoint, id); err != nil {
+			return fmt.Errorf("job: evacuation: releasing removal state: %w", err)
 		}
 		return nil
 	}
