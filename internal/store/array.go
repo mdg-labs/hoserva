@@ -481,20 +481,23 @@ func (s *ArrayStore) ReleaseRemovalState(ctx context.Context, mountpoint, jobID 
 	return n > 0, nil
 }
 
-// CancelRemovalState unconditionally clears mountpoint's removal state
-// back to NULL while it is "evacuating" or "evacuated", and reports
-// whether it did (#361's cancelDiskRemoval). Unlike ReleaseRemovalState,
-// this is not scoped to a holding job id: cancelDiskRemoval's own caller
-// (internal/api) has already decided, from the disk's RemovalJobID and
-// the job store, that no evacuation job is still queued, running or
-// interrupted for this disk — an evacuated disk never has one to begin
-// with, since RunEvacuation's own job already finished. A disk that is
-// "unpooled" or "unlisted" is left as it is: it has already left the
-// pool, so only finishDiskRemoval takes it further (doc 09 §4's own Open
-// questions). A mountpoint with no data disk, or one not currently in
-// removal at all, also reports false and changes nothing.
-func (s *ArrayStore) CancelRemovalState(ctx context.Context, mountpoint string) (bool, error) {
-	n, err := s.q.CancelArrayDiskRemovalState(ctx, mountpoint)
+// CancelRemovalState clears mountpoint's removal state back to NULL, and
+// reports whether it did (#361's cancelDiskRemoval), only while the row
+// still holds exactly expectedState and expectedJobID — the values the
+// caller read when it decided, from the disk's RemovalJobID and the job
+// store, that no evacuation job is still queued, running or interrupted
+// for this disk. A re-evacuation of an evacuated disk that starts after
+// that read changes the job id, so the cancel leaves the new evacuation's
+// state alone and reports false. Only "evacuating" and "evacuated" are
+// ever cleared: a disk that is "unpooled" or "unlisted" has already left
+// the pool, so only finishDiskRemoval takes it further (doc 09 §4's own
+// Open questions). An expectedJobID of "" matches a NULL job id.
+func (s *ArrayStore) CancelRemovalState(ctx context.Context, mountpoint, expectedState, expectedJobID string) (bool, error) {
+	n, err := s.q.CancelArrayDiskRemovalState(ctx, storedb.CancelArrayDiskRemovalStateParams{
+		Mountpoint:    mountpoint,
+		ExpectedState: sql.NullString{String: expectedState, Valid: true},
+		ExpectedJobID: nullString(expectedJobID),
+	})
 	if err != nil {
 		return false, fmt.Errorf("store: cancelling removal state at %s: %w", mountpoint, err)
 	}

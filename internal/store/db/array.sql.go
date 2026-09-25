@@ -40,11 +40,20 @@ func (q *Queries) AdvanceArrayDiskRemovalState(ctx context.Context, arg AdvanceA
 
 const cancelArrayDiskRemovalState = `-- name: CancelArrayDiskRemovalState :execrows
 UPDATE array_disks SET removal_state = NULL, removal_job_id = NULL
-WHERE mountpoint = ? AND role = 'data' AND removal_state IN ('evacuating', 'evacuated')
+WHERE mountpoint = ?1 AND role = 'data'
+    AND removal_state IN ('evacuating', 'evacuated')
+    AND removal_state = ?2
+    AND removal_job_id IS ?3
 `
 
-func (q *Queries) CancelArrayDiskRemovalState(ctx context.Context, mountpoint string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, cancelArrayDiskRemovalState, mountpoint)
+type CancelArrayDiskRemovalStateParams struct {
+	Mountpoint    string         `json:"mountpoint"`
+	ExpectedState sql.NullString `json:"expected_state"`
+	ExpectedJobID sql.NullString `json:"expected_job_id"`
+}
+
+func (q *Queries) CancelArrayDiskRemovalState(ctx context.Context, arg CancelArrayDiskRemovalStateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelArrayDiskRemovalState, arg.Mountpoint, arg.ExpectedState, arg.ExpectedJobID)
 	if err != nil {
 		return 0, err
 	}

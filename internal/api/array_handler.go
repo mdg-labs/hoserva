@@ -616,7 +616,7 @@ func (h *Handler) CancelDiskRemoval(ctx context.Context, req *apiv1.CancelDiskRe
 		}
 		return errDiskRemovalNotCancellable(req.Mountpoint, reason)
 	}
-	cleared, err := h.ArrayStore.CancelRemovalState(ctx, req.Mountpoint)
+	cleared, err := h.ArrayStore.CancelRemovalState(ctx, req.Mountpoint, existing.RemovalState, existing.RemovalJobID)
 	if err != nil {
 		return fmt.Errorf("cancel disk removal: clearing removal state for %s: %w", req.Mountpoint, err)
 	}
