@@ -2022,6 +2022,34 @@ func TestDiskUpgradeData_UR4_SlotNoLongerNamingAFailsBeforeFormatting(t *testing
 	}
 }
 
+// TestDiskUpgradeData_E1None_SlotInRemovalFailsBeforeFormatting covers
+// #368: an evacuation queued ahead of this upgrade marks the slot for
+// removal before it runs. store.ReplaceDataDisk never touches
+// removal_state, so without this refusal B would silently inherit A's
+// removing/removed state the moment it is adopted.
+func TestDiskUpgradeData_E1None_SlotInRemovalFailsBeforeFormatting(t *testing.T) {
+	h := newUpgradeHarness(t)
+	h.register()
+	h.stopArray()
+	if err := h.st.SetRemovalState(h.ctx, h.oldWhere, store.RemovalStateEvacuating, "evacuation-job"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+	j, err := h.s.Submit(h.ctx, TypeDiskUpgradeData, nil, h.params())
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := h.await(j.ID)
+	if done.Status != StatusFailed || !strings.Contains(done.ErrorMessage, "leaving the array") {
+		t.Fatalf("status = %s (%s), want failed on a removal-state refusal", done.Status, done.ErrorMessage)
+	}
+	if !strings.Contains(done.ErrorMessage, h.oldWhere) {
+		t.Fatalf("ErrorMessage = %q, want it to name %s", done.ErrorMessage, h.oldWhere)
+	}
+	if _, formatted := h.provider.FormattedAs("/dev/sdz"); formatted {
+		t.Fatal("B was formatted")
+	}
+}
+
 // E1 None's identity step: B must still be the disk the plan confirmed by
 // its by-id identity.
 func TestDiskUpgradeData_E1None_DriftedNewDiskFailsBeforeFormatting(t *testing.T) {

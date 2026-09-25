@@ -153,6 +153,59 @@ func TestRunDiskReplace_WrongConfirmationFormatsNothing(t *testing.T) {
 	}
 }
 
+// TestRunDiskReplace_RefusesASlotInRemoval covers #368: an evacuation
+// queued ahead of a replace of the same slot marks it for removal before
+// the replace job runs. store.ReplaceDataDisk never touches removal_state,
+// so without this refusal the replacement disk would silently inherit
+// removing/removed as its own state the moment it is adopted.
+func TestRunDiskReplace_RefusesASlotInRemoval(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	st := store.NewArrayStore(newTestDB(t))
+	genRoot := t.TempDir()
+	mounter := disk.NewFakeMounter()
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	p.AddDisk("/dev/sdz", disk.Disk{Size: 4 * disk.TB})
+	seedTwoDataDiskArray(t, st)
+	if err := st.SetRemovalState(ctx, "/mnt/disk1", store.RemovalStateEvacuating, "evacuation-job"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+
+	eng := newRecordingEngine()
+	registerDiskReplace(t, s, p, disk.NewFakeRunner(), st, genRoot, mounter, eng)
+
+	replacement := disk.AssignedDisk{Device: "/dev/sdz", Filesystem: disk.XFS}
+	params := DiskReplaceParams{
+		Confirmation: SingleDiskConfirmation(replacement),
+		Mountpoint:   "/mnt/disk1",
+		Disk:         replacement,
+		Sizes:        map[string]int64{"/dev/sda": 8 * disk.TB, "/dev/sdc": 4 * disk.TB, "/dev/sdz": 4 * disk.TB},
+	}
+	j, err := s.Submit(ctx, TypeDiskReplace, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("status = %s (%s), want failed", finished.Status, finished.ErrorMessage)
+	}
+	if !strings.Contains(finished.ErrorMessage, "/mnt/disk1") || !strings.Contains(finished.ErrorMessage, "leaving the array") {
+		t.Fatalf("ErrorMessage = %q, want a removal-state refusal naming /mnt/disk1", finished.ErrorMessage)
+	}
+	if _, ok := p.FormattedAs("/dev/sdz"); ok {
+		t.Fatal("a slot in removal formatted the replacement disk anyway")
+	}
+	got, err := st.GetDataDiskByMountpoint(ctx, "/mnt/disk1")
+	if err != nil {
+		t.Fatalf("GetDataDiskByMountpoint: %v", err)
+	}
+	if got.Device != "/dev/sdb" {
+		t.Fatalf("disk1 device = %q, want unchanged /dev/sdb", got.Device)
+	}
+}
+
 func TestRunDiskReplace_UnknownMountpointRefused(t *testing.T) {
 	ctx := context.Background()
 	s := newTestScheduler(t)

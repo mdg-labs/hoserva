@@ -1,7 +1,9 @@
 package job
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -185,6 +187,90 @@ func TestRunRebalance_RefusesAPlanTouchingALeavingDisk(t *testing.T) {
 				t.Fatalf("nothing may be copied to a leaving disk: err=%v", err)
 			}
 		})
+	}
+}
+
+// TestRunRebalance_ResumeFromAMidPlanCheckpoint_RefusesAPlanTouchingALeavingDisk
+// covers #368's resume-time gap directly: a rebalance interrupted after its
+// copy phase — mid-plan, with the source not yet synced or deleted — is
+// resumed from that persisted checkpoint after its target disk has since
+// entered removal. The resumed run must refuse before touching anything
+// further, exactly like a fresh run against the same now-leaving disk
+// (TestRunRebalance_RefusesAPlanTouchingALeavingDisk).
+func TestRunRebalance_ResumeFromAMidPlanCheckpoint_RefusesAPlanTouchingALeavingDisk(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	disk1, disk2 := filepath.Join(base, "disk1"), filepath.Join(base, "disk2")
+	src, dst := filepath.Join(disk1, "media"), filepath.Join(disk2, "media")
+	plan := newRebalanceTestPlan(t, src, dst, "media", "movie.mkv", "movie bytes")
+	arrays := newRebalanceTestArray(t, disk1, disk2)
+	params := mustJSON(t, RebalanceParams{Plan: plan})
+
+	eng := newRecordingEngine()
+	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+
+	fn := RunRebalance(RebalanceDeps{
+		Sync:             syncFuncFromEngine(eng),
+		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
+		Store:            arrays,
+	})
+
+	// Run 1: interrupted right after the copy phase's own checkpoint save
+	// (Phase == syncing), before cache.RunRebalance ever calls Sync or
+	// deletes the source — a genuinely mid-plan checkpoint, not just an
+	// unstarted one.
+	var lastCheckpoint []byte
+	stopRequested := make(chan struct{})
+	rc1 := &RunContext{
+		ctx:           ctx,
+		out:           &bytes.Buffer{},
+		params:        params,
+		stopRequested: stopRequested,
+		saveCheckpoint: func(data []byte) error {
+			lastCheckpoint = append([]byte(nil), data...)
+			var cp cache.RebalanceCheckpoint
+			if err := json.Unmarshal(data, &cp); err != nil {
+				t.Fatalf("unmarshal checkpoint: %v", err)
+			}
+			if cp.Phase == cache.RebalancePhaseSyncing {
+				close(stopRequested)
+			}
+			return nil
+		},
+		setProgress: func(int) {},
+	}
+	if err := fn(ctx, rc1); err != nil {
+		t.Fatalf("interrupted run: %v", err)
+	}
+	if lastCheckpoint == nil {
+		t.Fatal("interrupted run never saved a checkpoint — nothing to resume from")
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("source must still exist mid-plan, before the resume: %v", err)
+	}
+
+	// disk2 enters removal between the interrupt and the resume — an
+	// evacuation submitted and started while the rebalance sat interrupted.
+	if err := arrays.SetRemovalState(ctx, disk2, store.RemovalStateEvacuating, "evacuation-job"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+
+	// Run 2: resumed from run 1's own mid-plan checkpoint.
+	rc2 := &RunContext{
+		ctx:            ctx,
+		out:            &bytes.Buffer{},
+		params:         params,
+		checkpoint:     lastCheckpoint,
+		stopRequested:  make(chan struct{}),
+		saveCheckpoint: func([]byte) error { return nil },
+		setProgress:    func(int) {},
+	}
+	err := fn(ctx, rc2)
+	if err == nil || !strings.Contains(err.Error(), disk2) {
+		t.Fatalf("resumed run error = %v, want a refusal naming %s", err, disk2)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatalf("source must survive a refused resume: %v", err)
 	}
 }
 

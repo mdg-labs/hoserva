@@ -310,7 +310,7 @@ An interrupted job runs nothing. Only E3 to E8 reach it: cancel, restart, `array
 | State | Before | Action | After | SQLite names | Result |
 |---|---|---|---|---|---|
 | Queued, or queued at releasing | *Stopped* or *Unknown* | It starts once no conflicting job runs. Maintenance mode and UR3 leave no other job running, so it starts at once | as the state it starts in | A. Queued at releasing: A or B | None, or the state for its checkpoint (E5) |
-| None | *Stopped* | Unwind. Confirm A and B by their by-id identities. Establish(*Old*). `snapraid diff` must report nothing to sync | *Old* | A | Formatting |
+| None | *Stopped* | Unwind. Confirm A and B by their by-id identities, and that slot N is not itself in removal (doc 09 §4) — an evacuation queued ahead of this upgrade can mark it after the plan was confirmed, and `store.ReplaceDataDisk` never touches `removal_state`, so B would otherwise silently inherit A's removing/removed state the moment it is adopted (#368). Establish(*Old*). `snapraid diff` must report nothing to sync | *Old* | A | Formatting |
 | Formatting | *Old* | Format B through its by-id path, mount B at G, and confirm that G holds B's new UUID. Save *copying* with B's UUID | *Copy* | A | Copying |
 | Copying | *Copy* | Copy S to G with ownership, xattrs and timestamps, saving the last completed path as it goes. Then save *verifying* | *Copy* | A | Verifying |
 | Verifying | *Copy* | Compare G with S. On a full match, save *remounting* | *Copy* | A | Remounting |
@@ -516,6 +516,8 @@ The pending-state refusal belongs to the `array stop` command and its API operat
 3. Identify the new disk, format (again through its by-id path when known, as "Adding a disk" step 3 does), mount at the same `/mnt/diskN`
 4. `snapraid fix -d dN` reconstructs the contents from parity + remaining disks
 5. Verify, then resume the normal schedule
+
+Before formatting, the job refuses if the slot is already in removal (doc 09 §4) — an evacuation queued or run ahead of it. `store.ReplaceDataDisk` does not touch `removal_state`, so a replacement would otherwise silently inherit the old disk's removing/removed state the moment it is adopted (#368).
 
 **Honest constraint that must be surfaced in the UI:** reconstruction can only restore data that was present at the last successful sync. Files written after it are gone. The UI shows the last sync time and the files on that disk that were pending at failure — counted and, from the change journal (§2), named — so the user knows exactly what they lost instead of discovering it months later.
 

@@ -84,6 +84,13 @@ func RunDiskReplace(d DiskReplaceDeps) RunFunc {
 		if SingleDiskConfirmation(params.Disk) != params.Confirmation {
 			return disk.ErrConfirmationMismatch
 		}
+		// An evacuation queued ahead of this replace can mark the slot for
+		// removal after the plan was confirmed; store.ReplaceDataDisk would
+		// otherwise carry that removal state onto the replacement unchanged
+		// (#368).
+		if oldDisk.LeavingArray() {
+			return fmt.Errorf("job: %w: %s is %s", store.ErrDiskLeavingArray, params.Mountpoint, oldDisk.RemovalState)
+		}
 
 		// A fresh inventory read, not whatever params.Disk carried at
 		// submit time: this job can have sat queued behind a running
