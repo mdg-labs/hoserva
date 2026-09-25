@@ -786,6 +786,30 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		// Production's SetSharePermissions refuses a repeated user or
+		// group id with duplicate_grant/400 before any existence check
+		// (rejectDuplicateGrants, share_permissions.go); the mock
+		// mirrors that order.
+		op:   "UpdateSharePermissions",
+		name: "duplicate_user_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+				return err
+			}
+			u, err := h.CreateUser(ctx, &apiv1.CreateUserRequest{Username: "permviewer"})
+			if err != nil {
+				return err
+			}
+			_, err = h.UpdateSharePermissions(ctx, &apiv1.UpdateSharePermissionsRequest{
+				Users: []apiv1.UpdateSharePermissionsRequestUsersItem{
+					{UserId: u.ID, Access: apiv1.ShareAccessLevelReadOnly},
+					{UserId: u.ID, Access: apiv1.ShareAccessLevelReadWrite},
+				},
+			}, apiv1.UpdateSharePermissionsParams{Name: "media"})
+			return err
+		},
+	},
+	{
 		// GetUserSharePermissions on a real user's own id succeeds on
 		// both sides.
 		op:   "GetUserSharePermissions",

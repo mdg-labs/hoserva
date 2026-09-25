@@ -333,10 +333,25 @@ func (h *handler) UpdateSharePermissions(ctx context.Context, req *apiv1.UpdateS
 	h.usersMu.Lock()
 	defer h.usersMu.Unlock()
 
-	// mirrors internal/api's own SetSharePermissions (share_permissions.go,
-	// existsInTx): every user and group id in a full-replace write must
-	// already exist — an unknown id is refused with user_not_found/
-	// group_not_found, not silently written with an empty username.
+	// mirrors internal/api's own SetSharePermissions (share_permissions.go):
+	// a repeated user or group id is refused with duplicate_grant before
+	// any existence check (rejectDuplicateGrants), then every id must
+	// already exist (existsInTx) — an unknown id is refused with
+	// user_not_found/group_not_found, not written with an empty username.
+	seenUsers := make(map[uuid.UUID]struct{}, len(req.Users))
+	for _, u := range req.Users {
+		if _, dup := seenUsers[u.UserId]; dup {
+			return nil, errDuplicateGrant(u.UserId)
+		}
+		seenUsers[u.UserId] = struct{}{}
+	}
+	seenGroups := make(map[uuid.UUID]struct{}, len(req.Groups))
+	for _, g := range req.Groups {
+		if _, dup := seenGroups[g.GroupId]; dup {
+			return nil, errDuplicateGrant(g.GroupId)
+		}
+		seenGroups[g.GroupId] = struct{}{}
+	}
 	users := make([]apiv1.UserPermissionEntry, 0, len(req.Users))
 	for _, u := range req.Users {
 		account, ok := h.users[u.UserId]
