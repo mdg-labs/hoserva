@@ -122,12 +122,6 @@ func diskMountDescription(d store.ArrayDisk) string {
 	}
 }
 
-// leftPool reports whether a data disk's removal has taken it out of
-// every pool mount (#358, doc 09 §4 step 7): unpooled, or further along.
-func leftPool(d store.ArrayDisk) bool {
-	return d.RemovalState == store.RemovalStateUnpooled || d.RemovalState == store.RemovalStateUnlisted
-}
-
 // poolStateFromStore leaves a disk that has left the pool out of every
 // branch list.
 func poolStateFromStore(settings store.ArraySettings, disks []store.ArrayDisk) config.PoolState {
@@ -137,7 +131,7 @@ func poolStateFromStore(settings store.ArraySettings, disks []store.ArrayDisk) c
 	for _, d := range disks {
 		switch d.Role {
 		case store.ArrayRoleData:
-			if leftPool(d) {
+			if d.LeftPool() {
 				continue
 			}
 			dataDisks = append(dataDisks, d.Mountpoint)

@@ -89,7 +89,7 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		})
 		switch d.Role {
 		case store.ArrayRoleData:
-			if d.RemovalState == store.RemovalStateUnpooled {
+			if d.LeftPool() {
 				continue
 			}
 			dataMounts = append(dataMounts, d.Mountpoint)

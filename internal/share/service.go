@@ -903,7 +903,7 @@ func splitDisks(disks []store.ArrayDisk) (data []string, cache, parity string) {
 	for _, d := range disks {
 		switch d.Role {
 		case store.ArrayRoleData:
-			if d.RemovalState == store.RemovalStateUnpooled || d.RemovalState == store.RemovalStateUnlisted {
+			if d.LeftPool() {
 				continue
 			}
 			data = append(data, d.Mountpoint)
