@@ -1812,6 +1812,18 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		// #373: an unrecognized channel is bad client input (400), not an
+		// opaque 500 — the generated decoder accepts any string here
+		// (UpdateChannel.Decode has no default-case error), so both
+		// handlers must reject it themselves.
+		op:   "UpdateUpdateSettings",
+		name: "unknown_channel",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateUpdateSettings(ctx, &apiv1.UpdateUpdateSettingsRequest{Channel: apiv1.NewOptUpdateChannel(apiv1.UpdateChannel("nightly"))})
+			return err
+		},
+	},
+	{
 		// CheckForUpdate (both sides' own fixture reports v0.2.0
 		// available over the current 0.1.0 — update_handler_test.go's
 		// own newUpdateHandler shape), then ApplyUpdate with

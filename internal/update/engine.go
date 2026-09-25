@@ -203,7 +203,7 @@ func (e *Engine) SetSettings(ctx context.Context, channel *Channel, checkEnabled
 		case ChannelStable, ChannelBeta:
 			row.Channel = *channel
 		default:
-			return Status{}, fmt.Errorf("update: unknown channel %q", *channel)
+			return Status{}, fmt.Errorf("%w: %q", ErrUnknownChannel, *channel)
 		}
 	}
 	if checkEnabled != nil {

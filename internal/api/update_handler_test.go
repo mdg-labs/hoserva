@@ -130,6 +130,16 @@ func TestHandlerApplyUpdateChecksumMismatchInstallsNothing(t *testing.T) {
 	}
 }
 
+func TestHandlerUpdateSettingsRejectsUnknownChannel(t *testing.T) {
+	h, _, _, _ := newUpdateHandler(t, []byte("deb"))
+	bogus := apiv1.UpdateChannel("nightly")
+	_, err := h.UpdateUpdateSettings(context.Background(), &apiv1.UpdateUpdateSettingsRequest{Channel: apiv1.NewOptUpdateChannel(bogus)})
+	status := apiError(t, h, err)
+	if status.StatusCode != 400 || status.Response.Code != "update_invalid_channel" {
+		t.Fatalf("status = (%d %q), want (400 update_invalid_channel)", status.StatusCode, status.Response.Code)
+	}
+}
+
 func TestHandlerGetUpdateStatusQueriesHostOnce(t *testing.T) {
 	h, _, _, _ := newUpdateHandler(t, []byte("deb"))
 	host := h.Updates.Host.(*update.FakeHost)
