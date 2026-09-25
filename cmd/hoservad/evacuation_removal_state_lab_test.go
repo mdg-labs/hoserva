@@ -156,28 +156,10 @@ func p359LabEngine(t *testing.T, lab, name string, mounts []string) *parity.Snap
 	}
 }
 
-// p359ClaimCatchAllPath makes pool.CatchAllPath free for this test's own
-// catch-all. smb-check.sh, which `make test-integration` runs before the
-// lab tests, leaves it as a symlink to the standing array's own pool; the
-// symlink is moved aside for the test and put back at cleanup, which runs
-// after the test's pool is unmounted. Anything else already mounted there
-// fails the test.
+// p359ClaimCatchAllPath fails the test if pool.CatchAllPath is already a
+// mount point — a previous test in this lab left a pool mounted there.
 func p359ClaimCatchAllPath(t *testing.T) {
 	t.Helper()
-	if target, err := os.Readlink(pool.CatchAllPath); err == nil {
-		if err := os.Remove(pool.CatchAllPath); err != nil {
-			t.Fatalf("moving the %s symlink aside: %v", pool.CatchAllPath, err)
-		}
-		t.Cleanup(func() {
-			if err := os.Remove(pool.CatchAllPath); err != nil && !os.IsNotExist(err) {
-				t.Errorf("removing %s before restoring its symlink: %v", pool.CatchAllPath, err)
-				return
-			}
-			if err := os.Symlink(target, pool.CatchAllPath); err != nil {
-				t.Errorf("restoring the %s symlink: %v", pool.CatchAllPath, err)
-			}
-		})
-	}
 	if pool.IsMounted(pool.CatchAllPath) {
 		t.Fatalf("%s is already a mount point in this lab — a previous test left a pool mounted", pool.CatchAllPath)
 	}
@@ -344,17 +326,43 @@ func (d *p359Daemon) poolMounts(t *testing.T) []pool.Mount {
 	return mounts
 }
 
+// p359MountAndTrack mounts mnt through mounter and arranges its own
+// cleanup: unmount, then — only when this call is the one that created
+// mnt.Where (pool.Mounter's own Mount does os.MkdirAll(mnt.Where) when it
+// is missing) — remove it again, so the lab is back to a clean /mnt (doc
+// 06 §3). A mnt.Where that already existed (CatchAllPath left by an
+// earlier, unrelated use of the lab) is left exactly as found.
+func p359MountAndTrack(t *testing.T, mounter pool.Mounter, mnt pool.Mount) {
+	t.Helper()
+	created := false
+	if _, err := os.Lstat(mnt.Where); err != nil {
+		if !os.IsNotExist(err) {
+			t.Fatalf("checking whether %s already exists: %v", mnt.Where, err)
+		}
+		created = true
+	}
+	if err := mounter.Mount(context.Background(), mnt); err != nil {
+		t.Fatalf("mounting %s: %v", mnt.Where, err)
+	}
+	where := mnt.Where
+	t.Cleanup(func() {
+		_ = mounter.Unmount(context.Background(), where)
+		if !created {
+			return
+		}
+		if err := os.Remove(where); err != nil && !os.IsNotExist(err) {
+			t.Errorf("removing mount point %s: %v", where, err)
+		}
+	})
+}
+
 // mountPool brings the pool up from poolMounts through pool.Mounter (this
-// file's header) and unmounts it again at cleanup, shares first.
+// file's header), shares first, each mount tracked by p359MountAndTrack.
 func (d *p359Daemon) mountPool(t *testing.T) {
 	t.Helper()
 	mounter := pool.Mounter{Runner: disk.CommandRunner{}}
 	for _, m := range d.poolMounts(t) {
-		if err := mounter.Mount(context.Background(), m); err != nil {
-			t.Fatalf("mounting %s: %v", m.Where, err)
-		}
-		where := m.Where
-		t.Cleanup(func() { _ = mounter.Unmount(context.Background(), where) })
+		p359MountAndTrack(t, mounter, m)
 	}
 }
 
@@ -647,10 +655,7 @@ func TestLabEvacuation_FailedLiveNoCreate_FailsBeforeAnyCopy(t *testing.T) {
 
 	mounter := pool.Mounter{Runner: exec}
 	catchAll := d.poolMounts(t)[0]
-	if err := mounter.Mount(ctx, catchAll); err != nil {
-		t.Fatalf("mounting the catch-all: %v", err)
-	}
-	t.Cleanup(func() { _ = mounter.Unmount(context.Background(), catchAll.Where) })
+	p359MountAndTrack(t, mounter, catchAll)
 	foreign := pool.SharePath(p359Share)
 	if err := os.MkdirAll(foreign, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", foreign, err)
@@ -658,6 +663,12 @@ func TestLabEvacuation_FailedLiveNoCreate_FailsBeforeAnyCopy(t *testing.T) {
 	if _, err := exec.Run(ctx, "mount", "-t", "tmpfs", "-o", "size=1m", "p359-foreign", foreign); err != nil {
 		t.Fatalf("mounting a foreign tmpfs at %s: %v", foreign, err)
 	}
+	// foreign is a path inside the already-live catch-all union, not a
+	// bare directory of its own: it resolves through mergerfs to disk1's
+	// own p359Share branch, which a.fill already populated before this
+	// mount, so it is never empty and is never this test's to remove —
+	// only to unmount, the same as pool.Mounter's own Unmount tears down
+	// a share mount without removing the share's own on-disk directory.
 	t.Cleanup(func() { _, _ = exec.Run(context.Background(), "umount", foreign) })
 	shareRelocLabSyncOnce(t, ctx, d.engine)
 

@@ -347,11 +347,7 @@ func p358Setup(t *testing.T, name string) *p358Env {
 		if !ok {
 			t.Fatalf("pool mount %s is %T, want pool.MountController", m.Where(), m)
 		}
-		if err := mounter.Mount(ctx, mc.Mnt); err != nil {
-			t.Fatalf("mounting %s: %v", mc.Mnt.Where, err)
-		}
-		where := mc.Mnt.Where
-		t.Cleanup(func() { _ = mounter.Unmount(context.Background(), where) })
+		p359MountAndTrack(t, mounter, mc.Mnt)
 	}
 
 	for _, spec := range []struct {
