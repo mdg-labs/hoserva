@@ -191,6 +191,77 @@ function mountedPool() {
   };
 }
 
+// poolWithRemovalState is mountedPool with its second data disk
+// (/mnt/disk2) carrying removalState and its own server-supplied
+// finishConfirmation phrase (PoolDiskEntry, #361, mirroring production's
+// GetPool: set whenever removalState is set, not only when the disk is
+// still eligible for a fresh planDiskEvacuation call) — #361's own
+// per-state fixture for the removal badge, Finish removal and Cancel
+// removal.
+function poolWithRemovalState(state: string) {
+  return {
+    mounted: true,
+    disks: [
+      {
+        device: "/dev/sdb",
+        mountPoint: "/mnt/disk1",
+        role: "data",
+        state: "active",
+        sizeBytes: 4_000_000_000_000,
+        usedBytes: 2_000_000_000_000,
+      },
+      {
+        device: "/dev/sdc",
+        mountPoint: "/mnt/disk2",
+        role: "data",
+        state: "active",
+        sizeBytes: 4_000_000_000_000,
+        usedBytes: 1_000_000_000_000,
+        removalState: state,
+        finishConfirmation: "REMOVE /mnt/disk2",
+      },
+      {
+        device: "/dev/sde",
+        mountPoint: "/mnt/parity",
+        role: "parity",
+        state: "active",
+        sizeBytes: 4_000_000_000_000,
+        usedBytes: 400_000_000_000,
+      },
+    ],
+  };
+}
+
+// mockPoolAndJobs is mockStatusAndJobs's own shape, with a caller-supplied
+// jobs list (default []) and an optional /disks response — #361's Finish
+// removal dialog reads inventory once, for the ending "safe to physically
+// remove" message's own device identity.
+function mockPoolAndJobs(
+  get: typeof mockGet,
+  poolData: unknown,
+  jobs: unknown[] = [],
+  disksEntries: unknown[] = [],
+): void {
+  get.mockImplementation((path: string) => {
+    if (path === "/status") {
+      return Promise.resolve({ data: { healthy: true, summary: "OK", maintenanceMode: false }, response: { ok: true } });
+    }
+    if (path === "/pool") {
+      return Promise.resolve({ data: poolData, response: { ok: true } });
+    }
+    if (path === "/jobs") {
+      return Promise.resolve({ data: { jobs }, response: { ok: true } });
+    }
+    if (path === "/doctor") {
+      return Promise.resolve({ data: { overall: "pass", checks: [] }, response: { ok: true } });
+    }
+    if (path === "/disks") {
+      return Promise.resolve({ data: { disks: disksEntries }, response: { ok: true } });
+    }
+    return Promise.resolve({ data: null, response: { ok: false } });
+  });
+}
+
 // poolWithMissingReplaceCandidate is mountedPool with its data slot
 // replaced by a stored member no longer physically present (#326's own
 // "missing" shape, state alone marking it, never an empty device string)
@@ -647,5 +718,375 @@ describe("Pool overview page — rebalance and remove disk (#274)", () => {
         expect.objectContaining({ body: { mountpoint: "/mnt/disk1", confirmation: "REMOVE /mnt/disk1" } }),
       ),
     );
+  });
+});
+
+describe("Pool overview page — disk removal state, Finish removal, Cancel removal (#361)", () => {
+  beforeEach(() => {
+    cleanup();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockMatchMedia();
+  });
+
+  it("shows the evacuating badge, and offers neither Finish removal nor Cancel removal", async () => {
+    mockPoolAndJobs(mockGet, poolWithRemovalState("evacuating"));
+
+    renderPool();
+
+    expect(await screen.findByText("Being emptied — no new files land here")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finish removal" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel removal" })).not.toBeInTheDocument();
+  });
+
+  it("shows the evacuated badge, and offers both Finish removal and Cancel removal", async () => {
+    mockPoolAndJobs(mockGet, poolWithRemovalState("evacuated"));
+
+    renderPool();
+
+    expect(await screen.findByText("Empty — ready to finish removal")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Finish removal" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel removal" })).toBeInTheDocument();
+  });
+
+  it.each(["unpooled", "unlisted"])("shows the %s badge, and offers Finish removal but not Cancel removal", async (state) => {
+    mockPoolAndJobs(mockGet, poolWithRemovalState(state));
+
+    renderPool();
+
+    expect(await screen.findByText("Removal in progress")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Finish removal" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel removal" })).not.toBeInTheDocument();
+  });
+
+  it("Finish removal can be retried for an unpooled disk — planDiskEvacuation would refuse it, but the dialog opens with a typeable confirmation anyway", async () => {
+    // A disk_remove job that failed (e.g. the threshold guard tripped)
+    // leaves the disk unpooled: still off the pool, but not yet unlisted
+    // (finding 1 of this issue's fix round). planDiskEvacuation refuses
+    // any disk that has left the pool with disk_leaving_array, so a
+    // dialog that sourced its confirmation phrase from that operation
+    // could never reopen here — this proves the dialog no longer calls it
+    // at all.
+    mockPoolAndJobs(mockGet, poolWithRemovalState("unpooled"));
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/disks/array/evacuate/plan") {
+        return Promise.resolve({
+          error: { message: "disk /mnt/disk2 is being removed from the array (unpooled)" },
+          response: { ok: false },
+        });
+      }
+      if (path === "/disks/array/remove/finish") {
+        return Promise.resolve({
+          data: { id: "job-finish-2", type: "disk_remove", class: "topology", status: "queued", resumable: false, cancellable: false, createdAt: "2026-01-01T00:00:00Z" },
+          response: { ok: true },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Finish removal" }));
+    const dialog = await screen.findByRole("dialog");
+
+    const confirmInput = await within(dialog).findByRole("textbox");
+    const submit = within(dialog).getByRole("button", { name: "Finish removal" });
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(confirmInput, { target: { value: "REMOVE /mnt/disk2" } });
+    expect(submit).not.toBeDisabled();
+
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith(
+        "/disks/array/remove/finish",
+        expect.objectContaining({ body: { mountpoint: "/mnt/disk2", confirmation: "REMOVE /mnt/disk2" } }),
+      ),
+    );
+    expect(mockPost).not.toHaveBeenCalledWith("/disks/array/evacuate/plan", expect.anything());
+  });
+
+  it("renders nothing extra when no disk is in removal", async () => {
+    mockPoolAndJobs(mockGet, mountedPool());
+
+    renderPool();
+
+    await waitFor(() => expect(screen.getByText("/mnt/disk1")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Finish removal" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel removal" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Removal in progress/)).not.toBeInTheDocument();
+  });
+
+  it("Finish removal requires the exact typed phrase, calls finishDiskRemoval, shows the job's progress, and ends with the safe-to-remove message naming the device and serial/WWN", async () => {
+    let financeCalled = false;
+    mockPoolAndJobs(mockGet, poolWithRemovalState("evacuated"), [], [
+      { device: "/dev/sdc", sizeBytes: 4_000_000_000_000, model: "WDC WD40EFRX", wwn: "0xabc123", boot: false },
+    ]);
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/status") {
+        return Promise.resolve({ data: { healthy: true, summary: "OK", maintenanceMode: false }, response: { ok: true } });
+      }
+      if (path === "/pool") {
+        return Promise.resolve({ data: poolWithRemovalState("evacuated"), response: { ok: true } });
+      }
+      if (path === "/jobs") {
+        return Promise.resolve({
+          data: {
+            jobs: financeCalled
+              ? [
+                  {
+                    id: "job-finish-1",
+                    type: "disk_remove",
+                    class: "topology",
+                    status: "succeeded",
+                    resumable: false,
+                    cancellable: false,
+                    createdAt: "2026-01-01T00:00:00Z",
+                  },
+                ]
+              : [],
+          },
+          response: { ok: true },
+        });
+      }
+      if (path === "/doctor") {
+        return Promise.resolve({ data: { overall: "pass", checks: [] }, response: { ok: true } });
+      }
+      if (path === "/disks") {
+        return Promise.resolve({
+          data: { disks: [{ device: "/dev/sdc", sizeBytes: 4_000_000_000_000, model: "WDC WD40EFRX", wwn: "0xabc123", boot: false }] },
+          response: { ok: true },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/disks/array/evacuate/plan") {
+        return Promise.resolve({
+          data: { mountpoint: "/mnt/disk2", moves: [], warnings: [], confirmation: "REMOVE /mnt/disk2" },
+          response: { ok: true },
+        });
+      }
+      if (path === "/disks/array/remove/finish") {
+        financeCalled = true;
+        return Promise.resolve({
+          data: {
+            id: "job-finish-1",
+            type: "disk_remove",
+            class: "topology",
+            status: "queued",
+            resumable: false,
+            cancellable: false,
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+          response: { ok: true },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Finish removal" }));
+    const dialog = await screen.findByRole("dialog");
+
+    const submit = await within(dialog).findByRole("button", { name: "Finish removal" });
+    expect(submit).toBeDisabled();
+
+    const confirmInput = await within(dialog).findByRole("textbox");
+    fireEvent.change(confirmInput, { target: { value: "wrong" } });
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(confirmInput, { target: { value: "REMOVE /mnt/disk2" } });
+    expect(submit).not.toBeDisabled();
+
+    fireEvent.click(submit);
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith(
+        "/disks/array/remove/finish",
+        expect.objectContaining({ body: { mountpoint: "/mnt/disk2", confirmation: "REMOVE /mnt/disk2" } }),
+      ),
+    );
+
+    expect(
+      await within(dialog).findByText(
+        "/mnt/disk2 (WDC WD40EFRX · WWN 0xabc123 · 3.64 TiB) is safe to physically remove. Its filesystem was not wiped.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a rejected Finish removal request inside the dialog without closing it", async () => {
+    mockPoolAndJobs(mockGet, poolWithRemovalState("evacuated"));
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/disks/array/evacuate/plan") {
+        return Promise.resolve({
+          data: { mountpoint: "/mnt/disk2", moves: [], warnings: [], confirmation: "REMOVE /mnt/disk2" },
+          response: { ok: true },
+        });
+      }
+      if (path === "/disks/array/remove/finish") {
+        return Promise.resolve({ error: { message: "threshold guard tripped" }, response: { ok: false } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Finish removal" }));
+    const dialog = await screen.findByRole("dialog");
+    const confirmInput = await within(dialog).findByRole("textbox");
+    fireEvent.change(confirmInput, { target: { value: "REMOVE /mnt/disk2" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Finish removal" }));
+
+    expect(await within(dialog).findByText("threshold guard tripped")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("Cancel removal calls cancelDiskRemoval, and a rejected request is shown inside the dialog without closing it", async () => {
+    mockPoolAndJobs(mockGet, poolWithRemovalState("evacuated"));
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/disks/array/remove/cancel") {
+        return Promise.resolve({ error: { message: "its removal state changed" }, response: { ok: false } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel removal" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel removal" }));
+
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith("/disks/array/remove/cancel", expect.objectContaining({ body: { mountpoint: "/mnt/disk2" } })),
+    );
+    expect(await within(dialog).findByText("its removal state changed")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("a failed disk_remove job shows its message on the row, next to the Finish removal retry", async () => {
+    mockPoolAndJobs(mockGet, poolWithRemovalState("unpooled"), [
+      {
+        id: "job-failed-1",
+        type: "disk_remove",
+        class: "topology",
+        status: "failed",
+        resumable: false,
+        cancellable: false,
+        createdAt: "2026-01-01T00:00:00Z",
+        error: { code: "threshold_guard_tripped", message: "the threshold guard is tripped" },
+      },
+    ]);
+
+    renderPool();
+
+    expect(await screen.findByText(/the threshold guard is tripped/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Finish removal" })).toBeInTheDocument();
+  });
+
+  it("shows a failed disk_remove job newer than its own evacuation job — the current removal's own failure", async () => {
+    mockPoolAndJobs(mockGet, poolWithRemovalState("unpooled"), [
+      {
+        id: "job-evac-1",
+        type: "evacuation",
+        class: "array_write",
+        status: "succeeded",
+        resumable: true,
+        cancellable: true,
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: "job-failed-1",
+        type: "disk_remove",
+        class: "topology",
+        status: "failed",
+        resumable: false,
+        cancellable: false,
+        createdAt: "2026-01-02T00:00:00Z",
+        error: { code: "threshold_guard_tripped", message: "the threshold guard is tripped" },
+      },
+    ]);
+
+    renderPool();
+
+    expect(await screen.findByText(/the threshold guard is tripped/)).toBeInTheDocument();
+  });
+
+  it("does not show a failed disk_remove job once a later disk_remove job for the same removal is queued or running", async () => {
+    // Scenario: Finish removal failed, the user cleared the guard and
+    // retried — the retry (job-remove-2) is running while the old
+    // failure (job-remove-1) is still in the job list. The row must
+    // reflect the retry in progress, not the superseded failure.
+    mockPoolAndJobs(mockGet, poolWithRemovalState("unpooled"), [
+      {
+        id: "job-evac-1",
+        type: "evacuation",
+        class: "array_write",
+        status: "succeeded",
+        resumable: true,
+        cancellable: true,
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: "job-remove-1",
+        type: "disk_remove",
+        class: "topology",
+        status: "failed",
+        resumable: false,
+        cancellable: false,
+        createdAt: "2026-01-02T00:00:00Z",
+        error: { code: "threshold_guard_tripped", message: "the threshold guard is tripped" },
+      },
+      {
+        id: "job-remove-2",
+        type: "disk_remove",
+        class: "topology",
+        status: "running",
+        resumable: false,
+        cancellable: false,
+        createdAt: "2026-01-03T00:00:00Z",
+      },
+    ]);
+
+    renderPool();
+
+    expect(await screen.findByRole("button", { name: "Finish removal" })).toBeInTheDocument();
+    expect(screen.queryByText(/Finishing removal failed/)).not.toBeInTheDocument();
+  });
+
+  it("does not show a stale failed disk_remove job once a newer evacuation has started for a later removal (finding 2)", async () => {
+    // Scenario: disk3's finish attempt failed, its retry later succeeded,
+    // and disk2's own evacuation (shown as removalDisk here) only started
+    // after that — the old disk3 failure must never be misattributed to
+    // disk2's row.
+    mockPoolAndJobs(mockGet, poolWithRemovalState("evacuated"), [
+      {
+        id: "job-failed-old",
+        type: "disk_remove",
+        class: "topology",
+        status: "failed",
+        resumable: false,
+        cancellable: false,
+        createdAt: "2026-01-01T00:00:00Z",
+        error: { code: "threshold_guard_tripped", message: "the threshold guard is tripped" },
+      },
+      {
+        id: "job-evac-new",
+        type: "evacuation",
+        class: "array_write",
+        status: "succeeded",
+        resumable: true,
+        cancellable: true,
+        createdAt: "2026-01-02T00:00:00Z",
+      },
+    ]);
+
+    renderPool();
+
+    expect(await screen.findByRole("button", { name: "Finish removal" })).toBeInTheDocument();
+    expect(screen.queryByText(/Finishing removal failed/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Takes /mnt/disk2 out of the pool and SnapRAID, then reports it safe to pull (doc 09 §4)."),
+    ).toBeInTheDocument();
   });
 });

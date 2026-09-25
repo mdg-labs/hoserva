@@ -326,6 +326,22 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		}, layout); err != nil {
 			t.Fatalf("seeding array topology: %v", err)
 		}
+		// PutArray's own InsertArrayDisk carries no removal_state column
+		// (SetRemovalState is production's only writer of it, since a
+		// disk only ever enters removal after create-array already ran)
+		// — so a scenario's own removal state, set directly on the
+		// layout above, has to be replayed here too, or this rig's own
+		// disk would silently start "not in removal" while the mock
+		// (which reads mockArrayDisks fresh on every call, never through
+		// ArrayStore) still reports it correctly (#361).
+		for _, d := range layout {
+			if d.RemovalState == "" {
+				continue
+			}
+			if err := arrayStore.SetRemovalState(ctx, d.Mountpoint, d.RemovalState, "contract-rig-removal"); err != nil {
+				t.Fatalf("seeding removal state for %s: %v", d.Mountpoint, err)
+			}
+		}
 	}
 
 	provider := disk.NewFakeProvider()
@@ -456,11 +472,17 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	extRunner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdf"}, []byte("ext-fixture-uuid\n"), nil)
 
 	return &api.Handler{
-		Scheduler:   scheduler,
-		Store:       jobStore,
-		Logs:        logs,
-		Disks:       provider,
-		ArrayStore:  arrayStore,
+		Scheduler:  scheduler,
+		Store:      jobStore,
+		Logs:       logs,
+		Disks:      provider,
+		ArrayStore: arrayStore,
+		// ArrayReady: CancelDiskRemoval (#361) is the only handler method
+		// that calls it directly rather than through a job — this rig
+		// never mounts anything for real (Array's own doc comment
+		// below), so a no-op that always succeeds matches every other
+		// "mounts nothing for real" fake here.
+		ArrayReady:  func(context.Context) error { return nil },
 		Shares:      shareSvc,
 		Notify:      notifySvc,
 		Auth:        authSvc,

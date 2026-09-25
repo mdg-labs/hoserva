@@ -196,6 +196,14 @@ export function postDiskEvacuation(body: { mountpoint: string; confirmation: str
   return hoservaClient.POST("/disks/array/evacuate", { body });
 }
 
+export function postDiskRemovalFinish(body: { mountpoint: string; confirmation: string }) {
+  return hoservaClient.POST("/disks/array/remove/finish", { body });
+}
+
+export function postDiskRemovalCancel(body: { mountpoint: string }) {
+  return hoservaClient.POST("/disks/array/remove/cancel", { body });
+}
+
 export function postMoverRun() {
   return hoservaClient.POST("/mover/run");
 }

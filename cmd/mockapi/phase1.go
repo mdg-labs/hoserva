@@ -11,6 +11,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/job"
 )
 
 const mockDiskSize = 4_000_000_000_000
@@ -91,6 +92,17 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 	if scenario == "degraded" {
 		disks[2].Failed = apiv1.NewOptBool(true)
 	}
+	if scenario == "sync-blocked" {
+		// disk5 mirrors mockArrayDisks's own "sync-blocked" scenario
+		// (#361): already evacuated, so `disk remove finish`/the pool
+		// page's Finish removal have a disk they can actually run to
+		// success against the mock — the one gap #358's executor found
+		// (no scenario had an evacuated disk).
+		disks = append(disks, apiv1.DiskInventoryEntry{
+			Device: "/dev/sdg", SizeBytes: mockDiskSize,
+			Model: apiv1.NewOptString("WDC WD40EFRX"), Serial: apiv1.NewOptString("WD-WCC4E2222222"),
+		})
+	}
 	return append(disks, mockUSBDisk())
 }
 
@@ -140,6 +152,7 @@ func mockPoolStatus(scenario string) *apiv1.PoolStatus {
 		// disk3 mirrors mockArrayDisks's own "degraded" scenario (#359,
 		// doc 09 §4 step 2): mid-evacuation, no-create.
 		disks[2].RemovalState = apiv1.NewOptNilDiskRemovalState(apiv1.DiskRemovalStateEvacuating)
+		disks[2].FinishConfirmation = apiv1.NewOptString(job.EvacuationConfirmation(disks[2].MountPoint))
 		// A stored array member with no identity match in inventory at
 		// all (#326) — the literal "failed disk" scenario doc 02 §4
 		// describes, mirroring production GetPool's shape: stored
@@ -149,6 +162,19 @@ func mockPoolStatus(scenario string) *apiv1.PoolStatus {
 			MountPoint: "/mnt/disk4",
 			Role:       apiv1.PoolDiskEntryRoleData,
 			State:      apiv1.DiskStateMissing,
+		})
+	}
+	if scenario == "sync-blocked" {
+		// Mirrors mockArrayDisks's own "sync-blocked" scenario (#361):
+		// disk5 already evacuated and ready for `finishDiskRemoval` —
+		// the one removal state no scenario had a disk in before this,
+		// so the pool page's Finish removal action has something to
+		// demo a real success against.
+		disks = append(disks, apiv1.PoolDiskEntry{
+			Device: "/dev/sdg", MountPoint: "/mnt/disk5", Role: apiv1.PoolDiskEntryRoleData,
+			State: apiv1.DiskStateActive, SizeBytes: size, UsedBytes: used,
+			RemovalState:       apiv1.NewOptNilDiskRemovalState(apiv1.DiskRemovalStateEvacuated),
+			FinishConfirmation: apiv1.NewOptString(job.EvacuationConfirmation("/mnt/disk5")),
 		})
 	}
 	return &apiv1.PoolStatus{Mounted: true, Disks: disks}

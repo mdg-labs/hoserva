@@ -412,6 +412,13 @@ func run(cfg config) error {
 	handler.HostConfig = store.NewHostConfigStore(db)
 	handler.Docker = cfggen.ExecDocker{}
 	handler.ArrayStore = arrayStore
+	// CancelDiskRemoval (#361) is the one handler method that calls
+	// ArrayReady directly, outside any job — parityReg.callArrayReady is
+	// the same fail-on-live-update-failure hook TypeEvacuation/
+	// TypeDiskRemove already run with (parityReg.register's own doc
+	// comment), so a live-apply failure while re-applying RW branches is
+	// reported to the caller rather than silently reporting success.
+	handler.ArrayReady = parityReg.callArrayReady
 	handler.Network = networkSvc
 	handler.ACME = acmeService
 	handler.Shares = shareService

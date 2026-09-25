@@ -68,6 +68,10 @@ UPDATE array_disks SET removal_state = ?, removal_job_id = ? WHERE mountpoint = 
 UPDATE array_disks SET removal_state = NULL, removal_job_id = NULL
 WHERE mountpoint = ? AND role = 'data' AND removal_state = 'evacuating' AND removal_job_id = ?;
 
+-- name: CancelArrayDiskRemovalState :execrows
+UPDATE array_disks SET removal_state = NULL, removal_job_id = NULL
+WHERE mountpoint = ? AND role = 'data' AND removal_state IN ('evacuating', 'evacuated');
+
 -- name: AdvanceArrayDiskRemovalState :execrows
 UPDATE array_disks SET removal_state = sqlc.arg(to_state), removal_job_id = sqlc.arg(job_id)
 WHERE mountpoint = sqlc.arg(mountpoint) AND role = 'data'

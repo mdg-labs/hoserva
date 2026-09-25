@@ -11,6 +11,7 @@ const (
 	ApplyNetworkSettingsOperation           OperationName = "ApplyNetworkSettings"
 	ApplyUpdateOperation                    OperationName = "ApplyUpdate"
 	BrowseShareOperation                    OperationName = "BrowseShare"
+	CancelDiskRemovalOperation              OperationName = "CancelDiskRemoval"
 	CancelJobOperation                      OperationName = "CancelJob"
 	CheckForUpdateOperation                 OperationName = "CheckForUpdate"
 	ConfigureLetsEncryptOperation           OperationName = "ConfigureLetsEncrypt"

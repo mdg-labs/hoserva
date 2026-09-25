@@ -1928,6 +1928,102 @@ func (s *CacheUsageBreakdown) UnmarshalJSON(data []byte) error {
 }
 
 // Encode implements json.Marshaler.
+func (s *CancelDiskRemovalRequest) Encode(e *jx.Encoder) {
+	e.ObjStart()
+	s.encodeFields(e)
+	e.ObjEnd()
+}
+
+// encodeFields encodes fields.
+func (s *CancelDiskRemovalRequest) encodeFields(e *jx.Encoder) {
+	{
+		e.FieldStart("mountpoint")
+		e.Str(s.Mountpoint)
+	}
+}
+
+var jsonFieldsNameOfCancelDiskRemovalRequest = [1]string{
+	0: "mountpoint",
+}
+
+// Decode decodes CancelDiskRemovalRequest from json.
+func (s *CancelDiskRemovalRequest) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode CancelDiskRemovalRequest to nil")
+	}
+	var requiredBitSet [1]uint8
+
+	if err := d.ObjBytes(func(d *jx.Decoder, k []byte) error {
+		switch string(k) {
+		case "mountpoint":
+			requiredBitSet[0] |= 1 << 0
+			if err := func() error {
+				v, err := d.Str()
+				s.Mountpoint = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"mountpoint\"")
+			}
+		default:
+			return d.Skip()
+		}
+		return nil
+	}); err != nil {
+		return errors.Wrap(err, "decode CancelDiskRemovalRequest")
+	}
+	// Validate required fields.
+	var failures []validate.FieldError
+	for i, mask := range [1]uint8{
+		0b00000001,
+	} {
+		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
+			// Mask only required fields and check equality to mask using XOR.
+			//
+			// If XOR result is not zero, result is not equal to expected, so some fields are missed.
+			// Bits of fields which would be set are actually bits of missed fields.
+			missed := bits.OnesCount8(result)
+			for bitN := 0; bitN < missed; bitN++ {
+				bitIdx := bits.TrailingZeros8(result)
+				fieldIdx := i*8 + bitIdx
+				var name string
+				if fieldIdx < len(jsonFieldsNameOfCancelDiskRemovalRequest) {
+					name = jsonFieldsNameOfCancelDiskRemovalRequest[fieldIdx]
+				} else {
+					name = strconv.Itoa(fieldIdx)
+				}
+				failures = append(failures, validate.FieldError{
+					Name:  name,
+					Error: validate.ErrFieldRequired,
+				})
+				// Reset bit.
+				result &^= 1 << bitIdx
+			}
+		}
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s *CancelDiskRemovalRequest) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *CancelDiskRemovalRequest) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode implements json.Marshaler.
 func (s *ConfigureLetsEncryptRequest) Encode(e *jx.Encoder) {
 	e.ObjStart()
 	s.encodeFields(e)
@@ -14514,9 +14610,15 @@ func (s *PoolDiskEntry) encodeFields(e *jx.Encoder) {
 			s.RemovalState.Encode(e)
 		}
 	}
+	{
+		if s.FinishConfirmation.Set {
+			e.FieldStart("finishConfirmation")
+			s.FinishConfirmation.Encode(e)
+		}
+	}
 }
 
-var jsonFieldsNameOfPoolDiskEntry = [9]string{
+var jsonFieldsNameOfPoolDiskEntry = [10]string{
 	0: "device",
 	1: "mountPoint",
 	2: "role",
@@ -14526,6 +14628,7 @@ var jsonFieldsNameOfPoolDiskEntry = [9]string{
 	6: "freeBytes",
 	7: "nearMinFreeSpace",
 	8: "removalState",
+	9: "finishConfirmation",
 }
 
 // Decode decodes PoolDiskEntry from json.
@@ -14630,6 +14733,16 @@ func (s *PoolDiskEntry) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"removalState\"")
+			}
+		case "finishConfirmation":
+			if err := func() error {
+				s.FinishConfirmation.Reset()
+				if err := s.FinishConfirmation.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"finishConfirmation\"")
 			}
 		default:
 			return d.Skip()

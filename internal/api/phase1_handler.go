@@ -67,6 +67,7 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 				entry.Role = arrayRoleToAPI(arrayDisks[idx].Role)
 				entry.MountPoint = arrayDisks[idx].Mountpoint
 				entry.RemovalState = removalStateToAPI(arrayDisks[idx].RemovalState)
+				entry.FinishConfirmation = finishConfirmationForState(arrayDisks[idx].Mountpoint, arrayDisks[idx].RemovalState)
 			}
 			entries = append(entries, entry)
 		}
@@ -85,11 +86,12 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 			device = ""
 		}
 		entries = append(entries, apiv1.PoolDiskEntry{
-			Device:       device,
-			MountPoint:   ad.Mountpoint,
-			Role:         arrayRoleToAPI(ad.Role),
-			RemovalState: removalStateToAPI(ad.RemovalState),
-			State:        apiv1.DiskStateMissing,
+			Device:             device,
+			MountPoint:         ad.Mountpoint,
+			Role:               arrayRoleToAPI(ad.Role),
+			RemovalState:       removalStateToAPI(ad.RemovalState),
+			FinishConfirmation: finishConfirmationForState(ad.Mountpoint, ad.RemovalState),
+			State:              apiv1.DiskStateMissing,
 		})
 	}
 	mounted, err := pathIsMountpoint(pool.CatchAllPath)
@@ -169,6 +171,18 @@ func removalStateToAPI(state string) apiv1.OptNilDiskRemovalState {
 		return apiv1.OptNilDiskRemovalState{}
 	}
 	return apiv1.NewOptNilDiskRemovalState(apiv1.DiskRemovalState(state))
+}
+
+// finishConfirmationForState is job.EvacuationConfirmation(mountpoint)
+// whenever state is set — the same fixed phrase finishDiskRemoval checks
+// — so the pool page can retry Finish removal once the disk has left the
+// pool (unpooled/unlisted), where planDiskEvacuation itself now refuses
+// (#361, finding 1 of this issue's fix round).
+func finishConfirmationForState(mountpoint, state string) apiv1.OptString {
+	if state == "" {
+		return apiv1.OptString{}
+	}
+	return apiv1.NewOptString(job.EvacuationConfirmation(mountpoint))
 }
 
 // populatePoolSpace fills status's pool-free, largest-single-disk-free and

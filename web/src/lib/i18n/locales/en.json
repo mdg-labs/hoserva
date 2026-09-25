@@ -312,6 +312,34 @@
       "confirmTitle": "Confirm evacuating {{mountpoint}}",
       "confirmDescription": "Every file is copied, verified and synced onto the pool's remaining disks before the originals are deleted."
     },
+    "removal": {
+      "badge": {
+        "evacuating": "Being emptied — no new files land here",
+        "evacuated": "Empty — ready to finish removal",
+        "unpooled": "Removal in progress",
+        "unlisted": "Removal in progress"
+      },
+      "dangerZoneTitle": "{{mountpoint}} is leaving the array",
+      "finishDescription": "Takes {{mountpoint}} out of the pool and SnapRAID, then reports it safe to pull (doc 09 §4).",
+      "finishAction": "Finish removal",
+      "cancelDescription": "Returns {{mountpoint}} to normal use — it takes new files again immediately.",
+      "cancelAction": "Cancel removal",
+      "failedJob": "Finishing removal failed: {{message}}"
+    },
+    "finishRemoval": {
+      "title": "Finish removing {{mountpoint}}",
+      "description": "Takes the disk out of every pool mount and out of SnapRAID, then unmounts it. Its filesystem is never wiped.",
+      "confirmTitle": "Confirm finishing {{mountpoint}}'s removal",
+      "confirmDescription": "This runs immediately once you type the phrase below — there is no further confirmation.",
+      "submit": "Finish removal",
+      "safeToRemove": "{{mountpoint}} ({{identity}}) is safe to physically remove. Its filesystem was not wiped.",
+      "safeToRemoveNoIdentity": "{{mountpoint}} is safe to physically remove. Its filesystem was not wiped."
+    },
+    "cancelRemoval": {
+      "title": "Cancel removing {{mountpoint}}?",
+      "description": "The disk returns to normal use and starts taking new files again immediately.",
+      "confirm": "Cancel removal"
+    },
     "stop": {
       "title": "Stop the array?",
       "description": "Maintenance mode stops services and unmounts pool disks in a safe order (Q70).",

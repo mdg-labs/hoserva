@@ -121,6 +121,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 	generated := []apiv1.OperationName{
 		apiv1.AddDiskOperation,
 		apiv1.ApplyHostConfigOperation,
+		apiv1.CancelDiskRemovalOperation,
 		apiv1.CancelJobOperation,
 		apiv1.ConfirmTotpOperation,
 		apiv1.CreateApiTokenOperation,

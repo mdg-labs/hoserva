@@ -248,6 +248,31 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "CancelDiskRemoval",
+		name: "disk_slot_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.CancelDiskRemoval(ctx, &apiv1.CancelDiskRemovalRequest{Mountpoint: "/mnt/disk9"})
+		},
+	},
+	{
+		op:   "CancelDiskRemoval",
+		name: "not_in_removal",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.CancelDiskRemoval(ctx, &apiv1.CancelDiskRemovalRequest{Mountpoint: "/mnt/disk1"})
+		},
+	},
+	{
+		// mockArrayDisks/mockPoolStatus's own "sync-blocked" scenario
+		// (#361) carries disk5 already evacuated — the one removal state
+		// no scenario had a disk in before this issue.
+		op:       "CancelDiskRemoval",
+		name:     "valid_evacuated_disk",
+		scenario: "sync-blocked",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.CancelDiskRemoval(ctx, &apiv1.CancelDiskRemovalRequest{Mountpoint: "/mnt/disk5"})
+		},
+	},
+	{
 		op:   "PlanRebalance",
 		name: "valid",
 		run: func(ctx context.Context, h apiv1.Handler) error {

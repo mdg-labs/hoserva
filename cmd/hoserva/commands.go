@@ -134,6 +134,7 @@ func diskRemoveCmd() *cobra.Command {
 	_ = plan.MarkFlagRequired("mountpoint")
 	cmd.AddCommand(plan)
 	cmd.AddCommand(diskRemoveFinishCmd())
+	cmd.AddCommand(diskRemoveCancelCmd())
 
 	return cmd
 }
@@ -156,6 +157,34 @@ func diskRemoveFinishCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&mountpoint, "mountpoint", "", "The evacuated data disk's slot, e.g. /mnt/disk3 (required)")
 	cmd.Flags().StringVar(&confirm, "confirm", "", "Exact confirmation phrase from `disk remove plan` (required)")
+	_ = cmd.MarkFlagRequired("mountpoint")
+	return cmd
+}
+
+// diskRemoveCancelCmd is `hoserva disk remove cancel` (#361): clears the
+// disk's removal state synchronously — no job, no typed confirmation —
+// and returns it to normal use. Refused (and the reason printed) unless
+// the disk is evacuated, or evacuating with its own evacuation job no
+// longer queued, running or interrupted.
+func diskRemoveCancelCmd() *cobra.Command {
+	var mountpoint string
+	cmd := &cobra.Command{
+		Use:   "cancel",
+		Short: "Cancel a disk's removal and return it to normal use (doc 09 §4)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newAPIClient()
+			if err != nil {
+				return err
+			}
+			req := &apiv1.CancelDiskRemovalRequest{Mountpoint: mountpoint}
+			if err := c.CancelDiskRemoval(apiCtx(), req); err != nil {
+				return mapAPIErr(err)
+			}
+			fmt.Printf("disk removal cancelled: %s is back to normal use\n", mountpoint)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&mountpoint, "mountpoint", "", "The data disk slot to stop removing, e.g. /mnt/disk3 (required)")
 	_ = cmd.MarkFlagRequired("mountpoint")
 	return cmd
 }

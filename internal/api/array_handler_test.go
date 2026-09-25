@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/cache"
@@ -803,6 +805,218 @@ func TestHandler_FinishDiskRemoval_StoreFailureIsInternal(t *testing.T) {
 	_, err = h.FinishDiskRemoval(ctx, &apiv1.FinishDiskRemovalRequest{Mountpoint: "/mnt/disk2", Confirmation: "REMOVE /mnt/disk2"})
 	if status := apiError(t, h, err); status.StatusCode != 500 || status.Response.Code != "internal" {
 		t.Fatalf("FinishDiskRemoval with a failing store = %+v, want an opaque 500", status)
+	}
+}
+
+// fakeArrayReadyHook mirrors internal/job's own scriptable ArrayReady
+// dependency (evacuation_run_test.go's doc comment) at the Handler level:
+// CancelDiskRemoval (#361) is the one handler method that calls
+// Handler.ArrayReady directly, outside any job, so a test needs the same
+// call-counting, scriptable-error fake to prove the disk's branches are
+// re-applied RW exactly when — and only when — a cancel actually clears
+// the removal state.
+type fakeArrayReadyHook struct {
+	mu    sync.Mutex
+	calls int
+	err   error
+}
+
+func (f *fakeArrayReadyHook) hook(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.err
+}
+
+func (f *fakeArrayReadyHook) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// TestHandler_CancelDiskRemoval_RefusalsInOrder is the acceptance
+// criterion's status mapping: 501 with ArrayReady not wired, 404 for a
+// slot with no data disk, 409 disk_removal_not_cancellable for a disk not
+// currently in removal, one already unpooled or unlisted (#361's Open
+// questions default: only finishDiskRemoval takes those further), and one
+// evacuating whose own evacuation job is still queued — and ArrayReady is
+// never called for any of them.
+func TestHandler_CancelDiskRemoval_RefusalsInOrder(t *testing.T) {
+	ctx := context.Background()
+
+	unconfigured, _, _, _ := newDiskRemoveTestHandler(t, true)
+	unconfigured.ArrayReady = nil
+	if err := unconfigured.CancelDiskRemoval(ctx, &apiv1.CancelDiskRemovalRequest{Mountpoint: "/mnt/disk1"}); err == nil {
+		t.Fatal("CancelDiskRemoval with no ArrayReady wired = nil, want 501")
+	} else if status := apiError(t, unconfigured, err); status.StatusCode != 501 || status.Response.Code != "not_configured" {
+		t.Fatalf("CancelDiskRemoval with no ArrayReady wired = %+v, want 501 not_configured", status)
+	}
+
+	h, disk1, disk2, _ := newDiskRemoveTestHandler(t, true)
+	arrayReady := &fakeArrayReadyHook{}
+	h.ArrayReady = arrayReady.hook
+
+	if err := h.CancelDiskRemoval(ctx, &apiv1.CancelDiskRemovalRequest{Mountpoint: "/mnt/disk9"}); err == nil {
+		t.Fatal("CancelDiskRemoval(unknown slot) = nil, want 404")
+	} else if status := apiError(t, h, err); status.StatusCode != 404 || status.Response.Code != "disk_slot_not_found" {
+		t.Fatalf("CancelDiskRemoval(unknown slot) = %+v, want 404 disk_slot_not_found", status)
+	}
+
+	if err := h.CancelDiskRemoval(ctx, &apiv1.CancelDiskRemovalRequest{Mountpoint: disk1}); err == nil {
+		t.Fatal("CancelDiskRemoval(not in removal) = nil, want 409")
+	} else if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_removal_not_cancellable" {
+		t.Fatalf("CancelDiskRemoval(not in removal) = %+v, want 409 disk_removal_not_cancellable", status)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, h *api.Handler)
+	}{
+		{
+			name: "unpooled",
+			setup: func(t *testing.T, h *api.Handler) {
+				if err := h.ArrayStore.SetRemovalState(ctx, disk2, store.RemovalStateEvacuating, "evac-1"); err != nil {
+					t.Fatalf("SetRemovalState(evacuating): %v", err)
+				}
+				if err := h.ArrayStore.AdvanceRemovalState(ctx, disk2, store.RemovalStateEvacuating, store.RemovalStateUnpooled, "evac-1"); err != nil {
+					t.Fatalf("AdvanceRemovalState(unpooled): %v", err)
+				}
+			},
+		},
+		{
+			name: "unlisted",
+			setup: func(t *testing.T, h *api.Handler) {
+				if err := h.ArrayStore.SetRemovalState(ctx, disk2, store.RemovalStateEvacuating, "evac-1"); err != nil {
+					t.Fatalf("SetRemovalState(evacuating): %v", err)
+				}
+				if err := h.ArrayStore.AdvanceRemovalState(ctx, disk2, store.RemovalStateEvacuating, store.RemovalStateEvacuated, "evac-1"); err != nil {
+					t.Fatalf("AdvanceRemovalState(evacuated): %v", err)
+				}
+				if err := h.ArrayStore.AdvanceRemovalState(ctx, disk2, store.RemovalStateEvacuated, store.RemovalStateUnlisted, "evac-1"); err != nil {
+					t.Fatalf("AdvanceRemovalState(unlisted): %v", err)
+				}
+			},
+		},
+		{
+			name: "evacuating with a still-queued evacuation job",
+			setup: func(t *testing.T, h *api.Handler) {
+				jobID := uuid.NewString()
+				if err := h.Store.Create(ctx, &job.Job{ID: jobID, Type: job.TypeEvacuation, Class: job.ClassArrayWrite, Status: job.StatusQueued, CreatedAt: time.Now().UTC()}); err != nil {
+					t.Fatalf("seeding a pending evacuation job: %v", err)
+				}
+				if err := h.ArrayStore.SetRemovalState(ctx, disk2, store.RemovalStateEvacuating, jobID); err != nil {
+					t.Fatalf("SetRemovalState(evacuating): %v", err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, disk2, _ := newDiskRemoveTestHandler(t, true)
+			arrayReady := &fakeArrayReadyHook{}
+			h.ArrayReady = arrayReady.hook
+			tc.setup(t, h)
+
+			err := h.CancelDiskRemoval(ctx, &apiv1.CancelDiskRemovalRequest{Mountpoint: disk2})
+			if status := apiError(t, h, err); status.StatusCode != 409 || status.Response.Code != "disk_removal_not_cancellable" {
+				t.Fatalf("CancelDiskRemoval(%s) = %+v, want 409 disk_removal_not_cancellable", tc.name, status)
+			}
+			if arrayReady.callCount() != 0 {
+				t.Fatalf("CancelDiskRemoval(%s): ArrayReady ran %d time(s) on a refusal", tc.name, arrayReady.callCount())
+			}
+		})
+	}
+}
+
+// TestHandler_CancelDiskRemoval_ClearsStateAndReappliesPool proves a
+// successful cancel — for an evacuated disk, and for an evacuating one
+// whose own job has already ended (succeeded/failed/cancelled) or whose
+// job record the store no longer has — clears the disk's removal state
+// back to "" and re-applies the pool live exactly once, so its branches
+// go back to RW (#361).
+func TestHandler_CancelDiskRemoval_ClearsStateAndReappliesPool(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, h *api.Handler, mountpoint string)
+	}{
+		{
+			name: "evacuated",
+			setup: func(t *testing.T, h *api.Handler, mountpoint string) {
+				if err := h.ArrayStore.SetRemovalState(ctx, mountpoint, store.RemovalStateEvacuated, "evac-1"); err != nil {
+					t.Fatalf("SetRemovalState(evacuated): %v", err)
+				}
+			},
+		},
+		{
+			name: "evacuating, its job already succeeded",
+			setup: func(t *testing.T, h *api.Handler, mountpoint string) {
+				jobID := uuid.NewString()
+				if err := h.Store.Create(ctx, &job.Job{ID: jobID, Type: job.TypeEvacuation, Class: job.ClassArrayWrite, Status: job.StatusSucceeded, CreatedAt: time.Now().UTC()}); err != nil {
+					t.Fatalf("seeding an ended evacuation job: %v", err)
+				}
+				if err := h.ArrayStore.SetRemovalState(ctx, mountpoint, store.RemovalStateEvacuating, jobID); err != nil {
+					t.Fatalf("SetRemovalState(evacuating): %v", err)
+				}
+			},
+		},
+		{
+			name: "evacuating, no job record at all",
+			setup: func(t *testing.T, h *api.Handler, mountpoint string) {
+				if err := h.ArrayStore.SetRemovalState(ctx, mountpoint, store.RemovalStateEvacuating, "a-job-id-the-store-never-saw"); err != nil {
+					t.Fatalf("SetRemovalState(evacuating): %v", err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, disk2, _ := newDiskRemoveTestHandler(t, true)
+			arrayReady := &fakeArrayReadyHook{}
+			h.ArrayReady = arrayReady.hook
+			tc.setup(t, h, disk2)
+
+			if err := h.CancelDiskRemoval(ctx, &apiv1.CancelDiskRemovalRequest{Mountpoint: disk2}); err != nil {
+				t.Fatalf("CancelDiskRemoval: %v", err)
+			}
+			if arrayReady.callCount() != 1 {
+				t.Fatalf("ArrayReady was called %d time(s), want exactly 1 — the disk's branches must be re-applied RW", arrayReady.callCount())
+			}
+			got, err := h.ArrayStore.GetDataDiskByMountpoint(ctx, disk2)
+			if err != nil {
+				t.Fatalf("GetDataDiskByMountpoint: %v", err)
+			}
+			if got.RemovalState != "" || got.RemovalJobID != "" {
+				t.Fatalf("disk after cancel: RemovalState=%q RemovalJobID=%q, want both cleared", got.RemovalState, got.RemovalJobID)
+			}
+		})
+	}
+}
+
+// TestHandler_CancelDiskRemoval_LiveApplyFailureIsInternal proves a
+// live-update failure while re-applying the pool is reported as an opaque
+// internal error, with the removal state already cleared beforehand — the
+// same clear-then-apply order the disk-topology jobs already use for
+// their own ArrayReady call, never silently reporting success while the
+// disk is still no-create, and never leaving it stranded no-create either
+// once the state is already gone.
+func TestHandler_CancelDiskRemoval_LiveApplyFailureIsInternal(t *testing.T) {
+	ctx := context.Background()
+	h, _, disk2, _ := newDiskRemoveTestHandler(t, true)
+	failing := &fakeArrayReadyHook{err: errors.New("applying the new pool mounts to the running pool: simulated mount failure")}
+	h.ArrayReady = failing.hook
+	if err := h.ArrayStore.SetRemovalState(ctx, disk2, store.RemovalStateEvacuated, "evac-1"); err != nil {
+		t.Fatalf("SetRemovalState(evacuated): %v", err)
+	}
+
+	err := h.CancelDiskRemoval(ctx, &apiv1.CancelDiskRemovalRequest{Mountpoint: disk2})
+	if status := apiError(t, h, err); status.StatusCode != 500 || status.Response.Code != "internal" {
+		t.Fatalf("CancelDiskRemoval with a failing ArrayReady = %+v, want an opaque 500", status)
+	}
+	got, gerr := h.ArrayStore.GetDataDiskByMountpoint(ctx, disk2)
+	if gerr != nil {
+		t.Fatalf("GetDataDiskByMountpoint: %v", gerr)
+	}
+	if got.RemovalState != "" {
+		t.Fatalf("RemovalState after a failed live apply = %q, want cleared (never silently left no-create)", got.RemovalState)
 	}
 }
 

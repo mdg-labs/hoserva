@@ -74,6 +74,27 @@ func (UnimplementedHandler) BrowseShare(ctx context.Context, params BrowseShareP
 	return r, ht.ErrNotImplemented
 }
 
+// CancelDiskRemoval implements cancelDiskRemoval operation.
+//
+// Clears `mountpoint`'s doc 09 §4 removal state synchronously — no job — and re-applies the pool
+// live so the disk's branches go back to RW (#361). Refused with `disk_slot_not_found` (404) when no
+// data disk occupies `mountpoint`. Refused with `disk_removal_not_cancellable` (409) when the disk is
+// not currently in removal; when it is `unpooled` or `unlisted` — it has already left the pool, so
+// the only way forward is `finishDiskRemoval`, never back (doc 09 §4's own Open questions); or when
+// it is `evacuating` and its evacuation job is still queued, running or interrupted — that job owns
+// the state, so cancel it (`DELETE /jobs/{jobId}` — `jobs/{jobId}/cancel`) instead. An `evacuating`
+// disk whose evacuation job has already ended (no longer queued, running or interrupted — including
+// a job the store no longer has a record of) is cancelled the same as an `evacuated` one: the copy it
+// ran already stopped, and cancelling here is how the disk gets back to ordinary use instead of
+// sitting stuck until it is evacuated again. A live-update failure while re-applying the pool is an
+// internal error, and the removal state is left cleared — the same as the disk-topology jobs' own
+// live-apply failures — rather than silently reporting success with the disk still no-create.
+//
+// POST /disks/array/remove/cancel
+func (UnimplementedHandler) CancelDiskRemoval(ctx context.Context, req *CancelDiskRemovalRequest) error {
+	return ht.ErrNotImplemented
+}
+
 // CancelJob implements cancelJob operation.
 //
 // Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be

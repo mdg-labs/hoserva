@@ -113,6 +113,15 @@ type Handler struct {
 	// ArrayStore is create-array topology, used to decide whether a Docker
 	// data-root move to cache is even possible (Q62). Nil means no cache.
 	ArrayStore *store.ArrayStore
+	// ArrayReady is cmd/hoservad's own topology-changed hook, the one that
+	// fails on a live-update error rather than logging it — the same
+	// method value job.EvacuationDeps.ArrayReady and
+	// job.DiskRemoveDeps.ArrayReady already run with (#265, #359). Set
+	// once at startup: CancelDiskRemoval (#361) is the only handler that
+	// calls it directly, since it clears a disk's removal state
+	// synchronously rather than through a job. Nil is only valid in tests
+	// that exercise none of those operations.
+	ArrayReady func(ctx context.Context) error
 	// DiskMounter mounts and unmounts external disks by filesystem UUID
 	// (Q72). Nil uses DirectMounter over DiskRunner.
 	DiskMounter disk.UnitMounter

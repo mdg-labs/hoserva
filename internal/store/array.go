@@ -481,6 +481,26 @@ func (s *ArrayStore) ReleaseRemovalState(ctx context.Context, mountpoint, jobID 
 	return n > 0, nil
 }
 
+// CancelRemovalState unconditionally clears mountpoint's removal state
+// back to NULL while it is "evacuating" or "evacuated", and reports
+// whether it did (#361's cancelDiskRemoval). Unlike ReleaseRemovalState,
+// this is not scoped to a holding job id: cancelDiskRemoval's own caller
+// (internal/api) has already decided, from the disk's RemovalJobID and
+// the job store, that no evacuation job is still queued, running or
+// interrupted for this disk — an evacuated disk never has one to begin
+// with, since RunEvacuation's own job already finished. A disk that is
+// "unpooled" or "unlisted" is left as it is: it has already left the
+// pool, so only finishDiskRemoval takes it further (doc 09 §4's own Open
+// questions). A mountpoint with no data disk, or one not currently in
+// removal at all, also reports false and changes nothing.
+func (s *ArrayStore) CancelRemovalState(ctx context.Context, mountpoint string) (bool, error) {
+	n, err := s.q.CancelArrayDiskRemovalState(ctx, mountpoint)
+	if err != nil {
+		return false, fmt.Errorf("store: cancelling removal state at %s: %w", mountpoint, err)
+	}
+	return n > 0, nil
+}
+
 // RemovingDisk returns the mountpoint and state of the array's one disk
 // currently in removal (#359), or ("", "", nil) when none is. Used by
 // planDiskEvacuation/evacuateDisk to refuse a second disk while one is

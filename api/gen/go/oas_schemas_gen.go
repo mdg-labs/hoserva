@@ -891,6 +891,25 @@ func (s *CacheUsageBreakdown) SetComputedAt(val time.Time) {
 	s.ComputedAt = val
 }
 
+// CancelDiskRemovalNoContent is response for CancelDiskRemoval operation.
+type CancelDiskRemovalNoContent struct{}
+
+// Ref: #/components/schemas/CancelDiskRemovalRequest
+type CancelDiskRemovalRequest struct {
+	// The data disk slot to stop removing, e.g. `/mnt/disk3`.
+	Mountpoint string `json:"mountpoint"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *CancelDiskRemovalRequest) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *CancelDiskRemovalRequest) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
 // Ref: #/components/schemas/ConfigureLetsEncryptRequest
 type ConfigureLetsEncryptRequest struct {
 	// Hostname the certificate will cover, challenged via DNS-01.
@@ -7821,6 +7840,12 @@ type PoolDiskEntry struct {
 	// Doc 09 §4 step 2's own removal state (#359) for this disk. Null for a disk that is not currently in
 	// removal.
 	RemovalState OptNilDiskRemovalState `json:"removalState"`
+	// The exact typed phrase `finishDiskRemoval` requires for this disk (#361), set whenever
+	// `removalState` is set. Reading it here rather than from `planDiskEvacuation` is what lets Finish
+	// removal be retried once the disk has left the pool (`unpooled`/`unlisted`) — `planDiskEvacuation`
+	// itself refuses those states with `disk_leaving_array`, since evacuating a disk that has already left
+	// the pool makes no sense, but the confirmation phrase does not depend on evacuating it again.
+	FinishConfirmation OptString `json:"finishConfirmation"`
 }
 
 // GetDevice returns the value of Device.
@@ -7868,6 +7893,11 @@ func (s *PoolDiskEntry) GetRemovalState() OptNilDiskRemovalState {
 	return s.RemovalState
 }
 
+// GetFinishConfirmation returns the value of FinishConfirmation.
+func (s *PoolDiskEntry) GetFinishConfirmation() OptString {
+	return s.FinishConfirmation
+}
+
 // SetDevice sets the value of Device.
 func (s *PoolDiskEntry) SetDevice(val string) {
 	s.Device = val
@@ -7911,6 +7941,11 @@ func (s *PoolDiskEntry) SetNearMinFreeSpace(val OptBool) {
 // SetRemovalState sets the value of RemovalState.
 func (s *PoolDiskEntry) SetRemovalState(val OptNilDiskRemovalState) {
 	s.RemovalState = val
+}
+
+// SetFinishConfirmation sets the value of FinishConfirmation.
+func (s *PoolDiskEntry) SetFinishConfirmation(val OptString) {
+	s.FinishConfirmation = val
 }
 
 type PoolDiskEntryRole string

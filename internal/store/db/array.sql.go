@@ -38,6 +38,19 @@ func (q *Queries) AdvanceArrayDiskRemovalState(ctx context.Context, arg AdvanceA
 	return result.RowsAffected()
 }
 
+const cancelArrayDiskRemovalState = `-- name: CancelArrayDiskRemovalState :execrows
+UPDATE array_disks SET removal_state = NULL, removal_job_id = NULL
+WHERE mountpoint = ? AND role = 'data' AND removal_state IN ('evacuating', 'evacuated')
+`
+
+func (q *Queries) CancelArrayDiskRemovalState(ctx context.Context, mountpoint string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelArrayDiskRemovalState, mountpoint)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const countArraySettings = `-- name: CountArraySettings :one
 SELECT COUNT(*) FROM array_settings
 `
