@@ -623,7 +623,9 @@ func (h *Handler) CancelDiskRemoval(ctx context.Context, req *apiv1.CancelDiskRe
 	if !cleared {
 		return errDiskRemovalNotCancellable(req.Mountpoint, "its removal state changed before the cancel could apply")
 	}
-	if err := h.ArrayReady(ctx); err != nil {
+	// The state is already cleared, and a second cancel now answers 409, so
+	// a client disconnect must not abort the apply and strand the disk NC.
+	if err := h.ArrayReady(context.WithoutCancel(ctx)); err != nil {
 		return fmt.Errorf("cancel disk removal: reapplying the live pool: %w", err)
 	}
 	return nil

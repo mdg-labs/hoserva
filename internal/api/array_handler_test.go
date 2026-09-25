@@ -1020,6 +1020,32 @@ func TestHandler_CancelDiskRemoval_LiveApplyFailureIsInternal(t *testing.T) {
 	}
 }
 
+// TestHandler_CancelDiskRemoval_LiveApplySurvivesRequestCancel proves the
+// live re-apply after the state is cleared does not inherit the request's
+// cancellation: once the row is RW a second cancel answers 409, so a
+// client disconnect mid-apply must not leave the running pool no-create.
+func TestHandler_CancelDiskRemoval_LiveApplySurvivesRequestCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h, _, disk2, _ := newDiskRemoveTestHandler(t, true)
+	var applyErr error
+	h.ArrayReady = func(applyCtx context.Context) error {
+		cancel()
+		applyErr = applyCtx.Err()
+		return applyErr
+	}
+	if err := h.ArrayStore.SetRemovalState(ctx, disk2, store.RemovalStateEvacuated, "evac-1"); err != nil {
+		t.Fatalf("SetRemovalState(evacuated): %v", err)
+	}
+
+	if err := h.CancelDiskRemoval(ctx, &apiv1.CancelDiskRemovalRequest{Mountpoint: disk2}); err != nil {
+		t.Fatalf("CancelDiskRemoval with the request cancelled mid-apply: %v", err)
+	}
+	if applyErr != nil {
+		t.Fatalf("ArrayReady's context = %v after the request was cancelled, want still live", applyErr)
+	}
+}
+
 // TestHandler_ReplaceDisk_RefusesADiskInRemoval proves #366's refusal:
 // store.ReplaceDataDisk keeps a slot's removal state, so planDiskReplace
 // and replaceDisk answer 409 disk_leaving_array for a disk in any removal
