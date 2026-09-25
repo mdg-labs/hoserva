@@ -277,6 +277,9 @@ export function SharesPage(): React.ReactElement {
       <FormOverlay
         open={createOpen}
         onOpenChange={(open) => {
+          if (!open && createBusy) {
+            return;
+          }
           setCreateOpen(open);
           if (!open) {
             createMutation.reset();
@@ -287,7 +290,7 @@ export function SharesPage(): React.ReactElement {
         description={t("shares.create.description")}
         footer={
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+            <Button variant="outline" disabled={createBusy} onClick={() => setCreateOpen(false)}>
               {t("confirm.cancel")}
             </Button>
             <Button loading={createBusy} disabled={createName.trim().length === 0} onClick={() => void handleCreate()}>
@@ -306,6 +309,9 @@ export function SharesPage(): React.ReactElement {
       <FormOverlay
         open={deleteTarget !== null}
         onOpenChange={(open) => {
+          if (!open && deleteBusy) {
+            return;
+          }
           if (!open) {
             setDeleteTarget(null);
             setDeleteConfirm("");

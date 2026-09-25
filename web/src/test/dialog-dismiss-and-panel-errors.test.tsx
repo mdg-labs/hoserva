@@ -9,12 +9,16 @@
 //
 // Regression test for issue #377, the same dismiss-while-busy pattern on the
 // browse tab's per-file delete dialog.
+//
+// PR #382 review: the same two patterns on the /shares create and delete
+// overlays, the /users edit panel, and the /users revoke/delete dialog.
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ShareDetailPage } from "@/routes/shares/detail";
+import { SharesPage } from "@/routes/shares/index";
 import { CachePage } from "@/routes/storage/cache";
 import { UsersPage } from "@/routes/users";
 
@@ -682,5 +686,116 @@ describe("issue #377 — browse-tab delete-file dialog ignores Escape while busy
 
     pendingDelete.release?.();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+});
+
+describe("PR #382 review — shares and users overlays ignore Escape while busy", () => {
+  beforeEach(resetMocks);
+
+  it("does not close the create-share overlay on Escape while the create request is pending, and still shows its failure", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/shares") {
+        return Promise.resolve({ data: { shares: [share()] }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    const pendingPost: { release: (() => void) | null } = { release: null };
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/shares") {
+        return new Promise((resolve) => {
+          pendingPost.release = () =>
+            resolve({ error: { code: "internal_error", message: "share create failed" }, response: { ok: false } });
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <SharesPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Create share" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Share name" }), { target: { value: "movies" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create share" }));
+
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: /Create share/ })).toBeDisabled());
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    pendingPost.release?.();
+    expect(await within(dialog).findByText("share create failed")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("does not close the edit panel on Escape while the save is pending, and still shows its failure", async () => {
+    mockUsersData();
+    const pendingPatch: { release: (() => void) | null } = { release: null };
+    mockPatch.mockImplementation((path: string) => {
+      if (path === "/users/{userId}") {
+        return new Promise((resolve) => {
+          pendingPatch.release = () =>
+            resolve({ error: { code: "internal_error", message: "role save failed" }, response: { ok: false } });
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <UsersPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for alice" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+    const panel = await screen.findByRole("dialog");
+    fireEvent.click(within(panel).getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(within(panel).getByRole("button", { name: /Save changes/ })).toBeDisabled());
+    expect(within(panel).getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    pendingPatch.release?.();
+    expect(await within(panel).findByText("role save failed")).toBeInTheDocument();
+  });
+
+  it("shows a failed account delete inside its open dialog, not the page banner, and ignores Escape while pending", async () => {
+    mockUsersData();
+    const pendingDelete: { release: (() => void) | null } = { release: null };
+    mockDelete.mockImplementation((path: string) => {
+      if (path === "/users/{userId}") {
+        return new Promise((resolve) => {
+          pendingDelete.release = () =>
+            resolve({ error: { code: "internal_error", message: "account delete failed" }, response: { ok: false } });
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <UsersPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for alice" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: /Confirm/ })).toBeDisabled());
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    pendingDelete.release?.();
+    expect(await within(dialog).findByText("account delete failed")).toBeInTheDocument();
+    expect(screen.getAllByText("account delete failed")).toHaveLength(1);
   });
 });

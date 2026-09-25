@@ -112,7 +112,6 @@ export function UsersPage(): React.ReactElement {
   const tokens = tokensQuery.data?.tokens ?? null;
   const shares = sharesQuery.data?.shares ?? [];
 
-  const [actionError, setActionError] = useState<string | null>(null);
   // Errors from an action started inside the create/edit panel (role,
   // permissions, group membership) render inside that panel, not the page
   // banner behind it, which an open SidePanel hides (#375).
@@ -143,6 +142,7 @@ export function UsersPage(): React.ReactElement {
   const [createdToken, setCreatedToken] = useState<ApiTokenCreated | null>(null);
 
   const [pendingRevoke, setPendingRevoke] = useState<PendingRevoke | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
   // Keyed on the editing user's id so switching users (or closing and
   // reopening for someone else) resets and refetches through the hook's
@@ -354,22 +354,22 @@ export function UsersPage(): React.ReactElement {
   }
 
   function requestDeleteUser(user: UserSummary): void {
-    setActionError(null);
+    setRevokeError(null);
     setPendingRevoke({ kind: "user", id: user.id, label: user.username });
   }
 
   function requestDeleteGroup(group: UserGroup): void {
-    setActionError(null);
+    setRevokeError(null);
     setPendingRevoke({ kind: "group", id: group.id, label: group.name });
   }
 
   function requestRevokeSession(session: Session): void {
-    setActionError(null);
+    setRevokeError(null);
     setPendingRevoke({ kind: "session", id: session.id, label: session.username });
   }
 
   function requestRevokeToken(token: ApiTokenSummary): void {
-    setActionError(null);
+    setRevokeError(null);
     setPendingRevoke({ kind: "token", id: token.id, label: token.name });
   }
 
@@ -377,7 +377,7 @@ export function UsersPage(): React.ReactElement {
     if (!pendingRevoke) return;
     const result = await revokeMutation.mutate(pendingRevoke);
     if (!result.ok) {
-      if (!result.aborted) setActionError(result.error);
+      if (!result.aborted) setRevokeError(result.error);
       return;
     }
     const kind = pendingRevoke.kind;
@@ -565,7 +565,6 @@ export function UsersPage(): React.ReactElement {
         </Button>
       </div>
       {error ? <Banner tone="error" title={error} /> : null}
-      {actionError ? <Banner tone="error" title={actionError} /> : null}
 
       {users && users.length === 0 ? (
         <EmptyState icon={UsersIcon} title={t("users.empty.title")} description={t("users.empty.description")} />
@@ -645,11 +644,16 @@ export function UsersPage(): React.ReactElement {
 
       <SidePanel
         open={panelOpen}
-        onOpenChange={setPanelOpen}
+        onOpenChange={(open) => {
+          if (!open && panelBusy) {
+            return;
+          }
+          setPanelOpen(open);
+        }}
         title={editingUser ? t("users.panel.editTitle", { username: editingUser.username }) : t("users.panel.createTitle")}
         footer={
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setPanelOpen(false)}>
+            <Button variant="outline" disabled={panelBusy} onClick={() => setPanelOpen(false)}>
               {t("confirm.cancel")}
             </Button>
             <Button
@@ -858,12 +862,21 @@ export function UsersPage(): React.ReactElement {
 
       <ConfirmDialog
         open={pendingRevoke !== null}
-        onOpenChange={(open) => !open && setPendingRevoke(null)}
+        onOpenChange={(open) => {
+          if (!open && revokeMutation.pending) {
+            return;
+          }
+          if (!open) {
+            setPendingRevoke(null);
+            setRevokeError(null);
+          }
+        }}
         title={
           pendingRevoke
             ? t(`users.revokeTitles.${pendingRevoke.kind}`, { label: pendingRevoke.label })
             : ""
         }
+        error={revokeError}
         destructive
         loading={revokeMutation.pending}
         onConfirm={() => void handleRevoke()}

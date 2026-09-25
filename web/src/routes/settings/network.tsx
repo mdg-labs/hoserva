@@ -515,6 +515,9 @@ export function NetworkSettingsPage(): React.ReactElement {
       <FormOverlay
         open={leOpen}
         onOpenChange={(open) => {
+          if (!open && leBusy) {
+            return;
+          }
           setLeOpen(open);
           if (open) {
             setLeValidationError(null);
@@ -525,7 +528,7 @@ export function NetworkSettingsPage(): React.ReactElement {
         description={t("settings.network.leDescription")}
         footer={
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => setLeOpen(false)}>
+            <Button type="button" variant="outline" disabled={leBusy} onClick={() => setLeOpen(false)}>
               {t("settings.actions.cancel")}
             </Button>
             <Button type="button" loading={leBusy} onClick={() => void handleLetsEncrypt()}>
