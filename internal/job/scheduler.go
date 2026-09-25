@@ -185,6 +185,17 @@ type Scheduler struct {
 	// can deterministically land a Cancel call inside that exact window
 	// instead of racing the real clock (#364). Never set outside a test.
 	settleHook func(jobID string)
+	// resumableDecisionHook, when non-nil, is called synchronously by the
+	// scheduler-owned half of RunContext.KeepForResume — after a RunFunc
+	// (RunEvacuation's own d.run) has decided every other condition for
+	// ending resumable already holds, but before KeepForResume takes
+	// rj.mu to commit that decision against a racing Cancel — so a test
+	// can land a Cancel call deterministically inside that exact window
+	// (#378) instead of racing the real clock. It is never called when a
+	// RunFunc's own preliminary check already decided against resumable;
+	// KeepForResume is never reached at all in that case. Never set
+	// outside a test.
+	resumableDecisionHook func(jobID string)
 }
 
 // NewScheduler wires a Scheduler to its persistence, log capture, event
@@ -1151,6 +1162,31 @@ func (s *Scheduler) runJob(ctx context.Context, rj *runningJob) {
 			snapshot := *rj.job
 			s.mu.Unlock()
 			s.hub.Publish(&snapshot)
+		},
+		keepForResume: func() bool {
+			// Called with no lock held: the test hook, when set, may
+			// itself call s.Cancel, which takes s.mu then rj.mu — taking
+			// rj.mu here first would deadlock a hook that lands the
+			// Cancel this call is meant to race against (#378). Because
+			// the hook call is synchronous, by the time it returns any
+			// Cancel it made is already fully committed (reason and the
+			// underlying context cancellation both set) before this
+			// function goes on to read rj.reason below.
+			if s.resumableDecisionHook != nil {
+				s.resumableDecisionHook(rj.job.ID)
+			}
+			rj.mu.Lock()
+			defer rj.mu.Unlock()
+			if rj.reason == reasonCancel {
+				return false
+			}
+			// Committing here refuses every Cancel for the rest of this
+			// run the same way #364's own post-return settle window
+			// does — rj.finished already means exactly "no further
+			// Cancel may change this job's outcome" to Cancel itself,
+			// and that is exactly the guarantee this commit needs too.
+			rj.finished = true
+			return true
 		},
 	}
 

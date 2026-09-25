@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/mdg-labs/hoserva/internal/cache"
@@ -130,7 +131,33 @@ func RunEvacuation(d EvacuationDeps) RunFunc {
 		if ctx.Err() == nil {
 			return err
 		}
-		if relErr := releaseRemovalState(context.WithoutCancel(ctx), d.Store, d.ArrayReady, p.Mountpoint, rc.JobID()); relErr != nil {
+		cleanupCtx := context.WithoutCancel(ctx)
+		cleanupErr := err
+		code := ""
+		// d.run's own preliminary "end resumable" choice is committed
+		// against a racing Cancel atomically, under the running job's own
+		// lock (RunContext.KeepForResume, #378): whichever of the two
+		// wins that race decides, so by the time d.run returns here with
+		// ctx already cancelled, it has always already taken its own
+		// non-resumable branch itself. Every non-resumable return d.run can
+		// take clears the relocation manifest and removing-disks exemption
+		// itself before returning — the ordinary post-copy ending inline,
+		// and its two pre-copy returns (SetRemovalState, the pre-copy
+		// ArrayReady) through the same earlyReturnErr/
+		// clearOwnedEvacuationManifest helper a resumed run needs, since
+		// either can fail after an earlier stop already committed that
+		// state for Resume (#378) — so there is nothing left for this
+		// outer pass to clear a second time, and reading the manifest
+		// again here to check would only risk misreporting a transient
+		// read error as a clear that never happened. A failure of that
+		// clear comes back wrapped in a *CancelCleanupError; its code is
+		// kept as this report's code rather than a further failure below
+		// silently displacing it.
+		var alreadyReported *CancelCleanupError
+		if errors.As(err, &alreadyReported) {
+			code = alreadyReported.Code
+		}
+		if relErr := releaseRemovalState(cleanupCtx, d.Store, d.ArrayReady, p.Mountpoint, rc.JobID()); relErr != nil {
 			// The removal state itself may already be released (the
 			// database now says RW) even though this specific failure is
 			// in re-applying that to the live pool — runJob still records
@@ -138,7 +165,13 @@ func RunEvacuation(d EvacuationDeps) RunFunc {
 			// way), but must never silently drop a failure that can leave
 			// the database and the live mounts disagreeing about whether
 			// this disk takes writes (#364).
-			return &CancelCleanupError{Code: "evacuation_cancel_reapply_failed", Err: combineEvacuationErr(err, "releasing the removal state after cancel", relErr)}
+			cleanupErr = combineEvacuationErr(cleanupErr, "releasing the removal state after cancel", relErr)
+			if code == "" {
+				code = "evacuation_cancel_reapply_failed"
+			}
+		}
+		if code != "" {
+			return &CancelCleanupError{Code: code, Err: cleanupErr}
 		}
 		return err
 	}
@@ -150,10 +183,10 @@ func (d EvacuationDeps) run(ctx context.Context, rc *RunContext, p EvacuationPar
 	// same RunFunc). A failure of either step fails the job before any
 	// copy runs.
 	if err := d.Store.SetRemovalState(ctx, p.Mountpoint, store.RemovalStateEvacuating, rc.JobID()); err != nil {
-		return fmt.Errorf("job: evacuation: marking %s removing: %w", p.Mountpoint, err)
+		return d.earlyReturnErr(ctx, p.Mountpoint, fmt.Errorf("job: evacuation: marking %s removing: %w", p.Mountpoint, err))
 	}
 	if err := d.ArrayReady(ctx); err != nil {
-		return fmt.Errorf("job: evacuation: applying no-create to the live pool: %w", err)
+		return d.earlyReturnErr(ctx, p.Mountpoint, fmt.Errorf("job: evacuation: applying no-create to the live pool: %w", err))
 	}
 	// removingDisks names exactly the disk this job was submitted to
 	// evacuate — never recomputed or widened — so every batch sync
@@ -188,7 +221,21 @@ func (d EvacuationDeps) run(ctx context.Context, rc *RunContext, p EvacuationPar
 	// resumability, so ctx.Err() != nil is exactly the signal that this
 	// stop is not one of those two and the job will end failed or
 	// cancelled, neither of which Resume ever revisits.
+	//
+	// Even once every other condition holds, rc.KeepForResume() still has
+	// the last word: it and Cancel decide under the same lock, so a
+	// Cancel landing anywhere between this preliminary check and the
+	// caller's own outer ctx.Err() check (#378) can never leave this
+	// run's manifest and exemption committed for Resume while the job
+	// also ends up recorded cancelled. It is called only once this
+	// preliminary check already holds — a stop that was never going to
+	// end resumable anyway needs no atomic commit against Cancel, since
+	// its state is cleared unconditionally just below regardless of how
+	// Cancel's own race with it comes out.
 	resumable := err == nil && report.Interrupted && ctx.Err() == nil
+	if resumable {
+		resumable = rc.KeepForResume()
+	}
 	if d.Manifest != nil && !resumable {
 		// Every non-resumable ending — a clean finish, a failure, or an
 		// explicit Cancel — clears the whole persisted relocation state,
@@ -218,7 +265,20 @@ func (d EvacuationDeps) run(ctx context.Context, rc *RunContext, p EvacuationPar
 		// the same run, so its manifest and exemption must survive.
 		clearCtx := context.WithoutCancel(ctx)
 		if clearErr := d.Manifest.Replace(clearCtx, nil, nil); clearErr != nil {
-			return combineEvacuationErr(err, "clearing relocation manifest", clearErr)
+			combined := combineEvacuationErr(err, "clearing relocation manifest", clearErr)
+			// ctx.Err() != nil here means this non-resumable ending is an
+			// explicit Cancel (the doc comment on RunEvacuation's own
+			// outer ctx.Err() check: only Scheduler.Cancel of a running
+			// evacuation ever cancels this ctx). runJob's own reasonCancel
+			// branch keeps only a *CancelCleanupError under a cancelled
+			// outcome and drops anything else — a plain error here would
+			// leave this failed clear silently unrecorded even though the
+			// removing-disks exemption it tried to release may still be
+			// persisted (#378).
+			if ctx.Err() != nil {
+				return &CancelCleanupError{Code: "evacuation_cancel_manifest_clear_failed", Err: combined}
+			}
+			return combined
 		}
 	}
 	if err != nil {
@@ -241,6 +301,41 @@ func (d EvacuationDeps) run(ctx context.Context, rc *RunContext, p EvacuationPar
 		return fmt.Errorf("job: evacuation: marking %s evacuated: %w", p.Mountpoint, err)
 	}
 	return nil
+}
+
+// earlyReturnErr wraps a failure from d.run's two pre-copy steps —
+// SetRemovalState or the pre-copy ArrayReady — neither of which is a
+// resumable ending (doc 09 §4 step 2 runs both on every resume too, before
+// RunRebalance is ever re-entered, so resumable's own check at the bottom
+// of d.run is never reached here). A resume can land here after an
+// earlier graceful stop already committed this run's manifest and
+// removing-disks exemption for Resume (RunContext.KeepForResume, #378):
+// since this return does not keep the run for another resume, whatever
+// that earlier stop left behind must not survive it. On a fresh
+// (non-resumed) run nothing is persisted yet, so
+// clearOwnedEvacuationManifest is a no-op — it only clears when the
+// persisted removing-disks set still names exactly this job's own
+// mountpoint. Uses a non-cancellable context, the same reasoning as
+// d.run's own later clear: a Cancel landing during either failure must
+// not leave the exemption stranded. A cancel whose clear itself fails is
+// reported as a *CancelCleanupError (runJob's own doc comment on why: a
+// plain error under a cancelled outcome is otherwise dropped); an
+// ordinary failure's clear failure is folded into the same error instead,
+// so the Failed job's recorded error names both.
+func (d EvacuationDeps) earlyReturnErr(ctx context.Context, mountpoint string, runErr error) error {
+	if d.Manifest == nil {
+		return runErr
+	}
+	clearCtx := context.WithoutCancel(ctx)
+	clearErr := clearOwnedEvacuationManifest(clearCtx, d.Manifest, mountpoint)
+	if clearErr == nil {
+		return runErr
+	}
+	combined := combineEvacuationErr(runErr, "clearing relocation manifest", clearErr)
+	if ctx.Err() != nil {
+		return &CancelCleanupError{Code: "evacuation_cancel_manifest_clear_failed", Err: combined}
+	}
+	return combined
 }
 
 // releaseRemovalState releases the removal state jobID holds on
@@ -273,6 +368,32 @@ func combineEvacuationErr(runErr error, cleanupDescription string, cleanupErr er
 	return fmt.Errorf("%w (also failed %s: %v)", runErr, cleanupDescription, cleanupErr)
 }
 
+// clearOwnedEvacuationManifest clears the persisted relocation manifest
+// and removing-disks exemption only when the persisted removing-disks set
+// still names exactly mountpoint and nothing else — never blind, because
+// the manifest store holds one shared slot and a different array-write job
+// could have claimed it for an unrelated relocation by the time this runs
+// (EvacuationAbort's own doc comment). Used by EvacuationAbort, whose own
+// job never ran the copy that would otherwise have cleared this state
+// inline, and by d.run's own earlyReturnErr, for the two pre-copy returns
+// (SetRemovalState, the pre-copy ArrayReady) a resume can hit before ever
+// reaching that copy again (#378) — RunEvacuation's own d.run clears this
+// state, one way or the other, on every ending it does not keep for
+// Resume.
+func clearOwnedEvacuationManifest(ctx context.Context, manifest relocationManifestStore, mountpoint string) error {
+	_, removingDisks, err := manifest.Current(ctx)
+	if err != nil {
+		return fmt.Errorf("reading relocation manifest: %w", err)
+	}
+	if len(removingDisks) != 1 || !removingDisks[mountpoint] {
+		return nil
+	}
+	if err := manifest.Replace(ctx, nil, nil); err != nil {
+		return fmt.Errorf("clearing relocation manifest: %w", err)
+	}
+	return nil
+}
+
 // EvacuationAbort is the AbortFunc hoservad registers for
 // job.TypeEvacuation (doc 09 §4, #274, #359): Scheduler.Cancel of a
 // queued or interrupted evacuation never re-enters RunEvacuation, so this
@@ -300,14 +421,8 @@ func EvacuationAbort(manifest relocationManifestStore, removal removalStateStore
 		if err != nil {
 			return err
 		}
-		_, removingDisks, err := manifest.Current(ctx)
-		if err != nil {
-			return fmt.Errorf("job: evacuation: reading relocation manifest: %w", err)
-		}
-		if len(removingDisks) == 1 && removingDisks[p.Mountpoint] {
-			if err := manifest.Replace(ctx, nil, nil); err != nil {
-				return fmt.Errorf("job: evacuation: clearing relocation manifest: %w", err)
-			}
+		if err := clearOwnedEvacuationManifest(ctx, manifest, p.Mountpoint); err != nil {
+			return fmt.Errorf("job: evacuation: %w", err)
 		}
 		if err := releaseRemovalState(ctx, removal, arrayReady, p.Mountpoint, id); err != nil {
 			return fmt.Errorf("job: evacuation: releasing removal state: %w", err)
