@@ -264,6 +264,54 @@ func TestDiskRemoveCancelSendsTheRequestAndPrintsAConfirmation(t *testing.T) {
 	}
 }
 
+// TestDiskRemovePlanRefusalIsACommandFailure proves #367's finding 2:
+// ogen treats planDiskEvacuation's documented 400 EvacuationPlanRefusal
+// as a normal sum-type response, not a client error, so `disk remove
+// plan` must fail the command itself once its own PlanDiskEvacuation
+// call type-switches to a refusal — never print the refusal and exit 0,
+// indistinguishable from a real plan for any script or chained command.
+func TestDiskRemovePlanRefusalIsACommandFailure(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refusal := apiv1.EvacuationPlanRefusal{
+			Code:          "invalid_plan",
+			Message:       "cache: disk holds content outside every configured share: /mnt/disk3/leftover",
+			NonSharePaths: []string{"/mnt/disk3/leftover"},
+		}
+		out, err := refusal.MarshalJSON()
+		if err != nil {
+			t.Errorf("encoding the refusal: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write(out)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	var errBuf bytes.Buffer
+	root := rootCmd()
+	root.SetArgs([]string{"--socket", sock, "disk", "remove", "plan", "--mountpoint", "/mnt/disk3"})
+	root.SetOut(&errBuf)
+	root.SetErr(&errBuf)
+	runErr := root.Execute()
+	if runErr == nil {
+		t.Fatal("disk remove plan against a refused evacuation = nil error, want a command failure")
+	}
+	if !strings.Contains(runErr.Error(), "/mnt/disk3/leftover") {
+		t.Fatalf("disk remove plan error %q does not name the offending path", runErr.Error())
+	}
+}
+
 func assertRequiresConfirm(t *testing.T, args []string) {
 	t.Helper()
 	root := rootCmd()

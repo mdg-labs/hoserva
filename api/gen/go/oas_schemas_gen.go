@@ -2398,6 +2398,11 @@ type EvacuationPlan struct {
 	Mountpoint string             `json:"mountpoint"`
 	Moves      []RebalanceMove    `json:"moves"`
 	Warnings   []RebalanceWarning `json:"warnings"`
+	// Every top-level entry on the disk's own mountpoint that is neither a configured share's own branch
+	// there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — content doc 09 §4 has
+	// no procedure for moving (#367). Always empty on a plan this operation actually returns: any such
+	// content refuses the plan outright (`EvacuationPlanRefusal`) instead.
+	NonSharePaths []string `json:"nonSharePaths"`
 	// Exact typed confirmation `evacuateDisk` requires for this plan (`REMOVE <mountpoint>`).
 	Confirmation string `json:"confirmation"`
 }
@@ -2415,6 +2420,11 @@ func (s *EvacuationPlan) GetMoves() []RebalanceMove {
 // GetWarnings returns the value of Warnings.
 func (s *EvacuationPlan) GetWarnings() []RebalanceWarning {
 	return s.Warnings
+}
+
+// GetNonSharePaths returns the value of NonSharePaths.
+func (s *EvacuationPlan) GetNonSharePaths() []string {
+	return s.NonSharePaths
 }
 
 // GetConfirmation returns the value of Confirmation.
@@ -2437,10 +2447,62 @@ func (s *EvacuationPlan) SetWarnings(val []RebalanceWarning) {
 	s.Warnings = val
 }
 
+// SetNonSharePaths sets the value of NonSharePaths.
+func (s *EvacuationPlan) SetNonSharePaths(val []string) {
+	s.NonSharePaths = val
+}
+
 // SetConfirmation sets the value of Confirmation.
 func (s *EvacuationPlan) SetConfirmation(val string) {
 	s.Confirmation = val
 }
+
+func (*EvacuationPlan) planDiskEvacuationRes() {}
+
+// `planDiskEvacuation`'s 400 refusal (#367): the shared `Error` schema has no room for
+// `nonSharePaths`, so a refusal caused by non-share content on the disk gets its own body naming every
+// offending path structurally, not only in `message`.
+// Ref: #/components/schemas/EvacuationPlanRefusal
+type EvacuationPlanRefusal struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Every top-level entry on the disk's own mountpoint that is neither a configured share's own branch
+	// there nor SnapRAID's own bookkeeping — empty when the refusal has a different cause (no other
+	// branch, an unsupported entry, or the remaining disks not having room).
+	NonSharePaths []string `json:"nonSharePaths"`
+}
+
+// GetCode returns the value of Code.
+func (s *EvacuationPlanRefusal) GetCode() string {
+	return s.Code
+}
+
+// GetMessage returns the value of Message.
+func (s *EvacuationPlanRefusal) GetMessage() string {
+	return s.Message
+}
+
+// GetNonSharePaths returns the value of NonSharePaths.
+func (s *EvacuationPlanRefusal) GetNonSharePaths() []string {
+	return s.NonSharePaths
+}
+
+// SetCode sets the value of Code.
+func (s *EvacuationPlanRefusal) SetCode(val string) {
+	s.Code = val
+}
+
+// SetMessage sets the value of Message.
+func (s *EvacuationPlanRefusal) SetMessage(val string) {
+	s.Message = val
+}
+
+// SetNonSharePaths sets the value of NonSharePaths.
+func (s *EvacuationPlanRefusal) SetNonSharePaths(val []string) {
+	s.NonSharePaths = val
+}
+
+func (*EvacuationPlanRefusal) planDiskEvacuationRes() {}
 
 type ExportConfigOK struct {
 	Data io.Reader

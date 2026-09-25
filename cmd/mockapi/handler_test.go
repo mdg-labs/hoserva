@@ -644,9 +644,13 @@ func TestJobSubmission_RefusedInMaintenanceMode(t *testing.T) {
 
 	t.Run("EvacuateDisk", func(t *testing.T) {
 		client := newTestClient(t, "healthy")
-		plan, err := client.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: "/mnt/disk1"})
+		res, err := client.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: "/mnt/disk1"})
 		if err != nil {
 			t.Fatalf("PlanDiskEvacuation: %v", err)
+		}
+		plan, ok := res.(*apiv1.EvacuationPlan)
+		if !ok {
+			t.Fatalf("PlanDiskEvacuation = %T, want *apiv1.EvacuationPlan", res)
 		}
 		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
 			t.Fatalf("StopArray: %v", err)
@@ -736,9 +740,13 @@ func TestEvacuateDisk_MirrorsProductionAdmission(t *testing.T) {
 	ctx := context.Background()
 
 	req := func(mountpoint string) *apiv1.EvacuateDiskRequest {
-		plan, err := client.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: mountpoint})
+		res, err := client.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: mountpoint})
 		if err != nil {
 			t.Fatalf("PlanDiskEvacuation(%s): %v", mountpoint, err)
+		}
+		plan, ok := res.(*apiv1.EvacuationPlan)
+		if !ok {
+			t.Fatalf("PlanDiskEvacuation(%s) = %T, want *apiv1.EvacuationPlan", mountpoint, res)
 		}
 		return &apiv1.EvacuateDiskRequest{Mountpoint: mountpoint, Confirmation: plan.Confirmation}
 	}

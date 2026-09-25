@@ -912,17 +912,35 @@ func encodePlanDiskAddResponse(response *AddDiskPlan, w http.ResponseWriter, spa
 	return nil
 }
 
-func encodePlanDiskEvacuationResponse(response *EvacuationPlan, w http.ResponseWriter, span trace.Span) error {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(200)
+func encodePlanDiskEvacuationResponse(response PlanDiskEvacuationRes, w http.ResponseWriter, span trace.Span) error {
+	switch response := response.(type) {
+	case *EvacuationPlan:
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(200)
 
-	e := new(jx.Encoder)
-	response.Encode(e)
-	if _, err := e.WriteTo(w); err != nil {
-		return errors.Wrap(err, "write")
+		e := new(jx.Encoder)
+		response.Encode(e)
+		if _, err := e.WriteTo(w); err != nil {
+			return errors.Wrap(err, "write")
+		}
+
+		return nil
+
+	case *EvacuationPlanRefusal:
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(400)
+
+		e := new(jx.Encoder)
+		response.Encode(e)
+		if _, err := e.WriteTo(w); err != nil {
+			return errors.Wrap(err, "write")
+		}
+
+		return nil
+
+	default:
+		return errors.Errorf("unexpected response type: %T", response)
 	}
-
-	return nil
 }
 
 func encodePlanDiskReplaceResponse(response *ReplaceDiskPlan, w http.ResponseWriter, span trace.Span) error {

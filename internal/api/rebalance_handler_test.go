@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +168,47 @@ func TestHandler_PlanDiskEvacuation_UnknownMountpointRefused(t *testing.T) {
 	}
 	if status := apiError(t, h, err); status.StatusCode != 404 || status.Response.Code != "disk_slot_not_found" {
 		t.Fatalf("PlanDiskEvacuation(unknown mountpoint) = %+v, want 404 disk_slot_not_found", status)
+	}
+}
+
+// TestHandler_PlanDiskEvacuation_RefusesNonShareContent proves #367's own
+// refusal reaches hoservad's real Handler, not just cache.PlanEvacuation:
+// a top-level directory on disk1 outside its "media" share branch, that
+// itself holds a file, refuses planDiskEvacuation with a structured 400
+// body naming the path in both NonSharePaths and Message — never just a
+// message a caller would have to parse — matching the encoding
+// encodePlanDiskEvacuationResponse's 400 case actually writes to the wire
+// (api/gen/go/oas_response_encoders_gen.go). A bare directory with no
+// file anywhere beneath it does not refuse — cache's own
+// TestPlanEvacuation_TolerantOfAnEmptyStrayDirectoryTree covers that.
+func TestHandler_PlanDiskEvacuation_RefusesNonShareContent(t *testing.T) {
+	ctx := context.Background()
+	h, _, _, disk1, _ := newRebalanceTestHandler(t)
+
+	stray := filepath.Join(disk1, "leftover")
+	if err := os.MkdirAll(stray, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stray, "orphan.bin"), []byte("orphan"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	res, err := h.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: disk1})
+	if err != nil {
+		t.Fatalf("PlanDiskEvacuation(disk with non-share content) returned an error instead of a refusal body: %v", err)
+	}
+	refusal, ok := res.(*apiv1.EvacuationPlanRefusal)
+	if !ok {
+		t.Fatalf("PlanDiskEvacuation(disk with non-share content) = %T, want *apiv1.EvacuationPlanRefusal", res)
+	}
+	if refusal.Code != "invalid_plan" {
+		t.Fatalf("PlanDiskEvacuation refusal code = %q, want invalid_plan", refusal.Code)
+	}
+	if len(refusal.NonSharePaths) != 1 || refusal.NonSharePaths[0] != stray {
+		t.Fatalf("PlanDiskEvacuation refusal NonSharePaths = %v, want [%s]", refusal.NonSharePaths, stray)
+	}
+	if !strings.Contains(refusal.Message, stray) {
+		t.Fatalf("PlanDiskEvacuation refusal message %q does not name %q", refusal.Message, stray)
 	}
 }
 
@@ -337,9 +379,13 @@ func TestHandler_PlanDiskEvacuation_ThenEvacuateDisk_RunsThroughRealJob(t *testi
 	ctx := context.Background()
 	h, _, share, disk1, _ := newRebalanceTestHandler(t)
 
-	plan, err := h.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: disk1})
+	res, err := h.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: disk1})
 	if err != nil {
 		t.Fatalf("PlanDiskEvacuation: %v", err)
+	}
+	plan, ok := res.(*apiv1.EvacuationPlan)
+	if !ok {
+		t.Fatalf("PlanDiskEvacuation = %T, want *apiv1.EvacuationPlan", res)
 	}
 	wantConfirmation := "REMOVE " + disk1
 	if len(plan.Moves) != 1 || plan.Confirmation != wantConfirmation {
@@ -431,9 +477,13 @@ func TestHandler_PlanDiskEvacuation_KeepsItsOwnDiskInRemoval(t *testing.T) {
 			h, _, share, disk1, _ := newRebalanceTestHandler(t)
 			markRemoval(t, h.ArrayStore, disk1, state)
 
-			plan, err := h.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: disk1})
+			res, err := h.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: disk1})
 			if err != nil {
 				t.Fatalf("PlanDiskEvacuation(%s disk): %v", state, err)
+			}
+			plan, ok := res.(*apiv1.EvacuationPlan)
+			if !ok {
+				t.Fatalf("PlanDiskEvacuation(%s disk) = %T, want *apiv1.EvacuationPlan", state, res)
 			}
 			if len(plan.Moves) != 1 || plan.Moves[0].SourceBranch != share.Branches[0] || plan.Moves[0].TargetBranch != share.Branches[1] {
 				t.Fatalf("PlanDiskEvacuation(%s disk) moves = %+v, want movie.mkv from %s to %s", state, plan.Moves, share.Branches[0], share.Branches[1])

@@ -287,12 +287,12 @@ func p358Setup(t *testing.T, name string) *p358Env {
 // outsideShareFile is set, it also writes one extra file directly at
 // disk2's own root, outside p358share entirely — finding 1's own vector
 // (the catch-all pool, or a share whose definition was deleted but its
-// files kept) — before the initial sync, so SnapRAID tracks it. The
-// evacuation that follows moves only p358share's own branch, and its
-// post-check (cache.EvacuationPostCheck) only ever inspects that same
-// branch, so this file is never touched and survives the evacuation
-// untouched: disk2 reaches "evacuated" with SnapRAID still recording one
-// file on it.
+// files kept). #367 now refuses planDiskEvacuation itself when disk2
+// holds such content, so it can no longer be present going into an
+// evacuation; the file is instead written directly to disk2's own
+// mountpoint, bypassing the pool, once the evacuation below has already
+// succeeded — content that appeared afterward — and a second sync
+// records it in SnapRAID before disk2's loop device is ever detached.
 func p369SetupWithOutsideShareFile(t *testing.T, name string, outsideShareFile bool) *p358Env {
 	t.Helper()
 	lab := shareRelocLabDir(t)
@@ -377,18 +377,15 @@ func p369SetupWithOutsideShareFile(t *testing.T, name string, outsideShareFile b
 			}
 		}
 	}
-	if outsideShareFile {
-		// Written directly at disk2's own root, never under p358share:
-		// the evacuation plan below only ever moves each share's own
-		// branch, and cache.EvacuationPostCheck only ever inspects that
-		// same branch, so this file is untouched by both.
-		shareRelocLabWriteFile(t, filepath.Join(p358Disk2, "orphan-outside-share.bin"), 100_000)
-	}
 	env.sync(t, false)
 
-	plan, err := env.d.handler.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: p358Disk2})
+	res, err := env.d.handler.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: p358Disk2})
 	if err != nil {
 		t.Fatalf("PlanDiskEvacuation: %v", err)
+	}
+	plan, ok := res.(*apiv1.EvacuationPlan)
+	if !ok {
+		t.Fatalf("PlanDiskEvacuation = %T, want *apiv1.EvacuationPlan", res)
 	}
 	if len(plan.Moves) != 5 {
 		t.Fatalf("evacuation plan moves %d files, want disk2's 5", len(plan.Moves))
@@ -407,6 +404,15 @@ func p369SetupWithOutsideShareFile(t *testing.T, name string, outsideShareFile b
 	for _, m := range plan.Moves {
 		path := filepath.Join(m.TargetBranch, m.RelPath)
 		env.files[path] = p358Sha(t, path)
+	}
+	if outsideShareFile {
+		// Written directly at disk2's own root, now that the evacuation
+		// above has already succeeded: #367 refuses planDiskEvacuation
+		// itself when such content is present going in, so it can only
+		// ever appear afterward. A second sync records it in SnapRAID
+		// before disk2's loop device is later detached.
+		shareRelocLabWriteFile(t, filepath.Join(p358Disk2, "orphan-outside-share.bin"), 100_000)
+		env.sync(t, false)
 	}
 	return env
 }
@@ -813,18 +819,19 @@ func TestLabDiskRemove_LoopDeviceDetachedButSnapraidStillTracksAFile_StillRefuse
 }
 
 // TestLabDiskRemove_LoopDeviceDetachedWithFileOutsideEveryShare_StillRefused
-// is finding 1's own regression from #369's first fix round: a file
-// outside every share, present on disk2 since before it was evacuated —
-// the catch-all pool, or a share whose definition was deleted but its
-// files kept — is a case the evacuation's own post-check never inspects
-// (cache.EvacuationPostCheck only ever looks at each share's own
-// branch), so disk2 reaches "evacuated" with SnapRAID still recording it
-// there. Its loop device is then detached exactly as in the clean
-// scenario above. The finish must still refuse: a fresh diff, read
-// before step 8's own sync ever runs, still shows that file on disk2,
-// and no sync may run at all — a --force-empty sync that ran first would
-// itself become the new "before" a later diff reads, silently recording
-// the file's loss as success instead of refusing it.
+// is finding 1's own regression from #369's first fix round, adapted for
+// #367: a file outside every share now refuses planDiskEvacuation itself
+// when present going into an evacuation, so p369SetupWithOutsideShareFile
+// writes it directly to disk2's own mountpoint — the catch-all pool, or a
+// share whose definition was deleted but its files kept — only once the
+// evacuation has already succeeded, content appearing afterward.
+// disk2 still reaches "evacuated" with SnapRAID recording that file. Its
+// loop device is then detached exactly as in the clean scenario above.
+// The finish must still refuse: a fresh diff, read before step 8's own
+// sync ever runs, still shows that file on disk2, and no sync may run at
+// all — a --force-empty sync that ran first would itself become the new
+// "before" a later diff reads, silently recording the file's loss as
+// success instead of refusing it.
 func TestLabDiskRemove_LoopDeviceDetachedWithFileOutsideEveryShare_StillRefused(t *testing.T) {
 	ctx := context.Background()
 	e := p369SetupWithOutsideShareFile(t, "p369orphan", true)

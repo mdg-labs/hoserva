@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -430,5 +431,202 @@ func TestPlanEvacuation_ChecksIntoJSONRoundTrip(t *testing.T) {
 	}
 	if len(roundTripped.Moves) != len(plan.Moves) {
 		t.Fatalf("round-tripped plan has %d moves, want %d", len(roundTripped.Moves), len(plan.Moves))
+	}
+}
+
+// --- Non-share content (#367) ---
+
+// TestPlanEvacuation_RefusesAStrayTopLevelDirectoryHoldingAFile proves
+// PlanEvacuation refuses (ErrEvacuationNonShareContent) when the disk
+// holds a top-level directory — neither a configured share's own branch
+// nor SnapRAID's own bookkeeping — that itself holds a file: the disk's
+// own leftover content PlanEvacuation never used to look at (#367). It
+// names the path and the refused plan still carries it in
+// NonShareContent. A bare directory tree with no file anywhere beneath
+// it is tolerated instead — see
+// TestPlanEvacuation_TolerantOfAnEmptyStrayDirectoryTree — matching
+// EvacuationPostCheck's own whole-disk scan and job.diskLeftover's
+// allowDirs=true, since step 8's own removeEmptyDirs is what clears a
+// bare directory, not this plan-time scan.
+func TestPlanEvacuation_RefusesAStrayTopLevelDirectoryHoldingAFile(t *testing.T) {
+	base := t.TempDir()
+	disk1 := filepath.Join(base, "disk1")
+	disk2 := filepath.Join(base, "disk2")
+	s := evacuateShare(t, "movies", []string{disk1, disk2})
+	rebalanceWriteSize(t, filepath.Join(s.Branches[0], "a.bin"), 100)
+
+	stray := filepath.Join(disk1, "leftover")
+	rebalanceWriteSize(t, filepath.Join(stray, "nested", "orphan.bin"), 10)
+
+	deps := Deps{Open: NewFakeOpenChecker()}
+	deps.Usage = fakeUsage(map[string]DiskUsage{
+		s.Branches[1]: {TotalBytes: 1000, FreeBytes: 900},
+	})
+
+	plan, err := PlanEvacuation(context.Background(), disk1, []Share{s}, deps)
+	if !errors.Is(err, ErrEvacuationNonShareContent) {
+		t.Fatalf("PlanEvacuation: got %v, want ErrEvacuationNonShareContent", err)
+	}
+	if !strings.Contains(err.Error(), stray) {
+		t.Fatalf("PlanEvacuation error %q does not name %q", err.Error(), stray)
+	}
+	if len(plan.NonShareContent) != 1 || plan.NonShareContent[0] != stray {
+		t.Fatalf("plan.NonShareContent = %v, want [%s] even on refusal", plan.NonShareContent, stray)
+	}
+}
+
+// TestPlanEvacuation_TolerantOfAnEmptyStrayDirectoryTree proves a
+// top-level directory tree outside every share that holds no file (or
+// other non-directory entry) anywhere beneath it does not refuse
+// PlanEvacuation — the same leniency EvacuationPostCheck's own
+// nonShareLeftover and job.diskLeftover's allowDirs=true already give a
+// bare directory, since step 8's own removeEmptyDirs is what clears one,
+// not this plan-time scan.
+func TestPlanEvacuation_TolerantOfAnEmptyStrayDirectoryTree(t *testing.T) {
+	base := t.TempDir()
+	disk1 := filepath.Join(base, "disk1")
+	disk2 := filepath.Join(base, "disk2")
+	s := evacuateShare(t, "movies", []string{disk1, disk2})
+	rebalanceWriteSize(t, filepath.Join(s.Branches[0], "a.bin"), 100)
+
+	stray := filepath.Join(disk1, "leftover", "nested", "empty")
+	if err := os.MkdirAll(stray, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	deps := rebalanceTestDeps(NewFakeOpenChecker())
+	deps.Usage = fakeUsage(map[string]DiskUsage{
+		s.Branches[1]: {TotalBytes: 1000, FreeBytes: 900},
+	})
+
+	plan, err := PlanEvacuation(context.Background(), disk1, []Share{s}, deps)
+	if err != nil {
+		t.Fatalf("PlanEvacuation: %v, want nil — a bare directory tree is tolerated", err)
+	}
+	if len(plan.NonShareContent) != 0 {
+		t.Fatalf("plan.NonShareContent = %v, want none", plan.NonShareContent)
+	}
+	if len(plan.Moves) != 1 {
+		t.Fatalf("Moves = %+v, want 1", plan.Moves)
+	}
+}
+
+// TestPlanEvacuation_LostAndFoundAndContentFilesDoNotBlock proves a disk
+// holding only lost+found and SnapRAID's own content files besides share
+// content — exactly what a data disk's root legitimately carries — plans
+// and evacuates normally, matching job.diskLeftover's own exclusions
+// (#358) exactly.
+func TestPlanEvacuation_LostAndFoundAndContentFilesDoNotBlock(t *testing.T) {
+	base := t.TempDir()
+	disk1 := filepath.Join(base, "disk1")
+	disk2 := filepath.Join(base, "disk2")
+	s := evacuateShare(t, "movies", []string{disk1, disk2})
+	rebalanceWriteSize(t, filepath.Join(s.Branches[0], "a.bin"), 100)
+
+	if err := os.MkdirAll(filepath.Join(disk1, "lost+found"), 0o700); err != nil {
+		t.Fatalf("mkdir lost+found: %v", err)
+	}
+	rebalanceWriteSize(t, filepath.Join(disk1, "snapraid.content"), 10)
+
+	deps := rebalanceTestDeps(NewFakeOpenChecker())
+	deps.Usage = fakeUsage(map[string]DiskUsage{
+		s.Branches[1]: {TotalBytes: 1000, FreeBytes: 900},
+	})
+
+	plan, err := PlanEvacuation(context.Background(), disk1, []Share{s}, deps)
+	if err != nil {
+		t.Fatalf("PlanEvacuation: %v", err)
+	}
+	if len(plan.NonShareContent) != 0 {
+		t.Fatalf("plan.NonShareContent = %v, want none", plan.NonShareContent)
+	}
+	if len(plan.Moves) != 1 {
+		t.Fatalf("Moves = %+v, want 1", plan.Moves)
+	}
+
+	engine := parity.NewFakeEngine()
+	engine.Sleep = func(time.Duration) {}
+	engine.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+	deps.Sync = syncFuncFromEngine(engine)
+
+	if _, err := RunRebalance(context.Background(), plan, Config{}, deps, RunHooks{}, nil); err != nil {
+		t.Fatalf("RunRebalance: %v", err)
+	}
+	if err := EvacuationPostCheck(disk1, []Share{s}); err != nil {
+		t.Fatalf("EvacuationPostCheck: %v, want nil — only lost+found and a content file remain", err)
+	}
+}
+
+// TestEvacuationPostCheck_FailsOnNonShareLeftoverAfterSuccessfulEvacuation
+// simulates the report's own scenario (#367): a share's own content
+// evacuates cleanly, but something appears on the disk's root outside
+// every share during the run — a case PlanEvacuation's own refusal at
+// plan time cannot have caught, since it was not there yet. The
+// post-check must still catch it before a caller ever proceeds to doc 09
+// §4 steps 7-9.
+func TestEvacuationPostCheck_FailsOnNonShareLeftoverAfterSuccessfulEvacuation(t *testing.T) {
+	base := t.TempDir()
+	disk1 := filepath.Join(base, "disk1")
+	disk2 := filepath.Join(base, "disk2")
+	s := evacuateShare(t, "movies", []string{disk1, disk2})
+	rebalanceWriteSize(t, filepath.Join(s.Branches[0], "a.bin"), 100)
+
+	deps := rebalanceTestDeps(NewFakeOpenChecker())
+	deps.Usage = fakeUsage(map[string]DiskUsage{
+		s.Branches[1]: {TotalBytes: 1000, FreeBytes: 900},
+	})
+
+	plan, err := PlanEvacuation(context.Background(), disk1, []Share{s}, deps)
+	if err != nil {
+		t.Fatalf("PlanEvacuation: %v", err)
+	}
+
+	engine := parity.NewFakeEngine()
+	engine.Sleep = func(time.Duration) {}
+	engine.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+	deps.Sync = syncFuncFromEngine(engine)
+
+	if _, err := RunRebalance(context.Background(), plan, Config{}, deps, RunHooks{}, nil); err != nil {
+		t.Fatalf("RunRebalance: %v", err)
+	}
+	if err := EvacuationPostCheck(disk1, []Share{s}); err != nil {
+		t.Fatalf("EvacuationPostCheck: %v, want nil before the leftover appears", err)
+	}
+
+	// Something appears on the disk's root, outside every share, after
+	// the evacuation's own run finished — the scenario the report
+	// describes.
+	leftover := filepath.Join(disk1, "orphaned")
+	if err := os.MkdirAll(leftover, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	rebalanceWriteSize(t, filepath.Join(leftover, "still-here.bin"), 10)
+
+	err = EvacuationPostCheck(disk1, []Share{s})
+	if !errors.Is(err, ErrEvacuationNotEmpty) {
+		t.Fatalf("EvacuationPostCheck: got %v, want ErrEvacuationNotEmpty", err)
+	}
+	if !strings.Contains(err.Error(), leftover) {
+		t.Fatalf("EvacuationPostCheck error %q does not name %q", err.Error(), leftover)
+	}
+}
+
+// TestEvacuationPostCheck_PassesWithOnlyLostAndFoundAndContentFiles
+// proves the whole-disk check accepts exactly job.diskLeftover's own
+// exclusions (#358) and nothing else, once share branches are empty.
+func TestEvacuationPostCheck_PassesWithOnlyLostAndFoundAndContentFiles(t *testing.T) {
+	base := t.TempDir()
+	disk1 := filepath.Join(base, "disk1")
+	s := evacuateShare(t, "movies", []string{disk1})
+	if err := os.MkdirAll(s.Branches[0], 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(disk1, "lost+found"), 0o700); err != nil {
+		t.Fatalf("mkdir lost+found: %v", err)
+	}
+	rebalanceWriteSize(t, filepath.Join(disk1, "snapraid.content.disk1"), 10)
+
+	if err := EvacuationPostCheck(disk1, []Share{s}); err != nil {
+		t.Fatalf("EvacuationPostCheck: %v, want nil", err)
 	}
 }

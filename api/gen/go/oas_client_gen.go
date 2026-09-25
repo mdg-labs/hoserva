@@ -638,10 +638,14 @@ type Invoker interface {
 	// that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed
 	// confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no
 	// other branch to evacuate onto, when an entry on the disk is something the evacuation copy path
-	// cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room
-	// even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or
-	// deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own
-	// `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
+	// cannot move (a symlink, fifo, socket or device node), when the remaining disks do not have room even
+	// after each one's own minimum free space is kept, or when the disk holds any top-level entry that is
+	// neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`,
+	// `snapraid.content*`) — doc 09 §4 has no procedure for moving such content, so evacuation refuses
+	// to start rather than leave it behind unreported (#367); that refusal's own 400 body,
+	// `EvacuationPlanRefusal`, names every offending path in `nonSharePaths`. Read-only: nothing is
+	// copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's
+	// own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
 	// disk keeps taking new writes only until that job starts, never for as long as it runs. Refused
 	// (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
 	// `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is
@@ -653,7 +657,7 @@ type Invoker interface {
 	// performed by either.
 	//
 	// POST /disks/array/evacuate/plan
-	PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (*EvacuationPlan, error)
+	PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (PlanDiskEvacuationRes, error)
 	// PlanDiskReplace invokes planDiskReplace operation.
 	//
 	// Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity
@@ -10484,10 +10488,14 @@ func (c *Client) sendPlanDiskAdd(ctx context.Context, request *AddDiskPlanReques
 // that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed
 // confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no
 // other branch to evacuate onto, when an entry on the disk is something the evacuation copy path
-// cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room
-// even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or
-// deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own
-// `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
+// cannot move (a symlink, fifo, socket or device node), when the remaining disks do not have room even
+// after each one's own minimum free space is kept, or when the disk holds any top-level entry that is
+// neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`,
+// `snapraid.content*`) — doc 09 §4 has no procedure for moving such content, so evacuation refuses
+// to start rather than leave it behind unreported (#367); that refusal's own 400 body,
+// `EvacuationPlanRefusal`, names every offending path in `nonSharePaths`. Read-only: nothing is
+// copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's
+// own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
 // disk keeps taking new writes only until that job starts, never for as long as it runs. Refused
 // (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
 // `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is
@@ -10499,12 +10507,12 @@ func (c *Client) sendPlanDiskAdd(ctx context.Context, request *AddDiskPlanReques
 // performed by either.
 //
 // POST /disks/array/evacuate/plan
-func (c *Client) PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (*EvacuationPlan, error) {
+func (c *Client) PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (PlanDiskEvacuationRes, error) {
 	res, err := c.sendPlanDiskEvacuation(ctx, request)
 	return res, err
 }
 
-func (c *Client) sendPlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (res *EvacuationPlan, err error) {
+func (c *Client) sendPlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (res PlanDiskEvacuationRes, err error) {
 	otelAttrs := []attribute.KeyValue{
 		otelogen.OperationID("planDiskEvacuation"),
 		semconv.HTTPRequestMethodKey.String("POST"),

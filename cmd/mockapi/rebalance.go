@@ -125,7 +125,10 @@ func (h *handler) StartRebalance(ctx context.Context, req *apiv1.StartRebalanceR
 // this mock's fixed inventory: the same disk_slot_not_found,
 // disk_leaving_array and disk_removal_in_progress refusals, in the same
 // order, and the same honestly empty plan mockRebalancePlan returns.
-func (h *handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDiskPlanRequest) (*apiv1.EvacuationPlan, error) {
+// There is no real filesystem behind this mock's disks, so there is
+// never any non-share content to refuse on (#367) — NonSharePaths is
+// always empty, mirroring production's own field on a returned plan.
+func (h *handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDiskPlanRequest) (apiv1.PlanDiskEvacuationRes, error) {
 	disks, _, err := h.mockArrayState()
 	if err != nil {
 		return nil, err
@@ -137,10 +140,11 @@ func (h *handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDis
 		return nil, err
 	}
 	return &apiv1.EvacuationPlan{
-		Mountpoint:   req.Mountpoint,
-		Moves:        []apiv1.RebalanceMove{},
-		Warnings:     []apiv1.RebalanceWarning{},
-		Confirmation: job.EvacuationConfirmation(req.Mountpoint),
+		Mountpoint:    req.Mountpoint,
+		Moves:         []apiv1.RebalanceMove{},
+		Warnings:      []apiv1.RebalanceWarning{},
+		NonSharePaths: []string{},
+		Confirmation:  job.EvacuationConfirmation(req.Mountpoint),
 	}, nil
 }
 

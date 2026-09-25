@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -231,9 +232,13 @@ var contractCases = []contractCase{
 		op:   "EvacuateDisk",
 		name: "valid_disk",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			plan, err := h.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: "/mnt/disk1"})
+			res, err := h.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: "/mnt/disk1"})
 			if err != nil {
 				return err
+			}
+			plan, ok := res.(*apiv1.EvacuationPlan)
+			if !ok {
+				return fmt.Errorf("PlanDiskEvacuation = %T, want *apiv1.EvacuationPlan", res)
 			}
 			_, err = h.EvacuateDisk(ctx, &apiv1.EvacuateDiskRequest{Mountpoint: "/mnt/disk1", Confirmation: plan.Confirmation})
 			return err

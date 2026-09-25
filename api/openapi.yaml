@@ -2136,10 +2136,16 @@ paths:
         `evacuateDisk` requires. Refused (`invalid_plan`) when a share on
         this disk has no other branch to evacuate onto, when an entry on
         the disk is something the evacuation copy path cannot move (a
-        symlink, fifo, socket or device node), or when the remaining disks
+        symlink, fifo, socket or device node), when the remaining disks
         do not have room even after each one's own minimum free space is
-        kept. Read-only: nothing is copied, synced or deleted, and this
-        preview does not itself put the disk into doc 09 §4 step 2's own
+        kept, or when the disk holds any top-level entry that is neither
+        a configured share's own branch there nor SnapRAID's own
+        bookkeeping (`lost+found`, `snapraid.content*`) — doc 09 §4 has no
+        procedure for moving such content, so evacuation refuses to start
+        rather than leave it behind unreported (#367); that refusal's own
+        400 body, `EvacuationPlanRefusal`, names every offending path in
+        `nonSharePaths`. Read-only: nothing is copied, synced or deleted,
+        and this preview does not itself put the disk into doc 09 §4 step 2's own
         `removing`/no-create state — `evacuateDisk`'s own job does that,
         before its first copy, so the disk keeps taking new writes only
         until that job starts, never for as long as it runs. Refused
@@ -2169,6 +2175,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EvacuationPlan'
+        "400":
+          description: >-
+            The disk holds content outside every configured share;
+            `nonSharePaths` names it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvacuationPlanRefusal'
         default:
           $ref: '#/components/responses/Error'
 
@@ -5301,7 +5315,7 @@ components:
 
     EvacuationPlan:
       type: object
-      required: [mountpoint, moves, warnings, confirmation]
+      required: [mountpoint, moves, warnings, nonSharePaths, confirmation]
       properties:
         mountpoint:
           type: string
@@ -5313,11 +5327,46 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/RebalanceWarning'
+        nonSharePaths:
+          type: array
+          items:
+            type: string
+          description: >-
+            Every top-level entry on the disk's own mountpoint that is
+            neither a configured share's own branch there nor SnapRAID's
+            own bookkeeping (`lost+found`, `snapraid.content*`) — content
+            doc 09 §4 has no procedure for moving (#367). Always empty on
+            a plan this operation actually returns: any such content
+            refuses the plan outright (`EvacuationPlanRefusal`) instead.
         confirmation:
           type: string
           description: >-
             Exact typed confirmation `evacuateDisk` requires for this
             plan (`REMOVE <mountpoint>`).
+
+    EvacuationPlanRefusal:
+      type: object
+      required: [code, message, nonSharePaths]
+      description: >-
+        `planDiskEvacuation`'s 400 refusal (#367): the shared `Error`
+        schema has no room for `nonSharePaths`, so a refusal caused by
+        non-share content on the disk gets its own body naming every
+        offending path structurally, not only in `message`.
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        nonSharePaths:
+          type: array
+          items:
+            type: string
+          description: >-
+            Every top-level entry on the disk's own mountpoint that is
+            neither a configured share's own branch there nor SnapRAID's
+            own bookkeeping — empty when the refusal has a different
+            cause (no other branch, an unsupported entry, or the
+            remaining disks not having room).
 
     EvacuateDiskPlanRequest:
       type: object

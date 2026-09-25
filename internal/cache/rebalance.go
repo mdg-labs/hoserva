@@ -77,6 +77,16 @@ type RebalanceWarning struct {
 type RebalancePlan struct {
 	Moves    []RebalanceMove
 	Warnings []RebalanceWarning
+	// NonShareContent is PlanEvacuation's own addition (#367): every
+	// top-level entry on the disk being evacuated that is neither a
+	// configured share's own branch there nor SnapRAID's own bookkeeping
+	// (lost+found, snapraid.content*). It is set whenever
+	// nonShareTopLevelEntries finds any, including on the
+	// ErrEvacuationNonShareContent refusal it causes, so a caller that
+	// inspects the returned plan on that error still has the paths.
+	// PlanRebalance never sets this: a rebalance has no single disk to
+	// scope it to.
+	NonShareContent []string
 }
 
 // RebalanceConfig tunes PlanRebalance's own target selection.

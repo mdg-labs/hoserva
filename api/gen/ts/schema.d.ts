@@ -1310,7 +1310,7 @@ export interface paths {
         put?: never;
         /**
          * Preview evacuating a data disk before removal
-         * @description Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no other branch to evacuate onto, when an entry on the disk is something the evacuation copy path cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the disk keeps taking new writes only until that job starts, never for as long as it runs. Refused (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed or repeated evacuation. No other disk in removal is ever a target. This operation carries out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not performed by either.
+         * @description Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no other branch to evacuate onto, when an entry on the disk is something the evacuation copy path cannot move (a symlink, fifo, socket or device node), when the remaining disks do not have room even after each one's own minimum free space is kept, or when the disk holds any top-level entry that is neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — doc 09 §4 has no procedure for moving such content, so evacuation refuses to start rather than leave it behind unreported (#367); that refusal's own 400 body, `EvacuationPlanRefusal`, names every offending path in `nonSharePaths`. Read-only: nothing is copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the disk keeps taking new writes only until that job starts, never for as long as it runs. Refused (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed or repeated evacuation. No other disk in removal is ever a target. This operation carries out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not performed by either.
          */
         post: operations["planDiskEvacuation"];
         delete?: never;
@@ -2984,8 +2984,17 @@ export interface components {
             mountpoint: string;
             moves: components["schemas"]["RebalanceMove"][];
             warnings: components["schemas"]["RebalanceWarning"][];
+            /** @description Every top-level entry on the disk's own mountpoint that is neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — content doc 09 §4 has no procedure for moving (#367). Always empty on a plan this operation actually returns: any such content refuses the plan outright (`EvacuationPlanRefusal`) instead. */
+            nonSharePaths: string[];
             /** @description Exact typed confirmation `evacuateDisk` requires for this plan (`REMOVE <mountpoint>`). */
             confirmation: string;
+        };
+        /** @description `planDiskEvacuation`'s 400 refusal (#367): the shared `Error` schema has no room for `nonSharePaths`, so a refusal caused by non-share content on the disk gets its own body naming every offending path structurally, not only in `message`. */
+        EvacuationPlanRefusal: {
+            code: string;
+            message: string;
+            /** @description Every top-level entry on the disk's own mountpoint that is neither a configured share's own branch there nor SnapRAID's own bookkeeping — empty when the refusal has a different cause (no other branch, an unsupported entry, or the remaining disks not having room). */
+            nonSharePaths: string[];
         };
         EvacuateDiskPlanRequest: {
             /** @description The data disk slot to evacuate, e.g. `/mnt/disk3`. */
@@ -5234,6 +5243,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvacuationPlan"];
+                };
+            };
+            /** @description The disk holds content outside every configured share; `nonSharePaths` names it. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvacuationPlanRefusal"];
                 };
             };
             default: components["responses"]["Error"];

@@ -35,6 +35,109 @@ var ErrEvacuationWontFit = errors.New("cache: remaining disks do not have room t
 // fail the post-check, and fail every retry the same way.
 var ErrEvacuationUnsupportedEntry = errors.New("cache: evacuated disk holds an entry evacuation cannot move")
 
+// ErrEvacuationNonShareContent is PlanEvacuation's refusal when disk
+// holds any top-level entry that is neither a configured share's own
+// branch there nor SnapRAID's own bookkeeping (lost+found,
+// snapraid.content*) — a stray directory or file outside every share
+// (#367). doc 09 §4 describes evacuation entirely in terms of share
+// branches and has no procedure for moving anything else, so evacuation
+// refuses to start rather than silently leaving it on the disk.
+var ErrEvacuationNonShareContent = errors.New("cache: disk holds content outside every configured share")
+
+// evacuationLostAndFound and evacuationContentPrefix name the same
+// SnapRAID bookkeeping job.diskLeftover excludes from a disk's own root
+// (#358): lost+found is the filesystem's own directory, and
+// snapraid.content* (and its own temporary copies) is what Layout places
+// directly on a data disk's root and every snapraid.conf excludes. Kept
+// in sync with disk_remove_run.go's own lostAndFound/contentFilePrefix
+// so nonShareTopLevelEntries and the finish job's own leftover check
+// never disagree about what a data disk's root may legitimately hold
+// outside a share.
+const (
+	evacuationLostAndFound  = "lost+found"
+	evacuationContentPrefix = "snapraid.content"
+)
+
+// nonShareTopLevelEntries lists every entry directly under disk's own
+// mountpoint that is neither a configured share's own branch there nor
+// SnapRAID's own bookkeeping (evacuationLostAndFound,
+// evacuationContentPrefix) — content doc 09 §4 has no procedure for
+// moving or checking — and that actually holds something: a top-level
+// directory tree with no file (or other non-directory entry) anywhere
+// beneath it is tolerated here, the same way EvacuationPostCheck's own
+// whole-disk scan (nonShareLeftover) and job.diskLeftover's
+// allowDirs=true already tolerate a bare directory (step 8's own
+// removeEmptyDirs is what clears one, not this plan-time scan) — so the
+// two never disagree about what counts as a refusing leftover, even
+// though PlanEvacuation only ever gets to run before any copy, while
+// EvacuationPostCheck runs after. A disk that does not exist at all —
+// never adopted, or already unmounted — holds nothing to report.
+func nonShareTopLevelEntries(disk string, shares []Share) ([]string, error) {
+	branchNames := make(map[string]bool)
+	for _, s := range shares {
+		for _, b := range s.Branches {
+			if filepath.Dir(b) == disk {
+				branchNames[filepath.Base(b)] = true
+			}
+		}
+	}
+	entries, err := os.ReadDir(disk)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading %q: %w", disk, err)
+	}
+	var found []string
+	for _, e := range entries {
+		name := e.Name()
+		if branchNames[name] {
+			continue
+		}
+		path := filepath.Join(disk, name)
+		if e.IsDir() {
+			if name == evacuationLostAndFound {
+				continue
+			}
+			holds, err := dirHoldsNonDirEntry(path)
+			if err != nil {
+				return nil, fmt.Errorf("scanning %q: %w", path, err)
+			}
+			if !holds {
+				continue
+			}
+		} else if strings.HasPrefix(name, evacuationContentPrefix) {
+			continue
+		}
+		found = append(found, path)
+	}
+	sort.Strings(found)
+	return found, nil
+}
+
+// dirHoldsNonDirEntry reports whether root — already known to exist and
+// be a directory — holds any entry that is not itself a directory,
+// anywhere beneath it (a regular file, symlink, fifo, socket or device
+// node). A pure directory tree, however deep or however many empty
+// directories, reports false.
+func dirHoldsNonDirEntry(root string) (bool, error) {
+	holds := false
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		holds = true
+		return filepath.SkipAll
+	})
+	if err != nil {
+		return false, err
+	}
+	return holds, nil
+}
+
 // PlanEvacuation computes, for every share with a branch on disk, a plan
 // that moves every file on that branch onto the share's other branches
 // (doc 09 §4 steps 1 and 3: "mechanically a rebalance targeting one
@@ -62,6 +165,13 @@ var ErrEvacuationUnsupportedEntry = errors.New("cache: evacuated disk holds an e
 // through a real copy.
 func PlanEvacuation(ctx context.Context, disk string, shares []Share, deps Deps) (RebalancePlan, error) {
 	deps = deps.withDefaults()
+	nonShare, err := nonShareTopLevelEntries(disk, shares)
+	if err != nil {
+		return RebalancePlan{}, fmt.Errorf("cache: scanning %s for content outside every share: %w", disk, err)
+	}
+	if len(nonShare) > 0 {
+		return RebalancePlan{NonShareContent: nonShare}, fmt.Errorf("%w: %s", ErrEvacuationNonShareContent, strings.Join(nonShare, ", "))
+	}
 	var plan RebalancePlan
 	// Keyed by disk mount: every share's branch on one disk draws on the
 	// same filesystem's free space, so planned moves must be charged
@@ -249,20 +359,30 @@ func pickEvacuationTarget(states []*evacuationTarget, size, minFreeSpace int64) 
 // exists to prevent.
 var ErrEvacuationNotEmpty = errors.New("cache: evacuated disk still has content besides empty directories")
 
-// EvacuationPostCheck implements doc 09 §4 step 6's own post-check:
-// every share's own branch on disk must contain nothing but empty
-// directories once a caller's RunRebalance call for PlanEvacuation's own
-// plan has finished without interruption. It only ever reads the
-// filesystem — it never deletes anything itself.
+// EvacuationPostCheck implements doc 09 §4 step 6's own post-check: every
+// share's own branch on disk must contain nothing but empty directories
+// once a caller's RunRebalance call for PlanEvacuation's own plan has
+// finished without interruption, and disk must hold no file outside
+// those branches either — anything nonShareLeftover finds means a file
+// appeared on disk during the run, outside every share, that neither
+// PlanEvacuation's own plan-time refusal nor this check's own per-branch
+// half ever looked at (#367). It only ever reads the filesystem — it
+// never deletes anything itself.
 //
-// This checks the branches PlanEvacuation itself enumerated files from
-// (each share's own "<disk>/<share>" directory) — the files doc 09 §4's
-// own "sources" refers to — not disk's mount point as a whole: SnapRAID's
-// own bookkeeping (its content/parity files, when disk is one of the
-// ones doc 02 §2's own placement chose to hold a copy) legitimately
-// lives directly on a data disk's own root, outside any share. Step 8's
-// own "remove from the SnapRAID data list" is what retires those, not
-// this check.
+// A bare directory outside every share is not itself a failure here — a
+// caller reaches this check before doc 09 §4 step 8's own removeEmptyDirs
+// has had a chance to clear one away (finishDiskRemoval's own re-run
+// path leaves exactly that shape behind after a failed sync), and
+// job.diskLeftover applies the identical leniency at the matching point
+// in its own lifecycle (its own allowDirs=true, #358) — only the finish
+// job's later, stricter pass (allowDirs=false, once removeEmptyDirs has
+// run) treats a leftover directory itself as the problem. SnapRAID's own
+// bookkeeping (its content files, when disk is one of the ones doc 02
+// §2's own placement chose to hold a copy) legitimately lives directly on
+// a data disk's own root, outside any share — nonShareLeftover excludes
+// those the same way job.diskLeftover does, so the two checks never
+// disagree. Step 8's own "remove from the SnapRAID data list" is what
+// retires the content files, not this check.
 func EvacuationPostCheck(disk string, shares []Share) error {
 	for _, s := range shares {
 		for _, b := range s.Branches {
@@ -274,7 +394,57 @@ func EvacuationPostCheck(disk string, shares []Share) error {
 			}
 		}
 	}
+	if err := nonShareLeftover(disk, shares); err != nil {
+		return fmt.Errorf("%w: %v", ErrEvacuationNotEmpty, err)
+	}
 	return nil
+}
+
+// nonShareLeftover mirrors job.diskLeftover's own allowDirs=true rule
+// (#358), scoped to paths outside every share's own branch on disk: a
+// directory anywhere is fine, but a file anywhere other than SnapRAID's
+// own content files at the disk's own root (evacuationContentPrefix) is a
+// leftover. A disk that does not exist at all holds nothing to report.
+func nonShareLeftover(disk string, shares []Share) error {
+	if _, err := os.Stat(disk); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	branches := make(map[string]bool)
+	for _, s := range shares {
+		for _, b := range s.Branches {
+			if filepath.Dir(b) == disk {
+				branches[filepath.Clean(b)] = true
+			}
+		}
+	}
+	root := filepath.Clean(disk)
+	var bad error
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root {
+			return nil
+		}
+		if branches[filepath.Clean(path)] {
+			return filepath.SkipDir
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if filepath.Dir(path) == root && strings.HasPrefix(d.Name(), evacuationContentPrefix) {
+			return nil
+		}
+		bad = fmt.Errorf("%s is outside every configured share", path)
+		return filepath.SkipAll
+	})
+	if bad != nil {
+		return bad
+	}
+	return err
 }
 
 // checkOnlyEmptyDirs walks root and fails on the first non-directory
