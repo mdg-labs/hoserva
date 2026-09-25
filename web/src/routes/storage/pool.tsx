@@ -1193,6 +1193,9 @@ export function PoolOverviewPage(): React.ReactElement {
       <FormOverlay
         open={finishOpen}
         onOpenChange={(open) => {
+          if (!open && finishPending) {
+            return;
+          }
           setFinishOpen(open);
           if (!open) resetFinishRemoval();
         }}
@@ -1239,6 +1242,9 @@ export function PoolOverviewPage(): React.ReactElement {
       <ConfirmDialog
         open={cancelOpen}
         onOpenChange={(open) => {
+          if (!open && cancelPending) {
+            return;
+          }
           setCancelOpen(open);
           if (!open) setCancelError(null);
         }}

@@ -964,6 +964,32 @@ describe("Pool overview page — disk removal state, Finish removal, Cancel remo
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
+  it("does not close the Cancel removal dialog on Escape while the request is pending, and still shows its failure", async () => {
+    mockPoolAndJobs(mockGet, poolWithRemovalState("evacuated"));
+    const pendingPost: { release: (() => void) | null } = { release: null };
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/disks/array/remove/cancel") {
+        return new Promise((resolve) => {
+          pendingPost.release = () => resolve({ error: { message: "its removal state changed" }, response: { ok: false } });
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel removal" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel removal" }));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: /Cancel removal/ })).toBeDisabled());
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    pendingPost.release?.();
+    expect(await within(dialog).findByText("its removal state changed")).toBeInTheDocument();
+  });
+
   it("a failed disk_remove job shows its message on the row, next to the Finish removal retry", async () => {
     mockPoolAndJobs(mockGet, poolWithRemovalState("unpooled"), [
       {
