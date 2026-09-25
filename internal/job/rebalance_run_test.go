@@ -2,13 +2,16 @@ package job
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/parity"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // newRebalanceTestPlan writes content at srcDir/rel and returns the
@@ -47,6 +50,7 @@ func TestRunRebalance_MovesThroughScheduler(t *testing.T) {
 	s.registry.Register(TypeRebalance, true, RunRebalance(RebalanceDeps{
 		Sync:             syncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
+		Store:            newRebalanceTestArray(t, filepath.Join(base, "disk1"), filepath.Join(base, "disk2")),
 	}))
 
 	j, err := s.Submit(ctx, TypeRebalance, nil, mustJSON(t, RebalanceParams{Plan: plan}))
@@ -89,6 +93,7 @@ func TestRunRebalance_GuardBlocked_LeavesSourceUntouched(t *testing.T) {
 	s.registry.Register(TypeRebalance, true, RunRebalance(RebalanceDeps{
 		Sync:             syncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
+		Store:            newRebalanceTestArray(t, filepath.Join(base, "disk1"), filepath.Join(base, "disk2")),
 	}))
 
 	j, err := s.Submit(ctx, TypeRebalance, nil, mustJSON(t, RebalanceParams{Plan: plan}))
@@ -107,6 +112,79 @@ func TestRunRebalance_GuardBlocked_LeavesSourceUntouched(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dst, "movie.mkv")); err != nil {
 		t.Fatalf("verified target copy must survive a blocked sync: %v", err)
+	}
+}
+
+// newRebalanceTestArray is an array of the given data disks, none of
+// them leaving it.
+func newRebalanceTestArray(t *testing.T, mountpoints ...string) *store.ArrayStore {
+	t.Helper()
+	arrays := store.NewArrayStore(newTestDB(t))
+	disks := make([]store.ArrayDisk, 0, len(mountpoints))
+	for i, mp := range mountpoints {
+		disks = append(disks, store.ArrayDisk{Role: store.ArrayRoleData, RoleIndex: i + 1, Device: fmt.Sprintf("/dev/sd%c", 'b'+i), Filesystem: "xfs", FSUUID: fmt.Sprintf("uuid-d%d", i+1), Mountpoint: mp})
+	}
+	if err := arrays.PutArray(context.Background(), store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "1M", CreatedAt: time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)}, disks); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	return arrays
+}
+
+// TestRunRebalance_RefusesAPlanTouchingALeavingDisk covers a plan that
+// was computed before a disk entered removal — a rebalance interrupted,
+// then resumed after an evacuation started. Its persisted plan still
+// targets that disk; the run must refuse it before copying anything, or
+// the file lands on a disk the evacuation already emptied (#366).
+func TestRunRebalance_RefusesAPlanTouchingALeavingDisk(t *testing.T) {
+	for _, state := range []string{store.RemovalStateEvacuating, store.RemovalStateEvacuated, store.RemovalStateUnpooled} {
+		t.Run(state, func(t *testing.T) {
+			ctx := context.Background()
+			s := newTestScheduler(t)
+			base := t.TempDir()
+			disk1, disk2 := filepath.Join(base, "disk1"), filepath.Join(base, "disk2")
+			src, dst := filepath.Join(disk1, "media"), filepath.Join(disk2, "media")
+			plan := newRebalanceTestPlan(t, src, dst, "media", "movie.mkv", "movie bytes")
+			arrays := newRebalanceTestArray(t, disk1, disk2)
+			if err := arrays.SetRemovalState(ctx, disk2, store.RemovalStateEvacuating, "evacuation-job"); err != nil {
+				t.Fatalf("SetRemovalState: %v", err)
+			}
+			if state != store.RemovalStateEvacuating {
+				if err := arrays.SetRemovalState(ctx, disk2, store.RemovalStateEvacuated, "evacuation-job"); err != nil {
+					t.Fatalf("SetRemovalState(evacuated): %v", err)
+				}
+			}
+			if state == store.RemovalStateUnpooled {
+				if err := arrays.AdvanceRemovalState(ctx, disk2, store.RemovalStateEvacuated, store.RemovalStateUnpooled, "remove-job"); err != nil {
+					t.Fatalf("AdvanceRemovalState(unpooled): %v", err)
+				}
+			}
+
+			eng := newRecordingEngine()
+			eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
+			s.registry.Register(TypeRebalance, true, RunRebalance(RebalanceDeps{
+				Sync:             syncFuncFromEngine(eng),
+				TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
+				Store:            arrays,
+			}))
+
+			j, err := s.Submit(ctx, TypeRebalance, nil, mustJSON(t, RebalanceParams{Plan: plan}))
+			if err != nil {
+				t.Fatalf("Submit: %v", err)
+			}
+			finished := await(t, s, j.ID)
+			if finished.Status != StatusFailed {
+				t.Fatalf("status = %s, want failed", finished.Status)
+			}
+			if !strings.Contains(finished.ErrorMessage, disk2) {
+				t.Fatalf("ErrorMessage = %q, want it to name %s", finished.ErrorMessage, disk2)
+			}
+			if _, err := os.Stat(filepath.Join(src, "movie.mkv")); err != nil {
+				t.Fatalf("source must be untouched: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(dst, "movie.mkv")); !os.IsNotExist(err) {
+				t.Fatalf("nothing may be copied to a leaving disk: err=%v", err)
+			}
+		})
 	}
 }
 

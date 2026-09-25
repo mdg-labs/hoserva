@@ -2,9 +2,12 @@ package job
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/mdg-labs/hoserva/internal/cache"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // RebalanceDeps is what RunRebalance needs to run a rebalance job (doc 09
@@ -15,6 +18,10 @@ type RebalanceDeps struct {
 	Config           cache.Config
 	Sync             cache.SyncFunc
 	TrackedFileCount func(ctx context.Context) (int, error)
+	// Store is read before every run, a resume included, to refuse a plan
+	// that touches a disk leaving the array (#366): the plan was computed
+	// before that disk entered removal. Required.
+	Store *store.ArrayStore
 }
 
 // RunRebalance is the RunFunc hoservad registers for job.TypeRebalance: a
@@ -32,6 +39,12 @@ func RunRebalance(d RebalanceDeps) RunFunc {
 		if err != nil {
 			return err
 		}
+		if d.Store == nil {
+			return fmt.Errorf("job: rebalance: Deps.Store is required")
+		}
+		if err := refuseLeavingDiskMoves(ctx, d.Store, p.Plan); err != nil {
+			return err
+		}
 		hooks := cache.RunHooks{
 			StopRequested:  rc.StopRequested(),
 			SaveCheckpoint: rc.SaveCheckpoint,
@@ -46,6 +59,37 @@ func RunRebalance(d RebalanceDeps) RunFunc {
 		}
 		return err
 	}
+}
+
+// refuseLeavingDiskMoves fails a rebalance whose plan moves a file from
+// or to a data disk leaving the array. A plan is only ever computed
+// without leaving disks (api.Handler.sharesOffLeavingDisks), but a
+// rebalance interrupted before an evacuation started resumes its old
+// plan. A move's disk is filepath.Dir of its branch, the "<disk>/<share>"
+// shape every cache.Share branch has.
+func refuseLeavingDiskMoves(ctx context.Context, arrays *store.ArrayStore, plan cache.RebalancePlan) error {
+	_, disks, err := arrays.GetArray(ctx)
+	if err != nil {
+		if errors.Is(err, store.ErrNoArray) {
+			return nil
+		}
+		return fmt.Errorf("job: rebalance: reading the array's disks: %w", err)
+	}
+	leaving := make(map[string]string)
+	for _, disk := range disks {
+		if disk.Role == store.ArrayRoleData && disk.LeavingArray() {
+			leaving[disk.Mountpoint] = disk.RemovalState
+		}
+	}
+	for _, mv := range plan.Moves {
+		for _, branch := range []string{mv.SourceBranch, mv.TargetBranch} {
+			mp := filepath.Dir(branch)
+			if state, ok := leaving[mp]; ok {
+				return fmt.Errorf("job: rebalance: the plan moves %s via %s, which is being removed from the array (%s) — cancel this rebalance and plan a new one", mv.RelPath, mp, state)
+			}
+		}
+	}
+	return nil
 }
 
 // RebalanceConfirmation is the exact typed confirmation startRebalance

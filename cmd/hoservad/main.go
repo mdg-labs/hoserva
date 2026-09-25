@@ -745,6 +745,7 @@ func (p *parityRegistrar) register(engine *parity.SnapraidEngine) {
 	p.registry.Register(job.TypeRebalance, true, job.RunRebalance(job.RebalanceDeps{
 		Sync:             shareRelocationSyncFunc(engine),
 		TrackedFileCount: rebalanceTracked,
+		Store:            p.arrayStore,
 	}))
 	p.registry.Register(job.TypeEvacuation, true, job.RunEvacuation(job.EvacuationDeps{
 		Sync:             evacuationSyncFunc(engine),

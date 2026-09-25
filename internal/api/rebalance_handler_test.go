@@ -90,6 +90,7 @@ func newRebalanceTestHandler(t *testing.T) (h *api.Handler, scheduler *job.Sched
 	registry.Register(job.TypeRebalance, true, job.RunRebalance(job.RebalanceDeps{
 		Sync:             noopSync,
 		TrackedFileCount: trackedCount,
+		Store:            arrayStore,
 	}))
 	registry.Register(job.TypeEvacuation, true, job.RunEvacuation(job.EvacuationDeps{
 		Sync:             noopEvacuationSync,
