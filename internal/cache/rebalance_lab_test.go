@@ -137,7 +137,19 @@ func rebalanceCreateAndMountLoopDisk(t *testing.T, lab, name, mountpoint string)
 	if out, err := exec.Command("mount", dev, mountpoint).CombinedOutput(); err != nil {
 		t.Fatalf("mount %s %s: %v: %s", dev, mountpoint, err, out)
 	}
+	// Loop device numbers are host-global and freed as soon as they are
+	// detached, so this re-checks ownership straight from sysfs rather
+	// than trusting dev still names this test's own device — a
+	// concurrently running lab may have since claimed the freed number
+	// for its own image (CLAUDE.md: detach only devices backed by your
+	// own lab's image files). cacheLoopStillBacksImage is
+	// relocate_lab_test.go's own helper, shared by this package's two
+	// lab-tagged files that pair a loop-device detach with an unmount.
 	t.Cleanup(func() {
+		if !cacheLoopStillBacksImage(t, dev, img) {
+			t.Logf("skipping unmount/detach of %s: no longer backed by %s (likely reused by another lab)", dev, img)
+			return
+		}
 		_, _ = exec.Command("umount", mountpoint).CombinedOutput()
 		_, _ = exec.Command("losetup", "-d", dev).CombinedOutput()
 	})
