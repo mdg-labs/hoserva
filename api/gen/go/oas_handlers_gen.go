@@ -5999,8 +5999,7 @@ func (s *Server) handleEnrollTotpRequest(args [0]string, argsEscaped bool, w htt
 // that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling
 // that run clears it. Success here means the disk's data as this job saw it is safely off it and it is
 // no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09
-// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are not performed by this
-// operation.
+// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are `finishDiskRemoval`'s.
 //
 // POST /disks/array/evacuate
 func (s *Server) handleEvacuateDiskRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -6413,6 +6412,243 @@ func (s *Server) handleExportConfigRequest(args [0]string, argsEscaped bool, w h
 	}
 
 	if err := encodeExportConfigResponse(response, w, span); err != nil {
+		defer recordError("EncodeResponse", err)
+		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+		}
+		return
+	}
+}
+
+// handleFinishDiskRemovalRequest handles finishDiskRemoval operation.
+//
+// Queues a `job.TypeDiskRemove` Topology job that takes an evacuated data disk out of the array (doc
+// 09 §4 steps 7-9). The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation`
+// returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies
+// `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or
+// `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when
+// the daemon has no parity engine. Before changing anything the job checks all of that again, that the
+// array without the disk still has a data disk and room for every content-file copy (Q18), that the
+// disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own
+// content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every
+// pool mount, live (step 7; a failed live update fails the job); removes the empty directories the
+// evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold
+// guard with only this disk exempt from the zero-files rule, while its data line is still in
+// snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates
+// snapraid.conf without it and checks SnapRAID accepts the result (step 8); then stops its mount unit,
+// removes the unit file and deletes the disk from the array (step 9). The job's result names the disk
+// as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted
+// leaves the disk in the last state it reached, and running this operation again carries on from there
+// — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed
+// and mounted, with nothing synced.
+//
+// POST /disks/array/remove/finish
+func (s *Server) handleFinishDiskRemovalRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
+	statusWriter := &codeRecorder{ResponseWriter: w}
+	w = statusWriter
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("finishDiskRemoval"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.HTTPRouteKey.String("/disks/array/remove/finish"),
+	}
+	// Add attributes from config.
+	otelAttrs = append(otelAttrs, s.cfg.Attributes...)
+
+	// Start a span for this request.
+	ctx, span := s.cfg.Tracer.Start(r.Context(), FinishDiskRemovalOperation,
+		trace.WithAttributes(otelAttrs...),
+		serverSpanKind,
+	)
+	defer span.End()
+
+	// Add Labeler to context.
+	labeler := &Labeler{attrs: otelAttrs}
+	ctx = contextWithLabeler(ctx, labeler)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		elapsedDuration := time.Since(startTime)
+
+		attrSet := labeler.AttributeSet()
+		attrs := attrSet.ToSlice()
+		code := statusWriter.status
+		if code != 0 {
+			codeAttr := semconv.HTTPResponseStatusCode(code)
+			attrs = append(attrs, codeAttr)
+			span.SetAttributes(attrs...)
+		}
+		attrOpt := metric.WithAttributes(attrs...)
+
+		// Increment request counter.
+		s.requests.Add(ctx, 1, attrOpt)
+
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		s.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), attrOpt)
+	}()
+
+	var (
+		recordError = func(stage string, err error) {
+			span.RecordError(err)
+
+			// https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+			// Span Status MUST be left unset if HTTP status code was in the 1xx, 2xx or 3xx ranges,
+			// unless there was another error (e.g., network error receiving the response body; or 3xx codes with
+			// max redirects exceeded), in which case status MUST be set to Error.
+			code := statusWriter.status
+			if code < 100 || code >= 500 {
+				span.SetStatus(codes.Error, stage)
+			}
+
+			attrSet := labeler.AttributeSet()
+			attrs := attrSet.ToSlice()
+			if code != 0 {
+				attrs = append(attrs, semconv.HTTPResponseStatusCode(code))
+			}
+
+			s.errors.Add(ctx, 1, metric.WithAttributes(attrs...))
+		}
+		err          error
+		opErrContext = ogenerrors.OperationContext{
+			Name: FinishDiskRemovalOperation,
+			ID:   "finishDiskRemoval",
+		}
+	)
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			sctx, ok, err := s.securitySessionCookie(ctx, FinishDiskRemovalOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "SessionCookie",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:SessionCookie", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 0
+				ctx = sctx
+			}
+		}
+		{
+			sctx, ok, err := s.securityApiToken(ctx, FinishDiskRemovalOperation, r)
+			if err != nil {
+				err = &ogenerrors.SecurityError{
+					OperationContext: opErrContext,
+					Security:         "ApiToken",
+					Err:              err,
+				}
+				if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+					defer recordError("Security:ApiToken", err)
+				}
+				return
+			}
+			if ok {
+				satisfied[0] |= 1 << 1
+				ctx = sctx
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			err = &ogenerrors.SecurityError{
+				OperationContext: opErrContext,
+				Err:              ogenerrors.ErrSecurityRequirementIsNotSatisfied,
+			}
+			if encodeErr := encodeErrorResponse(s.h.NewError(ctx, err), w, span); encodeErr != nil {
+				defer recordError("Security", err)
+			}
+			return
+		}
+	}
+
+	var rawBody []byte
+	request, rawBody, close, err := s.decodeFinishDiskRemovalRequest(r)
+	if err != nil {
+		err = &ogenerrors.DecodeRequestError{
+			OperationContext: opErrContext,
+			Err:              err,
+		}
+		defer recordError("DecodeRequest", err)
+		s.cfg.ErrorHandler(ctx, w, r, err)
+		return
+	}
+	defer func() {
+		if err := close(); err != nil {
+			recordError("CloseRequest", err)
+		}
+	}()
+
+	var response *Job
+	if m := s.cfg.Middleware; m != nil {
+		mreq := middleware.Request{
+			Context:          ctx,
+			OperationName:    FinishDiskRemovalOperation,
+			OperationSummary: "Finish removing an evacuated data disk",
+			OperationID:      "finishDiskRemoval",
+			Body:             request,
+			RawBody:          rawBody,
+			Params:           middleware.Parameters{},
+			Raw:              r,
+		}
+
+		type (
+			Request  = *FinishDiskRemovalRequest
+			Params   = struct{}
+			Response = *Job
+		)
+		response, err = middleware.HookMiddleware[
+			Request,
+			Params,
+			Response,
+		](
+			m,
+			mreq,
+			nil,
+			func(ctx context.Context, request Request, params Params) (response Response, err error) {
+				response, err = s.h.FinishDiskRemoval(ctx, request)
+				return response, err
+			},
+		)
+	} else {
+		response, err = s.h.FinishDiskRemoval(ctx, request)
+	}
+	if err != nil {
+		if errRes, ok := errors.Into[*ErrorStatusCode](err); ok {
+			if err := encodeErrorResponse(errRes, w, span); err != nil {
+				defer recordError("Internal", err)
+			}
+			return
+		}
+		if errors.Is(err, ht.ErrNotImplemented) {
+			s.cfg.ErrorHandler(ctx, w, r, err)
+			return
+		}
+		if err := encodeErrorResponse(s.h.NewError(ctx, err), w, span); err != nil {
+			defer recordError("Internal", err)
+		}
+		return
+	}
+
+	if err := encodeFinishDiskRemovalResponse(response, w, span); err != nil {
 		defer recordError("EncodeResponse", err)
 		if !errors.Is(err, ht.ErrInternalServerErrorResponse) {
 			s.cfg.ErrorHandler(ctx, w, r, err)

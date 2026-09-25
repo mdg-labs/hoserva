@@ -267,6 +267,20 @@ func encodeEvacuateDiskRequest(
 	return nil
 }
 
+func encodeFinishDiskRemovalRequest(
+	req *FinishDiskRemovalRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeFormatExternalDiskRequest(
 	req *FormatExternalDiskRequest,
 	r *http.Request,

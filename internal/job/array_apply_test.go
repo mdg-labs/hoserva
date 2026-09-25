@@ -67,3 +67,47 @@ func TestPoolStateFromStore_NoRemovalState_LeavesRemovingDiskEmpty(t *testing.T)
 		t.Fatalf("RemovingDisk = %q, want empty", state.RemovingDisk)
 	}
 }
+
+// TestPoolStateAndLayoutFromStore_DiskLeavingTheArray is #358's generator
+// filter: an unpooled disk is in no pool branch list but still in the
+// SnapRAID layout (it must be synced empty while listed); an unlisted
+// one is in neither. An evacuating or evacuated disk stays a branch.
+func TestPoolStateAndLayoutFromStore_DiskLeavingTheArray(t *testing.T) {
+	for _, tc := range []struct {
+		state            string
+		inPool, inLayout bool
+	}{
+		{state: "", inPool: true, inLayout: true},
+		{state: store.RemovalStateEvacuating, inPool: true, inLayout: true},
+		{state: store.RemovalStateEvacuated, inPool: true, inLayout: true},
+		{state: store.RemovalStateUnpooled, inPool: false, inLayout: true},
+		{state: store.RemovalStateUnlisted, inPool: false, inLayout: false},
+	} {
+		disks := []store.ArrayDisk{
+			{Role: store.ArrayRoleParity, RoleIndex: 1, Mountpoint: "/mnt/parity1"},
+			{Role: store.ArrayRoleData, RoleIndex: 1, Mountpoint: "/mnt/disk1"},
+			{Role: store.ArrayRoleData, RoleIndex: 2, Mountpoint: "/mnt/disk2", RemovalState: tc.state},
+			{Role: store.ArrayRoleData, RoleIndex: 3, Mountpoint: "/mnt/disk3"},
+		}
+		state := poolStateFromStore(store.ArraySettings{}, disks)
+		var inPool bool
+		for _, d := range state.DataDisks {
+			inPool = inPool || d == "/mnt/disk2"
+		}
+		if inPool != tc.inPool || (!tc.inPool && state.RemovingDisk == "/mnt/disk2") {
+			t.Fatalf("%q: /mnt/disk2 in the pool = %v (removing %q), want %v", tc.state, inPool, state.RemovingDisk, tc.inPool)
+		}
+		var inLayout bool
+		for _, m := range layoutFromStore(disks).DataMounts {
+			if m.Mountpoint == "/mnt/disk2" {
+				inLayout = true
+			}
+			if m.Mountpoint == "/mnt/disk3" && m.RoleIndex != 3 {
+				t.Fatalf("%q: /mnt/disk3 renamed to role_index %d", tc.state, m.RoleIndex)
+			}
+		}
+		if inLayout != tc.inLayout {
+			t.Fatalf("%q: /mnt/disk2 in the SnapRAID layout = %v, want %v", tc.state, inLayout, tc.inLayout)
+		}
+	}
+}

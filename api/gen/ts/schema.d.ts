@@ -1330,9 +1330,29 @@ export interface paths {
         put?: never;
         /**
          * Evacuate a data disk before removal
-         * @description Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one, `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job. Before copying anything — and again on every resume — the job marks the disk `evacuating` (persisted in SQLite, D4) and applies no-create to its own branch in every pool mount, live (doc 09 §4 step 2); a failure to apply that fails the job before any copy. It then runs the plan through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this disk in the guard's own zero-files exemption, Q15, since the batch that finally empties it would otherwise trip that rule), delete the batch's sources, sync again (Q14) — then, once the whole plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share branches hold nothing but empty directories (doc 09 §4 step 6) and the job marks the disk `evacuated` before reporting success. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs, a second disk is refused (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal state belongs to the job that set it: cancelling that job — queued, running or interrupted — clears it and puts the disk back to taking writes, and cancelling any other job never does. A job that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling that run clears it. Success here means the disk's data as this job saw it is safely off it and it is no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09 §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are not performed by this operation.
+         * @description Recomputes the evacuation plan for `mountpoint` (never trusting a client-supplied one, `startRebalance`'s own reasoning) and, once `confirmation` matches the exact phrase the matching `planDiskEvacuation` call returned, queues a resumable `job.TypeEvacuation` job. Before copying anything — and again on every resume — the job marks the disk `evacuating` (persisted in SQLite, D4) and applies no-create to its own branch in every pool mount, live (doc 09 §4 step 2); a failure to apply that fails the job before any copy. It then runs the plan through `cache.RunRebalance` unchanged: copy and verify every batch, sync through the threshold guard (each such sync naming this disk in the guard's own zero-files exemption, Q15, since the batch that finally empties it would otherwise trip that rule), delete the batch's sources, sync again (Q14) — then, once the whole plan finishes without being interrupted, `cache.EvacuationPostCheck` confirms the disk's own share branches hold nothing but empty directories (doc 09 §4 step 6) and the job marks the disk `evacuated` before reporting success. A wrong or missing confirmation is refused (`confirmation_required`) before anything runs, a second disk is refused (`disk_removal_in_progress`) while one is already in removal, and any new evacuation is refused (`evacuation_pending`) while another evacuation job is queued, running or interrupted. The removal state belongs to the job that set it: cancelling that job — queued, running or interrupted — clears it and puts the disk back to taking writes, and cancelling any other job never does. A job that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling that run clears it. Success here means the disk's data as this job saw it is safely off it and it is no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09 §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are `finishDiskRemoval`'s.
          */
         post: operations["evacuateDisk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/disks/array/remove/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finish removing an evacuated data disk
+         * @description Queues a `job.TypeDiskRemove` Topology job that takes an evacuated data disk out of the array (doc 09 §4 steps 7-9). The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation` returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when the daemon has no parity engine. Before changing anything the job checks all of that again, that the array without the disk still has a data disk and room for every content-file copy (Q18), that the disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every pool mount, live (step 7; a failed live update fails the job); removes the empty directories the evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold guard with only this disk exempt from the zero-files rule, while its data line is still in snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates snapraid.conf without it and checks SnapRAID accepts the result (step 8); then stops its mount unit, removes the unit file and deletes the disk from the array (step 9). The job's result names the disk as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted leaves the disk in the last state it reached, and running this operation again carries on from there — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed and mounted, with nothing synced.
+         */
+        post: operations["finishDiskRemoval"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2052,7 +2072,7 @@ export interface components {
         /** @enum {string} */
         DiskState: "active" | "standby" | "spinning_up" | "missing" | "failed";
         /**
-         * @description doc 09 §4's own disk-removal state machine (#359, #358): `evacuating` from before an evacuation's first copy until its post-check passes — every pool mount marks this disk no-create for the whole time (step 2); `evacuated` once that copy and post-check finish, but the disk is still in every mergerfs branch list, SnapRAID layout and mount table (steps 7-9 have not run yet, still no-create); `unpooled` and `unlisted` are #358's own later steps of that same removal.
+         * @description doc 09 §4's own disk-removal state machine (#359, #358): `evacuating` from before an evacuation's first copy until its post-check passes — every pool mount marks this disk no-create for the whole time (step 2); `evacuated` once that copy and post-check finish, but the disk is still in every mergerfs branch list, SnapRAID layout and mount table (steps 7-9 have not run yet, still no-create); `unpooled` once `finishDiskRemoval`'s job has taken it out of every pool mount (step 7) — still in snapraid.conf and mounted; `unlisted` once a sync has recorded it empty and it is out of snapraid.conf too (step 8) — only its unmount and removal from the array are left. A disk that finished leaves the pool and the array altogether.
          * @enum {string}
          */
         DiskRemovalState: "evacuating" | "evacuated" | "unpooled" | "unlisted";
@@ -2948,6 +2968,12 @@ export interface components {
         EvacuateDiskPlanRequest: {
             /** @description The data disk slot to evacuate, e.g. `/mnt/disk3`. */
             mountpoint: string;
+        };
+        FinishDiskRemovalRequest: {
+            /** @description The evacuated data disk's slot, e.g. `/mnt/disk3`. */
+            mountpoint: string;
+            /** @description `REMOVE <mountpoint>` — the phrase `planDiskEvacuation` returned for this disk. A wrong or missing string is refused and nothing runs. */
+            confirmation: string;
         };
         EvacuateDiskRequest: {
             mountpoint: string;
@@ -5201,6 +5227,31 @@ export interface operations {
         };
         responses: {
             /** @description The queued, resumable evacuation job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    finishDiskRemoval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FinishDiskRemovalRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued disk-removal job. */
             200: {
                 headers: {
                     [name: string]: unknown;

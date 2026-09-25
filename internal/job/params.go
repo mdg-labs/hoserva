@@ -140,6 +140,14 @@ type EvacuationParams struct {
 	Plan       cache.RebalancePlan `json:"plan"`
 }
 
+// DiskRemoveParams is finishDiskRemoval's persisted Topology-job payload
+// (doc 09 §4 steps 7-9, #358): the evacuated data disk's slot and the
+// typed confirmation, which RunDiskRemove checks again itself.
+type DiskRemoveParams struct {
+	Mountpoint   string `json:"mountpoint"`
+	Confirmation string `json:"confirmation"`
+}
+
 // DiskReplaceParams is replaceDisk's persisted Topology-job payload
 // (doc 02 §4 "Replacing a failed disk"): the existing data-disk slot being
 // replaced, the replacement disk, the typed confirmation planDiskReplace's
@@ -186,6 +194,9 @@ func ValidateParams(t Type, params []byte) error {
 		if t == TypeEvacuation {
 			return fmt.Errorf("job: evacuation params require a mountpoint and a plan")
 		}
+		if t == TypeDiskRemove {
+			return fmt.Errorf("job: disk_remove params require a mountpoint and confirmation")
+		}
 		return nil
 	}
 	switch t {
@@ -206,6 +217,9 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeDiskReplace:
 		_, err := decodeDiskReplaceParams(params)
+		return err
+	case TypeDiskRemove:
+		_, err := decodeDiskRemoveParams(params)
 		return err
 	case TypeDiskUpgradeData:
 		_, err := decodeDiskUpgradeDataParams(params)
@@ -425,6 +439,20 @@ func decodeRebalanceParams(params []byte) (RebalanceParams, error) {
 	var p RebalanceParams
 	if err := decodeJSON(params, &p); err != nil {
 		return RebalanceParams{}, err
+	}
+	return p, nil
+}
+
+func decodeDiskRemoveParams(params []byte) (DiskRemoveParams, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return DiskRemoveParams{}, fmt.Errorf("job: disk_remove params require a mountpoint and confirmation")
+	}
+	var p DiskRemoveParams
+	if err := decodeJSON(params, &p); err != nil {
+		return DiskRemoveParams{}, err
+	}
+	if p.Mountpoint == "" || p.Confirmation == "" {
+		return DiskRemoveParams{}, fmt.Errorf("job: disk_remove params require a mountpoint and confirmation")
 	}
 	return p, nil
 }

@@ -42,6 +42,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.EnrollTotpOperation:                     RoleViewer,
 	apiv1.EvacuateDiskOperation:                   RoleAdmin,
 	apiv1.ExportConfigOperation:                   RoleAdmin,
+	apiv1.FinishDiskRemovalOperation:              RoleAdmin,
 	apiv1.GetCacheUsageOperation:                  RoleViewer,
 	apiv1.GetCurrentSessionOperation:              RoleViewer,
 	apiv1.GetGeneralSettingsOperation:             RoleViewer,

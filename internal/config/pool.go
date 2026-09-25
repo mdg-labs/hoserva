@@ -2,10 +2,14 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/pool"
 )
 
@@ -82,6 +86,42 @@ const poolMountUnitDir = "systemd/system/"
 
 func mountUnitPath(where string) string {
 	return poolMountUnitDir + unitFileName(where)
+}
+
+// RemoveDiskMount deletes the physical-disk .mount unit WriteDiskMounts
+// wrote for where, and its manifest record, so a data disk that has left
+// the array (#358, doc 09 §4 step 9) is not mounted again at the next
+// boot. A unit that is already gone is success, and any record left for
+// it is dropped. A unit that was edited by hand or kept unmanaged is
+// left in place and refused: deleting it would discard that change, and
+// keeping it quietly would mount the disk at the next boot.
+func (g *Generator) RemoveDiskMount(ctx context.Context, where string) error {
+	path := poolMountUnitDir + disk.UnitFileName(where)
+	removed, err := g.RemoveManaged(ctx, path)
+	if err != nil {
+		return err
+	}
+	if removed {
+		return nil
+	}
+	full, key, err := g.resolvePath(path)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(full); err == nil {
+		return fmt.Errorf("config: %s was changed by hand or kept unmanaged — resolve it before removing the disk", key)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("config: checking %s: %w", key, err)
+	}
+	manifest, err := g.loadManifest()
+	if err != nil {
+		return err
+	}
+	if _, ok := manifest[key]; !ok {
+		return nil
+	}
+	delete(manifest, key)
+	return g.saveManifest(manifest)
 }
 
 func poolMounts(state PoolState) ([]pool.Mount, error) {

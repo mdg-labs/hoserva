@@ -539,3 +539,43 @@ func (h *handler) UpgradeDisk(ctx context.Context, req *apiv1.UpgradeDiskRequest
 	h.jobs[j.ID] = j
 	return &j, nil
 }
+
+// FinishDiskRemoval mirrors internal/api's own FinishDiskRemoval and its
+// validation order against this mock's fixed array: not_configured with
+// no array (production has no parity engine then), disk_slot_not_found,
+// disk_not_evacuated unless the disk is evacuated or further along, then
+// confirmation_required (job.EvacuationConfirmation). No scenario has an
+// evacuated disk, so every scenario refuses.
+func (h *handler) FinishDiskRemoval(ctx context.Context, req *apiv1.FinishDiskRemovalRequest) (*apiv1.Job, error) {
+	disks := mockArrayDisks(h.scenario)
+	if disks == nil {
+		return nil, &mockError{code: "not_configured", statusCode: 501, message: "disk removal is not configured on this daemon — it needs the array's parity engine"}
+	}
+	d, ok := mockDataDiskAt(disks, req.Mountpoint)
+	if !ok {
+		return nil, errDiskSlotNotFound(req.Mountpoint)
+	}
+	switch d.RemovalState {
+	case store.RemovalStateEvacuated, store.RemovalStateUnpooled, store.RemovalStateUnlisted:
+	default:
+		state := d.RemovalState
+		if state == "" {
+			state = "not in removal"
+		}
+		return nil, &mockError{code: "disk_not_evacuated", statusCode: 409, message: fmt.Sprintf("disk %s is %s — evacuate it before finishing its removal", req.Mountpoint, state)}
+	}
+	if req.Confirmation == "" || job.EvacuationConfirmation(req.Mountpoint) != req.Confirmation {
+		return nil, errConfirmRequired()
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	j := apiv1.Job{
+		ID:        uuid.New(),
+		Type:      apiv1.JobTypeDiskRemove,
+		Class:     apiv1.JobClassTopology,
+		Status:    apiv1.JobStatusQueued,
+		CreatedAt: time.Now().UTC(),
+	}
+	h.jobs[j.ID] = j
+	return &j, nil
+}

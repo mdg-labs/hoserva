@@ -22,8 +22,10 @@ const (
 // §4's own disk-removal state machine). All four are the CHECK
 // constraint's own spellings, declared together because SQLite cannot
 // widen a CHECK without rebuilding the table (D16): RemovalStateEvacuating
-// and RemovalStateEvacuated are this issue's own states; RemovalStateUnpooled
-// and RemovalStateUnlisted belong to #358's own later removal steps.
+// and RemovalStateEvacuated are the evacuation's own states;
+// RemovalStateUnpooled (out of every pool mount, still in snapraid.conf)
+// and RemovalStateUnlisted (out of snapraid.conf too; only its unmount
+// and this row's deletion are left) are the disk_remove job's (#358).
 const (
 	RemovalStateEvacuating = "evacuating"
 	RemovalStateEvacuated  = "evacuated"
@@ -59,6 +61,15 @@ var (
 	// (#359, doc 09 §4 Open questions: one disk in removal at a time —
 	// the *Removing mount builders each take a single removingDisk).
 	ErrAnotherDiskRemoving = errors.New("store: another disk is already in removal")
+	// ErrDiskLeavingArray is SetRemovalState's refusal for a disk already
+	// past its evacuation (unpooled or unlisted, #358): it has left the
+	// pool, so a new evacuation must not put it back in as no-create.
+	ErrDiskLeavingArray = errors.New("store: the disk is already leaving the array")
+	// ErrRemovalStateMismatch is AdvanceRemovalState's and
+	// DeleteUnlistedDataDisk's refusal when the disk's removal state is
+	// not the one the step expects — another writer changed it since the
+	// caller read it (#358).
+	ErrRemovalStateMismatch = errors.New("store: the disk's removal state is not the one this step expects")
 )
 
 // ArraySettings is the singleton pool-wide create-array row: mergerfs
@@ -367,6 +378,9 @@ func (s *ArrayStore) SetRemovalState(ctx context.Context, mountpoint, state, job
 	if err == nil && current.Mountpoint != mountpoint {
 		return fmt.Errorf("%w: %s", ErrAnotherDiskRemoving, current.Mountpoint)
 	}
+	if err == nil && (current.RemovalState.String == RemovalStateUnpooled || current.RemovalState.String == RemovalStateUnlisted) {
+		return fmt.Errorf("%w: %s is %s", ErrDiskLeavingArray, mountpoint, current.RemovalState.String)
+	}
 
 	n, err := q.SetArrayDiskRemovalState(ctx, storedb.SetArrayDiskRemovalStateParams{
 		RemovalState: sql.NullString{String: state, Valid: true},
@@ -383,6 +397,52 @@ func (s *ArrayStore) SetRemovalState(ctx context.Context, mountpoint, state, job
 		return fmt.Errorf("store: committing removal-state change: %w", err)
 	}
 	return nil
+}
+
+// AdvanceRemovalState moves the data disk at mountpoint from the removal
+// state from to to, and records jobID as its holder — the disk_remove
+// job's own steps (#358, doc 09 §4 steps 7-8: evacuated to unpooled,
+// unpooled to unlisted). A disk already in to is left there, under
+// jobID, so a re-run repeats the step. Any other current state refuses
+// with ErrRemovalStateMismatch and writes nothing, as does a mountpoint
+// that is not a data disk.
+func (s *ArrayStore) AdvanceRemovalState(ctx context.Context, mountpoint, from, to, jobID string) error {
+	if jobID == "" {
+		return fmt.Errorf("store: marking %s %s: no job id", mountpoint, to)
+	}
+	n, err := s.q.AdvanceArrayDiskRemovalState(ctx, storedb.AdvanceArrayDiskRemovalStateParams{
+		ToState:    sql.NullString{String: to, Valid: true},
+		JobID:      sql.NullString{String: jobID, Valid: true},
+		Mountpoint: mountpoint,
+		FromState:  sql.NullString{String: from, Valid: true},
+		SameState:  sql.NullString{String: to, Valid: true},
+	})
+	if err != nil {
+		return fmt.Errorf("store: marking %s %s: %w", mountpoint, to, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: %s is not %s or %s", ErrRemovalStateMismatch, mountpoint, from, to)
+	}
+	return nil
+}
+
+// DeleteUnlistedDataDisk deletes the data disk row at mountpoint, but
+// only while its removal state is "unlisted" (#358, doc 09 §4 step 9):
+// the disk is already out of every pool mount and out of snapraid.conf.
+// Any other state refuses with ErrRemovalStateMismatch, and a mountpoint
+// with no data disk with ErrArrayDiskNotFound.
+func (s *ArrayStore) DeleteUnlistedDataDisk(ctx context.Context, mountpoint string) error {
+	n, err := s.q.DeleteUnlistedArrayDataDisk(ctx, mountpoint)
+	if err != nil {
+		return fmt.Errorf("store: deleting data disk %s: %w", mountpoint, err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := s.GetDataDiskByMountpoint(ctx, mountpoint); err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: %s is not %s", ErrRemovalStateMismatch, mountpoint, RemovalStateUnlisted)
 }
 
 // ReleaseRemovalState clears mountpoint's removal state back to NULL

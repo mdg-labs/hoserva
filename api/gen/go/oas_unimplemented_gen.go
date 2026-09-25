@@ -351,8 +351,7 @@ func (UnimplementedHandler) EnrollTotp(ctx context.Context, req *TotpEnrollReque
 // that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling
 // that run clears it. Success here means the disk's data as this job saw it is safely off it and it is
 // no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09
-// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are not performed by this
-// operation.
+// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are `finishDiskRemoval`'s.
 //
 // POST /disks/array/evacuate
 func (UnimplementedHandler) EvacuateDisk(ctx context.Context, req *EvacuateDiskRequest) (r *Job, _ error) {
@@ -365,6 +364,33 @@ func (UnimplementedHandler) EvacuateDisk(ctx context.Context, req *EvacuateDiskR
 //
 // POST /config/export
 func (UnimplementedHandler) ExportConfig(ctx context.Context) (r ExportConfigOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// FinishDiskRemoval implements finishDiskRemoval operation.
+//
+// Queues a `job.TypeDiskRemove` Topology job that takes an evacuated data disk out of the array (doc
+// 09 §4 steps 7-9). The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation`
+// returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies
+// `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or
+// `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when
+// the daemon has no parity engine. Before changing anything the job checks all of that again, that the
+// array without the disk still has a data disk and room for every content-file copy (Q18), that the
+// disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own
+// content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every
+// pool mount, live (step 7; a failed live update fails the job); removes the empty directories the
+// evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold
+// guard with only this disk exempt from the zero-files rule, while its data line is still in
+// snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates
+// snapraid.conf without it and checks SnapRAID accepts the result (step 8); then stops its mount unit,
+// removes the unit file and deletes the disk from the array (step 9). The job's result names the disk
+// as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted
+// leaves the disk in the last state it reached, and running this operation again carries on from there
+// — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed
+// and mounted, with nothing synced.
+//
+// POST /disks/array/remove/finish
+func (UnimplementedHandler) FinishDiskRemoval(ctx context.Context, req *FinishDiskRemovalRequest) (r *Job, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

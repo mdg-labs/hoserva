@@ -10,6 +10,34 @@ import (
 	"database/sql"
 )
 
+const advanceArrayDiskRemovalState = `-- name: AdvanceArrayDiskRemovalState :execrows
+UPDATE array_disks SET removal_state = ?1, removal_job_id = ?2
+WHERE mountpoint = ?3 AND role = 'data'
+    AND removal_state IN (?4, ?5)
+`
+
+type AdvanceArrayDiskRemovalStateParams struct {
+	ToState    sql.NullString `json:"to_state"`
+	JobID      sql.NullString `json:"job_id"`
+	Mountpoint string         `json:"mountpoint"`
+	FromState  sql.NullString `json:"from_state"`
+	SameState  sql.NullString `json:"same_state"`
+}
+
+func (q *Queries) AdvanceArrayDiskRemovalState(ctx context.Context, arg AdvanceArrayDiskRemovalStateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, advanceArrayDiskRemovalState,
+		arg.ToState,
+		arg.JobID,
+		arg.Mountpoint,
+		arg.FromState,
+		arg.SameState,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const countArraySettings = `-- name: CountArraySettings :one
 SELECT COUNT(*) FROM array_settings
 `
@@ -19,6 +47,18 @@ func (q *Queries) CountArraySettings(ctx context.Context) (int64, error) {
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteUnlistedArrayDataDisk = `-- name: DeleteUnlistedArrayDataDisk :execrows
+DELETE FROM array_disks WHERE mountpoint = ? AND role = 'data' AND removal_state = 'unlisted'
+`
+
+func (q *Queries) DeleteUnlistedArrayDataDisk(ctx context.Context, mountpoint string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteUnlistedArrayDataDisk, mountpoint)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getArrayDataDiskByMountpoint = `-- name: GetArrayDataDiskByMountpoint :one

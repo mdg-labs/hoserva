@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -75,6 +76,9 @@ func newParityRegistrationEnv(t *testing.T) (context.Context, *parityRegistratio
 		shareStore: shares,
 		arrayStore: arrays,
 		chainGuard: chainGuard,
+		generator:  cfggen.NewGenerator(configRoot),
+		diskUnits:  disk.NewFakeMounter(),
+		mounts:     job.NewFakeMountTable(),
 	}
 
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
@@ -187,7 +191,7 @@ func TestParityRegistrar_WiresJobTypesAndHandlerFieldsAfterLiveArrayCreation(t *
 	// After the live creation, no restart: every parity job type is
 	// registered on the same *job.Registry Submit already checked above —
 	// a second Register call for any of them now panics.
-	for _, typ := range []job.Type{job.TypeSync, job.TypeScrub, job.TypeFix, job.TypeShareRelocation, job.TypeRebalance, job.TypeEvacuation} {
+	for _, typ := range []job.Type{job.TypeSync, job.TypeScrub, job.TypeFix, job.TypeShareRelocation, job.TypeRebalance, job.TypeEvacuation, job.TypeDiskRemove} {
 		assertAlreadyRegistered(t, env.registry, typ)
 	}
 
@@ -226,6 +230,74 @@ func TestParityRegistrar_WiresJobTypesAndHandlerFieldsAfterLiveArrayCreation(t *
 	}
 	if finishedRebalance.Status != job.StatusSucceeded {
 		t.Fatalf("rebalance job status = %s (%s), want succeeded — TypeRebalance is unreachable until a restart without #265's fix", finishedRebalance.Status, finishedRebalance.ErrorMessage)
+	}
+}
+
+// TestFinishDiskRemoval_ReachesTheJobParityRegistrarRegisters is #358's
+// reachability criterion: finishDiskRemoval, on the Handler run() wires,
+// is 501 until the array exists, and once a live array creation has
+// registered the parity job types it queues the disk_remove job
+// parityRegistrar.register bound — this test registers no RunFunc of its
+// own. The disk is evacuated in the store but nothing is mounted, so the
+// real job refuses before changing anything, which is what proves it ran.
+func TestFinishDiskRemoval_ReachesTheJobParityRegistrarRegisters(t *testing.T) {
+	ctx, env := newParityRegistrationEnv(t)
+	h := env.handler
+	env.provider.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB, WWN: "wwn-parity", Serial: "PARITY1", ByIDName: "wwn-wwn-parity"})
+	env.provider.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB, Serial: "DATA1"})
+	env.provider.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, Serial: "DATA2"})
+	env.provider.AddDisk("/dev/sdd", disk.Disk{Size: 4 * disk.TB, Serial: "DATA3"})
+	env.runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/disk/by-id/wwn-wwn-parity"}, []byte("uuid-parity1\n"), nil)
+	env.runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdb"}, []byte("uuid-disk1\n"), nil)
+	env.runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdc"}, []byte("uuid-disk2\n"), nil)
+	env.runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdd"}, []byte("uuid-disk3\n"), nil)
+	// Three data disks: with one parity disk Q18 needs three content-file
+	// copies, and without disk2 the boot device, disk1 and disk3 hold them.
+	plan := disk.TopologyPlan{
+		Parity: []disk.AssignedDisk{{Device: "/dev/sda", Filesystem: disk.XFS}},
+		Data:   []disk.AssignedDisk{{Device: "/dev/sdb", Filesystem: disk.XFS}, {Device: "/dev/sdc", Filesystem: disk.XFS}, {Device: "/dev/sdd", Filesystem: disk.XFS}},
+	}
+	createReq := &apiv1.CreateArrayRequest{Confirmation: plan.Confirmation(), Disks: []apiv1.ArrayDiskAssignment{
+		xfsAssignment("/dev/sda", apiv1.ArrayDiskRoleParity),
+		xfsAssignment("/dev/sdb", apiv1.ArrayDiskRoleData),
+		xfsAssignment("/dev/sdc", apiv1.ArrayDiskRoleData),
+		xfsAssignment("/dev/sdd", apiv1.ArrayDiskRoleData),
+	}}
+
+	req := &apiv1.FinishDiskRemovalRequest{Mountpoint: "/mnt/disk2", Confirmation: job.EvacuationConfirmation("/mnt/disk2")}
+	if _, err := h.FinishDiskRemoval(ctx, req); err == nil {
+		t.Fatal("FinishDiskRemoval before the array exists succeeded, want 501 not_configured")
+	} else if status := handlerAPIError(t, h, err); status.StatusCode != 501 || status.Response.Code != "not_configured" {
+		t.Fatalf("FinishDiskRemoval before the array exists = %+v, want 501 not_configured", status)
+	}
+
+	created, err := h.CreateArray(ctx, createReq)
+	if err != nil {
+		t.Fatalf("CreateArray: %v", err)
+	}
+	if finished, err := h.Scheduler.Await(ctx, created.ID.String()); err != nil || finished.Status != job.StatusSucceeded {
+		t.Fatalf("create-array = (%v, %v), want succeeded", finished, err)
+	}
+	if err := h.ArrayStore.SetRemovalState(ctx, "/mnt/disk2", store.RemovalStateEvacuated, "evac-1"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+
+	j, err := h.FinishDiskRemoval(ctx, req)
+	if err != nil {
+		t.Fatalf("FinishDiskRemoval: %v", err)
+	}
+	if j.Type != apiv1.JobTypeDiskRemove {
+		t.Fatalf("queued job type = %s, want disk_remove", j.Type)
+	}
+	finished, err := h.Scheduler.Await(ctx, j.ID.String())
+	if err != nil {
+		t.Fatalf("Await(disk_remove): %v", err)
+	}
+	if finished.Status != job.StatusFailed || !strings.Contains(finished.ErrorMessage, "/mnt/disk2 is not mounted, so it cannot be confirmed empty") {
+		t.Fatalf("disk_remove = %s (%s), want the registered job's own refusal of an unmounted disk", finished.Status, finished.ErrorMessage)
+	}
+	if d, err := h.ArrayStore.GetDataDiskByMountpoint(ctx, "/mnt/disk2"); err != nil || d.RemovalState != store.RemovalStateEvacuated {
+		t.Fatalf("disk2 after the refusal = (%+v, %v), want still evacuated", d, err)
 	}
 }
 

@@ -136,6 +136,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.DisableUserTotpOperation,
 		apiv1.EnrollTotpOperation,
 		apiv1.EvacuateDiskOperation,
+		apiv1.FinishDiskRemovalOperation,
 		apiv1.ExportConfigOperation,
 		apiv1.GetCacheUsageOperation,
 		apiv1.GetCurrentSessionOperation,

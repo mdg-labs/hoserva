@@ -341,3 +341,136 @@ func TestArrayStore_RemovingDisk_NoneByDefault(t *testing.T) {
 		t.Fatalf("RemovingDisk = (%q, %q), want both empty", mountpoint, state)
 	}
 }
+
+func removalOf(t *testing.T, st *ArrayStore, mountpoint string) (state, holder string, present bool) {
+	t.Helper()
+	_, disks, err := st.GetArray(context.Background())
+	if err != nil {
+		t.Fatalf("GetArray: %v", err)
+	}
+	for _, d := range disks {
+		if d.Mountpoint == mountpoint {
+			return d.RemovalState, d.RemovalJobID, true
+		}
+	}
+	return "", "", false
+}
+
+// TestArrayStore_AdvanceRemovalState_OnlyFromTheExpectedState proves the
+// disk_remove job's own transitions (#358): each moves only from the
+// state before it or repeats itself, and every other starting state is
+// refused with nothing written.
+func TestArrayStore_AdvanceRemovalState_OnlyFromTheExpectedState(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	twoDataDiskArray(t, st)
+
+	if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuated, RemovalStateUnpooled, "rm-1"); !errors.Is(err, ErrRemovalStateMismatch) {
+		t.Fatalf("AdvanceRemovalState from NULL = %v, want ErrRemovalStateMismatch", err)
+	}
+	if err := st.SetRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuating, "evac-1"); err != nil {
+		t.Fatalf("SetRemovalState(evacuating): %v", err)
+	}
+	if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuated, RemovalStateUnpooled, "rm-1"); !errors.Is(err, ErrRemovalStateMismatch) {
+		t.Fatalf("AdvanceRemovalState from evacuating = %v, want ErrRemovalStateMismatch", err)
+	}
+	if state, holder, _ := removalOf(t, st, "/mnt/disk1"); state != RemovalStateEvacuating || holder != "evac-1" {
+		t.Fatalf("after refused advances: (%q, %q), want (evacuating, evac-1)", state, holder)
+	}
+
+	if err := st.SetRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuated, "evac-1"); err != nil {
+		t.Fatalf("SetRemovalState(evacuated): %v", err)
+	}
+	if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", RemovalStateUnpooled, RemovalStateUnlisted, "rm-1"); !errors.Is(err, ErrRemovalStateMismatch) {
+		t.Fatalf("AdvanceRemovalState evacuated->unlisted = %v, want ErrRemovalStateMismatch (no skipping unpooled)", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuated, RemovalStateUnpooled, "rm-1"); err != nil {
+			t.Fatalf("AdvanceRemovalState evacuated->unpooled (call %d): %v", i+1, err)
+		}
+	}
+	if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", RemovalStateUnpooled, RemovalStateUnlisted, "rm-2"); err != nil {
+		t.Fatalf("AdvanceRemovalState unpooled->unlisted: %v", err)
+	}
+	if state, holder, _ := removalOf(t, st, "/mnt/disk1"); state != RemovalStateUnlisted || holder != "rm-2" {
+		t.Fatalf("after advancing: (%q, %q), want (unlisted, rm-2)", state, holder)
+	}
+	if err := st.AdvanceRemovalState(ctx, "/mnt/parity1", RemovalStateEvacuated, RemovalStateUnpooled, "rm-1"); !errors.Is(err, ErrRemovalStateMismatch) {
+		t.Fatalf("AdvanceRemovalState on the parity disk = %v, want ErrRemovalStateMismatch", err)
+	}
+	if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", RemovalStateUnpooled, RemovalStateUnlisted, ""); err == nil {
+		t.Fatal("AdvanceRemovalState with no job id succeeded")
+	}
+}
+
+// TestArrayStore_SetRemovalState_RefusesADiskLeavingTheArray proves an
+// evacuation cannot pull a disk that has already left the pool (#358)
+// back to "evacuating" — that would put it back into every pool mount.
+func TestArrayStore_SetRemovalState_RefusesADiskLeavingTheArray(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	twoDataDiskArray(t, st)
+	if err := st.SetRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuated, "evac-1"); err != nil {
+		t.Fatalf("SetRemovalState(evacuated): %v", err)
+	}
+	for _, to := range []string{RemovalStateUnpooled, RemovalStateUnlisted} {
+		from := RemovalStateEvacuated
+		if to == RemovalStateUnlisted {
+			from = RemovalStateUnpooled
+		}
+		if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", from, to, "rm-1"); err != nil {
+			t.Fatalf("AdvanceRemovalState -> %s: %v", to, err)
+		}
+		for _, again := range []string{RemovalStateEvacuating, RemovalStateEvacuated} {
+			if err := st.SetRemovalState(ctx, "/mnt/disk1", again, "evac-2"); !errors.Is(err, ErrDiskLeavingArray) {
+				t.Fatalf("SetRemovalState(%s) on a %s disk = %v, want ErrDiskLeavingArray", again, to, err)
+			}
+		}
+		if state, holder, _ := removalOf(t, st, "/mnt/disk1"); state != to || holder != "rm-1" {
+			t.Fatalf("after the refused SetRemovalState: (%q, %q), want (%q, rm-1)", state, holder, to)
+		}
+	}
+}
+
+// TestArrayStore_DeleteUnlistedDataDisk_OnlyOnceUnlisted proves the row
+// goes only once the disk is out of snapraid.conf (#358, doc 09 §4 step
+// 9), and a second delete reports the slot gone.
+func TestArrayStore_DeleteUnlistedDataDisk_OnlyOnceUnlisted(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	twoDataDiskArray(t, st)
+
+	if err := st.DeleteUnlistedDataDisk(ctx, "/mnt/disk1"); !errors.Is(err, ErrRemovalStateMismatch) {
+		t.Fatalf("DeleteUnlistedDataDisk not in removal = %v, want ErrRemovalStateMismatch", err)
+	}
+	if err := st.SetRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuated, "evac-1"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+	if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuated, RemovalStateUnpooled, "rm-1"); err != nil {
+		t.Fatalf("AdvanceRemovalState -> unpooled: %v", err)
+	}
+	if err := st.DeleteUnlistedDataDisk(ctx, "/mnt/disk1"); !errors.Is(err, ErrRemovalStateMismatch) {
+		t.Fatalf("DeleteUnlistedDataDisk while unpooled = %v, want ErrRemovalStateMismatch", err)
+	}
+	if _, _, present := removalOf(t, st, "/mnt/disk1"); !present {
+		t.Fatal("an unpooled disk's row was deleted")
+	}
+	if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", RemovalStateUnpooled, RemovalStateUnlisted, "rm-1"); err != nil {
+		t.Fatalf("AdvanceRemovalState -> unlisted: %v", err)
+	}
+	if err := st.DeleteUnlistedDataDisk(ctx, "/mnt/disk1"); err != nil {
+		t.Fatalf("DeleteUnlistedDataDisk: %v", err)
+	}
+	if _, _, present := removalOf(t, st, "/mnt/disk1"); present {
+		t.Fatal("the unlisted disk's row is still there")
+	}
+	if _, _, present := removalOf(t, st, "/mnt/disk2"); !present {
+		t.Fatal("the other data disk's row was deleted too")
+	}
+	if err := st.DeleteUnlistedDataDisk(ctx, "/mnt/disk1"); !errors.Is(err, ErrArrayDiskNotFound) {
+		t.Fatalf("second DeleteUnlistedDataDisk = %v, want ErrArrayDiskNotFound", err)
+	}
+	if mp, _, err := st.RemovingDisk(ctx); err != nil || mp != "" {
+		t.Fatalf("RemovingDisk after the delete = (%q, %v), want none", mp, err)
+	}
+}

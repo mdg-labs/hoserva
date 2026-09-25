@@ -399,6 +399,8 @@ A key file owned by the wrong account is not a lost-key situation at all — res
 
 **Default: jobs are never resumed automatically. Resumable job types (mover, rebalance, evacuation, share relocation, and the data- and parity-disk upgrades) persist a checkpoint and resume from it, never restarting from zero, when the user clicks Resume or, for the mover only, at its next scheduled run.** Sync, scrub and fix are not resumable; they are re-run. Both documents' intents survive: no surprise background work after a crash, and no repeating a day of copying.
 
+Finishing a disk's removal (doc 09 §4 steps 7–9, `disk_remove`, #358) is re-run too, not resumed: it is not in the resumable set and keeps no checkpoint. Its progress is the disk's persisted removal state (`unpooled`, `unlisted`), which every run starts from, so a re-run after a failure or restart skips the steps already done and never repeats the step-8 sync once the disk is `unlisted`.
+
 ### Q30 — Nightly schedule ordering
 **Status:** Default · **Gate:** Phase 1 · **Affects:** doc 02 §2, §3, doc 03 §8.4, doc 09 §2, §6
 

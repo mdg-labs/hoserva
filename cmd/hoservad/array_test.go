@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -477,6 +478,134 @@ func TestNewArraySequence_RemovingDiskMarksOnlyThatDiskNC(t *testing.T) {
 	}
 	if !strings.Contains(moverMount.Mnt.What, "/mnt/disk1/media=NC") {
 		t.Fatalf("mover-target mount What = %q, want /mnt/disk1/media=NC", moverMount.Mnt.What)
+	}
+}
+
+// TestNewArraySequence_DiskLeavingThePoolIsInNoBranchList is #358's own
+// filter: an unpooled data disk is in no pool mount's branch list but is
+// still one of the array's disks (it is still in SnapRAID and mounted);
+// an unlisted one is not part of the sequence at all — neither mounted
+// nor UUID-checked at start.
+func TestNewArraySequence_DiskLeavingThePoolIsInNoBranchList(t *testing.T) {
+	for _, state := range []string{store.RemovalStateUnpooled, store.RemovalStateUnlisted} {
+		t.Run(state, func(t *testing.T) {
+			ctx, h, arrays, shares, disks, runner := newArrayTestEnv(t)
+			if err := arrays.PutArray(ctx, store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "20G", CreatedAt: time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)}, []store.ArrayDisk{
+				{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", Mountpoint: "/mnt/parity1"},
+				{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", Mountpoint: "/mnt/disk1"},
+				{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-d2", Mountpoint: "/mnt/disk2"},
+			}); err != nil {
+				t.Fatalf("PutArray: %v", err)
+			}
+			if err := arrays.SetRemovalState(ctx, "/mnt/disk1", store.RemovalStateEvacuated, "evac-1"); err != nil {
+				t.Fatalf("SetRemovalState: %v", err)
+			}
+			if err := arrays.AdvanceRemovalState(ctx, "/mnt/disk1", store.RemovalStateEvacuated, store.RemovalStateUnpooled, "rm-1"); err != nil {
+				t.Fatalf("AdvanceRemovalState(unpooled): %v", err)
+			}
+			if state == store.RemovalStateUnlisted {
+				if err := arrays.AdvanceRemovalState(ctx, "/mnt/disk1", store.RemovalStateUnpooled, store.RemovalStateUnlisted, "rm-1"); err != nil {
+					t.Fatalf("AdvanceRemovalState(unlisted): %v", err)
+				}
+			}
+			now := time.Date(2026, 9, 25, 12, 5, 0, 0, time.UTC)
+			if err := shares.Insert(ctx, store.Share{Name: "media", CacheMode: "array-only", CreatePolicy: "mfs", CreatedAt: now, UpdatedAt: now}); err != nil {
+				t.Fatalf("Insert share: %v", err)
+			}
+
+			attachDaemonArray(t, ctx, h, arrays, shares, disks, runner)
+			if h.Array == nil {
+				t.Fatal("Handler.Array is nil with a persisted topology")
+			}
+			for _, m := range append([]job.ArrayMount{h.Array.CatchAll}, h.Array.ShareMounts...) {
+				mc, ok := m.(pool.MountController)
+				if !ok {
+					t.Fatalf("pool mount %s is %T, want pool.MountController", m.Where(), m)
+				}
+				if strings.Contains(mc.Mnt.What, "/mnt/disk1") {
+					t.Fatalf("%s mount branches %q still include /mnt/disk1", mc.Mnt.Where, mc.Mnt.What)
+				}
+				if !strings.Contains(mc.Mnt.What, "/mnt/disk2") || strings.Contains(mc.Mnt.What, "=NC") {
+					t.Fatalf("%s mount branches %q, want only /mnt/disk2, RW", mc.Mnt.Where, mc.Mnt.What)
+				}
+			}
+			var inSequence bool
+			for _, m := range h.Array.Disks {
+				if m.Where() == "/mnt/disk1" {
+					inSequence = true
+				}
+			}
+			if want := state == store.RemovalStateUnpooled; inSequence != want {
+				t.Fatalf("/mnt/disk1 in the sequence's disks = %v, want %v", inSequence, want)
+			}
+			check, ok := h.Array.DiskCheck.(job.ArrayDiskUUIDCheck)
+			if !ok {
+				t.Fatalf("DiskCheck is %T, want job.ArrayDiskUUIDCheck", h.Array.DiskCheck)
+			}
+			var checked bool
+			for _, u := range check.Disks {
+				if u.Where == "/mnt/disk1" {
+					checked = true
+				}
+			}
+			if want := state == store.RemovalStateUnpooled; checked != want {
+				t.Fatalf("/mnt/disk1 UUID-checked at start = %v, want %v", checked, want)
+			}
+		})
+	}
+}
+
+// TestShareService_ApplyTopology_LeavesADepartedDiskOutOfEveryUnit is the
+// share-file half of #358's filter, through the share.Service run()
+// builds: with a data disk unpooled or unlisted, no generated pool unit
+// — catch-all, share or mover target — lists it as a branch.
+func TestShareService_ApplyTopology_LeavesADepartedDiskOutOfEveryUnit(t *testing.T) {
+	for _, state := range []string{store.RemovalStateUnpooled, store.RemovalStateUnlisted} {
+		t.Run(state, func(t *testing.T) {
+			ctx, _, arrays, shares, _, _ := newArrayTestEnv(t)
+			if err := arrays.PutArray(ctx, store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "20G", CreatedAt: time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)}, []store.ArrayDisk{
+				{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", Mountpoint: "/mnt/parity1"},
+				{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", Mountpoint: "/mnt/disk1"},
+				{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-d2", Mountpoint: "/mnt/disk2"},
+			}); err != nil {
+				t.Fatalf("PutArray: %v", err)
+			}
+			if err := arrays.SetRemovalState(ctx, "/mnt/disk1", store.RemovalStateEvacuated, "evac-1"); err != nil {
+				t.Fatalf("SetRemovalState: %v", err)
+			}
+			if err := arrays.AdvanceRemovalState(ctx, "/mnt/disk1", store.RemovalStateEvacuated, store.RemovalStateUnpooled, "rm-1"); err != nil {
+				t.Fatalf("AdvanceRemovalState(unpooled): %v", err)
+			}
+			if state == store.RemovalStateUnlisted {
+				if err := arrays.AdvanceRemovalState(ctx, "/mnt/disk1", store.RemovalStateUnpooled, store.RemovalStateUnlisted, "rm-1"); err != nil {
+					t.Fatalf("AdvanceRemovalState(unlisted): %v", err)
+				}
+			}
+			now := time.Date(2026, 9, 25, 12, 5, 0, 0, time.UTC)
+			if err := shares.Insert(ctx, store.Share{Name: "media", CacheMode: "array-only", CreatePolicy: "mfs", CreatedAt: now, UpdatedAt: now}); err != nil {
+				t.Fatalf("Insert share: %v", err)
+			}
+			configRoot := t.TempDir()
+			if err := newShareService(shares, arrays, cfggen.NewGenerator(configRoot), nil, nil).ApplyTopology(ctx, false); err != nil {
+				t.Fatalf("ApplyTopology: %v", err)
+			}
+			units, err := filepath.Glob(filepath.Join(configRoot, "systemd/system", "*.mount"))
+			if err != nil || len(units) != 3 {
+				t.Fatalf("generated units = %v (%v), want the catch-all, media and its mover target", units, err)
+			}
+			for _, unit := range units {
+				body, err := os.ReadFile(unit)
+				if err != nil {
+					t.Fatalf("reading %s: %v", unit, err)
+				}
+				if strings.Contains(string(body), "/mnt/disk1") {
+					t.Fatalf("%s still lists /mnt/disk1:\n%s", unit, body)
+				}
+				if !strings.Contains(string(body), "/mnt/disk2") {
+					t.Fatalf("%s lost /mnt/disk2:\n%s", unit, body)
+				}
+			}
+		})
 	}
 }
 

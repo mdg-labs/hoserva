@@ -35,6 +35,7 @@ const (
 	EnrollTotpOperation                     OperationName = "EnrollTotp"
 	EvacuateDiskOperation                   OperationName = "EvacuateDisk"
 	ExportConfigOperation                   OperationName = "ExportConfig"
+	FinishDiskRemovalOperation              OperationName = "FinishDiskRemoval"
 	FormatExternalDiskOperation             OperationName = "FormatExternalDisk"
 	GetCacheUsageOperation                  OperationName = "GetCacheUsage"
 	GetCurrentSessionOperation              OperationName = "GetCurrentSession"

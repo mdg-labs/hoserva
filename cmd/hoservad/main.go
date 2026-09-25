@@ -330,6 +330,9 @@ func run(cfg config) error {
 		shareStore: shareStore,
 		arrayStore: arrayStore,
 		chainGuard: chainGuard,
+		generator:  generator,
+		diskUnits:  disk.SystemdMounter{Runner: linuxDisks.Exec},
+		mounts:     disk.KernelMounts{Runner: linuxDisks.Exec},
 	}
 	if parityEngine != nil {
 		parityReg.register(parityEngine)
@@ -599,15 +602,17 @@ const (
 	logLiveUpdateFailure liveUpdateFailure = iota
 	// failOnLiveUpdateFailure returns it: an evacuation must not copy
 	// anything while its disk still takes new writes in a live mount
-	// (doc 09 §4 step 2, #359).
+	// (doc 09 §4 step 2, #359), and a disk removal must not take a disk
+	// out of SnapRAID while it is still a branch of a live mount (step 7,
+	// #358).
 	failOnLiveUpdateFailure
 )
 
 // wireTopologyHooks builds both topology hooks run() uses and returns
 // topologyChanged, the disk-topology jobs' ArrayReady hook, which only
 // logs a failed live update. It binds parityReg's arrayReady — the hook
-// job.TypeEvacuation's run and abort call — to the variant that returns
-// that failure instead, before any evacuation can run.
+// job.TypeEvacuation's run and abort and job.TypeDiskRemove call — to the
+// variant that returns that failure instead, before either can run.
 func wireTopologyHooks(shareService *share.Service, rebuildArraySequence func(ctx context.Context) error, parityReg *parityRegistrar, handler *api.Handler) func(ctx context.Context) error {
 	parityReg.arrayReady = newTopologyChangedHook(shareService, rebuildArraySequence, parityReg, handler, failOnLiveUpdateFailure)
 	return newTopologyChangedHook(shareService, rebuildArraySequence, parityReg, handler, logLiveUpdateFailure)
@@ -654,7 +659,7 @@ func newTopologyChangedHook(shareService *share.Service, rebuildArraySequence fu
 
 // parityRegistrar wires every parity-dependent job type
 // (TypeSync/TypeScrub/TypeFix/TypeShareRelocation/TypeRebalance/
-// TypeEvacuation) and Handler's own parity-derived fields
+// TypeEvacuation/TypeDiskRemove) and Handler's own parity-derived fields
 // (Handler.SetParity) against a *parity.SnapraidEngine, exactly once: at
 // startup, when an array already exists, or — since #265 — the first
 // time topologyChanged's ArrayReady hook observes that a live `POST
@@ -681,12 +686,36 @@ type parityRegistrar struct {
 	// reads this field at call time, since register can run (at startup,
 	// when an array already exists) before the hook exists at all (#359).
 	arrayReady func(ctx context.Context) error
+	// generator, diskUnits and mounts are TypeDiskRemove's own: the
+	// config generator every array file is written through, what stops
+	// a data disk's own mount unit (disk.SystemdMounter), and the kernel
+	// mount table (disk.KernelMounts).
+	generator *cfggen.Generator
+	diskUnits disk.UnitMounter
+	mounts    job.MountTable
 }
 
-// callArrayReady is job.EvacuationDeps.ArrayReady/EvacuationAbort's own
-// dependency: a stable method value register can capture before
-// p.arrayReady is wired, since neither ever runs before startup finishes
-// wiring it (this type's own field doc comment).
+// shareNamesFromStore lists every share's name: TypeDiskRemove's
+// post-check looks at each one's branch on the disk being removed.
+func shareNamesFromStore(shares *store.ShareStore) func(ctx context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		rows, err := shares.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(rows))
+		for _, r := range rows {
+			names = append(names, r.Name)
+		}
+		return names, nil
+	}
+}
+
+// callArrayReady is job.EvacuationDeps.ArrayReady/EvacuationAbort's and
+// job.DiskRemoveDeps.ArrayReady's own dependency: a stable method value
+// register can capture before p.arrayReady is wired, since none of them
+// ever runs before startup finishes wiring it (this type's own field doc
+// comment).
 func (p *parityRegistrar) callArrayReady(ctx context.Context) error {
 	if p.arrayReady == nil {
 		return fmt.Errorf("hoservad: the array-ready hook is not wired yet")
@@ -730,6 +759,19 @@ func (p *parityRegistrar) register(engine *parity.SnapraidEngine) {
 	// stale removing-disks exemption and removal state (job.EvacuationAbort's
 	// own doc comment).
 	p.registry.RegisterAbort(job.TypeEvacuation, job.EvacuationAbort(engine.Relocation, p.arrayStore, p.callArrayReady))
+	// Finishing a disk's removal (doc 09 §4 steps 7-9, #358). Not
+	// cancellable: each step is short and recorded in the disk's removal
+	// state, and a failed or interrupted run is finished by running it
+	// again, never undone half-way.
+	p.registry.Register(job.TypeDiskRemove, false, job.RunDiskRemove(job.DiskRemoveDeps{
+		Store:      p.arrayStore,
+		Generator:  p.generator,
+		Mounts:     p.mounts,
+		Unmounter:  p.diskUnits,
+		Parity:     engine,
+		ShareNames: shareNamesFromStore(p.shareStore),
+		ArrayReady: p.callArrayReady,
+	}))
 
 	p.handler.SetParity(engine, engine.Guard, engine.Relocation, rebalanceShares)
 	p.chainGuard.set(job.EngineDiffGuard{Engine: engine, Guard: engine.Guard})

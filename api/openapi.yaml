@@ -2195,8 +2195,8 @@ paths:
         here means the disk's data as this job saw it is safely off it
         and it is no longer taking new writes, not that it is empty of
         every file or safe to physically remove: doc 09 §4 steps 7-9
-        (mergerfs branch-list removal, SnapRAID removal, unmount) are not
-        performed by this operation.
+        (mergerfs branch-list removal, SnapRAID removal, unmount) are
+        `finishDiskRemoval`'s.
       tags: [disks]
       x-hoserva-role: admin
       requestBody:
@@ -2208,6 +2208,57 @@ paths:
       responses:
         "200":
           description: The queued, resumable evacuation job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /disks/array/remove/finish:
+    post:
+      operationId: finishDiskRemoval
+      summary: Finish removing an evacuated data disk
+      description: >-
+        Queues a `job.TypeDiskRemove` Topology job that takes an evacuated
+        data disk out of the array (doc 09 §4 steps 7-9). The confirmation
+        is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation`
+        returned for the disk. Refused synchronously with
+        `disk_slot_not_found` when no data disk occupies `mountpoint`,
+        `disk_not_evacuated` when its removal state is not `evacuated`,
+        `unpooled` or `unlisted`, and `confirmation_required` for a wrong
+        or missing confirmation; `not_configured` when the daemon has no
+        parity engine. Before changing anything the job checks all of that
+        again, that the array without the disk still has a data disk and
+        room for every content-file copy (Q18), that the disk is mounted
+        by its own filesystem, and that nothing but empty directories and
+        SnapRAID's own content files is left anywhere on it. It then marks
+        the disk `unpooled` and takes it out of every pool mount, live
+        (step 7; a failed live update fails the job); removes the empty
+        directories the evacuation left, since SnapRAID records those too
+        (rmdir only); runs a sync through the threshold guard with only
+        this disk exempt from the zero-files rule, while its data line is
+        still in snapraid.conf, and confirms SnapRAID tracks no file on it;
+        marks it `unlisted`, regenerates snapraid.conf without it and
+        checks SnapRAID accepts the result (step 8); then stops its mount
+        unit, removes the unit file and deletes the disk from the array
+        (step 9). The job's result names the disk
+        as safe to physically remove; its filesystem is never wiped. A job
+        that fails or is interrupted leaves the disk in the last state it
+        reached, and running this operation again carries on from there —
+        once `unlisted`, it never syncs again. A tripped guard leaves the
+        disk `unpooled`, still listed and mounted, with nothing synced.
+      tags: [disks]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinishDiskRemovalRequest'
+      responses:
+        "200":
+          description: The queued disk-removal job.
           content:
             application/json:
               schema:
@@ -3372,8 +3423,12 @@ components:
         for the whole time (step 2); `evacuated` once that copy and
         post-check finish, but the disk is still in every mergerfs branch
         list, SnapRAID layout and mount table (steps 7-9 have not run
-        yet, still no-create); `unpooled` and `unlisted` are #358's own
-        later steps of that same removal.
+        yet, still no-create); `unpooled` once `finishDiskRemoval`'s job
+        has taken it out of every pool mount (step 7) — still in
+        snapraid.conf and mounted; `unlisted` once a sync has recorded it
+        empty and it is out of snapraid.conf too (step 8) — only its
+        unmount and removal from the array are left. A disk that finished
+        leaves the pool and the array altogether.
       enum: [evacuating, evacuated, unpooled, unlisted]
 
     ContainerState:
@@ -5205,6 +5260,20 @@ components:
         mountpoint:
           type: string
           description: The data disk slot to evacuate, e.g. `/mnt/disk3`.
+
+    FinishDiskRemovalRequest:
+      type: object
+      required: [mountpoint, confirmation]
+      properties:
+        mountpoint:
+          type: string
+          description: The evacuated data disk's slot, e.g. `/mnt/disk3`.
+        confirmation:
+          type: string
+          description: >-
+            `REMOVE <mountpoint>` — the phrase `planDiskEvacuation`
+            returned for this disk. A wrong or missing string is refused
+            and nothing runs.
 
     EvacuateDiskRequest:
       type: object

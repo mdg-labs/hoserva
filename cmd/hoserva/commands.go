@@ -104,7 +104,7 @@ func diskCmd() *cobra.Command {
 // diskRemoveCmd is diskAddCmd's own shape for `hoserva disk remove`
 // (doc 09 §4): evacuates a data disk's files onto the pool's remaining
 // disks. It does not remove the disk from the array's own configuration
-// or unmount it (doc 09 §4 steps 7-9) — those are a separate operation.
+// or unmount it (doc 09 §4 steps 7-9) — `disk remove finish` does.
 func diskRemoveCmd() *cobra.Command {
 	var mountpoint, confirm string
 	cmd := &cobra.Command{
@@ -133,7 +133,30 @@ func diskRemoveCmd() *cobra.Command {
 	plan.Flags().StringVar(&mountpoint, "mountpoint", "", "The data disk slot to evacuate, e.g. /mnt/disk3 (required)")
 	_ = plan.MarkFlagRequired("mountpoint")
 	cmd.AddCommand(plan)
+	cmd.AddCommand(diskRemoveFinishCmd())
 
+	return cmd
+}
+
+// diskRemoveFinishCmd is `hoserva disk remove finish` (doc 09 §4 steps
+// 7-9): once the disk is evacuated, takes it out of every pool mount and
+// out of SnapRAID, then unmounts it. Prints the queued job.
+func diskRemoveFinishCmd() *cobra.Command {
+	var mountpoint, confirm string
+	cmd := &cobra.Command{
+		Use:   "finish",
+		Short: "Finish removing an evacuated disk: out of the pool and SnapRAID, then unmounted (doc 09 §4)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if confirm == "" {
+				return fmt.Errorf("disk remove finish requires --confirm with the exact phrase `disk remove plan` returned for this disk")
+			}
+			req := &apiv1.FinishDiskRemovalRequest{Mountpoint: mountpoint, Confirmation: confirm}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.FinishDiskRemoval(apiCtx(), req) })(cmd, args)
+		},
+	}
+	cmd.Flags().StringVar(&mountpoint, "mountpoint", "", "The evacuated data disk's slot, e.g. /mnt/disk3 (required)")
+	cmd.Flags().StringVar(&confirm, "confirm", "", "Exact confirmation phrase from `disk remove plan` (required)")
+	_ = cmd.MarkFlagRequired("mountpoint")
 	return cmd
 }
 

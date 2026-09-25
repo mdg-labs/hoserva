@@ -1772,7 +1772,10 @@ func (s *DiskInventoryEntry) SetLooksLikeUnraid(val OptBool) {
 // first copy until its post-check passes — every pool mount marks this disk no-create for the whole
 // time (step 2); `evacuated` once that copy and post-check finish, but the disk is still in every
 // mergerfs branch list, SnapRAID layout and mount table (steps 7-9 have not run yet, still no-create);
-// `unpooled` and `unlisted` are #358's own later steps of that same removal.
+// `unpooled` once `finishDiskRemoval`'s job has taken it out of every pool mount (step 7) — still in
+// snapraid.conf and mounted; `unlisted` once a sync has recorded it empty and it is out of
+// snapraid.conf too (step 8) — only its unmount and removal from the array are left. A disk that
+// finished leaves the pool and the array altogether.
 // Ref: #/components/schemas/DiskRemovalState
 type DiskRemovalState string
 
@@ -2576,6 +2579,35 @@ func (s *ExternalDisk) SetSerial(val OptString) {
 }
 
 type ExternalDiskLabel string
+
+// Ref: #/components/schemas/FinishDiskRemovalRequest
+type FinishDiskRemovalRequest struct {
+	// The evacuated data disk's slot, e.g. `/mnt/disk3`.
+	Mountpoint string `json:"mountpoint"`
+	// `REMOVE <mountpoint>` — the phrase `planDiskEvacuation` returned for this disk. A wrong or missing
+	// string is refused and nothing runs.
+	Confirmation string `json:"confirmation"`
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *FinishDiskRemovalRequest) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetConfirmation returns the value of Confirmation.
+func (s *FinishDiskRemovalRequest) GetConfirmation() string {
+	return s.Confirmation
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *FinishDiskRemovalRequest) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetConfirmation sets the value of Confirmation.
+func (s *FinishDiskRemovalRequest) SetConfirmation(val string) {
+	s.Confirmation = val
+}
 
 // Ref: #/components/schemas/FormatExternalDiskRequest
 type FormatExternalDiskRequest struct {

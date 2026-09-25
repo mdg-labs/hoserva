@@ -168,11 +168,13 @@ Removing a disk from the pool. Mechanically a rebalance targeting one specific s
 4. Copy and verify each file to the remaining disks; record each in the relocation manifest
 5. Sync parity through the threshold guard — the copies are protected before anything is deleted (Q14)
 6. Delete the sources; **post-check:** source disk contains nothing but empty directories
-7. Remove from every mergerfs branch list, remount
-8. Remove from the SnapRAID data list and sync with `--force-empty` for that disk only
-9. Only then: unmount and report the disk as safe to physically remove
+7. Remove from every mergerfs branch list, remount: the disk is persisted `unpooled` first, then every pool mount is regenerated without it and applied to the running pool. If the running pool cannot be switched, the removal fails here, before parity is touched
+8. Record the disk empty in parity, then remove it from the SnapRAID data list — in that order. SnapRAID records empty directories as well as files, and the evacuation leaves each share's directory tree behind, so those empty directories are removed first (`rmdir` only — nothing that holds a file can go). Then a sync through the threshold guard runs while the disk's `data` line is still in `snapraid.conf`, with only this disk exempt from the zero-files rule (`--force-empty` for that disk only); a fresh diff must show SnapRAID tracking no file on it, and nothing but its content files may be left on it. Only then is it persisted `unlisted` and `snapraid.conf` regenerated without it, and `snapraid status` must accept the result; the other disks keep their own `dN` names, and a content-file copy that was on it moves to the next device Q18 allows (written at the next sync). Dropping the line while SnapRAID still records anything on the disk — a file, or just an empty directory — does not work: every later `status`, `diff` and `sync` refuses ("Disk 'dN' … not present in the configuration file"), whatever force flags are passed — confirmed against the real binary in the lab (#360, #358). A tripped guard leaves the disk `unpooled`, still listed and mounted, with nothing synced
+9. Only then: unmount (stop its mount unit), remove its unit file, delete it from the array, and report the disk — device, WWN, serial — as safe to physically remove. Its filesystem is never wiped
 
-Interruptible, checkpointed and resumable. This can run for a day on a full 8 TB disk. After a daemon restart it is marked interrupted, and resumes from its checkpoint — not from zero — when the user resumes it (Q29).
+Steps 1–6 are the evacuation: interruptible, checkpointed and resumable. This can run for a day on a full 8 TB disk. After a daemon restart it is marked interrupted, and resumes from its checkpoint — not from zero — when the user resumes it (Q29).
+
+Steps 7–9 are a separate, short job the user starts once the evacuation has succeeded (`finishDiskRemoval`, `hoserva disk remove finish`). It re-checks the post-check first, refuses a disk that still holds any file outside the shares too (anything left on it would leave the pool with it), and refuses a disk that is not mounted by its own filesystem, since an unmounted slot would pass any emptiness check. It is re-run, not resumed (Q29): each step is keyed on the disk's persisted state (`evacuated` → `unpooled` → `unlisted` → gone), so running it again after a failure, a restart or a guard trip carries on from the last step that finished, and never syncs again once the disk is `unlisted`.
 
 ---
 
@@ -208,6 +210,7 @@ Every one of these runs on the loop-device harness:
 - **Rebalance and evacuation never delete a source before the sync that covers its copy** — kill the job between copy and sync, fail a *different* data disk, and assert full reconstruction (Q14)
 - **Evacuation does not trip the threshold guard**, and an unrelated mass deletion during the same window still does (Q15)
 - Evacuation empties a disk completely and the pool remounts cleanly without it
+- Finishing a removal leaves the disk unmounted, out of every branch list and out of `snapraid.conf`; the surviving disks keep their `dN` names, `snapraid diff` shows nothing to sync, `snapraid check` passes and a file deleted from a surviving disk is fixed byte for byte. An unrelated mass deletion blocks its sync with the disk still listed; a re-run after a stop before or after that sync, across a daemon restart, finishes with exactly one such sync
 - Share relocation array → cache moves the share and follows the two-phase order on the array side
 - VM disk relocation refuses to start while the domain is running, and array-involved moves follow the two-phase order (Phase 3.5)
 - ENOSPC-under-path-preserving-policy is detected and surfaced as a rebalance suggestion; `mspmfs` falls back to the parent path instead (spike S6)

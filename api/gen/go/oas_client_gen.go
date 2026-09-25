@@ -286,8 +286,7 @@ type Invoker interface {
 	// that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling
 	// that run clears it. Success here means the disk's data as this job saw it is safely off it and it is
 	// no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09
-	// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are not performed by this
-	// operation.
+	// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are `finishDiskRemoval`'s.
 	//
 	// POST /disks/array/evacuate
 	EvacuateDisk(ctx context.Context, request *EvacuateDiskRequest) (*Job, error)
@@ -297,6 +296,30 @@ type Invoker interface {
 	//
 	// POST /config/export
 	ExportConfig(ctx context.Context) (ExportConfigOK, error)
+	// FinishDiskRemoval invokes finishDiskRemoval operation.
+	//
+	// Queues a `job.TypeDiskRemove` Topology job that takes an evacuated data disk out of the array (doc
+	// 09 §4 steps 7-9). The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation`
+	// returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies
+	// `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or
+	// `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when
+	// the daemon has no parity engine. Before changing anything the job checks all of that again, that the
+	// array without the disk still has a data disk and room for every content-file copy (Q18), that the
+	// disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own
+	// content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every
+	// pool mount, live (step 7; a failed live update fails the job); removes the empty directories the
+	// evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold
+	// guard with only this disk exempt from the zero-files rule, while its data line is still in
+	// snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates
+	// snapraid.conf without it and checks SnapRAID accepts the result (step 8); then stops its mount unit,
+	// removes the unit file and deletes the disk from the array (step 9). The job's result names the disk
+	// as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted
+	// leaves the disk in the last state it reached, and running this operation again carries on from there
+	// — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed
+	// and mounted, with nothing synced.
+	//
+	// POST /disks/array/remove/finish
+	FinishDiskRemoval(ctx context.Context, request *FinishDiskRemovalRequest) (*Job, error)
 	// FormatExternalDisk invokes formatExternalDisk operation.
 	//
 	// Formats the disk after the same typed confirmation array setup uses
@@ -4750,8 +4773,7 @@ func (c *Client) sendEnrollTotp(ctx context.Context, request *TotpEnrollRequest)
 // that fails leaves the disk `evacuating`; evacuating it again takes the state over, and cancelling
 // that run clears it. Success here means the disk's data as this job saw it is safely off it and it is
 // no longer taking new writes, not that it is empty of every file or safe to physically remove: doc 09
-// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are not performed by this
-// operation.
+// §4 steps 7-9 (mergerfs branch-list removal, SnapRAID removal, unmount) are `finishDiskRemoval`'s.
 //
 // POST /disks/array/evacuate
 func (c *Client) EvacuateDisk(ctx context.Context, request *EvacuateDiskRequest) (*Job, error) {
@@ -4995,6 +5017,152 @@ func (c *Client) sendExportConfig(ctx context.Context) (res ExportConfigOK, err 
 
 	stage = "DecodeResponse"
 	result, err := decodeExportConfigResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// FinishDiskRemoval invokes finishDiskRemoval operation.
+//
+// Queues a `job.TypeDiskRemove` Topology job that takes an evacuated data disk out of the array (doc
+// 09 §4 steps 7-9). The confirmation is the same `REMOVE <mountpoint>` phrase `planDiskEvacuation`
+// returned for the disk. Refused synchronously with `disk_slot_not_found` when no data disk occupies
+// `mountpoint`, `disk_not_evacuated` when its removal state is not `evacuated`, `unpooled` or
+// `unlisted`, and `confirmation_required` for a wrong or missing confirmation; `not_configured` when
+// the daemon has no parity engine. Before changing anything the job checks all of that again, that the
+// array without the disk still has a data disk and room for every content-file copy (Q18), that the
+// disk is mounted by its own filesystem, and that nothing but empty directories and SnapRAID's own
+// content files is left anywhere on it. It then marks the disk `unpooled` and takes it out of every
+// pool mount, live (step 7; a failed live update fails the job); removes the empty directories the
+// evacuation left, since SnapRAID records those too (rmdir only); runs a sync through the threshold
+// guard with only this disk exempt from the zero-files rule, while its data line is still in
+// snapraid.conf, and confirms SnapRAID tracks no file on it; marks it `unlisted`, regenerates
+// snapraid.conf without it and checks SnapRAID accepts the result (step 8); then stops its mount unit,
+// removes the unit file and deletes the disk from the array (step 9). The job's result names the disk
+// as safe to physically remove; its filesystem is never wiped. A job that fails or is interrupted
+// leaves the disk in the last state it reached, and running this operation again carries on from there
+// — once `unlisted`, it never syncs again. A tripped guard leaves the disk `unpooled`, still listed
+// and mounted, with nothing synced.
+//
+// POST /disks/array/remove/finish
+func (c *Client) FinishDiskRemoval(ctx context.Context, request *FinishDiskRemovalRequest) (*Job, error) {
+	res, err := c.sendFinishDiskRemoval(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendFinishDiskRemoval(ctx context.Context, request *FinishDiskRemovalRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("finishDiskRemoval"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array/remove/finish"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, FinishDiskRemovalOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array/remove/finish"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeFinishDiskRemovalRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, FinishDiskRemovalOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, FinishDiskRemovalOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeFinishDiskRemovalResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

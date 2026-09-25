@@ -896,10 +896,16 @@ func (s *Service) array(ctx context.Context) (store.ArraySettings, []store.Array
 	return settings, disks, nil
 }
 
+// splitDisks leaves out a data disk whose removal has taken it out of
+// the pool (unpooled or unlisted, #358, doc 09 §4 step 7): no share mount
+// branches onto it and no share directory is created on it.
 func splitDisks(disks []store.ArrayDisk) (data []string, cache, parity string) {
 	for _, d := range disks {
 		switch d.Role {
 		case store.ArrayRoleData:
+			if d.RemovalState == store.RemovalStateUnpooled || d.RemovalState == store.RemovalStateUnlisted {
+				continue
+			}
 			data = append(data, d.Mountpoint)
 		case store.ArrayRoleCache:
 			cache = d.Mountpoint
