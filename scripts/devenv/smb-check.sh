@@ -70,9 +70,10 @@ trap cleanup EXIT
 # anything outside this container. Only set mnt_user_created when this run
 # is the one making the symlink: a path already occupied here is left
 # exactly as found, and cleanup above must not remove something it didn't
-# create (issue #363).
+# create (issue #363). -L also catches a dangling symlink, which -e misses
+# and ln -s would then fail on before check-mnt-user-clean.sh can report it.
 mkdir -p /mnt
-if [[ -e /mnt/user ]]; then
+if [[ -e /mnt/user || -L /mnt/user ]]; then
   echo "smb-check: /mnt/user already exists — leaving it as found, not removing it on exit"
 else
   ln -s "$LAB/mnt/user" /mnt/user
