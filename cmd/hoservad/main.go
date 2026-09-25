@@ -627,10 +627,23 @@ func wireTopologyHooks(shareService *share.Service, rebuildArraySequence func(ct
 // added disk's capacity is available at once (doc 02 §4 "Adding a disk"
 // step 6) and a disk in removal is no-create at once (doc 09 §4 step 2).
 // onLiveFailure decides whether a failure of that last step is logged or
-// returned.
+// returned. It also decides how an unconfirmable catch-all mount state is
+// read: a stat failure other than ENOENT (in particular ENOTCONN from a
+// dead FUSE endpoint whose mergerfs has exited without unmounting) cannot
+// tell a live pool from a stopped one, so the strict variant fails before
+// doing anything else rather than guessing "not live" and letting an
+// evacuation copy while the pool it could not switch to no-create is
+// still RW (#365); the logging variant keeps collapsing it to "not live",
+// unchanged from before #365.
 func newTopologyChangedHook(shareService *share.Service, rebuildArraySequence func(ctx context.Context) error, parityReg *parityRegistrar, handler *api.Handler, onLiveFailure liveUpdateFailure) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
-		live := pool.IsMounted(pool.CatchAllPath)
+		live, confirmErr := pool.IsMountedConfirmed(pool.CatchAllPath)
+		if confirmErr != nil {
+			if onLiveFailure == failOnLiveUpdateFailure {
+				return fmt.Errorf("cannot confirm whether the catch-all pool mount is live: %w", confirmErr)
+			}
+			live = false
+		}
 		if err := shareService.ApplyTopology(ctx, live); err != nil {
 			return fmt.Errorf("regenerating share configuration: %w", err)
 		}
