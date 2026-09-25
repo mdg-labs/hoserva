@@ -16,6 +16,7 @@ import (
 	cfggen "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -37,6 +38,8 @@ type parityRegistrationEnv struct {
 	configRoot string
 	provider   *disk.FakeProvider
 	runner     *disk.FakeRunner
+	db         *sql.DB
+	shareStore *store.ShareStore
 }
 
 func newParityRegistrationEnv(t *testing.T) (context.Context, *parityRegistrationEnv) {
@@ -81,25 +84,36 @@ func newParityRegistrationEnv(t *testing.T) (context.Context, *parityRegistratio
 		mounts:     job.NewFakeMountTable(),
 	}
 
+	// arrayReadyHook mirrors main.go's own topologyChanged (fail-on-
+	// failure half, wireTopologyHooks): rebuild the live ArraySequence
+	// from the store, then let parityReg notice a live array creation the
+	// same way #265's own topologyChanged does. handler.ArrayReady is set
+	// to parityReg.callArrayReady, exactly main.go's own line (#361) —
+	// not this closure directly — so a test proves CancelDiskRemoval
+	// reaches it through the same indirection production wiring uses.
+	arrayReadyHook := func(ctx context.Context) error {
+		seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, fakeRunner)
+		if err != nil {
+			return err
+		}
+		handler.SetArray(seq)
+		// Mirrors topologyChanged's own call into parityReg.ensure
+		// (main.go, #265): the live CreateArray job's own Generator
+		// has already written snapraid.conf under configRoot by the
+		// time this ArrayReady hook runs.
+		return parityReg.ensure(ctx)
+	}
+	parityReg.arrayReady = arrayReadyHook
+	handler.ArrayReady = parityReg.callArrayReady
+
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
-		Provider:  provider,
-		Runner:    fakeRunner,
-		Store:     arrays,
-		Generator: cfggen.NewGenerator(configRoot),
-		Mounter:   disk.NewFakeMounter(),
-		ArrayReady: func(ctx context.Context) error {
-			seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, fakeRunner)
-			if err != nil {
-				return err
-			}
-			handler.SetArray(seq)
-			// Mirrors topologyChanged's own call into parityReg.ensure
-			// (main.go, #265): the live CreateArray job's own Generator
-			// has already written snapraid.conf under configRoot by the
-			// time this ArrayReady hook runs.
-			return parityReg.ensure(ctx)
-		},
-		Now: func() time.Time { return time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC) },
+		Provider:   provider,
+		Runner:     fakeRunner,
+		Store:      arrays,
+		Generator:  cfggen.NewGenerator(configRoot),
+		Mounter:    disk.NewFakeMounter(),
+		ArrayReady: arrayReadyHook,
+		Now:        func() time.Time { return time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC) },
 	}))
 
 	return context.Background(), &parityRegistrationEnv{
@@ -111,6 +125,8 @@ func newParityRegistrationEnv(t *testing.T) (context.Context, *parityRegistratio
 		configRoot: configRoot,
 		provider:   provider,
 		runner:     fakeRunner,
+		db:         db,
+		shareStore: shares,
 	}
 }
 
@@ -298,6 +314,117 @@ func TestFinishDiskRemoval_ReachesTheJobParityRegistrarRegisters(t *testing.T) {
 	}
 	if d, err := h.ArrayStore.GetDataDiskByMountpoint(ctx, "/mnt/disk2"); err != nil || d.RemovalState != store.RemovalStateEvacuated {
 		t.Fatalf("disk2 after the refusal = (%+v, %v), want still evacuated", d, err)
+	}
+}
+
+// TestCancelDiskRemoval_ReachesArrayReadyParityRegistrarWires is #361's
+// own reachability criterion: cancelDiskRemoval, on the Handler run()
+// wires, is 501 until Handler.ArrayReady is wired (main.go's own
+// `handler.ArrayReady = parityReg.callArrayReady` line), and once a live
+// array creation exists, cancelling an evacuated disk clears its removal
+// state and calls through parityReg.callArrayReady into the same
+// ArraySequence rebuild every disk-topology job's own ArrayReady already
+// runs — proven here by the call succeeding at all: callArrayReady
+// returns its own "not wired yet" error otherwise (parityRegistrar's own
+// doc comment), so a nil ArrayReady or an unwired parityReg.arrayReady
+// would fail this the same way a genuinely broken wiring would. It also
+// proves what that rebuild actually changes — the acceptance criterion's
+// own "the disk's branches are RW again after cancel" — the way
+// TestNewArraySequence_RemovingDiskMarksOnlyThatDiskNC
+// (cmd/hoservad/array_test.go) already inspects a live pool.MountController's
+// own Mnt.What: disk2's own catch-all branch goes from NC (while
+// evacuated) to RW again once CancelDiskRemoval's own rebuild runs,
+// never just the disk's row in the database.
+func TestCancelDiskRemoval_ReachesArrayReadyParityRegistrarWires(t *testing.T) {
+	ctx, env := newParityRegistrationEnv(t)
+	h := env.handler
+	env.provider.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB, WWN: "wwn-parity", Serial: "PARITY1", ByIDName: "wwn-wwn-parity"})
+	env.provider.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB, Serial: "DATA1"})
+	env.provider.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, Serial: "DATA2"})
+	env.provider.AddDisk("/dev/sdd", disk.Disk{Size: 4 * disk.TB, Serial: "DATA3"})
+	env.runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/disk/by-id/wwn-wwn-parity"}, []byte("uuid-parity1\n"), nil)
+	env.runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdb"}, []byte("uuid-disk1\n"), nil)
+	env.runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdc"}, []byte("uuid-disk2\n"), nil)
+	env.runner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdd"}, []byte("uuid-disk3\n"), nil)
+	plan := disk.TopologyPlan{
+		Parity: []disk.AssignedDisk{{Device: "/dev/sda", Filesystem: disk.XFS}},
+		Data:   []disk.AssignedDisk{{Device: "/dev/sdb", Filesystem: disk.XFS}, {Device: "/dev/sdc", Filesystem: disk.XFS}, {Device: "/dev/sdd", Filesystem: disk.XFS}},
+	}
+	createReq := &apiv1.CreateArrayRequest{Confirmation: plan.Confirmation(), Disks: []apiv1.ArrayDiskAssignment{
+		xfsAssignment("/dev/sda", apiv1.ArrayDiskRoleParity),
+		xfsAssignment("/dev/sdb", apiv1.ArrayDiskRoleData),
+		xfsAssignment("/dev/sdc", apiv1.ArrayDiskRoleData),
+		xfsAssignment("/dev/sdd", apiv1.ArrayDiskRoleData),
+	}}
+
+	req := &apiv1.CancelDiskRemovalRequest{Mountpoint: "/mnt/disk2"}
+	h.ArrayStore = nil
+	if err := h.CancelDiskRemoval(ctx, req); err == nil {
+		t.Fatal("CancelDiskRemoval before the array exists succeeded, want 501 not_configured")
+	} else if status := handlerAPIError(t, h, err); status.StatusCode != 501 || status.Response.Code != "not_configured" {
+		t.Fatalf("CancelDiskRemoval before the array exists = %+v, want 501 not_configured", status)
+	}
+	h.ArrayStore = env.parityReg.arrayStore
+
+	created, err := h.CreateArray(ctx, createReq)
+	if err != nil {
+		t.Fatalf("CreateArray: %v", err)
+	}
+	if finished, err := h.Scheduler.Await(ctx, created.ID.String()); err != nil || finished.Status != job.StatusSucceeded {
+		t.Fatalf("create-array = (%v, %v), want succeeded", finished, err)
+	}
+	if err := h.ArrayStore.SetRemovalState(ctx, "/mnt/disk2", store.RemovalStateEvacuated, "evac-1"); err != nil {
+		t.Fatalf("SetRemovalState: %v", err)
+	}
+	// Rebuilds h.Array from the store directly — the same rebuild an
+	// evacuation job's own ArrayReady call would have already run — so
+	// the in-memory ArraySequence actually reflects disk2's evacuated
+	// state (NC) before CancelDiskRemoval is asked to reverse it; without
+	// this, h.Array would still carry the RW branch list CreateArray's own
+	// rebuild left behind, and the RW assertion after cancel would prove
+	// nothing.
+	if err := env.parityReg.arrayReady(ctx); err != nil {
+		t.Fatalf("rebuilding the array with disk2 evacuated: %v", err)
+	}
+	beforeCatchAll, ok := h.Array.CatchAll.(pool.MountController)
+	if !ok {
+		t.Fatalf("CatchAll is %T, want pool.MountController", h.Array.CatchAll)
+	}
+	if !strings.Contains(beforeCatchAll.Mnt.What, "/mnt/disk2=NC") {
+		t.Fatalf("catch-all What before cancel = %q, want /mnt/disk2=NC", beforeCatchAll.Mnt.What)
+	}
+
+	// Wraps parityReg.arrayReady with a counter after create-array's own
+	// job already ran it once, so this only counts the call
+	// CancelDiskRemoval itself makes through Handler.ArrayReady
+	// (parityReg.callArrayReady) — proof the handler method really
+	// reaches this wiring, not just that the disk's own row changed.
+	inner := env.parityReg.arrayReady
+	calls := 0
+	env.parityReg.arrayReady = func(ctx context.Context) error {
+		calls++
+		return inner(ctx)
+	}
+
+	if err := h.CancelDiskRemoval(ctx, req); err != nil {
+		t.Fatalf("CancelDiskRemoval: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("ArrayReady ran %d time(s) for CancelDiskRemoval, want exactly 1 — Handler.ArrayReady did not reach parityReg.callArrayReady", calls)
+	}
+	d, err := h.ArrayStore.GetDataDiskByMountpoint(ctx, "/mnt/disk2")
+	if err != nil {
+		t.Fatalf("GetDataDiskByMountpoint: %v", err)
+	}
+	if d.RemovalState != "" || d.RemovalJobID != "" {
+		t.Fatalf("disk2 after cancel = %+v, want its removal state cleared", d)
+	}
+	afterCatchAll, ok := h.Array.CatchAll.(pool.MountController)
+	if !ok {
+		t.Fatalf("CatchAll after cancel is %T, want pool.MountController", h.Array.CatchAll)
+	}
+	if !strings.Contains(afterCatchAll.Mnt.What, "/mnt/disk2=RW") || strings.Contains(afterCatchAll.Mnt.What, "/mnt/disk2=NC") {
+		t.Fatalf("catch-all What after cancel = %q, want /mnt/disk2=RW and no longer NC", afterCatchAll.Mnt.What)
 	}
 }
 

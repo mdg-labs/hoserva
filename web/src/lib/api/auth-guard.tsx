@@ -11,11 +11,12 @@ import {
   type AuthPhase,
   type AuthProviderProps,
 } from "@/lib/api/auth-context";
-import { hoservaClient, type components } from "@/lib/api/client";
+import type { components } from "@/lib/api/client";
 import {
   inferOnboardingCompleteIfNeeded,
   isOnboardingComplete,
 } from "@/lib/api/onboarding";
+import { getAuthSession, getSetupStatus } from "@/lib/api/operations";
 
 type User = components["schemas"]["User"];
 
@@ -25,10 +26,7 @@ async function loadAuthState(): Promise<{
   failed: boolean;
 }> {
   try {
-    const [setupResult, sessionResult] = await Promise.all([
-      hoservaClient.GET("/setup/status"),
-      hoservaClient.GET("/auth/session"),
-    ]);
+    const [setupResult, sessionResult] = await Promise.all([getSetupStatus(), getAuthSession()]);
 
     if (!setupResult.response) {
       return { adminExists: false, user: null, failed: true };

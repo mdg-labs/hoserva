@@ -3,8 +3,10 @@ import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
 import { ConfirmDialog } from "@/components/patterns/confirm";
+import { DangerZone, type DangerZoneAction } from "@/components/patterns/danger-zone";
 import { FormOverlay } from "@/components/patterns/form-overlay";
 import { InlineNote } from "@/components/patterns/inline-note";
+import { JobProgress } from "@/components/patterns/job-progress";
 import { LoadingBlock } from "@/components/patterns/loading";
 import { MetricTile } from "@/components/patterns/metric-tile";
 import { StatusBadge } from "@/components/patterns/status-badge";
@@ -15,6 +17,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { useSystemData } from "@/hooks/use-system-status";
 import {
+  getDisks,
   postArrayAdd,
   postArrayAddPlan,
   postArrayReplace,
@@ -25,6 +28,8 @@ import {
   postArrayUpgradePlan,
   postDiskEvacuation,
   postDiskEvacuationPlan,
+  postDiskRemovalCancel,
+  postDiskRemovalFinish,
   postPoolRebalance,
   postPoolRebalancePlan,
 } from "@/lib/api/operations";
@@ -40,6 +45,11 @@ type RebalancePlan = components["schemas"]["RebalancePlan"];
 type EvacuationPlan = components["schemas"]["EvacuationPlan"];
 type ArrayDiskFilesystem = components["schemas"]["ArrayDiskFilesystem"];
 type PoolDiskEntry = components["schemas"]["PoolDiskEntry"];
+type DiskRemovalState = components["schemas"]["DiskRemovalState"];
+type Job = components["schemas"]["Job"];
+
+const DANGER_ACTION_FINISH_REMOVAL = "finish-removal";
+const DANGER_ACTION_CANCEL_REMOVAL = "cancel-removal";
 
 const FILESYSTEM_OPTIONS: { value: ArrayDiskFilesystem; label: string }[] = [
   { value: "xfs", label: "XFS" },
@@ -85,6 +95,32 @@ function upgradeSlotLabel(entry: PoolDiskEntry): string {
   return `${entry.mountPoint} (${entry.role}, ${entry.device})`;
 }
 
+// removalBadgeTone maps a disk's doc 09 §4 removal state to the
+// status-badge tone (doc 03): still taking a copy (evacuating) reads as
+// in-progress work, everything past it (ready to finish, or the
+// finishing job's own remaining steps) reads as the disk's own attention
+// state rather than an error — nothing here is a failure on its own, the
+// failed-job banner covers that separately.
+function removalBadgeTone(state: DiskRemovalState): "warning" | "info" {
+  return state === "evacuated" ? "info" : "warning";
+}
+
+// finishRemovalIdentity finds mountpoint's disk in the freshest disk
+// inventory (device model/WWN/serial), for the "safe to physically
+// remove" message naming the device and serial/WWN — the array's own row
+// for it is already gone by the time finishDiskRemoval succeeds (doc 09
+// §4 step 9), so this is captured once, when Finish removal opens, from
+// the physical inventory rather than the pool's own disk list.
+function finishRemovalIdentity(
+  t: TFunction,
+  device: string,
+  listed: components["schemas"]["DiskInventoryEntry"][],
+): string | null {
+  const entry = listed.find((d) => d.device === device);
+  if (!entry) return null;
+  return diskIdentitySummary(t, entry);
+}
+
 // rebalancePlanItems renders a RebalancePlan or EvacuationPlan's own
 // moves and warnings (doc 09 §3-4) as the TypedConfirm item list: a plain
 // count/size summary first, since the exact per-file list can run into
@@ -100,7 +136,7 @@ function rebalancePlanItems(t: TFunction, plan: Pick<RebalancePlan, "moves" | "w
 
 export function PoolOverviewPage(): React.ReactElement {
   const { t } = useTranslation();
-  const { status, pool, loading, error, refresh } = useSystemData();
+  const { status, pool, jobs, loading, error, refresh } = useSystemData();
   const [stopOpen, setStopOpen] = useState(false);
   const [startOpen, setStartOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -158,6 +194,30 @@ export function PoolOverviewPage(): React.ReactElement {
   const [removePending, setRemovePending] = useState(false);
   const removeSelectionGen = useRef(0);
 
+  // finishRemoval (#361): the disk being finished, its own server-supplied
+  // finishConfirmation phrase (PoolDiskEntry, set whenever removalState is
+  // set) rather than planDiskEvacuation's — evacuating an unpooled or
+  // unlisted disk again makes no sense, and planDiskEvacuation refuses
+  // those states with disk_leaving_array, so it cannot be Finish
+  // removal's own confirmation source once the disk has left the pool
+  // (finding 1 of this issue's fix round) — the job it queues, and the
+  // physical identity (device, WWN or serial) captured at open time for
+  // the ending "safe to physically remove" message, since the array's own
+  // row for the disk is gone by the time that job succeeds.
+  const [finishOpen, setFinishOpen] = useState(false);
+  const [finishDisk, setFinishDisk] = useState<PoolDiskEntry | null>(null);
+  const [finishIdentity, setFinishIdentity] = useState<string | null>(null);
+  const [finishConfirmValue, setFinishConfirmValue] = useState("");
+  const [finishError, setFinishError] = useState<string | null>(null);
+  const [finishPending, setFinishPending] = useState(false);
+  const [finishJob, setFinishJob] = useState<Job | null>(null);
+  const finishSelectionGen = useRef(0);
+
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelMountpoint, setCancelMountpoint] = useState("");
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelPending, setCancelPending] = useState(false);
+
   const addPlanMutation = useApiMutation({ mutationFn: postArrayAddPlan });
   const addMutation = useApiMutation({ mutationFn: postArrayAdd });
   const replacePlanMutation = useApiMutation({ mutationFn: postArrayReplacePlan });
@@ -168,6 +228,9 @@ export function PoolOverviewPage(): React.ReactElement {
   const rebalanceMutation = useApiMutation({ mutationFn: postPoolRebalance });
   const removePlanMutation = useApiMutation({ mutationFn: postDiskEvacuationPlan });
   const removeMutation = useApiMutation({ mutationFn: postDiskEvacuation });
+  const finishMutation = useApiMutation({ mutationFn: postDiskRemovalFinish });
+  const finishDisksMutation = useApiMutation({ mutationFn: () => getDisks() });
+  const cancelMutation = useApiMutation({ mutationFn: postDiskRemovalCancel });
   const stopMutation = useApiMutation({ mutationFn: postArrayStop });
   const startMutation = useApiMutation({ mutationFn: postArrayStart });
 
@@ -446,6 +509,81 @@ export function PoolOverviewPage(): React.ReactElement {
     setRemovePending(false);
   }
 
+  function resetFinishRemoval(): void {
+    setFinishDisk(null);
+    setFinishIdentity(null);
+    setFinishConfirmValue("");
+    setFinishError(null);
+    setFinishPending(false);
+    setFinishJob(null);
+  }
+
+  // openFinishRemoval reads mountPoint and finishConfirmation straight off
+  // disk — PoolDiskEntry's own server-supplied fields (#361), set
+  // whenever removalState is set, unlike planDiskEvacuation's own
+  // confirmation phrase, which planDiskEvacuation refuses to hand back
+  // once a disk has left the pool (unpooled/unlisted, disk_leaving_array)
+  // — and captures the disk's own physical identity from a fresh
+  // inventory read for the "safe to physically remove" message, since
+  // finishDiskRemoval's own job takes the disk's row out of the array by
+  // the time it succeeds.
+  async function openFinishRemoval(disk: PoolDiskEntry): Promise<void> {
+    finishSelectionGen.current += 1;
+    const gen = finishSelectionGen.current;
+    resetFinishRemoval();
+    setFinishDisk(disk);
+    setFinishOpen(true);
+    setFinishPending(true);
+    const disksResult = await finishDisksMutation.mutate(undefined);
+    if (finishSelectionGen.current !== gen) return;
+    if (disksResult.ok && disksResult.data && disk.device) {
+      setFinishIdentity(finishRemovalIdentity(t, disk.device, disksResult.data.disks));
+    }
+    setFinishPending(false);
+  }
+
+  // submitFinishRemoval deliberately never closes the dialog on success:
+  // the queued job's progress, and the ending "safe to physically remove"
+  // message, both render inside it while it stays open.
+  async function submitFinishRemoval(): Promise<void> {
+    if (!finishDisk) return;
+    setFinishPending(true);
+    setFinishError(null);
+    const result = await finishMutation.mutate({
+      mountpoint: finishDisk.mountPoint,
+      confirmation: finishConfirmValue,
+    });
+    if (!result.ok) {
+      setFinishError(result.error);
+      setFinishPending(false);
+      return;
+    }
+    setFinishJob(result.data ?? null);
+    setFinishPending(false);
+    await refresh();
+  }
+
+  function openCancelRemoval(mountpoint: string): void {
+    setCancelMountpoint(mountpoint);
+    setCancelError(null);
+    setCancelPending(false);
+    setCancelOpen(true);
+  }
+
+  async function handleCancelRemoval(): Promise<void> {
+    setCancelPending(true);
+    setCancelError(null);
+    const result = await cancelMutation.mutate({ mountpoint: cancelMountpoint });
+    if (!result.ok) {
+      setCancelError(result.error);
+      setCancelPending(false);
+      return;
+    }
+    setCancelOpen(false);
+    setCancelPending(false);
+    await refresh();
+  }
+
   const handleStop = async (): Promise<void> => {
     setPending(true);
     const result = await stopMutation.mutate(undefined);
@@ -511,6 +649,48 @@ export function PoolOverviewPage(): React.ReactElement {
   const replaceIdentity = replacePlan ? diskIdentitySummary(t, replacePlan) : null;
   const upgradeIdentity = upgradePlan ? diskIdentitySummary(t, upgradePlan) : null;
   const upgradeIsParity = upgradePlan?.role === "parity";
+
+  // removalDisk is the array's one disk currently in removal, if any
+  // (doc 09 §4's own Open questions: only one at a time) — the danger
+  // zone below renders only for it, and only for the states past
+  // "evacuating" that Finish removal / Cancel removal actually offer.
+  const removalDisk = disks.find((disk) => disk.removalState);
+  // finishConfirmation is removalDisk's own server-supplied confirmation
+  // phrase (PoolDiskEntry.finishConfirmation, #361), captured once at
+  // Finish removal's own open time (finishDisk) so a fresh /pool poll
+  // mid-dialog can never swap the phrase the TypedConfirm is checking
+  // against out from under a half-typed value.
+  const finishConfirmation = finishDisk?.finishConfirmation ?? null;
+  // newestEvacuationJob anchors "the current removal" (finding 2 of this
+  // issue's fix round): an evacuation always starts a disk's removal, so
+  // a failed disk_remove job older than the newest evacuation job belongs
+  // to a removal that has already ended — cancelled, or finished by a
+  // later successful Finish removal — never to removalDisk, which only
+  // ever holds the disk the most recent removal is about.
+  const newestEvacuationJob = [...jobs]
+    .filter((job) => job.type === "evacuation")
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  // failedDiskRemoveJob is the most recent failed disk_remove job, shown
+  // on removalDisk's own row, but only when it is both the newest
+  // disk_remove job of any status and newer than newestEvacuationJob —
+  // otherwise it is a stale failure superseded either by a later
+  // disk_remove job (a queued or running retry of the same removal) or
+  // by a removal that has since been retried, cancelled or finished for
+  // a different disk (finding 2), and showing it would misattribute that
+  // old failure to removalDisk.
+  const newestDiskRemoveJob = [...jobs]
+    .filter((job) => job.type === "disk_remove")
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const failedDiskRemoveJob =
+    newestDiskRemoveJob?.status === "failed" &&
+    (!newestEvacuationJob || newestDiskRemoveJob.createdAt > newestEvacuationJob.createdAt)
+      ? newestDiskRemoveJob
+      : undefined;
+  const displayedFinishJob = finishJob ? (jobs.find((job) => job.id === finishJob.id) ?? finishJob) : null;
+  const finishJobEnded = displayedFinishJob
+    ? displayedFinishJob.status !== "queued" && displayedFinishJob.status !== "running" && displayedFinishJob.status !== "interrupted"
+    : false;
+  const finishJobSucceeded = displayedFinishJob?.status === "succeeded";
 
   return (
     <div className="flex flex-col gap-4">
@@ -593,14 +773,51 @@ export function PoolOverviewPage(): React.ReactElement {
               description={`${disk.role} · ${diskUsed == null ? t("pool.diskUsageUnavailable") : formatBytes(diskUsed)}`}
               progress={percent}
               footer={
-                <StatusBadge tone={disk.state === "failed" || missing ? "error" : "success"}>
-                  {t(`pool.diskState.${disk.state}`)}
-                </StatusBadge>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge tone={disk.state === "failed" || missing ? "error" : "success"}>
+                    {t(`pool.diskState.${disk.state}`)}
+                  </StatusBadge>
+                  {disk.removalState ? (
+                    <StatusBadge tone={removalBadgeTone(disk.removalState)}>
+                      {t(`pool.removal.badge.${disk.removalState}`)}
+                    </StatusBadge>
+                  ) : null}
+                </div>
               }
             />
           );
         })}
       </section>
+      {removalDisk ? (
+        <DangerZone
+          actions={[
+            ...(removalDisk.removalState === "evacuated" || removalDisk.removalState === "unpooled" || removalDisk.removalState === "unlisted"
+              ? [
+                  {
+                    id: DANGER_ACTION_FINISH_REMOVAL,
+                    title: t("pool.removal.dangerZoneTitle", { mountpoint: removalDisk.mountPoint }),
+                    description: failedDiskRemoveJob
+                      ? t("pool.removal.failedJob", { message: failedDiskRemoveJob.error?.message ?? "" })
+                      : t("pool.removal.finishDescription", { mountpoint: removalDisk.mountPoint }),
+                    actionLabel: t("pool.removal.finishAction"),
+                    onAction: () => void openFinishRemoval(removalDisk),
+                  } satisfies DangerZoneAction,
+                ]
+              : []),
+            ...(removalDisk.removalState === "evacuated"
+              ? [
+                  {
+                    id: DANGER_ACTION_CANCEL_REMOVAL,
+                    title: t("pool.removal.dangerZoneTitle", { mountpoint: removalDisk.mountPoint }),
+                    description: t("pool.removal.cancelDescription", { mountpoint: removalDisk.mountPoint }),
+                    actionLabel: t("pool.removal.cancelAction"),
+                    onAction: () => openCancelRemoval(removalDisk.mountPoint),
+                  } satisfies DangerZoneAction,
+                ]
+              : []),
+          ]}
+        />
+      ) : null}
       <ConfirmDialog
         open={stopOpen}
         onOpenChange={setStopOpen}
@@ -973,6 +1190,71 @@ export function PoolOverviewPage(): React.ReactElement {
           />
         ) : null}
       </FormOverlay>
+      <FormOverlay
+        open={finishOpen}
+        onOpenChange={(open) => {
+          if (!open && finishPending) {
+            return;
+          }
+          setFinishOpen(open);
+          if (!open) resetFinishRemoval();
+        }}
+        title={finishDisk ? t("pool.finishRemoval.title", { mountpoint: finishDisk.mountPoint }) : ""}
+        description={t("pool.finishRemoval.description")}
+        footer={
+          finishConfirmation && !finishJobSucceeded && (!displayedFinishJob || finishJobEnded) ? (
+            <Button
+              variant="destructive"
+              disabled={finishPending || finishConfirmValue !== finishConfirmation}
+              onClick={() => void submitFinishRemoval()}
+            >
+              {t("pool.finishRemoval.submit")}
+            </Button>
+          ) : undefined
+        }
+      >
+        {finishError ? <Banner tone="error" title={finishError} /> : null}
+        {displayedFinishJob && finishJobEnded && !finishJobSucceeded ? (
+          <Banner tone="error" title={displayedFinishJob.error?.message ?? ""} />
+        ) : null}
+        {displayedFinishJob ? <JobProgress job={displayedFinishJob} /> : null}
+        {finishJobSucceeded && finishDisk ? (
+          <Banner
+            tone="info"
+            title={
+              finishIdentity
+                ? t("pool.finishRemoval.safeToRemove", { mountpoint: finishDisk.mountPoint, identity: finishIdentity })
+                : t("pool.finishRemoval.safeToRemoveNoIdentity", { mountpoint: finishDisk.mountPoint })
+            }
+          />
+        ) : null}
+        {finishConfirmation && finishDisk && !finishJobSucceeded && (!displayedFinishJob || finishJobEnded) ? (
+          <TypedConfirm
+            phrase={finishConfirmation}
+            value={finishConfirmValue}
+            onChange={setFinishConfirmValue}
+            title={t("pool.finishRemoval.confirmTitle", { mountpoint: finishDisk.mountPoint })}
+            description={t("pool.finishRemoval.confirmDescription")}
+            items={[]}
+          />
+        ) : null}
+      </FormOverlay>
+      <ConfirmDialog
+        open={cancelOpen}
+        onOpenChange={(open) => {
+          if (!open && cancelPending) {
+            return;
+          }
+          setCancelOpen(open);
+          if (!open) setCancelError(null);
+        }}
+        title={t("pool.cancelRemoval.title", { mountpoint: cancelMountpoint })}
+        description={t("pool.cancelRemoval.description")}
+        error={cancelError}
+        confirmLabel={t("pool.cancelRemoval.confirm")}
+        loading={cancelPending}
+        onConfirm={() => void handleCancelRemoval()}
+      />
     </div>
   );
 }

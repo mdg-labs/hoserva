@@ -489,6 +489,44 @@ func TestReboot_WaitsThenShutdownNeverAuto(t *testing.T) {
 	}
 }
 
+func TestReboot_DataDiskUpgradeRunsStopSequenceInsteadOfWaiting(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, []byte("deb"), "")
+	e, _, _, _, jobs, host := testEngine(t, f)
+	shutdown := &FakeShutdown{}
+	e.Shutdown = shutdown
+	jobs.Blocking = &job.Job{ID: "upgrade-1", Type: job.TypeDiskUpgradeData}
+
+	if err := e.Reboot(ctx); err != nil {
+		t.Fatalf("Reboot: %v", err)
+	}
+	if jobs.WaitN != 0 {
+		t.Fatalf("WaitForStorageJobs calls = %d, want 0 — a running data-disk upgrade must not be waited for (Q68 vs doc 02 §4 E4)", jobs.WaitN)
+	}
+	if shutdown.Stops != 1 {
+		t.Fatalf("Shutdown.Stop calls = %d, want 1 — the stop sequence is what stops the upgrade at its checkpoint", shutdown.Stops)
+	}
+	if host.RebootCalls != 1 {
+		t.Fatalf("Reboot calls = %d, want 1", host.RebootCalls)
+	}
+}
+
+func TestReboot_OtherStorageJobStillWaits(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t, []byte("deb"), "")
+	e, _, _, _, jobs, _ := testEngine(t, f)
+	shutdown := &FakeShutdown{}
+	e.Shutdown = shutdown
+	jobs.Blocking = &job.Job{ID: "sync-1", Type: job.TypeSync}
+
+	if err := e.Reboot(ctx); err != nil {
+		t.Fatalf("Reboot: %v", err)
+	}
+	if jobs.WaitN != 1 {
+		t.Fatalf("WaitForStorageJobs calls = %d, want 1 — a running sync keeps Q68's wait", jobs.WaitN)
+	}
+}
+
 func TestCheck_NeverUsesGitHubAPI(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t, []byte("deb"), "")

@@ -4,7 +4,7 @@ An open-source home server platform for mixed-size disks: a management layer (Go
 
 **Positioning and tone** (doc 00 §6): describe Hoserva by what it does, never as "an X alternative". Mention Unraid and other projects only factually — migration, compatibility, a design comparison. No disparaging remarks about other projects or their users. This applies to docs, issues, commit messages, UI copy and the docs site.
 
-**Current state: design phase.** No code exists yet. The design lives in `docs/internal/`, and the work itself is tracked as GitHub epics and sub-issues on `mdg-labs/hoserva`, one epic per phase — Phase 0 spikes and the Phase 1 foundation first (doc 07 §1, doc 12 §5). Code conventions below are the plan; tighten them as the first real code lands.
+**Current state: Phases 0 and 1 are done and Phase 2 is in progress.** The design lives in `docs/internal/`; the live record of what's built, in progress or planned is the GitHub epics and sub-issues on `mdg-labs/hoserva`, one epic per phase (doc 07 §1, doc 12 §5). Code conventions below are enforced, not aspirational.
 
 # Documentation map
 
@@ -129,17 +129,17 @@ GitHub issues on `mdg-labs/hoserva` are this project's plan and memory between s
 
 A `spike` issue's deliverable is **recorded findings, not product code**: a findings section in `docs/internal/` (extend doc 08 or add a doc), the exact commands and outputs that support it, any experiment scripts under `spikes/<spike-id>/`, and the doc 13 entries it confirms or overturns. Every spike is agent work: research on the dev host, or experiments in the loop-device lab or an L3 VM once those exist (D20).
 
-# Conventions (planned — enforce as code lands)
+# Conventions
 
-- Go: `gofmt`, `go vet`, `golangci-lint`; errors wrapped with context (`fmt.Errorf("…: %w", err)`); `context.Context` first parameter on anything that does IO or runs long.
-- No comments unless the *why* is non-obvious. No speculative abstraction. No half-finished work. No error handling for cases that cannot happen.
-- No business logic in API handlers; the frontend computes nothing the backend should own.
-- Every UI string goes through the i18n catalog (Q48); every technical term gets a plain-language label (doc 03).
-- The UI is coss ui (D15): use the component and particle doc 03 names for each element, build shared patterns once in `web/src/components/patterns/`, and use the `coss` / `coss-particles` skills when writing them. What coss lacks uses Q59's libraries.
-- Golden files change only deliberately — a golden diff is explained in the commit message, never regenerated to make a test pass.
-- Conventional commits (`feat(parity): …`, `fix(mover): …`), one issue per commit, `Fixes #n` trailer.
+- Go: `gofmt`, `go vet`, `golangci-lint` — enforced by `make lint-go` and CI's `lint-and-unit` job; errors wrapped with context (`fmt.Errorf("…: %w", err)`) and `context.Context` first parameter on anything that does IO or runs long are review conventions, not linted.
+- No comments unless the *why* is non-obvious. No speculative abstraction. No half-finished work. No error handling for cases that cannot happen. Review conventions, not tool-enforced.
+- No business logic in API handlers; the frontend computes nothing the backend should own. Review convention, not tool-enforced.
+- Every UI string goes through the i18n catalog (Q48), enforced by `eslint-plugin-i18next` in `web/eslint.config.js` and CI's `web` job (`npm run lint`); every technical term gets a plain-language label (doc 03) is a review convention on top of that.
+- The UI is coss ui (D15): use the component and particle doc 03 names for each element, build shared patterns once in `web/src/components/patterns/`, and use the `coss` / `coss-particles` skills when writing them. What coss lacks uses Q59's libraries. Review convention, not tool-enforced.
+- Golden files change only deliberately — a golden diff is explained in the commit message, never regenerated to make a test pass. Not tool-enforced; caught in review.
+- Conventional commits (`feat(parity): …`, `fix(mover): …`), one issue per commit, `Fixes #n` trailer. Not tool-enforced; caught in review.
 - Every commit carries a DCO `Signed-off-by:` trailer (CONTRIBUTING.md, doc 13 Q2) — run `make hooks-install` once per clone (including a scratch clone) and it's automatic; CI's `dco` job rejects a commit that's missing one.
-- `make test` (L1 + L2) before landing, once the Makefile exists. If a workflow isn't a `make` target, it doesn't exist.
+- `make test` (L1 + L2) before landing. If a workflow isn't a `make` target, it doesn't exist.
 
 # Anti-patterns specific to this project
 

@@ -44,6 +44,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -155,28 +156,10 @@ func p359LabEngine(t *testing.T, lab, name string, mounts []string) *parity.Snap
 	}
 }
 
-// p359ClaimCatchAllPath makes pool.CatchAllPath free for this test's own
-// catch-all. smb-check.sh, which `make test-integration` runs before the
-// lab tests, leaves it as a symlink to the standing array's own pool; the
-// symlink is moved aside for the test and put back at cleanup, which runs
-// after the test's pool is unmounted. Anything else already mounted there
-// fails the test.
+// p359ClaimCatchAllPath fails the test if pool.CatchAllPath is already a
+// mount point — a previous test in this lab left a pool mounted there.
 func p359ClaimCatchAllPath(t *testing.T) {
 	t.Helper()
-	if target, err := os.Readlink(pool.CatchAllPath); err == nil {
-		if err := os.Remove(pool.CatchAllPath); err != nil {
-			t.Fatalf("moving the %s symlink aside: %v", pool.CatchAllPath, err)
-		}
-		t.Cleanup(func() {
-			if err := os.Remove(pool.CatchAllPath); err != nil && !os.IsNotExist(err) {
-				t.Errorf("removing %s before restoring its symlink: %v", pool.CatchAllPath, err)
-				return
-			}
-			if err := os.Symlink(target, pool.CatchAllPath); err != nil {
-				t.Errorf("restoring the %s symlink: %v", pool.CatchAllPath, err)
-			}
-		})
-	}
 	if pool.IsMounted(pool.CatchAllPath) {
 		t.Fatalf("%s is already a mount point in this lab — a previous test left a pool mounted", pool.CatchAllPath)
 	}
@@ -343,17 +326,43 @@ func (d *p359Daemon) poolMounts(t *testing.T) []pool.Mount {
 	return mounts
 }
 
+// p359MountAndTrack mounts mnt through mounter and arranges its own
+// cleanup: unmount, then — only when this call is the one that created
+// mnt.Where (pool.Mounter's own Mount does os.MkdirAll(mnt.Where) when it
+// is missing) — remove it again, so the lab is back to a clean /mnt (doc
+// 06 §3). A mnt.Where that already existed (CatchAllPath left by an
+// earlier, unrelated use of the lab) is left exactly as found.
+func p359MountAndTrack(t *testing.T, mounter pool.Mounter, mnt pool.Mount) {
+	t.Helper()
+	created := false
+	if _, err := os.Lstat(mnt.Where); err != nil {
+		if !os.IsNotExist(err) {
+			t.Fatalf("checking whether %s already exists: %v", mnt.Where, err)
+		}
+		created = true
+	}
+	if err := mounter.Mount(context.Background(), mnt); err != nil {
+		t.Fatalf("mounting %s: %v", mnt.Where, err)
+	}
+	where := mnt.Where
+	t.Cleanup(func() {
+		_ = mounter.Unmount(context.Background(), where)
+		if !created {
+			return
+		}
+		if err := os.Remove(where); err != nil && !os.IsNotExist(err) {
+			t.Errorf("removing mount point %s: %v", where, err)
+		}
+	})
+}
+
 // mountPool brings the pool up from poolMounts through pool.Mounter (this
-// file's header) and unmounts it again at cleanup, shares first.
+// file's header), shares first, each mount tracked by p359MountAndTrack.
 func (d *p359Daemon) mountPool(t *testing.T) {
 	t.Helper()
 	mounter := pool.Mounter{Runner: disk.CommandRunner{}}
 	for _, m := range d.poolMounts(t) {
-		if err := mounter.Mount(context.Background(), m); err != nil {
-			t.Fatalf("mounting %s: %v", m.Where, err)
-		}
-		where := m.Where
-		t.Cleanup(func() { _ = mounter.Unmount(context.Background(), where) })
+		p359MountAndTrack(t, mounter, m)
 	}
 }
 
@@ -646,10 +655,7 @@ func TestLabEvacuation_FailedLiveNoCreate_FailsBeforeAnyCopy(t *testing.T) {
 
 	mounter := pool.Mounter{Runner: exec}
 	catchAll := d.poolMounts(t)[0]
-	if err := mounter.Mount(ctx, catchAll); err != nil {
-		t.Fatalf("mounting the catch-all: %v", err)
-	}
-	t.Cleanup(func() { _ = mounter.Unmount(context.Background(), catchAll.Where) })
+	p359MountAndTrack(t, mounter, catchAll)
 	foreign := pool.SharePath(p359Share)
 	if err := os.MkdirAll(foreign, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", foreign, err)
@@ -657,6 +663,12 @@ func TestLabEvacuation_FailedLiveNoCreate_FailsBeforeAnyCopy(t *testing.T) {
 	if _, err := exec.Run(ctx, "mount", "-t", "tmpfs", "-o", "size=1m", "p359-foreign", foreign); err != nil {
 		t.Fatalf("mounting a foreign tmpfs at %s: %v", foreign, err)
 	}
+	// foreign is a path inside the already-live catch-all union, not a
+	// bare directory of its own: it resolves through mergerfs to disk1's
+	// own p359Share branch, which a.fill already populated before this
+	// mount, so it is never empty and is never this test's to remove —
+	// only to unmount, the same as pool.Mounter's own Unmount tears down
+	// a share mount without removing the share's own on-disk directory.
 	t.Cleanup(func() { _, _ = exec.Run(context.Background(), "umount", foreign) })
 	shareRelocLabSyncOnce(t, ctx, d.engine)
 
@@ -795,5 +807,143 @@ func TestLabEvacuation_RestartMidEvacuation_UnitsKeepNoCreate_ResumeReappliesIt(
 				t.Fatalf("after the resumed evacuation a file written through the %s landed on disk1", tgt)
 			}
 		}
+	}
+}
+
+// p365MergerfsPID returns the PID of the mergerfs process serving where,
+// found by an exact match of its own last argv element against where —
+// never a name or pattern match (CLAUDE.md: kill by PID only). Mount's
+// own Argv (internal/pool/mount.go) always ends in the mountpoint, and
+// mergerfs daemonizes on its own without re-execing, so the running
+// daemon's /proc/<pid>/cmdline still carries it.
+func p365MergerfsPID(t *testing.T, where string) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		t.Fatalf("reading /proc: %v", err)
+	}
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		if err != nil {
+			continue
+		}
+		args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+		if len(args) == 0 || !strings.HasSuffix(args[0], "mergerfs") {
+			continue
+		}
+		if args[len(args)-1] == where {
+			return pid
+		}
+	}
+	t.Fatalf("no mergerfs process found with %s as its last argument", where)
+	return 0
+}
+
+// TestLabEvacuation_DeadCatchAllMergerfs_FailsBeforeAnyCopy is #365: the
+// catch-all's own mergerfs dies (killed by PID, confirmed by its exact
+// argv) while the per-share and mover-target mergerfs mounts — the ones
+// that actually give the evacuating disk RW — stay up. A dead FUSE
+// endpoint's stat returns ENOTCONN, not ENOENT, so the strict topology
+// hook wireTopologyHooks binds for the evacuation job must read that as
+// "cannot confirm the pool is live", not silently as "pool stopped", and
+// fail the job before any file is copied off the pool — never letting
+// EvacuationPostCheck be the first thing to notice.
+func TestLabEvacuation_DeadCatchAllMergerfs_FailsBeforeAnyCopy(t *testing.T) {
+	ctx := context.Background()
+	a := p359NewArray(t, "p365")
+	d := p359StartDaemon(t, t.TempDir(), t.TempDir(), p359LabEngine(t, a.lab, "p365", a.disks))
+	a.seed(t, d)
+	moved := a.fill(t, 3)
+	disk1 := a.disks[0]
+	d.mountPool(t)
+	// SharePath nests the per-share mount under the catch-all
+	// (CatchAllPath+"/"+share); once the catch-all's mergerfs is dead,
+	// even a path lookup that only passes through it — not touching the
+	// share's own live process at all — can itself return ENOTCONN once
+	// the FUSE entry-cache on that path expires (confirmed in the lab).
+	// A lazy unmount of the catch-all after this test's own assertions
+	// clears the orphaned nested mount along with it, so this scenario
+	// does not leave a later test's own use of pool.CatchAllPath stuck.
+	t.Cleanup(func() {
+		_, _ = disk.CommandRunner{}.Run(context.Background(), "fusermount", "-uz", pool.CatchAllPath)
+	})
+	shareRelocLabSyncOnce(t, ctx, d.engine)
+
+	// The scenario needs the per-share and mover-target mounts RW before
+	// the catch-all dies: read while the catch-all is still alive, since
+	// the share mount is nested under it (above).
+	for _, c := range []struct{ where, branch string }{
+		{pool.SharePath(p359Share), filepath.Join(disk1, p359Share)},
+		{pool.MoverTargetPath(p359Share), filepath.Join(disk1, p359Share)},
+	} {
+		got, err := p359BranchMode(c.where, c.branch)
+		if err != nil {
+			t.Fatalf("reading the live mode of %s: %v", c.where, err)
+		}
+		if got != "RW" {
+			t.Fatalf("live mount %s gives disk1 mode %s, want RW — the scenario needs it writable before the catch-all dies", c.where, got)
+		}
+	}
+
+	catchAllPID := p365MergerfsPID(t, pool.CatchAllPath)
+	info, err := os.Stat(filepath.Join("/proc", strconv.Itoa(catchAllPID)))
+	if err != nil || !info.IsDir() {
+		t.Fatalf("pid %d is not a running process right before killing it: %v", catchAllPID, err)
+	}
+	if err := syscall.Kill(catchAllPID, syscall.SIGKILL); err != nil {
+		t.Fatalf("killing the catch-all's mergerfs (pid %d): %v", catchAllPID, err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := pool.IsMountedConfirmed(pool.CatchAllPath); err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s never became unconfirmable after killing its mergerfs (pid %d)", pool.CatchAllPath, catchAllPID)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// The per-share and mover-target mergerfs processes themselves are
+	// still running — only the catch-all's own died. Found the same way
+	// catchAllPID was, by exact argv, not by filesystem path (which the
+	// dead catch-all can now block, per the comment above).
+	_ = p365MergerfsPID(t, pool.SharePath(p359Share))
+	_ = p365MergerfsPID(t, pool.MoverTargetPath(p359Share))
+
+	j, err := d.scheduler.Submit(ctx, job.TypeEvacuation, nil, d.plan(t, disk1))
+	if err != nil {
+		t.Fatalf("Submit(TypeEvacuation): %v", err)
+	}
+	finished, err := d.scheduler.Await(ctx, j.ID)
+	if err != nil {
+		t.Fatalf("Await: %v", err)
+	}
+	if finished.Status != job.StatusFailed {
+		t.Fatalf("status = %s (%s), want failed — a dead catch-all mergerfs must not be read as a stopped pool", finished.Status, finished.ErrorMessage)
+	}
+	if !strings.Contains(finished.ErrorMessage, "cannot confirm whether the catch-all pool mount is live") {
+		t.Fatalf("ErrorMessage = %q, want it to name the unconfirmable catch-all liveness", finished.ErrorMessage)
+	}
+	for _, rel := range moved {
+		if _, err := os.Stat(filepath.Join(disk1, p359Share, rel)); err != nil {
+			t.Fatalf("source %s must be untouched: %v", rel, err)
+		}
+		for _, other := range a.disks[1:] {
+			if _, err := os.Stat(filepath.Join(other, p359Share, rel)); !os.IsNotExist(err) {
+				t.Fatalf("%s was copied to %s (err=%v) — nothing may be copied before the catch-all's live state is confirmed", rel, other, err)
+			}
+		}
+	}
+	if manifest, removing, err := d.engine.Relocation.Current(ctx); err != nil || manifest != nil || removing != nil {
+		t.Fatalf("relocation manifest = (%v, %v, %v), want nothing persisted", manifest, removing, err)
+	}
+	if state, holder := d.removal(t, disk1); state != store.RemovalStateEvacuating || holder != j.ID {
+		t.Fatalf("removal state after the unconfirmed-liveness failure = (%q, %q), want (%q, %q)", state, holder, store.RemovalStateEvacuating, j.ID)
 	}
 }

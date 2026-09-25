@@ -126,6 +126,9 @@ func TestRootCmdHasDiskAddAndReplace(t *testing.T) {
 	if _, _, err := root.Find([]string{"disk", "upgrade", "plan"}); err != nil {
 		t.Fatalf("find disk upgrade plan: %v", err)
 	}
+	if _, _, err := root.Find([]string{"disk", "remove", "cancel"}); err != nil {
+		t.Fatalf("find disk remove cancel: %v", err)
+	}
 }
 
 func TestDiskAddRequiresConfirm(t *testing.T) {
@@ -203,6 +206,61 @@ func TestDiskRemoveFinishSendsTheRequestAndPrintsTheJob(t *testing.T) {
 	}
 	if !strings.Contains(string(printed), jobID.String()) {
 		t.Fatalf("output %q does not print the job id %s", printed, jobID)
+	}
+}
+
+// TestDiskRemoveCancelSendsTheRequestAndPrintsAConfirmation drives `hoserva
+// disk remove cancel` against a stand-in daemon on a Unix socket: the
+// request reaches cancelDiskRemoval with the slot as typed, and the CLI
+// prints a plain confirmation naming it — no typed confirmation is
+// required, since cancelDiskRemoval carries none in the spec.
+func TestDiskRemoveCancelSendsTheRequestAndPrintsAConfirmation(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	var gotPath string
+	var gotBody apiv1.CancelDiskRemovalRequest
+	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.Method + " " + r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		if err := gotBody.UnmarshalJSON(body); err != nil {
+			t.Errorf("decoding the request body %q: %v", body, err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	stdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	root := rootCmd()
+	root.SetArgs([]string{"--socket", sock, "disk", "remove", "cancel", "--mountpoint", "/mnt/disk5"})
+	runErr := root.Execute()
+	os.Stdout = stdout
+	_ = w.Close()
+	printed, _ := io.ReadAll(r)
+	if runErr != nil {
+		t.Fatalf("disk remove cancel: %v", runErr)
+	}
+	if gotPath != "POST /api/v1/disks/array/remove/cancel" {
+		t.Fatalf("request = %q, want POST /api/v1/disks/array/remove/cancel", gotPath)
+	}
+	if gotBody.Mountpoint != "/mnt/disk5" {
+		t.Fatalf("request body = %+v, want the slot as typed", gotBody)
+	}
+	if !strings.Contains(string(printed), "/mnt/disk5") {
+		t.Fatalf("output %q does not name the disk", printed)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 func errShareNotFound(name apiv1.ShareName) error {
@@ -18,6 +19,36 @@ func errShareNotFound(name apiv1.ShareName) error {
 
 func errShareExists(name apiv1.ShareName) error {
 	return &mockError{code: "share_exists", statusCode: 409, message: fmt.Sprintf("share %s already exists", name)}
+}
+
+func errShareInvalidInput(msg string) error {
+	return &mockError{code: "share_invalid_input", statusCode: 400, message: msg}
+}
+
+// mockCacheModeNeedsCacheDisk mirrors internal/share.Service.Create/
+// Update's own cache-disk check: cache-then-move and cache-only both need
+// a cache disk in the array, and mockArrayDisks("healthy") has none, so a
+// share created with no explicit cache mode (production's own default is
+// cache-then-move, internal/share/service.go) must be refused the same
+// way production refuses it, not silently accepted. A nil-array scenario
+// (fresh-install) is left alone here: production refuses share creation
+// there for a different reason first (ErrNoArray, "no_array") that this
+// mock does not model at all yet — a pre-existing gap this check must not
+// paper over by reporting the wrong code.
+func mockCacheModeNeedsCacheDisk(mode apiv1.ShareCacheMode, scenario string) error {
+	if mode != apiv1.ShareCacheModeCacheThenMove && mode != apiv1.ShareCacheModeCacheOnly {
+		return nil
+	}
+	disks := mockArrayDisks(scenario)
+	if disks == nil {
+		return nil
+	}
+	for _, d := range disks {
+		if d.Role == store.ArrayRoleCache {
+			return nil
+		}
+	}
+	return errShareInvalidInput(fmt.Sprintf("cache mode %q needs a cache disk", mode))
 }
 
 // defaultShareNFS and normalizeShareNFS both stamp fsid from name the
@@ -85,6 +116,9 @@ func (h *handler) CreateShare(ctx context.Context, req *apiv1.CreateShareRequest
 	if v, ok := req.CacheMode.Get(); ok {
 		mode = v
 	}
+	if err := mockCacheModeNeedsCacheDisk(mode, h.scenario); err != nil {
+		return nil, err
+	}
 	policy := apiv1.ArrayCreatePolicyMspmfs
 	if v, ok := req.CreatePolicy.Get(); ok {
 		policy = v
@@ -124,6 +158,9 @@ func (h *handler) UpdateShare(ctx context.Context, req *apiv1.UpdateShareRequest
 		return nil, errShareNotFound(params.Name)
 	}
 	if v, ok := req.CacheMode.Get(); ok {
+		if err := mockCacheModeNeedsCacheDisk(v, h.scenario); err != nil {
+			return nil, err
+		}
 		s.CacheMode = v
 	}
 	if v, ok := req.CreatePolicy.Get(); ok {
@@ -195,6 +232,11 @@ func (h *handler) StartShareRelocation(ctx context.Context, req *apiv1.StartShar
 	defer h.mu.Unlock()
 	if _, ok := h.shares[string(params.Name)]; !ok {
 		return nil, errShareNotFound(params.Name)
+	}
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
 	}
 	now := time.Now().UTC()
 	j := apiv1.Job{

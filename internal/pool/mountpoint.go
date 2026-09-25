@@ -1,7 +1,9 @@
 package pool
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -18,6 +20,25 @@ import (
 func IsMounted(path string) bool {
 	mounted, err := isMountpoint(path)
 	return err == nil && mounted
+}
+
+// IsMountedConfirmed is IsMounted's tri-state form: a path that genuinely
+// does not exist (os.Stat returns fs.ErrNotExist) is confirmed not
+// mounted, exactly as IsMounted already treats it, and reported as
+// (false, nil). Any other stat failure — in particular ENOTCONN, what a
+// dead FUSE endpoint's own mount point reports once its serving process
+// has exited without unmounting — cannot tell "live" from "gone", and is
+// returned instead of being silently read as "not mounted" the way
+// IsMounted's single bool would (#365).
+func IsMountedConfirmed(path string) (bool, error) {
+	mounted, err := isMountpoint(path)
+	if err == nil {
+		return mounted, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 func isMountpoint(path string) (bool, error) {

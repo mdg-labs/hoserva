@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -336,6 +337,48 @@ func TestUpdateGeneralSettings_RejectsUnknownTimezone(t *testing.T) {
 	}
 }
 
+// TestScheduleUpdates_RefusedRequestChangesNothing proves a 400 from
+// either schedule write leaves every field it named untouched — a valid
+// field listed before the invalid one is not applied on its own. It calls
+// the handler directly: ogen's own request decoding already refuses a
+// weekday of 9 over HTTP, but the handler must not rely on that.
+func TestScheduleUpdates_RefusedRequestChangesNothing(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatalf("newHandler(healthy): %v", err)
+	}
+	refused := func(op string, err error) {
+		t.Helper()
+		var me *mockError
+		if !errors.As(err, &me) || me.code != "schedule_invalid_input" {
+			t.Fatalf("%s = %v, want schedule_invalid_input", op, err)
+		}
+	}
+	ctx := context.Background()
+
+	before, err := h.GetSchedules(ctx)
+	if err != nil {
+		t.Fatalf("GetSchedules: %v", err)
+	}
+	_, err = h.UpdateMaintenanceChainSchedule(ctx, &apiv1.UpdateMaintenanceChainScheduleRequest{
+		StartTime:      apiv1.NewOptString("03:17"),
+		WeeklyScrubDay: apiv1.NewOptWeekday(9),
+	})
+	refused("UpdateMaintenanceChainSchedule(valid time, bad day)", err)
+	_, err = h.UpdateScheduledJob(ctx, &apiv1.UpdateScheduledJobRequest{
+		Enabled:   apiv1.NewOptBool(false),
+		Frequency: apiv1.NewOptScheduleFrequency("hourly"),
+	}, apiv1.UpdateScheduledJobParams{JobId: apiv1.OtherScheduleJobIdSmartSelfTest})
+	refused("UpdateScheduledJob(enabled, bad frequency)", err)
+	after, err := h.GetSchedules(ctx)
+	if err != nil {
+		t.Fatalf("GetSchedules: %v", err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("schedules changed after two refused writes:\nbefore %+v\nafter  %+v", before, after)
+	}
+}
+
 func TestArrayStopAndStartFlipsMaintenanceMode(t *testing.T) {
 	client := newTestClient(t, "healthy")
 	ctx := context.Background()
@@ -402,7 +445,7 @@ func TestShares_RefusedInMaintenanceMode(t *testing.T) {
 	client := newTestClient(t, "healthy")
 	ctx := context.Background()
 
-	if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media"}); err != nil {
+	if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
 		t.Fatalf("CreateShare(media) before stop: %v", err)
 	}
 	if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
@@ -496,6 +539,152 @@ func TestUpgradeDisk_ParityRefusedInMaintenanceMode(t *testing.T) {
 	if code := errorCode(t, err); code != "maintenance_mode" {
 		t.Fatalf("UpgradeDisk(parity, maintenance mode): code = %q, want maintenance_mode", code)
 	}
+}
+
+// TestJobSubmission_RefusedInMaintenanceMode proves that every mockapi
+// operation submitting a job mirrors production's Scheduler.Submit
+// (#330): a maintenance-mode refusal (409 maintenance_mode) once StopArray
+// has completed, for every job type but TypeDiskUpgradeData (covered
+// separately by TestUpgradeDisk_ParityRefusedInMaintenanceMode and
+// production's own data-disk upgrade exception, #289's Q70/Q71).
+func TestJobSubmission_RefusedInMaintenanceMode(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("AddDisk", func(t *testing.T) {
+		client := newTestClient(t, "healthy")
+		plan, err := client.PlanDiskAdd(ctx, &apiv1.AddDiskPlanRequest{Device: "/dev/sdf"})
+		if err != nil {
+			t.Fatalf("PlanDiskAdd: %v", err)
+		}
+		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+			t.Fatalf("StopArray: %v", err)
+		}
+		_, err = client.AddDisk(ctx, &apiv1.AddDiskRequest{Device: "/dev/sdf", Confirmation: plan.Confirmation})
+		if code := errorCode(t, err); code != "maintenance_mode" {
+			t.Fatalf("AddDisk after StopArray: code = %q, want maintenance_mode", code)
+		}
+	})
+
+	t.Run("ReplaceDisk", func(t *testing.T) {
+		// degraded's disk4 is the one slot with no matching inventory
+		// entry (mockArrayDisks), so it is the only one
+		// ConfirmReplacementTargetAbsent lets past slot_disk_present.
+		client := newTestClient(t, "degraded")
+		plan, err := client.PlanDiskReplace(ctx, &apiv1.ReplaceDiskPlanRequest{Mountpoint: "/mnt/disk4", Device: "/dev/sdf"})
+		if err != nil {
+			t.Fatalf("PlanDiskReplace: %v", err)
+		}
+		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+			t.Fatalf("StopArray: %v", err)
+		}
+		_, err = client.ReplaceDisk(ctx, &apiv1.ReplaceDiskRequest{Mountpoint: "/mnt/disk4", Device: "/dev/sdf", Confirmation: plan.Confirmation})
+		if code := errorCode(t, err); code != "maintenance_mode" {
+			t.Fatalf("ReplaceDisk after StopArray: code = %q, want maintenance_mode", code)
+		}
+	})
+
+	t.Run("StartSync", func(t *testing.T) {
+		client := newTestClient(t, "healthy")
+		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+			t.Fatalf("StopArray: %v", err)
+		}
+		_, err := client.StartSync(ctx, &apiv1.StartSyncRequest{})
+		if code := errorCode(t, err); code != "maintenance_mode" {
+			t.Fatalf("StartSync after StopArray: code = %q, want maintenance_mode", code)
+		}
+	})
+
+	t.Run("StartScrub", func(t *testing.T) {
+		client := newTestClient(t, "healthy")
+		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+			t.Fatalf("StopArray: %v", err)
+		}
+		_, err := client.StartScrub(ctx, &apiv1.StartScrubRequest{})
+		if code := errorCode(t, err); code != "maintenance_mode" {
+			t.Fatalf("StartScrub after StopArray: code = %q, want maintenance_mode", code)
+		}
+	})
+
+	t.Run("StartFix", func(t *testing.T) {
+		client := newTestClient(t, "healthy")
+		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+			t.Fatalf("StopArray: %v", err)
+		}
+		_, err := client.StartFix(ctx, &apiv1.StartFixRequest{Confirm: true})
+		if code := errorCode(t, err); code != "maintenance_mode" {
+			t.Fatalf("StartFix after StopArray: code = %q, want maintenance_mode", code)
+		}
+	})
+
+	t.Run("StartMover", func(t *testing.T) {
+		client := newTestClient(t, "healthy")
+		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+			t.Fatalf("StopArray: %v", err)
+		}
+		_, err := client.StartMover(ctx)
+		if code := errorCode(t, err); code != "maintenance_mode" {
+			t.Fatalf("StartMover after StopArray: code = %q, want maintenance_mode", code)
+		}
+	})
+
+	t.Run("StartRebalance", func(t *testing.T) {
+		client := newTestClient(t, "healthy")
+		plan, err := client.PlanRebalance(ctx)
+		if err != nil {
+			t.Fatalf("PlanRebalance: %v", err)
+		}
+		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+			t.Fatalf("StopArray: %v", err)
+		}
+		_, err = client.StartRebalance(ctx, &apiv1.StartRebalanceRequest{Confirmation: plan.Confirmation})
+		if code := errorCode(t, err); code != "maintenance_mode" {
+			t.Fatalf("StartRebalance after StopArray: code = %q, want maintenance_mode", code)
+		}
+	})
+
+	t.Run("EvacuateDisk", func(t *testing.T) {
+		client := newTestClient(t, "healthy")
+		plan, err := client.PlanDiskEvacuation(ctx, &apiv1.EvacuateDiskPlanRequest{Mountpoint: "/mnt/disk1"})
+		if err != nil {
+			t.Fatalf("PlanDiskEvacuation: %v", err)
+		}
+		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+			t.Fatalf("StopArray: %v", err)
+		}
+		_, err = client.EvacuateDisk(ctx, &apiv1.EvacuateDiskRequest{Mountpoint: "/mnt/disk1", Confirmation: plan.Confirmation})
+		if code := errorCode(t, err); code != "maintenance_mode" {
+			t.Fatalf("EvacuateDisk after StopArray: code = %q, want maintenance_mode", code)
+		}
+	})
+
+	t.Run("StartShareRelocation", func(t *testing.T) {
+		client := newTestClient(t, "healthy")
+		if _, err := client.CreateShare(ctx, &apiv1.CreateShareRequest{Name: "media", CacheMode: apiv1.NewOptShareCacheMode(apiv1.ShareCacheModeArrayOnly)}); err != nil {
+			t.Fatalf("CreateShare: %v", err)
+		}
+		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+			t.Fatalf("StopArray: %v", err)
+		}
+		_, err := client.StartShareRelocation(ctx, &apiv1.StartShareRelocationRequest{To: apiv1.StartShareRelocationRequestToArray}, apiv1.StartShareRelocationParams{Name: "media"})
+		if code := errorCode(t, err); code != "maintenance_mode" {
+			t.Fatalf("StartShareRelocation after StopArray: code = %q, want maintenance_mode", code)
+		}
+	})
+
+	t.Run("CreateArray", func(t *testing.T) {
+		client := newTestClient(t, "fresh-install")
+		disks := []apiv1.ArrayDiskAssignment{
+			{Device: "/dev/sdb", Role: apiv1.ArrayDiskRoleParity, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs)},
+			{Device: "/dev/sdc", Role: apiv1.ArrayDiskRoleData, Filesystem: apiv1.NewOptArrayDiskFilesystem(apiv1.ArrayDiskFilesystemXfs)},
+		}
+		if _, err := client.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+			t.Fatalf("StopArray: %v", err)
+		}
+		_, err := client.CreateArray(ctx, &apiv1.CreateArrayRequest{Disks: disks, Confirmation: "ERASE /dev/sdb, /dev/sdc"})
+		if code := errorCode(t, err); code != "maintenance_mode" {
+			t.Fatalf("CreateArray after StopArray: code = %q, want maintenance_mode", code)
+		}
+	})
 }
 
 // TestUpgradeDisk_DataMirrorsProductionAdmission mirrors production's

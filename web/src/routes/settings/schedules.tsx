@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
@@ -15,7 +15,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { hoservaClient, type components } from "@/lib/api/client";
+import type { components } from "@/lib/api/client";
+import { getSchedules, putMaintenanceChainSchedule, putScheduledJob } from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
 import {
   MAINTENANCE_CHAIN_STEPS,
   OTHER_SCHEDULE_JOBS,
@@ -47,60 +50,42 @@ function conflictDescription(
 
 export function SchedulesSettingsPage(): React.ReactElement {
   const { t, i18n } = useTranslation();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [schedules, setSchedules] = useState<Schedules | null>(null);
+  const schedulesQuery = useApiQuery<Schedules>({
+    queryKey: "schedules",
+    queryFn: (signal) => getSchedules(signal),
+    fallbackError: t("settings.schedules.loadErrorDescription"),
+  });
+  const [actionError, setActionError] = useState<string | null>(null);
   const [timeDrafts, setTimeDrafts] = useState<Partial<Record<OtherScheduleJobId, string>>>({});
 
-  useEffect(() => {
-    const controller = new AbortController();
-    hoservaClient
-      .GET("/settings/schedules", { signal: controller.signal })
-      .then(({ data, error: apiError }) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        if (apiError) {
-          setError(apiError.message);
-          return;
-        }
-        if (data) {
-          setSchedules(data);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
-      });
-    return () => {
-      controller.abort();
-    };
-  }, []);
+  const schedules = schedulesQuery.data;
+
+  const chainMutation = useApiMutation<components["schemas"]["MaintenanceChainStep"][], Schedules>({
+    mutationFn: (steps) => putMaintenanceChainSchedule(steps),
+  });
+  const otherJobMutation = useApiMutation<
+    { jobId: OtherScheduleJobId; patch: { enabled?: boolean; frequency?: ScheduleFrequency; time?: string } },
+    Schedules
+  >({
+    mutationFn: ({ jobId, patch }) => putScheduledJob(jobId, patch),
+  });
 
   async function updateChainStep(stepId: MaintenanceChainStepId, enabled: boolean): Promise<void> {
     if (!schedules) {
       return;
     }
-    setError(null);
+    setActionError(null);
     const steps = schedules.chain.steps.map((step) =>
       step.id === stepId ? { ...step, enabled } : step,
     );
-    const { data, error: apiError } = await hoservaClient.PUT("/settings/schedules/chain", {
-      body: { steps },
-    });
-    if (apiError) {
-      setError(apiError.message);
+    const result = await chainMutation.mutate(steps);
+    if (!result.ok) {
+      if (!result.aborted) {
+        setActionError(result.error);
+      }
       return;
     }
-    if (data) {
-      setSchedules(data);
-    }
+    await schedulesQuery.refresh();
   }
 
   async function updateOtherJob(
@@ -110,18 +95,15 @@ export function SchedulesSettingsPage(): React.ReactElement {
     if (!schedules) {
       return;
     }
-    setError(null);
-    const { data, error: apiError } = await hoservaClient.PUT("/settings/schedules/jobs/{jobId}", {
-      params: { path: { jobId } },
-      body: patch,
-    });
-    if (apiError) {
-      setError(apiError.message);
+    setActionError(null);
+    const result = await otherJobMutation.mutate({ jobId, patch });
+    if (!result.ok) {
+      if (!result.aborted) {
+        setActionError(result.error);
+      }
       return;
     }
-    if (data) {
-      setSchedules(data);
-    }
+    await schedulesQuery.refresh();
   }
 
   async function commitOtherJobTime(jobId: OtherScheduleJobId, persistedTime: string): Promise<void> {
@@ -148,7 +130,7 @@ export function SchedulesSettingsPage(): React.ReactElement {
     });
   }
 
-  if (loading) {
+  if (schedulesQuery.loading) {
     return <LoadingBlock />;
   }
 
@@ -157,10 +139,12 @@ export function SchedulesSettingsPage(): React.ReactElement {
       <Banner
         tone="error"
         title={t("settings.schedules.loadErrorTitle")}
-        description={error ?? t("settings.schedules.loadErrorDescription")}
+        description={schedulesQuery.error ?? t("settings.schedules.loadErrorDescription")}
       />
     );
   }
+
+  const error = actionError;
 
   const conflicts = schedules.conflicts.map((conflict) => conflictDescription(conflict, t));
 
@@ -205,7 +189,7 @@ export function SchedulesSettingsPage(): React.ReactElement {
                     label={t(`settings.schedules.chainSteps.${stepId}.title`)}
                     description={t(`settings.schedules.chainSteps.${stepId}.description`)}
                     checked={step?.enabled ?? true}
-                    onCheckedChange={(enabled) => updateChainStep(stepId, enabled)}
+                    onCheckedChange={(enabled) => void updateChainStep(stepId, enabled)}
                   />
                 </FramePanel>
               );
@@ -229,7 +213,7 @@ export function SchedulesSettingsPage(): React.ReactElement {
                   label={t(`settings.schedules.otherJobs.${jobId}.title`)}
                   description={t(`settings.schedules.otherJobs.${jobId}.description`)}
                   checked={job.enabled}
-                  onCheckedChange={(enabled) => updateOtherJob(jobId, { enabled })}
+                  onCheckedChange={(enabled) => void updateOtherJob(jobId, { enabled })}
                 />
                 <div className="grid gap-4 sm:grid-cols-3">
                   <Field>
@@ -238,7 +222,7 @@ export function SchedulesSettingsPage(): React.ReactElement {
                       value={job.frequency}
                       disabled={!job.enabled}
                       onValueChange={(value) =>
-                        value && updateOtherJob(jobId, { frequency: value as ScheduleFrequency })
+                        value && void updateOtherJob(jobId, { frequency: value as ScheduleFrequency })
                       }
                     >
                       <SelectTrigger>

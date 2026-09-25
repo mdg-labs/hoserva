@@ -334,8 +334,19 @@ func (e *SnapraidEngine) runStream(ctx context.Context, logPath string, tail []s
 				finalErr = accept(summary, waitErr)
 			}
 		}
-		if finalErr == nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
+		// Wrapped even when finalErr is already set (#379): a process this
+		// ctx's own cancellation killed reports a real, non-nil exit error
+		// through accept (a killed SnapRAID process's own waitErr), not a
+		// nil one — folding ctxErr in either way keeps
+		// errors.Is(finalErr, context.Canceled) true, so runJob's own
+		// identity classification (job/scheduler.go) still recognizes this
+		// as the RunFunc's own reaction to the cancellation it was asked to
+		// stop for, rather than a newly-surfaced genuine failure a raced
+		// Cancel must not erase.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if finalErr != nil {
+				finalErr = fmt.Errorf("%w: %v", ctxErr, finalErr)
+			} else {
 				finalErr = ctxErr
 			}
 		}

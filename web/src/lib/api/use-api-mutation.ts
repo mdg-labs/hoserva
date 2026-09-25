@@ -15,6 +15,7 @@ export type UseApiMutationResult<TArgs, TResult> = {
   mutate: (args: TArgs) => Promise<MutationResult<TResult>>;
   pending: boolean;
   error: string | null;
+  reset: () => void;
 };
 
 export function useApiMutation<TArgs, TResult>({
@@ -55,5 +56,9 @@ export function useApiMutation<TArgs, TResult>({
     [fallbackError],
   );
 
-  return { mutate, pending, error };
+  const reset = useCallback((): void => {
+    setError(null);
+  }, []);
+
+  return { mutate, pending, error, reset };
 }

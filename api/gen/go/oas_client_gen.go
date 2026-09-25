@@ -75,6 +75,24 @@ type Invoker interface {
 	//
 	// GET /shares/{name}/browse
 	BrowseShare(ctx context.Context, params BrowseShareParams) (*ShareBrowseResult, error)
+	// CancelDiskRemoval invokes cancelDiskRemoval operation.
+	//
+	// Clears `mountpoint`'s doc 09 §4 removal state synchronously — no job — and re-applies the pool
+	// live so the disk's branches go back to RW (#361). Refused with `disk_slot_not_found` (404) when no
+	// data disk occupies `mountpoint`. Refused with `disk_removal_not_cancellable` (409) when the disk is
+	// not currently in removal; when it is `unpooled` or `unlisted` — it has already left the pool, so
+	// the only way forward is `finishDiskRemoval`, never back (doc 09 §4's own Open questions); or when
+	// it is `evacuating` and its evacuation job is still queued, running or interrupted — that job owns
+	// the state, so cancel it (`DELETE /jobs/{jobId}` — `jobs/{jobId}/cancel`) instead. An `evacuating`
+	// disk whose evacuation job has already ended (no longer queued, running or interrupted — including
+	// a job the store no longer has a record of) is cancelled the same as an `evacuated` one: the copy it
+	// ran already stopped, and cancelling here is how the disk gets back to ordinary use instead of
+	// sitting stuck until it is evacuated again. A live-update failure while re-applying the pool is an
+	// internal error, and the removal state is left cleared — the same as the disk-topology jobs' own
+	// live-apply failures — rather than silently reporting success with the disk still no-create.
+	//
+	// POST /disks/array/remove/cancel
+	CancelDiskRemoval(ctx context.Context, request *CancelDiskRemovalRequest) error
 	// CancelJob invokes cancelJob operation.
 	//
 	// Only meaningful where the underlying tool supports cancellation (doc 01 §4); a job that cannot be
@@ -1738,6 +1756,146 @@ func (c *Client) sendBrowseShare(ctx context.Context, params BrowseShareParams) 
 
 	stage = "DecodeResponse"
 	result, err := decodeBrowseShareResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// CancelDiskRemoval invokes cancelDiskRemoval operation.
+//
+// Clears `mountpoint`'s doc 09 §4 removal state synchronously — no job — and re-applies the pool
+// live so the disk's branches go back to RW (#361). Refused with `disk_slot_not_found` (404) when no
+// data disk occupies `mountpoint`. Refused with `disk_removal_not_cancellable` (409) when the disk is
+// not currently in removal; when it is `unpooled` or `unlisted` — it has already left the pool, so
+// the only way forward is `finishDiskRemoval`, never back (doc 09 §4's own Open questions); or when
+// it is `evacuating` and its evacuation job is still queued, running or interrupted — that job owns
+// the state, so cancel it (`DELETE /jobs/{jobId}` — `jobs/{jobId}/cancel`) instead. An `evacuating`
+// disk whose evacuation job has already ended (no longer queued, running or interrupted — including
+// a job the store no longer has a record of) is cancelled the same as an `evacuated` one: the copy it
+// ran already stopped, and cancelling here is how the disk gets back to ordinary use instead of
+// sitting stuck until it is evacuated again. A live-update failure while re-applying the pool is an
+// internal error, and the removal state is left cleared — the same as the disk-topology jobs' own
+// live-apply failures — rather than silently reporting success with the disk still no-create.
+//
+// POST /disks/array/remove/cancel
+func (c *Client) CancelDiskRemoval(ctx context.Context, request *CancelDiskRemovalRequest) error {
+	_, err := c.sendCancelDiskRemoval(ctx, request)
+	return err
+}
+
+func (c *Client) sendCancelDiskRemoval(ctx context.Context, request *CancelDiskRemovalRequest) (res *CancelDiskRemovalNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("cancelDiskRemoval"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/disks/array/remove/cancel"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, CancelDiskRemovalOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/disks/array/remove/cancel"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeCancelDiskRemovalRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, CancelDiskRemovalOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, CancelDiskRemovalOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeCancelDiskRemovalResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

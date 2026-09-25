@@ -664,4 +664,64 @@ describe("Settings pages", () => {
 
     expect(await within(dialog).findByText("acme: a DNS credential is required")).toBeInTheDocument();
   });
+
+  it("does not close the Let's Encrypt overlay on Escape while the issue request is pending", async () => {
+    const networkPayload = {
+      backend: "ifupdown",
+      editable: true,
+      interfaces: [
+        {
+          name: "enp1s0",
+          method: "dhcp",
+          address: "10.0.2.15",
+          prefix: 24,
+          state: "up",
+        },
+      ],
+      certificate: {
+        kind: "self_signed",
+        notAfter: "2036-09-20T00:00:00.000Z",
+        daysRemaining: 3650,
+      },
+      letsEncrypt: {
+        configured: false,
+        enabled: false,
+      },
+      allowAllSources: false,
+      listenPort: 8008,
+    };
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/settings/network") {
+        return Promise.resolve({ data: networkPayload, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+    const pendingPost: { release: (() => void) | null } = { release: null };
+    mockPost.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          pendingPost.release = () => resolve({ error: { message: "acme: a DNS credential is required" }, response: { ok: false } });
+        }),
+    );
+
+    renderWithToast(<NetworkSettingsPage />);
+
+    expect(await screen.findByText("Valid")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Set up Let's Encrypt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Issue certificate" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Enter a domain name.")).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByPlaceholderText("nas.example.com"), { target: { value: "nas.example.com" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Issue certificate" }));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: /Issue certificate/ })).toBeDisabled());
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    pendingPost.release?.();
+    expect(await within(dialog).findByText("acme: a DNS credential is required")).toBeInTheDocument();
+  });
 });

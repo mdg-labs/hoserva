@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,12 @@ import (
 
 func errUserNotFound(id uuid.UUID) error {
 	return &mockError{code: "user_not_found", statusCode: 404, message: fmt.Sprintf("no user with id %s", id)}
+}
+
+// errUserExists mirrors internal/api's ErrUserExists (users_admin.go):
+// CreateUser refuses a duplicate username, case-insensitively.
+func errUserExists(username string) error {
+	return &mockError{code: "user_exists", statusCode: 409, message: fmt.Sprintf("a user named %q already exists", username)}
 }
 
 func errGroupNotFound(id uuid.UUID) error {
@@ -33,6 +40,14 @@ func errApiTokenNotFound(id string) error {
 
 func errUserNotFoundByUsername(username string) error {
 	return &mockError{code: "user_not_found", statusCode: 404, message: fmt.Sprintf("no user %q", username)}
+}
+
+// errDuplicateGrant mirrors internal/api's own ErrDuplicateGrant
+// (share_permissions.go), which groups_store.go's SetGroupMembers
+// returns as duplicate_grant/400 for a repeated id in a full-replace
+// write.
+func errDuplicateGrant(id uuid.UUID) error {
+	return &mockError{code: "duplicate_grant", statusCode: 400, message: fmt.Sprintf("the same id appears more than once in this request: %s", id)}
 }
 
 // errShareOnlyNoAPIToken mirrors internal/api's ErrShareOnlyNoAPIToken
@@ -74,6 +89,11 @@ func (h *handler) ListUsers(ctx context.Context) (*apiv1.ListUsersOK, error) {
 func (h *handler) CreateUser(ctx context.Context, req *apiv1.CreateUserRequest) (*apiv1.UserSummary, error) {
 	h.usersMu.Lock()
 	defer h.usersMu.Unlock()
+	for _, u := range h.users {
+		if strings.EqualFold(u.Username, req.Username) {
+			return nil, errUserExists(req.Username)
+		}
+	}
 	role := apiv1.UserRoleShareOnly
 	if v, ok := req.Role.Get(); ok {
 		role = apiv1.UserRole(v)
@@ -184,6 +204,20 @@ func (h *handler) SetUserGroupMembers(ctx context.Context, req *apiv1.SetUserGro
 	g, ok := h.userGroups[params.GroupId]
 	if !ok {
 		return nil, errGroupNotFound(params.GroupId)
+	}
+	// mirrors internal/api's own AuthStore.SetGroupMembers
+	// (groups_store.go): every member id in a full-replace write must
+	// already be a real user, and no id may repeat — checked per
+	// element, duplicate before unknown, in production's own order.
+	seen := make(map[uuid.UUID]struct{}, len(req.UserIds))
+	for _, id := range req.UserIds {
+		if _, dup := seen[id]; dup {
+			return nil, errDuplicateGrant(id)
+		}
+		seen[id] = struct{}{}
+		if _, ok := h.users[id]; !ok {
+			return nil, errUserNotFound(id)
+		}
 	}
 	members := req.UserIds
 	if members == nil {
@@ -299,21 +333,40 @@ func (h *handler) UpdateSharePermissions(ctx context.Context, req *apiv1.UpdateS
 	h.usersMu.Lock()
 	defer h.usersMu.Unlock()
 
+	// mirrors internal/api's own SetSharePermissions (share_permissions.go):
+	// a repeated user or group id is refused with duplicate_grant before
+	// any existence check (rejectDuplicateGrants), then every id must
+	// already exist (existsInTx) — an unknown id is refused with
+	// user_not_found/group_not_found, not written with an empty username.
+	seenUsers := make(map[uuid.UUID]struct{}, len(req.Users))
+	for _, u := range req.Users {
+		if _, dup := seenUsers[u.UserId]; dup {
+			return nil, errDuplicateGrant(u.UserId)
+		}
+		seenUsers[u.UserId] = struct{}{}
+	}
+	seenGroups := make(map[uuid.UUID]struct{}, len(req.Groups))
+	for _, g := range req.Groups {
+		if _, dup := seenGroups[g.GroupId]; dup {
+			return nil, errDuplicateGrant(g.GroupId)
+		}
+		seenGroups[g.GroupId] = struct{}{}
+	}
 	users := make([]apiv1.UserPermissionEntry, 0, len(req.Users))
 	for _, u := range req.Users {
-		username := ""
-		if account, ok := h.users[u.UserId]; ok {
-			username = account.Username
+		account, ok := h.users[u.UserId]
+		if !ok {
+			return nil, errUserNotFound(u.UserId)
 		}
-		users = append(users, apiv1.UserPermissionEntry{UserId: u.UserId, Username: username, Access: u.Access})
+		users = append(users, apiv1.UserPermissionEntry{UserId: u.UserId, Username: account.Username, Access: u.Access})
 	}
 	groups := make([]apiv1.GroupPermissionEntry, 0, len(req.Groups))
 	for _, g := range req.Groups {
-		name := ""
-		if group, ok := h.userGroups[g.GroupId]; ok {
-			name = group.Name
+		group, ok := h.userGroups[g.GroupId]
+		if !ok {
+			return nil, errGroupNotFound(g.GroupId)
 		}
-		groups = append(groups, apiv1.GroupPermissionEntry{GroupId: g.GroupId, Name: name, Access: g.Access})
+		groups = append(groups, apiv1.GroupPermissionEntry{GroupId: g.GroupId, Name: group.Name, Access: g.Access})
 	}
 	result := apiv1.SharePermissionsResult{Users: users, Groups: groups}
 	h.sharePermissions[params.Name] = result

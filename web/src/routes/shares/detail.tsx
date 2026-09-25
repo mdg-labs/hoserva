@@ -1,5 +1,5 @@
 import { Home, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
@@ -39,7 +39,22 @@ import {
   SHARE_TAB_SMB,
 } from "@/hooks/share-detail-tabs";
 import { shareAccessOptions } from "@/hooks/share-access-options";
-import { hoservaClient, type components } from "@/lib/api/client";
+import type { components } from "@/lib/api/client";
+import {
+  deleteShare,
+  deleteShareFile,
+  getShare,
+  getSharePermissions,
+  getUserGroups,
+  getUsers,
+  getShareBrowse,
+  patchShare,
+  postShareDataDelete,
+  postShareRelocate,
+  putSharePermissions,
+} from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
 import { shareMutationError, shareRelocationDirection } from "@/routes/shares/cache-mode";
 import { buildNfsExportLine, buildSmbStanza } from "@/routes/shares/config-preview";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
@@ -85,12 +100,31 @@ export function ShareDetailPage(): React.ReactElement {
   const [searchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") ?? SHARE_TAB_GENERAL;
 
+  const shareQuery = useApiQuery<Share>({
+    queryKey: ["share", name],
+    queryFn: (signal) => getShare(name, signal),
+    fallbackError: t("shares.detail.loadFailed"),
+  });
+  const detailUsersQuery = useApiQuery<{ users: components["schemas"]["UserSummary"][] }>({
+    queryKey: "share-detail-users",
+    queryFn: (signal) => getUsers(signal),
+    fallbackError: t("shares.detail.loadFailed"),
+  });
+  const detailGroupsQuery = useApiQuery<{ groups: components["schemas"]["UserGroup"][] }>({
+    queryKey: "share-detail-groups",
+    queryFn: (signal) => getUserGroups(signal),
+    fallbackError: t("shares.detail.loadFailed"),
+  });
+  const sharePermissionsQuery = useApiQuery<components["schemas"]["SharePermissionsResult"]>({
+    queryKey: ["share-permissions", name],
+    queryFn: (signal) => getSharePermissions(name, signal),
+    fallbackError: t("shares.detail.loadFailed"),
+  });
+
   const [share, setShare] = useState<Share | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const [createPolicyDraft, setCreatePolicyDraft] = useState<ArrayCreatePolicy>("mspmfs");
-  const [savingAllocation, setSavingAllocation] = useState(false);
 
   const [cacheModeDraft, setCacheModeDraft] = useState<ShareCacheMode>("cache-then-move");
   const [cacheConfirmOpen, setCacheConfirmOpen] = useState(false);
@@ -98,144 +132,183 @@ export function ShareDetailPage(): React.ReactElement {
   // share.cacheMode before the relocate call, so a relocate that then
   // fails must still be offered (and summarized) from this mode.
   const [cacheModeFrom, setCacheModeFrom] = useState<ShareCacheMode | null>(null);
-  const [savingCache, setSavingCache] = useState(false);
   const [cacheDialogError, setCacheDialogError] = useState<string | null>(null);
 
   const [smbDraft, setSmbDraft] = useState<ShareSMB | null>(null);
-  const [savingSmb, setSavingSmb] = useState(false);
 
   const [nfsDraft, setNfsDraft] = useState<ShareNFS | null>(null);
-  const [savingNfs, setSavingNfs] = useState(false);
 
   const [permissionRows, setPermissionRows] = useState<PermissionRow[] | null>(null);
-  const [savingPermissions, setSavingPermissions] = useState(false);
 
   const [browseAcknowledged, setBrowseAcknowledged] = useState(false);
   const [browsePath, setBrowsePath] = useState("");
   const [browseEntries, setBrowseEntries] = useState<ShareBrowseEntry[] | null>(null);
-  const [browseLoading, setBrowseLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [deleteFileTarget, setDeleteFileTarget] = useState<string | null>(null);
-  const [deleteFileBusy, setDeleteFileBusy] = useState(false);
 
   const [removeOpen, setRemoveOpen] = useState(false);
-  const [removeBusy, setRemoveBusy] = useState(false);
   const [removeDialogError, setRemoveDialogError] = useState<string | null>(null);
   const [deleteDataOpen, setDeleteDataOpen] = useState(false);
   const [deleteDataConfirm, setDeleteDataConfirm] = useState("");
-  const [deleteDataBusy, setDeleteDataBusy] = useState(false);
+  const [deleteDataError, setDeleteDataError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    Promise.all([
-      hoservaClient.GET("/shares/{name}", { params: { path: { name } }, signal: controller.signal }),
-      hoservaClient.GET("/users", { signal: controller.signal }),
-      hoservaClient.GET("/user-groups", { signal: controller.signal }),
-      hoservaClient.GET("/shares/{name}/permissions", {
-        params: { path: { name } },
-        signal: controller.signal,
-      }),
-    ])
-      .then(([shareResult, usersResult, groupsResult, permissionsResult]) => {
-        if (controller.signal.aborted) return;
-        if (shareResult.error) {
-          setError(shareResult.error.message);
-          return;
-        }
-        const loaded = shareResult.data;
-        if (!loaded) return;
-        setShare(loaded);
-        setCreatePolicyDraft(loaded.createPolicy);
-        setCacheModeDraft(loaded.cacheMode);
-        setSmbDraft(loaded.smb);
-        setNfsDraft(loaded.nfs);
-
-        const userList = usersResult.data?.users ?? [];
-        const groupList = groupsResult.data?.groups ?? [];
-
-        const permissions = permissionsResult.data;
-        const userAccess = new Map(permissions?.users.map((entry) => [entry.userId, entry.access]));
-        const groupAccess = new Map(permissions?.groups.map((entry) => [entry.groupId, entry.access]));
-        setPermissionRows([
-          ...userList.map((user) => ({
-            kind: "user" as const,
-            id: user.id,
-            label: user.username,
-            access: userAccess.get(user.id) ?? "none",
-          })),
-          ...groupList.map((group) => ({
-            kind: "group" as const,
-            id: group.id,
-            label: group.name,
-            access: groupAccess.get(group.id) ?? "none",
-          })),
-        ]);
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      });
-    return () => controller.abort();
-  }, [name]);
-
-  async function saveShare(patch: Partial<components["schemas"]["UpdateShareRequest"]>): Promise<boolean> {
-    setSaveError(null);
-    try {
-      const { data, error: apiError } = await hoservaClient.PATCH("/shares/{name}", {
-        params: { path: { name } },
-        body: patch,
-      });
-      if (apiError) {
-        setSaveError(shareMutationError(apiError, t));
-        return false;
-      }
-      if (data) {
-        setShare(data);
-      }
-      return true;
-    } catch (err: unknown) {
-      setSaveError(shareMutationError(err, t));
-      return false;
-    }
+  // Adjusts state when the loaded share changes, rather than in an effect
+  // (react-hooks/set-state-in-effect).
+  const [seenShare, setSeenShare] = useState<Share | null>(null);
+  if (shareQuery.data && shareQuery.data !== seenShare) {
+    const loaded = shareQuery.data;
+    setSeenShare(loaded);
+    setShare(loaded);
+    setCreatePolicyDraft(loaded.createPolicy);
+    setCacheModeDraft(loaded.cacheMode);
+    setSmbDraft(loaded.smb);
+    setNfsDraft(loaded.nfs);
   }
+
+  // Only seeds once all three of users, groups and this share's permissions
+  // have loaded — a failed permissions fetch must never read as "no
+  // access", and a save built from a partial draft would silently wipe
+  // every grant this share actually has (issue #271 finding 2). Adjusted
+  // during render, not in an effect, for the same reason as above; each
+  // source is tracked separately since the three queries settle at
+  // different times.
+  const [seenUsers, setSeenUsers] = useState<typeof detailUsersQuery.data>(null);
+  const [seenGroups, setSeenGroups] = useState<typeof detailGroupsQuery.data>(null);
+  const [seenPermissions, setSeenPermissions] = useState<typeof sharePermissionsQuery.data>(null);
+  const userList = detailUsersQuery.data?.users;
+  const groupList = detailGroupsQuery.data?.groups;
+  const permissions = sharePermissionsQuery.data;
+  if (
+    userList &&
+    groupList &&
+    permissions &&
+    (detailUsersQuery.data !== seenUsers ||
+      detailGroupsQuery.data !== seenGroups ||
+      sharePermissionsQuery.data !== seenPermissions)
+  ) {
+    setSeenUsers(detailUsersQuery.data);
+    setSeenGroups(detailGroupsQuery.data);
+    setSeenPermissions(sharePermissionsQuery.data);
+    const userAccess = new Map(permissions.users.map((entry) => [entry.userId, entry.access]));
+    const groupAccess = new Map(permissions.groups.map((entry) => [entry.groupId, entry.access]));
+    setPermissionRows([
+      ...userList.map((user) => ({
+        kind: "user" as const,
+        id: user.id,
+        label: user.username,
+        access: userAccess.get(user.id) ?? "none",
+      })),
+      ...groupList.map((group) => ({
+        kind: "group" as const,
+        id: group.id,
+        label: group.name,
+        access: groupAccess.get(group.id) ?? "none",
+      })),
+    ]);
+  }
+
+  const permissionsLoadError =
+    detailUsersQuery.error ?? detailGroupsQuery.error ?? sharePermissionsQuery.error;
+  const permissionsLoading =
+    detailUsersQuery.loading || detailGroupsQuery.loading || sharePermissionsQuery.loading;
+
+  // Every share-detail mutation goes through useApiMutation, which already
+  // treats openapi-fetch's non-OK-empty-body response the same as an
+  // `error` (issue #271 finding 3) and never lets a rejected request or an
+  // abort escape as an unhandled rejection. Allocation, cache mode, SMB and
+  // NFS each keep a separate mutation instance so one section's spinner
+  // never lights up another's Save button.
+  const allocationMutation = useApiMutation<Partial<components["schemas"]["UpdateShareRequest"]>, Share>({
+    mutationFn: async (patch) => {
+      const result = await patchShare(name, patch);
+      if (result.error) {
+        return { ...result, error: { ...result.error, message: shareMutationError(result.error, t) } };
+      }
+      return result;
+    },
+  });
+  const cacheModeMutation = useApiMutation<Partial<components["schemas"]["UpdateShareRequest"]>, Share>({
+    mutationFn: async (patch) => {
+      const result = await patchShare(name, patch);
+      if (result.error) {
+        return { ...result, error: { ...result.error, message: shareMutationError(result.error, t) } };
+      }
+      return result;
+    },
+  });
+  const relocateMutation = useApiMutation<"cache" | "array", components["schemas"]["Job"] | undefined>({
+    mutationFn: async (direction) => {
+      const result = await postShareRelocate(name, direction);
+      if (result.error) {
+        return { ...result, error: { ...result.error, message: shareMutationError(result.error, t) } };
+      }
+      return result;
+    },
+  });
+  const smbMutation = useApiMutation<Partial<components["schemas"]["UpdateShareRequest"]>, Share>({
+    mutationFn: async (patch) => {
+      const result = await patchShare(name, patch);
+      if (result.error) {
+        return { ...result, error: { ...result.error, message: shareMutationError(result.error, t) } };
+      }
+      return result;
+    },
+  });
+  const nfsMutation = useApiMutation<Partial<components["schemas"]["UpdateShareRequest"]>, Share>({
+    mutationFn: async (patch) => {
+      const result = await patchShare(name, patch);
+      if (result.error) {
+        return { ...result, error: { ...result.error, message: shareMutationError(result.error, t) } };
+      }
+      return result;
+    },
+  });
+  const permissionsMutation = useApiMutation<components["schemas"]["UpdateSharePermissionsRequest"], unknown>({
+    mutationFn: async (body) => {
+      const result = await putSharePermissions(name, body);
+      if (result.error) {
+        return { ...result, error: { ...result.error, message: shareMutationError(result.error, t) } };
+      }
+      return result;
+    },
+  });
+  const browseMutation = useApiMutation<string, { entries: ShareBrowseEntry[] }>({
+    mutationFn: (path) => getShareBrowse(name, path),
+  });
+  const deleteFileMutation = useApiMutation<string, unknown>({
+    mutationFn: (path) => deleteShareFile(name, path),
+  });
+  const removeMutation = useApiMutation<undefined, unknown>({
+    mutationFn: async () => {
+      const result = await deleteShare(name);
+      if (result.error) {
+        return { ...result, error: { ...result.error, message: shareMutationError(result.error, t) } };
+      }
+      return result;
+    },
+  });
+  const deleteDataMutation = useApiMutation<string, unknown>({
+    mutationFn: (confirmation) => postShareDataDelete(name, confirmation),
+  });
 
   async function handleSaveAllocation(): Promise<void> {
-    setSavingAllocation(true);
-    try {
-      await saveShare({ createPolicy: createPolicyDraft });
-    } finally {
-      setSavingAllocation(false);
+    setSaveError(null);
+    const result = await allocationMutation.mutate({ createPolicy: createPolicyDraft });
+    if (result.ok) {
+      if (result.data) setShare(result.data);
+    } else if (!result.aborted) {
+      setSaveError(result.error);
     }
-  }
-
-  async function saveCacheMode(): Promise<boolean> {
-    const { data, error: apiError } = await hoservaClient.PATCH("/shares/{name}", {
-      params: { path: { name } },
-      body: { cacheMode: cacheModeDraft },
-    });
-    if (apiError) {
-      setCacheDialogError(shareMutationError(apiError, t));
-      return false;
-    }
-    if (data) {
-      setShare(data);
-    }
-    return true;
   }
 
   async function handleSaveCacheModeOnly(): Promise<void> {
-    setSavingCache(true);
     setCacheDialogError(null);
-    try {
-      const saved = await saveCacheMode();
-      if (saved) {
-        setCacheConfirmOpen(false);
-      }
-    } catch (err: unknown) {
-      setCacheDialogError(shareMutationError(err, t));
-    } finally {
-      setSavingCache(false);
+    const result = await cacheModeMutation.mutate({ cacheMode: cacheModeDraft });
+    if (result.ok) {
+      if (result.data) setShare(result.data);
+      setCacheConfirmOpen(false);
+    } else if (!result.aborted) {
+      setCacheDialogError(result.error);
     }
   }
 
@@ -247,159 +320,117 @@ export function ShareDetailPage(): React.ReactElement {
     if (!direction) {
       return;
     }
-    setSavingCache(true);
     setCacheDialogError(null);
-    try {
-      const saved = await saveCacheMode();
-      if (!saved) {
-        return;
-      }
-      const { data, error: apiError } = await hoservaClient.POST("/shares/{name}/relocate", {
-        params: { path: { name } },
-        body: { to: direction },
-      });
-      if (apiError) {
-        setCacheDialogError(shareMutationError(apiError, t));
-        return;
-      }
-      if (data) {
-        toastManager.add({
-          type: "success",
-          title: t("cache.relocation.queuedTitle"),
-          description: t("cache.relocation.queuedDescription"),
-          actionProps: {
-            children: t("cache.relocation.viewJob"),
-            onClick: () => navigate(jobDetailPath(data.id)),
-          },
-        });
-      }
-      setCacheConfirmOpen(false);
-    } catch (err: unknown) {
-      setCacheDialogError(shareMutationError(err, t));
-    } finally {
-      setSavingCache(false);
+    const patchResult = await cacheModeMutation.mutate({ cacheMode: cacheModeDraft });
+    if (!patchResult.ok) {
+      if (!patchResult.aborted) setCacheDialogError(patchResult.error);
+      return;
     }
+    if (patchResult.data) setShare(patchResult.data);
+
+    const relocateResult = await relocateMutation.mutate(direction);
+    if (!relocateResult.ok) {
+      if (!relocateResult.aborted) setCacheDialogError(relocateResult.error);
+      return;
+    }
+    const relocatedJob = relocateResult.data;
+    if (relocatedJob) {
+      toastManager.add({
+        type: "success",
+        title: t("cache.relocation.queuedTitle"),
+        description: t("cache.relocation.queuedDescription"),
+        actionProps: {
+          children: t("cache.relocation.viewJob"),
+          onClick: () => navigate(jobDetailPath(relocatedJob.id)),
+        },
+      });
+    }
+    setCacheConfirmOpen(false);
   }
 
   async function handleSaveSmb(): Promise<void> {
     if (!smbDraft) return;
-    setSavingSmb(true);
-    try {
-      await saveShare({ smb: smbDraft });
-    } finally {
-      setSavingSmb(false);
+    setSaveError(null);
+    const result = await smbMutation.mutate({ smb: smbDraft });
+    if (result.ok) {
+      if (result.data) setShare(result.data);
+    } else if (!result.aborted) {
+      setSaveError(result.error);
     }
   }
 
   async function handleSaveNfs(): Promise<void> {
     if (!nfsDraft) return;
-    setSavingNfs(true);
-    try {
-      await saveShare({ nfs: nfsDraft });
-    } finally {
-      setSavingNfs(false);
+    setSaveError(null);
+    const result = await nfsMutation.mutate({ nfs: nfsDraft });
+    if (result.ok) {
+      if (result.data) setShare(result.data);
+    } else if (!result.aborted) {
+      setSaveError(result.error);
     }
   }
 
   async function handleSavePermissions(): Promise<void> {
-    if (!permissionRows) return;
-    setSavingPermissions(true);
+    if (!permissionRows || permissionsLoading || permissionsLoadError) return;
     setSaveError(null);
-    try {
-      const { error: apiError } = await hoservaClient.PUT("/shares/{name}/permissions", {
-        params: { path: { name } },
-        body: {
-          users: permissionRows
-            .filter((row) => row.kind === "user" && row.access !== "none")
-            .map((row) => ({ userId: row.id, access: row.access })),
-          groups: permissionRows
-            .filter((row) => row.kind === "group" && row.access !== "none")
-            .map((row) => ({ groupId: row.id, access: row.access })),
-        },
-      });
-      if (apiError) {
-        setSaveError(apiError.message);
-      }
-    } finally {
-      setSavingPermissions(false);
+    const result = await permissionsMutation.mutate({
+      users: permissionRows
+        .filter((row) => row.kind === "user" && row.access !== "none")
+        .map((row) => ({ userId: row.id, access: row.access })),
+      groups: permissionRows
+        .filter((row) => row.kind === "group" && row.access !== "none")
+        .map((row) => ({ groupId: row.id, access: row.access })),
+    });
+    if (!result.ok && !result.aborted) {
+      setSaveError(result.error);
     }
   }
 
   async function loadBrowse(path: string): Promise<void> {
-    setBrowseLoading(true);
     setBrowseError(null);
-    try {
-      const { data, error: apiError } = await hoservaClient.GET("/shares/{name}/browse", {
-        params: { path: { name }, query: { path } },
-      });
-      if (apiError) {
-        setBrowseError(apiError.message);
-        return;
-      }
-      setBrowsePath(path);
-      setBrowseEntries(data?.entries ?? []);
-    } finally {
-      setBrowseLoading(false);
+    const result = await browseMutation.mutate(path);
+    if (!result.ok) {
+      if (!result.aborted) setBrowseError(result.error);
+      return;
     }
+    setBrowsePath(path);
+    setBrowseEntries(result.data?.entries ?? []);
   }
 
   async function handleDeleteFile(): Promise<void> {
     if (deleteFileTarget === null) return;
-    setDeleteFileBusy(true);
-    try {
-      const { error: apiError } = await hoservaClient.DELETE("/shares/{name}/browse", {
-        params: { path: { name }, query: { path: deleteFileTarget } },
-        body: { confirm: true },
-      });
-      if (apiError) {
-        setBrowseError(apiError.message);
-        setDeleteFileTarget(null);
-        return;
-      }
+    const result = await deleteFileMutation.mutate(deleteFileTarget);
+    if (!result.ok) {
+      if (!result.aborted) setBrowseError(result.error);
       setDeleteFileTarget(null);
-      await loadBrowse(browsePath);
-    } finally {
-      setDeleteFileBusy(false);
+      return;
     }
+    setDeleteFileTarget(null);
+    await loadBrowse(browsePath);
   }
 
   async function handleRemoveDefinition(): Promise<void> {
-    setRemoveBusy(true);
     setRemoveDialogError(null);
-    try {
-      const { error: apiError } = await hoservaClient.DELETE("/shares/{name}", {
-        params: { path: { name } },
-        body: { confirm: true },
-      });
-      if (apiError) {
-        setRemoveDialogError(shareMutationError(apiError, t));
-        return;
-      }
-      navigate(PATHS.shares);
-    } catch (err: unknown) {
-      setRemoveDialogError(shareMutationError(err, t));
-    } finally {
-      setRemoveBusy(false);
+    const result = await removeMutation.mutate(undefined);
+    if (!result.ok) {
+      if (!result.aborted) setRemoveDialogError(result.error);
+      return;
     }
+    navigate(PATHS.shares);
   }
 
   async function handleDeleteData(): Promise<void> {
-    setDeleteDataBusy(true);
-    try {
-      const { error: apiError } = await hoservaClient.POST("/shares/{name}/data/delete", {
-        params: { path: { name } },
-        body: { confirmation: deleteDataConfirm },
-      });
-      if (apiError) {
-        setSaveError(apiError.message);
-        return;
-      }
-      setDeleteDataOpen(false);
-      setDeleteDataConfirm("");
-    } finally {
-      setDeleteDataBusy(false);
+    setDeleteDataError(null);
+    const result = await deleteDataMutation.mutate(deleteDataConfirm);
+    if (!result.ok) {
+      if (!result.aborted) setDeleteDataError(result.error);
+      return;
     }
+    setDeleteDataOpen(false);
+    setDeleteDataConfirm("");
   }
+
+  const cacheDialogBusy = cacheModeMutation.pending || relocateMutation.pending;
 
   const includedInParity = share ? share.cacheMode !== "cache-only" : false;
   const cacheRelocationDirection = cacheModeFrom ? shareRelocationDirection(cacheModeFrom, cacheModeDraft) : null;
@@ -444,6 +475,8 @@ export function ShareDetailPage(): React.ReactElement {
     ],
     [t],
   );
+
+  const error = shareQuery.error;
 
   if (!share && !error) {
     return <LoadingBlock />;
@@ -529,6 +562,7 @@ export function ShareDetailPage(): React.ReactElement {
       actionLabel: t("shares.detail.danger.deleteDataAction"),
       onAction: () => {
         setDeleteDataConfirm("");
+        setDeleteDataError(null);
         setDeleteDataOpen(true);
       },
     },
@@ -613,7 +647,7 @@ export function ShareDetailPage(): React.ReactElement {
                 </CardPanel>
                 <CardFooter className="justify-end border-t">
                   <Button
-                    loading={savingAllocation}
+                    loading={allocationMutation.pending}
                     disabled={createPolicyDraft === share.createPolicy}
                     onClick={() => void handleSaveAllocation()}
                   >
@@ -714,7 +748,7 @@ export function ShareDetailPage(): React.ReactElement {
                     <CodeView title={t("shares.detail.smb.exportPreview")} code={smbStanza} />
                   </CardPanel>
                   <CardFooter className="justify-end border-t">
-                    <Button loading={savingSmb} onClick={() => void handleSaveSmb()}>
+                    <Button loading={smbMutation.pending} onClick={() => void handleSaveSmb()}>
                       {t("shares.detail.save")}
                     </Button>
                   </CardFooter>
@@ -725,14 +759,20 @@ export function ShareDetailPage(): React.ReactElement {
                     <CardTitle>{t("shares.detail.smb.permissions.title")}</CardTitle>
                   </CardHeader>
                   <CardPanel>
-                    {permissionRows ? (
+                    {permissionsLoadError ? (
+                      <Banner tone="error" title={permissionsLoadError} />
+                    ) : permissionRows ? (
                       <DataTable columns={permissionColumns} rows={permissionRows} getRowKey={(row) => `${row.kind}-${row.id}`} />
                     ) : (
                       <LoadingBlock rows={2} />
                     )}
                   </CardPanel>
                   <CardFooter className="justify-end border-t">
-                    <Button loading={savingPermissions} onClick={() => void handleSavePermissions()}>
+                    <Button
+                      loading={permissionsMutation.pending}
+                      disabled={!permissionRows || permissionsLoading || Boolean(permissionsLoadError)}
+                      onClick={() => void handleSavePermissions()}
+                    >
                       {t("shares.detail.save")}
                     </Button>
                   </CardFooter>
@@ -788,7 +828,7 @@ export function ShareDetailPage(): React.ReactElement {
                   </div>
                 </CardPanel>
                 <CardFooter className="justify-end border-t">
-                  <Button loading={savingNfs} onClick={() => void handleSaveNfs()}>
+                  <Button loading={nfsMutation.pending} onClick={() => void handleSaveNfs()}>
                     {t("shares.detail.save")}
                   </Button>
                 </CardFooter>
@@ -851,7 +891,7 @@ export function ShareDetailPage(): React.ReactElement {
                       </BreadcrumbList>
                     </Breadcrumb>
                     {browseError ? <Banner tone="error" title={browseError} /> : null}
-                    {browseLoading || !browseEntries ? (
+                    {browseMutation.pending || !browseEntries ? (
                       <LoadingBlock />
                     ) : (
                       <DataTable columns={browseColumns} rows={browseEntries} getRowKey={(entry) => entry.name} />
@@ -872,6 +912,12 @@ export function ShareDetailPage(): React.ReactElement {
       <FormOverlay
         open={cacheConfirmOpen}
         onOpenChange={(open) => {
+          // Same rule as the disabled Cancel button: Escape and a backdrop
+          // click both come through here as onOpenChange(false), so a busy
+          // handler must ignore them too, not just the button (#375).
+          if (!open && cacheDialogBusy) {
+            return;
+          }
           setCacheConfirmOpen(open);
           if (!open) {
             setCacheDialogError(null);
@@ -882,14 +928,14 @@ export function ShareDetailPage(): React.ReactElement {
         description={t("shares.detail.cache.confirmDescription")}
         footer={
           <div className="flex flex-wrap justify-end gap-2">
-            <Button variant="outline" disabled={savingCache} onClick={() => setCacheConfirmOpen(false)}>
+            <Button variant="outline" disabled={cacheDialogBusy} onClick={() => setCacheConfirmOpen(false)}>
               {t("confirm.cancel")}
             </Button>
-            <Button loading={savingCache} onClick={() => void handleSaveCacheModeOnly()}>
+            <Button loading={cacheDialogBusy} onClick={() => void handleSaveCacheModeOnly()}>
               {t("shares.detail.cache.changeModeOnly")}
             </Button>
             {cacheRelocationDirection ? (
-              <Button loading={savingCache} onClick={() => void handleSaveCacheModeAndRelocate()}>
+              <Button loading={cacheDialogBusy} onClick={() => void handleSaveCacheModeAndRelocate()}>
                 {t("shares.detail.cache.relocateNow")}
               </Button>
             ) : null}
@@ -911,6 +957,13 @@ export function ShareDetailPage(): React.ReactElement {
       <ConfirmDialog
         open={deleteFileTarget !== null}
         onOpenChange={(open) => {
+          // Same rule as the cache-mode, delete-data and remove-definition
+          // dialogs: Escape and a backdrop click both come through here as
+          // onOpenChange(false), so a busy handler must ignore them too
+          // (#375, #376).
+          if (!open && deleteFileMutation.pending) {
+            return;
+          }
           if (!open) setDeleteFileTarget(null);
         }}
         title={t("shares.detail.browse.deleteConfirmTitle")}
@@ -920,13 +973,19 @@ export function ShareDetailPage(): React.ReactElement {
             : undefined
         }
         destructive
-        loading={deleteFileBusy}
+        loading={deleteFileMutation.pending}
         onConfirm={() => void handleDeleteFile()}
       />
 
       <ConfirmDialog
         open={removeOpen}
         onOpenChange={(open) => {
+          // Same rule as the cache-mode and delete-data dialogs: Escape and
+          // a backdrop click both come through here as onOpenChange(false),
+          // so a busy handler must ignore them too (#375, #376).
+          if (!open && removeMutation.pending) {
+            return;
+          }
           setRemoveOpen(open);
           if (!open) {
             setRemoveDialogError(null);
@@ -936,16 +995,24 @@ export function ShareDetailPage(): React.ReactElement {
         description={t("shares.detail.danger.removeConfirmDescription")}
         error={removeDialogError}
         destructive
-        loading={removeBusy}
+        loading={removeMutation.pending}
         onConfirm={() => void handleRemoveDefinition()}
       />
 
       <FormOverlay
         open={deleteDataOpen}
         onOpenChange={(open) => {
+          // Same rule as the cache-mode and remove-definition dialogs:
+          // Escape and a backdrop click both come through here as
+          // onOpenChange(false), so a busy handler must ignore them too
+          // (#375, #376).
+          if (!open && deleteDataMutation.pending) {
+            return;
+          }
           if (!open) {
             setDeleteDataOpen(false);
             setDeleteDataConfirm("");
+            setDeleteDataError(null);
           }
         }}
         title={t("shares.detail.danger.deleteDataConfirmTitle")}
@@ -953,14 +1020,15 @@ export function ShareDetailPage(): React.ReactElement {
         footer={
           <Button
             variant="destructive"
-            disabled={deleteDataConfirm !== share.name || deleteDataBusy}
-            loading={deleteDataBusy}
+            disabled={deleteDataConfirm !== share.name || deleteDataMutation.pending}
+            loading={deleteDataMutation.pending}
             onClick={() => void handleDeleteData()}
           >
             {t("shares.detail.danger.deleteDataAction")}
           </Button>
         }
       >
+        {deleteDataError ? <Banner tone="error" title={deleteDataError} /> : null}
         <TypedConfirm
           phrase={share.name}
           value={deleteDataConfirm}

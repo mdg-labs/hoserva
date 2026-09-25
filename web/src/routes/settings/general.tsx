@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Banner } from "@/components/patterns/banner";
@@ -11,7 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardFooter, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { hoservaClient, type components } from "@/lib/api/client";
+import type { components } from "@/lib/api/client";
+import { getGeneralSettings, getUPSSettings, putGeneralSettings, putUPSSettings } from "@/lib/api/operations";
+import { useApiMutation } from "@/lib/api/use-api-mutation";
+import { useApiQuery } from "@/lib/api/use-api-query";
 
 type GeneralSettings = components["schemas"]["GeneralSettings"];
 type UPSSettings = components["schemas"]["UPSSettings"];
@@ -119,61 +122,57 @@ function upsDirty(form: UPSFormState, saved: UPSSettings | null, passwordTouched
 
 export function GeneralSettingsPage(): React.ReactElement {
   const { t } = useTranslation();
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [upsSaving, setUpsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [upsError, setUpsError] = useState<string | null>(null);
-  const [saved, setSaved] = useState<GeneralSettings | null>(null);
-  const [upsSaved, setUpsSaved] = useState<UPSSettings | null>(null);
+  const generalQuery = useApiQuery<GeneralSettings>({
+    queryKey: "general-settings",
+    queryFn: (signal) => getGeneralSettings(signal),
+    fallbackError: t("settings.general.loadFailed"),
+  });
+  const upsQuery = useApiQuery<UPSSettings>({
+    queryKey: "ups-settings",
+    queryFn: (signal) => getUPSSettings(signal),
+    fallbackError: t("settings.ups.loadFailed"),
+  });
+  const generalMutation = useApiMutation<{ hostname: string; timezone: string }, GeneralSettings>({
+    mutationFn: (body) => putGeneralSettings(body),
+    fallbackError: t("settings.general.saveFailed"),
+  });
+  const upsMutation = useApiMutation<components["schemas"]["UpdateUPSSettingsRequest"], UPSSettings>({
+    mutationFn: (body) => putUPSSettings(body),
+    fallbackError: t("settings.ups.saveFailed"),
+  });
+
+  const saved = generalQuery.data;
+  const upsSaved = upsQuery.data;
   const [hostname, setHostname] = useState("");
   const [timezone, setTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [upsForm, setUpsForm] = useState<UPSFormState>(defaultUPSForm);
   const [passwordTouched, setPasswordTouched] = useState({ monitor: false, network: false });
+  // Set at handler entry and cleared in `finally`, so Save/Cancel stay
+  // disabled across the whole handler, not just while the mutation's own
+  // `pending` flag is true — that flag drops back to false while the
+  // trailing `refresh()` is still in flight and `dirty`/`upsIsDirty` are
+  // still true (the query's `data` hasn't caught up yet), which would let
+  // a second click re-submit the same save (issue #271 finding).
+  const [generalSaveBusy, setGeneralSaveBusy] = useState(false);
+  const [upsSaveBusy, setUpsSaveBusy] = useState(false);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    Promise.all([
-      hoservaClient.GET("/settings/general", { signal: controller.signal }),
-      hoservaClient.GET("/settings/ups", { signal: controller.signal }),
-    ])
-      .then(([general, ups]) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        if (general.error) {
-          setError(general.error.message ?? t("settings.general.loadFailed"));
-        } else if (general.data) {
-          setSaved(general.data);
-          setHostname(general.data.hostname ?? "");
-          setTimezone(general.data.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
-        } else {
-          setError(t("settings.general.loadFailed"));
-        }
-        if (ups.error) {
-          setUpsError(ups.error.message ?? t("settings.ups.loadFailed"));
-        } else if (ups.data) {
-          setUpsSaved(ups.data);
-          setUpsForm(upsFormFromSettings(ups.data));
-          setPasswordTouched({ monitor: false, network: false });
-        } else {
-          setUpsError(t("settings.ups.loadFailed"));
-        }
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
-      });
-    return () => {
-      controller.abort();
-    };
-  }, [t]);
+  // Adjusts state when the loaded (or just-saved) settings object changes,
+  // rather than in an effect (react-hooks/set-state-in-effect) — the draft
+  // resets to match the server exactly once per new `saved`/`upsSaved`
+  // reference.
+  const [seededGeneral, setSeededGeneral] = useState<GeneralSettings | null>(null);
+  if (saved && saved !== seededGeneral) {
+    setSeededGeneral(saved);
+    setHostname(saved.hostname ?? "");
+    setTimezone(saved.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
+  }
+
+  const [seededUps, setSeededUps] = useState<UPSSettings | null>(null);
+  if (upsSaved && upsSaved !== seededUps) {
+    setSeededUps(upsSaved);
+    setUpsForm(upsFormFromSettings(upsSaved));
+    setPasswordTouched({ monitor: false, network: false });
+  }
 
   const dirty =
     saved !== null &&
@@ -182,95 +181,70 @@ export function GeneralSettingsPage(): React.ReactElement {
   const upsIsDirty = upsDirty(upsForm, upsSaved, passwordTouched);
 
   async function handleSave(): Promise<void> {
-    setError(null);
-    setSaving(true);
+    setGeneralSaveBusy(true);
     try {
-      const { data, error: apiError } = await hoservaClient.PUT("/settings/general", {
-        body: {
-          hostname,
-          timezone,
-        },
-      });
-      if (apiError) {
-        setError(apiError.message ?? t("settings.general.saveFailed"));
+      const result = await generalMutation.mutate({ hostname, timezone });
+      if (!result.ok) {
         return;
       }
-      if (!data) {
-        setError(t("settings.general.saveFailed"));
-        return;
-      }
-      setSaved(data);
-      setHostname(data.hostname ?? "");
-      setTimezone(data.timezone ?? timezone);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      await generalQuery.refresh();
     } finally {
-      setSaving(false);
+      setGeneralSaveBusy(false);
     }
   }
 
   function handleCancel(): void {
+    generalMutation.reset();
     if (!saved) {
       return;
     }
     setHostname(saved.hostname ?? "");
     setTimezone(saved.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
-    setError(null);
   }
 
   async function handleUPSSave(): Promise<void> {
-    setUpsError(null);
-    setUpsSaving(true);
+    const body: components["schemas"]["UpdateUPSSettingsRequest"] = {
+      connection: upsForm.connection,
+    };
+    if (upsForm.connection === "usb") {
+      body.driver = upsForm.driver;
+      body.port = upsForm.port;
+      if (upsForm.monitorPassword !== "") {
+        body.monitorPassword = upsForm.monitorPassword;
+      }
+      body.lowBatteryPercent = upsForm.lowBatteryPercent;
+      body.runtimeSeconds = upsForm.runtimeSeconds;
+    } else {
+      body.networkHost = upsForm.networkHost;
+      body.networkPort = upsForm.networkPort;
+      body.networkUpsName = upsForm.networkUpsName;
+      body.networkUsername = upsForm.networkUsername;
+      if (upsForm.networkPassword !== "") {
+        body.networkPassword = upsForm.networkPassword;
+      }
+    }
+    setUpsSaveBusy(true);
     try {
-      const body: components["schemas"]["UpdateUPSSettingsRequest"] = {
-        connection: upsForm.connection,
-      };
-      if (upsForm.connection === "usb") {
-        body.driver = upsForm.driver;
-        body.port = upsForm.port;
-        if (upsForm.monitorPassword !== "") {
-          body.monitorPassword = upsForm.monitorPassword;
-        }
-        body.lowBatteryPercent = upsForm.lowBatteryPercent;
-        body.runtimeSeconds = upsForm.runtimeSeconds;
-      } else {
-        body.networkHost = upsForm.networkHost;
-        body.networkPort = upsForm.networkPort;
-        body.networkUpsName = upsForm.networkUpsName;
-        body.networkUsername = upsForm.networkUsername;
-        if (upsForm.networkPassword !== "") {
-          body.networkPassword = upsForm.networkPassword;
-        }
-      }
-      const { data, error: apiError } = await hoservaClient.PUT("/settings/ups", { body });
-      if (apiError) {
-        setUpsError(apiError.message ?? t("settings.ups.saveFailed"));
+      const result = await upsMutation.mutate(body);
+      if (!result.ok) {
         return;
       }
-      if (!data) {
-        setUpsError(t("settings.ups.saveFailed"));
-        return;
-      }
-      setUpsSaved(data);
-      setUpsForm(upsFormFromSettings(data));
-      setPasswordTouched({ monitor: false, network: false });
-    } catch (err: unknown) {
-      setUpsError(err instanceof Error ? err.message : String(err));
+      await upsQuery.refresh();
     } finally {
-      setUpsSaving(false);
+      setUpsSaveBusy(false);
     }
   }
 
   function handleUPSCancel(): void {
+    upsMutation.reset();
     if (!upsSaved) {
       return;
     }
     setUpsForm(upsFormFromSettings(upsSaved));
     setPasswordTouched({ monitor: false, network: false });
-    setUpsError(null);
   }
 
-  if (loading) {
+  if (generalQuery.loading || upsQuery.loading) {
     return <LoadingBlock />;
   }
 
@@ -286,6 +260,11 @@ export function GeneralSettingsPage(): React.ReactElement {
       description: t("settings.ups.connectionNetworkDescription"),
     },
   ];
+
+  const error = generalQuery.error ?? generalMutation.error;
+  const upsError = upsQuery.error ?? upsMutation.error;
+  const saving = generalSaveBusy || generalMutation.pending;
+  const upsSaving = upsSaveBusy || upsMutation.pending;
 
   return (
     <div className="flex flex-col gap-4">

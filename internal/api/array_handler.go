@@ -554,6 +554,83 @@ func (h *Handler) FinishDiskRemoval(ctx context.Context, req *apiv1.FinishDiskRe
 	return jobToAPI(j)
 }
 
+func errDiskRemovalCancelNotConfigured() error {
+	return &apiError{code: "not_configured", statusCode: 501, message: "cancelling a disk removal is not configured on this daemon"}
+}
+
+func errDiskRemovalNotCancellable(mountpoint, reason string) error {
+	return &apiError{code: "disk_removal_not_cancellable", statusCode: 409, message: fmt.Sprintf("disk %s's removal cannot be cancelled: %s", mountpoint, reason)}
+}
+
+// evacuationJobStillOwnsState reports whether j is still queued, running
+// or interrupted — the doc 09 §4 window during which an evacuation job
+// (not CancelDiskRemoval) is the only thing allowed to clear the removal
+// state it set (evacuation_run.go's own releaseRemovalState).
+func evacuationJobStillOwnsState(status job.Status) bool {
+	switch status {
+	case job.StatusQueued, job.StatusRunning, job.StatusInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+// CancelDiskRemoval clears mountpoint's doc 09 §4 removal state
+// synchronously — no job — and re-applies the pool live so the disk's
+// branches go back to RW (#361). Refuses (disk_slot_not_found, 404) when
+// no data disk occupies mountpoint. Refuses (disk_removal_not_cancellable,
+// 409) when the disk is not currently in removal; when it is unpooled or
+// unlisted (already out of the pool — only finishDiskRemoval takes it
+// further, doc 09 §4's own Open questions); or when it is evacuating and
+// its evacuation job is still queued, running or interrupted (that job
+// owns the state — cancel the job instead). An evacuating disk whose job
+// has already ended, or whose job record the store no longer has, is
+// cancelled the same as an evacuated one.
+func (h *Handler) CancelDiskRemoval(ctx context.Context, req *apiv1.CancelDiskRemovalRequest) error {
+	if h.ArrayStore == nil || h.ArrayReady == nil {
+		return errDiskRemovalCancelNotConfigured()
+	}
+	existing, err := h.ArrayStore.GetDataDiskByMountpoint(ctx, req.Mountpoint)
+	if err != nil {
+		if errors.Is(err, store.ErrArrayDiskNotFound) {
+			return errDiskSlotNotFound(req.Mountpoint)
+		}
+		return fmt.Errorf("cancel disk removal: loading %s: %w", req.Mountpoint, err)
+	}
+	switch existing.RemovalState {
+	case store.RemovalStateEvacuated:
+	case store.RemovalStateEvacuating:
+		if existing.RemovalJobID != "" {
+			j, err := h.Store.Get(ctx, existing.RemovalJobID)
+			if err != nil && !errors.Is(err, job.ErrNotFound) {
+				return fmt.Errorf("cancel disk removal: reading evacuation job %s: %w", existing.RemovalJobID, err)
+			}
+			if err == nil && evacuationJobStillOwnsState(j.Status) {
+				return errDiskRemovalNotCancellable(req.Mountpoint, "its evacuation job is still queued, running or interrupted — cancel that job instead")
+			}
+		}
+	default:
+		reason := "it is not currently in removal"
+		if existing.LeftPool() {
+			reason = "it has already left the pool — finish its removal instead"
+		}
+		return errDiskRemovalNotCancellable(req.Mountpoint, reason)
+	}
+	cleared, err := h.ArrayStore.CancelRemovalState(ctx, req.Mountpoint, existing.RemovalState, existing.RemovalJobID)
+	if err != nil {
+		return fmt.Errorf("cancel disk removal: clearing removal state for %s: %w", req.Mountpoint, err)
+	}
+	if !cleared {
+		return errDiskRemovalNotCancellable(req.Mountpoint, "its removal state changed before the cancel could apply")
+	}
+	// The state is already cleared, and a second cancel now answers 409, so
+	// a client disconnect must not abort the apply and strand the disk NC.
+	if err := h.ArrayReady(context.WithoutCancel(ctx)); err != nil {
+		return fmt.Errorf("cancel disk removal: reapplying the live pool: %w", err)
+	}
+	return nil
+}
+
 func assignedFromRequest(a apiv1.ArrayDiskAssignment) (disk.AssignedDisk, error) {
 	fs := disk.XFS
 	if v, ok := a.Filesystem.Get(); ok {

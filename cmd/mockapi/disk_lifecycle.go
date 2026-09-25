@@ -43,6 +43,17 @@ func mockArrayDisks(scenario string) []store.ArrayDisk {
 		// one.
 		disks[2].RemovalState = store.RemovalStateEvacuating
 	}
+	if scenario == "sync-blocked" {
+		// disk5 is already evacuated (#361, mockPoolStatus's own
+		// "sync-blocked" scenario) — the removal state no scenario had a
+		// disk in before this, so `finishDiskRemoval`/`disk remove
+		// finish` and the pool page's Finish removal action all have a
+		// disk that can actually run to success against the mock.
+		disks = append(disks, store.ArrayDisk{
+			Role: store.ArrayRoleData, RoleIndex: 5, Device: "/dev/sdg", Filesystem: "xfs",
+			Serial: "WD-WCC4E2222222", Mountpoint: "/mnt/disk5", RemovalState: store.RemovalStateEvacuated,
+		})
+	}
 	return disks
 }
 
@@ -250,6 +261,11 @@ func (h *handler) AddDisk(ctx context.Context, req *apiv1.AddDiskRequest) (*apiv
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
 		ID:        uuid.New(),
@@ -333,6 +349,11 @@ func (h *handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	j := apiv1.Job{
 		ID:        uuid.New(),
@@ -556,8 +577,10 @@ func (h *handler) UpgradeDisk(ctx context.Context, req *apiv1.UpgradeDiskRequest
 // validation order against this mock's fixed array: not_configured with
 // no array (production has no parity engine then), disk_slot_not_found,
 // disk_not_evacuated unless the disk is evacuated or further along, then
-// confirmation_required (job.EvacuationConfirmation). No scenario has an
-// evacuated disk, so every scenario refuses.
+// confirmation_required (job.EvacuationConfirmation). The "sync-blocked"
+// scenario carries disk5 already evacuated (#361, mockArrayDisks's own
+// doc comment), so it can actually be run to a queued job; every other
+// scenario still refuses disk_not_evacuated.
 func (h *handler) FinishDiskRemoval(ctx context.Context, req *apiv1.FinishDiskRemovalRequest) (*apiv1.Job, error) {
 	disks := mockArrayDisks(h.scenario)
 	if disks == nil {
@@ -581,6 +604,11 @@ func (h *handler) FinishDiskRemoval(ctx context.Context, req *apiv1.FinishDiskRe
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	j := apiv1.Job{
 		ID:        uuid.New(),
 		Type:      apiv1.JobTypeDiskRemove,
@@ -590,4 +618,34 @@ func (h *handler) FinishDiskRemoval(ctx context.Context, req *apiv1.FinishDiskRe
 	}
 	h.jobs[j.ID] = j
 	return &j, nil
+}
+
+// CancelDiskRemoval mirrors internal/api's own CancelDiskRemoval and its
+// validation order against this mock's fixed array: disk_slot_not_found,
+// then disk_removal_not_cancellable unless the disk is evacuating or
+// evacuated. None of this mock's fixture disks carry a RemovalJobID, so
+// an evacuating disk here is always the "job already ended" case
+// production also cancels — the same "job-timing state, out of scope"
+// this file's FinishDiskRemoval already documents. Success clears
+// nothing persisted: this mock never mutates mockArrayDisks's own fixed
+// removal states.
+func (h *handler) CancelDiskRemoval(ctx context.Context, req *apiv1.CancelDiskRemovalRequest) error {
+	disks := mockArrayDisks(h.scenario)
+	if disks == nil {
+		return &mockError{code: "not_configured", statusCode: 501, message: "cancelling a disk removal is not configured on this daemon"}
+	}
+	d, ok := mockDataDiskAt(disks, req.Mountpoint)
+	if !ok {
+		return errDiskSlotNotFound(req.Mountpoint)
+	}
+	switch d.RemovalState {
+	case store.RemovalStateEvacuated, store.RemovalStateEvacuating:
+		return nil
+	default:
+		reason := "it is not currently in removal"
+		if d.LeftPool() {
+			reason = "it has already left the pool — finish its removal instead"
+		}
+		return &mockError{code: "disk_removal_not_cancellable", statusCode: 409, message: fmt.Sprintf("disk %s's removal cannot be cancelled: %s", req.Mountpoint, reason)}
+	}
 }

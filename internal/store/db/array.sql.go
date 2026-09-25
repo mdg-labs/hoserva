@@ -38,6 +38,28 @@ func (q *Queries) AdvanceArrayDiskRemovalState(ctx context.Context, arg AdvanceA
 	return result.RowsAffected()
 }
 
+const cancelArrayDiskRemovalState = `-- name: CancelArrayDiskRemovalState :execrows
+UPDATE array_disks SET removal_state = NULL, removal_job_id = NULL
+WHERE mountpoint = ?1 AND role = 'data'
+    AND removal_state IN ('evacuating', 'evacuated')
+    AND removal_state = ?2
+    AND removal_job_id IS ?3
+`
+
+type CancelArrayDiskRemovalStateParams struct {
+	Mountpoint    string         `json:"mountpoint"`
+	ExpectedState sql.NullString `json:"expected_state"`
+	ExpectedJobID sql.NullString `json:"expected_job_id"`
+}
+
+func (q *Queries) CancelArrayDiskRemovalState(ctx context.Context, arg CancelArrayDiskRemovalStateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelArrayDiskRemovalState, arg.Mountpoint, arg.ExpectedState, arg.ExpectedJobID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const countArraySettings = `-- name: CountArraySettings :one
 SELECT COUNT(*) FROM array_settings
 `

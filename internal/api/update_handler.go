@@ -26,6 +26,9 @@ func mapUpdateError(err error) error {
 	if errors.Is(err, update.ErrConfirmRequired) {
 		return errConfirmRequired
 	}
+	if errors.Is(err, update.ErrUnknownChannel) {
+		return &apiError{code: "update_invalid_channel", statusCode: 400, message: err.Error()}
+	}
 	if errors.Is(err, update.ErrNotAvailable) {
 		return &apiError{code: "update_not_available", statusCode: 409, message: err.Error()}
 	}

@@ -70,12 +70,35 @@ func (h *handler) ListExternalDisks(ctx context.Context) (*apiv1.ListExternalDis
 }
 
 func (h *handler) RegisterExternalDisk(ctx context.Context, req *apiv1.RegisterExternalDiskRequest) (*apiv1.ExternalDisk, error) {
-	if req.Device == "/dev/sda" {
-		return nil, errInvalidPlan(disk.ErrBootDevice)
-	}
 	label := string(req.Label)
 	if err := disk.ValidateExternalLabel(label); err != nil {
 		return nil, errInvalidPlan(err)
+	}
+	// mirrors internal/api's own RegisterExternalDisk/RefuseBootDevice
+	// (external_handler.go, disk/external.go), in the same order: a
+	// device this mock's own inventory (mockDiskInventory) reports as
+	// the boot disk is refused first; one already holding an array role
+	// (mockArrayDisks) is refused next; one it has never heard of, and
+	// that isn't a loop device, is refused as unmanaged — none of the
+	// three silently registered.
+	found := false
+	for _, e := range mockDiskInventory(h.scenario) {
+		if e.Device != req.Device {
+			continue
+		}
+		found = true
+		if e.Boot {
+			return nil, errInvalidPlan(fmt.Errorf("%s: %w", req.Device, disk.ErrBootDevice))
+		}
+		break
+	}
+	for _, d := range mockArrayDisks(h.scenario) {
+		if d.Device == req.Device {
+			return nil, errInvalidPlan(fmt.Errorf("%w: %s", disk.ErrExternalInArray, req.Device))
+		}
+	}
+	if !found && !disk.IsLoopDevice(req.Device) {
+		return nil, errUnmanagedDevice(fmt.Errorf("%w: %s", disk.ErrUnmanagedDevice, req.Device))
 	}
 	d := defaultMockExternal()
 	d.Label = req.Label

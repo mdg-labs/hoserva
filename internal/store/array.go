@@ -481,6 +481,29 @@ func (s *ArrayStore) ReleaseRemovalState(ctx context.Context, mountpoint, jobID 
 	return n > 0, nil
 }
 
+// CancelRemovalState clears mountpoint's removal state back to NULL, and
+// reports whether it did (#361's cancelDiskRemoval), only while the row
+// still holds exactly expectedState and expectedJobID — the values the
+// caller read when it decided, from the disk's RemovalJobID and the job
+// store, that no evacuation job is still queued, running or interrupted
+// for this disk. A re-evacuation of an evacuated disk that starts after
+// that read changes the job id, so the cancel leaves the new evacuation's
+// state alone and reports false. Only "evacuating" and "evacuated" are
+// ever cleared: a disk that is "unpooled" or "unlisted" has already left
+// the pool, so only finishDiskRemoval takes it further (doc 09 §4's own
+// Open questions). An expectedJobID of "" matches a NULL job id.
+func (s *ArrayStore) CancelRemovalState(ctx context.Context, mountpoint, expectedState, expectedJobID string) (bool, error) {
+	n, err := s.q.CancelArrayDiskRemovalState(ctx, storedb.CancelArrayDiskRemovalStateParams{
+		Mountpoint:    mountpoint,
+		ExpectedState: sql.NullString{String: expectedState, Valid: true},
+		ExpectedJobID: nullString(expectedJobID),
+	})
+	if err != nil {
+		return false, fmt.Errorf("store: cancelling removal state at %s: %w", mountpoint, err)
+	}
+	return n > 0, nil
+}
+
 // RemovingDisk returns the mountpoint and state of the array's one disk
 // currently in removal (#359), or ("", "", nil) when none is. Used by
 // planDiskEvacuation/evacuateDisk to refuse a second disk while one is

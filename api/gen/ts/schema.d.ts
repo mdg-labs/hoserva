@@ -1359,6 +1359,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/disks/array/remove/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a data disk's removal and return it to normal use
+         * @description Clears `mountpoint`'s doc 09 §4 removal state synchronously — no job — and re-applies the pool live so the disk's branches go back to RW (#361). Refused with `disk_slot_not_found` (404) when no data disk occupies `mountpoint`. Refused with `disk_removal_not_cancellable` (409) when the disk is not currently in removal; when it is `unpooled` or `unlisted` — it has already left the pool, so the only way forward is `finishDiskRemoval`, never back (doc 09 §4's own Open questions); or when it is `evacuating` and its evacuation job is still queued, running or interrupted — that job owns the state, so cancel it (`DELETE /jobs/{jobId}` — `jobs/{jobId}/cancel`) instead. An `evacuating` disk whose evacuation job has already ended (no longer queued, running or interrupted — including a job the store no longer has a record of) is cancelled the same as an `evacuated` one: the copy it ran already stopped, and cancelling here is how the disk gets back to ordinary use instead of sitting stuck until it is evacuated again. A live-update failure while re-applying the pool is an internal error, and the removal state is left cleared — the same as the disk-topology jobs' own live-apply failures — rather than silently reporting success with the disk still no-create.
+         */
+        post: operations["cancelDiskRemoval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/array/stop": {
         parameters: {
             query?: never;
@@ -2683,6 +2703,8 @@ export interface components {
             nearMinFreeSpace?: boolean;
             /** @description doc 09 §4 step 2's own removal state (#359) for this disk. Null for a disk that is not currently in removal. */
             removalState?: components["schemas"]["DiskRemovalState"] | null;
+            /** @description The exact typed phrase `finishDiskRemoval` requires for this disk (#361), set whenever `removalState` is set. Reading it here rather than from `planDiskEvacuation` is what lets Finish removal be retried once the disk has left the pool (`unpooled`/`unlisted`) — `planDiskEvacuation` itself refuses those states with `disk_leaving_array`, since evacuating a disk that has already left the pool makes no sense, but the confirmation phrase does not depend on evacuating it again. */
+            finishConfirmation?: string;
         };
         PoolStatus: {
             mounted: boolean;
@@ -2974,6 +2996,10 @@ export interface components {
             mountpoint: string;
             /** @description `REMOVE <mountpoint>` — the phrase `planDiskEvacuation` returned for this disk. A wrong or missing string is refused and nothing runs. */
             confirmation: string;
+        };
+        CancelDiskRemovalRequest: {
+            /** @description The data disk slot to stop removing, e.g. `/mnt/disk3`. */
+            mountpoint: string;
         };
         EvacuateDiskRequest: {
             mountpoint: string;
@@ -5259,6 +5285,29 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Job"];
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    cancelDiskRemoval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancelDiskRemovalRequest"];
+            };
+        };
+        responses: {
+            /** @description The removal is cancelled; the disk takes writes again. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

@@ -312,6 +312,34 @@
       "confirmTitle": "Confirm evacuating {{mountpoint}}",
       "confirmDescription": "Every file is copied, verified and synced onto the pool's remaining disks before the originals are deleted."
     },
+    "removal": {
+      "badge": {
+        "evacuating": "Being emptied — no new files land here",
+        "evacuated": "Empty — ready to finish removal",
+        "unpooled": "Removal in progress",
+        "unlisted": "Removal in progress"
+      },
+      "dangerZoneTitle": "{{mountpoint}} is leaving the array",
+      "finishDescription": "Takes {{mountpoint}} out of the pool and SnapRAID, then reports it safe to pull (doc 09 §4).",
+      "finishAction": "Finish removal",
+      "cancelDescription": "Returns {{mountpoint}} to normal use — it takes new files again immediately.",
+      "cancelAction": "Cancel removal",
+      "failedJob": "Finishing removal failed: {{message}}"
+    },
+    "finishRemoval": {
+      "title": "Finish removing {{mountpoint}}",
+      "description": "Takes the disk out of every pool mount and out of SnapRAID, then unmounts it. Its filesystem is never wiped.",
+      "confirmTitle": "Confirm finishing {{mountpoint}}'s removal",
+      "confirmDescription": "This runs immediately once you type the phrase below — there is no further confirmation.",
+      "submit": "Finish removal",
+      "safeToRemove": "{{mountpoint}} ({{identity}}) is safe to physically remove. Its filesystem was not wiped.",
+      "safeToRemoveNoIdentity": "{{mountpoint}} is safe to physically remove. Its filesystem was not wiped."
+    },
+    "cancelRemoval": {
+      "title": "Cancel removing {{mountpoint}}?",
+      "description": "The disk returns to normal use and starts taking new files again immediately.",
+      "confirm": "Cancel removal"
+    },
     "stop": {
       "title": "Stop the array?",
       "description": "Maintenance mode stops services and unmounts pool disks in a safe order (Q70).",
@@ -706,7 +734,8 @@
       "passwordTooShort": "The password must be at least 12 characters.",
       "totpEnrollFailed": "Could not start authenticator enrolment.",
       "totpConfirmRequired": "Enter the six-digit code from your authenticator app.",
-      "storageBlocked": "Fix the failed storage dependency checks before continuing."
+      "storageBlocked": "Fix the failed storage dependency checks before continuing.",
+      "doctorLoadFailed": "Could not run the storage dependency checks."
     }
   },
   "common": {
@@ -981,6 +1010,7 @@
       "portRestart": "Restart Hoserva to listen on the new port."
     },
     "notifications": {
+      "loadFailed": "Could not load notification settings.",
       "channelsTitle": "Notification channels",
       "addChannel": "Add channel",
       "addChannelDescription": "Configure a channel for alerts. Untested notification config is the same as no notification config.",
@@ -1086,6 +1116,7 @@
       }
     },
     "updates": {
+      "loadFailed": "Could not load update status",
       "apiNote": "Security updates install unattended. Hoserva never reboots on its own — reboot is always your action (Q68).",
       "versionTitle": "Hoserva version",
       "currentVersion": "Installed version",
@@ -1183,6 +1214,7 @@
     },
     "list": {
       "description": "Every configured share, with cache mode, SMB and NFS status.",
+      "loadFailed": "Could not load shares",
       "create": "Create share",
       "edit": "Edit",
       "browse": "Browse",
@@ -1221,6 +1253,7 @@
     "detail": {
       "save": "Save changes",
       "notFound": "Share {{name}} was not found.",
+      "loadFailed": "Could not load this share",
       "tabs": {
         "general": "General",
         "allocation": "Allocation",
@@ -1368,7 +1401,13 @@
       "description": "Create an account to give someone UI access, SMB/NFS access, or both."
     },
     "errors": {
-      "usernameRequired": "Enter a username."
+      "usernameRequired": "Enter a username.",
+      "loadFailed": "Could not load accounts",
+      "groupsLoadFailed": "Could not load groups",
+      "sessionsLoadFailed": "Could not load sessions",
+      "tokensLoadFailed": "Could not load API tokens",
+      "sharesLoadFailed": "Could not load shares",
+      "permissionsLoadFailed": "Could not load this account's share permissions"
     },
     "panel": {
       "createTitle": "Create account",

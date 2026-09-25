@@ -13,6 +13,7 @@ var (
 	ErrNoPrevious       = errors.New("update: no previous version to roll back to")
 	ErrConfirmRequired  = errors.New("update: this operation requires confirm=true")
 	ErrIndexURL         = errors.New("update: refusing to fetch a URL that is not the configured release index or a named release asset")
+	ErrUnknownChannel   = errors.New("update: unrecognized channel")
 )
 
 // ErrBlocked is an update/rollback refused because a storage-class job

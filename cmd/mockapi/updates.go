@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 )
@@ -48,7 +49,12 @@ func (h *handler) UpdateUpdateSettings(ctx context.Context, req *apiv1.UpdateUpd
 	defer h.notifyMu.Unlock()
 	if req != nil {
 		if v, ok := req.Channel.Get(); ok {
-			h.updateStatus.Channel = v
+			switch v {
+			case apiv1.UpdateChannelStable, apiv1.UpdateChannelBeta:
+				h.updateStatus.Channel = v
+			default:
+				return nil, &mockError{code: "update_invalid_channel", statusCode: 400, message: fmt.Sprintf("update: unrecognized channel: %q", v)}
+			}
 		}
 		if v, ok := req.CheckEnabled.Get(); ok {
 			h.updateStatus.CheckEnabled = v

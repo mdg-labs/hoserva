@@ -20,6 +20,12 @@ type RunContext struct {
 
 	saveCheckpoint func(data []byte) error
 	setProgress    func(pct int)
+
+	// keepForResume is the scheduler-owned half of KeepForResume: it
+	// decides, under the running job's own mu, whether this run's
+	// preliminary "end resumable" choice can still be honoured, or
+	// whether a Cancel has already claimed the job (#378).
+	keepForResume func() bool
 }
 
 // JobID is the id of the job this run belongs to — the same id on every
@@ -64,3 +70,32 @@ func (rc *RunContext) SaveCheckpoint(data []byte) error { return rc.saveCheckpoi
 // the events hub (doc 01 §5's job_progress) and persisted so GetJob
 // reflects it immediately.
 func (rc *RunContext) SetProgress(pct int) { rc.setProgress(pct) }
+
+// KeepForResume is a RunFunc's atomic commit point for ending this run
+// resumable and keeping whatever job-owned state (RunEvacuation's own
+// relocation manifest and removing-disks exemption, #274/#359/#378) it
+// has decided to leave for Resume: call it only once every other
+// condition for that ending already holds.
+//
+// It either commits — refusing every Cancel of this job for the rest of
+// the run, the same refusal #364's own settle window already gives a
+// Cancel that lands after RunFunc has returned — and returns true; or, if
+// a Cancel has already been accepted for this job, refuses the commit and
+// returns false, so the caller clears that state instead, exactly as it
+// would for any other non-resumable ending. The decision and Cancel's own
+// accept-or-refuse decision are made under the same lock, so a Cancel
+// landing anywhere around this call can never leave the run's own choice
+// and the job's recorded outcome disagreeing about whether the state was
+// kept — unlike an outer, best-effort second pass after the fact, which
+// cannot make that guarantee.
+//
+// A RunContext built directly rather than by Scheduler.runJob — every
+// test that drives a RunFunc without a real Scheduler behind it — has no
+// keepForResume wired at all; there is no concurrent Cancel to race in
+// that case, so it commits unconditionally.
+func (rc *RunContext) KeepForResume() bool {
+	if rc.keepForResume == nil {
+		return true
+	}
+	return rc.keepForResume()
+}

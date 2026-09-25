@@ -44,6 +44,7 @@ PASSWORD="hoserva-lab-check"
 work=""
 extra_globals=""
 smbd_pid=""
+mnt_user_created=0
 cleanup() {
   # smbd's own process group, not just its own PID: it forks smbd-notifyd
   # and smbd-cleanupd helpers into the same group, and leaving them running
@@ -51,6 +52,14 @@ cleanup() {
   [[ -n "$smbd_pid" ]] && kill -- "-$smbd_pid" 2>/dev/null
   [[ -n "$extra_globals" ]] && rm -f "$extra_globals"
   [[ -n "$work" ]] && rm -rf "$work"
+  # Only ever remove the /mnt/user symlink this run created itself (issue
+  # #363): a stray leak here masquerades, to any later lab test that mounts
+  # pool.CatchAllPath fresh, as an existing non-hoserva-pool mount at that
+  # path. -L (not -e) because a symlink whose target this same cleanup may
+  # be racing to tear down elsewhere must still be recognised and removed.
+  if [[ "$mnt_user_created" -eq 1 && -L /mnt/user ]]; then
+    rm -f /mnt/user
+  fi
   return 0
 }
 trap cleanup EXIT
@@ -58,9 +67,18 @@ trap cleanup EXIT
 # /mnt/user is the pool path RenderSambaConf's share sections hard-code
 # (doc 03 §4.2) — a plain symlink onto this lab's own mergerfs mount
 # (create-array.sh), so the rendered path resolves without touching
-# anything outside this container.
+# anything outside this container. Only set mnt_user_created when this run
+# is the one making the symlink: a path already occupied here is left
+# exactly as found, and cleanup above must not remove something it didn't
+# create (issue #363). -L also catches a dangling symlink, which -e misses
+# and ln -s would then fail on before check-mnt-user-clean.sh can report it.
 mkdir -p /mnt
-[[ -e /mnt/user ]] || ln -s "$LAB/mnt/user" /mnt/user
+if [[ -e /mnt/user || -L /mnt/user ]]; then
+  echo "smb-check: /mnt/user already exists — leaving it as found, not removing it on exit"
+else
+  ln -s "$LAB/mnt/user" /mnt/user
+  mnt_user_created=1
+fi
 
 # The user-owned escape hatch every generated smb.conf ends with
 # (SambaCustomInclude, internal/config/samba.go) — empty is enough for smbd

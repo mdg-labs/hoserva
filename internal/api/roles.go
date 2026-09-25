@@ -27,6 +27,7 @@ const (
 // the mechanism available.
 var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.AddDiskOperation:                        RoleAdmin,
+	apiv1.CancelDiskRemovalOperation:              RoleAdmin,
 	apiv1.CancelJobOperation:                      RoleAdmin,
 	apiv1.ConfirmTotpOperation:                    RoleViewer,
 	apiv1.CreateApiTokenOperation:                 RoleAdmin,

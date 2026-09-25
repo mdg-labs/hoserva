@@ -75,3 +75,56 @@ describe("no direct HTTP outside src/lib/api (D18)", () => {
     expect(fires(result)).toBe(false);
   });
 });
+
+// Proves the "hoservaClient is only ever called from src/lib/api" rule
+// (D18, #271): a route or component must go through the shared
+// useApiQuery/useApiMutation hooks (or an src/lib/api/operations.ts
+// wrapper), never hoservaClient directly.
+describe("no direct hoservaClient outside src/lib/api (D18, #271)", () => {
+  it("rejects a direct hoservaClient call in a route", async () => {
+    const result = await lint(
+      'import { hoservaClient } from "@/lib/api/client";\nexport function bad() { return hoservaClient.GET("/jobs"); }\n',
+      path.resolve(import.meta.dirname, "../routes/deliberately-bad.ts"),
+    );
+    expect(fires(result)).toBe(true);
+  });
+
+  it("rejects a direct hoservaClient call in a pattern component", async () => {
+    const result = await lint(
+      'import { hoservaClient } from "@/lib/api/client";\nexport function bad() { return hoservaClient.POST("/mover/run"); }\n',
+      path.resolve(import.meta.dirname, "../components/patterns/deliberately-bad.ts"),
+    );
+    expect(fires(result)).toBe(true);
+  });
+
+  it("rejects importing hoservaClient in a route even before it is called", async () => {
+    const result = await lint(
+      'import { hoservaClient } from "@/lib/api/client";\nexport const client = hoservaClient;\n',
+      path.resolve(import.meta.dirname, "../routes/deliberately-bad.ts"),
+    );
+    expect(fires(result)).toBe(true);
+  });
+
+  it("allows the shared useApiQuery hook in a route", async () => {
+    const result = await lint(
+      [
+        'import { getJobs } from "@/lib/api/operations";',
+        'import { useApiQuery } from "@/lib/api/use-api-query";',
+        "export function useJobs() {",
+        '  return useApiQuery({ queryKey: "jobs", queryFn: (signal) => getJobs(undefined, signal) });',
+        "}",
+        "",
+      ].join("\n"),
+      path.resolve(import.meta.dirname, "../routes/deliberately-fine.ts"),
+    );
+    expect(fires(result)).toBe(false);
+  });
+
+  it("allows hoservaClient inside src/lib/api", async () => {
+    const result = await lint(
+      'import { hoservaClient } from "@/lib/api/client";\nexport function getJobs() { return hoservaClient.GET("/jobs"); }\n',
+      path.resolve(import.meta.dirname, "../lib/api/deliberately-fine.ts"),
+    );
+    expect(fires(result)).toBe(false);
+  });
+});

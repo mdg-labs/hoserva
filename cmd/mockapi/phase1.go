@@ -11,6 +11,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/job"
 )
 
 const mockDiskSize = 4_000_000_000_000
@@ -91,6 +92,17 @@ func mockDiskInventory(scenario string) []apiv1.DiskInventoryEntry {
 	if scenario == "degraded" {
 		disks[2].Failed = apiv1.NewOptBool(true)
 	}
+	if scenario == "sync-blocked" {
+		// disk5 mirrors mockArrayDisks's own "sync-blocked" scenario
+		// (#361): already evacuated, so `disk remove finish`/the pool
+		// page's Finish removal have a disk they can actually run to
+		// success against the mock — the one gap #358's executor found
+		// (no scenario had an evacuated disk).
+		disks = append(disks, apiv1.DiskInventoryEntry{
+			Device: "/dev/sdg", SizeBytes: mockDiskSize,
+			Model: apiv1.NewOptString("WDC WD40EFRX"), Serial: apiv1.NewOptString("WD-WCC4E2222222"),
+		})
+	}
 	return append(disks, mockUSBDisk())
 }
 
@@ -140,6 +152,7 @@ func mockPoolStatus(scenario string) *apiv1.PoolStatus {
 		// disk3 mirrors mockArrayDisks's own "degraded" scenario (#359,
 		// doc 09 §4 step 2): mid-evacuation, no-create.
 		disks[2].RemovalState = apiv1.NewOptNilDiskRemovalState(apiv1.DiskRemovalStateEvacuating)
+		disks[2].FinishConfirmation = apiv1.NewOptString(job.EvacuationConfirmation(disks[2].MountPoint))
 		// A stored array member with no identity match in inventory at
 		// all (#326) — the literal "failed disk" scenario doc 02 §4
 		// describes, mirroring production GetPool's shape: stored
@@ -149,6 +162,19 @@ func mockPoolStatus(scenario string) *apiv1.PoolStatus {
 			MountPoint: "/mnt/disk4",
 			Role:       apiv1.PoolDiskEntryRoleData,
 			State:      apiv1.DiskStateMissing,
+		})
+	}
+	if scenario == "sync-blocked" {
+		// Mirrors mockArrayDisks's own "sync-blocked" scenario (#361):
+		// disk5 already evacuated and ready for `finishDiskRemoval` —
+		// the one removal state no scenario had a disk in before this,
+		// so the pool page's Finish removal action has something to
+		// demo a real success against.
+		disks = append(disks, apiv1.PoolDiskEntry{
+			Device: "/dev/sdg", MountPoint: "/mnt/disk5", Role: apiv1.PoolDiskEntryRoleData,
+			State: apiv1.DiskStateActive, SizeBytes: size, UsedBytes: used,
+			RemovalState:       apiv1.NewOptNilDiskRemovalState(apiv1.DiskRemovalStateEvacuated),
+			FinishConfirmation: apiv1.NewOptString(job.EvacuationConfirmation("/mnt/disk5")),
 		})
 	}
 	return &apiv1.PoolStatus{Mounted: true, Disks: disks}
@@ -260,7 +286,13 @@ func mockSystemStatus(scenario string, activeJobs int32, maintenance bool) *apiv
 	return status
 }
 
+// submitParityJob is called with h.mu already held. Production's
+// Scheduler.Submit refuses every job type but TypeDiskUpgradeData while
+// maintenance mode is active (Q70).
 func (h *handler) submitParityJob(jobType apiv1.JobType, cancellable bool) (*apiv1.Job, error) {
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	job := apiv1.Job{
 		ID:          uuid.New(),
@@ -293,7 +325,39 @@ func (h *handler) RunDoctor(ctx context.Context) (*apiv1.DoctorReport, error) {
 	return mockDoctorReport(h.scenario), nil
 }
 
+// errInvalidHostConfig mirrors internal/api's own errInvalidHostConfig
+// (hostconfig.go): an unknown host-config id, a duplicate choice for the
+// same one, or a decision that isn't import/leave is refused the same
+// way production refuses it, not silently accepted.
+func errInvalidHostConfig(msg string) error {
+	return &mockError{code: "invalid_host_config", statusCode: 400, message: msg}
+}
+
+// mockHostConfigKinds mirrors internal/config's own KindFromCheckID
+// whitelist (host.go) closely enough for this mock's own fixed check ids
+// (phase1.go's mockDoctorReport): every id RunDoctor ever reports here.
+var mockHostConfigKinds = map[string]bool{
+	"host_samba":             true,
+	"host_nfs":               true,
+	"host_fstab":             true,
+	"host_docker_containers": true,
+	"host_docker_images":     true,
+}
+
 func (h *handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfigRequest) (*apiv1.ApplyHostConfigResult, error) {
+	seen := map[apiv1.HostConfigID]struct{}{}
+	for _, choice := range req.Files {
+		if !mockHostConfigKinds[string(choice.ID)] {
+			return nil, errInvalidHostConfig(fmt.Sprintf("unknown host-config id %q", choice.ID))
+		}
+		if _, dup := seen[choice.ID]; dup {
+			return nil, errInvalidHostConfig(fmt.Sprintf("duplicate choice for %s", choice.ID))
+		}
+		seen[choice.ID] = struct{}{}
+		if choice.Decision != apiv1.HostConfigDecisionImport && choice.Decision != apiv1.HostConfigDecisionLeave {
+			return nil, errInvalidHostConfig(fmt.Sprintf("decision for %s must be import or leave", choice.ID))
+		}
+	}
 	return &apiv1.ApplyHostConfigResult{
 		Files:          req.Files,
 		DockerDataRoot: "/var/lib/docker",
@@ -328,6 +392,11 @@ func (h *handler) StartFix(ctx context.Context, req *apiv1.StartFixRequest) (*ap
 func (h *handler) StartMover(ctx context.Context) (*apiv1.Job, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	job := apiv1.Job{
 		ID:          uuid.New(),
@@ -372,6 +441,11 @@ func (h *handler) CreateArray(ctx context.Context, req *apiv1.CreateArrayRequest
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// Production's Scheduler.Submit refuses every job type but
+	// TypeDiskUpgradeData while maintenance mode is active (Q70).
+	if h.maintenance {
+		return nil, errMaintenanceMode()
+	}
 	now := time.Now().UTC()
 	job := apiv1.Job{
 		ID:          uuid.New(),

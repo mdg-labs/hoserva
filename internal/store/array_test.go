@@ -303,6 +303,46 @@ func TestArrayStore_ReleaseRemovalState_OnlyByTheHoldingJob(t *testing.T) {
 	}
 }
 
+// TestArrayStore_CancelRemovalState_OnlyTheStateItRead proves
+// cancelDiskRemoval's clear is a compare-and-swap on the state and job id
+// its caller read: a re-evacuation of an evacuated disk that starts after
+// that read leaves the new evacuation's state in place, and only a cancel
+// that names the current state and job clears it.
+func TestArrayStore_CancelRemovalState_OnlyTheStateItRead(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t)
+	twoDataDiskArray(t, st)
+
+	if err := st.SetRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuated, "job-a"); err != nil {
+		t.Fatalf("SetRemovalState(evacuated, job-a): %v", err)
+	}
+	if err := st.SetRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuating, "job-b"); err != nil {
+		t.Fatalf("SetRemovalState(evacuating, job-b): %v", err)
+	}
+
+	cleared, err := st.CancelRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuated, "job-a")
+	if err != nil {
+		t.Fatalf("CancelRemovalState(stale read): %v", err)
+	}
+	if cleared {
+		t.Fatal("CancelRemovalState(evacuated, job-a) cleared the re-evacuation job-b holds")
+	}
+	if mountpoint, state, err := st.RemovingDisk(ctx); err != nil || mountpoint != "/mnt/disk1" || state != RemovalStateEvacuating {
+		t.Fatalf("RemovingDisk after a stale cancel = (%q, %q, %v), want (/mnt/disk1, %q, nil)", mountpoint, state, err, RemovalStateEvacuating)
+	}
+
+	cleared, err = st.CancelRemovalState(ctx, "/mnt/disk1", RemovalStateEvacuating, "job-b")
+	if err != nil {
+		t.Fatalf("CancelRemovalState(current read): %v", err)
+	}
+	if !cleared {
+		t.Fatal("CancelRemovalState(evacuating, job-b) did not clear the state it read")
+	}
+	if mountpoint, _, err := st.RemovingDisk(ctx); err != nil || mountpoint != "" {
+		t.Fatalf("RemovingDisk after cancel = (%q, %v), want none", mountpoint, err)
+	}
+}
+
 // TestArrayStore_ReleaseRemovalState_LeavesEvacuatedAlone proves a
 // release never undoes "evacuated", even by the job that reached it.
 func TestArrayStore_ReleaseRemovalState_LeavesEvacuatedAlone(t *testing.T) {
