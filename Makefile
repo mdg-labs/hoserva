@@ -581,10 +581,14 @@ lab-snapraid-check: lab-require-id
 # Samba-related itself. test-lab (issue #328) then compiles every
 # //go:build lab package on the host and runs each binary in this lab;
 # smb-check runs first so a destroy+create reset inside test-lab cannot
-# wipe smb.conf.rendered mid-check.
+# wipe smb.conf.rendered mid-check. check-mnt-user-clean.sh runs after it,
+# confirming smb-check's own /mnt/user symlink (issue #363) is gone before
+# test-lab's own lab tests, any of which may mount pool.CatchAllPath fresh
+# at that same path, run.
 test-integration: lab-require-id
 	$(GO) run ./scripts/devenv/gen-smb-conf > ".lab/$$HOSERVA_LAB_ID/smb.conf.rendered"
 	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/smb-check.sh
+	$(COMPOSE_DEV) -p "hoserva-lab-$$HOSERVA_LAB_ID" exec -T lab bash /src/scripts/devenv/check-mnt-user-clean.sh
 	$(MAKE) test-lab
 
 # Every //go:build lab Go test (doc 06 §3, issue #328): compile on the
