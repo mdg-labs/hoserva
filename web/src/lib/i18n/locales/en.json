@@ -241,7 +241,8 @@
       "currentFilesystem": "currently {{filesystem}}"
     },
     "planItems": {
-      "summaryItem": "{{count}} files, {{size}} total",
+      "summaryItem_one": "{{count}} file, {{size}} total",
+      "summaryItem_other": "{{count}} files, {{size}} total",
       "warningItem": "{{share}}: {{reason}}"
     },
     "add": {

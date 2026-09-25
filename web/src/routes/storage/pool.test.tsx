@@ -550,6 +550,7 @@ describe("Pool overview page — rebalance and remove disk (#274)", () => {
 
     const submit = await within(dialog).findByRole("button", { name: "Rebalance" });
     expect(submit).toBeDisabled();
+    expect(within(dialog).getByText(/^1 file, .+ total$/)).toBeInTheDocument();
 
     const confirmInput = within(dialog).getByRole("textbox");
     fireEvent.change(confirmInput, { target: { value: "wrong" } });
