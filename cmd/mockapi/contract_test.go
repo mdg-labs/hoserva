@@ -20,11 +20,11 @@ import (
 // the whole case rather than to one call inside it.
 //
 // op names the apiv1.Handler method this case's own comparison exercises
-// — the one assertContractCoverage checks off doc 06 §8's "every
-// operation has a case or a reviewed skip entry" against. scenario
-// selects the mockapi fixture (and the matching production rig topology,
-// see contract_rig_test.go) the case runs against; "" defaults to
-// "healthy".
+// — the one assertContractCoverage checks off against doc 06 §8's
+// coverage rule: every operation needs a table entry or a reviewed
+// contractSkip entry, or the test fails. scenario selects the mockapi
+// fixture (and the matching production rig topology, see
+// contract_rig_test.go) the case runs against; "" defaults to "healthy".
 type contractCase struct {
 	op       string
 	name     string
@@ -186,9 +186,9 @@ var contractSkip = map[string]string{
 	// could add is the one genuinely different behaviour (Login accepts
 	// any password; GetCurrentSession/Logout/EnrollTotp/ConfirmTotp
 	// never check for a principal at all), which is the mock's own
-	// documented simplification for local UI dev, not drift. Reported
-	// separately (see this issue's PR) as worth either blessing in doc
-	// 06 §8 or tightening in a follow-up, not silently changed here.
+	// documented simplification for local UI dev, not drift — see doc 06
+	// §8: any credential accepted for Login, no session ever validated
+	// for any request.
 	"Login":             "the mock accepts any credential by design (cmd/mockapi/auth.go) — production's Login checks the real password; comparing would encode that documented simplification as a bug, not drift",
 	"Logout":            "the mock has no session/principal concept for any request — GetCurrentSession/Logout/EnrollTotp/ConfirmTotp all return canned success regardless of ctx; production needs a principal HandleSessionCookie would inject",
 	"GetCurrentSession": "same as Logout — the mock returns mockUser() unconditionally; production requires a request-scoped principal",
