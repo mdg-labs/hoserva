@@ -261,7 +261,15 @@ func mockDoctorReport(scenario string) *apiv1.DoctorReport {
 	return &apiv1.DoctorReport{Overall: overall, Checks: checks}
 }
 
-func mockSystemStatus(scenario string, activeJobs int32, maintenance bool) *apiv1.SystemStatus {
+// mockSystemStatus mirrors production GetStatus's own arrayDegraded/
+// arrayDegradedAcknowledged derivation (internal/api's degradedGate +
+// disk.StorageGate.Missing()/Ready()): arrayDegraded is true for the
+// "degraded" scenario's missing disk4 (mockPoolStatus) regardless of
+// acknowledgement — acknowledging must never report a still-degraded
+// array as healthy (#385 finding 2) — and arrayDegradedAcknowledged is
+// what flips once acknowledgeDegraded (this mock's own stand-in for
+// Acknowledge) sets degradedAcknowledged.
+func mockSystemStatus(scenario string, activeJobs int32, maintenance, degradedAcknowledged bool) *apiv1.SystemStatus {
 	report := mockDoctorReport(scenario)
 	healthy := report.Overall != apiv1.DoctorCheckStatusFail
 	summary := "All checks passed"
@@ -276,9 +284,21 @@ func mockSystemStatus(scenario string, activeJobs int32, maintenance bool) *apiv
 		Summary:         summary,
 		ActiveJobs:      apiv1.NewOptInt32(activeJobs),
 		MaintenanceMode: apiv1.NewOptBool(maintenance),
+		// storageServicesReleased (#385 finding 2) mirrors
+		// storageTargetSync.Ready() without a real gate behind this
+		// mock: outside the "degraded" scenario nothing ever gated the
+		// dependent services, so they are released whenever the array
+		// itself is not in maintenance; in the "degraded" scenario they
+		// are only released once AcknowledgeDegradedArray has actually
+		// succeeded (degradedAcknowledged) and the array is not
+		// currently in maintenance — an acknowledge attempted during
+		// maintenance sets degradedAcknowledged but is refused
+		// (array_services_not_started) before this ever reports true.
+		StorageServicesReleased: apiv1.NewOptBool(!maintenance && (scenario != "degraded" || degradedAcknowledged)),
 	}
 	if scenario == "degraded" {
 		status.ArrayDegraded = apiv1.NewOptBool(true)
+		status.ArrayDegradedAcknowledged = apiv1.NewOptBool(degradedAcknowledged)
 	}
 	if scenario == "sync-blocked" {
 		status.ParityBlocked = apiv1.NewOptBool(true)
@@ -310,7 +330,55 @@ func (h *handler) submitParityJob(jobType apiv1.JobType, cancellable bool) (*api
 func (h *handler) GetStatus(ctx context.Context) (*apiv1.SystemStatus, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance), nil
+	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance, h.degradedAcknowledged), nil
+}
+
+// errArrayNotDegraded mirrors production's own refusal (internal/api's
+// errArrayNotDegraded, disk.ErrNothingToAcknowledge): acknowledging a
+// degraded state that does not exist would let a stale acknowledgement
+// outlive the situation it was about.
+func errArrayNotDegraded() error {
+	return &mockError{code: "array_not_degraded", statusCode: 409, message: "the array is not degraded — nothing to acknowledge"}
+}
+
+// errArrayServicesNotStarted mirrors production's own refusal
+// (internal/api's errArrayServicesNotStarted, api.ErrDegradedServicesNotStarted)
+// for the same case cmd/hoservad's storageTargetSync.UpdateOrError
+// reports: the acknowledgement itself succeeded, but the not-ready→ready
+// transition it triggers did not actually start anything because the
+// array is in maintenance mode (#385 finding 1).
+func errArrayServicesNotStarted() error {
+	return &mockError{
+		code:       "array_services_not_started",
+		statusCode: 409,
+		message:    "the array was acknowledged, but the gated services could not be started: storage gate is ready but the array is in maintenance mode — leaving Samba/NFS/Docker/libvirt gated closed until array start",
+	}
+}
+
+// AcknowledgeDegradedArray mirrors production's own operation (#385): only
+// the "degraded" scenario's missing disk4 (mockPoolStatus) has anything to
+// acknowledge. A second call while the disk is still (mock-)missing
+// succeeds again, exactly like a real disk.StorageGate.Acknowledge, which
+// only refuses once the gate itself is genuinely ready — this mock never
+// re-evaluates disk4 as present, so it is never refused on a repeat call.
+// While the array is in maintenance mode (an explicit `array stop`) the
+// acknowledgement itself is still recorded — h.degradedAcknowledged is
+// set exactly as it is outside maintenance mode, mirroring
+// disk.StorageGate.Acknowledge's own contract — but the call is refused
+// with array_services_not_started (#385 finding 1), the same as
+// production's storageTargetSync.UpdateOrError refusing the not-ready→
+// ready transition it would otherwise run.
+func (h *handler) AcknowledgeDegradedArray(ctx context.Context) (*apiv1.SystemStatus, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.scenario != "degraded" {
+		return nil, errArrayNotDegraded()
+	}
+	h.degradedAcknowledged = true
+	if h.maintenance {
+		return nil, errArrayServicesNotStarted()
+	}
+	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance, h.degradedAcknowledged), nil
 }
 
 func (h *handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
@@ -536,7 +604,7 @@ func (h *handler) StopArray(ctx context.Context, req *apiv1.StopArrayRequest) (*
 		return nil, errDiskUpgradePending(id)
 	}
 	h.maintenance = true
-	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance), nil
+	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance, h.degradedAcknowledged), nil
 }
 
 func (h *handler) StartArray(ctx context.Context) (*apiv1.SystemStatus, error) {
@@ -546,5 +614,5 @@ func (h *handler) StartArray(ctx context.Context) (*apiv1.SystemStatus, error) {
 		return nil, errDiskUpgradePending(id)
 	}
 	h.maintenance = false
-	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance), nil
+	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance, h.degradedAcknowledged), nil
 }

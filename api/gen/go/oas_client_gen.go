@@ -29,6 +29,30 @@ func trimTrailingSlashes(u *url.URL) {
 
 // Invoker invokes operations described by OpenAPI v3 specification.
 type Invoker interface {
+	// AcknowledgeDegradedArray invokes acknowledgeDegradedArray operation.
+	//
+	// Records the user's explicit choice to proceed while the array is degraded (doc 02 §1, Q69,
+	// `hoserva array acknowledge-degraded`): the handler calls `disk.StorageGate.Acknowledge` on the
+	// daemon's live gate and then runs the exact not-ready→ready transition a returning disk reaches
+	// (`storageTargetSync.UpdateOrError`) — mounting and confirming the pool, then starting every
+	// enabled, unmasked unit in `pool.DependentServiceUnits` (Samba, NFS, Docker, libvirtd), never `sh -c`
+	// and never a second mechanism. The acknowledgement itself survives every later rebuild of the
+	// daemon's array sequence (a share change, a disk-topology change, a SIGHUP) for as long as the same
+	// disk stays missing. Refused with `array_not_degraded` (409, `disk.ErrNothingToAcknowledge`) when
+	// nothing is currently missing — acknowledging a degraded state that does not exist would let a
+	// stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started`
+	// (409) when the acknowledgement itself succeeds but the transition it triggers does not actually
+	// start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or
+	// confirming the pool fails — so this never reports success over services that never came up — in
+	// that refusal case `arrayDegradedAcknowledged` on a later `GetStatus` still reports true (the
+	// acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both
+	// before ever telling the user services are running. `arrayDegraded` on the returned status stays true
+	// for as long as the disk is still missing — acknowledging never reports a degraded array as healthy
+	// — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and
+	// top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
+	//
+	// POST /array/degraded/acknowledge
+	AcknowledgeDegradedArray(ctx context.Context) (*SystemStatus, error)
 	// AddDisk invokes addDisk operation.
 	//
 	// Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
@@ -1075,6 +1099,149 @@ func (c *Client) requestURL(ctx context.Context) *url.URL {
 		return c.serverURL
 	}
 	return u
+}
+
+// AcknowledgeDegradedArray invokes acknowledgeDegradedArray operation.
+//
+// Records the user's explicit choice to proceed while the array is degraded (doc 02 §1, Q69,
+// `hoserva array acknowledge-degraded`): the handler calls `disk.StorageGate.Acknowledge` on the
+// daemon's live gate and then runs the exact not-ready→ready transition a returning disk reaches
+// (`storageTargetSync.UpdateOrError`) — mounting and confirming the pool, then starting every
+// enabled, unmasked unit in `pool.DependentServiceUnits` (Samba, NFS, Docker, libvirtd), never `sh -c`
+// and never a second mechanism. The acknowledgement itself survives every later rebuild of the
+// daemon's array sequence (a share change, a disk-topology change, a SIGHUP) for as long as the same
+// disk stays missing. Refused with `array_not_degraded` (409, `disk.ErrNothingToAcknowledge`) when
+// nothing is currently missing — acknowledging a degraded state that does not exist would let a
+// stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started`
+// (409) when the acknowledgement itself succeeds but the transition it triggers does not actually
+// start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or
+// confirming the pool fails — so this never reports success over services that never came up — in
+// that refusal case `arrayDegradedAcknowledged` on a later `GetStatus` still reports true (the
+// acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both
+// before ever telling the user services are running. `arrayDegraded` on the returned status stays true
+// for as long as the disk is still missing — acknowledging never reports a degraded array as healthy
+// — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and
+// top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
+//
+// POST /array/degraded/acknowledge
+func (c *Client) AcknowledgeDegradedArray(ctx context.Context) (*SystemStatus, error) {
+	res, err := c.sendAcknowledgeDegradedArray(ctx)
+	return res, err
+}
+
+func (c *Client) sendAcknowledgeDegradedArray(ctx context.Context) (res *SystemStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("acknowledgeDegradedArray"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/array/degraded/acknowledge"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, AcknowledgeDegradedArrayOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/array/degraded/acknowledge"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, AcknowledgeDegradedArrayOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, AcknowledgeDegradedArrayOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeAcknowledgeDegradedArrayResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
 }
 
 // AddDisk invokes addDisk operation.

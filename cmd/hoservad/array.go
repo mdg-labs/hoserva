@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 
+	"github.com/mdg-labs/hoserva/internal/api"
 	cfggen "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
@@ -199,4 +201,164 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		})
 	}
 	return seq, nil
+}
+
+// storageGateOf unwraps newArraySequence's gate: the storage readiness
+// gate inside job.PendingUpgradeGate (doc 02 §4 UR2). Acknowledging a
+// degraded array (#385) needs the concrete *disk.StorageGate — Acknowledge
+// is not part of the job.ReadinessGate interface newArraySequence's own
+// Gate field carries — and this is the one place production reconstructs
+// it, the same way this package's own tests already did before this
+// wiring needed it too.
+func storageGateOf(g job.ReadinessGate) (*disk.StorageGate, bool) {
+	wrapped, ok := g.(job.PendingUpgradeGate)
+	if !ok {
+		return nil, false
+	}
+	inner, ok := wrapped.Gate.(*disk.StorageGate)
+	return inner, ok
+}
+
+// acknowledgedDegraded remembers, for cmd/hoservad's whole lifetime, which
+// missing disks the user has explicitly acknowledged (#385 finding 1).
+// newArraySequence's own disk.StorageGate is rebuilt from scratch on every
+// share create/update/delete (shareService.PostCommit), every
+// disk-topology job's ArrayReady hook, and every SIGHUP — a freshly built
+// gate has never itself been acknowledged, so without this, any one of
+// those re-evaluates the same still-missing disk as newly degraded and
+// undoes the acknowledgement the moment it runs. reapply only
+// re-acknowledges a freshly evaluated gate when every disk it currently
+// reports missing is one this holder already recorded
+// (disk.Identity.Matches) — a disk arriving, or a different disk going
+// missing, is a new degraded state and gets its own banner, never a
+// blanket "stay quiet forever".
+type acknowledgedDegraded struct {
+	mu         sync.Mutex
+	identities []disk.Identity
+}
+
+// record captures the identities behind an acknowledgement that has just
+// succeeded — gate.Missing(), read against the same gate.Acknowledge()
+// call that just succeeded.
+func (a *acknowledgedDegraded) record(missing []disk.ExpectedDisk) {
+	ids := make([]disk.Identity, 0, len(missing))
+	for _, m := range missing {
+		ids = append(ids, m.Identity)
+	}
+	a.mu.Lock()
+	a.identities = ids
+	a.mu.Unlock()
+}
+
+// reapply re-acknowledges gate — freshly built and already Evaluate'd by
+// newArraySequence — when every disk it now reports missing is already in
+// this holder's own recorded set. It clears that set once gate reports
+// nothing missing at all, so disk.StorageGate.Evaluate's own "all present
+// clears the acknowledgement" rule is never contradicted by a stale
+// holder outliving the state it was about.
+func (a *acknowledgedDegraded) reapply(gate *disk.StorageGate) {
+	missing := gate.Missing()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(missing) == 0 {
+		a.identities = nil
+		return
+	}
+	for _, m := range missing {
+		found := false
+		for _, id := range a.identities {
+			if m.Identity.Matches(id) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return
+		}
+	}
+	_ = gate.Acknowledge()
+}
+
+// wireAcknowledgeDegraded installs Handler.AcknowledgeDegraded (#385, doc
+// 02 §1, Q69): cmd/hoservad's own main.go and this package's own tests
+// both call this one function, so a test built the way main.go builds the
+// handler fails the moment this wiring is skipped, instead of passing
+// against dead production code the way a hand-copied closure could.
+//
+// It calls disk.StorageGate.Acknowledge on CurrentArray()'s own live gate
+// — never a rebuild through newArraySequence, which would construct a
+// fresh, unacknowledged gate and undo the call this hook just made —
+// records the missing identities behind it (ack.record) so a later
+// rebuild's own reapply can re-acknowledge the same degraded state
+// (finding 1), and finally runs storageTarget's own not-ready→ready
+// transition (UpdateOrError) against that same sequence. A transition
+// that does not actually start anything — the array is in maintenance
+// mode, or the pool fails to mount or confirm — is reported to the
+// caller as api.ErrDegradedServicesNotStarted (finding 3) rather than
+// silently reported as success: the acknowledgement itself still stands,
+// but the caller must never tell the user services are running when they
+// are not.
+//
+// It also wires Handler.StorageServicesReleased to storageTarget.Ready
+// (#385 finding 2): GetStatus's own storageServicesReleased field must
+// read this same live gate state, never be derived from the
+// acknowledgement alone, since the two can disagree exactly in the
+// maintenance-mode and mount-failure cases above.
+func wireAcknowledgeDegraded(handler *api.Handler, storageTarget *storageTargetSync, ack *acknowledgedDegraded) {
+	handler.StorageServicesReleased = storageTarget.Ready
+	handler.AcknowledgeDegraded = func(ctx context.Context) error {
+		seq := handler.CurrentArray()
+		if seq == nil {
+			return disk.ErrNothingToAcknowledge
+		}
+		gate, ok := storageGateOf(seq.Gate)
+		if !ok {
+			return disk.ErrNothingToAcknowledge
+		}
+		if err := gate.Acknowledge(); err != nil {
+			return err
+		}
+		ack.record(gate.Missing())
+		if err := storageTarget.UpdateOrError(ctx, seq); err != nil {
+			return fmt.Errorf("%w: %v", api.ErrDegradedServicesNotStarted, err)
+		}
+		return nil
+	}
+}
+
+// newRebuildArraySequence builds the rebuild closure run() installs as
+// shareService.PostCommit, hands to wireTopologyHooks for the
+// disk-topology jobs' ArrayReady hook, and re-runs on every SIGHUP
+// (installReloadHandler) — the single place a disk arriving/leaving or a
+// live share change re-evaluates disk.StorageGate (doc 02 §1, Q69). It
+// re-applies any acknowledgement of a still-missing disk the user already
+// gave (ack.reapply, #385 finding 1) to the freshly built gate before
+// syncing the storage-target units — without this, a fresh, unevaluated
+// gate is never acknowledged, so any one of this closure's own callers
+// (a share edit, a disk-topology change, a SIGHUP) would undo the user's
+// acknowledgement the moment it ran.
+func newRebuildArraySequence(scheduler *job.Scheduler, arrayStore *store.ArrayStore, shareStore *store.ShareStore, disks disk.Provider, runner disk.Runner, storageTarget *storageTargetSync, handler *api.Handler, ack *acknowledgedDegraded) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		seq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, runner)
+		if err != nil {
+			return err
+		}
+		if seq != nil {
+			seq.StorageTarget = storageTarget
+			if gate, ok := storageGateOf(seq.Gate); ok {
+				ack.reapply(gate)
+			}
+		}
+		handler.SetArray(seq)
+		// A disk arriving, leaving or a live topology change is exactly
+		// the "storage gate's inputs changed" doc 02 §1 and Q69 describe —
+		// the boot-ordering units must reflect it now, not only at the
+		// next reboot. Update only ever runs after notifySystemdReady has
+		// already sent READY=1, so hoserva.service's own start job is long
+		// finished; it also only touches systemd on an actual transition
+		// (storageTargetSync's own doc comment), so a share create with an
+		// unchanged gate never restarts anything already running.
+		storageTarget.Update(ctx, seq)
+		return nil
+	}
 }

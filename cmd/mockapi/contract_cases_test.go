@@ -359,6 +359,70 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		// #385: the "degraded" scenario's own disk4 (mockArrayDisks,
+		// empty identity, never in mockDiskInventory) leaves both
+		// handlers' own storage gate not ready, so acknowledging succeeds
+		// on both — the same not-ready state GetStatus's own "valid" case
+		// above would report arrayDegraded for under this scenario.
+		op:       "AcknowledgeDegradedArray",
+		name:     "valid",
+		scenario: "degraded",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AcknowledgeDegradedArray(ctx)
+			return err
+		},
+	},
+	{
+		// The default "healthy" scenario has every expected disk present
+		// on both handlers, so there is nothing to acknowledge — refused
+		// with array_not_degraded on both, never silently accepted.
+		op:   "AcknowledgeDegradedArray",
+		name: "refused_when_nothing_is_missing",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.AcknowledgeDegradedArray(ctx)
+			return err
+		},
+	},
+	{
+		// #385 finding 5: a second acknowledge while the disk is still
+		// missing must succeed on both handlers, the same as a real
+		// disk.StorageGate.Acknowledge — which only refuses once the gate
+		// itself is genuinely ready (last.Ready), never because it was
+		// already acknowledged once. Neither this rig's own degradedGate
+		// (contract_rig_test.go) nor the mock's disk4 is ever re-evaluated
+		// as present here, so both stay degraded and both accept the
+		// repeat call.
+		op:       "AcknowledgeDegradedArray",
+		name:     "valid_second_acknowledge_while_still_missing",
+		scenario: "degraded",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.AcknowledgeDegradedArray(ctx); err != nil {
+				return err
+			}
+			_, err := h.AcknowledgeDegradedArray(ctx)
+			return err
+		},
+	},
+	{
+		// #385 finding 1: the mock previously accepted an acknowledge
+		// during maintenance mode (200) while production refused it
+		// (409 array_services_not_started, storageTargetSync.
+		// UpdateOrError's own maintenance-mode check) — this rig's own
+		// AcknowledgeDegraded hook (contract_rig_test.go) now carries the
+		// same check, so this case fails again the moment either side
+		// stops refusing it.
+		op:       "AcknowledgeDegradedArray",
+		name:     "refused_when_array_is_in_maintenance",
+		scenario: "degraded",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.AcknowledgeDegradedArray(ctx)
+			return err
+		},
+	},
+	{
 		op:   "StartSync",
 		name: "valid",
 		run: func(ctx context.Context, h apiv1.Handler) error {

@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -358,6 +359,33 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		registry.Register(jt, true, noop)
 	}
 
+	// degradedGate mirrors cmd/hoservad's own newArraySequence (#385, doc
+	// 02 §1, Q69): expected from the same layout PutArray above seeded,
+	// present from the same provider mockDiskInventory just populated —
+	// so the "degraded" scenario's own disk4 (mockArrayDisks, empty
+	// identity, never in mockDiskInventory) evaluates not ready on this
+	// rig exactly as it does in production, with no scenario-specific
+	// branch of its own here.
+	expectedDisks := mockArrayDisks(scenario)
+	expected := make([]disk.ExpectedDisk, 0, len(expectedDisks))
+	for _, d := range expectedDisks {
+		expected = append(expected, disk.ExpectedDisk{
+			Identity: disk.Identity{WWN: d.WWN, Serial: d.Serial, WeakIdentity: d.WeakIdentity, ByIDName: d.ByIDName},
+			Role:     d.Role,
+			MountAt:  d.Mountpoint,
+		})
+	}
+	degradedGate := disk.NewStorageGate(expected)
+	listedForGate, err := provider.List(ctx)
+	if err != nil {
+		t.Fatalf("listing disks for the contract rig's storage gate: %v", err)
+	}
+	present := make([]disk.Identity, 0, len(listedForGate))
+	for _, d := range listedForGate {
+		present = append(present, disk.Identity{WWN: d.WWN, Serial: d.Serial, WeakIdentity: d.WeakIdentity, ByIDName: d.ByIDName})
+	}
+	degradedGate.Evaluate(present)
+
 	shareRoot := filepath.Join(t.TempDir(), "user")
 	if err := os.MkdirAll(shareRoot, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", shareRoot, err)
@@ -496,8 +524,31 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		// nothing for real, but Stop/Start still run the Scheduler's own
 		// maintenance-mode transition (EnterMaintenance, Drain,
 		// MarkArrayStopped) — exactly the behaviour #330's contract
-		// cases exercise.
-		Array:       &job.ArraySequence{Scheduler: scheduler},
+		// cases exercise. Gate is degradedGate above, built from this same
+		// scenario's own topology and inventory (#385) — GetStatus's own
+		// arrayDegraded and AcknowledgeDegradedArray both read it live.
+		Array: &job.ArraySequence{Scheduler: scheduler, Gate: job.PendingUpgradeGate{Gate: degradedGate, Scheduler: scheduler}},
+		// AcknowledgeDegraded (#385) calls disk.StorageGate.Acknowledge on
+		// degradedGate directly — this rig mounts nothing for real (Array's
+		// own doc comment above), so there is no storageTargetSync
+		// transition to run here; only the status/error-code contract
+		// AcknowledgeDegradedArray itself maps is in scope for this rig.
+		// It still refuses with api.ErrDegradedServicesNotStarted while the
+		// array is in maintenance mode (#385 finding 1) — the same case
+		// storageTargetSync.UpdateOrError refuses in production — so this
+		// rig's own "AcknowledgeDegradedArray"/"refused_when_array_is_in_
+		// maintenance" contract case agrees with cmd/mockapi's own
+		// maintenance-mode check instead of the mock refusing what this
+		// rig used to accept.
+		AcknowledgeDegraded: func(context.Context) error {
+			if err := degradedGate.Acknowledge(); err != nil {
+				return err
+			}
+			if scheduler.InMaintenance() {
+				return fmt.Errorf("%w: the array is in maintenance mode", api.ErrDegradedServicesNotStarted)
+			}
+			return nil
+		},
 		Schedules:   scheduleSvc,
 		Settings:    settingsSvc,
 		UPS:         upsSvc,

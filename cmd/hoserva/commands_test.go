@@ -61,7 +61,7 @@ func TestRootCmdHasArrayStopAndStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find array: %v", err)
 	}
-	for _, name := range []string{"stop", "start"} {
+	for _, name := range []string{"stop", "start", "acknowledge-degraded"} {
 		if _, _, err := array.Find([]string{name}); err != nil {
 			t.Fatalf("find array %s: %v", name, err)
 		}
@@ -85,6 +85,100 @@ func TestRebootRequiresConfirm(t *testing.T) {
 
 func TestArrayStopRequiresConfirm(t *testing.T) {
 	assertRequiresConfirm(t, []string{"array", "stop"})
+}
+
+// TestArrayAcknowledgeDegradedSendsTheRequestAndPrintsTheStatus drives
+// `hoserva array acknowledge-degraded` against a stand-in daemon on a
+// Unix socket: the request reaches acknowledgeDegradedArray and the
+// returned status is printed.
+func TestArrayAcknowledgeDegradedSendsTheRequestAndPrintsTheStatus(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	var gotPath string
+	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.Method + " " + r.URL.Path
+		status := apiv1.SystemStatus{Healthy: true, Summary: "All checks passed", ArrayDegraded: apiv1.NewOptBool(false)}
+		out, err := status.MarshalJSON()
+		if err != nil {
+			t.Errorf("encoding the status: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(out)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	stdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	root := rootCmd()
+	root.SetArgs([]string{"--socket", sock, "array", "acknowledge-degraded"})
+	runErr := root.Execute()
+	os.Stdout = stdout
+	_ = w.Close()
+	printed, _ := io.ReadAll(r)
+	if runErr != nil {
+		t.Fatalf("array acknowledge-degraded: %v", runErr)
+	}
+	if gotPath != "POST /api/v1/array/degraded/acknowledge" {
+		t.Fatalf("request = %q, want POST /api/v1/array/degraded/acknowledge", gotPath)
+	}
+	if !strings.Contains(string(printed), "All checks passed") {
+		t.Fatalf("output %q does not print the returned status", printed)
+	}
+}
+
+// TestArrayAcknowledgeDegradedRefusalIsACommandFailure proves a 409
+// array_not_degraded refusal fails the command itself, not just prints
+// the error and exits 0 — indistinguishable from success to any script or
+// chained command otherwise.
+func TestArrayAcknowledgeDegradedRefusalIsACommandFailure(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refusal := apiv1.Error{Code: "array_not_degraded", Message: "the array is not degraded — nothing to acknowledge"}
+		out, err := refusal.MarshalJSON()
+		if err != nil {
+			t.Errorf("encoding the refusal: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write(out)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	var errBuf bytes.Buffer
+	root := rootCmd()
+	root.SetArgs([]string{"--socket", sock, "array", "acknowledge-degraded"})
+	root.SetOut(&errBuf)
+	root.SetErr(&errBuf)
+	runErr := root.Execute()
+	if runErr == nil {
+		t.Fatal("array acknowledge-degraded against a refusal = nil error, want a command failure")
+	}
+	if !strings.Contains(runErr.Error(), "array_not_degraded") {
+		t.Fatalf("array acknowledge-degraded error %q does not name the refusal code", runErr.Error())
+	}
 }
 
 func TestUpdateRequiresConfirm(t *testing.T) {

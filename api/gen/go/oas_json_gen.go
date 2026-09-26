@@ -19674,6 +19674,18 @@ func (s *SystemStatus) encodeFields(e *jx.Encoder) {
 		}
 	}
 	{
+		if s.ArrayDegradedAcknowledged.Set {
+			e.FieldStart("arrayDegradedAcknowledged")
+			s.ArrayDegradedAcknowledged.Encode(e)
+		}
+	}
+	{
+		if s.StorageServicesReleased.Set {
+			e.FieldStart("storageServicesReleased")
+			s.StorageServicesReleased.Encode(e)
+		}
+	}
+	{
 		if s.ParityBlocked.Set {
 			e.FieldStart("parityBlocked")
 			s.ParityBlocked.Encode(e)
@@ -19687,13 +19699,15 @@ func (s *SystemStatus) encodeFields(e *jx.Encoder) {
 	}
 }
 
-var jsonFieldsNameOfSystemStatus = [6]string{
+var jsonFieldsNameOfSystemStatus = [8]string{
 	0: "healthy",
 	1: "summary",
 	2: "maintenanceMode",
 	3: "arrayDegraded",
-	4: "parityBlocked",
-	5: "activeJobs",
+	4: "arrayDegradedAcknowledged",
+	5: "storageServicesReleased",
+	6: "parityBlocked",
+	7: "activeJobs",
 }
 
 // Decode decodes SystemStatus from json.
@@ -19748,6 +19762,26 @@ func (s *SystemStatus) Decode(d *jx.Decoder) error {
 				return nil
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"arrayDegraded\"")
+			}
+		case "arrayDegradedAcknowledged":
+			if err := func() error {
+				s.ArrayDegradedAcknowledged.Reset()
+				if err := s.ArrayDegradedAcknowledged.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"arrayDegradedAcknowledged\"")
+			}
+		case "storageServicesReleased":
+			if err := func() error {
+				s.StorageServicesReleased.Reset()
+				if err := s.StorageServicesReleased.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"storageServicesReleased\"")
 			}
 		case "parityBlocked":
 			if err := func() error {

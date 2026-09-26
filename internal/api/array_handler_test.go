@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -538,6 +539,180 @@ func TestHandler_StartArray_RefusesWhenGateIsNotReady(t *testing.T) {
 	}
 	if len(log) != 0 {
 		t.Fatalf("StartArray mounted %v while the gate reported not ready", log)
+	}
+}
+
+// attachDegradedArraySequence wires seq's Gate as newArraySequence
+// (cmd/hoservad) always does — a real *disk.StorageGate inside a
+// job.PendingUpgradeGate — so degradedGate's own unwrapping and
+// AcknowledgeDegradedArray's call to Acknowledge exercise the exact shape
+// production builds, not a bare fake.
+func attachDegradedArraySequence(h *api.Handler, s *job.Scheduler, gate *disk.StorageGate, seq job.ArraySequence) {
+	seq.Gate = job.PendingUpgradeGate{Gate: gate, Scheduler: s}
+	attachArraySequence(h, s, seq)
+}
+
+// TestHandler_AcknowledgeDegradedArray_NotConfiguredReturns501 proves the
+// handler never invents its own gate access: without cmd/hoservad's own
+// hook wired (Handler.AcknowledgeDegraded), the operation is unreachable,
+// not silently a no-op.
+func TestHandler_AcknowledgeDegradedArray_NotConfiguredReturns501(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	_, err := h.AcknowledgeDegradedArray(context.Background())
+	status := apiError(t, h, err)
+	if status.StatusCode != 501 || status.Response.Code != "not_configured" {
+		t.Fatalf("AcknowledgeDegradedArray = %+v, want 501 not_configured", status)
+	}
+}
+
+// TestHandler_AcknowledgeDegradedArray_RefusesWhenNothingIsMissing is
+// this issue's own safety property: acknowledging a degraded state that
+// does not exist must be refused, never silently accepted — accepting it
+// would let a stale acknowledgement outlive the situation it was about
+// and mask a future, real one (disk.StorageGate.Acknowledge's own
+// contract).
+func TestHandler_AcknowledgeDegradedArray_RefusesWhenNothingIsMissing(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	h.AcknowledgeDegraded = func(context.Context) error { return disk.ErrNothingToAcknowledge }
+
+	_, err := h.AcknowledgeDegradedArray(context.Background())
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "array_not_degraded" {
+		t.Fatalf("AcknowledgeDegradedArray = %+v, want 409 array_not_degraded", status)
+	}
+}
+
+// TestHandler_AcknowledgeDegradedArray_AcknowledgesTheLiveGateAndReportsStatus
+// is #385's own data-loss-adjacent scenario at the handler layer: a
+// missing expected disk leaves the live gate not ready and GetStatus
+// reporting arrayDegraded; acknowledging flips the same gate instance
+// CurrentArray() already holds (never a rebuilt, fresh, unacknowledged
+// one) and the status the operation returns reflects the clear
+// immediately — the same object a concurrent GetStatus call would see.
+func TestHandler_AcknowledgeDegradedArray_AcknowledgesTheLiveGateAndReportsStatus(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+
+	gate := disk.NewStorageGate([]disk.ExpectedDisk{
+		{Identity: disk.Identity{Serial: "DATA1"}, Role: "data", MountAt: "/mnt/disk1"},
+	})
+	gate.Evaluate(nil) // the expected disk is not present
+	if gate.Ready() {
+		t.Fatal("gate.Ready() = true with the expected disk missing")
+	}
+	attachDegradedArraySequence(h, s, gate, job.ArraySequence{})
+
+	before, err := h.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if !before.ArrayDegraded.Or(false) {
+		t.Fatal("GetStatus.ArrayDegraded = false with the expected disk missing and unacknowledged")
+	}
+
+	var updateCalls int
+	h.AcknowledgeDegraded = func(ctx context.Context) error {
+		g, ok := h.CurrentArray().Gate.(job.PendingUpgradeGate)
+		if !ok {
+			t.Fatal("CurrentArray().Gate is not a job.PendingUpgradeGate")
+		}
+		sg, ok := g.Gate.(*disk.StorageGate)
+		if !ok {
+			t.Fatal("PendingUpgradeGate.Gate is not a *disk.StorageGate")
+		}
+		if sg != gate {
+			t.Fatal("AcknowledgeDegraded was not handed the same live gate CurrentArray() holds")
+		}
+		if err := sg.Acknowledge(); err != nil {
+			return err
+		}
+		updateCalls++
+		return nil
+	}
+
+	status, err := h.AcknowledgeDegradedArray(ctx)
+	if err != nil {
+		t.Fatalf("AcknowledgeDegradedArray: %v", err)
+	}
+	if updateCalls != 1 {
+		t.Fatalf("AcknowledgeDegraded hook called %d times, want 1", updateCalls)
+	}
+	// The disk is still physically missing — acknowledging must never
+	// report the array as healthy (#385 finding 2). arrayDegraded stays
+	// true; arrayDegradedAcknowledged is what flips instead.
+	if !status.ArrayDegraded.Or(false) {
+		t.Fatal("AcknowledgeDegradedArray status no longer reports arrayDegraded=true after acknowledging, even though the disk is still missing")
+	}
+	if !status.ArrayDegradedAcknowledged.Or(false) {
+		t.Fatal("AcknowledgeDegradedArray status does not report arrayDegradedAcknowledged=true after a successful acknowledgement")
+	}
+	if !gate.Ready() {
+		t.Fatal("the live gate is still not ready after Acknowledge — the transition never reached it")
+	}
+
+	// Once the disk genuinely returns (a fresh Evaluate finds it present),
+	// disk.StorageGate.Acknowledge itself refuses — there is no longer a
+	// degraded state to acknowledge, and CurrentArray() still holds this
+	// exact gate instance, so the refusal reaches the handler with no
+	// further rebuild in between.
+	gate.Evaluate([]disk.Identity{{Serial: "DATA1"}})
+	if _, err := h.AcknowledgeDegradedArray(ctx); err == nil {
+		t.Fatal("AcknowledgeDegradedArray = nil error once the missing disk is present again, want a refusal")
+	}
+}
+
+// TestHandler_AcknowledgeDegradedArray_ServicesNotStartedIsARefusal is
+// #385 finding 3's own handler-level mapping test: when the hook reports
+// api.ErrDegradedServicesNotStarted (cmd/hoservad's own signal that the
+// acknowledgement succeeded but the not-ready→ready transition it
+// triggered did not actually start anything), the operation must refuse
+// with a typed 409, never report success over services that never came
+// up.
+func TestHandler_AcknowledgeDegradedArray_ServicesNotStartedIsARefusal(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	h.AcknowledgeDegraded = func(context.Context) error {
+		return fmt.Errorf("%w: the array is in maintenance mode", api.ErrDegradedServicesNotStarted)
+	}
+
+	_, err := h.AcknowledgeDegradedArray(context.Background())
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "array_services_not_started" {
+		t.Fatalf("AcknowledgeDegradedArray = %+v, want 409 array_services_not_started", status)
+	}
+}
+
+// TestHandler_GetStatus_ArrayDegradedClearsOnceTheDiskReturns proves
+// arrayDegraded is read live from the gate, not cached from acknowledge
+// time: a disk reappearing (Evaluate finding every expected disk present)
+// clears it exactly the way an explicit acknowledgement does, and — per
+// disk.StorageGate.Evaluate's own contract — resets any acknowledgement,
+// so a later, genuinely new absence is reported again rather than masked
+// by a stale flag.
+func TestHandler_GetStatus_ArrayDegradedClearsOnceTheDiskReturns(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+
+	identity := disk.Identity{Serial: "DATA1"}
+	gate := disk.NewStorageGate([]disk.ExpectedDisk{{Identity: identity, Role: "data", MountAt: "/mnt/disk1"}})
+	gate.Evaluate(nil)
+	attachDegradedArraySequence(h, s, gate, job.ArraySequence{})
+
+	status, err := h.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if !status.ArrayDegraded.Or(false) {
+		t.Fatal("GetStatus.ArrayDegraded = false with the expected disk missing")
+	}
+
+	gate.Evaluate([]disk.Identity{identity})
+
+	status, err = h.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if status.ArrayDegraded.Or(true) {
+		t.Fatal("GetStatus.ArrayDegraded = true once the expected disk is present again")
 	}
 }
 

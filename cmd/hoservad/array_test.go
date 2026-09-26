@@ -988,17 +988,6 @@ func TestShareService_PostCommit_KeepsArraySequenceShareMountsInSyncWithStore(t 
 	}
 }
 
-// storageGateOf unwraps newArraySequence's gate: the storage readiness
-// gate inside job.PendingUpgradeGate (doc 02 §4 UR2).
-func storageGateOf(g job.ReadinessGate) (*disk.StorageGate, bool) {
-	wrapped, ok := g.(job.PendingUpgradeGate)
-	if !ok {
-		return nil, false
-	}
-	inner, ok := wrapped.Gate.(*disk.StorageGate)
-	return inner, ok
-}
-
 // isolateDiskCheck asserts newArraySequence wired UR9's check (doc 02 §4)
 // with the production mount-table reader and SQLite's UUIDs, then swaps
 // that reader for an empty fake table so Start never reads the host's

@@ -26,6 +26,7 @@ const (
 // that reads the spec from the repository (never from a built binary) is
 // the mechanism available.
 var operationRoles = map[apiv1.OperationName]Role{
+	apiv1.AcknowledgeDegradedArrayOperation:       RoleAdmin,
 	apiv1.AddDiskOperation:                        RoleAdmin,
 	apiv1.CancelDiskRemovalOperation:              RoleAdmin,
 	apiv1.CancelJobOperation:                      RoleAdmin,

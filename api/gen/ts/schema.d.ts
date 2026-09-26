@@ -1419,6 +1419,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/array/degraded/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Acknowledge a degraded array
+         * @description Records the user's explicit choice to proceed while the array is degraded (doc 02 §1, Q69, `hoserva array acknowledge-degraded`): the handler calls `disk.StorageGate.Acknowledge` on the daemon's live gate and then runs the exact not-ready→ready transition a returning disk reaches (`storageTargetSync.UpdateOrError`) — mounting and confirming the pool, then starting every enabled, unmasked unit in `pool.DependentServiceUnits` (Samba, NFS, Docker, libvirtd), never `sh -c` and never a second mechanism. The acknowledgement itself survives every later rebuild of the daemon's array sequence (a share change, a disk-topology change, a SIGHUP) for as long as the same disk stays missing. Refused with `array_not_degraded` (409, `disk.ErrNothingToAcknowledge`) when nothing is currently missing — acknowledging a degraded state that does not exist would let a stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started` (409) when the acknowledgement itself succeeds but the transition it triggers does not actually start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or confirming the pool fails — so this never reports success over services that never came up — in that refusal case `arrayDegradedAcknowledged` on a later `GetStatus` still reports true (the acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both before ever telling the user services are running. `arrayDegraded` on the returned status stays true for as long as the disk is still missing — acknowledging never reports a degraded array as healthy — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
+         */
+        post: operations["acknowledgeDegradedArray"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/parity": {
         parameters: {
             query?: never;
@@ -2679,7 +2699,12 @@ export interface components {
             healthy: boolean;
             summary: string;
             maintenanceMode?: boolean;
+            /** @description True whenever any disk `hoservad` expects is currently missing by identity (doc 02 §1, Q69) — including once the user has acknowledged the degraded state through `POST /array/degraded/acknowledge`. It clears only once the missing disk actually reappears; `arrayDegradedAcknowledged` is what distinguishes an acknowledged degraded array from one still waiting on the user. */
             arrayDegraded?: boolean;
+            /** @description True once the user has acknowledged the current degraded state (`hoserva array acknowledge-degraded`) — only meaningful while `arrayDegraded` is also true. It resets the moment the missing disk reappears, the same way the acknowledgement itself does. It can be true while `storageServicesReleased` is still false: the acknowledgement stands even when the transition it triggers does not actually start anything (maintenance mode, or a mount failure, `array_services_not_started`) — a client must never read this field alone as "services are running" (#385 finding 2). */
+            arrayDegradedAcknowledged?: boolean;
+            /** @description True once `hoservad`'s storage-target gate has actually released Samba, NFS, Docker and libvirt — read live from the same runtime flag (`/run/hoserva/storage-ready`) hoservad itself sets only after mounting and confirming the pool — and the array is not currently in maintenance mode. This is the field a client checks before ever telling the user services are running; `arrayDegradedAcknowledged` alone only reports the acknowledgement, not whether it took effect (#385 finding 2). It goes false again the moment `array stop` enters maintenance mode, even while the runtime flag from an earlier acknowledgement is still set — an explicit stop takes those services back down, so a standing acknowledgement must never be read as "still running". */
+            storageServicesReleased?: boolean;
             parityBlocked?: boolean;
             /** Format: int32 */
             activeJobs?: number;
@@ -5365,6 +5390,27 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description System status after the sequence. `maintenanceMode` is false on success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    acknowledgeDegradedArray: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description System status after acknowledging. `arrayDegraded` stays true while the disk is still missing; `arrayDegradedAcknowledged` is true; `storageServicesReleased` is true only once the transition actually started the gated services. */
             200: {
                 headers: {
                     [name: string]: unknown;

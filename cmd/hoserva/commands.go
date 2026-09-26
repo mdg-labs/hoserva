@@ -45,6 +45,11 @@ func arrayCmd() *cobra.Command {
 		Short: "Mount the array and leave maintenance mode (Q70)",
 		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.StartArray(apiCtx()) }),
 	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "acknowledge-degraded",
+		Short: "Acknowledge a degraded array and start the services waiting on it (doc 02 §1, Q69)",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.AcknowledgeDegradedArray(apiCtx()) }),
+	})
 	return cmd
 }
 

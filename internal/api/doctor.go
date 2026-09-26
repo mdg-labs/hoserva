@@ -478,10 +478,48 @@ func (h *Handler) GetStatus(ctx context.Context) (*apiv1.SystemStatus, error) {
 	if h.Scheduler != nil {
 		maintenance = h.Scheduler.InMaintenance()
 	}
+	// arrayDegraded mirrors disk.StorageGate.Missing() (doc 02 §1, Q69):
+	// true whenever any expected disk is currently absent by identity,
+	// regardless of acknowledgement — acknowledging a degraded array must
+	// never report it as healthy (#385 finding 2). arrayDegradedAcknowledged
+	// is what distinguishes "acknowledged, running degraded" from "not yet
+	// acknowledged": true only once the acknowledgement has also made the
+	// gate itself report ready (gate.Ready(), disk.StorageGate's own
+	// contract). Both clear together once the missing disk actually
+	// reappears (a fresh Evaluate). No gate at all (no array configured
+	// yet, or a caller's own test predating the gate) reports both false:
+	// there is nothing missing to report on.
+	arrayDegraded := false
+	arrayDegradedAcknowledged := false
+	if gate := degradedGate(h.CurrentArray()); gate != nil {
+		arrayDegraded = len(gate.Missing()) > 0
+		arrayDegradedAcknowledged = arrayDegraded && gate.Ready()
+	}
+	// storageServicesReleased (#385 finding 2) is read from
+	// cmd/hoservad's own storage-target gate state, never derived from
+	// arrayDegradedAcknowledged: the acknowledgement above can stand
+	// while the not-ready→ready transition it triggered did not actually
+	// start anything (maintenance mode, or a mount failure) — a client
+	// must be able to tell the two apart rather than infer "running"
+	// from the acknowledgement alone. No hook wired (an older daemon
+	// build, or a caller's own test predating it) reports false, never a
+	// guess. storageTargetSync.Ready() only ever tracks whether that
+	// transition ran, never whether a later `array stop` then stopped
+	// and unmounted everything again — ArraySequence.Stop does not clear
+	// it — so this also requires the array not be in maintenance: a
+	// still-standing acknowledgement must never be reported as "services
+	// running" once StopArray has taken them down.
+	storageServicesReleased := false
+	if h.StorageServicesReleased != nil {
+		storageServicesReleased = h.StorageServicesReleased() && !maintenance
+	}
 	return &apiv1.SystemStatus{
-		Healthy:         healthy,
-		Summary:         summary,
-		ActiveJobs:      apiv1.NewOptInt32(active),
-		MaintenanceMode: apiv1.NewOptBool(maintenance),
+		Healthy:                   healthy,
+		Summary:                   summary,
+		ActiveJobs:                apiv1.NewOptInt32(active),
+		MaintenanceMode:           apiv1.NewOptBool(maintenance),
+		ArrayDegraded:             apiv1.NewOptBool(arrayDegraded),
+		ArrayDegradedAcknowledged: apiv1.NewOptBool(arrayDegradedAcknowledged),
+		StorageServicesReleased:   apiv1.NewOptBool(storageServicesReleased),
 	}, nil
 }

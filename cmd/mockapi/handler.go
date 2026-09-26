@@ -63,6 +63,11 @@ type handler struct {
 	// maintenance is Q70's maintenance mode for this mock instance:
 	// StopArray sets it, StartArray clears it, GetStatus reports it.
 	maintenance bool
+	// degradedAcknowledged is #385's own mock state: AcknowledgeDegradedArray
+	// sets it once, for the "degraded" scenario only, and mockSystemStatus
+	// clears arrayDegraded once it is set — mirroring production's
+	// disk.StorageGate.Acknowledge without a real gate behind this mock.
+	degradedAcknowledged bool
 
 	shares map[string]apiv1.Share
 

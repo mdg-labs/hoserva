@@ -338,6 +338,16 @@ func run(cfg config) error {
 	// writer once the daemon starts serving requests.
 	handler := &api.Handler{}
 	handler.SetArray(arraySeq)
+	// AcknowledgeDegraded (#385, doc 02 §1, Q69) is wired by
+	// wireAcknowledgeDegraded (cmd/hoservad/array.go) — the same function
+	// this package's own tests call, so a test built the way this line
+	// builds the handler fails if the wiring is ever skipped. ackHolder
+	// remembers which missing disks were acknowledged for as long as this
+	// process runs, so a later rebuild of arraySeq (a share change, a
+	// disk-topology change, a SIGHUP) can re-apply it to the fresh,
+	// otherwise-unacknowledged gate that rebuild builds (finding 1).
+	ackHolder := &acknowledgedDegraded{}
+	wireAcknowledgeDegraded(handler, storageTarget, ackHolder)
 	upsController := newUPSController(scheduler, handler.CurrentArray, notifyService, linuxDisks.Exec)
 
 	// Losing metrics.db must not look like array failure (#186): log and
@@ -414,27 +424,11 @@ func run(cfg config) error {
 	// stays exactly as stale as it was at the last daemon start or
 	// disk-topology change — array/stop then fails EBUSY on a share that
 	// exists and is mounted, but that the running daemon has never once
-	// rebuilt its ArraySequence to know about (#268).
-	rebuildArraySequence := func(ctx context.Context) error {
-		seq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, linuxDisks.Exec)
-		if err != nil {
-			return err
-		}
-		if seq != nil {
-			seq.StorageTarget = storageTarget
-		}
-		handler.SetArray(seq)
-		// A disk arriving, leaving or a live topology change is exactly
-		// the "storage gate's inputs changed" doc 02 §1 and Q69 describe —
-		// the boot-ordering units must reflect it now, not only at the
-		// next reboot. Update only ever runs after notifySystemdReady has
-		// already sent READY=1, so hoserva.service's own start job is long
-		// finished; it also only touches systemd on an actual transition
-		// (storageTargetSync's own doc comment), so a share create with an
-		// unchanged gate never restarts anything already running.
-		storageTarget.Update(ctx, seq)
-		return nil
-	}
+	// rebuilt its ArraySequence to know about (#268). newRebuildArraySequence
+	// (cmd/hoservad/array.go) also re-applies ackHolder to the fresh gate
+	// it builds, so an earlier acknowledgement of a still-missing disk
+	// survives this rebuild instead of being undone by it (#385 finding 1).
+	rebuildArraySequence := newRebuildArraySequence(scheduler, arrayStore, shareStore, disks, linuxDisks.Exec, storageTarget, handler, ackHolder)
 	// installReloadHandler (cmd/hoservad/reload.go) re-runs
 	// rebuildArraySequence on SIGHUP — packaging/debian/hoserva-storage.rules's own
 	// trigger for a disk arriving or leaving while hoservad is already

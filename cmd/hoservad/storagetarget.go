@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -186,6 +187,21 @@ func gateReady(seq *job.ArraySequence) bool {
 	return seq.Gate == nil || seq.Gate.Ready()
 }
 
+// Ready reports whether this sync's own not-ready→ready transition has
+// actually run — the same s.ready this type already tracks internally to
+// tell an unchanged rebuild from a real transition, exposed for
+// api.Handler.StorageServicesReleased (#385 finding 2). Unlike
+// disk.StorageGate.Ready(), which flips the moment Acknowledge succeeds,
+// this only ever reports true once mountAndConfirmPool has actually
+// confirmed the pool and startDependents has run — never on the
+// acknowledgement alone, so a caller can tell "acknowledged" from
+// "acknowledged, and the gated services actually came up" apart.
+func (s *storageTargetSync) Ready() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ready
+}
+
 // writeUnits regenerates every storage-target unit from units and reloads
 // systemd. Every file it writes is independent of readiness (D4:
 // pool.StorageReadyUnit's own content never encodes
@@ -312,9 +328,40 @@ func (s *storageTargetSync) Startup(ctx context.Context, seq *job.ArraySequence)
 // share.Service.PostCommit, every disk-topology job's ArrayReady hook,
 // and the SIGHUP handler all run well after startup), so there is no
 // ordering deadlock to avoid the way Startup has.
+//
+// Update only ever logs a transition that did not actually start
+// anything (maintenance mode, or a mount/flag failure) — updateTransition
+// carries the shared logic; UpdateOrError below is the same transition
+// for a caller that needs to know it did not run (#385's AcknowledgeDegraded
+// hook), rather than only see it logged.
 func (s *storageTargetSync) Update(ctx context.Context, seq *job.ArraySequence) {
+	if err := s.updateTransition(ctx, seq); err != nil {
+		log.Printf("hoservad: %v", err)
+	}
+}
+
+// UpdateOrError is Update's own not-ready→ready transition, reported to
+// the caller instead of only logged (#385 finding 3): AcknowledgeDegraded's
+// own hook has just promised the user services are starting, so silently
+// returning success while maintenance mode or a mount failure left every
+// dependent exactly where it was would leave Samba, NFS, Docker and
+// libvirt down with no indication anything went wrong.
+func (s *storageTargetSync) UpdateOrError(ctx context.Context, seq *job.ArraySequence) error {
+	return s.updateTransition(ctx, seq)
+}
+
+// errStorageTargetInMaintenance is updateTransition's own refusal when a
+// not-ready→ready transition arrives while the array is in maintenance
+// mode (an explicit `array stop`, doc 02 §4/Q70): ArraySequence.Stop
+// already stopped Samba/NFS directly, and mounting or starting anything
+// here over an in-progress disk swap would undo that.
+var errStorageTargetInMaintenance = errors.New("storage gate is ready but the array is in maintenance mode — leaving Samba/NFS/Docker/libvirt gated closed until array start")
+
+// updateTransition is Update and UpdateOrError's shared implementation;
+// see Update's own doc comment above for the full contract.
+func (s *storageTargetSync) updateTransition(ctx context.Context, seq *job.ArraySequence) error {
 	if seq == nil {
-		return
+		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -326,7 +373,7 @@ func (s *storageTargetSync) Update(ctx context.Context, seq *job.ArraySequence) 
 	readyChanged := !s.applied || s.ready != ready
 
 	if !unitsChanged && !readyChanged {
-		return
+		return nil
 	}
 
 	if unitsChanged {
@@ -339,16 +386,15 @@ func (s *storageTargetSync) Update(ctx context.Context, seq *job.ArraySequence) 
 	}
 
 	if !readyChanged {
-		return
+		return nil
 	}
 
 	if !ready {
 		if err := s.clearFlag(); err != nil {
-			log.Printf("hoservad: clearing storage-ready flag: %v", err)
-			return
+			return fmt.Errorf("clearing storage-ready flag: %w", err)
 		}
 		s.ready, s.applied = false, true
-		return
+		return nil
 	}
 
 	// A not-ready→ready transition while the array is in maintenance mode
@@ -359,8 +405,7 @@ func (s *storageTargetSync) Update(ctx context.Context, seq *job.ArraySequence) 
 	// false, so the next rebuild after the array starts again re-evaluates
 	// this correctly instead of the transition being lost.
 	if seq.Scheduler != nil && seq.Scheduler.InMaintenance() {
-		log.Printf("hoservad: storage gate is ready but the array is in maintenance mode — leaving Samba/NFS/Docker/libvirt gated closed until array start")
-		return
+		return errStorageTargetInMaintenance
 	}
 	// mountAndConfirmPool is what makes this transition trustworthy:
 	// disk.StorageGate.Ready() only reports every expected disk present by
@@ -372,15 +417,14 @@ func (s *storageTargetSync) Update(ctx context.Context, seq *job.ArraySequence) 
 	// the boot disk even though every unit this gate installs reports
 	// active.
 	if err := s.mountAndConfirmPool(ctx, seq); err != nil {
-		log.Printf("hoservad: %v — leaving the storage-ready flag closed", err)
-		return
+		return fmt.Errorf("%w — leaving the storage-ready flag closed", err)
 	}
 	if err := s.setFlagReady(); err != nil {
-		log.Printf("hoservad: writing storage-ready flag: %v", err)
-		return
+		return fmt.Errorf("writing storage-ready flag: %w", err)
 	}
 	s.startDependents(ctx)
 	s.ready, s.applied = true, true
+	return nil
 }
 
 // startDependents starts every unit in pool.DependentServiceUnits that

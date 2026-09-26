@@ -9824,12 +9824,34 @@ func (s *StopArrayRequest) SetConfirm(val bool) {
 
 // Ref: #/components/schemas/SystemStatus
 type SystemStatus struct {
-	Healthy         bool     `json:"healthy"`
-	Summary         string   `json:"summary"`
-	MaintenanceMode OptBool  `json:"maintenanceMode"`
-	ArrayDegraded   OptBool  `json:"arrayDegraded"`
-	ParityBlocked   OptBool  `json:"parityBlocked"`
-	ActiveJobs      OptInt32 `json:"activeJobs"`
+	Healthy         bool    `json:"healthy"`
+	Summary         string  `json:"summary"`
+	MaintenanceMode OptBool `json:"maintenanceMode"`
+	// True whenever any disk `hoservad` expects is currently missing by identity (doc 02 §1, Q69) —
+	// including once the user has acknowledged the degraded state through
+	// `POST /array/degraded/acknowledge`. It clears only once the missing disk actually reappears;
+	// `arrayDegradedAcknowledged` is what distinguishes an acknowledged degraded array from one still
+	// waiting on the user.
+	ArrayDegraded OptBool `json:"arrayDegraded"`
+	// True once the user has acknowledged the current degraded state
+	// (`hoserva array acknowledge-degraded`) — only meaningful while `arrayDegraded` is also true. It
+	// resets the moment the missing disk reappears, the same way the acknowledgement itself does. It can
+	// be true while `storageServicesReleased` is still false: the acknowledgement stands even when the
+	// transition it triggers does not actually start anything (maintenance mode, or a mount failure,
+	// `array_services_not_started`) — a client must never read this field alone as "services are
+	// running" (#385 finding 2).
+	ArrayDegradedAcknowledged OptBool `json:"arrayDegradedAcknowledged"`
+	// True once `hoservad`'s storage-target gate has actually released Samba, NFS, Docker and libvirt —
+	// read live from the same runtime flag (`/run/hoserva/storage-ready`) hoservad itself sets only after
+	// mounting and confirming the pool — and the array is not currently in maintenance mode. This is the
+	// field a client checks before ever telling the user services are running; `arrayDegradedAcknowledged`
+	// alone only reports the acknowledgement, not whether it took effect (#385 finding 2). It goes false
+	// again the moment `array stop` enters maintenance mode, even while the runtime flag from an earlier
+	// acknowledgement is still set — an explicit stop takes those services back down, so a standing
+	// acknowledgement must never be read as "still running".
+	StorageServicesReleased OptBool  `json:"storageServicesReleased"`
+	ParityBlocked           OptBool  `json:"parityBlocked"`
+	ActiveJobs              OptInt32 `json:"activeJobs"`
 }
 
 // GetHealthy returns the value of Healthy.
@@ -9850,6 +9872,16 @@ func (s *SystemStatus) GetMaintenanceMode() OptBool {
 // GetArrayDegraded returns the value of ArrayDegraded.
 func (s *SystemStatus) GetArrayDegraded() OptBool {
 	return s.ArrayDegraded
+}
+
+// GetArrayDegradedAcknowledged returns the value of ArrayDegradedAcknowledged.
+func (s *SystemStatus) GetArrayDegradedAcknowledged() OptBool {
+	return s.ArrayDegradedAcknowledged
+}
+
+// GetStorageServicesReleased returns the value of StorageServicesReleased.
+func (s *SystemStatus) GetStorageServicesReleased() OptBool {
+	return s.StorageServicesReleased
 }
 
 // GetParityBlocked returns the value of ParityBlocked.
@@ -9880,6 +9912,16 @@ func (s *SystemStatus) SetMaintenanceMode(val OptBool) {
 // SetArrayDegraded sets the value of ArrayDegraded.
 func (s *SystemStatus) SetArrayDegraded(val OptBool) {
 	s.ArrayDegraded = val
+}
+
+// SetArrayDegradedAcknowledged sets the value of ArrayDegradedAcknowledged.
+func (s *SystemStatus) SetArrayDegradedAcknowledged(val OptBool) {
+	s.ArrayDegradedAcknowledged = val
+}
+
+// SetStorageServicesReleased sets the value of StorageServicesReleased.
+func (s *SystemStatus) SetStorageServicesReleased(val OptBool) {
+	s.StorageServicesReleased = val
 }
 
 // SetParityBlocked sets the value of ParityBlocked.

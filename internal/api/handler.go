@@ -93,6 +93,26 @@ type Handler struct {
 	// hold arrayMu, never this field directly.
 	Array   *job.ArraySequence
 	arrayMu sync.RWMutex
+	// AcknowledgeDegraded is cmd/hoservad's own hook for `POST
+	// /array/degraded/acknowledge` (#385, doc 02 §1, Q69): it calls
+	// disk.StorageGate.Acknowledge on the daemon's live gate and then runs
+	// the same not-ready→ready transition a returning disk reaches
+	// (storageTargetSync.Update) against the current CurrentArray()
+	// sequence — never a rebuild, which would construct a fresh,
+	// unacknowledged gate and undo the call it just made. It returns
+	// disk.ErrNothingToAcknowledge when nothing is currently missing. Set
+	// once at startup, the same way ArrayReady is; nil returns 501.
+	AcknowledgeDegraded func(ctx context.Context) error
+	// StorageServicesReleased is cmd/hoservad's own hook for GetStatus's
+	// storageServicesReleased field (#385 finding 2): it reads the live
+	// storage-target gate's own runtime state
+	// (storageTargetSync.Ready — whether the /run/hoserva/storage-ready
+	// flag is actually set), never AcknowledgeDegraded's own success —
+	// an acknowledgement can succeed on the gate while the transition it
+	// triggers does not, so a client must never infer "services are
+	// running" from ArrayDegradedAcknowledged alone. Set once at startup,
+	// the same way AcknowledgeDegraded is; nil reports false.
+	StorageServicesReleased func() bool
 	// History is spin-state and audit-log persistence (Q32, Q74). Nil
 	// returns an empty wake-events list rather than an error.
 	History *store.History

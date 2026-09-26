@@ -13,6 +13,33 @@ type UnimplementedHandler struct{}
 
 var _ Handler = UnimplementedHandler{}
 
+// AcknowledgeDegradedArray implements acknowledgeDegradedArray operation.
+//
+// Records the user's explicit choice to proceed while the array is degraded (doc 02 §1, Q69,
+// `hoserva array acknowledge-degraded`): the handler calls `disk.StorageGate.Acknowledge` on the
+// daemon's live gate and then runs the exact not-ready→ready transition a returning disk reaches
+// (`storageTargetSync.UpdateOrError`) — mounting and confirming the pool, then starting every
+// enabled, unmasked unit in `pool.DependentServiceUnits` (Samba, NFS, Docker, libvirtd), never `sh -c`
+// and never a second mechanism. The acknowledgement itself survives every later rebuild of the
+// daemon's array sequence (a share change, a disk-topology change, a SIGHUP) for as long as the same
+// disk stays missing. Refused with `array_not_degraded` (409, `disk.ErrNothingToAcknowledge`) when
+// nothing is currently missing — acknowledging a degraded state that does not exist would let a
+// stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started`
+// (409) when the acknowledgement itself succeeds but the transition it triggers does not actually
+// start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or
+// confirming the pool fails — so this never reports success over services that never came up — in
+// that refusal case `arrayDegradedAcknowledged` on a later `GetStatus` still reports true (the
+// acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both
+// before ever telling the user services are running. `arrayDegraded` on the returned status stays true
+// for as long as the disk is still missing — acknowledging never reports a degraded array as healthy
+// — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and
+// top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
+//
+// POST /array/degraded/acknowledge
+func (UnimplementedHandler) AcknowledgeDegradedArray(ctx context.Context) (r *SystemStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // AddDisk implements addDisk operation.
 //
 // Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
