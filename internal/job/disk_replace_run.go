@@ -38,30 +38,36 @@ type DiskReplaceDeps struct {
 // RunDiskReplace is the RunFunc hoservad registers for TypeDiskReplace. It
 // re-validates the queued plan's confirmation and Q19/Q20/Q23 checks
 // against the array's current topology (the same defense-in-depth
-// RunDiskAdd applies), refuses when the slot's own recorded disk is still
-// mounted or still present in inventory by identity
-// (ConfirmReplacementTargetAbsent, doc 02 §4 steps 1-2 — a disk that has
-// not actually failed or been removed is not this job's job, #289), formats
-// or adopts the replacement through disk.FormatForAddition at the failed
-// disk's own mountpoint, re-points that slot's array_disks row at the
-// replacement's identity (store.ReplaceDataDisk), regenerates mount units,
-// the pool and snapraid.conf from SQLite, confirms the mountpoint is
-// genuinely backed by the replacement's own filesystem before touching
-// parity, and only then resolves the slot's own SnapRAID disk label from
-// the regenerated config (parity.ParityStatus.DataDiskLabel) and runs
-// `snapraid fix` to reconstruct its contents from parity and the
-// remaining disks.
+// RunDiskAdd applies), refuses a slot whose removal state
+// ReplaceEligibleDuringRemoval does not allow (still evacuating, or
+// already unlisted — doc 09 §4 "Other operations…", #384), refuses when
+// the slot's own recorded disk is still mounted or still present in
+// inventory by identity (ConfirmReplacementTargetAbsent, doc 02 §4 steps
+// 1-2 — a disk that has not actually failed or been removed is not this
+// job's job, #289), formats or adopts the replacement through
+// disk.FormatForAddition at the failed disk's own mountpoint, re-points
+// that slot's array_disks row at the replacement's identity
+// (store.ReplaceDataDisk, or store.ReplaceDataDiskAbandoningRemoval when
+// the slot was evacuated/unpooled — the removal is abandoned in the same
+// statement, #384), regenerates mount units, the pool and snapraid.conf
+// from SQLite, confirms the mountpoint is genuinely backed by the
+// replacement's own filesystem before touching parity, and only then
+// resolves the slot's own SnapRAID disk label from the regenerated
+// config (parity.ParityStatus.DataDiskLabel) and runs `snapraid fix` to
+// reconstruct its contents from parity and the remaining disks.
 //
-// A failure before ReplaceDataDisk leaves the array's topology unchanged,
-// aside from the replacement disk itself already having been formatted or
-// adopted. A failure between ReplaceDataDisk and a successful Fix — the
-// fix step itself failing, or the job being interrupted mid-fix — leaves
-// the array's topology, mounts and snapraid.conf already switched over to
-// the replacement, recoverable by an ordinary `hoserva fix` against the
-// same disk: neither ReplaceDataDisk nor applyArrayFromStore ever touch
-// parity or another disk's own data, and SnapRAID's own fix only ever
-// reconstructs files it has not already restored, so a second fix against
-// the same disk picks up exactly where an interrupted one left off.
+// A failure before the store write leaves the array's topology
+// unchanged, aside from the replacement disk itself already having been
+// formatted or adopted. A failure between that write and a successful
+// Fix — the fix step itself failing, or the job being interrupted
+// mid-fix — leaves the array's topology, mounts and snapraid.conf
+// already switched over to the replacement (and, for a slot that was
+// evacuated/unpooled, already out of removal), recoverable by an
+// ordinary `hoserva fix` against the same disk: neither store write nor
+// applyArrayFromStore ever touch parity or another disk's own data, and
+// SnapRAID's own fix only ever reconstructs files it has not already
+// restored, so a second fix against the same disk picks up exactly where
+// an interrupted one left off.
 func RunDiskReplace(d DiskReplaceDeps) RunFunc {
 	return func(ctx context.Context, rc *RunContext) error {
 		params, err := decodeDiskReplaceParams(rc.Params())
@@ -87,8 +93,15 @@ func RunDiskReplace(d DiskReplaceDeps) RunFunc {
 		// An evacuation queued ahead of this replace can mark the slot for
 		// removal after the plan was confirmed; store.ReplaceDataDisk would
 		// otherwise carry that removal state onto the replacement unchanged
-		// (#368).
-		if oldDisk.LeavingArray() {
+		// (#368). Evacuated and unpooled are narrower than that: the
+		// evacuation has already succeeded, and the old disk may since have
+		// died with SnapRAID still recording a file the evacuation's own
+		// post-check never inspected — the only way to keep that file's
+		// last copy is to rebuild it onto a replacement, so those two
+		// states are not refused here on the removal state alone
+		// (ReplaceEligibleDuringRemoval, #384); ConfirmReplacementTargetAbsent
+		// below still refuses one whose old disk is not genuinely missing.
+		if oldDisk.LeavingArray() && !ReplaceEligibleDuringRemoval(oldDisk.RemovalState) {
 			return fmt.Errorf("job: %w: %s is %s", store.ErrDiskLeavingArray, params.Mountpoint, oldDisk.RemovalState)
 		}
 
@@ -147,7 +160,18 @@ func RunDiskReplace(d DiskReplaceDeps) RunFunc {
 			row.Size = size
 			row.SizeSet = true
 		}
-		if err := d.Store.ReplaceDataDisk(ctx, params.Mountpoint, row); err != nil {
+		// oldDisk.LeavingArray() here can only be evacuated or unpooled —
+		// the refusal above already stopped evacuating/unlisted — so the
+		// same statement that adopts the replacement's identity also
+		// abandons the removal, rejoining the slot to the pool as an
+		// ordinary disk (doc 09 §4 "Other operations…"). A failure here
+		// leaves the row exactly as it was: neither the identity swap nor
+		// the removal-state clear has applied.
+		if oldDisk.LeavingArray() {
+			if err := d.Store.ReplaceDataDiskAbandoningRemoval(ctx, params.Mountpoint, row); err != nil {
+				return err
+			}
+		} else if err := d.Store.ReplaceDataDisk(ctx, params.Mountpoint, row); err != nil {
 			return err
 		}
 

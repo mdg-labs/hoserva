@@ -15263,8 +15263,11 @@ func (s *Server) handlePlanDiskEvacuationRequest(args [0]string, argsEscaped boo
 // genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
 // §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
 // replacement that would leave a parity disk smaller than the array's largest data disk. Refuses
-// (`disk_leaving_array`, 409) a slot whose disk is in removal (any `removalState`): the replacement
-// would inherit that state. Read-only: nothing is formatted or persisted.
+// (`disk_leaving_array`, 409) a slot whose disk is still `evacuating` or already `unlisted`: the
+// replacement would inherit that state. A slot that is `evacuated` or `unpooled` is allowed once the
+// slot's own disk is genuinely missing, refused with `slot_disk_present` otherwise like any other slot
+// — replace abandons the removal and rebuilds the disk's recorded files from parity (#384).
+// Read-only: nothing is formatted or persisted.
 //
 // POST /disks/array/replace/plan
 func (s *Server) handlePlanDiskReplaceRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -16575,7 +16578,10 @@ func (s *Server) handleRegisterExternalDiskRequest(args [0]string, argsEscaped b
 // to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
 // disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
 // (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
-// or still present by identity, and (`disk_leaving_array`, 409) a slot whose disk is in removal. The
+// or still present by identity, and (`disk_leaving_array`, 409) a slot still `evacuating` or already
+// `unlisted`. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is
+// genuinely missing: the job clears the removal state as part of adopting the replacement, so the disk
+// rejoins the array as an ordinary member and its recorded files rebuild from parity (#384). The
 // confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or
 // missing one is refused with `confirmation_required` and formats nothing.
 //

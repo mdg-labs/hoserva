@@ -770,3 +770,135 @@ func TestRunDiskReplace_RefusesWhenMountedFilesystemIsNotTheReplacement(t *testi
 		t.Fatalf("snapraid fix ran (Disk=%q) against a mountpoint not backed by the replacement", lastFix.Disk)
 	}
 }
+
+// TestRunDiskReplace_AbandonsRemovalAndSucceeds_WhenEvacuatedOrUnpooled is
+// #384's own regression: a slot marked evacuated or unpooled is no longer
+// refused (store.ErrDiskLeavingArray) on the removal state alone —
+// ReplaceEligibleDuringRemoval allows both — and the replacement's
+// identity swap clears removal_state and removal_job_id in the same
+// store write (store.ReplaceDataDiskAbandoningRemoval), so the slot
+// rejoins the pool as an ordinary disk and SnapRAID's fix still runs
+// against it.
+func TestRunDiskReplace_AbandonsRemovalAndSucceeds_WhenEvacuatedOrUnpooled(t *testing.T) {
+	for _, state := range []string{store.RemovalStateEvacuated, store.RemovalStateUnpooled} {
+		t.Run(state, func(t *testing.T) {
+			ctx := context.Background()
+			s := newTestScheduler(t)
+			st := store.NewArrayStore(newTestDB(t))
+			genRoot := t.TempDir()
+			mounter := disk.NewFakeMounter()
+
+			p := disk.NewFakeProvider()
+			p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+			p.AddDisk("/dev/sdz", disk.Disk{Size: 4 * disk.TB})
+			r := disk.NewFakeRunner()
+			scriptFilesystemUUID(r, "/dev/sdz", "uuid-new")
+			scriptMountedUUID(r, "/mnt/disk1", "uuid-new")
+
+			seedTwoDataDiskArray(t, st)
+			if err := st.SetRemovalState(ctx, "/mnt/disk1", store.RemovalStateEvacuated, "evacuation-job"); err != nil {
+				t.Fatalf("SetRemovalState(evacuated): %v", err)
+			}
+			if state == store.RemovalStateUnpooled {
+				if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", store.RemovalStateEvacuated, store.RemovalStateUnpooled, "disk-remove-job"); err != nil {
+					t.Fatalf("AdvanceRemovalState(unpooled): %v", err)
+				}
+			}
+
+			eng := newRecordingEngine()
+			eng.SetStatus(parity.ParityStatus{DataMounts: map[string]string{"d1": "/mnt/disk1", "d2": "/mnt/disk2"}})
+			eng.ScriptFix([]parity.Progress{{}}, nil)
+
+			registerDiskReplace(t, s, p, r, st, genRoot, mounter, eng)
+
+			replacement := disk.AssignedDisk{Device: "/dev/sdz", Filesystem: disk.XFS}
+			params := DiskReplaceParams{
+				Confirmation: SingleDiskConfirmation(replacement),
+				Mountpoint:   "/mnt/disk1",
+				Disk:         replacement,
+				Sizes:        map[string]int64{"/dev/sda": 8 * disk.TB, "/dev/sdc": 4 * disk.TB, "/dev/sdz": 4 * disk.TB},
+			}
+			j, err := s.Submit(ctx, TypeDiskReplace, nil, mustJSON(t, params))
+			if err != nil {
+				t.Fatalf("Submit: %v", err)
+			}
+			finished := await(t, s, j.ID)
+			if finished.Status != StatusSucceeded {
+				t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+			}
+			if _, ok := p.FormattedAs("/dev/sdz"); !ok {
+				t.Fatal("replacement disk was not formatted")
+			}
+			got, err := st.GetDataDiskByMountpoint(ctx, "/mnt/disk1")
+			if err != nil {
+				t.Fatalf("GetDataDiskByMountpoint: %v", err)
+			}
+			if got.Device != "/dev/sdz" || got.FSUUID != "uuid-new" {
+				t.Fatalf("replaced disk = %+v", got)
+			}
+			if got.RemovalState != "" {
+				t.Fatalf("removal_state = %q after replace, want cleared", got.RemovalState)
+			}
+			if got.RemovalJobID != "" {
+				t.Fatalf("removal_job_id = %q after replace, want cleared", got.RemovalJobID)
+			}
+			_, _, _, lastFix := eng.snapshot()
+			if lastFix.Disk != "d1" {
+				t.Fatalf("Fix ran against disk %q, want d1", lastFix.Disk)
+			}
+		})
+	}
+}
+
+// TestRunDiskReplace_StillRefusesWhenUnlisted is ReplaceEligibleDuringRemoval's
+// own negative case: a disk already dropped from snapraid.conf has
+// nothing left for SnapRAID's fix to rebuild against, so it stays
+// refused exactly like TestRunDiskReplace_RefusesASlotInRemoval's
+// evacuating case, even though both are "left the pool"
+// (store.ArrayDisk.LeftPool).
+func TestRunDiskReplace_StillRefusesWhenUnlisted(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	st := store.NewArrayStore(newTestDB(t))
+	genRoot := t.TempDir()
+	mounter := disk.NewFakeMounter()
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	p.AddDisk("/dev/sdz", disk.Disk{Size: 4 * disk.TB})
+	seedTwoDataDiskArray(t, st)
+	if err := st.SetRemovalState(ctx, "/mnt/disk1", store.RemovalStateEvacuated, "evacuation-job"); err != nil {
+		t.Fatalf("SetRemovalState(evacuated): %v", err)
+	}
+	if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", store.RemovalStateEvacuated, store.RemovalStateUnpooled, "disk-remove-job"); err != nil {
+		t.Fatalf("AdvanceRemovalState(unpooled): %v", err)
+	}
+	if err := st.AdvanceRemovalState(ctx, "/mnt/disk1", store.RemovalStateUnpooled, store.RemovalStateUnlisted, "disk-remove-job"); err != nil {
+		t.Fatalf("AdvanceRemovalState(unlisted): %v", err)
+	}
+
+	eng := newRecordingEngine()
+	registerDiskReplace(t, s, p, disk.NewFakeRunner(), st, genRoot, mounter, eng)
+
+	replacement := disk.AssignedDisk{Device: "/dev/sdz", Filesystem: disk.XFS}
+	params := DiskReplaceParams{
+		Confirmation: SingleDiskConfirmation(replacement),
+		Mountpoint:   "/mnt/disk1",
+		Disk:         replacement,
+		Sizes:        map[string]int64{"/dev/sda": 8 * disk.TB, "/dev/sdc": 4 * disk.TB, "/dev/sdz": 4 * disk.TB},
+	}
+	j, err := s.Submit(ctx, TypeDiskReplace, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusFailed {
+		t.Fatalf("status = %s (%s), want failed", finished.Status, finished.ErrorMessage)
+	}
+	if !strings.Contains(finished.ErrorMessage, "/mnt/disk1") || !strings.Contains(finished.ErrorMessage, "leaving the array") {
+		t.Fatalf("ErrorMessage = %q, want a removal-state refusal naming /mnt/disk1", finished.ErrorMessage)
+	}
+	if _, ok := p.FormattedAs("/dev/sdz"); ok {
+		t.Fatal("an unlisted slot formatted the replacement disk anyway")
+	}
+}

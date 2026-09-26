@@ -1046,12 +1046,16 @@ func TestHandler_CancelDiskRemoval_LiveApplySurvivesRequestCancel(t *testing.T) 
 	}
 }
 
-// TestHandler_ReplaceDisk_RefusesADiskInRemoval proves #366's refusal:
-// store.ReplaceDataDisk keeps a slot's removal state, so planDiskReplace
-// and replaceDisk answer 409 disk_leaving_array for a disk in any removal
-// state, and nothing is formatted or queued.
+// TestHandler_ReplaceDisk_RefusesADiskInRemoval proves #366's refusal
+// narrowed by #384: a disk still evacuating, or already unlisted, has
+// nothing replace's job can rebuild against or has already left removal
+// too far to abandon, so planDiskReplace and replaceDisk still answer 409
+// disk_leaving_array for either state, and nothing is formatted or
+// queued. Evacuated and unpooled are covered separately
+// (TestHandler_ReplaceDisk_AllowsAnEvacuatedOrUnpooledDiskOnceGenuinelyMissing)
+// — they are no longer refused on the removal state alone.
 func TestHandler_ReplaceDisk_RefusesADiskInRemoval(t *testing.T) {
-	for _, state := range []string{store.RemovalStateEvacuating, store.RemovalStateEvacuated, store.RemovalStateUnpooled, store.RemovalStateUnlisted} {
+	for _, state := range []string{store.RemovalStateEvacuating, store.RemovalStateUnlisted} {
 		t.Run(state, func(t *testing.T) {
 			ctx := context.Background()
 			h, _, p, st, _, _ := newDiskLifecycleHandler(t)

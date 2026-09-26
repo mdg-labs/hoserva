@@ -51,6 +51,13 @@ SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
     wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?
 WHERE mountpoint = ? AND role = 'data';
 
+-- name: ReplaceArrayDataDiskIdentityAbandoningRemoval :execrows
+UPDATE array_disks
+SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
+    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?,
+    removal_state = NULL, removal_job_id = NULL
+WHERE mountpoint = ? AND role = 'data' AND removal_state IN ('evacuated', 'unpooled');
+
 -- name: UpgradeArrayParityDiskSlot :execrows
 UPDATE array_disks
 SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,

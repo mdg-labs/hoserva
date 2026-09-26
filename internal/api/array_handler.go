@@ -398,10 +398,13 @@ func (h *Handler) AddDisk(ctx context.Context, req *apiv1.AddDiskRequest) (*apiv
 // and refused (slot_disk_present) unless the slot's own recorded disk is
 // genuinely gone (job.ConfirmReplacementTargetAbsent, doc 02 §4 steps
 // 1-2) — a disk that has not actually failed or been removed goes through
-// the upgrade flow instead (#289), never replace. A disk in removal is
-// refused (disk_leaving_array, #366): store.ReplaceDataDisk keeps the
-// slot's removal state, so the replacement would inherit it. Read-only —
-// nothing is formatted or persisted.
+// the upgrade flow instead (#289), never replace. A disk still evacuating
+// or already unlisted is refused (disk_leaving_array, #366); evacuated
+// and unpooled are not, on the removal state alone
+// (job.ReplaceEligibleDuringRemoval, doc 09 §4 "Other operations…",
+// #384) — ConfirmReplacementTargetAbsent below is what still refuses one
+// whose old disk is not genuinely missing. Read-only — nothing is
+// formatted or persisted.
 func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPlanRequest) (*apiv1.ReplaceDiskPlan, error) {
 	if h.Disks == nil || h.ArrayStore == nil {
 		return nil, errArrayDisksNotConfigured()
@@ -417,7 +420,7 @@ func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 		}
 		return nil, err
 	}
-	if existing.LeavingArray() {
+	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, listed); err != nil {
@@ -456,8 +459,9 @@ func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 // and typed confirmation planDiskReplace already computed — a stale or
 // forged confirmation is refused (confirmation_required) before anything
 // is submitted, and the queued job re-validates the slot, identity and
-// topology checks again itself. A disk in removal is refused
-// (disk_leaving_array) as planDiskReplace refuses it.
+// topology checks again itself. A disk still evacuating or already
+// unlisted is refused (disk_leaving_array) as planDiskReplace refuses it;
+// evacuated and unpooled are not, on the removal state alone (#384).
 func (h *Handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest) (*apiv1.Job, error) {
 	if h.Disks == nil || h.ArrayStore == nil {
 		return nil, errArrayDisksNotConfigured()
@@ -476,7 +480,7 @@ func (h *Handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 		}
 		return nil, err
 	}
-	if existing.LeavingArray() {
+	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, listed); err != nil {

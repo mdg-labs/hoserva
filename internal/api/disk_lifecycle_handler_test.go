@@ -408,3 +408,55 @@ func TestHandler_ReplaceDisk_Success_StartsJobAndSwitchesTopology(t *testing.T) 
 		t.Fatalf("disk1 device = %q, want /dev/sdz", switched.Device)
 	}
 }
+
+// TestHandler_ReplaceDisk_AllowsAnEvacuatedOrUnpooledDiskOnceGenuinelyMissing
+// is #384's own regression: a slot marked evacuated or unpooled is no
+// longer refused (disk_leaving_array) on the removal state alone once its
+// old disk is genuinely missing (no strong identity for
+// ConfirmReplacementTargetAbsent to still find present, the same shape a
+// dead disk's loop device leaves once detached, doc 06 §3). PlanDiskReplace
+// and ReplaceDisk both succeed, the job clears removal_state in the same
+// write that adopts the replacement, and the slot's device switches over —
+// the lab test (cmd/hoservad/disk_replace_removal_lab_test.go) proves the
+// full data-loss scenario this unlocks against a real SnapRAID fix.
+func TestHandler_ReplaceDisk_AllowsAnEvacuatedOrUnpooledDiskOnceGenuinelyMissing(t *testing.T) {
+	for _, state := range []string{store.RemovalStateEvacuated, store.RemovalStateUnpooled} {
+		t.Run(state, func(t *testing.T) {
+			ctx := context.Background()
+			h, s, p, st, eng, r := newDiskLifecycleHandler(t)
+			seedHandlerArray(t, st, p)
+			markRemoval(t, st, "/mnt/disk1", state)
+			p.AddDisk("/dev/sdz", disk.Disk{Size: 4 * disk.TB})
+			scriptUUID(r, "/dev/sdz", "uuid-replaced")
+			scriptReplaceMountedUUID(r, "/mnt/disk1", "uuid-replaced")
+			eng.SetStatus(parity.ParityStatus{DataMounts: map[string]string{"d1": "/mnt/disk1"}})
+
+			plan, err := h.PlanDiskReplace(ctx, &apiv1.ReplaceDiskPlanRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdz"})
+			if err != nil {
+				t.Fatalf("PlanDiskReplace(%s disk): %v", state, err)
+			}
+			if plan.Confirmation != "ERASE /dev/sdz" {
+				t.Fatalf("Confirmation = %q, want ERASE /dev/sdz", plan.Confirmation)
+			}
+
+			got, err := h.ReplaceDisk(ctx, &apiv1.ReplaceDiskRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdz", Confirmation: "ERASE /dev/sdz"})
+			if err != nil {
+				t.Fatalf("ReplaceDisk(%s disk): %v", state, err)
+			}
+			finished := awaitJob(t, s, got.ID.String())
+			if finished.Status != job.StatusSucceeded {
+				t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+			}
+			switched, err := st.GetDataDiskByMountpoint(ctx, "/mnt/disk1")
+			if err != nil {
+				t.Fatalf("GetDataDiskByMountpoint(/mnt/disk1): %v", err)
+			}
+			if switched.Device != "/dev/sdz" {
+				t.Fatalf("disk1 device = %q, want /dev/sdz", switched.Device)
+			}
+			if switched.RemovalState != "" {
+				t.Fatalf("disk1 removal_state = %q after replace, want cleared", switched.RemovalState)
+			}
+		})
+	}
+}

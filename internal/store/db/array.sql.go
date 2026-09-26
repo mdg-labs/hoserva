@@ -317,6 +317,44 @@ func (q *Queries) ReplaceArrayDataDiskIdentity(ctx context.Context, arg ReplaceA
 	return result.RowsAffected()
 }
 
+const replaceArrayDataDiskIdentityAbandoningRemoval = `-- name: ReplaceArrayDataDiskIdentityAbandoningRemoval :execrows
+UPDATE array_disks
+SET device = ?, filesystem = ?, fs_uuid = ?, size_bytes = ?,
+    wwn = ?, serial = ?, by_id_name = ?, weak_identity = ?,
+    removal_state = NULL, removal_job_id = NULL
+WHERE mountpoint = ? AND role = 'data' AND removal_state IN ('evacuated', 'unpooled')
+`
+
+type ReplaceArrayDataDiskIdentityAbandoningRemovalParams struct {
+	Device       string         `json:"device"`
+	Filesystem   string         `json:"filesystem"`
+	FsUuid       string         `json:"fs_uuid"`
+	SizeBytes    sql.NullInt64  `json:"size_bytes"`
+	Wwn          sql.NullString `json:"wwn"`
+	Serial       sql.NullString `json:"serial"`
+	ByIDName     sql.NullString `json:"by_id_name"`
+	WeakIdentity int64          `json:"weak_identity"`
+	Mountpoint   string         `json:"mountpoint"`
+}
+
+func (q *Queries) ReplaceArrayDataDiskIdentityAbandoningRemoval(ctx context.Context, arg ReplaceArrayDataDiskIdentityAbandoningRemovalParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, replaceArrayDataDiskIdentityAbandoningRemoval,
+		arg.Device,
+		arg.Filesystem,
+		arg.FsUuid,
+		arg.SizeBytes,
+		arg.Wwn,
+		arg.Serial,
+		arg.ByIDName,
+		arg.WeakIdentity,
+		arg.Mountpoint,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setArrayDiskRemovalState = `-- name: SetArrayDiskRemovalState :execrows
 UPDATE array_disks SET removal_state = ?, removal_job_id = ? WHERE mountpoint = ? AND role = 'data'
 `

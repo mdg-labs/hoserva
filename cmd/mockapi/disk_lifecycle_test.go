@@ -63,3 +63,24 @@ func TestReplaceAndUpgrade_RefuseADiskInRemoval(t *testing.T) {
 		t.Fatal("PlanDiskReplace(/mnt/disk1) = disk_leaving_array, want disk1 (not in removal) past that check")
 	}
 }
+
+// TestReplace_EvacuatedDiskPastLeavingArrayGate proves the mock mirrors
+// production's #384 narrowing: a slot that is `evacuated` no longer trips
+// `disk_leaving_array` (job.ReplaceEligibleDuringRemoval), so the request
+// reaches ConfirmReplacementTargetAbsent instead — which still refuses
+// with `slot_disk_present` here because the "sync-blocked" scenario's
+// disk5 is evacuated but its own device is still listed in inventory
+// (mockDiskInventory), not genuinely missing.
+func TestReplace_EvacuatedDiskPastLeavingArrayGate(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t, "sync-blocked")
+
+	_, err := client.PlanDiskReplace(ctx, &apiv1.ReplaceDiskPlanRequest{Mountpoint: "/mnt/disk5", Device: "/dev/sdf"})
+	if got := errorCode(t, err); got != "slot_disk_present" {
+		t.Fatalf("PlanDiskReplace(/mnt/disk5) = %s, want slot_disk_present", got)
+	}
+	_, err = client.ReplaceDisk(ctx, &apiv1.ReplaceDiskRequest{Mountpoint: "/mnt/disk5", Device: "/dev/sdf", Confirmation: "ERASE /dev/sdf"})
+	if got := errorCode(t, err); got != "slot_disk_present" {
+		t.Fatalf("ReplaceDisk(/mnt/disk5) = %s, want slot_disk_present", got)
+	}
+}
