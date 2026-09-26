@@ -8,8 +8,38 @@ After=network.target local-fs.target
 # mergerfs/SnapRAID mounts, and there is no way to do that as an
 # unprivileged user.
 ExecStart=/usr/bin/hoservad
+# SIGHUP (doc 02 §1, Q69, issue #372) re-evaluates disk.StorageGate
+# without a restart: cmd/hoservad's own handler (installReloadHandler)
+# re-lists disks and reflects a fresh readiness into
+# hoserva-storage-ready.service's own runtime flag, which
+# packaging/debian/hoserva-storage.rules fires whenever a block device
+# with a filesystem UUID appears.
+ExecReload=/bin/kill -HUP $MAINPID
+# No RuntimeDirectory= here: /run/hoserva also holds pool.ArrayRootPath's
+# own live mergerfs mover mounts (doc 09 §2), and systemd removes a
+# RuntimeDirectory's contents when its unit stops — cmd/hoservad creates
+# and clears pool.StorageReadyFlagPath itself (storageTargetSync) instead,
+# so this directory's lifecycle stays under this repo's own control, never
+# systemd's, alongside those mounts.
 Restart=on-failure
 RestartSec=5
+# Type=notify (doc 02 §1, Q69): hoservad sends READY=1 only once it has
+# attempted to write and reload this boot's storage-target units
+# (hoserva-storage.target, hoserva-storage-ready.service, and each
+# dependent service's own managed drop-in) and evaluated this boot's own
+# readiness flag. Every one of those units is ordered After=hoserva.
+# service, so with Type=simple's own "started the instant the process
+# forks" a dependent service (Samba, NFS, Docker, libvirt) pulling
+# hoserva-storage-ready.service in at boot could run it before hoservad
+# has evaluated disk.StorageGate at all — this closes that race. hoservad
+# sends READY=1 even when that write or evaluation fails: withholding it
+# buys no safety (the flag is already cleared before any of this runs, so
+# the gate is closed either way) and would instead put hoservad in a
+# permanent kill-and-restart loop under this Type=notify's own
+# TimeoutStartSec, taking the API and UI down with it every cycle — the
+# flag itself, not this notification, is what keeps hoserva-storage.target
+# closed over a failed or unconfirmed boot (doc 02 §1).
+Type=notify
 
 [Install]
 WantedBy=multi-user.target

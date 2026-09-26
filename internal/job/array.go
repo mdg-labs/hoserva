@@ -60,6 +60,19 @@ var ErrDiskUpgradeDataPending = errors.New("job: a data-disk upgrade is pending"
 // not hold the filesystem SQLite names for it (doc 02 §4 UR9).
 var ErrArrayDiskMismatch = errors.New("job: an array disk mountpoint does not hold the disk SQLite names")
 
+// StorageTarget is the boot-ordering gate (doc 02 §1, Q69) Start brings
+// current once its own Disks, CatchAll and ShareMounts are all mounted
+// and confirmed, and before any Services starts (#372 finding 1):
+// cmd/hoservad's storageTargetSync satisfies this without this package
+// importing it. Without this, Start's own Services loop calls systemctl
+// start against a unit (Samba, NFS) whose own drop-in binds it to
+// hoserva-storage.target while the readiness flag behind that target is
+// still whatever an earlier, not-ready boot left it as — every retry
+// failing the same way, with the array stuck in maintenance mode.
+type StorageTarget interface {
+	ConfirmReady(ctx context.Context, seq *ArraySequence) error
+}
+
 // ArrayDiskCheck is UR9's check: every array-disk mountpoint that is
 // mounted holds the filesystem UUID SQLite names for it.
 type ArrayDiskCheck interface {
@@ -148,6 +161,11 @@ type ArraySequence struct {
 	// DiskCheck, when set, runs once Start has mounted Disks and before
 	// anything above them starts (doc 02 §4 UR9).
 	DiskCheck ArrayDiskCheck
+	// StorageTarget, when set, is called by Start once every mount above
+	// has succeeded and before any Services starts (#372 finding 1). Nil
+	// is every existing caller in this package's own tests and the lab,
+	// which have no such gate to satisfy.
+	StorageTarget StorageTarget
 }
 
 // Stop runs doc 02 §4's sequence. It stops on the first error and does
@@ -232,13 +250,17 @@ func (s ArraySequence) RefreshLive(ctx context.Context, running bool) error {
 }
 
 // Start reverses Stop: the disks mount first, then the catch-all, then
-// the per-share mounts, then every service starts, in the reverse of its
-// own Stop order (the last thing stopped is the first thing started).
-// Maintenance mode is exited only once every step succeeds. It is refused
-// while a data-disk upgrade is pending (doc 02 §4 E6), and once the disks
-// are mounted DiskCheck confirms them before anything above them starts
-// (UR9): on a mismatch the disks are unmounted again and maintenance mode
-// stays on.
+// the per-share mounts, then StorageTarget (if set) confirms the boot-
+// ordering gate is current, then every service starts, in the reverse of
+// its own Stop order (the last thing stopped is the first thing
+// started). Maintenance mode is exited only once every step succeeds. It
+// is refused while a data-disk upgrade is pending (doc 02 §4 E6), and
+// once the disks are mounted DiskCheck confirms them before anything
+// above them starts (UR9): on a mismatch the disks are unmounted again
+// and maintenance mode stays on. StorageTarget runs before Services for
+// the same reason: Samba and NFS's own drop-ins bind them to
+// hoserva-storage.target, so starting them against a gate this boot's
+// own evaluation left closed would fail every time (#372 finding 1).
 func (s ArraySequence) Start(ctx context.Context) error {
 	// A start that fails before leaving anything mounted puts the
 	// "stop completed" state back as it was, so a data-disk upgrade stays
@@ -286,6 +308,11 @@ func (s ArraySequence) Start(ctx context.Context) error {
 	for _, m := range s.ShareMounts {
 		if err := m.Mount(ctx); err != nil {
 			return fmt.Errorf("job: mounting %s: %w", m.Where(), err)
+		}
+	}
+	if s.StorageTarget != nil {
+		if err := s.StorageTarget.ConfirmReady(ctx, &s); err != nil {
+			return fmt.Errorf("job: confirming storage-target readiness: %w", err)
 		}
 	}
 	for i := len(s.Services) - 1; i >= 0; i-- {

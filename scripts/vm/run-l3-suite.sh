@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # `make vm-suite` — the nightly/pre-release L3 suite (doc 06 §4, §7,
 # Q79): install, onboarding, array setup, array stop/start with a live
-# share (issue #268), disk yank and reconstruction, `virsh destroy`
-# mid-sync recovery, reboot persistence, config backup/restore, spindown,
-# network confirm-or-revert (issue #114), the array stop/start sequence
-# (issue #146), and the UPS on-battery/power-restored/low-battery flow
-# against NUT's own dummy-ups driver (issue #250).
+# share (issue #268), storage-target boot ordering (issue #372), disk
+# yank and reconstruction, `virsh destroy` mid-sync recovery, reboot
+# persistence, config backup/restore, spindown, network confirm-or-revert
+# (issue #114), the array stop/start sequence (issue #146), and the UPS
+# on-battery/power-restored/low-battery flow against NUT's own dummy-ups
+# driver (issue #250).
 #
 # Every step below runs against whatever hoservad actually exposes today
 # and reports PASS/FAIL for it. A step the product does not implement yet
@@ -1169,6 +1170,17 @@ if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >
   fi
 else
   not_yet "pool survives hoservad restart" "no active hoservad on the guest (install or array setup above did not complete — see step 1 and step 3)"
+fi
+
+echo "vm-suite[$HOSERVA_LAB_ID]: === storage-target boot ordering: Samba/NFS never serve an unmounted pool path (issue #372) ==="
+if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+  if ARRAY_ADMIN_USERNAME="$ARRAY_ADMIN_USERNAME" ARRAY_ADMIN_PASSWORD="$ARRAY_ADMIN_PASSWORD" ARRAY_SMB_SHARE="$JOURNEY5_SHARE" "$script_dir/storage-target-boot-check.sh"; then
+    pass "storage-target boot ordering"
+  else
+    fail "storage-target boot ordering" "see storage-target-boot-check.sh output above (issue #372) — needs array setup (step 3)'s own admin account and '$JOURNEY5_SHARE' share still present and the array still mounted"
+  fi
+else
+  not_yet "storage-target boot ordering" "no active hoservad on the guest (install or array setup above did not complete — see step 1 and step 3)"
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 5/13 disk yank and reconstruction ==="

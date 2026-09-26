@@ -54,16 +54,22 @@ func TestStorageTargetUnit_Render_NoDisks(t *testing.T) {
 	}
 }
 
+// TestStorageReadyUnit_Render proves the unit's own content never encodes
+// disk.StorageGate.Ready() itself: ExecStart is always the same fixed
+// existence test against StorageReadyFlagPath, the runtime flag cmd/
+// hoservad alone writes and removes (doc 02 §1, Q69) — a caller has
+// nothing to pass in because there is nothing left here that varies with
+// readiness.
 func TestStorageReadyUnit_Render(t *testing.T) {
-	u := StorageReadyUnit{ExecStart: []string{"/usr/lib/hoserva/hoservad", "storage-ready-check"}}
-	got := u.Render()
+	got := StorageReadyUnit{}.Render()
 
 	for _, want := range []string{
 		"Description=Hoserva storage readiness gate",
+		"After=" + HoservadServiceUnit,
 		"[Service]",
 		"Type=oneshot",
 		"RemainAfterExit=yes",
-		"ExecStart=/usr/lib/hoserva/hoservad storage-ready-check",
+		"ExecStart=/usr/bin/test -e " + StorageReadyFlagPath,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Render() = %q, want it to contain %q", got, want)

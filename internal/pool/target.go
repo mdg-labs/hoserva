@@ -23,36 +23,58 @@ var DependentServiceUnits = []string{
 }
 
 // StorageReadyUnitName is the systemd oneshot service hoserva-storage.target
-// hard-requires (Q69): hoservad regenerates and (re-)starts it every time
-// disk.StorageGate.Evaluate's inputs change (daemon start, a udev-driven
-// disk-arrival event), and it succeeds — and stays "active" via
-// RemainAfterExit — only once disk.StorageGate.Ready() is true: every
-// expected disk present by identity (Q21), or the missing ones explicitly
+// hard-requires (Q69): it succeeds — and stays "active" via
+// RemainAfterExit — only once StorageReadyFlagPath exists, which cmd/
+// hoservad creates or removes every time disk.StorageGate.Evaluate's
+// inputs change (daemon start, a share create, a disk-topology job, or a
+// udev-driven disk-arrival SIGHUP) and Ready() is true: every expected
+// disk present by identity (Q21), or the missing ones explicitly
 // acknowledged. Because StorageTargetUnit.Render's Requires=/After= (below)
 // names this unit rather than only the disk mounts, a still-degraded,
 // unacknowledged array genuinely keeps hoserva-storage.target — and every
 // service ordered after it via ServiceDropIn — from ever activating.
 const StorageReadyUnitName = "hoserva-storage-ready.service"
 
+// HoservadServiceUnit is hoservad's own systemd service unit
+// (packaging/debian/hoserva.service). StorageReadyUnit.Render orders
+// itself After= it: hoserva.service's Type=notify only reports itself
+// started once cmd/hoservad has actually written and reloaded this boot's
+// storage-target units, so a plain fork-time "started" (which Type=simple
+// would report immediately, well before hoservad has opened its database
+// or evaluated disk.StorageGate) can never race a dependent service's own
+// boot-time activation of hoserva-storage-ready.service.
+const HoservadServiceUnit = "hoserva.service"
+
+// StorageReadyFlagPath is the runtime flag hoserva-storage-ready.service's
+// own fixed ExecStart tests for (doc 02 §1, Q69): tmpfs-backed and absent
+// by default, so a hoservad that never starts, crashes, or never reaches
+// a completed disk.StorageGate evaluation this boot leaves the unit — and
+// hoserva-storage.target, and every dependent service ordered after it —
+// failed closed, with nothing for a stale unit file to get wrong. cmd/
+// hoservad is this path's only writer: it removes the flag before every
+// evaluation and creates it only once that evaluation says ready.
+const StorageReadyFlagPath = "/run/hoserva/storage-ready"
+
 // StorageReadyUnit is hoserva-storage-ready.service's own generated
-// content. ExecStart is the argv hoservad execs to evaluate
-// disk.StorageGate.Ready() — the daemon and CLI command that argv runs
-// (internal/api, cmd/hoservad) are not yet built in this repo; this type
-// only renders the systemd wiring around it, the same division target.go's
-// other Render methods keep from the daemon logic they gate.
-type StorageReadyUnit struct {
-	ExecStart []string
-}
+// content. Its ExecStart is fixed — a plain existence test against
+// StorageReadyFlagPath — and never changes with disk.StorageGate.Ready():
+// the piece of state that must never go stale on disk lives in that flag
+// file, which cmd/hoservad writes and removes live, never in this unit's
+// own content. That is what makes a refused write or a failed
+// daemon-reload harmless here (doc 02 §1): whatever this unit's content
+// already was, on disk, keeps testing the same flag, so it can never be
+// left holding a stale "always succeeds" the way a per-evaluation
+// ExecStart could.
+type StorageReadyUnit struct{}
 
 // Render returns u's systemd unit file content, for config.Generator (D4)
 // to write to /etc/systemd/system/hoserva-storage-ready.service.
 func (u StorageReadyUnit) Render() string {
 	var b strings.Builder
-	b.WriteString("[Unit]\nDescription=Hoserva storage readiness gate\n\n")
+	b.WriteString("[Unit]\nDescription=Hoserva storage readiness gate\n")
+	fmt.Fprintf(&b, "After=%s\n\n", HoservadServiceUnit)
 	b.WriteString("[Service]\nType=oneshot\nRemainAfterExit=yes\n")
-	if len(u.ExecStart) > 0 {
-		fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(u.ExecStart, " "))
-	}
+	fmt.Fprintf(&b, "ExecStart=/usr/bin/test -e %s\n", StorageReadyFlagPath)
 	return b.String()
 }
 

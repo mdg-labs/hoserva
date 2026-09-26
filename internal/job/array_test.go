@@ -50,6 +50,21 @@ func (f *fakeArrayMount) Unmount(ctx context.Context) error {
 	return f.unmountErr
 }
 
+// fakeStorageTarget is ArraySequence's StorageTarget fake (#372 finding
+// 1): it records when ConfirmReady ran (relative to whatever else writes
+// into the same log) and can be scripted to fail, so a test can assert
+// both the ordering Start owes it and that a failure there blocks every
+// Service from starting.
+type fakeStorageTarget struct {
+	err error
+	log *[]string
+}
+
+func (f *fakeStorageTarget) ConfirmReady(ctx context.Context, seq *ArraySequence) error {
+	*f.log = append(*f.log, "confirmready")
+	return f.err
+}
+
 func sliceEqual(t *testing.T, got, want []string) {
 	t.Helper()
 	if len(got) != len(want) {
@@ -289,6 +304,72 @@ func TestArraySequence_Start_ReversesStopOrderAndExitsMaintenance(t *testing.T) 
 
 	if s.InMaintenance() {
 		t.Fatal("Start: maintenance mode must be exited once every step succeeds")
+	}
+}
+
+// TestArraySequence_Start_StorageTargetRunsBeforeServices is #372 finding
+// 1's own regression test: without the hook, Start's own Services loop
+// calls systemctl start against a unit whose drop-in binds it to
+// hoserva-storage.target while the readiness flag behind that target is
+// still whatever an earlier, not-ready boot left it as — reproduced here
+// by the log ordering StorageTarget.ConfirmReady must appear in, after
+// every mount and before any service starts.
+func TestArraySequence_Start_StorageTargetRunsBeforeServices(t *testing.T) {
+	var log []string
+	svc := &fakeArrayService{name: "nfs", log: &log}
+	share := &fakeArrayMount{where: "/mnt/user/media", log: &log}
+	catchAll := &fakeArrayMount{where: "/mnt/user", log: &log}
+	disk1 := &fakeArrayMount{where: "/mnt/disk1", log: &log}
+	target := &fakeStorageTarget{log: &log}
+
+	seq := ArraySequence{
+		Services:      []ArrayService{svc},
+		ShareMounts:   []ArrayMount{share},
+		CatchAll:      catchAll,
+		Disks:         []ArrayMount{disk1},
+		StorageTarget: target,
+	}
+
+	if err := seq.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	sliceEqual(t, log, []string{
+		"mount:/mnt/disk1",
+		"mount:/mnt/user",
+		"mount:/mnt/user/media",
+		"confirmready",
+		"start:nfs",
+	})
+}
+
+// TestArraySequence_Start_StorageTargetFailureBlocksServices proves a
+// ConfirmReady failure — the pool never actually confirmed mounted, or
+// the units failed to write — stops Start before any Service starts,
+// exactly like every other Start failure (doc 02 §4 UR9's own DiskCheck
+// failure does the same for a disk mismatch): a client must never be
+// told the array is up, or have Samba/NFS started, over a storage gate
+// this call could not bring current.
+func TestArraySequence_Start_StorageTargetFailureBlocksServices(t *testing.T) {
+	var log []string
+	svc := &fakeArrayService{name: "nfs", log: &log}
+	catchAll := &fakeArrayMount{where: "/mnt/user", log: &log}
+	target := &fakeStorageTarget{err: errors.New("mnt-user.mount is not mounted"), log: &log}
+
+	seq := ArraySequence{
+		Services:      []ArrayService{svc},
+		CatchAll:      catchAll,
+		StorageTarget: target,
+	}
+
+	if err := seq.Start(context.Background()); err == nil {
+		t.Fatal("Start: got nil error, want the StorageTarget failure to propagate")
+	}
+
+	for _, m := range log {
+		if m == "start:nfs" {
+			t.Fatalf("Start started %q after StorageTarget.ConfirmReady failed; full log: %v", m, log)
+		}
 	}
 }
 

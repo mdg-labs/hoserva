@@ -95,6 +95,17 @@ case "$1" in
 # plain mask symlink above, never this override directory.
 ConditionPathExists=/nonexistent-hoserva-smartd-disabled
 UNIT
+
+    # packaging/debian/hoserva-storage.rules (doc 02 §1, Q69, issue #372):
+    # a fresh install's rule file is useless to a udev daemon that never
+    # re-reads it, and an upgrade replacing an already-installed version
+    # needs the same reload. Skipped under HOSERVA_TEST_ROOT (no real
+    # udev to reload against a throwaway tree) and where udevadm itself
+    # is missing (a chroot build with no udev running, the same reasoning
+    # the deb-systemd-helper calls above already apply).
+    if [ -z "$root" ] && command -v udevadm >/dev/null 2>&1; then
+      udevadm control --reload-rules >/dev/null 2>&1 || true
+    fi
     ;;
 esac
 

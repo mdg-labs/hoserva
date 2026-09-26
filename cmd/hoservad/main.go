@@ -200,6 +200,14 @@ func run(cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// sighup is registered here, at the top of run(), before any of its
+	// own IO (state directory, database, migrations, job recovery, disk
+	// listing), so no SIGHUP delivered from this point on can take Go's
+	// default (process-exit) action (#372 finding 2) — installReloadHandler
+	// (further down, once rebuildArraySequence exists) is what actually
+	// drains it.
+	sighup := newReloadSignal()
+
 	if err := os.MkdirAll(cfg.stateDir, 0o700); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
@@ -297,6 +305,32 @@ func run(cfg config) error {
 	if err != nil {
 		return fmt.Errorf("building array stop/start sequence: %w", err)
 	}
+	// storageTarget is shared with rebuildArraySequence below (and the
+	// SIGHUP handler installed once it exists) so every later call can
+	// tell an unchanged rebuild from a real readiness or topology
+	// transition (storageTargetSync's own doc comment). It is also
+	// arraySeq's own StorageTarget (#372 finding 1): an explicit `array
+	// start` brings the boot-ordering gate current itself, right before
+	// starting Samba/NFS, instead of hitting whatever this boot's own
+	// evaluation last left the flag as.
+	storageTarget := &storageTargetSync{Generator: generator, Runner: linuxDisks.Exec}
+	if arraySeq != nil {
+		arraySeq.StorageTarget = storageTarget
+	}
+	// Startup brings the pool up itself on an ordinary boot (see its own
+	// doc comment), and never issues a systemctl start/restart of a unit
+	// ordered After=hoserva.service. A failed
+	// write, reload, mount or confirmation leaves the flag cleared, so
+	// the gate stays closed until the next rebuild or SIGHUP retries it —
+	// but hoservad reports itself ready to systemd regardless (#372
+	// finding 4): withholding READY=1 here buys no safety (the flag is
+	// already cleared either way) and would instead put hoservad in a
+	// permanent kill-and-restart loop under Type=notify's own
+	// TimeoutStartSec, taking the API and UI down with it on every cycle.
+	if err := storageTarget.Startup(ctx, arraySeq); err != nil {
+		log.Printf("hoservad: installing storage-target boot ordering: %v — Samba/NFS/Docker/libvirt stay gated closed until this is retried", err)
+	}
+	notifySystemdReady()
 	// handler is created here, ahead of its other fields, so upsController
 	// and updateEngine (below) can both resolve handler.CurrentArray at
 	// shutdown time instead of capturing arraySeq's own startup value
@@ -386,9 +420,31 @@ func run(cfg config) error {
 		if err != nil {
 			return err
 		}
+		if seq != nil {
+			seq.StorageTarget = storageTarget
+		}
 		handler.SetArray(seq)
+		// A disk arriving, leaving or a live topology change is exactly
+		// the "storage gate's inputs changed" doc 02 §1 and Q69 describe —
+		// the boot-ordering units must reflect it now, not only at the
+		// next reboot. Update only ever runs after notifySystemdReady has
+		// already sent READY=1, so hoserva.service's own start job is long
+		// finished; it also only touches systemd on an actual transition
+		// (storageTargetSync's own doc comment), so a share create with an
+		// unchanged gate never restarts anything already running.
+		storageTarget.Update(ctx, seq)
 		return nil
 	}
+	// installReloadHandler (cmd/hoservad/reload.go) re-runs
+	// rebuildArraySequence on SIGHUP — packaging/debian/hoserva-storage.rules's own
+	// trigger for a disk arriving or leaving while hoservad is already
+	// running, so that reaches the gate without waiting for an unrelated
+	// share edit or a reboot (doc 02 §1, Q69) — and, on install, once
+	// unconditionally, so a disk that arrived earlier in startup (sighup
+	// was registered before any disk listing, above) is re-evaluated here
+	// even if systemd never delivered a SIGHUP for it at all (#372
+	// finding 2).
+	installReloadHandler(ctx, sighup, rebuildArraySequence)
 	shareService := newShareService(shareStore, arrayStore, generator, pool.SystemdMounter{Runner: linuxDisks.Exec}, parity.NewUsageStore(db))
 	shareService.PostCommit = rebuildArraySequence
 	// topologyChanged is the disk-topology jobs' ArrayReady hook, built by
