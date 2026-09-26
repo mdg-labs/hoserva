@@ -672,20 +672,25 @@ midsync_recover_guest() {
 }
 
 # midsync_destroy runs one full destroy/recover cycle at delay_s seconds
-# past the moment the sync is confirmed genuinely mid-flight. iteration 1
-# creates MIDSYNC_SHARE and seeds its very first data, so getParity's own
-# lastSyncAt (internal/parity/status_parse.go's StatusReport.LastActivityAt,
-# which a completed sync's content-file write is what actually creates)
-# must be entirely absent afterward — doc 02 §6's "first-ever sync
-# interrupted" case, unambiguous because there is no earlier sync for it
-# to fall back to. Every later iteration reuses the same share with a
-# fresh batch of files and instead asserts the general form of the same
-# property: lastSyncAt must not move past the last confirmed-good sync
-# (doc 02 §6, "parity stays not fresh") — freshness itself does not
-# reliably move off green for a small interrupted sync (confirmed
-# empirically: ToParityStatus only reads Amber from `snapraid status`'s
-# own has_unsynced count), so lastSyncAt is the one signal both cases can
-# actually rely on.
+# past the moment the sync is confirmed genuinely mid-flight, and asserts
+# the property doc 02 §6 requires regardless of what has already synced
+# before it runs: lastSyncAt must never move past whatever it already
+# read immediately before this iteration's own destroyed sync — an
+# interrupted sync must never read as a completed one. That "before"
+# value is read fresh, every iteration, rather than assumed from the
+# iteration number: this step (issue #386, this round) can now start
+# from an array that already has a real completed sync on it (array
+# setup's own baseline, or a replaced disk's own snapraid fix), so
+# iteration 1 is no longer guaranteed to be parity's first sync ever —
+# and the property under test is exactly the same either way, whether
+# the "before" value is empty (nothing has ever synced) or set (a real
+# prior sync exists): lastSyncAt after the interrupted sync must equal
+# what it already was before it, never move. Every later iteration
+# reuses the same share with a fresh batch of files and the identical
+# comparison. freshness itself does not reliably move off green for a
+# small interrupted sync (confirmed empirically: ToParityStatus only
+# reads Amber from `snapraid status`'s own has_unsynced count), so
+# lastSyncAt is the one signal every iteration can actually rely on.
 midsync_destroy() {
   local delay_s=$1 iteration=$2
   MIDSYNC_ARRAY_VERIFIED=0
@@ -707,16 +712,21 @@ midsync_destroy() {
     fi
   fi
 
-  local pre_lastsyncat=""
-  if [[ "$iteration" != "1" ]]; then
-    local pre_parity
-    pre_parity="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
-    if [[ "$pre_parity" =~ \"lastSyncAt\":\"([^\"]+)\" ]]; then
-      pre_lastsyncat="${BASH_REMATCH[1]}"
-    else
-      MIDSYNC_REASON="expected a prior successful sync's lastSyncAt ahead of iteration $iteration's own destroy: $pre_parity"
-      return 1
-    fi
+  # Read fresh every iteration, never assumed from the iteration number
+  # (see this function's own header comment): empty when parity has
+  # genuinely never synced yet, set when a real prior sync already
+  # exists — either is a valid "before" state to compare the interrupted
+  # sync's own lastSyncAt against below. Iteration 2+ still requires one
+  # to be present: by then this loop's own iteration 1 must already have
+  # completed its guarded re-sync, so a missing lastSyncAt there is a
+  # real precondition failure, not a legitimately-never-synced array.
+  local pre_parity pre_lastsyncat=""
+  pre_parity="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/parity" 2>/dev/null)"
+  if [[ "$pre_parity" =~ \"lastSyncAt\":\"([^\"]+)\" ]]; then
+    pre_lastsyncat="${BASH_REMATCH[1]}"
+  elif [[ "$iteration" != "1" ]]; then
+    MIDSYNC_REASON="expected a prior successful sync's lastSyncAt ahead of iteration $iteration's own destroy: $pre_parity"
+    return 1
   fi
 
   echo "vm-suite[$HOSERVA_LAB_ID]: seeding $((MIDSYNC_FILE_COUNT * MIDSYNC_FILE_SIZE_MB))MB into $MIDSYNC_SHARE_PATH (iteration $iteration, destroy delay ${delay_s}s past confirmed mid-flight) so this sync still has real work left when we destroy the guest"
@@ -771,9 +781,9 @@ midsync_destroy() {
     MIDSYNC_REASON="getParity returned an unexpected response after the post-destroy boot (iteration $iteration): $parity_result"
     return 1
   fi
-  if [[ "$iteration" == "1" ]]; then
+  if [[ -z "$pre_lastsyncat" ]]; then
     if [[ "$parity_result" == *'"lastSyncAt"'* ]]; then
-      MIDSYNC_REASON="getParity reports a lastSyncAt after only an interrupted first-ever sync (delay ${delay_s}s) — parity should not read as ever having synced. getParity's lastSyncAt reads internal/parity/status_parse.go's StatusReport.LastActivityAt, itself only ever set from a snapraid status log's own info_time lines, which only a completed sync's content-file write creates: $parity_result"
+      MIDSYNC_REASON="getParity reports a lastSyncAt after only an interrupted sync (iteration $iteration, delay ${delay_s}s) — parity had no prior successful sync before this iteration's own destroy, so it should not read as ever having synced. getParity's lastSyncAt reads internal/parity/status_parse.go's StatusReport.LastActivityAt, itself only ever set from a snapraid status log's own info_time lines, which only a completed sync's content-file write creates: $parity_result"
       return 1
     fi
   elif [[ "$parity_result" != *"\"lastSyncAt\":\"$pre_lastsyncat\""* ]]; then
@@ -826,7 +836,7 @@ midsync_destroy() {
     MIDSYNC_REASON="getParity does not report a completed sync (freshness=green, lastSyncAt set) after the guarded re-sync succeeded (iteration $iteration): $parity_result"
     return 1
   fi
-  if [[ "$iteration" != "1" && "$parity_result" == *"\"lastSyncAt\":\"$pre_lastsyncat\""* ]]; then
+  if [[ -n "$pre_lastsyncat" && "$parity_result" == *"\"lastSyncAt\":\"$pre_lastsyncat\""* ]]; then
     MIDSYNC_REASON="getParity's lastSyncAt did not advance past the pre-iteration value ($pre_lastsyncat) after the guarded re-sync succeeded (iteration $iteration): $parity_result"
     return 1
   fi
@@ -912,6 +922,32 @@ midsync_ensure_synced() {
     return 1
   fi
   return 0
+}
+
+# dump_hoserva_diagnostics (steps 6 and 7 only) captures hoservad's own
+# service state, boot journal, any stuck systemd jobs and disk1's own
+# mount unit on a failure here — the same guest-side dump disk-yank-
+# check.sh's own EXIT trap runs (issue #386, this round), so a nightly
+# failure in either of the two steps that run right after a disk yank
+# and replace is diagnosable from the log alone. Best-effort: a guest
+# that is not reachable here has bigger problems the caller already
+# reports.
+dump_hoserva_diagnostics() {
+  local label=$1
+  echo "vm-suite[$HOSERVA_LAB_ID]: === guest diagnostics ($label) ==="
+  echo "--- systemctl status hoserva --no-pager ---"
+  vm_ssh 'sudo systemctl status hoserva --no-pager' \
+    || echo "vm-suite[$HOSERVA_LAB_ID]: could not read systemctl status hoserva (guest unreachable?)" >&2
+  echo "--- journalctl -u hoserva -b --no-pager (last 200 lines) ---"
+  vm_ssh 'sudo journalctl -u hoserva -b --no-pager | tail -200' \
+    || echo "vm-suite[$HOSERVA_LAB_ID]: could not read journalctl -u hoserva" >&2
+  echo "--- systemctl list-jobs ---"
+  vm_ssh 'sudo systemctl list-jobs' \
+    || echo "vm-suite[$HOSERVA_LAB_ID]: could not read systemctl list-jobs" >&2
+  echo "--- systemctl status mnt-disk1.mount --no-pager ---"
+  vm_ssh 'sudo systemctl status mnt-disk1.mount --no-pager' \
+    || echo "vm-suite[$HOSERVA_LAB_ID]: could not read systemctl status mnt-disk1.mount" >&2
+  echo "vm-suite[$HOSERVA_LAB_ID]: === end guest diagnostics ==="
 }
 
 # config_backup_restore (step 7, doc 10 §1) is doc 10's *in-place* restore
@@ -1184,7 +1220,15 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 5/13 disk yank and reconstruction ==="
-not_yet "disk yank and reconstruction" "array setup (step 3, #258) now gives this a real array to yank a disk from, but there is still no add/replace/remove-disk operation in api/openapi.yaml to reintroduce a replacement disk into an already-created array: createArray (POST /disks/array) only drives the wizard's one-time initial array creation (doc 03 §3.1 step 6); the only other topology-touching operations are formatExternalDisk (non-array disks only, doc 02 §4's Q72) and startFix (POST /parity/fix), which reconstructs a disk already mounted at its assigned /mnt/diskN — it has nothing to reconstruct onto if no operation ever formats and remounts a replacement there. JobType reserves disk_add/disk_replace/disk_remove (doc 01 §4) but no REST operation triggers any of them, and cmd/hoserva has no 'disk add'/'disk replace' subcommand either — re-check once one lands"
+if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+  if ARRAY_ADMIN_USERNAME="$ARRAY_ADMIN_USERNAME" ARRAY_ADMIN_PASSWORD="$ARRAY_ADMIN_PASSWORD" "$script_dir/disk-yank-check.sh"; then
+    pass "disk yank and reconstruction"
+  else
+    fail "disk yank and reconstruction" "see disk-yank-check.sh output above (issue #386) — needs array setup (step 3)'s own admin account and disk1's own array topology still present"
+  fi
+else
+  not_yet "disk yank and reconstruction" "no active hoservad on the guest (install or array setup above did not complete — see step 1 and step 3)"
+fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 6/13 virsh destroy mid-sync recovery ==="
 if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
@@ -1216,6 +1260,7 @@ if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >
   if [[ "$midsync_ok" == "1" ]]; then
     pass "virsh destroy mid-sync recovery"
   else
+    vm_domain_running "$VM_DOMAIN" && dump_hoserva_diagnostics "virsh destroy mid-sync recovery"
     fail "virsh destroy mid-sync recovery" "$midsync_last_reason"
   fi
 else
@@ -1251,10 +1296,34 @@ if vm_domain_running "$VM_DOMAIN"; then
     done
     if ! $reboot_seen; then
       fail "reboot persistence" "guest boot id did not change within ${timeout_s}s of 'virsh reboot' — the guest may never have actually rebooted"
-    elif vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
-      pass "reboot persistence"
     else
-      fail "reboot persistence" "hoservad was not active again after a confirmed guest reboot"
+      # hoserva.service is Type=notify (#372): it reaches active only once
+      # its own Startup has mounted and confirmed the pool and every share
+      # mount, which a real reboot with real array disks and shares (steps
+      # 3-6 above) can genuinely take past the instant the boot id changes
+      # — confirmed empirically (issue #386, this round) reaching active a
+      # few seconds later, well inside TimeoutStartSec, not hung. A single
+      # immediate check race-loses against that, not a real hang, so this
+      # polls instead — bounded well inside TimeoutStartSec (90s default)
+      # so a genuine hang (hoservad kill-and-restart looping, never
+      # reaching active at all) still fails loudly rather than hanging
+      # this step itself.
+      hoserva_active=false
+      hoserva_wait_s=120
+      hoserva_wait_start=$SECONDS
+      while (( SECONDS - hoserva_wait_start < hoserva_wait_s )); do
+        if vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+          hoserva_active=true
+          break
+        fi
+        sleep 2
+      done
+      if $hoserva_active; then
+        pass "reboot persistence"
+      else
+        dump_hoserva_diagnostics "reboot persistence"
+        fail "reboot persistence" "hoservad was not active within ${hoserva_wait_s}s of a confirmed guest reboot"
+      fi
     fi
   fi
 else
