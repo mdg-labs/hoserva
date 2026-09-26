@@ -250,6 +250,31 @@ func TestSnapraidEngine_Sync_RunsTouchWhenZeroSubsecondFilesExist(t *testing.T) 
 	}
 }
 
+// TestSnapraidEngine_Sync_DryRunSucceedsWhenAlreadySynced is #389's own
+// reproduction for the dry-run path: a real, unedited `snapraid diff -l`
+// capture against an already-synced array (testdata/parsers/
+// snapraid_diff_idle.log, captured on a real Debian 13 guest with real
+// UUID support) reports `summary:exit:equal`, exactly like sync's own
+// no-op case (#267) — but DryRun's own accept closure only recognized
+// "ok" or "diff", so a dry-run request against an array with nothing to
+// sync fell into its "unexpected exit" failure branch.
+func TestSnapraidEngine_Sync_DryRunSucceedsWhenAlreadySynced(t *testing.T) {
+	dir := t.TempDir()
+	r := &scriptedRunner{t: t, script: []scriptedResult{
+		{logBody: string(readCorpus(t, "snapraid_diff_idle.log"))},
+	}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r}
+
+	ch, err := e.Sync(context.Background(), SyncOpts{DryRun: true})
+	if err != nil {
+		t.Fatalf("Sync (dry-run): %v", err)
+	}
+	final := drain(t, ch)
+	if final.Err != nil {
+		t.Fatalf("Sync (dry-run, already synced) final Progress.Err = %v, want nil", final.Err)
+	}
+}
+
 func TestSnapraidEngine_Sync_FailsWhenProcessDidNotRun(t *testing.T) {
 	dir := t.TempDir()
 	boom := errors.New("boom")

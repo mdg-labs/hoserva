@@ -1,6 +1,7 @@
 package parity
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -97,5 +98,42 @@ func TestParseRunSummary_CheckAuditOnly(t *testing.T) {
 func TestParseRunSummary_EmptyInput(t *testing.T) {
 	if _, err := ParseRunSummary(nil); err == nil {
 		t.Fatal("ParseRunSummary(nil): got nil error")
+	}
+}
+
+// TestParseRunSummary_NoOpAfterReplace is a real, unedited `-l` log
+// captured on a real Debian 13 guest with real disk UUIDs: disk1 replaced
+// (wiped, reformatted with a genuinely new filesystem UUID, and rebuilt
+// with a real `snapraid fix -d d1`), then a real follow-up sync finding
+// nothing left to do — printing the exact `WARNING! UUID is changed for
+// disks: 'd1'` line a real-world report of a no-op sync being
+// misclassified as a failed job quoted (tracked separately from this
+// dry-run fix). It carries a full `summary:` section (both the pre-sync
+// diff's own summary:exit:equal and a terminal summary:exit:ok) and
+// already parses as success today — kept as a regression test so this
+// real, exact scenario stays covered.
+func TestParseRunSummary_NoOpAfterReplace(t *testing.T) {
+	s, err := ParseRunSummary(readCorpus(t, "snapraid_sync_noop_after_replace.log"))
+	if err != nil {
+		t.Fatalf("ParseRunSummary: %v", err)
+	}
+	if s.Exit != "ok" {
+		t.Fatalf("Exit = %q, want %q", s.Exit, "ok")
+	}
+}
+
+// TestParseRunSummary_TruncatedStillFails is a real `-l` log from a
+// snapraid sync process SIGKILLed 20ms after it started: it has the
+// header tags (version, command, argv, selftest) and one msg:progress
+// line, but stops there — no summary tag of any kind. Kept as a
+// regression test: a truncated run is still reported as the parse
+// failure it is.
+func TestParseRunSummary_TruncatedStillFails(t *testing.T) {
+	s, err := ParseRunSummary(readCorpus(t, "snapraid_sync_truncated_no_summary.log"))
+	if err == nil {
+		t.Fatalf("ParseRunSummary: got %+v, nil error; want a failure for a truncated log", s)
+	}
+	if !errors.Is(err, ErrRunParse) {
+		t.Fatalf("error = %v, want it to wrap ErrRunParse", err)
 	}
 }

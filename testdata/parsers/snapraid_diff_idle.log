@@ -1,0 +1,47 @@
+version:none
+unixtime:1790429711
+time:2026-09-26 13:35:11
+command:diff
+argv:0:snapraid
+argv:1:-c
+argv:2:/home/hoserva/p389/snapraid.conf
+argv:3:-l
+argv:4:/home/hoserva/p389/logs/diff-idle.log
+argv:5:diff
+conf:file:/home/hoserva/p389/snapraid.conf
+uuid:by-uuid:254:32:bdc84a1e-7918-435f-9a31-e63ea296a870: found ../../vdc
+uuid:by-uuid:254:48:8b277031-2f4c-4358-ad49-a3c4932a745f: found ../../vdd
+uuid:by-uuid:254:64:1f61d1a1-3083-4389-a1a0-26471a6e34ee: found ../../vde
+blocksize:262144
+data:d1:/mnt/disk1/
+data:d2:/mnt/disk2/
+data:d3:/mnt/disk3/
+mode:par1
+parity:0:/mnt/parity1/snapraid.parity
+content:/mnt/parity1/snapraid.content
+msg:progress: Loading state from /mnt/parity1/snapraid.content...
+msg:verbose:        1 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        0 empty dirs
+msg:progress: Comparing...
+statfs:xfs: /mnt/disk1/ 
+statfs:xfs: /mnt/disk2/ 
+statfs:xfs: /mnt/disk3/ 
+msg:status: 
+msg:status:        1 equal
+msg:status:        0 added
+msg:status:        0 removed
+msg:status:        0 updated
+msg:status:        0 moved
+msg:status:        0 copied
+msg:status:        0 restored
+summary:equal:1
+summary:added:0
+summary:removed:0
+summary:updated:0
+summary:moved:0
+summary:copied:0
+summary:restored:0
+msg:status: No differences
+summary:exit:equal
