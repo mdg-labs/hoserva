@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
+	storedb "github.com/mdg-labs/hoserva/internal/store/db"
 )
 
 // blockingRun returns a RunFunc that signals started, then blocks until
@@ -636,6 +638,191 @@ func TestScheduler_ResumeContinuesFromCheckpoint(t *testing.T) {
 }
 
 func timePtr(t time.Time) *time.Time { return &t }
+
+// schedulerOnSameDB returns a second, independent *Scheduler backed by the
+// same *sql.DB s already uses — never a second connection or file, just a
+// second in-memory Scheduler struct with none of s's own fields carried
+// over — so a test can prove a piece of state actually round-trips
+// through SQLite (#387, D16) rather than merely surviving in memory.
+func schedulerOnSameDB(t *testing.T, s *Scheduler) *Scheduler {
+	t.Helper()
+	return NewScheduler(s.store, NewLogStore(t.TempDir()), NewHub(), NewRegistry())
+}
+
+// TestScheduler_RestorePersistedMaintenance_NoRowIsNormalOperation proves
+// a fresh install, or one that has never run `array stop`, restores to
+// ordinary operation rather than failing or wrongly entering maintenance.
+func TestScheduler_RestorePersistedMaintenance_NoRowIsNormalOperation(t *testing.T) {
+	s := newTestScheduler(t)
+	if err := s.RestorePersistedMaintenance(context.Background()); err != nil {
+		t.Fatalf("RestorePersistedMaintenance: %v", err)
+	}
+	if s.InMaintenance() {
+		t.Fatal("InMaintenance() = true with no persisted row")
+	}
+}
+
+// TestScheduler_RestorePersistedMaintenance_SurvivesAcrossASchedulerRestart
+// is #387's own central regression at the Scheduler level: EnterMaintenance
+// and MarkArrayStopped persist to SQLite, and a brand new Scheduler reading
+// the same database — standing in for a hoservad restart — restores both,
+// without ever calling EnterMaintenance itself. The data-disk-upgrade
+// admission check (UR3, doc 02 §4) is what actually reads arrayStopped;
+// admitDiskUpgradeDataLocked is called directly, under s2.mu exactly as
+// its own doc comment requires, because building a full TypeDiskUpgradeData
+// Submit here would need a registered job type and JSON params this test
+// has no need for.
+func TestScheduler_RestorePersistedMaintenance_SurvivesAcrossASchedulerRestart(t *testing.T) {
+	ctx := context.Background()
+	s1 := newTestScheduler(t)
+	if err := s1.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	s1.MarkArrayStopped()
+
+	s2 := schedulerOnSameDB(t, s1)
+	if err := s2.RestorePersistedMaintenance(ctx); err != nil {
+		t.Fatalf("RestorePersistedMaintenance: %v", err)
+	}
+	if !s2.InMaintenance() {
+		t.Fatal("InMaintenance() = false on a fresh Scheduler after EnterMaintenance+MarkArrayStopped were persisted — `array stop` did not survive the restart (#387)")
+	}
+
+	s2.mu.Lock()
+	err := s2.admitDiskUpgradeDataLocked(ctx)
+	s2.mu.Unlock()
+	if err != nil {
+		t.Fatalf("admitDiskUpgradeDataLocked on the restarted Scheduler = %v, want nil — arrayStopped must have been restored too", err)
+	}
+}
+
+// TestScheduler_RestorePersistedMaintenance_ExitedMaintenanceStaysExited
+// proves ExitMaintenance's own persisted write is what a restart actually
+// sees — not the stale "stopped" row EnterMaintenance/MarkArrayStopped
+// left, which would otherwise come back on a plain `array start` too.
+func TestScheduler_RestorePersistedMaintenance_ExitedMaintenanceStaysExited(t *testing.T) {
+	ctx := context.Background()
+	s1 := newTestScheduler(t)
+	if err := s1.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	s1.MarkArrayStopped()
+	s1.ExitMaintenance()
+
+	s2 := schedulerOnSameDB(t, s1)
+	if err := s2.RestorePersistedMaintenance(ctx); err != nil {
+		t.Fatalf("RestorePersistedMaintenance: %v", err)
+	}
+	if s2.InMaintenance() {
+		t.Fatal("InMaintenance() = true on a fresh Scheduler after ExitMaintenance was persisted")
+	}
+}
+
+// TestScheduler_BeginArrayStart_ClearedArrayStoppedSurvivesARestart proves
+// BeginArrayStart's own persisted write, not just its in-memory one: a
+// crash between BeginArrayStart and a successful Start must never restore
+// a "stop sequence completed" state a since-begun start has already
+// invalidated, or a restarted daemon could admit a data-disk upgrade
+// against an array whose start never actually finished.
+func TestScheduler_BeginArrayStart_ClearedArrayStoppedSurvivesARestart(t *testing.T) {
+	ctx := context.Background()
+	s1 := newTestScheduler(t)
+	if err := s1.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	s1.MarkArrayStopped()
+	if _, err := s1.BeginArrayStart(ctx); err != nil {
+		t.Fatalf("BeginArrayStart: %v", err)
+	}
+
+	s2 := schedulerOnSameDB(t, s1)
+	if err := s2.RestorePersistedMaintenance(ctx); err != nil {
+		t.Fatalf("RestorePersistedMaintenance: %v", err)
+	}
+	if !s2.InMaintenance() {
+		t.Fatal("InMaintenance() = false on the restarted Scheduler — BeginArrayStart must not touch maintenance mode itself")
+	}
+	s2.mu.Lock()
+	err := s2.admitDiskUpgradeDataLocked(ctx)
+	s2.mu.Unlock()
+	if !errors.Is(err, ErrArrayNotStopped) {
+		t.Fatalf("admitDiskUpgradeDataLocked on the restarted Scheduler = %v, want ErrArrayNotStopped — a since-begun start must not restore as a completed stop", err)
+	}
+}
+
+// failingExitMaintenanceDBTX wraps a real storedb.DBTX and fails only the
+// exact array_maintenance write ExitMaintenance makes (maintenance=0,
+// array_stopped=0) while shouldFail is true — every other statement,
+// including EnterMaintenance's and MarkArrayStopped's and BeginArrayStart's
+// own array_maintenance writes (which always carry a 1 in one of the
+// first two args once the array is actually stopped), passes straight
+// through, so this can inject a failure at exactly one call in an
+// otherwise-real stop/start sequence.
+type failingExitMaintenanceDBTX struct {
+	storedb.DBTX
+	shouldFail func() bool
+}
+
+func (d failingExitMaintenanceDBTX) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if strings.Contains(query, "array_maintenance") && len(args) >= 2 {
+		maintenance, _ := args[0].(int64)
+		arrayStopped, _ := args[1].(int64)
+		if maintenance == 0 && arrayStopped == 0 && d.shouldFail() {
+			return nil, errors.New("simulated: array_maintenance write failure")
+		}
+	}
+	return d.DBTX.ExecContext(ctx, query, args...)
+}
+
+// TestArraySequence_Start_FailedExitMaintenanceWriteFailsStartAndKeepsStateConsistent
+// is #387 finding 3's own regression: a failed ExitMaintenance persist
+// write must fail ArraySequence.Start itself — every mount and every
+// service has already succeeded by the time Start reaches it, so
+// reporting success while SQLite still holds the previous, stopped state
+// would let a restart before the user retries put the daemon straight
+// back into maintenance mode over an array that is actually live, with
+// GetStatus reporting it stopped while it is not. In-memory state must
+// stay exactly as consistent with the persisted row as it was before the
+// failed call — never optimistically cleared — and a successful retry
+// once the write stops failing must clear both.
+func TestArraySequence_Start_FailedExitMaintenanceWriteFailsStartAndKeepsStateConsistent(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	failWrite := false
+	wrapped := failingExitMaintenanceDBTX{DBTX: db, shouldFail: func() bool { return failWrite }}
+	s := NewScheduler(NewStore(wrapped), NewLogStore(t.TempDir()), NewHub(), NewRegistry())
+
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	s.MarkArrayStopped()
+
+	seq := ArraySequence{Scheduler: s}
+
+	failWrite = true
+	if err := seq.Start(ctx); err == nil {
+		t.Fatal("Start with a failing ExitMaintenance persist write = nil error, want one")
+	}
+	if !s.InMaintenance() {
+		t.Fatal("InMaintenance() = false after a failed ExitMaintenance persist write — in-memory state must not disagree with the still-persisted stopped row")
+	}
+
+	s2 := schedulerOnSameDB(t, s)
+	if err := s2.RestorePersistedMaintenance(ctx); err != nil {
+		t.Fatalf("RestorePersistedMaintenance: %v", err)
+	}
+	if !s2.InMaintenance() {
+		t.Fatal("InMaintenance() = false on a restarted Scheduler after array start's own exit-maintenance write failed (#387 finding 3) — persisted and in-memory state must never disagree")
+	}
+
+	failWrite = false
+	if err := seq.Start(ctx); err != nil {
+		t.Fatalf("Start (retry once the write no longer fails): %v", err)
+	}
+	if s.InMaintenance() {
+		t.Fatal("InMaintenance() = true after a successful retry")
+	}
+}
 
 func TestScheduler_MaintenanceModeRefusesNewJobs(t *testing.T) {
 	ctx := context.Background()

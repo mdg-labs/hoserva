@@ -76,6 +76,12 @@ type updateShutdownLookup struct {
 	currentArray func() *job.ArraySequence
 }
 
+// Stop runs seq.StopForShutdown, never seq.Stop (#387 finding 2): a
+// Reboot is not a user asking the array to stay stopped once the box
+// comes back up — persisting a new "stopped" state here would leave
+// RestorePersistedMaintenance holding the array offline after the next
+// ordinary boot. A persisted user `array stop` already in force is left
+// exactly as it is.
 func (u updateShutdownLookup) Stop(ctx context.Context) error {
 	if u.currentArray == nil {
 		return nil
@@ -84,7 +90,7 @@ func (u updateShutdownLookup) Stop(ctx context.Context) error {
 	if seq == nil {
 		return nil
 	}
-	return seq.Stop(ctx)
+	return seq.StopForShutdown(ctx)
 }
 
 func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, settings *api.SettingsService, scheduler *job.Scheduler, currentArray func() *job.ArraySequence, notifyService *notify.Service, runner disk.Runner, backupSvc *backup.Service) *update.Engine {

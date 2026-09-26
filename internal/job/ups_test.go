@@ -595,3 +595,62 @@ func TestUPSShutdown_ServiceRefusesToStop_NeverPowersOff(t *testing.T) {
 		t.Fatalf("PowerOff.count() = %d, want 0 — a refused service stop must never reach PowerOff", power.count())
 	}
 }
+
+// TestUPSShutdown_DoesNotPersistMaintenance_RestartRestoresNormalOperation
+// is #387 finding 2's own regression for the UPS low-battery path:
+// UPSShutdown.Shutdown must run ArraySequence.StopForShutdown, never
+// Stop, so a low-battery power-off does not itself become a persisted
+// `array stop`. A restarted Scheduler reading the same database — a
+// hoservad restart once the box powers back on — must come back to
+// ordinary operation, not stay stuck refusing every job with
+// ErrMaintenanceMode until someone runs `array start` against an array
+// that was never actually asked to stay down.
+func TestUPSShutdown_DoesNotPersistMaintenance_RestartRestoresNormalOperation(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	shutdown := UPSShutdown{Array: ArraySequence{Scheduler: s}, Power: &fakePowerOff{}}
+	c := &UPSController{Scheduler: s, Notifier: &fakeUPSNotifier{}, Shutdown: shutdown}
+
+	if err := c.HandleNotify(ctx, UPSNotifyLowBattery); err != nil {
+		t.Fatalf("HandleNotify(LOWBATT): %v", err)
+	}
+	if !s.InMaintenance() {
+		t.Fatal("InMaintenance() = false immediately after the low-battery shutdown")
+	}
+
+	s2 := schedulerOnSameDB(t, s)
+	if err := s2.RestorePersistedMaintenance(ctx); err != nil {
+		t.Fatalf("RestorePersistedMaintenance: %v", err)
+	}
+	if s2.InMaintenance() {
+		t.Fatal("InMaintenance() = true on a restarted Scheduler after only a UPS low-battery shutdown (#387 finding 2) — a plain low-battery power-off must not leave the array stuck in maintenance mode after the next boot")
+	}
+}
+
+// TestUPSShutdown_UserStopThenLowBattery_StaysStoppedAfterRestart proves
+// the other half of the same criterion: a persisted user `array stop`
+// already in force must survive a later UPS low-battery shutdown, not be
+// cleared or left ambiguous by it.
+func TestUPSShutdown_UserStopThenLowBattery_StaysStoppedAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	if err := (ArraySequence{Scheduler: s}).Stop(ctx); err != nil {
+		t.Fatalf("Stop (user array stop): %v", err)
+	}
+
+	shutdown := UPSShutdown{Array: ArraySequence{Scheduler: s}, Power: &fakePowerOff{}}
+	c := &UPSController{Scheduler: s, Notifier: &fakeUPSNotifier{}, Shutdown: shutdown}
+	if err := c.HandleNotify(ctx, UPSNotifyLowBattery); err != nil {
+		t.Fatalf("HandleNotify(LOWBATT): %v", err)
+	}
+
+	s2 := schedulerOnSameDB(t, s)
+	if err := s2.RestorePersistedMaintenance(ctx); err != nil {
+		t.Fatalf("RestorePersistedMaintenance: %v", err)
+	}
+	if !s2.InMaintenance() {
+		t.Fatal("InMaintenance() = false on a restarted Scheduler after a user `array stop` was already in force before a UPS low-battery shutdown (#387 finding 2) — a persisted user stop must survive a later shutdown-sequence caller")
+	}
+}

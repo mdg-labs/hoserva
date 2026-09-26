@@ -56,13 +56,19 @@ func (f *fakeArrayMount) Unmount(ctx context.Context) error {
 // both the ordering Start owes it and that a failure there blocks every
 // Service from starting.
 type fakeStorageTarget struct {
-	err error
-	log *[]string
+	err      error
+	closeErr error
+	log      *[]string
 }
 
 func (f *fakeStorageTarget) ConfirmReady(ctx context.Context, seq *ArraySequence) error {
 	*f.log = append(*f.log, "confirmready")
 	return f.err
+}
+
+func (f *fakeStorageTarget) Close(ctx context.Context) error {
+	*f.log = append(*f.log, "close")
+	return f.closeErr
 }
 
 func sliceEqual(t *testing.T, got, want []string) {
@@ -118,6 +124,64 @@ func TestArraySequence_Stop_ServiceMustStopBeforeAnyUnmount(t *testing.T) {
 
 	if !s.InMaintenance() {
 		t.Fatal("Stop: scheduler must stay in maintenance mode after a failed stop, so nothing new can start against a half-stopped array")
+	}
+}
+
+// TestArraySequence_Stop_ClosesStorageTargetGateAfterServicesBeforeUnmounts
+// is #387's own ordering test for the storage-target gate closing on
+// `array stop` (raised by the #372 verifier): the gate must close after
+// Services (Samba/NFS have already stopped their own way) but before any
+// unmount, exactly like a Service itself — a refusal to close it must hold
+// the whole sequence up rather than being skipped past on the way to
+// unmounting.
+func TestArraySequence_Stop_ClosesStorageTargetGateAfterServicesBeforeUnmounts(t *testing.T) {
+	var log []string
+	s := newTestScheduler(t)
+
+	svc := &fakeArrayService{name: "Samba", log: &log}
+	target := &fakeStorageTarget{log: &log}
+	catchAll := &fakeArrayMount{where: "/mnt/user", log: &log}
+
+	seq := ArraySequence{
+		Scheduler:     s,
+		Services:      []ArrayService{svc},
+		StorageTarget: target,
+		CatchAll:      catchAll,
+	}
+
+	if err := seq.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	sliceEqual(t, log, []string{"stop:Samba", "close", "unmount:/mnt/user"})
+}
+
+// TestArraySequence_Stop_StorageTargetCloseFailureBlocksUnmounts proves a
+// Close failure — Docker or libvirt refusing to stop, or the gate unit
+// itself refusing to stop — holds Stop up exactly like a refused Samba or
+// NFS stop: nothing unmounts, and maintenance mode stays on so an operator
+// can resolve it and retry, rather than continuing to unmount storage a
+// still-running service might hold open.
+func TestArraySequence_Stop_StorageTargetCloseFailureBlocksUnmounts(t *testing.T) {
+	var log []string
+	s := newTestScheduler(t)
+
+	target := &fakeStorageTarget{closeErr: errors.New("docker.service: still stopping"), log: &log}
+	catchAll := &fakeArrayMount{where: "/mnt/user", log: &log}
+
+	seq := ArraySequence{Scheduler: s, StorageTarget: target, CatchAll: catchAll}
+
+	err := seq.Stop(context.Background())
+	if err == nil {
+		t.Fatal("Stop: got nil error, want the storage-target Close failure to propagate")
+	}
+	for _, m := range log {
+		if m == "unmount:/mnt/user" {
+			t.Fatalf("Stop unmounted %q after the storage-target gate failed to close; full log: %v", m, log)
+		}
+	}
+	sliceEqual(t, log, []string{"close"})
+	if !s.InMaintenance() {
+		t.Fatal("Stop: scheduler must stay in maintenance mode after a failed gate close")
 	}
 }
 

@@ -58,13 +58,18 @@ type UPSShutdown struct {
 	Power PowerOff
 }
 
-// Shutdown runs ArraySequence.Stop and, only once it succeeds, powers the
-// host off. A failed Stop leaves maintenance mode active (ArraySequence
-// .Stop's own doc comment) and never reaches PowerOff — powering off
-// while a service refused to stop is exactly the data-loss scenario Stop
-// itself exists to prevent.
+// Shutdown runs ArraySequence.StopForShutdown and, only once it succeeds,
+// powers the host off. StopForShutdown, never Stop (#387 finding 2): a
+// UPS low-battery shutdown is not a user asking the array to stay stopped
+// once power returns — persisting a new "stopped" state here would leave
+// RestorePersistedMaintenance holding the array offline after the next
+// ordinary boot. A persisted user `array stop` already in force is left
+// exactly as it is. A failed stop leaves maintenance mode active
+// (ArraySequence.stop's own doc comment) and never reaches PowerOff —
+// powering off while a service refused to stop is exactly the data-loss
+// scenario the stop sequence itself exists to prevent.
 func (u UPSShutdown) Shutdown(ctx context.Context) error {
-	if err := u.Array.Stop(ctx); err != nil {
+	if err := u.Array.StopForShutdown(ctx); err != nil {
 		return fmt.Errorf("job: ups low-battery shutdown: stopping the array: %w", err)
 	}
 	if u.Power == nil {

@@ -255,10 +255,11 @@ func (s *storageTargetSync) writeUnits(ctx context.Context, units []string) erro
 // While the array is in maintenance mode (an explicit `array stop`,
 // §4/Q70) this mounts nothing and leaves the gate closed instead, even
 // with every disk present: a hoservad that restarts mid-swap must not
-// remount storage the user explicitly took down. Maintenance mode is an
-// in-memory Scheduler field, not persisted (#387), so this check only
-// ever protects within one process's own lifetime — it does not by
-// itself survive a hoservad restart; closing that gap is #387's own job.
+// remount storage the user explicitly took down. Maintenance mode is
+// persisted in SQLite (#387) and restored by main.go's own call to
+// Scheduler.RestorePersistedMaintenance before this runs, so this check
+// holds across a crash, a restart, or a reboot, not only within the
+// process that entered it.
 //
 // main.go calls notifySystemdReady regardless of whether this returns an
 // error: withholding READY=1 buys no safety here (the flag is already
@@ -460,8 +461,8 @@ func (s *storageTargetSync) startDependents(ctx context.Context) {
 // 02 §4 E4-E6), or a degraded boot followed by `array stop`/`array
 // start`. Unlike Update, it never defers to maintenance mode: Start's own
 // caller is still nominally "in maintenance" at the point this runs
-// (Start only calls Scheduler.ExitMaintenance once every one of its own
-// steps, including this one, has succeeded), so that is this
+// (Start only calls Scheduler.ExitMaintenanceChecked once every one of
+// its own steps, including this one, has succeeded), so that is this
 // transition's own starting point, not a reason to leave the gate
 // closed. It never mounts the pool itself — Start's own Disks/CatchAll/
 // ShareMounts loops, immediately before this call, already did — so it
@@ -485,6 +486,58 @@ func (s *storageTargetSync) ConfirmReady(ctx context.Context, seq *job.ArraySequ
 	}
 	s.startDependents(ctx)
 	s.units, s.ready, s.applied = units, true, true
+	return nil
+}
+
+// dependentServicesOutsideArraySequence is pool.DependentServiceUnits
+// without Samba and NFS: those two already stop and start through
+// job.ArraySequence's own Services list (#309, doc 02 §4's "Samba and NFS
+// stop"/"start" step). Docker and libvirt read the pool the same way
+// (#387, doc 02 §1, Q70) but were never added to that list, so Close
+// below is their only stop.
+var dependentServicesOutsideArraySequence = []string{"docker.service", "libvirtd.service"}
+
+// Close implements job.StorageTarget for job.ArraySequence.Stop (#387,
+// raised by the #372 verifier): hoserva-storage-ready.service is
+// RemainAfterExit=yes, so once it has ever succeeded it stays
+// "active (exited)" — satisfying hoserva-storage.target's own
+// Requires=/After= on it — regardless of what StorageReadyFlagPath says.
+// ArraySequence.Stop's own Services loop already stops Samba and NFS
+// directly, but neither that nor an unmount touches the gate unit itself,
+// so anything that later starts Samba or NFS during maintenance (an
+// unattended security update, a hand-run systemctl) still finds
+// hoserva-storage.target satisfied and serves the unmounted pool straight
+// off the boot disk. Close stops Docker and libvirt first — the same
+// enabled/masked-aware ServiceUnitController startDependents already uses,
+// mirrored for stopping, since a refusal to stop must hold the sequence
+// up exactly like a refused Samba/NFS stop, not be skipped past on the
+// way to unmounting — then removes the runtime flag before it stops the
+// gate unit itself (#387 finding 5, raised by the #387 verifier): an
+// smbd or NFS start landing between the two steps (an unattended security
+// update, a hand-run systemctl) must find the flag already gone, so its
+// fixed `test -e` ExecStart fails on its own even before the unit stop
+// below reaches it — clearing the flag only after stopping the unit left
+// a window where that same start could still find the flag in place and
+// pass, immediately before Stop's own unmount served the boot disk
+// underneath it.
+func (s *storageTargetSync) Close(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, svc := range dependentServicesOutsideArraySequence {
+		ctrl := disk.ServiceUnitController{ServiceName: svc, Unit: svc, Runner: s.Runner}
+		if err := ctrl.Stop(ctx); err != nil {
+			return fmt.Errorf("stopping %s before closing the storage-target gate: %w", svc, err)
+		}
+	}
+	if err := s.clearFlag(); err != nil {
+		return err
+	}
+	readyGate := disk.ServiceUnitController{ServiceName: "storage-ready gate", Unit: pool.StorageReadyUnitName, Runner: s.Runner}
+	if err := readyGate.Stop(ctx); err != nil {
+		return fmt.Errorf("stopping %s: %w", pool.StorageReadyUnitName, err)
+	}
+	s.ready, s.applied = false, true
 	return nil
 }
 

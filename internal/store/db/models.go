@@ -45,6 +45,13 @@ type ArrayDisk struct {
 	RemovalJobID sql.NullString `json:"removal_job_id"`
 }
 
+type ArrayMaintenance struct {
+	ID           int64  `json:"id"`
+	Maintenance  int64  `json:"maintenance"`
+	ArrayStopped int64  `json:"array_stopped"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
 type ArraySetting struct {
 	ID           int64  `json:"id"`
 	CreatePolicy string `json:"create_policy"`

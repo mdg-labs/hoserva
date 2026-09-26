@@ -300,6 +300,16 @@ func run(cfg config) error {
 	if err := scheduler.RecoverFromRestart(ctx); err != nil {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
+	// RestorePersistedMaintenance (#387, doc 02 §4, Q70) runs before
+	// anything below can admit a job, build the array's stop/start
+	// sequence, or evaluate the storage-target gate: a crash or restart
+	// while the user had `array stop` active must come back up still
+	// stopped — new jobs refused, the pool unmounted, Samba/NFS/Docker/
+	// libvirt down — never silently return to normal operation because
+	// maintenance mode used to live only in this scheduler's own memory.
+	if err := scheduler.RestorePersistedMaintenance(ctx); err != nil {
+		return fmt.Errorf("restoring persisted maintenance mode: %w", err)
+	}
 
 	arraySeq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, linuxDisks.Exec)
 	if err != nil {

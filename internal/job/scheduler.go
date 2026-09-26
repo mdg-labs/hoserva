@@ -3,6 +3,7 @@ package job
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mdg-labs/hoserva/internal/disk"
+	"github.com/mdg-labs/hoserva/internal/store"
+	storedb "github.com/mdg-labs/hoserva/internal/store/db"
 )
 
 // diskUpgradeDataCheckpointAtReleasing reports whether a data-disk
@@ -573,6 +576,59 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 	return &snapshot, nil
 }
 
+// persistMaintenanceLocked writes maintenance/arrayStopped to the
+// array_maintenance singleton row (D16, #387, doc 02 §4, Q70), so `array
+// stop` survives a hoservad restart or reboot — held only in this
+// struct's own fields before this, a crash or restart while the array
+// was stopped silently returned to normal operation. Both fields are
+// always written together, so a restart can never restore one without
+// the other. Callers must hold s.mu.
+func (s *Scheduler) persistMaintenanceLocked(ctx context.Context, maintenance, arrayStopped bool) error {
+	if s.store == nil {
+		// A Scheduler built without a Store (NewScheduler(nil, ...), this
+		// package's own tests that exercise nothing but in-memory state)
+		// has nothing to persist to and nothing a restart could restore
+		// either — every production caller (cmd/hoservad's main.go) always
+		// passes a real one.
+		return nil
+	}
+	return s.store.q.UpsertArrayMaintenance(ctx, storedb.UpsertArrayMaintenanceParams{
+		Maintenance:  boolToSQL(maintenance),
+		ArrayStopped: boolToSQL(arrayStopped),
+		UpdatedAt:    time.Now().UTC().Format(store.TimeFormat),
+	})
+}
+
+// RestorePersistedMaintenance reads the maintenance state `array stop`
+// last persisted and restores it into this scheduler (#387, doc 02 §4,
+// Q70). cmd/hoservad calls this once, immediately after
+// RecoverFromRestart and before building the array's stop/start sequence
+// or evaluating the storage-target gate: a crash or restart while the
+// array was stopped must never admit a job, remount the pool, or start
+// Samba/NFS/Docker/libvirt, because nothing survived in memory to say
+// otherwise. No persisted row — a fresh install, or one that has never
+// run `array stop` — restores to normal operation, and so does a
+// Scheduler built without a Store at all (NewScheduler(nil, ...), this
+// package's own tests that exercise nothing but in-memory state): there
+// is nothing for it to have restored from.
+func (s *Scheduler) RestorePersistedMaintenance(ctx context.Context) error {
+	if s.store == nil {
+		return nil
+	}
+	row, err := s.store.q.GetArrayMaintenance(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("job: reading persisted maintenance state: %w", err)
+	}
+	s.mu.Lock()
+	s.maintenance = row.Maintenance != 0
+	s.arrayStopped = row.ArrayStopped != 0
+	s.mu.Unlock()
+	return nil
+}
+
 // EnterMaintenance puts the scheduler in maintenance mode (Q70,
 // `hoserva array stop`): Submit and Resume refuse from this point on,
 // every resumable job currently running is asked to stop at its next
@@ -585,8 +641,40 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 // maintenance mode admits — so a shutdown's stop sequence stops it at its
 // next checkpoint too (doc 02 §4 E4). Every call clears the "stop
 // sequence completed" state (UR3) until ArraySequence.Stop sets it again.
+//
+// The new state is persisted (#387) before anything else changes: a
+// failure to persist refuses the whole call, leaving every job and every
+// service exactly as it was, rather than entering maintenance mode in
+// memory only and repeating the bug this exists to fix.
 func (s *Scheduler) EnterMaintenance(ctx context.Context) error {
+	return s.enterMaintenance(ctx, true)
+}
+
+// EnterMaintenanceTransient is EnterMaintenance's own shutdown-sequence
+// half (#387 finding 2): a reboot or a UPS low-battery shutdown needs the
+// exact same in-memory admission refusal and job-stopping ArraySequence
+// .Stop already gets from EnterMaintenance, but neither is a user asking
+// the array to stay stopped after the box comes back — persisting a new
+// "stopped" row here would leave RestorePersistedMaintenance holding the
+// array offline after the next ordinary boot (finding 2's own production
+// scenario: a plain Reboot, or a UPS shutdown, silently turning into a
+// stuck maintenance mode). It never writes to array_maintenance, so it
+// never fails and never disturbs a persisted user `array stop` already in
+// force either — that row is simply left exactly as it is.
+func (s *Scheduler) EnterMaintenanceTransient() {
+	// persist=false never touches the store, so this can never return an
+	// error — see enterMaintenance below.
+	_ = s.enterMaintenance(context.Background(), false)
+}
+
+func (s *Scheduler) enterMaintenance(ctx context.Context, persist bool) error {
 	s.mu.Lock()
+	if persist {
+		if err := s.persistMaintenanceLocked(ctx, true, false); err != nil {
+			s.mu.Unlock()
+			return fmt.Errorf("job: persisting maintenance mode: %w", err)
+		}
+	}
 	s.maintenance = true
 	s.arrayStopped = false
 
@@ -653,29 +741,85 @@ func (s *Scheduler) Drain(ctx context.Context) error {
 	return nil
 }
 
-// ExitMaintenance reverses EnterMaintenance (`hoserva array start`, Q70).
-// It does not resume anything on its own — every interrupted job stays
-// interrupted until an explicit Resume call.
+// ExitMaintenance reverses EnterMaintenance (`hoserva array start`, Q70)
+// without reporting a failed persistence write to its caller. It exists
+// only for this package's own tests (and internal/api's), which call it
+// as a bare statement and never exercise that failure path; a failed
+// write is only logged. ArraySequence.Start, the only production caller,
+// uses ExitMaintenanceChecked instead (#387 finding 3) — kept separate
+// rather than changing this signature, since every other call site would
+// need a matching fix outside this issue's own declared scope. Never
+// called by Scheduler.Cancel or Resume — neither touches maintenance
+// mode.
 func (s *Scheduler) ExitMaintenance() {
+	if err := s.ExitMaintenanceChecked(); err != nil {
+		log.Printf("job: %v — a caller ignoring ExitMaintenance's own returned error leaves maintenance mode entered", err)
+	}
+}
+
+// ExitMaintenanceChecked is ExitMaintenance with its persisted-write
+// failure reported to the caller (#387 finding 3): the cleared state is
+// persisted before it takes effect in memory, so ArraySequence.Start
+// returns this error and `array start` itself fails and the user
+// retries, rather than reporting success while SQLite still holds the
+// previous, stopped state — a restart before that is fixed would put the
+// daemon straight back into maintenance mode (RestorePersistedMaintenance)
+// over an array the user was just told had started, with GetStatus
+// reporting it stopped while it is actually live and serving clients.
+func (s *Scheduler) ExitMaintenanceChecked() error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.persistMaintenanceLocked(context.Background(), false, false); err != nil {
+		return fmt.Errorf("job: persisting the exited-maintenance state: %w", err)
+	}
 	s.maintenance = false
 	s.arrayStopped = false
-	s.mu.Unlock()
+	return nil
 }
 
 // MarkArrayStopped records that ArraySequence.Stop completed every step
 // (doc 02 §4 UR3): the only state that admits a data-disk upgrade.
 func (s *Scheduler) MarkArrayStopped() {
+	s.markArrayStopped(true)
+}
+
+// MarkArrayStoppedTransient is MarkArrayStopped's own shutdown-sequence
+// half (#387 finding 2, ArraySequence.StopForShutdown): completes the
+// in-memory "stop sequence completed" bookkeeping a reboot or UPS
+// shutdown's own stop sequence needs, without writing a new persisted
+// stop the user never asked for.
+func (s *Scheduler) MarkArrayStoppedTransient() {
+	s.markArrayStopped(false)
+}
+
+func (s *Scheduler) markArrayStopped(persist bool) {
 	s.mu.Lock()
-	s.arrayStopped = s.maintenance
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	stopped := s.maintenance
+	if persist {
+		// A failure here is only logged, not returned — by the time this
+		// runs every unmount has already succeeded, and the process's own
+		// in-memory state (which already governs Submit's admission check)
+		// is authoritative for as long as this process keeps running. Only
+		// a restart before this write is retried would restore the stale,
+		// unstopped state — refusing a data-disk upgrade until `array
+		// stop` runs again, never admitting one a restart could not
+		// confirm actually happened.
+		if err := s.persistMaintenanceLocked(context.Background(), s.maintenance, stopped); err != nil {
+			log.Printf("job: persisting the array-stopped state: %v — a restart before this is retried would refuse a data-disk upgrade until `array stop` runs again, never admit one unsafely", err)
+		}
+	}
+	s.arrayStopped = stopped
 }
 
 // BeginArrayStart is ArraySequence.Start's first step: it refuses while a
 // data-disk upgrade is pending (doc 02 §4 E6), and otherwise clears the
 // "stop sequence completed" state under the same lock Submit admits a
 // data-disk upgrade under, so no upgrade is admitted once a start begins.
-// It returns that state as it was, for RestoreArrayStopped.
+// It returns that state as it was, for RestoreArrayStopped. The cleared
+// state is persisted (#387) before it takes effect: a restart mid-start
+// must never restore a "stop sequence completed" state that a since-begun
+// start has already invalidated.
 func (s *Scheduler) BeginArrayStart(ctx context.Context) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -687,16 +831,28 @@ func (s *Scheduler) BeginArrayStart(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("%w: job %s — resume it, or cancel it to abort back to the old disk", ErrDiskUpgradeDataPending, pending[0].ID)
 	}
 	was := s.arrayStopped
+	if err := s.persistMaintenanceLocked(ctx, s.maintenance, false); err != nil {
+		return false, fmt.Errorf("job: persisting array-start state: %w", err)
+	}
 	s.arrayStopped = false
 	return was, nil
 }
 
 // RestoreArrayStopped puts back the state BeginArrayStart returned, for a
-// start that failed without leaving anything mounted.
-func (s *Scheduler) RestoreArrayStopped(was bool) {
+// start that failed without leaving anything mounted. The restored state
+// is persisted (#387) before it takes effect in memory: a failure here
+// leaves the persisted state at "not stopped", which only ever refuses a
+// data-disk upgrade a restart could not confirm is actually safe — never
+// the reverse.
+func (s *Scheduler) RestoreArrayStopped(was bool) error {
 	s.mu.Lock()
-	s.arrayStopped = was && s.maintenance
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	restored := was && s.maintenance
+	if err := s.persistMaintenanceLocked(context.Background(), s.maintenance, restored); err != nil {
+		return fmt.Errorf("job: persisting the restored array-stopped state: %w", err)
+	}
+	s.arrayStopped = restored
+	return nil
 }
 
 // InMaintenance reports whether maintenance mode is currently active.

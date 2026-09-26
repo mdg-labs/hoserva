@@ -503,12 +503,16 @@ func (h *Handler) GetStatus(ctx context.Context) (*apiv1.SystemStatus, error) {
 	// must be able to tell the two apart rather than infer "running"
 	// from the acknowledgement alone. No hook wired (an older daemon
 	// build, or a caller's own test predating it) reports false, never a
-	// guess. storageTargetSync.Ready() only ever tracks whether that
-	// transition ran, never whether a later `array stop` then stopped
-	// and unmounted everything again — ArraySequence.Stop does not clear
-	// it — so this also requires the array not be in maintenance: a
+	// guess. storageTargetSync.Ready() is cleared by ArraySequence.Stop's
+	// own StorageTarget.Close (#387) once the stop sequence actually
+	// reaches it — but not before: EnterMaintenance runs as that
+	// sequence's very first step, well ahead of Close, so a stop already
+	// in flight (still draining jobs, still stopping services) would
+	// otherwise report services as released before Close ever executes.
+	// Requiring the array not be in maintenance closes that window: a
 	// still-standing acknowledgement must never be reported as "services
-	// running" once StopArray has taken them down.
+	// running" once StopArray has started taking them down, whether or
+	// not Close has run yet.
 	storageServicesReleased := false
 	if h.StorageServicesReleased != nil {
 		storageServicesReleased = h.StorageServicesReleased() && !maintenance

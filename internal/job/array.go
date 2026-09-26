@@ -69,8 +69,23 @@ var ErrArrayDiskMismatch = errors.New("job: an array disk mountpoint does not ho
 // hoserva-storage.target while the readiness flag behind that target is
 // still whatever an earlier, not-ready boot left it as — every retry
 // failing the same way, with the array stuck in maintenance mode.
+// Close is the gate's own half of `array stop` (#387, raised by the #372
+// verifier): hoserva-storage-ready.service is RemainAfterExit=yes, so
+// once it has ever succeeded it stays "active (exited)" — satisfying
+// hoserva-storage.target's own Requires=/After= on it — regardless of
+// what the runtime flag behind it says. Stop's own Services loop above
+// already stops Samba and NFS directly, but neither that nor an unmount
+// touches the gate unit itself, so anything that later starts Samba or
+// NFS during maintenance (an unattended security update, a hand-run
+// systemctl) still passes hoserva-storage.target and serves the
+// unmounted pool. Close removes the runtime flag and stops the gate unit
+// so its fixed `test -e` ExecStart runs — and fails — the next time
+// anything needs it, and stops Docker and libvirt (doc 02 §1, Q70): both
+// read the pool the way Samba and NFS do, but neither is in Services,
+// which has only ever carried Samba and NFS (#309).
 type StorageTarget interface {
 	ConfirmReady(ctx context.Context, seq *ArraySequence) error
+	Close(ctx context.Context) error
 }
 
 // ArrayDiskCheck is UR9's check: every array-disk mountpoint that is
@@ -168,7 +183,9 @@ type ArraySequence struct {
 	StorageTarget StorageTarget
 }
 
-// Stop runs doc 02 §4's sequence. It stops on the first error and does
+// Stop runs doc 02 §4's sequence for a user-requested `array stop`: it
+// persists maintenance mode (#387), so a crash or restart while the array
+// is stopped this way stays stopped. It stops on the first error and does
 // not proceed to unmount anything past that point: unmounting storage a
 // service might still be writing to is exactly the data-loss scenario
 // this ordering exists to prevent (doc 02 §4 — "a container holding a
@@ -179,17 +196,40 @@ type ArraySequence struct {
 // retries, rather than silently falling back to normal operation with
 // some services already stopped.
 func (s ArraySequence) Stop(ctx context.Context) error {
+	return s.stop(ctx, true)
+}
+
+// StopForShutdown runs the exact same sequence as Stop, for a reboot
+// (update.Engine.Reboot) or a UPS low-battery shutdown (UPSShutdown) —
+// every job checkpointed or interrupted, every service stopped, the
+// storage-target gate closed, everything unmounted — but never persists a
+// new "stopped" state (#387 finding 2): neither is a user asking the
+// array to stay stopped once the box comes back, and persisting one here
+// would leave RestorePersistedMaintenance holding the array offline after
+// the next ordinary boot. A persisted user `array stop` already in force
+// is left exactly as it is — this never writes to it, so it can never
+// clear one either.
+func (s ArraySequence) StopForShutdown(ctx context.Context) error {
+	return s.stop(ctx, false)
+}
+
+func (s ArraySequence) stop(ctx context.Context, persist bool) error {
 	if s.Scheduler != nil {
-		if err := s.Scheduler.EnterMaintenance(ctx); err != nil {
-			return fmt.Errorf("job: entering maintenance mode: %w", err)
+		if persist {
+			if err := s.Scheduler.EnterMaintenance(ctx); err != nil {
+				return fmt.Errorf("job: entering maintenance mode: %w", err)
+			}
+		} else {
+			s.Scheduler.EnterMaintenanceTransient()
 		}
-		// EnterMaintenance only signals running jobs to stop and returns;
-		// it does not wait for them to actually finish. Proceeding to stop
-		// services and unmount storage while one of Hoserva's own jobs
-		// (mover, rebalance, evacuation, a Parity-class Sync) is still
-		// mid-write is exactly the data-loss scenario this sequence exists
-		// to prevent (doc 02 §4) — so Stop waits here for every job that
-		// was running to actually exit before touching anything else.
+		// EnterMaintenance/EnterMaintenanceTransient only signal running
+		// jobs to stop and return; neither waits for them to actually
+		// finish. Proceeding to stop services and unmount storage while
+		// one of Hoserva's own jobs (mover, rebalance, evacuation, a
+		// Parity-class Sync) is still mid-write is exactly the data-loss
+		// scenario this sequence exists to prevent (doc 02 §4) — so Stop
+		// waits here for every job that was running to actually exit
+		// before touching anything else.
 		if err := s.Scheduler.Drain(ctx); err != nil {
 			return err
 		}
@@ -205,6 +245,15 @@ func (s ArraySequence) Stop(ctx context.Context) error {
 	for _, svc := range s.Services {
 		if err := svc.Stop(ctx); err != nil {
 			return fmt.Errorf("job: stopping %s: %w", svc.Name(), err)
+		}
+	}
+	// Closing the storage-target gate (#387) runs here, with Services
+	// already stopped and before any unmount: like Services, a service it
+	// stops (Docker, libvirt) refusing to release the pool must hold the
+	// whole sequence up, not be skipped past on the way to unmounting.
+	if s.StorageTarget != nil {
+		if err := s.StorageTarget.Close(ctx); err != nil {
+			return fmt.Errorf("job: closing the storage-target gate: %w", err)
 		}
 	}
 	for _, m := range s.ShareMounts {
@@ -223,7 +272,11 @@ func (s ArraySequence) Stop(ctx context.Context) error {
 		}
 	}
 	if s.Scheduler != nil {
-		s.Scheduler.MarkArrayStopped()
+		if persist {
+			s.Scheduler.MarkArrayStopped()
+		} else {
+			s.Scheduler.MarkArrayStoppedTransient()
+		}
 	}
 	return nil
 }
@@ -274,7 +327,9 @@ func (s ArraySequence) Start(ctx context.Context) error {
 	}
 	if s.Gate != nil && !s.Gate.Ready() {
 		if s.Scheduler != nil {
-			s.Scheduler.RestoreArrayStopped(wasStopped)
+			if rerr := s.Scheduler.RestoreArrayStopped(wasStopped); rerr != nil {
+				return errors.Join(ErrStorageNotReady, rerr)
+			}
 		}
 		return ErrStorageNotReady
 	}
@@ -295,7 +350,9 @@ func (s ArraySequence) Start(ctx context.Context) error {
 			// Every disk unmounted again: the array is back where it was.
 			// Any failed unmount leaves it not stopped.
 			if len(errs) == 0 && s.Scheduler != nil {
-				s.Scheduler.RestoreArrayStopped(wasStopped)
+				if rerr := s.Scheduler.RestoreArrayStopped(wasStopped); rerr != nil {
+					errs = append(errs, rerr)
+				}
 			}
 			return errors.Join(append([]error{err}, errs...)...)
 		}
@@ -323,7 +380,15 @@ func (s ArraySequence) Start(ctx context.Context) error {
 	}
 
 	if s.Scheduler != nil {
-		s.Scheduler.ExitMaintenance()
+		// A failed persisted write here (#387 finding 3) must fail Start
+		// itself: every mount and every service above has already
+		// succeeded, so leaving SQLite still holding the previous,
+		// stopped state while reporting this call as successful would let
+		// a restart before the user retries put the daemon straight back
+		// into maintenance mode over an array that is actually live.
+		if err := s.Scheduler.ExitMaintenanceChecked(); err != nil {
+			return fmt.Errorf("job: exiting maintenance mode: %w", err)
+		}
 	}
 	return nil
 }

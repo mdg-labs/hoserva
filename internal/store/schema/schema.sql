@@ -376,6 +376,26 @@ CREATE TABLE array_disks (
 
 CREATE INDEX array_disks_role_idx ON array_disks (role, role_index);
 
+-- Array maintenance mode (#387, doc 02 §4, Q70): singleton row, same
+-- pattern as array_settings. Held only in job.Scheduler's own memory
+-- before this, a hoservad restart or reboot while a user had `array
+-- stop` active silently returned to normal operation — every job type
+-- admitted again, and the storage-target gate free to remount the pool
+-- and start Samba/NFS/Docker/libvirt over a disk swap the user believed
+-- was still stopped. maintenance is doc 02 §4's own maintenance mode
+-- (Scheduler.EnterMaintenance/ExitMaintenance); array_stopped is UR3's
+-- "the stop sequence has completed" state (Scheduler.MarkArrayStopped) —
+-- the only state that admits a data-disk upgrade. Both are written
+-- together on every transition, so a restart can never restore one
+-- without the other. No row yet (a fresh install, or one that has never
+-- run `array stop`) means normal operation.
+CREATE TABLE array_maintenance (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    maintenance INTEGER NOT NULL CHECK (maintenance IN (0, 1)),
+    array_stopped INTEGER NOT NULL CHECK (array_stopped IN (0, 1)),
+    updated_at TEXT NOT NULL
+) STRICT;
+
 -- Recurring schedules (#197, doc 03 §8.4, Q30): the nightly maintenance
 -- chain and separately scheduled jobs. Next-run times and conflict
 -- detection are computed by the daemon from these rows plus the

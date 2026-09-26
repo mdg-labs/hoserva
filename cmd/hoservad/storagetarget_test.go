@@ -195,10 +195,10 @@ func TestStorageTargetSync_Startup_MountsPoolButNeverStartsAUnitAfterHoservad(t 
 
 // TestStorageTargetSync_Startup_InMaintenanceLeavesGateClosed proves
 // Startup's own maintenance-mode guard: a hoservad that starts up while
-// Scheduler.InMaintenance() is already true (an explicit `array stop`
-// whose in-memory state somehow survived, or once #387 persists it
-// across a restart) must not mount the pool a user explicitly took down,
-// even with every disk present.
+// Scheduler.InMaintenance() is already true — an explicit `array stop`
+// still in force within this same process, or restored from SQLite across
+// a restart (#387, RestorePersistedMaintenance) — must not mount the pool
+// a user explicitly took down, even with every disk present.
 func TestStorageTargetSync_Startup_InMaintenanceLeavesGateClosed(t *testing.T) {
 	s := newTestStorageTargetSync(t)
 	s.PoolMounted = func(string) (bool, error) { return true, nil }
@@ -725,5 +725,133 @@ func TestStorageTargetSync_Startup_PoolNotMountedLeavesGateClosed(t *testing.T) 
 	}
 	if _, err := os.Stat(s.flagPath()); err == nil {
 		t.Fatal("the readiness flag exists even though the pool never confirmed mounted")
+	}
+}
+
+// TestStorageTargetSync_Close_StopsGateAndDockerAndLibvirtAndClearsFlag is
+// #387's own regression for the storage-target gate closing on `array
+// stop` (raised by the #372 verifier): hoserva-storage-ready.service is
+// RemainAfterExit=yes, so ArraySequence.Stop's own Services loop stopping
+// Samba and NFS directly never touches it — left alone, it stays
+// "active (exited)" and anything that later starts Samba or NFS during
+// maintenance still passes hoserva-storage.target. Close must stop it
+// (so its fixed `test -e` reruns — and fails — next time), stop Docker
+// and libvirt (doc 02 §1, Q70: neither is in ArraySequence's own Services
+// list, #309), and remove the flag.
+func TestStorageTargetSync_Close_StopsGateAndDockerAndLibvirtAndClearsFlag(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	if err := os.MkdirAll(filepath.Dir(s.flagPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(s.flagPath(), []byte("ready\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := s.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, err := os.Stat(s.flagPath()); err == nil {
+		t.Fatal("the readiness flag still exists after Close")
+	}
+	fakeRunner := s.Runner.(*disk.FakeRunner)
+	if !hasCall(fakeRunner.Calls(), "systemctl", "stop", "docker.service") {
+		t.Fatalf("Calls() = %v, want a systemctl stop docker.service from Close", fakeRunner.Calls())
+	}
+	if !hasCall(fakeRunner.Calls(), "systemctl", "stop", "libvirtd.service") {
+		t.Fatalf("Calls() = %v, want a systemctl stop libvirtd.service from Close", fakeRunner.Calls())
+	}
+	if !hasCall(fakeRunner.Calls(), "systemctl", "stop", pool.StorageReadyUnitName) {
+		t.Fatalf("Calls() = %v, want a systemctl stop %s from Close", fakeRunner.Calls(), pool.StorageReadyUnitName)
+	}
+	if s.Ready() {
+		t.Fatal("Ready() = true after Close")
+	}
+}
+
+// TestStorageTargetSync_Close_FailedDependentStopAbortsBeforeClosingTheGate
+// proves a Docker or libvirt stop failure — a container still holding a
+// file open on the pool is doc 02 §4's own example — aborts Close before
+// it ever touches the gate unit or the flag: leaving the gate itself
+// closed while a service that never actually stopped is still running
+// would be reporting a stop that did not fully happen.
+func TestStorageTargetSync_Close_FailedDependentStopAbortsBeforeClosingTheGate(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	if err := os.MkdirAll(filepath.Dir(s.flagPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(s.flagPath(), []byte("ready\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	fakeRunner := s.Runner.(*disk.FakeRunner)
+	fakeRunner.Script("systemctl", []string{"stop", "docker.service"}, nil, errors.New("docker.service: still stopping"))
+
+	if err := s.Close(context.Background()); err == nil {
+		t.Fatal("Close with a failed docker.service stop = nil error, want one")
+	}
+	if _, err := os.Stat(s.flagPath()); err != nil {
+		t.Fatalf("Stat(flag) = %v, want the flag left in place after a failed Close", err)
+	}
+	if hasCall(fakeRunner.Calls(), "systemctl", "stop", pool.StorageReadyUnitName) {
+		t.Fatal("Close stopped the gate unit even though docker.service refused to stop first")
+	}
+}
+
+// flagCheckRunner wraps a disk.Runner and records, the moment name/args
+// is run, whether flagPath still existed at that instant — this file's
+// own probe for #387 finding 5's ordering: a start landing between
+// removing the flag and stopping the gate unit must find the flag already
+// gone, not the reverse.
+type flagCheckRunner struct {
+	disk.Runner
+	flagPath   string
+	name       string
+	args       []string
+	ran        *bool
+	flagExists *bool
+}
+
+func (r flagCheckRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if name == r.name && equalStringSlices(args, r.args) {
+		*r.ran = true
+		if _, err := os.Stat(r.flagPath); err == nil {
+			*r.flagExists = true
+		}
+	}
+	return r.Runner.Run(ctx, name, args...)
+}
+
+// TestStorageTargetSync_Close_RemovesFlagBeforeStoppingTheGateUnit is
+// #387 finding 5's own regression: a Samba or NFS start racing Close (an
+// unattended-upgrades restart, or a manual `systemctl start`) must land
+// on a `test -e` that already fails, not on a flag Close has not gotten
+// around to removing yet. Close must therefore remove the flag before it
+// stops hoserva-storage-ready.service, never after.
+func TestStorageTargetSync_Close_RemovesFlagBeforeStoppingTheGateUnit(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	if err := os.MkdirAll(filepath.Dir(s.flagPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(s.flagPath(), []byte("ready\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	var ran, flagExists bool
+	s.Runner = flagCheckRunner{
+		Runner:     s.Runner,
+		flagPath:   s.flagPath(),
+		name:       "systemctl",
+		args:       []string{"stop", pool.StorageReadyUnitName},
+		ran:        &ran,
+		flagExists: &flagExists,
+	}
+
+	if err := s.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !ran {
+		t.Fatal("Close never stopped the gate unit")
+	}
+	if flagExists {
+		t.Fatal("the readiness flag still existed when Close stopped the gate unit — a start landing exactly here would still find it present and pass hoserva-storage.target (#387 finding 5)")
 	}
 }
