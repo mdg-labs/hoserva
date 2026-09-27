@@ -231,6 +231,124 @@ func TestHandler_ResumeJob_UnregisteredTypeReports501(t *testing.T) {
 	}
 }
 
+// TestHandler_ResumeJob_DatabaseRestoreHeldReports409 is #402's own
+// handler-level regression test: while BeginDatabaseRestore's hold is
+// held, ResumeJob must reach the caller as 409 database_restore_in_progress,
+// never an opaque 500 — mapSchedulerError has to know job.
+// ErrDatabaseRestoreInProgress for this to happen.
+func TestHandler_ResumeJob_DatabaseRestoreHeldReports409(t *testing.T) {
+	ctx := context.Background()
+	h, s, r := newTestHandler(t)
+	r.Register(job.TypeSync, true, blockingRunFunc(make(chan struct{}), make(chan struct{})))
+
+	j := &job.Job{ID: uuid.New().String(), Type: job.TypeSync, Class: job.ClassParity, Status: job.StatusInterrupted, Resumable: true, Cancellable: true, CreatedAt: time.Now().UTC()}
+	if err := h.Store.Create(ctx, j); err != nil {
+		t.Fatalf("seeding job: %v", err)
+	}
+
+	release, err := s.BeginDatabaseRestore(ctx)
+	if err != nil {
+		t.Fatalf("BeginDatabaseRestore: %v", err)
+	}
+	defer release()
+
+	id, _ := uuid.Parse(j.ID)
+	_, err = h.ResumeJob(ctx, apiv1.ResumeJobParams{JobId: id})
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "database_restore_in_progress" {
+		t.Fatalf("ResumeJob during a database restore hold error = %+v, want 409 database_restore_in_progress", status)
+	}
+}
+
+// TestHandler_ResumeJob_LiveRunnerReports409 is #402's own handler-level
+// regression test for a row a restore overwrote or mislabelled back to
+// interrupted while its runner is still going: ResumeJob must refuse with
+// 409 job_already_running, never start a second concurrent run, and never
+// surface as an opaque 500.
+func TestHandler_ResumeJob_LiveRunnerReports409(t *testing.T) {
+	ctx := context.Background()
+	h, s, r := newTestHandler(t)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	r.Register(job.TypeMover, true, func(ctx context.Context, rc *job.RunContext) error {
+		close(started)
+		<-release
+		return nil
+	})
+	j, err := s.Submit(ctx, job.TypeMover, []string{"diskA"}, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	<-started
+
+	// Stands in for a restore that overwrote this still-running job's row
+	// back to interrupted (#402) while its runner keeps going.
+	if err := h.Store.UpdateStatus(ctx, j.ID, job.StatusInterrupted, nil, "", "", j.StartedAt, nil); err != nil {
+		t.Fatalf("simulating the restore's overwrite of the stored row: %v", err)
+	}
+
+	id, _ := uuid.Parse(j.ID)
+	_, err = h.ResumeJob(ctx, apiv1.ResumeJobParams{JobId: id})
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "job_already_running" {
+		t.Fatalf("ResumeJob of a live runner error = %+v, want 409 job_already_running", status)
+	}
+
+	close(release)
+	waitForStatus(t, h.Store, j.ID, job.StatusSucceeded)
+}
+
+// TestHandler_CancelJob_DatabaseRestoreHeldReports409 is #402's own
+// handler-level regression test for the scope update's Cancel direction:
+// CancelJob during the hold must reach the caller as 409
+// database_restore_in_progress, never an opaque 500.
+func TestHandler_CancelJob_DatabaseRestoreHeldReports409(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+
+	j := &job.Job{ID: uuid.New().String(), Type: job.TypeMover, Class: job.ClassArrayWrite, Status: job.StatusInterrupted, Resumable: true, Cancellable: true, CreatedAt: time.Now().UTC()}
+	if err := h.Store.Create(ctx, j); err != nil {
+		t.Fatalf("seeding job: %v", err)
+	}
+
+	release, err := s.BeginDatabaseRestore(ctx)
+	if err != nil {
+		t.Fatalf("BeginDatabaseRestore: %v", err)
+	}
+	defer release()
+
+	id, _ := uuid.Parse(j.ID)
+	_, err = h.CancelJob(ctx, apiv1.CancelJobParams{JobId: id})
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "database_restore_in_progress" {
+		t.Fatalf("CancelJob during a database restore hold error = %+v, want 409 database_restore_in_progress", status)
+	}
+}
+
+// TestHandler_StartSync_DatabaseRestoreHeldReports409 is #402's own
+// handler-level regression test for every Submit-backed handler: StartSync
+// during the hold must reach the caller as 409
+// database_restore_in_progress, never an opaque 500 — every other
+// Submit-backed handler shares the same mapSchedulerError call.
+func TestHandler_StartSync_DatabaseRestoreHeldReports409(t *testing.T) {
+	ctx := context.Background()
+	h, s, r := newTestHandler(t)
+	r.Register(job.TypeSync, true, blockingRunFunc(make(chan struct{}), make(chan struct{})))
+
+	release, err := s.BeginDatabaseRestore(ctx)
+	if err != nil {
+		t.Fatalf("BeginDatabaseRestore: %v", err)
+	}
+	defer release()
+
+	_, err = h.StartSync(ctx, &apiv1.StartSyncRequest{})
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "database_restore_in_progress" {
+		t.Fatalf("StartSync during a database restore hold error = %+v, want 409 database_restore_in_progress", status)
+	}
+}
+
 func TestHandler_GetJobLog_NotFoundWhenNoLogWasCaptured(t *testing.T) {
 	ctx := context.Background()
 	h, _, _ := newTestHandler(t)

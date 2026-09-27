@@ -81,6 +81,25 @@ var (
 	// through an explicit Resume, never a plain terminal failure with no
 	// way back. A RunFunc wraps this with fmt.Errorf's %w.
 	ErrJobNeedsRetry = errors.New("job: stopped at a resumable checkpoint; resume once the condition that stopped it clears")
+	// ErrDatabaseRestoreInProgress refuses Submit and Resume while a
+	// whole-database restore holds job admission (BeginDatabaseRestore):
+	// a config import (doc 10 §1) that overwrites the jobs table
+	// underneath a job whose runner is still going (#402).
+	ErrDatabaseRestoreInProgress = errors.New("job: a database restore is in progress — jobs are refused until it completes")
+	// ErrJobsActiveForRestore refuses BeginDatabaseRestore while any job
+	// is queued or running, or while any job's Cancel abort is still
+	// running: a whole-database restore must never overwrite a live job's
+	// row while its runner is still going, and must never start while
+	// abortAndCancel's own writes (manifest clearing, removal-state
+	// release, final status) could still land against the table it is
+	// about to replace (#402).
+	ErrJobsActiveForRestore = errors.New("job: a job is queued, running or being aborted — refuse the database restore until it finishes")
+	// ErrJobAlreadyRunning refuses Resume of a job whose runner is still
+	// alive in this scheduler's own s.running, whatever its stored status
+	// says — a row a restore overwrote or mislabelled while the runner
+	// kept going must never start a second, concurrent run of the same
+	// job (#402).
+	ErrJobAlreadyRunning = errors.New("job: this job is already running")
 )
 
 // stopReason is set on a runningJob before it is asked to stop, so its
@@ -176,6 +195,13 @@ type Scheduler struct {
 	// both check it) and never touches a job of any other type, unlike
 	// EnterMaintenance's own refusal of everything.
 	batteryHold bool
+	// databaseRestore is BeginDatabaseRestore's own hold (#402): while
+	// true, Submit and Resume refuse every job, of every type, and Cancel
+	// refuses outright, with ErrDatabaseRestoreInProgress — a
+	// whole-database restore (ImportConfig) is about to overwrite the
+	// jobs table wholesale, and nothing may be admitted, resumed or
+	// cancelled underneath it.
+	databaseRestore bool
 	// shareMutations counts share create/update/delete calls admitted
 	// before maintenance mode. ArraySequence.Stop waits for it to drain
 	// before unmounting, so a mutation that passed the maintenance check
@@ -256,6 +282,10 @@ func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, pa
 	class, _ := ClassOf(t)
 
 	s.mu.Lock()
+	if s.databaseRestore {
+		s.mu.Unlock()
+		return nil, ErrDatabaseRestoreInProgress
+	}
 	if t == TypeDiskUpgradeData {
 		if err := s.admitDiskUpgradeDataLocked(ctx); err != nil {
 			s.mu.Unlock()
@@ -365,8 +395,21 @@ func (s *Scheduler) admitEvacuationLocked(ctx context.Context) error {
 // have run, orphaning whatever job-owned state that outcome legitimately
 // kept (e.g. #274/#359's evacuation manifest and no-create exemption for
 // a resumable stop).
+//
+// While BeginDatabaseRestore's hold is held, Cancel is refused outright
+// with ErrDatabaseRestoreInProgress, before any of the branches below run
+// (#402): abortAndCancel's own writes — clearing an evacuation's owned
+// manifest, releasing its removal state, recording the job's final status
+// — must never race backup.RestoreDatabase overwriting the same tables.
+// BeginDatabaseRestore itself refuses to start while an abort is already
+// running, so once the hold is granted no abort can be in flight for it
+// to race in the first place.
 func (s *Scheduler) Cancel(ctx context.Context, id string) (*Job, error) {
 	s.mu.Lock()
+	if s.databaseRestore {
+		s.mu.Unlock()
+		return nil, ErrDatabaseRestoreInProgress
+	}
 	if rj, ok := s.running[id]; ok {
 		rj.mu.Lock()
 		if rj.finished {
@@ -497,8 +540,21 @@ func (s *Scheduler) releaseAbort(id string) {
 // Cancel's abort of the same job and this never both run (doc 02 §4
 // UR7). A data-disk upgrade resumed at releasing is not cancellable,
 // decided and persisted before the job is visible to Cancel.
+//
+// Once the stored row itself says resumable and interrupted, it also
+// refuses with ErrJobAlreadyRunning if id's runner is still alive in
+// s.running (#402): a whole-database restore (ImportConfig) can
+// overwrite or mislabel that row back to interrupted while the runner it
+// actually describes is still going, and the class/resource-scope
+// conflict check below is blind to that on its own, since a restored
+// row's resource scope need not still overlap what is actually running
+// under the same id.
 func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 	s.mu.Lock()
+	if s.databaseRestore {
+		s.mu.Unlock()
+		return nil, ErrDatabaseRestoreInProgress
+	}
 	if s.aborting[id] {
 		s.mu.Unlock()
 		return nil, ErrJobAbortInProgress
@@ -515,6 +571,10 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 	if existing.Status != StatusInterrupted {
 		s.mu.Unlock()
 		return nil, ErrJobNotInterrupted
+	}
+	if _, ok := s.running[id]; ok {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("%w: job %s", ErrJobAlreadyRunning, id)
 	}
 	entry, ok := s.registry.lookup(existing.Type)
 	if !ok {
@@ -860,6 +920,47 @@ func (s *Scheduler) InMaintenance() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.maintenance
+}
+
+// BeginDatabaseRestore admits a whole-database restore (ImportConfig,
+// doc 10 §1, #402): it refuses with ErrDatabaseRestoreInProgress if
+// another restore already holds it, and with ErrJobsActiveForRestore if
+// any job is currently queued or running, or if any job's Cancel abort is
+// still running (s.aborting non-empty) — checked under s.mu, so a job
+// whose Submit already completed (its row persisted) cannot be missed,
+// and no further Submit, Resume or Cancel can land once this returns,
+// since each takes the same lock and checks the same flag. Refusing while
+// an abort is running closes the race abortAndCancel would otherwise have
+// against RestoreDatabase: an abort already past this check keeps running
+// to completion, exactly as a Cancel racing a maintenance-mode entry
+// already does elsewhere in this package (#402). On success, every
+// Submit, Resume and Cancel is refused with ErrDatabaseRestoreInProgress
+// until the returned release func is called; the caller must call it
+// exactly once, on every path — including error and panic (defer).
+func (s *Scheduler) BeginDatabaseRestore(ctx context.Context) (func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.databaseRestore {
+		return nil, ErrDatabaseRestoreInProgress
+	}
+	if len(s.aborting) > 0 {
+		return nil, ErrJobsActiveForRestore
+	}
+	active, err := s.store.ListActive(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("job: checking for active jobs before a database restore: %w", err)
+	}
+	if len(active) > 0 {
+		return nil, ErrJobsActiveForRestore
+	}
+	s.databaseRestore = true
+	return s.endDatabaseRestore, nil
+}
+
+func (s *Scheduler) endDatabaseRestore() {
+	s.mu.Lock()
+	s.databaseRestore = false
+	s.mu.Unlock()
 }
 
 // BeginShareMutation admits one share create, update, or delete. It

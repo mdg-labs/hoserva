@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +32,17 @@ import (
 // tests use — because the defect this issue fixes is specific to a
 // WAL-mode connection pool staying open across the restore.
 func newImportTestHandler(t *testing.T) (*Handler, *sql.DB, string) {
+	t.Helper()
+	h, _, db, dbPath := newImportTestHandlerWithRegistry(t)
+	return h, db, dbPath
+}
+
+// newImportTestHandlerWithRegistry is newImportTestHandler with its job
+// registry also returned, so a test can register a job type and call
+// Scheduler.Submit directly against the very same scheduler ImportConfig
+// holds (#402), rather than a second, throwaway scheduler that
+// ImportConfig's own BeginDatabaseRestore hold could never affect.
+func newImportTestHandlerWithRegistry(t *testing.T) (*Handler, *job.Registry, *sql.DB, string) {
 	t.Helper()
 	ctx := context.Background()
 	migrations, err := store.Load()
@@ -62,7 +74,7 @@ func newImportTestHandler(t *testing.T) (*Handler, *sql.DB, string) {
 			Paths: backup.Paths{DBPath: dbPath},
 		},
 	}
-	return h, db, dbPath
+	return h, registry, db, dbPath
 }
 
 func exportBytes(t *testing.T, h *Handler) []byte {
@@ -335,6 +347,115 @@ func TestImportConfig_RestoredRunningJobIsInterrupted(t *testing.T) {
 
 	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("second ImportConfig, refused by the first import's own restored job: %v", err)
+	}
+}
+
+// TestImportConfig_ConcurrentSubmitDuringRestoreIsRefused is #402's own
+// regression test for the scheduler admission hold: a job submitted while
+// ImportConfig's whole-database restore is in flight must be refused —
+// never silently admitted underneath a restore that is about to overwrite
+// the jobs table wholesale. importPostRestoreHookForTest lands the
+// concurrent Submit deterministically inside the hold's own window
+// (between backup.RestoreDatabase returning and the hold's release),
+// instead of racing the real clock.
+func TestImportConfig_ConcurrentSubmitDuringRestoreIsRefused(t *testing.T) {
+	ctx := context.Background()
+	h, registry, _, _ := newImportTestHandlerWithRegistry(t)
+	archive := exportBytes(t, h)
+
+	registry.Register(job.TypeSync, true, func(ctx context.Context, rc *job.RunContext) error { return nil })
+
+	inRestore := make(chan struct{})
+	proceed := make(chan struct{})
+	importPostRestoreHookForTest = func() {
+		close(inRestore)
+		<-proceed
+	}
+	t.Cleanup(func() { importPostRestoreHookForTest = nil })
+
+	importErrCh := make(chan error, 1)
+	go func() {
+		importErrCh <- h.ImportConfig(ctx, importReq(archive))
+	}()
+
+	<-inRestore
+	_, submitErr := h.Scheduler.Submit(ctx, job.TypeSync, nil, nil)
+	close(proceed)
+
+	if err := <-importErrCh; err != nil {
+		t.Fatalf("ImportConfig: %v", err)
+	}
+	if !errors.Is(submitErr, job.ErrDatabaseRestoreInProgress) {
+		t.Fatalf("Submit racing the restore's own hold = %v, want ErrDatabaseRestoreInProgress", submitErr)
+	}
+}
+
+// TestImportConfig_LeavesJobInsertedDuringRestoreWindowUntouched is
+// #402's own regression test for the "mirror image" race #269's verifier
+// also reported: the post-restore interrupt step must mark interrupted
+// only the ids that were queued or running in the archive it restored —
+// never every queued/running row the live table happens to hold once the
+// restore has finished. importPostRestoreHookForTest inserts a job
+// directly into the live database, deterministically inside that exact
+// window, standing in for an insert whose own Store.Create call happened
+// to land there (#402's own reported InterruptActiveJobs race).
+func TestImportConfig_LeavesJobInsertedDuringRestoreWindowUntouched(t *testing.T) {
+	ctx := context.Background()
+	h, db, _ := newImportTestHandler(t)
+
+	jobStore := job.NewStore(db)
+	archivedID := uuid.NewString()
+	if err := jobStore.Create(ctx, &job.Job{
+		ID:        archivedID,
+		Type:      job.TypeSync,
+		Class:     job.ClassParity,
+		Status:    job.StatusRunning,
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seeding a running job to export: %v", err)
+	}
+	archive := exportBytes(t, h)
+
+	// Finish it on the live daemon so ImportConfig's own active-jobs
+	// check does not refuse this import — what is under test is the
+	// running row the archive still carries, and the unrelated row
+	// inserted below.
+	if err := jobStore.UpdateStatus(ctx, archivedID, job.StatusSucceeded, nil, "", "", nil, nil); err != nil {
+		t.Fatalf("finishing the seeded job before import: %v", err)
+	}
+
+	outsideID := uuid.NewString()
+	importPostRestoreHookForTest = func() {
+		if err := jobStore.Create(ctx, &job.Job{
+			ID:        outsideID,
+			Type:      job.TypeScrub,
+			Class:     job.ClassParity,
+			Status:    job.StatusRunning,
+			CreatedAt: time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("inserting a job outside the restored archive: %v", err)
+		}
+	}
+	t.Cleanup(func() { importPostRestoreHookForTest = nil })
+
+	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+		t.Fatalf("ImportConfig: %v", err)
+	}
+
+	archived, err := jobStore.Get(ctx, archivedID)
+	if err != nil {
+		t.Fatalf("getting the archived job: %v", err)
+	}
+	if archived.Status != job.StatusInterrupted {
+		t.Fatalf("archived job status = %q, want %q", archived.Status, job.StatusInterrupted)
+	}
+
+	outside, err := jobStore.Get(ctx, outsideID)
+	if err != nil {
+		t.Fatalf("getting the job inserted outside the archive: %v", err)
+	}
+	if outside.Status != job.StatusRunning {
+		t.Fatalf("job inserted during the restore window, never part of the archive, status = %q, want it left untouched at %q", outside.Status, job.StatusRunning)
 	}
 }
 

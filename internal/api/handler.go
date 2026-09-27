@@ -316,6 +316,10 @@ func mapSchedulerError(id uuid.UUID, err error) error {
 		return &apiError{code: "array_not_stopped", statusCode: 409, message: "stop the array first (\"hoserva array stop\") — a data-disk upgrade runs only once the array's stop sequence has completed"}
 	case errors.Is(err, job.ErrJobTypeNotRegistered):
 		return &apiError{code: "job_type_not_registered", statusCode: 501, message: fmt.Sprintf("job %s's type has no registered implementation yet", id)}
+	case errors.Is(err, job.ErrDatabaseRestoreInProgress):
+		return &apiError{code: "database_restore_in_progress", statusCode: 409, message: "a database restore is in progress — jobs are refused until it completes"}
+	case errors.Is(err, job.ErrJobAlreadyRunning):
+		return &apiError{code: "job_already_running", statusCode: 409, message: fmt.Sprintf("job %s is already running", id)}
 	default:
 		return fmt.Errorf("job %s: %w", id, err)
 	}

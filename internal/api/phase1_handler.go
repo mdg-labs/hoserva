@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -470,7 +471,7 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if !req.Confirm {
 		return errConfirmRequired
 	}
-	if h.Backup == nil || h.Backup.DB == nil {
+	if h.Backup == nil || h.Backup.DB == nil || h.Scheduler == nil {
 		return &apiError{code: "not_configured", statusCode: 501, message: "config import is not configured on this daemon"}
 	}
 
@@ -533,43 +534,105 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		}
 	}
 
+	// The archive's own queued/running job ids, read from the staged copy
+	// before anything overwrites it (#402): the only ids the post-restore
+	// interrupt step below is ever allowed to touch. A job inserted into
+	// the live database around the restore, but not part of the archive,
+	// must never be relabelled just because its own status happens to be
+	// queued or running.
+	restoredActiveIDs, err := readActiveJobIDs(ctx, "file:"+stateDB+"?mode=ro")
+	if err != nil {
+		return fmt.Errorf("reading the archive's active job ids: %w", err)
+	}
+
 	// The same config backup the pre-update chain runs (doc 10 §1) — if
 	// it fails, the import is refused and the live database is untouched.
 	if err := h.Backup.Run(ctx); err != nil {
 		return fmt.Errorf("backing up before import: %w", err)
 	}
 
-	// Checked here, immediately before the restore, rather than at the
+	// Acquired here, immediately before the restore, rather than at the
 	// top of this method: a job submitted during the upload, the two
 	// verification passes or the backup above must still be refused, not
 	// silently orphaned by RestoreDatabase overwriting the jobs table
-	// underneath it.
-	if h.Store != nil {
-		active, err := h.Store.ListActive(ctx)
-		if err != nil {
-			return fmt.Errorf("checking for active jobs: %w", err)
-		}
-		if len(active) > 0 {
+	// underneath it. BeginDatabaseRestore checks the store under the
+	// scheduler's own lock and, from here on, refuses every Submit, Resume
+	// and Cancel until release runs — on every path below, including
+	// panic. Only the hold's own refusals (another restore already held,
+	// or a job active or being aborted) are reported as the ordinary
+	// "a job is running" 409 below — a failure while taking the hold
+	// (e.g. the store read it does) is returned as an error with its own
+	// detail, never misreported as a running job.
+	release, err := h.Scheduler.BeginDatabaseRestore(ctx)
+	if err != nil {
+		if errors.Is(err, job.ErrJobsActiveForRestore) || errors.Is(err, job.ErrDatabaseRestoreInProgress) {
 			return errImportJobInProgress
 		}
+		return fmt.Errorf("beginning database restore: %w", err)
 	}
+	defer release()
 
 	if err := backup.RestoreDatabase(ctx, h.Backup.DB, stateDB); err != nil {
 		return fmt.Errorf("restoring database: %w", err)
 	}
 
+	if importPostRestoreHookForTest != nil {
+		importPostRestoreHookForTest()
+	}
+
 	// The archive's jobs table is restored as-is, including any row that
 	// was queued or running when it was exported — nothing on this
-	// daemon is actually running it. Mark those rows interrupted the
-	// same way RecoverFromRestart does at boot (doc 01 §4), so a stale
-	// "running" row does not refuse the next import with job_in_progress
-	// forever.
+	// daemon is actually running it. Mark exactly those rows interrupted
+	// the same way RecoverFromRestart does at boot (doc 01 §4), so a
+	// stale "running" row does not refuse the next import with
+	// job_in_progress forever — never a blanket sweep over whatever the
+	// now-restored table holds, which would also catch a job inserted
+	// into the live database in the narrow window around this restore
+	// but never part of the archive at all (#402).
 	if h.Store != nil {
-		if err := h.Store.InterruptActive(ctx, time.Now().UTC()); err != nil {
+		if err := h.Store.InterruptByID(ctx, restoredActiveIDs, time.Now().UTC()); err != nil {
 			return fmt.Errorf("interrupting jobs restored from the archive: %w", err)
 		}
 	}
 	return nil
+}
+
+// importPostRestoreHookForTest, when non-nil, is called by ImportConfig
+// synchronously right after backup.RestoreDatabase has returned and
+// before the targeted post-restore interrupt step runs — so a test can
+// land a write to the live database deterministically inside that exact
+// window (#402), instead of racing the real clock. Never set outside a
+// test.
+var importPostRestoreHookForTest func()
+
+// readActiveJobIDs opens dsn read-only and returns the ids of every job
+// whose status is queued or running, without mutating the file it points
+// at — used against the staged, not-yet-trusted archive copy of state.db,
+// so ImportConfig knows exactly which ids its own restore is allowed to
+// mark interrupted afterward (#402).
+func readActiveJobIDs(ctx context.Context, dsn string) ([]string, error) {
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = db.Close() }()
+	rows, err := db.QueryContext(ctx, `SELECT id FROM jobs WHERE "status" IN ('queued', 'running')`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // readSchemaVersion opens dsn read-only and reads its store bookkeeping

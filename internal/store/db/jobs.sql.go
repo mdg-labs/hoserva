@@ -8,6 +8,7 @@ package storedb
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 const createJob = `-- name: CreateJob :exec
@@ -47,9 +48,9 @@ type CreateJobParams struct {
 // below: sqlc v1.31.1's SQLite engine mis-slices the raw source once any
 // extra comment line appears between two queries, silently truncating the
 // generated SQL text of every query that follows (confirmed while writing
-// this file). ListJobs, ListActiveJobs and InterruptActiveJobs carry doc
-// comments on their Go methods instead, in jobs.go, immediately above
-// each hand-written wrapper that calls them.
+// this file). ListJobs, ListActiveJobs, InterruptActiveJobs and
+// InterruptJobsByID carry doc comments on their Go methods instead, in
+// store.go, immediately above each hand-written wrapper that calls them.
 func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) error {
 	_, err := q.db.ExecContext(ctx, createJob,
 		arg.ID,
@@ -109,6 +110,32 @@ WHERE "status" IN ('queued', 'running')
 
 func (q *Queries) InterruptActiveJobs(ctx context.Context, finishedAt sql.NullString) error {
 	_, err := q.db.ExecContext(ctx, interruptActiveJobs, finishedAt)
+	return err
+}
+
+const interruptJobsByID = `-- name: InterruptJobsByID :exec
+UPDATE jobs SET "status" = 'interrupted', finished_at = ?
+WHERE id IN (/*SLICE:ids*/?) AND "status" IN ('queued', 'running')
+`
+
+type InterruptJobsByIDParams struct {
+	FinishedAt sql.NullString `json:"finished_at"`
+	Ids        []string       `json:"ids"`
+}
+
+func (q *Queries) InterruptJobsByID(ctx context.Context, arg InterruptJobsByIDParams) error {
+	query := interruptJobsByID
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.FinishedAt)
+	if len(arg.Ids) > 0 {
+		for _, v := range arg.Ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(arg.Ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	_, err := q.db.ExecContext(ctx, query, queryParams...)
 	return err
 }
 
