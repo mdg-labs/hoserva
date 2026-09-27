@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -328,10 +329,22 @@ func (e *SnapraidEngine) runStream(ctx context.Context, logPath string, tail []s
 			finalErr = fmt.Errorf("parity: reading run log: %w", readErr)
 		} else {
 			summary, parseErr := ParseRunSummary(data)
-			if parseErr != nil {
-				finalErr = parseErr
-			} else {
+			switch {
+			case parseErr == nil:
 				finalErr = accept(summary, waitErr)
+			case waitErr != nil:
+				// The run itself failed before ever writing a summary
+				// section (#390: a real snapraid 12.4-1 binary reading a
+				// content file an unclean shutdown left truncated prints
+				// its own msg:fatal diagnostic and exits non-zero in well
+				// under a second, with no summary tag at all). Reporting
+				// ParseRunSummary's own generic "no summary section
+				// found" here named the log's shape, not the reason it
+				// looks that way, and hid a real, actionable snapraid
+				// failure behind an opaque parse error.
+				finalErr = runFailedBeforeSummaryErr(waitErr, data)
+			default:
+				finalErr = parseErr
 			}
 		}
 		// Wrapped even when finalErr is already set (#379): a process this
@@ -462,6 +475,25 @@ func exitErr(op, verb, exit string, waitErr error) error {
 		return fmt.Errorf("parity: %s: %s %q: %w", op, verb, exit, waitErr)
 	}
 	return fmt.Errorf("parity: %s: %s %q", op, verb, exit)
+}
+
+// runFailedBeforeSummaryErr reports a run that exited before ever writing
+// a summary section to its own -l log (#390, reproduced in the
+// loop-device lab against a real snapraid 12.4-1 binary: a truncated
+// content file — the shape an unclean shutdown can leave one in — makes
+// sync print `msg:fatal: This content file is truncated. Please use an
+// alternate copy.` and exit non-zero in well under a second, with no
+// summary tag at all). It names SnapRAID's own fatal message when the log
+// carries one, and the process's own wait error either way, %w-wrapped so
+// errors.Is(finalErr, context.Canceled) below still recognizes a
+// cancelled run — never ParseRunSummary's own "no summary section found",
+// which described the log's shape but never the reason it looked that
+// way.
+func runFailedBeforeSummaryErr(waitErr error, log []byte) error {
+	if msgs := fatalMessages(log); len(msgs) > 0 {
+		return fmt.Errorf("parity: snapraid run failed: %s: %w", strings.Join(msgs, "; "), waitErr)
+	}
+	return fmt.Errorf("parity: snapraid run exited before writing a summary: %w", waitErr)
 }
 
 // Scrub runs a real scrub (doc 02 §2). Finding data errors (SnapRAID's
