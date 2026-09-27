@@ -195,19 +195,16 @@ var contractSkip = map[string]string{
 	"EnrollTotp":        "same as Logout — the mock has no real TOTP secret or session state to enrol against",
 	"ConfirmTotp":       "same as Logout — the mock has no real TOTP secret or session state to confirm against",
 
-	// ExportConfig: no test anywhere in internal/api (no
-	// backup_handler_test.go, no coverage in phase1_handler_test.go)
-	// exercises Handler.ExportConfig or Handler.ImportConfig at the
-	// handler level — production's own suite never reaches this
-	// operation with a fake either. ImportConfig's own missing-confirm
-	// case (contract_cases_test.go) needs no backup.Service wiring at
-	// all, since ImportConfig checks Confirm before touching h.Backup,
-	// but ExportConfig has no such early-exit: reaching it requires a
-	// fully wired backup.Service (a real DB path, Paths, SecretSource,
-	// Cipher — internal/backup has none of these as a scriptable fake),
-	// and the mock always returns canned archive bytes with no failure
-	// path to compare against.
-	"ExportConfig": "no internal/api test exercises this handler either; backup.Service needs a real DB path, Paths and SecretSource this pass does not build, and the mock has no failure path to compare against",
+	// ExportConfig: this rig's production handler now carries a real,
+	// migrated backup.Service (#269, alongside ImportConfig's own cases
+	// below), but the mock's own ExportConfig (phase1.go) always returns
+	// fixed stub bytes unconditionally — it has no failure path of its
+	// own, and no scenario makes either side fail, so there is nothing
+	// for a table entry to compare beyond "both return 200", which
+	// response-body equality is already out of scope for (contract_
+	// test.go's own doc comment on TestContract_MockMatchesProduction
+	// Validation).
+	"ExportConfig": "the mock's ExportConfig always returns fixed stub bytes with no failure path of its own — there is nothing to compare beyond response bodies, which this contract test does not check",
 }
 
 // contractNoValidCase is #272's own accounting of every operation this

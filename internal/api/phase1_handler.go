@@ -3,6 +3,7 @@ package api
 import (
 	"archive/tar"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -453,13 +454,26 @@ func (e *exportReadCloser) Close() error {
 
 const maxConfigArchiveBytes = 512 << 20
 
+// errImportJobInProgress refuses an import while a job is running or
+// queued (doc 01 §4): restoring the database would rewrite the jobs
+// table and the relocation/mover state underneath it.
+var errImportJobInProgress = &apiError{code: "job_in_progress", statusCode: 409, message: "a job is running or queued — import would rewrite the jobs table underneath it"}
+
+// ImportConfig restores the database step of doc 10 §1's in-place
+// restore (#269): checksum and integrity verification, then a schema-
+// version match, then a pre-import safety backup, then
+// backup.RestoreDatabase — SQLite's own online backup API, never a file-
+// level copy or rename over the live database's path (see
+// RestoreDatabase's own doc comment for why that corrupted it). Restoring
+// generated config files, stacks, templates and secrets.age is #62.
 func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) error {
 	if !req.Confirm {
 		return errConfirmRequired
 	}
-	if h.Backup == nil {
+	if h.Backup == nil || h.Backup.DB == nil {
 		return &apiError{code: "not_configured", statusCode: 501, message: "config import is not configured on this daemon"}
 	}
+
 	tmp, err := os.CreateTemp("", "hoserva-config-import-*.tar.zst")
 	if err != nil {
 		return err
@@ -484,7 +498,10 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := backup.VerifyArchive(tmpPath, ""); err != nil {
+	// Structural verification only (checksums, PRAGMA integrity_check):
+	// secrets.age, if present, is neither required nor decrypted here —
+	// this restores the database only (#62 restores the rest).
+	if err := backup.VerifyArchiveForImport(tmpPath); err != nil {
 		return &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
 	}
 	staging, err := os.MkdirTemp("", "hoserva-import-staging-*")
@@ -499,14 +516,72 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if _, err := os.Stat(stateDB); err != nil {
 		return &apiError{code: "invalid_archive", statusCode: 400, message: "archive is missing state.db"}
 	}
-	dest := h.Backup.Paths.DBPath
-	if dest == "" {
-		return &apiError{code: "not_configured", statusCode: 501, message: "no database path configured for import"}
+
+	archiveVersion, err := readSchemaVersion(ctx, "file:"+stateDB+"?mode=ro")
+	if err != nil {
+		return &apiError{code: "invalid_archive", statusCode: 400, message: fmt.Sprintf("reading archive schema version: %v", err)}
 	}
-	if err := copyFileAtomic(stateDB, dest); err != nil {
+	liveVersion, err := (&store.Runner{DB: h.Backup.DB}).CurrentVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("reading live database schema version: %w", err)
+	}
+	if archiveVersion != liveVersion {
+		return &apiError{
+			code:       "incompatible_archive",
+			statusCode: 400,
+			message:    fmt.Sprintf("archive schema version %s does not match the running database's %s", archiveVersion, liveVersion),
+		}
+	}
+
+	// The same config backup the pre-update chain runs (doc 10 §1) — if
+	// it fails, the import is refused and the live database is untouched.
+	if err := h.Backup.Run(ctx); err != nil {
+		return fmt.Errorf("backing up before import: %w", err)
+	}
+
+	// Checked here, immediately before the restore, rather than at the
+	// top of this method: a job submitted during the upload, the two
+	// verification passes or the backup above must still be refused, not
+	// silently orphaned by RestoreDatabase overwriting the jobs table
+	// underneath it.
+	if h.Store != nil {
+		active, err := h.Store.ListActive(ctx)
+		if err != nil {
+			return fmt.Errorf("checking for active jobs: %w", err)
+		}
+		if len(active) > 0 {
+			return errImportJobInProgress
+		}
+	}
+
+	if err := backup.RestoreDatabase(ctx, h.Backup.DB, stateDB); err != nil {
 		return fmt.Errorf("restoring database: %w", err)
 	}
+
+	// The archive's jobs table is restored as-is, including any row that
+	// was queued or running when it was exported — nothing on this
+	// daemon is actually running it. Mark those rows interrupted the
+	// same way RecoverFromRestart does at boot (doc 01 §4), so a stale
+	// "running" row does not refuse the next import with job_in_progress
+	// forever.
+	if h.Store != nil {
+		if err := h.Store.InterruptActive(ctx, time.Now().UTC()); err != nil {
+			return fmt.Errorf("interrupting jobs restored from the archive: %w", err)
+		}
+	}
 	return nil
+}
+
+// readSchemaVersion opens dsn read-only and reads its store bookkeeping
+// version, without mutating the file it points at — used against the
+// staged, not-yet-trusted archive copy of state.db.
+func readSchemaVersion(ctx context.Context, dsn string) (string, error) {
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = db.Close() }()
+	return (&store.Runner{DB: db}).CurrentVersion(ctx)
 }
 
 func packTarZst(dir, dest string) error {
@@ -640,27 +715,4 @@ func unpackTarZst(archivePath, dest string) error {
 		}
 	}
 	return nil
-}
-
-func copyFileAtomic(src, dest string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
-	tmp := dest + ".importing"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, dest)
 }

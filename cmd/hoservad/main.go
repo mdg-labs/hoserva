@@ -504,6 +504,7 @@ func run(cfg config) error {
 	handler.ACME = acmeService
 	handler.Shares = shareService
 	handler.MoverResults = moverResults
+	wireBackup(handler, backupService)
 
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
 		Provider:   disks,

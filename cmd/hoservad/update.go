@@ -64,6 +64,18 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 	}
 }
 
+// wireBackup connects backupService — built once in run() the same way
+// the nightly maintenance chain (scheduleRunner.Backup) and the
+// pre-self-update backup (newUpdateEngine) already use it — to
+// handler.Backup, so POST /config/export and POST /config/import
+// (ExportConfig/ImportConfig, #269) stop 501ing. Kept as its own
+// function, following wireAcknowledgeDegraded's pattern (array.go), so a
+// test can call exactly what main.go calls rather than a hand copy of
+// the assignment.
+func wireBackup(handler *api.Handler, backupService *backup.Service) {
+	handler.Backup = backupService
+}
+
 // updateShutdownLookup adapts the daemon's current job.ArraySequence to
 // update.Shutdown, resolved at the moment Engine.Reboot actually calls
 // Stop rather than once at daemon construction (#263) — the same

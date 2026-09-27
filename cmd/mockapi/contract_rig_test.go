@@ -19,6 +19,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/acme"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
+	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
@@ -578,6 +579,14 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		Docker:      config.MemoryDocker{},
 		DiskMounter: extMounter,
 		DiskRunner:  extRunner,
+		// Backup (#269) is a minimal, real backup.Service against this
+		// rig's own migrated db/dbPath — enough for ImportConfig's own
+		// checksum/integrity/schema-version validation to run and for its
+		// pre-restore h.Backup.Run(ctx) to succeed (Destinations is empty,
+		// so nothing here is written to any real path). ExportConfig
+		// stays out of contractCases (contractSkip's own entry) since the
+		// mock's own stub bytes give it no failure path to compare.
+		Backup: &backup.Service{DB: db, Paths: backup.Paths{DBPath: dbPath}},
 	}
 }
 
