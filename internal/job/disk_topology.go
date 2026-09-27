@@ -212,13 +212,35 @@ func ReplaceEligibleDuringRemoval(state string) bool {
 // commonly the path not existing) is treated as "not mounted" rather than
 // propagated, the same fail-open reading applyArrayFromStore's own
 // alreadyMounted already relies on for this exact check.
-func ConfirmReplacementTargetAbsent(mountpoint string, old store.ArrayDisk, listed []disk.Disk) error {
+//
+// One exception (#388): a disk matched by strong identity (WWN/serial) is
+// not refused when it is exactly targetDevice — the disk this replace is
+// about to format — and disk.FSUUIDMismatch positively confirms its
+// filesystem differs from old's own recorded one. That is the "wrong
+// filesystem" scenario replace exists to recover from
+// (disk.StorageGate.WrongFilesystem and GetPool's own per-slot state
+// report the identical disk as wrong_filesystem, never active), not old's
+// own disk continuing to serve. This is deliberately narrow and fails
+// closed on both axes: disk.FSUUIDMismatch itself never reports a
+// mismatch when either side's filesystem UUID is empty or unread, so a
+// disk whose filesystem could not be positively confirmed different still
+// refuses — and the exception never applies to any *other* disk in listed
+// that happens to carry old's identity: a second, untouched physical unit
+// elsewhere still refuses unconditionally, mismatched filesystem or not,
+// since its presence means old's own data is not confirmed gone, whatever
+// device the caller is actually about to format. The weak-identity
+// fallback below can never hit this exception either — it only matches
+// when both filesystem UUIDs are already equal, never different.
+func ConfirmReplacementTargetAbsent(mountpoint string, old store.ArrayDisk, listed []disk.Disk, targetDevice string) error {
 	if mounted, err := disk.IsMountpoint(mountpoint); err == nil && mounted {
 		return fmt.Errorf("%w: %s is still mounted", ErrReplacementSlotDiskPresent, mountpoint)
 	}
 	oldIdentity := disk.Identity{WWN: old.WWN, Serial: old.Serial}
 	for _, inv := range listed {
 		if oldIdentity.Matches(disk.Identity{WWN: inv.WWN, Serial: inv.Serial}) {
+			if inv.Device == targetDevice && disk.FSUUIDMismatch(old.FSUUID, inv.FSUUID) {
+				continue
+			}
 			return fmt.Errorf("%w: %s", ErrReplacementSlotDiskPresent, inv.Device)
 		}
 		if old.WeakIdentity && inv.WeakIdentity && old.FSUUID != "" && old.FSUUID == inv.FSUUID {

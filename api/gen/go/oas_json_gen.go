@@ -4351,6 +4351,8 @@ func (s *DiskState) Decode(d *jx.Decoder) error {
 		*s = DiskStateMissing
 	case DiskStateFailed:
 		*s = DiskStateFailed
+	case DiskStateWrongFilesystem:
+		*s = DiskStateWrongFilesystem
 	default:
 		*s = DiskState(v)
 	}

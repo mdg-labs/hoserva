@@ -150,15 +150,23 @@ func (s *ContainerStateEventData) SetAt(val time.Time) {
 	s.At = val
 }
 
+// `wrong_filesystem` (#388) is `PoolDiskEntry`-only: a disk matched to an array slot by identity (Q21:
+// serial/WWN) whose filesystem UUID does not match what SQLite recorded for that slot — a
+// replacement disk that kept the original disk's serial/WWN (a cloned or reused drive) but was
+// formatted differently, or not at all. Distinct from `missing`: the disk is genuinely present, so the
+// pool's own slot list must say so rather than report it `active`. The storage gate treats it exactly
+// like a missing disk (not ready, no mount attempted for that slot) and never emits it on
+// `DiskStateEvent`, since it is not a spindown state.
 // Ref: #/components/schemas/DiskState
 type DiskState string
 
 const (
-	DiskStateActive     DiskState = "active"
-	DiskStateStandby    DiskState = "standby"
-	DiskStateSpinningUp DiskState = "spinning_up"
-	DiskStateMissing    DiskState = "missing"
-	DiskStateFailed     DiskState = "failed"
+	DiskStateActive          DiskState = "active"
+	DiskStateStandby         DiskState = "standby"
+	DiskStateSpinningUp      DiskState = "spinning_up"
+	DiskStateMissing         DiskState = "missing"
+	DiskStateFailed          DiskState = "failed"
+	DiskStateWrongFilesystem DiskState = "wrong_filesystem"
 )
 
 // AllValues returns all DiskState values.
@@ -169,6 +177,7 @@ func (DiskState) AllValues() []DiskState {
 		DiskStateSpinningUp,
 		DiskStateMissing,
 		DiskStateFailed,
+		DiskStateWrongFilesystem,
 	}
 }
 
@@ -184,6 +193,8 @@ func (s DiskState) MarshalText() ([]byte, error) {
 	case DiskStateMissing:
 		return []byte(s), nil
 	case DiskStateFailed:
+		return []byte(s), nil
+	case DiskStateWrongFilesystem:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -207,6 +218,9 @@ func (s *DiskState) UnmarshalText(data []byte) error {
 		return nil
 	case DiskStateFailed:
 		*s = DiskStateFailed
+		return nil
+	case DiskStateWrongFilesystem:
+		*s = DiskStateWrongFilesystem
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -1940,6 +1954,8 @@ func (s *DiskState) Decode(d *jx.Decoder) error {
 		*s = DiskStateMissing
 	case DiskStateFailed:
 		*s = DiskStateFailed
+	case DiskStateWrongFilesystem:
+		*s = DiskStateWrongFilesystem
 	default:
 		*s = DiskState(v)
 	}
@@ -3777,6 +3793,8 @@ func (s DiskState) Validate() error {
 	case "missing":
 		return nil
 	case "failed":
+		return nil
+	case "wrong_filesystem":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

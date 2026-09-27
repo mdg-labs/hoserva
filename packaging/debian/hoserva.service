@@ -32,13 +32,20 @@ RestartSec=5
 # forks" a dependent service (Samba, NFS, Docker, libvirt) pulling
 # hoserva-storage-ready.service in at boot could run it before hoservad
 # has evaluated disk.StorageGate at all — this closes that race. hoservad
-# sends READY=1 even when that write or evaluation fails: withholding it
-# buys no safety (the flag is already cleared before any of this runs, so
-# the gate is closed either way) and would instead put hoservad in a
-# permanent kill-and-restart loop under this Type=notify's own
-# TimeoutStartSec, taking the API and UI down with it every cycle — the
-# flag itself, not this notification, is what keeps hoserva-storage.target
-# closed over a failed or unconfirmed boot (doc 02 §1).
+# sends READY=1 even when that write, evaluation or mount fails: every
+# mount call that evaluation can lead to (a physical array disk, the
+# mergerfs catch-all, a per-share mount) is itself bounded well under this
+# unit's own TimeoutStartSec (#388, cmd/hoservad's storageTargetSync), so
+# a disk whose slot cannot actually be mounted — including one that
+# satisfies disk.StorageGate's identity check but carries the wrong
+# filesystem — can never leave this call blocked past that bound.
+# Withholding READY=1 over any of these failures buys no safety (the flag
+# is already cleared before any of this runs, so the gate is closed
+# either way) and would instead put hoservad in a permanent
+# kill-and-restart loop under this Type=notify's own TimeoutStartSec,
+# taking the API and UI down with it every cycle — the flag itself, not
+# this notification, is what keeps hoserva-storage.target closed over a
+# failed or unconfirmed boot (doc 02 §1).
 Type=notify
 
 [Install]

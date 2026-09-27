@@ -68,6 +68,9 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 				entry.MountPoint = arrayDisks[idx].Mountpoint
 				entry.RemovalState = removalStateToAPI(arrayDisks[idx].RemovalState)
 				entry.FinishConfirmation = finishConfirmationForState(arrayDisks[idx].Mountpoint, arrayDisks[idx].RemovalState)
+				if wrongFilesystem(arrayDisks[idx], d) {
+					entry.State = apiv1.DiskStateWrongFilesystem
+				}
 			}
 			entries = append(entries, entry)
 		}
@@ -130,6 +133,20 @@ func matchArrayDisk(d disk.Disk, arrayDisks []store.ArrayDisk) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// wrongFilesystem reports whether a present disk matched to ad by identity
+// (Q21) carries a filesystem UUID different from what SQLite recorded for
+// that slot (#388) — a replacement disk that kept the original disk's
+// serial/WWN (a cloned or reused drive, or one from the same enclosure)
+// but was formatted differently, or not at all. disk.FSUUIDMismatch is the
+// one shared definition of this rule (also used by
+// disk.StorageGate.evaluate and job.ConfirmReplacementTargetAbsent's own
+// relaxation) — either side empty is not a mismatch there either: a slot
+// never formatted, or a present disk this build could not read a
+// filesystem UUID for, has nothing to compare.
+func wrongFilesystem(ad store.ArrayDisk, d disk.Disk) bool {
+	return disk.FSUUIDMismatch(ad.FSUUID, d.FSUUID)
 }
 
 // arrayTopology returns the persisted array settings and every assigned

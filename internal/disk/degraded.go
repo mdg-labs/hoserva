@@ -17,30 +17,47 @@ type ExpectedDisk struct {
 
 // ReadinessCheck is one evaluation of a set of ExpectedDisk against the
 // disks a Provider.List actually found (Q69): Ready is true only when
-// every expected disk was matched by identity; Missing names the rest, in
-// the order they were declared, for the degraded-state banner.
+// every expected disk was matched by identity and, where both sides carry
+// one, its filesystem UUID agreed too; Missing names the rest, in the
+// order they were declared, for the degraded-state banner.
 type ReadinessCheck struct {
 	Ready   bool
 	Missing []ExpectedDisk
+	// WrongFilesystem holds every ExpectedDisk matched by identity (Q21)
+	// whose recorded filesystem UUID does not match what evaluate found on
+	// the matching disk (#388) — a replacement disk carrying the original
+	// disk's serial/WWN (a cloned or reused drive, or one from the same
+	// enclosure) but a different, or absent, filesystem. Distinct from
+	// Missing: the disk is genuinely present. Reporting this slot ready
+	// anyway is exactly what let hoservad's own startup mount call hang
+	// waiting on a `/dev/disk/by-uuid/<uuid>` device that never appears,
+	// past Type=notify's own TimeoutStartSec, restarting forever (#388).
+	WrongFilesystem []ExpectedDisk
 }
 
-// evaluate matches expected against present by Identity.Matches (Q21) and
-// reports which of expected were not found.
+// evaluate matches expected against present by Identity.Matches (Q21),
+// then — for every match where both sides carry a filesystem UUID —
+// confirms it agrees (#388); Missing names every expected disk not found
+// at all, WrongFilesystem every one found by identity but carrying a
+// different filesystem than SQLite recorded for that slot.
 func evaluate(expected []ExpectedDisk, present []Identity) ReadinessCheck {
-	var missing []ExpectedDisk
+	var missing, wrongFS []ExpectedDisk
 	for _, e := range expected {
-		found := false
-		for _, p := range present {
-			if e.Identity.Matches(p) {
-				found = true
+		var match *Identity
+		for i := range present {
+			if e.Identity.Matches(present[i]) {
+				match = &present[i]
 				break
 			}
 		}
-		if !found {
+		switch {
+		case match == nil:
 			missing = append(missing, e)
+		case FSUUIDMismatch(e.Identity.FSUUID, match.FSUUID):
+			wrongFS = append(wrongFS, e)
 		}
 	}
-	return ReadinessCheck{Ready: len(missing) == 0, Missing: missing}
+	return ReadinessCheck{Ready: len(missing) == 0 && len(wrongFS) == 0, Missing: missing, WrongFilesystem: wrongFS}
 }
 
 // ErrNothingToAcknowledge is StorageGate.Acknowledge's refusal when the
@@ -102,6 +119,17 @@ func (g *StorageGate) Missing() []ExpectedDisk {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return append([]ExpectedDisk(nil), g.last.Missing...)
+}
+
+// WrongFilesystem returns the ExpectedDisk entries matched by identity at
+// the last Evaluate whose filesystem did not (#388) — populated even once
+// Acknowledge has been called, mirroring Missing, so a caller can keep
+// telling "physically absent" from "present, but not the disk that used
+// to be here" apart.
+func (g *StorageGate) WrongFilesystem() []ExpectedDisk {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]ExpectedDisk(nil), g.last.WrongFilesystem...)
 }
 
 // Acknowledge records the user's explicit choice to proceed with a

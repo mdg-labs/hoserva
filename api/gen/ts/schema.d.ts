@@ -2109,8 +2109,11 @@ export interface components {
             finishedAt?: string | null;
             error?: components["schemas"]["Error"] | null;
         };
-        /** @enum {string} */
-        DiskState: "active" | "standby" | "spinning_up" | "missing" | "failed";
+        /**
+         * @description `wrong_filesystem` (#388) is `PoolDiskEntry`-only: a disk matched to an array slot by identity (Q21: serial/WWN) whose filesystem UUID does not match what SQLite recorded for that slot — a replacement disk that kept the original disk's serial/WWN (a cloned or reused drive) but was formatted differently, or not at all. Distinct from `missing`: the disk is genuinely present, so the pool's own slot list must say so rather than report it `active`. The storage gate treats it exactly like a missing disk (not ready, no mount attempted for that slot) and never emits it on `DiskStateEvent`, since it is not a spindown state.
+         * @enum {string}
+         */
+        DiskState: "active" | "standby" | "spinning_up" | "missing" | "failed" | "wrong_filesystem";
         /**
          * @description doc 09 §4's own disk-removal state machine (#359, #358): `evacuating` from before an evacuation's first copy until its post-check passes — every pool mount marks this disk no-create for the whole time (step 2); `evacuated` once that copy and post-check finish, but the disk is still in every mergerfs branch list, SnapRAID layout and mount table (steps 7-9 have not run yet, still no-create); `unpooled` once `finishDiskRemoval`'s job has taken it out of every pool mount (step 7) — still in snapraid.conf and mounted; `unlisted` once a sync has recorded it empty and it is out of snapraid.conf too (step 8) — only its unmount and removal from the array are left. A disk that finished leaves the pool and the array altogether.
          * @enum {string}

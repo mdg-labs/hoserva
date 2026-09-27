@@ -627,11 +627,31 @@ export function PoolOverviewPage(): React.ReactElement {
   // offer (finding 2), not only a slot whose disk is still present.
   const dataDisks = disks.filter((disk) => disk.role === "data");
   const unassignedDisks = disks.filter((disk) => disk.role === "unassigned");
+  // replaceSlot is the currently selected "Disk to replace" entry.
+  // ConfirmReplacementTargetAbsent's own identity-plus-filesystem
+  // exception (#388) allows exactly one replacement target for a
+  // wrong-filesystem slot: the slot's own device, still physically
+  // present. Offering the unassigned list instead — which never includes
+  // it, since GetPool reports its role as "data" — left this slot with no
+  // usable target at all; any other unassigned disk is refused
+  // (slot_disk_present) since the slot's own recorded disk still shows up
+  // in inventory.
+  const replaceSlot = dataDisks.find((disk) => disk.mountPoint === replaceMountpoint) ?? null;
+  const replaceSlotOwnDevice = replaceSlot?.state === "wrong_filesystem" ? replaceSlot.device : undefined;
+  const replaceDeviceOptions = replaceSlotOwnDevice
+    ? [{ value: replaceSlotOwnDevice, label: replaceSlotOwnDevice }]
+    : unassignedDisks.map((disk) => ({ value: disk.device, label: disk.device }));
   // upgradableDisks are the data and parity slots an upgrade (doc 02 §4)
-  // can target — a missing slot has nothing to copy from and goes through
-  // Replace disk instead.
+  // can target — a missing slot has nothing to copy from, and a
+  // wrong-filesystem one (#388: present by identity, but not the disk
+  // SQLite recorded for the slot) is not the array's own disk to copy
+  // from either — both go through Replace disk instead.
   const upgradableDisks = disks.filter(
-    (disk) => (disk.role === "data" || disk.role === "parity") && disk.state !== "missing" && disk.device,
+    (disk) =>
+      (disk.role === "data" || disk.role === "parity") &&
+      disk.state !== "missing" &&
+      disk.state !== "wrong_filesystem" &&
+      disk.device,
   );
   const total = disks.reduce((sum, disk) => sum + (disk.sizeBytes ?? 0), 0);
   const used = disks.reduce((sum, disk) => sum + (disk.usedBytes ?? 0), 0);
@@ -765,6 +785,7 @@ export function PoolOverviewPage(): React.ReactElement {
           const diskUsed = disk.usedBytes;
           const percent = diskUsed != null && size > 0 ? Math.round((diskUsed / size) * 100) : null;
           const missing = disk.state === "missing";
+          const needsAttention = disk.state === "failed" || disk.state === "wrong_filesystem" || missing;
           return (
             <MetricTile
               key={`${disk.device || "missing"}-${disk.mountPoint}`}
@@ -774,7 +795,7 @@ export function PoolOverviewPage(): React.ReactElement {
               progress={percent}
               footer={
                 <div className="flex flex-wrap items-center gap-2">
-                  <StatusBadge tone={disk.state === "failed" || missing ? "error" : "success"}>
+                  <StatusBadge tone={needsAttention ? "error" : "success"}>
                     {t(`pool.diskState.${disk.state}`)}
                   </StatusBadge>
                   {disk.removalState ? (
@@ -954,12 +975,20 @@ export function PoolOverviewPage(): React.ReactElement {
             onChange={(value) => {
               replaceSelectionGen.current += 1;
               setReplaceMountpoint(value);
+              // A wrong-filesystem slot's only valid replacement target is
+              // its own device (#388) — pre-fill it, since the device
+              // field below no longer offers anything else to pick.
+              const slot = dataDisks.find((entry) => entry.mountPoint === value);
+              setReplaceDevice(slot?.state === "wrong_filesystem" && slot.device ? slot.device : "");
               resetReplacePlan();
             }}
             placeholder={t("pool.replace.slotPlaceholder")}
             options={dataDisks.map((disk) => ({ value: disk.mountPoint, label: slotLabel(t, disk) }))}
           />
         </Field>
+        {replaceSlotOwnDevice ? (
+          <InlineNote description={t("pool.replace.wrongFilesystemNote", { device: replaceSlotOwnDevice })} />
+        ) : null}
         <Field>
           <FieldLabel>{t("pool.replace.deviceLabel")}</FieldLabel>
           <SelectFilter
@@ -970,7 +999,7 @@ export function PoolOverviewPage(): React.ReactElement {
               resetReplacePlan();
             }}
             placeholder={t("pool.replace.devicePlaceholder")}
-            options={unassignedDisks.map((disk) => ({ value: disk.device, label: disk.device }))}
+            options={replaceDeviceOptions}
           />
         </Field>
         <Field>

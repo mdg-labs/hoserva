@@ -394,6 +394,83 @@ func TestAcknowledgeDegraded_SurvivesEveryRebuild(t *testing.T) {
 	}
 }
 
+// TestAcknowledgeDegraded_SurvivesEveryRebuild_WrongFilesystem is #388
+// finding 2's own regression test through the same real production path
+// as TestAcknowledgeDegraded_SurvivesEveryRebuild, for the case that test
+// does not cover: DATA1 is genuinely present the whole time — matched by
+// identity, but formatted with a filesystem SQLite never recorded for
+// this slot — so disk.StorageGate reports it through WrongFilesystem(),
+// never Missing(). Before this fix, ack.record only ever read
+// gate.Missing(), so this degraded state was silently dropped the moment
+// any rebuild ran.
+func TestAcknowledgeDegraded_SurvivesEveryRebuild_WrongFilesystem(t *testing.T) {
+	ctx, h, arrays, shares, provider, runner := newArrayTestEnv(t)
+	disks := persistSampleArray(t, arrays)
+	// disks[0] (parity) is present and matches SQLite's own recorded
+	// filesystem UUID exactly. disks[1] (DATA1) is present by identity too,
+	// but carries a different filesystem UUID than SQLite recorded for its
+	// slot — the #388 scenario — across every rebuild in this test.
+	provider.AddDisk(disks[0].Device, disk.Disk{WWN: disks[0].WWN, Serial: disks[0].Serial, ByIDName: disks[0].ByIDName, FSUUID: disks[0].FSUUID})
+	provider.AddDisk(disks[1].Device, disk.Disk{WWN: disks[1].WWN, Serial: disks[1].Serial, ByIDName: disks[1].ByIDName, FSUUID: "uuid-d-replaced"})
+	scheduler := h.Scheduler
+
+	seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, runner)
+	if err != nil {
+		t.Fatalf("newArraySequence: %v", err)
+	}
+	realCatchAll, ok := seq.CatchAll.(pool.MountController)
+	if !ok {
+		t.Fatalf("CatchAll is %T, want pool.MountController", seq.CatchAll)
+	}
+	seq.CatchAll = arrayTestCatchAll{where: pool.CatchAllPath, argv: realCatchAll.Mnt.Argv(), runner: runner}
+	h.SetArray(seq)
+
+	s := newTestStorageTargetSync(t)
+	s.PoolMounted = func(string) (bool, error) { return true, nil }
+	if err := s.Startup(ctx, seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+
+	ack := &acknowledgedDegraded{}
+	wireAcknowledgeDegraded(h, s, ack)
+
+	if _, err := h.AcknowledgeDegradedArray(ctx); err != nil {
+		t.Fatalf("AcknowledgeDegradedArray: %v", err)
+	}
+	if _, err := os.Stat(s.flagPath()); err != nil {
+		t.Fatalf("Stat(flag) = %v, want the readiness flag written once acknowledged", err)
+	}
+
+	// A share create, a disk-topology change or a SIGHUP all funnel through
+	// this exact function to re-evaluate disk.StorageGate with DATA1 still
+	// the only wrong-filesystem slot.
+	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, h, ack)
+	if err := rebuild(ctx); err != nil {
+		t.Fatalf("rebuildArraySequence: %v", err)
+	}
+
+	if _, err := os.Stat(s.flagPath()); err != nil {
+		t.Fatalf("Stat(flag) = %v, want the readiness flag to survive a rebuild while DATA1 is still the only wrong-filesystem disk — a rebuild runs on every udev block add, including an unrelated USB stick", err)
+	}
+	status, err := h.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if !status.ArrayDegraded.Or(false) {
+		t.Fatal("GetStatus.ArrayDegraded = false after a rebuild, want it to still report the wrong-filesystem disk")
+	}
+	if !status.ArrayDegradedAcknowledged.Or(false) {
+		t.Fatal("GetStatus.ArrayDegradedAcknowledged = false after a rebuild — the earlier acknowledgement was lost")
+	}
+	gate, ok := storageGateOf(h.CurrentArray().Gate)
+	if !ok {
+		t.Fatal("h.CurrentArray().Gate is not the expected wrapper after rebuild")
+	}
+	if !gate.Ready() {
+		t.Fatal("gate.Ready() = false after a rebuild that should have re-applied the earlier acknowledgement")
+	}
+}
+
 // TestAcknowledgedDegraded_Reapply_RefusesWhenADifferentDiskIsAlsoMissing
 // is finding 1's own explicit design contract: reapply only ever
 // re-acknowledges the same degraded state, never a blanket "stay quiet
@@ -403,7 +480,7 @@ func TestAcknowledgeDegraded_SurvivesEveryRebuild(t *testing.T) {
 func TestAcknowledgedDegraded_Reapply_RefusesWhenADifferentDiskIsAlsoMissing(t *testing.T) {
 	ack := &acknowledgedDegraded{}
 	acknowledgedDisk := disk.ExpectedDisk{Identity: disk.Identity{Serial: "DATA1"}, Role: "data", MountAt: "/mnt/disk1"}
-	ack.record([]disk.ExpectedDisk{acknowledgedDisk})
+	ack.record([]disk.ExpectedDisk{acknowledgedDisk}, nil)
 
 	gate := disk.NewStorageGate([]disk.ExpectedDisk{
 		acknowledgedDisk,
@@ -424,6 +501,116 @@ func TestAcknowledgedDegraded_Reapply_RefusesWhenADifferentDiskIsAlsoMissing(t *
 	ack.reapply(gate)
 	if !gate.Ready() {
 		t.Fatal("reapply did not re-acknowledge a gate whose only missing disk is the one already recorded")
+	}
+}
+
+// TestAcknowledgedDegraded_Reapply_SurvivesWrongFilesystemAcrossRebuild is
+// #388 finding 2's own regression test: a wrong-filesystem slot (present
+// by identity, but not Missing()) must be recorded and reapplied exactly
+// like a missing one, since hoserva-storage.rules sends a rebuild on
+// every udev block `add` — plugging in an unrelated USB stick is enough —
+// and the daemon's own gate is rebuilt from scratch every time.
+func TestAcknowledgedDegraded_Reapply_SurvivesWrongFilesystemAcrossRebuild(t *testing.T) {
+	ack := &acknowledgedDegraded{}
+	slot := disk.ExpectedDisk{Identity: disk.Identity{Serial: "DATA1", FSUUID: "uuid-original"}, Role: "data", MountAt: "/mnt/disk1"}
+	gate := disk.NewStorageGate([]disk.ExpectedDisk{slot})
+	gate.Evaluate([]disk.Identity{{Serial: "DATA1", FSUUID: "uuid-replaced"}})
+	if gate.Ready() {
+		t.Fatal("gate.Ready() = true with the only expected disk present but carrying the wrong filesystem")
+	}
+	if err := gate.Acknowledge(); err != nil {
+		t.Fatalf("Acknowledge: %v", err)
+	}
+	ack.record(gate.Missing(), gate.WrongFilesystem())
+
+	// A rebuild replaces the gate wholesale (newArraySequence): re-evaluate
+	// a fresh one against the same still-mismatched disk.
+	fresh := disk.NewStorageGate([]disk.ExpectedDisk{slot})
+	fresh.Evaluate([]disk.Identity{{Serial: "DATA1", FSUUID: "uuid-replaced"}})
+	ack.reapply(fresh)
+	if !fresh.Ready() {
+		t.Fatal("reapply did not re-acknowledge a gate whose only degraded slot is the wrong-filesystem one already recorded")
+	}
+}
+
+// TestAcknowledgedDegraded_Reapply_ClearsOnceNothingIsDegraded proves the
+// holder's own recorded set is dropped the moment a fresh Evaluate finds
+// every expected disk present with the right filesystem — a stale
+// acknowledgement must never survive to mask a later, genuinely new
+// degraded slot with the same identity, the same rule
+// disk.StorageGate.Evaluate already applies to its own acknowledged flag.
+func TestAcknowledgedDegraded_Reapply_ClearsOnceNothingIsDegraded(t *testing.T) {
+	ack := &acknowledgedDegraded{}
+	slot := disk.ExpectedDisk{Identity: disk.Identity{Serial: "DATA1", FSUUID: "uuid-original"}, Role: "data", MountAt: "/mnt/disk1"}
+	ack.record(nil, []disk.ExpectedDisk{slot})
+
+	// The disk was reformatted back to the recorded filesystem — no longer
+	// missing, no longer wrong-filesystem.
+	gate := disk.NewStorageGate([]disk.ExpectedDisk{slot})
+	gate.Evaluate([]disk.Identity{{Serial: "DATA1", FSUUID: "uuid-original"}})
+	ack.reapply(gate)
+
+	ack.mu.Lock()
+	cleared := ack.identities == nil
+	ack.mu.Unlock()
+	if !cleared {
+		t.Fatal("reapply did not clear the recorded set once the gate reported nothing degraded")
+	}
+
+	// A different disk going missing afterwards must surface as its own,
+	// fresh degraded state — nothing from the cleared acknowledgement
+	// should carry over.
+	second := disk.ExpectedDisk{Identity: disk.Identity{Serial: "DATA2"}, Role: "data", MountAt: "/mnt/disk2"}
+	gate2 := disk.NewStorageGate([]disk.ExpectedDisk{slot, second})
+	gate2.Evaluate([]disk.Identity{{Serial: "DATA1", FSUUID: "uuid-original"}})
+	ack.reapply(gate2)
+	if gate2.Ready() {
+		t.Fatal("reapply acknowledged a newly missing disk after its recorded set had already been cleared")
+	}
+}
+
+// TestAcknowledgedDegraded_Reapply_RefusesWhenANewWrongFilesystemSlotAppears
+// mirrors TestAcknowledgedDegraded_Reapply_RefusesWhenADifferentDiskIsAlso
+// Missing for the wrong-filesystem category: an acknowledgement of one
+// missing disk must not silently cover a second, different slot that
+// later turns up present but with the wrong filesystem — that is its own,
+// never-acknowledged degraded state.
+func TestAcknowledgedDegraded_Reapply_RefusesWhenANewWrongFilesystemSlotAppears(t *testing.T) {
+	ack := &acknowledgedDegraded{}
+	acknowledgedDisk := disk.ExpectedDisk{Identity: disk.Identity{Serial: "DATA1"}, Role: "data", MountAt: "/mnt/disk1"}
+	ack.record([]disk.ExpectedDisk{acknowledgedDisk}, nil)
+
+	wrongFSDisk := disk.ExpectedDisk{Identity: disk.Identity{Serial: "DATA2", FSUUID: "uuid-original"}, Role: "data", MountAt: "/mnt/disk2"}
+	gate := disk.NewStorageGate([]disk.ExpectedDisk{acknowledgedDisk, wrongFSDisk})
+	// DATA1 (already acknowledged) is still missing; DATA2 is now present,
+	// but carrying a filesystem never acknowledged for this slot.
+	gate.Evaluate([]disk.Identity{{Serial: "DATA2", FSUUID: "uuid-replaced"}})
+
+	ack.reapply(gate)
+	if gate.Ready() {
+		t.Fatal("reapply acknowledged a gate with a second, never-acknowledged wrong-filesystem slot")
+	}
+}
+
+// TestAcknowledgedDegraded_Reapply_CoversSameIdentityFlippingCategory
+// proves reapply's own identity match (disk.Identity.Matches) does not
+// care which of Missing()/WrongFilesystem() a slot was in when it was
+// acknowledged — the same physical disk going from "present, wrong
+// filesystem" to "gone entirely" (or the reverse) is still the same
+// acknowledged problem, not a fresh one.
+func TestAcknowledgedDegraded_Reapply_CoversSameIdentityFlippingCategory(t *testing.T) {
+	ack := &acknowledgedDegraded{}
+	slot := disk.ExpectedDisk{Identity: disk.Identity{Serial: "DATA1", FSUUID: "uuid-original"}, Role: "data", MountAt: "/mnt/disk1"}
+	// Acknowledged while present with the wrong filesystem.
+	ack.record(nil, []disk.ExpectedDisk{slot})
+
+	// The disk is pulled out entirely — same identity, now Missing()
+	// instead of WrongFilesystem().
+	gate := disk.NewStorageGate([]disk.ExpectedDisk{slot})
+	gate.Evaluate(nil)
+	ack.reapply(gate)
+	if !gate.Ready() {
+		t.Fatal("reapply did not cover the same identity's slot flipping from wrong-filesystem to missing")
 	}
 }
 

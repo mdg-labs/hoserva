@@ -77,6 +77,12 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 				Serial:       d.Serial,
 				WeakIdentity: d.WeakIdentity,
 				ByIDName:     d.ByIDName,
+				// FSUUID is the filesystem SQLite recorded for this slot
+				// (#388): a replacement disk matched by identity alone but
+				// carrying a different filesystem must not be reported
+				// present, since Startup would then try to mount it by a
+				// UUID that never appears as a device.
+				FSUUID: d.FSUUID,
 			},
 			Role:    d.Role,
 			MountAt: d.Mountpoint,
@@ -119,6 +125,11 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 				Serial:       d.Serial,
 				WeakIdentity: d.WeakIdentity,
 				ByIDName:     d.ByIDName,
+				// FSUUID is read from udev's own cache (disk.Lister.List),
+				// never by opening the device (#388) — the same source
+				// disk.Disk.FSUUID everywhere else in this file already
+				// trusts.
+				FSUUID: d.FSUUID,
 			})
 		}
 		gate.Evaluate(present)
@@ -220,18 +231,25 @@ func storageGateOf(g job.ReadinessGate) (*disk.StorageGate, bool) {
 }
 
 // acknowledgedDegraded remembers, for cmd/hoservad's whole lifetime, which
-// missing disks the user has explicitly acknowledged (#385 finding 1).
-// newArraySequence's own disk.StorageGate is rebuilt from scratch on every
-// share create/update/delete (shareService.PostCommit), every
-// disk-topology job's ArrayReady hook, and every SIGHUP — a freshly built
-// gate has never itself been acknowledged, so without this, any one of
-// those re-evaluates the same still-missing disk as newly degraded and
-// undoes the acknowledgement the moment it runs. reapply only
-// re-acknowledges a freshly evaluated gate when every disk it currently
-// reports missing is one this holder already recorded
-// (disk.Identity.Matches) — a disk arriving, or a different disk going
-// missing, is a new degraded state and gets its own banner, never a
-// blanket "stay quiet forever".
+// disks the user has explicitly acknowledged — missing ones (#385 finding
+// 1) and, identically, ones present by identity but carrying the wrong
+// filesystem (#388 finding 2, disk.StorageGate.WrongFilesystem): both are
+// exactly as degraded as the other, and the gate treats them the same way
+// in Ready(). newArraySequence's own disk.StorageGate is rebuilt from
+// scratch on every share create/update/delete (shareService.PostCommit),
+// every disk-topology job's ArrayReady hook, and every SIGHUP —
+// hoserva-storage.rules sends the latter on every udev block `add` event,
+// including an unrelated USB stick — a freshly built gate has never
+// itself been acknowledged, so without this, any one of those
+// re-evaluates the same still-degraded slot as newly degraded and undoes
+// the acknowledgement the moment it runs. reapply only re-acknowledges a
+// freshly evaluated gate when every slot it currently reports missing or
+// wrong-filesystem is one this holder already recorded
+// (disk.Identity.Matches, which does not distinguish the two categories —
+// the same identity flipping from missing to wrong-filesystem or back is
+// still the same acknowledged slot) — a disk arriving, or a different
+// slot going missing or wrong-filesystem, is a new degraded state and
+// gets its own banner, never a blanket "stay quiet forever".
 type acknowledgedDegraded struct {
 	mu         sync.Mutex
 	identities []disk.Identity
@@ -245,11 +263,16 @@ type acknowledgedDegraded struct {
 }
 
 // record captures the identities behind an acknowledgement that has just
-// succeeded — gate.Missing(), read against the same gate.Acknowledge()
-// call that just succeeded.
-func (a *acknowledgedDegraded) record(missing []disk.ExpectedDisk) {
-	ids := make([]disk.Identity, 0, len(missing))
+// succeeded — gate.Missing() and gate.WrongFilesystem() together (#388
+// finding 2), read against the same gate.Acknowledge() call that just
+// succeeded: a wrong-filesystem slot is exactly as degraded as a missing
+// one, and reapply must be able to tell it was already acknowledged too.
+func (a *acknowledgedDegraded) record(missing, wrongFilesystem []disk.ExpectedDisk) {
+	ids := make([]disk.Identity, 0, len(missing)+len(wrongFilesystem))
 	for _, m := range missing {
+		ids = append(ids, m.Identity)
+	}
+	for _, m := range wrongFilesystem {
 		ids = append(ids, m.Identity)
 	}
 	a.mu.Lock()
@@ -258,23 +281,24 @@ func (a *acknowledgedDegraded) record(missing []disk.ExpectedDisk) {
 }
 
 // reapply re-acknowledges gate — freshly built and already Evaluate'd by
-// newArraySequence — when every disk it now reports missing is already in
-// this holder's own recorded set. It clears that set once gate reports
-// nothing missing at all, so disk.StorageGate.Evaluate's own "all present
-// clears the acknowledgement" rule is never contradicted by a stale
-// holder outliving the state it was about.
+// newArraySequence — when every slot it now reports missing or wrong-
+// filesystem (#388 finding 2) is already in this holder's own recorded
+// set. It clears that set once gate reports nothing degraded at all, so
+// disk.StorageGate.Evaluate's own "all present clears the
+// acknowledgement" rule is never contradicted by a stale holder outliving
+// the state it was about.
 func (a *acknowledgedDegraded) reapply(gate *disk.StorageGate) {
-	missing := gate.Missing()
+	degraded := append(gate.Missing(), gate.WrongFilesystem()...)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if len(missing) == 0 {
+	if len(degraded) == 0 {
 		a.identities = nil
 		return
 	}
-	for _, m := range missing {
+	for _, d := range degraded {
 		found := false
 		for _, id := range a.identities {
-			if m.Identity.Matches(id) {
+			if d.Identity.Matches(id) {
 				found = true
 				break
 			}
@@ -295,9 +319,10 @@ func (a *acknowledgedDegraded) reapply(gate *disk.StorageGate) {
 // It calls disk.StorageGate.Acknowledge on CurrentArray()'s own live gate
 // — never a rebuild through newArraySequence, which would construct a
 // fresh, unacknowledged gate and undo the call this hook just made —
-// records the missing identities behind it (ack.record) so a later
-// rebuild's own reapply can re-acknowledge the same degraded state
-// (finding 1), and finally runs storageTarget's own not-ready→ready
+// records the degraded identities behind it — missing and wrong-
+// filesystem alike (ack.record, #388 finding 2) — so a later rebuild's
+// own reapply can re-acknowledge the same degraded state (finding 1), and
+// finally runs storageTarget's own not-ready→ready
 // transition (UpdateOrError) against that same sequence. A transition
 // that does not actually start anything — the array is in maintenance
 // mode, or the pool fails to mount or confirm — is reported to the
@@ -327,7 +352,7 @@ func wireAcknowledgeDegraded(handler *api.Handler, storageTarget *storageTargetS
 		if err := gate.Acknowledge(); err != nil {
 			return err
 		}
-		ack.record(gate.Missing())
+		ack.record(gate.Missing(), gate.WrongFilesystem())
 		if err := storageTarget.UpdateOrError(ctx, seq); err != nil {
 			return fmt.Errorf("%w: %v", api.ErrDegradedServicesNotStarted, err)
 		}
@@ -340,12 +365,13 @@ func wireAcknowledgeDegraded(handler *api.Handler, storageTarget *storageTargetS
 // disk-topology jobs' ArrayReady hook, and re-runs on every SIGHUP
 // (installReloadHandler) — the single place a disk arriving/leaving or a
 // live share change re-evaluates disk.StorageGate (doc 02 §1, Q69). It
-// re-applies any acknowledgement of a still-missing disk the user already
-// gave (ack.reapply, #385 finding 1) to the freshly built gate before
-// syncing the storage-target units — without this, a fresh, unevaluated
-// gate is never acknowledged, so any one of this closure's own callers
-// (a share edit, a disk-topology change, a SIGHUP) would undo the user's
-// acknowledgement the moment it ran.
+// re-applies any acknowledgement of a still-missing or still-wrong-
+// filesystem slot the user already gave (ack.reapply, #385 finding 1,
+// #388 finding 2) to the freshly built gate before syncing the storage-
+// target units — without this, a fresh, unevaluated gate is never
+// acknowledged, so any one of this closure's own callers (a share edit, a
+// disk-topology change, a SIGHUP) would undo the user's acknowledgement
+// the moment it ran.
 func newRebuildArraySequence(scheduler *job.Scheduler, arrayStore *store.ArrayStore, shareStore *store.ShareStore, disks disk.Provider, runner disk.Runner, storageTarget *storageTargetSync, handler *api.Handler, ack *acknowledgedDegraded) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		ack.seqMu.Lock()

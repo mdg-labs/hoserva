@@ -478,21 +478,22 @@ func (h *Handler) GetStatus(ctx context.Context) (*apiv1.SystemStatus, error) {
 	if h.Scheduler != nil {
 		maintenance = h.Scheduler.InMaintenance()
 	}
-	// arrayDegraded mirrors disk.StorageGate.Missing() (doc 02 §1, Q69):
-	// true whenever any expected disk is currently absent by identity,
-	// regardless of acknowledgement — acknowledging a degraded array must
-	// never report it as healthy (#385). arrayDegradedAcknowledged
+	// arrayDegraded mirrors disk.StorageGate.Missing() and .WrongFilesystem()
+	// (doc 02 §1, Q69, #388): true whenever any expected disk is currently
+	// absent by identity, or present by identity but carrying the wrong
+	// filesystem, regardless of acknowledgement — acknowledging a degraded
+	// array must never report it as healthy (#385). arrayDegradedAcknowledged
 	// is what distinguishes "acknowledged, running degraded" from "not yet
 	// acknowledged": true only once the acknowledgement has also made the
 	// gate itself report ready (gate.Ready(), disk.StorageGate's own
-	// contract). Both clear together once the missing disk actually
-	// reappears (a fresh Evaluate). No gate at all (no array configured
-	// yet, or a caller's own test predating the gate) reports both false:
-	// there is nothing missing to report on.
+	// contract). Both clear together once the disk actually reappears or is
+	// replaced (a fresh Evaluate). No gate at all (no array configured yet,
+	// or a caller's own test predating the gate) reports both false: there
+	// is nothing missing to report on.
 	arrayDegraded := false
 	arrayDegradedAcknowledged := false
 	if gate := degradedGate(h.CurrentArray()); gate != nil {
-		arrayDegraded = len(gate.Missing()) > 0
+		arrayDegraded = len(gate.Missing()) > 0 || len(gate.WrongFilesystem()) > 0
 		arrayDegradedAcknowledged = arrayDegraded && gate.Ready()
 	}
 	// storageServicesReleased (#385) is read from

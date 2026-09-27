@@ -63,6 +63,9 @@ type storageTargetSync struct {
 	// PoolMounted overrides pool.IsMountedConfirmed — set only by this
 	// package's own tests, never in production.
 	PoolMounted func(path string) (bool, error)
+	// StartupMountTimeout overrides startupMountTimeout — set only by
+	// this package's own tests, never in production.
+	StartupMountTimeout time.Duration
 
 	mu      sync.Mutex
 	applied bool // false until Startup or Update has completed at least once
@@ -75,6 +78,35 @@ func (s *storageTargetSync) poolMounted(path string) (bool, error) {
 		return s.PoolMounted(path)
 	}
 	return pool.IsMountedConfirmed(path)
+}
+
+// startupMountTimeout bounds every mount `systemctl start` Startup issues
+// before main.go sends systemd's own READY=1 (#388): a disk that satisfies
+// disk.StorageGate's identity check but carries the wrong filesystem is
+// the case this bound exists for, but it holds regardless of *why* a mount
+// unit's own device dependency never resolves — a generated `.mount` unit
+// carries no JobTimeoutSec= of its own, so `systemctl start` otherwise
+// waits on that job with no bound at all. Left unbounded, Type=notify's
+// own TimeoutStartSec (default 90s, packaging/debian/hoserva.service)
+// kills hoservad before Startup ever returns to send READY=1, and
+// Restart=on-failure repeats the identical wait forever — the restart
+// loop #388 reports. disk.Runner.Run execs through exec.CommandContext,
+// so a timed-out context kills the systemctl client the moment this
+// expires; the pending job it submitted may still be running in systemd
+// itself, exactly as it would be if an operator had run the same command
+// and given up on it, but Startup itself is unblocked and reports the
+// mount as failed — treated exactly like the gate reporting not ready:
+// no flag, no dependent start, and the next SIGHUP or rebuild retries it
+// once the disk is actually fixed. 20s leaves ample headroom under the
+// 90s default for every other step Startup and the rest of main.go's own
+// startup path still need to run.
+const startupMountTimeout = 20 * time.Second
+
+func (s *storageTargetSync) startupMountTimeout() time.Duration {
+	if s.StartupMountTimeout > 0 {
+		return s.StartupMountTimeout
+	}
+	return startupMountTimeout
 }
 
 // mountPool brings up seq's own mergerfs mounts — the catch-all and every
@@ -404,10 +436,23 @@ func (s *storageTargetSync) Startup(ctx context.Context, seq *job.ArraySequence)
 		// transaction, and nothing else ever retries it — Startup must not
 		// assume that activation happened just because the gate now reports
 		// every expected disk present.
-		if err := mountArrayDisks(ctx, seq); err != nil {
+		//
+		// mountCtx bounds every mount call below (#388): the gate reporting
+		// ready by identity is not a guarantee any of these actually mount
+		// cleanly (a wrong-filesystem slot is refused before it can reach
+		// here, evaluate/#388, but nothing rules out a mount unit's own
+		// device dependency hanging for some other reason) — see
+		// startupMountTimeout's own doc comment for why this cannot be
+		// left unbounded. A mount that times out is returned as an error
+		// exactly like one that fails outright: the switch above already
+		// leaves the flag cleared and s.ready false, so main.go still
+		// sends READY=1 on schedule and the next SIGHUP or rebuild retries.
+		mountCtx, cancel := context.WithTimeout(ctx, s.startupMountTimeout())
+		defer cancel()
+		if err := mountArrayDisks(mountCtx, seq); err != nil {
 			return fmt.Errorf("mounting the array's own disks before reporting the storage gate ready: %w", err)
 		}
-		if err := s.mountAndConfirmPool(ctx, seq); err != nil {
+		if err := s.mountAndConfirmPool(mountCtx, seq); err != nil {
 			return fmt.Errorf("mounting and confirming the pool before reporting the storage gate ready: %w", err)
 		}
 		if err := s.setFlagReady(); err != nil {
@@ -504,12 +549,18 @@ func (s *storageTargetSync) updateTransition(ctx context.Context, seq *job.Array
 	}
 
 	if unitsChanged {
+		// A refused write (a hand-edited managed unit) must fail this
+		// transition, not just log it (#388, raised by the #385 executor):
+		// UpdateOrError's whole point is telling a caller that surfaces an
+		// outcome — the acknowledge operation — that boot ordering did not
+		// actually update, rather than reporting success over stale units
+		// on disk. Update's own caller still only ever logs it, exactly as
+		// before, since it wraps this same call.
 		if err := s.writeUnits(ctx, units); err != nil {
-			log.Printf("hoservad: %v — Samba/NFS/Docker/libvirt boot ordering may be stale until this is retried", err)
-		} else {
-			s.units = units
-			s.applied = true
+			return fmt.Errorf("%w — Samba/NFS/Docker/libvirt boot ordering may be stale until this is retried", err)
 		}
+		s.units = units
+		s.applied = true
 	}
 
 	if !readyChanged {

@@ -302,6 +302,49 @@ func TestHandler_GetPool_MatchesRenumberedDiskByIdentity(t *testing.T) {
 	}
 }
 
+// TestHandler_GetPool_SameSerialWrongFilesystemIsReportedDistinctly is
+// #388's own regression test: a disk that satisfies the identity check
+// (Q21: matched by serial/WWN — a cloned or reused drive, or a blank
+// replacement carrying the original disk's serial) but was formatted with
+// a different filesystem than SQLite recorded for the slot must never be
+// reported `active` — the replace flow needs a distinct state to offer
+// itself against, and the storage gate must not attempt to mount it.
+func TestHandler_GetPool_SameSerialWrongFilesystemIsReportedDistinctly(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	dataDir := t.TempDir()
+	p := disk.NewFakeProvider()
+	// Same serial/WWN as the recorded member, but a different filesystem —
+	// exactly the "blank disk carrying disk1's original serial" scenario
+	// #388 reports.
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-data", FSUUID: "blank-replacement-uuid"})
+	h.Disks = p
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "original-uuid", WWN: "wwn-data", Mountpoint: dataDir},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	if len(got.Disks) != 1 {
+		t.Fatalf("len(Disks) = %d, want 1", len(got.Disks))
+	}
+	if e := got.Disks[0]; e.State != apiv1.DiskStateWrongFilesystem || e.Role != apiv1.PoolDiskEntryRoleData || e.MountPoint != dataDir {
+		t.Fatalf("sdc (same serial, wrong filesystem) = state %q role %q mount %q, want wrong_filesystem/data/%s", e.State, e.Role, e.MountPoint, dataDir)
+	}
+}
+
 // TestHandler_GetPool_WeakIdentityDifferentSizeIsNotTheMember is #327
 // through GET /pool: a stored weak-identity member with a recorded size
 // must not be matched by a same-UUID inventory disk of a different

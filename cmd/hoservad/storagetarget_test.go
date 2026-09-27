@@ -804,6 +804,41 @@ func TestStorageTargetSync_Update_DisabledDependentIsNotStarted(t *testing.T) {
 	}
 }
 
+// TestStorageTargetSync_UpdateOrError_FailedWriteIsReported is #388's own
+// regression test for finding 3 (raised by the #385 executor): a refused
+// unit-file write (a hand-edited managed unit) must reach UpdateOrError's
+// own caller as an error — #385's AcknowledgeDegraded hook needs exactly
+// this to tell the acknowledge operation the transition did not actually
+// take effect — never be logged and reported as success with stale
+// boot-ordering units left on disk. Update itself keeps only logging it
+// (TestStorageTargetSync_Update_TopologyChangeReloadsWithoutStartOrRestart
+// and friends already cover Update's own callers never seeing a panic or
+// crash from this), since it wraps the same updateTransition call.
+func TestStorageTargetSync_UpdateOrError_FailedWriteIsReported(t *testing.T) {
+	generator := cfggen.NewGenerator(t.TempDir())
+	ctx := context.Background()
+	now := time.Now()
+	readyUnitPath := "systemd/system/" + pool.StorageReadyUnitName
+	if err := generator.Write(ctx, cfggen.File{Path: readyUnitPath, Command: "array status", Body: []byte("placeholder\n")}, 1, now); err != nil {
+		t.Fatalf("seeding an existing managed file: %v", err)
+	}
+	if err := generator.KeepUnmanaged(ctx, readyUnitPath); err != nil {
+		t.Fatalf("KeepUnmanaged: %v", err)
+	}
+
+	s := &storageTargetSync{
+		Generator:       generator,
+		Runner:          disk.NewFakeRunner(),
+		FlagPath:        filepath.Join(t.TempDir(), "storage-ready"),
+		StoppedFlagPath: filepath.Join(t.TempDir(), "array-stopped"),
+	}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}}
+
+	if err := s.UpdateOrError(ctx, seq); err == nil {
+		t.Fatal("UpdateOrError with an unmanaged ready unit = nil error, want one")
+	}
+}
+
 // TestStorageTargetSync_ConfirmReady_SetsFlagAndStartsServices proves
 // (#372) the explicit `array start` path:
 // job.ArraySequence.Start calls ConfirmReady once its own mounts are up,
@@ -899,6 +934,99 @@ func TestStorageTargetSync_Startup_PoolNotMountedLeavesGateClosed(t *testing.T) 
 	}
 	if _, err := os.Stat(s.flagPath()); err == nil {
 		t.Fatal("the readiness flag exists even though the pool never confirmed mounted")
+	}
+}
+
+// blockingUntilCancelledMount is job.ArrayMount's own fake for
+// TestStorageTargetSync_Startup_BoundsAMountThatNeverReturns (#388): Mount
+// never returns on its own, the way `systemctl start` on a mount unit
+// whose device dependency never resolves never returns on its own either
+// — it only returns once ctx is cancelled, mirroring exec.CommandContext
+// killing the real systemctl client the instant startupMountTimeout
+// expires.
+type blockingUntilCancelledMount struct{ where string }
+
+func (m blockingUntilCancelledMount) Where() string { return m.where }
+func (m blockingUntilCancelledMount) Mount(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (m blockingUntilCancelledMount) Unmount(context.Context) error { return nil }
+
+// TestStorageTargetSync_Startup_BoundsAMountThatNeverReturns is #388's own
+// regression test for the restart-loop report: a mount that never returns
+// on its own (a replacement disk with the right serial but the wrong
+// filesystem, or any other device whose mount unit never activates) must
+// not block Startup past its own bound — otherwise hoservad never reaches
+// main.go's unconditional notifySystemdReady call, and systemd's
+// Type=notify TimeoutStartSec kills the whole process before it ever
+// sends READY=1, restarting forever. StartupMountTimeout is set well
+// below the real 90s default so this test proves the bound is enforced
+// without actually waiting anywhere near it.
+func TestStorageTargetSync_Startup_BoundsAMountThatNeverReturns(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	s.StartupMountTimeout = 50 * time.Millisecond
+	disk1 := blockingUntilCancelledMount{where: "/mnt/disk1"}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- s.Startup(context.Background(), seq) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Startup with a mount that never returns = nil error, want one")
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("Startup took %v, want it bounded near StartupMountTimeout (%v)", elapsed, s.StartupMountTimeout)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Startup did not return within 5s of a mount that never returns on its own — it would block main.go's own READY=1 forever")
+	}
+	if _, err := os.Stat(s.flagPath()); err == nil {
+		t.Fatal("the readiness flag exists even though the mount never confirmed")
+	}
+}
+
+// TestStorageTargetSync_Startup_BoundsAShareMountThatNeverReturns proves
+// the same bound covers a per-share mergerfs mount
+// (run-hoserva-array-<share>.mount, the orchestrator's own nightly L3 run
+// 36243538178 finding on an *ordinary* reboot with every disk present:
+// hoserva.service was still "activating (start)" 4s in, its child process
+// `systemctl start run-hoserva-array-hoserval3midsync.mount`), not just a
+// physical disk mount — mountAndConfirmPool (which mounts the catch-all,
+// then every ShareMounts entry, mountPool's own doc comment) runs inside
+// the exact same mountCtx Startup already bounds mountArrayDisks with, so
+// a share mount that never returns is bounded identically. CatchAll is a
+// fast, succeeding mount here — mountAndConfirmPool returns immediately
+// without ever calling mountPool when CatchAll is nil, which would prove
+// nothing about ShareMounts's own bound — so this isolates that the
+// blocking share mount, not the catch-all, is what gets bounded.
+func TestStorageTargetSync_Startup_BoundsAShareMountThatNeverReturns(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	s.StartupMountTimeout = 50 * time.Millisecond
+	catchAll := storageTargetTestMount{where: "/mnt/user"}
+	share := blockingUntilCancelledMount{where: "/mnt/user/massdel"}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, CatchAll: catchAll, ShareMounts: []job.ArrayMount{share}}
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- s.Startup(context.Background(), seq) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Startup with a share mount that never returns = nil error, want one")
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("Startup took %v, want it bounded near StartupMountTimeout (%v)", elapsed, s.StartupMountTimeout)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Startup did not return within 5s of a share mount that never returns on its own — it would block main.go's own READY=1 forever")
+	}
+	if _, err := os.Stat(s.flagPath()); err == nil {
+		t.Fatal("the readiness flag exists even though the share mount never confirmed")
 	}
 }
 

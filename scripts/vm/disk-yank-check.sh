@@ -35,21 +35,40 @@
 # per this round's own review note) must come back clean.
 #
 # The replacement's own <serial> is deliberately never the original
-# disk1's own — confirmed necessary the hard way (this issue's own
-# second round, nightly run 36236553908): reusing it left the
-# replacement's *identity* matching what disk.StorageGate already
-# expected for this slot while its filesystem did not, so the gate read
-# the array whole and hoservad's own storage-target boot ordering
-# (cmd/hoservad/storagetarget.go) tried to mount /mnt/disk1 by its old,
-# now-nonexistent filesystem UUID — a mount that can never succeed,
-# blocking hoservad's own startup long enough for systemd's Type=notify
-# TimeoutStartSec (90s) to kill it first, in a permanent kill-and-restart
-# loop. A distinct serial (matching a real disk swap, which is never the
-# same physical unit) keeps the gate correctly reporting the original
+# disk1's own — confirmed necessary the hard way (#388, nightly run
+# 36236553908): reusing it puts a disk satisfying disk.StorageGate's
+# identity check (Q21: matched by serial) into disk1's own slot. #388
+# fixed the restart-loop half of that for real (cmd/hoservad's
+# storageTargetSync now bounds every mount call it issues, so hoservad
+# always reaches READY=1 regardless), and fixed identity-plus-filesystem
+# detection for a same-serial disk carrying an actual, positively
+# readable *different* filesystem (disk.StorageGate.WrongFilesystem,
+# GetPool's own wrong_filesystem state, job.ConfirmReplacementTargetAbsent's
+# own replace exception) — but not for a same-serial disk that is
+# genuinely blank (no filesystem at all), which is what a same-serial
+# replacement normally looks like before anything writes to it. Blkid's
+# own udev builtin (60-persistent-storage.rules' IMPORT{builtin}="blkid",
+# the same one this file's own sibling hoserva-storage.rules depends on)
+# exports ID_FS_TYPE/ID_FS_UUID into the udev database only on a
+# *positive* probe (blkid_do_safeprobe() returning 0, confirmed against
+# this project's own dev host: a GPT-partitioned disk's whole-disk udev
+# record carries ID_PART_TABLE_TYPE with no ID_FS_TYPE, proving udev does
+# export a distinguishing key when it finds something) — but on every
+# other outcome (nothing found, ambiguous, a real read error) it exports
+# nothing at all, so "positively blank" and "unread/unknown" are
+# indistinguishable from udev's cache alone. The one command that *can*
+# tell them apart, `blkid <dev>` (exit 2 means "no signature", distinct
+# from a real error), only works by reading the device directly — which
+# disk.Provider.List() (the same call GetPool and disk.StorageGate.Evaluate
+# both make on every `GET /pool` poll, every SIGHUP, and every topology
+# rebuild) must never do (doc 02 §1, Q13: never opens a block device,
+# never risks waking a disk). That gap is real product behaviour outside
+# this file's own scope (cmd/hoservad/, internal/disk/), reported to the
+# maintainer rather than worked around here — see this commit's own
+# message. A distinct serial (matching a real disk swap, which is never
+# the same physical unit) keeps the gate correctly reporting the original
 # disk still missing — the same fast path the missing-disk boot already
-# takes. That gap is real product behaviour outside this issue's own
-# scope (cmd/hoservad/, not scripts/vm/) and is reported, not fixed,
-# here — see this commit's own message.
+# takes.
 #
 # Failing loudly here must never cascade into later steps (the #372
 # lesson run-l3-suite.sh's own header already names): trap
@@ -360,24 +379,13 @@ DISK1_REPLACEMENT_XML_FILE="$VM_STATE_DIR/disk-yank-check-disk1-replacement.xml"
   # ("disk1repl-", still matching every later step's own "-hoserva-
   # $HOSERVA_LAB_ID" and "disk*-hoserva-..." filters, e.g. array-sequence-
   # check.sh's) — matching a real disk swap, which is never the same
-  # physical unit. Confirmed empirically (this issue's own second round,
-  # nightly run 36236553908): reusing the original's own serial here
-  # left the replacement's *identity* matching what disk.StorageGate
-  # already expects for this slot while its filesystem does not,  so the
-  # gate read the array whole and let hoservad's own storage-target boot
-  # ordering (cmd/hoservad/storagetarget.go) attempt to mount /mnt/disk1
-  # by its old, now-nonexistent filesystem UUID — a mount that can never
-  # succeed, blocking hoservad's own startup ahead of its Type=notify
-  # READY=1 long enough for systemd's own TimeoutStartSec (90s) to kill
-  # it first, in a permanent kill-and-restart loop the daemon can never
-  # get out of on its own. A distinct serial keeps the gate correctly
-  # reporting the original disk still missing, exactly the fast,
-  # already-proven path this script's own missing-disk boot (above)
-  # takes — confirmed empirically to bring hoservad back within seconds,
-  # never the 90s+ hang a shared identity causes. This is a real
-  # cmd/hoservad/storagetarget.go gap outside this issue's own scope,
-  # reported separately (see this commit's own message) rather than
-  # fixed here.
+  # physical unit. See this script's own header comment (#388) for why a
+  # same-serial blank replacement is not exercised here: hoservad no
+  # longer restart-loops over one (the mount bound is unconditional), but
+  # neither the storage gate nor GetPool can positively tell a genuinely
+  # blank disk from one this build simply could not read a filesystem UUID
+  # for, without opening the device — which disk.Provider.List() must never
+  # do (doc 02 §1, Q13).
   echo "  <serial>disk1repl-hoserva-$HOSERVA_LAB_ID</serial>"
   echo "  <address type='pci' domain='0x0000' bus='0x00' slot='0x$DISK1_SLOT' function='0x0'/>"
   echo "</disk>"

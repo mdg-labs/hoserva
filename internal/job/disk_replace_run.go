@@ -44,7 +44,11 @@ type DiskReplaceDeps struct {
 // the slot's own recorded disk is still mounted or still present in
 // inventory by identity (ConfirmReplacementTargetAbsent, doc 02 §4 steps
 // 1-2 — a disk that has not actually failed or been removed is not this
-// job's job, #289), formats or adopts the replacement through
+// job's job, #289) unless that disk is the replacement target itself and
+// its filesystem was positively read to differ from the slot's own
+// recorded one — #388's own "wrong filesystem" scenario, where this job's
+// replace target is exactly the disk the user is asking to be
+// reconstructed onto — formats or adopts the replacement through
 // disk.FormatForAddition at the failed disk's own mountpoint, re-points
 // that slot's array_disks row at the replacement's identity
 // (store.ReplaceDataDisk, or store.ReplaceDataDiskAbandoningRemoval when
@@ -126,7 +130,7 @@ func RunDiskReplace(d DiskReplaceDeps) RunFunc {
 		if err := ValidateDiskReplacement(disks, params.Mountpoint, target, params.Sizes); err != nil {
 			return err
 		}
-		if err := ConfirmReplacementTargetAbsent(params.Mountpoint, oldDisk, listed); err != nil {
+		if err := ConfirmReplacementTargetAbsent(params.Mountpoint, oldDisk, listed, target.Device); err != nil {
 			return err
 		}
 
