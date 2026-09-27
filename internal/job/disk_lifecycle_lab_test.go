@@ -163,23 +163,6 @@ func resetBootContentDir(t *testing.T) {
 	}
 }
 
-// blkidTypeProbe reads dev's filesystem type by direct probe (`blkid -p`),
-// bypassing whatever cached scan result blkidType's own plain `blkid`
-// invocation would otherwise return. This lab container has no udev
-// (doc 06 §3), so nothing invalidates blkid's cache when a loop device is
-// detached and a different, freshly created image is immediately attached
-// to the same, just-freed minor number (createLoopImage's own
-// disk_run_lab_test.go cleanup runs `losetup -d` at the end of every
-// test) — a plain `blkid` on that reused minor can report the *previous*
-// occupant's filesystem for a device this test has confirmed, by reading
-// its raw bytes directly, is genuinely still all zero. A refusal test's
-// own "nothing was formatted" assertion needs the direct read, not the
-// stale scan.
-func blkidTypeProbe(ctx context.Context, r disk.Runner, dev string) string {
-	out, _ := r.Run(ctx, "blkid", "-p", "-s", "TYPE", "-o", "value", dev)
-	return strings.TrimSpace(string(out))
-}
-
 // assertOwnLoopDevice confirms dev is genuinely the loop device backing
 // img — CLAUDE.md's own safety check before detaching anything, never
 // losetup -D.
@@ -374,7 +357,7 @@ func TestLabDiskReplace_RefusesWhileSlotDiskStillMounted(t *testing.T) {
 		t.Fatalf("ErrorMessage = %q, want a still-mounted refusal", finished.ErrorMessage)
 	}
 
-	if got := blkidTypeProbe(ctx, execRunner, replacementDev); got != "" {
+	if got := blkidType(ctx, execRunner, replacementDev); got != "" {
 		t.Fatalf("replacement %s gained a filesystem (%q) — a refused replace must format nothing", replacementDev, got)
 	}
 

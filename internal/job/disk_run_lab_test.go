@@ -112,13 +112,24 @@ func loopStillBacksImage(t *testing.T, dev, img string) bool {
 	return gotImg == wantImg
 }
 
+// blkidType reads dev's filesystem type by direct probe (`blkid -p`)
+// rather than trusting libblkid's cache. This lab container has no udev
+// (doc 06 §3), so nothing invalidates that cache when a loop device is
+// detached and a different, freshly created image is immediately
+// attached to the same, just-freed minor number — a plain `blkid` on
+// that reused minor can report the *previous* occupant's filesystem for
+// a device this test has confirmed, by reading its raw bytes directly,
+// is genuinely something else (#399).
 func blkidType(ctx context.Context, r disk.Runner, dev string) string {
-	out, _ := r.Run(ctx, "blkid", "-s", "TYPE", "-o", "value", dev)
+	out, _ := r.Run(ctx, "blkid", "-p", "-s", "TYPE", "-o", "value", dev)
 	return strings.TrimSpace(string(out))
 }
 
+// blkidUUID reads dev's filesystem UUID by direct probe (`blkid -p`) for
+// the same reason blkidType does (#399): libblkid's cache can still name
+// a previous occupant of a reused loop minor.
 func blkidUUID(ctx context.Context, r disk.Runner, dev string) string {
-	out, _ := r.Run(ctx, "blkid", "-s", "UUID", "-o", "value", dev)
+	out, _ := r.Run(ctx, "blkid", "-p", "-s", "UUID", "-o", "value", dev)
 	return strings.TrimSpace(string(out))
 }
 
