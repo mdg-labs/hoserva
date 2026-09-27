@@ -85,6 +85,7 @@ existing line by adding its PR number.
 - **identity** — first match taken when several candidates match (a weak-identity disk and its clone), or a stale path reported beside the disk that now holds it, so one record appears twice — PR 337
 - **accounting** — capacity tracked per consumer (per share) instead of per filesystem, or a negative headroom summed into a total, so a plan overcommits or wrongly refuses — PR 337
 - **planning** — planner and post-check disagree on which entries count (the planner skips symlinks or all of lost+found, the post-check rejects them), so the refusal comes only after all the work, on every retry — PR 337, 394
+- **validation** — a list input split in a way that silently drops entries (bash `read` stops at the first newline and drops a trailing empty field) instead of refusing the malformed input — PR 403
 
 ## Security
 - **security** — host or URL checked by substring instead of parsed host; redirects not validated — PR 201, 228
@@ -93,7 +94,7 @@ existing line by adding its PR number.
 - **security** — user or state values written into a config format without escaping control characters — PR 254
 
 ## Tests
-- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record) — PR 159, 163, 231, 337
+- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open") — PR 159, 163, 231, 337, 403
 - **tests** — unsynchronized read of state written by another goroutine — PR 166, 246
 - **tests** — exact equality between two separately sampled system values — PR 236
 - **tests** — parallel labs compile test binaries into one directory, so one lab replaces another's binary — PR 344
@@ -113,3 +114,5 @@ existing line by adding its PR number.
 - **platform** — exports(5) default-options field (`-opts`) stored as a client host — PR 344
 - **platform** — `[[ -e path ]]` is false for a dangling symlink, so a script that then creates the path fails on it; test `-L` too — PR 382
 - **platform** — systemd `systemctl stop` of a busy mount reports a failed job without EBUSY text, so a retry that matches only strerror never runs — PR 344
+- **platform** — a filesystem path concatenated into a URI or DSN (SQLite `file:`) unescaped, so a `?`, `#` or `%` in it opens a different file and drops the query options — PR 403
+- **platform** — GitHub Actions: a job `timeout-minutes` at or below a step timeout it contains, so the job backstop cancels a step still inside its own bound — PR 403
