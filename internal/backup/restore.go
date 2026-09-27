@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 
 	sqlite "modernc.org/sqlite"
 )
@@ -56,7 +57,11 @@ func RestoreDatabase(ctx context.Context, db *sql.DB, srcPath string) error {
 		if !ok {
 			return fmt.Errorf("restoring database: driver connection does not support the online backup API")
 		}
-		b, err := r.NewRestore("file:" + srcPath + "?mode=ro")
+		// Built with net/url so a '?', '#' or '%' in srcPath is escaped
+		// rather than read by SQLite as a URI delimiter — unescaped, it
+		// opens a different (empty) file and restores that over db.
+		src := url.URL{Scheme: "file", Path: srcPath, RawQuery: "mode=ro"}
+		b, err := r.NewRestore(src.String())
 		if err != nil {
 			return fmt.Errorf("starting restore: %w", err)
 		}

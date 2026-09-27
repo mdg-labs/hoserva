@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -101,6 +102,58 @@ func TestRestoreDatabase_LivePoolSeesRestoredContentImmediately(t *testing.T) {
 	}
 	if v != "restored" {
 		t.Fatalf("read after restart = %q, want %q", v, "restored")
+	}
+}
+
+// TestRestoreDatabase_SourcePathWithURIDelimiters restores from a path
+// holding every character a SQLite URI treats specially ('?', '#', '%'):
+// srcPath must reach SQLite as that exact file, not be cut at the first
+// '?' or have its '%' decoded into a different name. ImportConfig stages
+// the file under os.MkdirTemp, whose prefix TMPDIR controls.
+func TestRestoreDatabase_SourcePathWithURIDelimiters(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", dsnWAL(filepath.Join(dir, "live.db")))
+	if err != nil {
+		t.Fatalf("opening live database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.ExecContext(ctx, "CREATE TABLE t (v TEXT)"); err != nil {
+		t.Fatalf("creating table: %v", err)
+	}
+
+	plainSrc := filepath.Join(dir, "src.db")
+	src, err := sql.Open("sqlite", plainSrc)
+	if err != nil {
+		t.Fatalf("opening source database: %v", err)
+	}
+	if _, err := src.ExecContext(ctx, "CREATE TABLE t (v TEXT)"); err != nil {
+		t.Fatalf("creating source table: %v", err)
+	}
+	if _, err := src.ExecContext(ctx, "INSERT INTO t (v) VALUES ('restored')"); err != nil {
+		t.Fatalf("seeding source row: %v", err)
+	}
+	if err := src.Close(); err != nil {
+		t.Fatalf("closing source database: %v", err)
+	}
+	oddDir := filepath.Join(dir, "a?b#c%41d")
+	if err := os.Mkdir(oddDir, 0o700); err != nil {
+		t.Fatalf("creating source directory: %v", err)
+	}
+	srcPath := filepath.Join(oddDir, "state.db")
+	if err := os.Rename(plainSrc, srcPath); err != nil {
+		t.Fatalf("moving source database: %v", err)
+	}
+
+	if err := RestoreDatabase(ctx, db, srcPath); err != nil {
+		t.Fatalf("RestoreDatabase(%q): %v", srcPath, err)
+	}
+	var v string
+	if err := db.QueryRowContext(ctx, "SELECT v FROM t").Scan(&v); err != nil {
+		t.Fatalf("reading restored row: %v", err)
+	}
+	if v != "restored" {
+		t.Fatalf("restored row = %q, want %q", v, "restored")
 	}
 }
 
