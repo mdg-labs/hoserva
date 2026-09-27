@@ -116,6 +116,9 @@ jobs:
       - name: Check every L3 step is in exactly one nightly-l3.yml group
         run: scripts/vm/l3-group-coverage-check.sh
 
+      - name: Check a malformed l3_steps selection is refused
+        run: scripts/vm/l3-step-selection-check.sh
+
       - name: Build this run's matrix
         id: matrix
         env:

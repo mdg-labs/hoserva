@@ -157,6 +157,12 @@ l3_resolve_steps() {
     wanted=("${L3_STEP_ORDER[@]}")
   else
     local id
+    # `read` stops at the first newline and drops a trailing empty field,
+    # so a multi-line or empty-entry selection would otherwise silently
+    # lose ids rather than be refused (l3-step-selection-check.sh).
+    [[ "$requested" != *[$'\n\r']* ]] || die "L3_STEPS must be one comma-separated line — got a line break"
+    [[ "$requested" != ,* && "$requested" != *, && "$requested" != *,,* ]] ||
+      die "L3_STEPS has an empty comma-separated entry: '$requested'"
     IFS=',' read -ra wanted <<<"$requested"
     for id in "${wanted[@]}"; do
       l3_step_known "$id" || die "unknown L3 step id '$id' — valid ids: ${L3_STEP_ORDER[*]}"
