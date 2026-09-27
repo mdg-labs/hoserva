@@ -46,9 +46,20 @@ func (s *Service) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Packed into a directory private to this run — not staging, which
+	// packArchive is about to walk, and not a name derived only from now,
+	// which two runs in the same minute would compute identically and
+	// race on (#405). buildArtifacts derives the encrypted archive and
+	// identity sidecar paths from archivePath's own directory, so this
+	// also isolates those.
+	archiveDir, err := os.MkdirTemp("", "hoserva-config-archive-*")
+	if err != nil {
+		return fmt.Errorf("creating archive directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(archiveDir) }()
+
 	name := archiveName(now)
-	archivePath := filepath.Join(os.TempDir(), name)
-	defer func() { _ = os.Remove(archivePath) }()
+	archivePath := filepath.Join(archiveDir, name)
 	if err := packArchive(staging, archivePath); err != nil {
 		return fmt.Errorf("packing archive: %w", err)
 	}
@@ -73,12 +84,13 @@ func (s *Service) Run(ctx context.Context) error {
 		writePath, writeName := archivePath, name
 		if dest.Encrypt {
 			if artifacts == nil {
+				// Written into archiveDir (both derived from archivePath's
+				// own directory), so archiveDir's own deferred removal
+				// above covers these too.
 				artifacts, err = s.buildArtifacts(archivePath, passphrase)
 				if err != nil {
 					return fmt.Errorf("encrypting archive for destination %q: %w", dest.ID, err)
 				}
-				defer func() { _ = os.Remove(artifacts.ArchivePath) }()
-				defer func() { _ = os.Remove(artifacts.SidecarPath) }()
 			}
 			writePath, writeName = artifacts.ArchivePath, filepath.Base(artifacts.ArchivePath)
 			if err := writeArchive(dest, artifacts.SidecarPath); err != nil {

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -366,6 +368,218 @@ func TestService_RunFailsClosedWhenEncryptRequestedWithoutRecipient(t *testing.T
 
 	if err := svc.Run(ctx); err == nil {
 		t.Fatal("expected Run to fail when Encrypt is requested with no onboarding recipient available")
+	}
+}
+
+// runConcurrentServices starts len(svcs) Service.Run calls together (a
+// closed start gate maximizes their overlap) and returns each call's
+// error, in order.
+func runConcurrentServices(svcs []*Service) []error {
+	errs := make([]error, len(svcs))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, svc := range svcs {
+		wg.Add(1)
+		go func(i int, svc *Service) {
+			defer wg.Done()
+			<-start
+			errs[i] = svc.Run(context.Background())
+		}(i, svc)
+	}
+	close(start)
+	wg.Wait()
+	return errs
+}
+
+// TestService_RunConcurrentRunsDoNotShareArchivePath proves two Run calls
+// that land on the same minute (issue #405) each get their own destination
+// archive rather than racing on a shared, minute-keyed temp path: before
+// the fix, every run computes the identical filepath.Join(os.TempDir(),
+// archiveName(now)), so a later run's packArchive rename or a finishing
+// run's defer os.Remove can hand one destination another host's archive,
+// or fail one run outright with "no such file or directory". TMPDIR is
+// pointed at a directory this test owns exclusively (created before the
+// Setenv so the test's own t.TempDir() scratch space is unaffected), so
+// the final os.ReadDir proves Run leaves nothing behind — on the unfixed
+// code that assertion fails too, since two runs finishing seconds apart
+// still overwrite rather than clean up after each other's shared path.
+func TestService_RunConcurrentRunsDoNotShareArchivePath(t *testing.T) {
+	const runs = 8
+	now := time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+
+	type run struct {
+		host      string
+		destDir   string
+		verifyDir string
+	}
+	plan := make([]run, runs)
+	svcs := make([]*Service, runs)
+	for i := 0; i < runs; i++ {
+		host := fmt.Sprintf("host-%d", i)
+		destDir := filepath.Join(root, host)
+		db := openTestDB(t)
+		paths, _ := testLayout(t)
+		plan[i] = run{host: host, destDir: destDir, verifyDir: t.TempDir()}
+		svcs[i] = &Service{
+			DB:    db,
+			Paths: paths,
+			Secrets: &FakeSecretSource{
+				Passphrase: "backup-pass",
+				HasPass:    true,
+			},
+			Cipher: FakeSecretCipher{},
+			Destinations: []Destination{{
+				ID:      host,
+				Path:    destDir,
+				Enabled: true,
+				Retention: Retention{
+					Daily:   7,
+					Weekly:  4,
+					Monthly: 6,
+				},
+			}},
+			Hostname: host,
+			Version:  "0.0.0-test",
+			Now:      func() time.Time { return now },
+		}
+	}
+
+	tmpRoot := t.TempDir()
+	t.Setenv("TMPDIR", tmpRoot)
+
+	for i, err := range runConcurrentServices(svcs) {
+		if err != nil {
+			t.Fatalf("Run for %q: %v", plan[i].host, err)
+		}
+	}
+
+	for _, r := range plan {
+		archivePath := filepath.Join(r.destDir, archiveName(now))
+		if err := unpackArchive(archivePath, r.verifyDir); err != nil {
+			t.Fatalf("unpackArchive for %q: %v", r.host, err)
+		}
+		manifest, err := readManifest(filepath.Join(r.verifyDir, "manifest.json"))
+		if err != nil {
+			t.Fatalf("readManifest for %q: %v", r.host, err)
+		}
+		if manifest.Host != r.host {
+			t.Fatalf("destination %q received host %q's archive, want %q", r.destDir, manifest.Host, r.host)
+		}
+	}
+
+	leftover, err := os.ReadDir(tmpRoot)
+	if err != nil {
+		t.Fatalf("reading TMPDIR: %v", err)
+	}
+	if len(leftover) != 0 {
+		names := make([]string, len(leftover))
+		for i, e := range leftover {
+			names[i] = e.Name()
+		}
+		t.Fatalf("TMPDIR not clean after concurrent runs: %v", names)
+	}
+}
+
+// TestService_RunConcurrentEncryptRunsDoNotShareArchivePath is the same
+// race, exercised through the Encrypt destination path: buildArtifacts
+// derives the encrypted archive and identity sidecar paths from
+// archivePath itself (archivePath+".age", +identitySidecarSuffix), so if
+// archivePath is shared, those derived paths are too.
+func TestService_RunConcurrentEncryptRunsDoNotShareArchivePath(t *testing.T) {
+	// Kept small: each run's buildArtifacts pays a real scrypt cost, and
+	// this test is exercised with -race -count=20.
+	const runs = 3
+	now := time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+
+	recipient, err := LoadOrGenerateRecipient(context.Background(), FakeSecretCipher{}, &FakeRecipientStore{}, nil)
+	if err != nil {
+		t.Fatalf("LoadOrGenerateRecipient: %v", err)
+	}
+
+	type run struct {
+		host      string
+		destDir   string
+		verifyDir string
+	}
+	plan := make([]run, runs)
+	svcs := make([]*Service, runs)
+	for i := 0; i < runs; i++ {
+		host := fmt.Sprintf("host-%d", i)
+		destDir := filepath.Join(root, host)
+		db := openTestDB(t)
+		paths, _ := testLayout(t)
+		plan[i] = run{host: host, destDir: destDir, verifyDir: t.TempDir()}
+		svcs[i] = &Service{
+			DB:    db,
+			Paths: paths,
+			Secrets: &FakeSecretSource{
+				Passphrase: "backup-pass",
+				HasPass:    true,
+			},
+			Cipher:    FakeSecretCipher{},
+			Recipient: recipient,
+			Destinations: []Destination{{
+				ID:      host,
+				Path:    destDir,
+				Enabled: true,
+				Encrypt: true,
+				Retention: Retention{
+					Daily:   7,
+					Weekly:  4,
+					Monthly: 6,
+				},
+			}},
+			Hostname: host,
+			Version:  "0.0.0-test",
+			Now:      func() time.Time { return now },
+		}
+	}
+
+	tmpRoot := t.TempDir()
+	t.Setenv("TMPDIR", tmpRoot)
+
+	for i, err := range runConcurrentServices(svcs) {
+		if err != nil {
+			t.Fatalf("Run for %q: %v", plan[i].host, err)
+		}
+	}
+
+	for _, r := range plan {
+		encPath := filepath.Join(r.destDir, archiveName(now)+".age")
+		sidecarPath := encPath + identitySidecarSuffix
+		got, err := decryptArchiveWithPassphrase(encPath, sidecarPath, "backup-pass")
+		if err != nil {
+			t.Fatalf("decryptArchiveWithPassphrase for %q: %v", r.host, err)
+		}
+		decrypted := filepath.Join(r.verifyDir, "decrypted.tar.zst")
+		if err := os.WriteFile(decrypted, got, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(r.verifyDir, "out")
+		if err := unpackArchive(decrypted, out); err != nil {
+			t.Fatalf("unpackArchive for %q: %v", r.host, err)
+		}
+		manifest, err := readManifest(filepath.Join(out, "manifest.json"))
+		if err != nil {
+			t.Fatalf("readManifest for %q: %v", r.host, err)
+		}
+		if manifest.Host != r.host {
+			t.Fatalf("destination %q received host %q's archive, want %q", r.destDir, manifest.Host, r.host)
+		}
+	}
+
+	leftover, err := os.ReadDir(tmpRoot)
+	if err != nil {
+		t.Fatalf("reading TMPDIR: %v", err)
+	}
+	if len(leftover) != 0 {
+		names := make([]string, len(leftover))
+		for i, e := range leftover {
+			names[i] = e.Name()
+		}
+		t.Fatalf("TMPDIR not clean after concurrent runs: %v", names)
 	}
 }
 
