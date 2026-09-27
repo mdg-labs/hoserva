@@ -79,11 +79,11 @@ func (u StorageReadyUnit) Render() string {
 }
 
 // StorageTargetUnit is hoserva-storage.target's own generated content. The
-// disk mount units get only Wants=/After= — deliberately soft, not
-// Requires= — because a hard Requires= directly on them would make a
-// single missing disk's failed .mount unit block the target from ever
-// activating, even after the user explicitly acknowledges the degraded
-// state (Q69), and overriding a systemd Requires= failure needs
+// disk mount units get only a soft Wants=/After=, never Requires() —
+// deliberately not Requires=, because a hard Requires= directly on them
+// would make a single missing disk's failed .mount unit block the target
+// from ever activating, even after the user explicitly acknowledges the
+// degraded state (Q69), and overriding a systemd Requires= failure needs
 // `--job-mode=ignore-dependencies` on every start, repeated forever.
 // StorageReadyUnitName is the actual gate: a hard Requires=/After= on
 // hoserva-storage-ready.service, the hoservad-owned oneshot that succeeds
@@ -92,6 +92,31 @@ func (u StorageReadyUnit) Render() string {
 // unacknowledged — Wants=/After= on the disk mounts alone only orders
 // services after whatever mounts happen to exist, without ever vetoing
 // the start.
+//
+// Wants=, not just After= (#387, raised by L3 nightly runs 36258823325
+// and 36264953516, reversing an intermediate fix from 36250289714's own
+// finding): a systemd Wants= is pulled into a transaction unconditionally
+// — confirmed empirically to remount a physical data disk as a side
+// effect of a refused dependent-service start during maintenance, which
+// is why an earlier round of this same issue dropped it. But every
+// generated disk mount unit (disk.MountUnit.Render) now carries its own
+// ConditionPathExists=!disk.StorageStoppedFlagPath, so a start reaching
+// it through *this* Wants= — or through any other edge entirely outside
+// Hoserva's own units, such as nfs-utils' own RequiresMountsFor= on
+// nfs-server.service for an NFS-exported share — is skipped, not merely
+// refused, whenever the array is genuinely stopped. With that condition
+// doing the actual gating, After= alone is not enough here: hoservad
+// itself never mounts a disk on its own initiative outside an explicit
+// `array start` (doc 02 §4) — a guest that crashes or loses power while
+// the array was simply running, never stopped, comes back up with every
+// generated mount unit's own condition satisfied (the flag was never
+// written), and only Wants= actually asks systemd to bring each disk back
+// on that ordinary boot; confirmed empirically against a real guest
+// destroy-and-reboot: with only After= here, the data disks and the
+// catch-all still came back (pulled by an NFS-exported share's own
+// RequiresMountsFor=, untouched by this type), but parity — never
+// referenced by any share — did not, and the next sync then failed
+// outright for want of its own parity file's mount.
 type StorageTargetUnit struct {
 	DiskMountUnits []string // e.g. "mnt-disk1.mount", "mnt-parity1.mount", "mnt-cache.mount"
 }

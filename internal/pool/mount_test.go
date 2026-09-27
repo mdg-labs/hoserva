@@ -3,6 +3,8 @@ package pool
 import (
 	"strings"
 	"testing"
+
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 func TestMount_Render(t *testing.T) {
@@ -19,6 +21,7 @@ func TestMount_Render(t *testing.T) {
 
 	for _, want := range []string{
 		"Description=Hoserva share movies",
+		"ConditionPathExists=!" + disk.StorageStoppedFlagPath,
 		"RequiresMountsFor=/mnt/user /mnt/cache /mnt/disk1",
 		"What=/mnt/cache/movies=RW:/mnt/disk1/movies=NC",
 		"Where=/mnt/user/movies",
@@ -28,6 +31,25 @@ func TestMount_Render(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Render() = %q, want it to contain %q", got, want)
 		}
+	}
+}
+
+// TestMount_Render_ConditionSkipsAnExternalStartWhileArrayStopped is
+// #387's own regression (L3 nightly run 36258823325) — see
+// disk.StorageStoppedFlagPath's own doc comment for the full mechanism.
+func TestMount_Render_ConditionSkipsAnExternalStartWhileArrayStopped(t *testing.T) {
+	m := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
+	got := m.Render()
+	wantLine := "ConditionPathExists=!" + disk.StorageStoppedFlagPath
+	found := false
+	for _, line := range strings.Split(got, "\n") {
+		if line == wantLine {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Render() = %q, want a line exactly %q", got, wantLine)
 	}
 }
 

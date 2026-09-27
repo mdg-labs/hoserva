@@ -14,6 +14,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/pool"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // storageTargetCommand is the `hoserva <command>` newArraySequence's own
@@ -43,6 +44,21 @@ type storageTargetSync struct {
 	// FlagPath overrides pool.StorageReadyFlagPath — set only by this
 	// package's own tests, never in production.
 	FlagPath string
+	// StoppedFlagPath is disk.StorageStoppedFlagPath in production
+	// (main.go sets it explicitly) and a temp path in every test (#387):
+	// unlike FlagPath above, this has no silent fallback —
+	// a test that forgot to set it would otherwise delete or write the
+	// real host's array-stopped flag under /var/lib/hoserva the moment it
+	// called Startup, Close or Open (CLAUDE.md: never touch that path
+	// from a test).
+	StoppedFlagPath string
+	// ArrayStore and ShareStore, when set, let Startup regenerate every
+	// managed disk and pool mount unit from SQLite before evaluating
+	// readiness (#387) — nil only in this package's own tests,
+	// which use job.ArraySequence fakes with nothing in SQLite to
+	// regenerate from; production (main.go) always sets both.
+	ArrayStore *store.ArrayStore
+	ShareStore *store.ShareStore
 	// PoolMounted overrides pool.IsMountedConfirmed — set only by this
 	// package's own tests, never in production.
 	PoolMounted func(path string) (bool, error)
@@ -78,6 +94,27 @@ func mountPool(ctx context.Context, seq *job.ArraySequence) error {
 	for _, m := range seq.ShareMounts {
 		if err := m.Mount(ctx); err != nil {
 			return fmt.Errorf("mounting %s: %w", m.Where(), err)
+		}
+	}
+	return nil
+}
+
+// mountArrayDisks brings every physical disk mount seq describes up
+// through its own mount unit — Startup's own call, before mountPool
+// (#387). Ordinarily nofail mounts a disk automatically the
+// moment its own device appears, well ahead of this call; this exists for
+// the boot where that never happened, because the array-stopped condition
+// flag (disk.StorageStoppedFlagPath) was still set from before this
+// boot's own reconciliation (already run above, ahead of this call) —
+// that skips the disk's automatic activation silently, in the very same
+// boot-time systemd transaction, and nothing else ever retries it.
+// `systemctl start` on an already-active unit is a no-op (confirmed
+// against a real systemd), so calling this on a disk that is already
+// mounted costs nothing.
+func mountArrayDisks(ctx context.Context, seq *job.ArraySequence) error {
+	for _, d := range seq.Disks {
+		if err := d.Mount(ctx); err != nil {
+			return fmt.Errorf("mounting %s: %w", d.Where(), err)
 		}
 	}
 	return nil
@@ -173,6 +210,44 @@ func (s *storageTargetSync) setFlagReady() error {
 	return nil
 }
 
+// stoppedFlagPath returns s.StoppedFlagPath as set — main.go sets it to
+// disk.StorageStoppedFlagPath for production, and every test sets it to a
+// temp path (#387). Deliberately no fallback: a caller that
+// forgot to set it gets an empty path, which os.WriteFile/os.Remove
+// refuse outright, rather than silently defaulting to the real host path.
+func (s *storageTargetSync) stoppedFlagPath() string {
+	return s.StoppedFlagPath
+}
+
+// setStoppedFlag creates the array-stopped condition flag (#387): every
+// generated mount unit carries ConditionPathExists=! this path, so a
+// start any of them receives while it exists — including one an edge
+// entirely outside Hoserva's own units reaches, like nfs-utils' own
+// RequiresMountsFor= on nfs-server.service for an NFS-exported path — is
+// skipped as a no-op rather than remounting a disk the user may be
+// mid-swap on.
+func (s *storageTargetSync) setStoppedFlag() error {
+	path := s.stoppedFlagPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte("stopped\n"), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
+}
+
+// clearStoppedFlag removes the array-stopped condition flag; an
+// already-absent flag is success. Called by Open (`array start`, before
+// it mounts anything) and by Startup when persisted maintenance state
+// says the array is not stopped.
+func (s *storageTargetSync) clearStoppedFlag() error {
+	if err := os.Remove(s.stoppedFlagPath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing %s: %w", s.stoppedFlagPath(), err)
+	}
+	return nil
+}
+
 // diskMountUnitNames is every physical disk mount unit's file name seq
 // carries, for hoserva-storage.target's own soft Wants=/After= ordering.
 func diskMountUnitNames(seq *job.ArraySequence) []string {
@@ -190,7 +265,7 @@ func gateReady(seq *job.ArraySequence) bool {
 // Ready reports whether this sync's own not-ready→ready transition has
 // actually run — the same s.ready this type already tracks internally to
 // tell an unchanged rebuild from a real transition, exposed for
-// api.Handler.StorageServicesReleased (#385 finding 2). Unlike
+// api.Handler.StorageServicesReleased (#385). Unlike
 // disk.StorageGate.Ready(), which flips the moment Acknowledge succeeds,
 // this only ever reports true once mountAndConfirmPool has actually
 // confirmed the pool and startDependents has run — never on the
@@ -255,10 +330,11 @@ func (s *storageTargetSync) writeUnits(ctx context.Context, units []string) erro
 // While the array is in maintenance mode (an explicit `array stop`,
 // §4/Q70) this mounts nothing and leaves the gate closed instead, even
 // with every disk present: a hoservad that restarts mid-swap must not
-// remount storage the user explicitly took down. Maintenance mode is an
-// in-memory Scheduler field, not persisted (#387), so this check only
-// ever protects within one process's own lifetime — it does not by
-// itself survive a hoservad restart; closing that gap is #387's own job.
+// remount storage the user explicitly took down. Maintenance mode is
+// persisted in SQLite (#387) and restored by main.go's own call to
+// Scheduler.RestorePersistedMaintenance before this runs, so this check
+// holds across a crash, a restart, or a reboot, not only within the
+// process that entered it.
 //
 // main.go calls notifySystemdReady regardless of whether this returns an
 // error: withholding READY=1 buys no safety here (the flag is already
@@ -279,6 +355,35 @@ func (s *storageTargetSync) Startup(ctx context.Context, seq *job.ArraySequence)
 	if err := s.clearFlag(); err != nil {
 		return err
 	}
+	// The array-stopped condition flag (#387) must reflect persisted
+	// maintenance state before writeUnits below regenerates any mount
+	// unit and before anything can race a start against it: a crash or
+	// restart while the array was stopped this way must come back with
+	// every generated mount unit still gated, not only the readiness
+	// unit — RestorePersistedMaintenance (main.go) has already run by the
+	// time this does, so InMaintenance() here reflects that persisted row,
+	// not just this process's own in-memory history.
+	inMaintenance := seq.Scheduler != nil && seq.Scheduler.InMaintenance()
+	if inMaintenance {
+		if err := s.setStoppedFlag(); err != nil {
+			return err
+		}
+	} else if err := s.clearStoppedFlag(); err != nil {
+		return err
+	}
+	// Regenerating every managed disk and pool mount unit from SQLite
+	// (#387) runs here, after the array-stopped flag above is
+	// already correct and before writeUnits below reloads systemd: an
+	// array or a share created before ConditionPathExists=!
+	// disk.StorageStoppedFlagPath existed in disk.MountUnit.Render/
+	// pool.Mount.Render left its own unit condition-less forever, since
+	// array creation, a share mutation, and the disk add/replace/upgrade
+	// flows are the only other writers of those files, and none of them
+	// runs again on a plain restart or package upgrade of an otherwise
+	// untouched array.
+	if err := s.regenerateArrayMounts(ctx); err != nil {
+		return fmt.Errorf("regenerating disk and pool mount units from SQLite: %w", err)
+	}
 	units := diskMountUnitNames(seq)
 	if err := s.writeUnits(ctx, units); err != nil {
 		return err
@@ -287,10 +392,20 @@ func (s *storageTargetSync) Startup(ctx context.Context, seq *job.ArraySequence)
 	switch {
 	case !ready:
 		// leave the flag cleared
-	case seq.Scheduler != nil && seq.Scheduler.InMaintenance():
+	case inMaintenance:
 		log.Printf("hoservad: storage gate is ready but the array is in maintenance mode at startup — leaving Samba/NFS/Docker/libvirt gated closed until array start")
 		ready = false
 	default:
+		// mountArrayDisks (#387) runs before mountAndConfirmPool:
+		// a boot where the array-stopped flag was still set from before this
+		// boot's own reconciliation above skipped every disk's automatic
+		// nofail activation silently, in the very same boot-time systemd
+		// transaction, and nothing else ever retries it — Startup must not
+		// assume that activation happened just because the gate now reports
+		// every expected disk present.
+		if err := mountArrayDisks(ctx, seq); err != nil {
+			return fmt.Errorf("mounting the array's own disks before reporting the storage gate ready: %w", err)
+		}
 		if err := s.mountAndConfirmPool(ctx, seq); err != nil {
 			return fmt.Errorf("mounting and confirming the pool before reporting the storage gate ready: %w", err)
 		}
@@ -300,6 +415,17 @@ func (s *storageTargetSync) Startup(ctx context.Context, seq *job.ArraySequence)
 	}
 	s.applied, s.ready, s.units = true, ready, units
 	return nil
+}
+
+// regenerateArrayMounts calls job.RegenerateArrayMountsFromStore against
+// s's own stores (#387). s.ArrayStore is nil only in this
+// package's own tests, which build seq from fakes with nothing in SQLite
+// to regenerate from; production (main.go) always sets both stores.
+func (s *storageTargetSync) regenerateArrayMounts(ctx context.Context) error {
+	if s.ArrayStore == nil {
+		return nil
+	}
+	return job.RegenerateArrayMountsFromStore(ctx, s.ArrayStore, s.ShareStore, s.Generator, time.Now())
 }
 
 // Update reflects a live topology or readiness change into the flag and,
@@ -341,7 +467,7 @@ func (s *storageTargetSync) Update(ctx context.Context, seq *job.ArraySequence) 
 }
 
 // UpdateOrError is Update's own not-ready→ready transition, reported to
-// the caller instead of only logged (#385 finding 3): AcknowledgeDegraded's
+// the caller instead of only logged (#385): AcknowledgeDegraded's
 // own hook has just promised the user services are starting, so silently
 // returning success while maintenance mode or a mount failure left every
 // dependent exactly where it was would leave Samba, NFS, Docker and
@@ -433,7 +559,7 @@ func (s *storageTargetSync) updateTransition(ctx context.Context, seq *job.Array
 // already applies to Samba and NFS) rather than an unconditional
 // "systemctl start": a unit an admin disabled or masked on purpose (no
 // VMs or Apps, SMB-only sharing, ...) must never be started back up just
-// because the storage gate opened (#372 finding 5). Each dependent starts
+// because the storage gate opened (#372). Each dependent starts
 // independently, and a failure is only ever logged, never fatal to the
 // caller's own transition: Docker and libvirt are optional prerequisites
 // (D8, doc 14) a given host may not have installed at all, and a
@@ -450,7 +576,7 @@ func (s *storageTargetSync) startDependents(ctx context.Context) {
 }
 
 // ConfirmReady implements job.StorageTarget for job.ArraySequence.Start
-// (#372 finding 1): an explicit `array start` is the user's own action to
+// (#372): an explicit `array start` is the user's own action to
 // bring the array up, and Start calls this once its own Disks, CatchAll
 // and ShareMounts are all mounted and confirmed — before it starts any
 // ArrayService — so `systemctl start nfs-kernel-server.service` (that
@@ -460,8 +586,8 @@ func (s *storageTargetSync) startDependents(ctx context.Context) {
 // 02 §4 E4-E6), or a degraded boot followed by `array stop`/`array
 // start`. Unlike Update, it never defers to maintenance mode: Start's own
 // caller is still nominally "in maintenance" at the point this runs
-// (Start only calls Scheduler.ExitMaintenance once every one of its own
-// steps, including this one, has succeeded), so that is this
+// (Start only calls Scheduler.ExitMaintenanceChecked once every one of
+// its own steps, including this one, has succeeded), so that is this
 // transition's own starting point, not a reason to leave the gate
 // closed. It never mounts the pool itself — Start's own Disks/CatchAll/
 // ShareMounts loops, immediately before this call, already did — so it
@@ -486,6 +612,137 @@ func (s *storageTargetSync) ConfirmReady(ctx context.Context, seq *job.ArraySequ
 	s.startDependents(ctx)
 	s.units, s.ready, s.applied = units, true, true
 	return nil
+}
+
+// dependentServicesOutsideArraySequence is pool.DependentServiceUnits
+// without Samba and NFS: those two already stop and start through
+// job.ArraySequence's own Services list (#309, doc 02 §4's "Samba and NFS
+// stop"/"start" step). Docker and libvirt read the pool the same way
+// (#387, doc 02 §1, Q70) but were never added to that list, so Close
+// below is their only stop.
+var dependentServicesOutsideArraySequence = []string{"docker.service", "libvirtd.service"}
+
+// Close implements job.StorageTarget for job.ArraySequence.Stop, and for
+// job.ArraySequence's own rollbackToStopped when a Start fails at or
+// after ConfirmReady (#387, #372):
+// hoserva-storage-ready.service is
+// RemainAfterExit=yes, so once it has ever succeeded it stays
+// "active (exited)" — satisfying hoserva-storage.target's own
+// Requires=/After= on it — regardless of what StorageReadyFlagPath says.
+// ArraySequence.Stop's own Services loop already stops Samba and NFS
+// directly, but neither that nor an unmount touches the gate unit itself,
+// so anything that later starts Samba or NFS during maintenance (an
+// unattended security update, a hand-run systemctl) still finds
+// hoserva-storage.target satisfied and serves the unmounted pool straight
+// off the boot disk. persist is the caller's own persist argument: only
+// persist=true (a user `array stop`, or rollbackToStopped undoing a
+// failed Start) sets the durable array-stopped condition flag
+// (disk.StorageStoppedFlagPath, #387) — every
+// generated mount unit carries ConditionPathExists=! that flag, which is
+// what actually keeps a mount from coming back during maintenance —
+// hoserva-storage.target's own Wants=/Requires= is not enough, because
+// nfs-utils' own systemd integration derives a RequiresMountsFor=
+// directly on nfs-server.service for every NFS-exported path, entirely
+// outside any edge Hoserva itself writes, and that reaches the exported
+// share's own mount unit — and, through its own RequiresMountsFor=, the
+// catch-all and every physical disk under it — regardless of
+// hoserva-storage.target's own state. persist=false (StopForShutdown, a
+// reboot or a UPS low-battery shutdown) never sets it: neither is a user
+// asking the array to stay stopped once the box comes back, and a flag
+// set here would fail every mount unit's own ConditionPathExists in the
+// boot-time systemd transaction that runs before hoservad is even
+// exec'd — long before Startup's own reconciliation from the (untouched)
+// persisted row could run. A flag already in force from an earlier
+// persisted stop is left exactly as it is either way: this never clears
+// it. Close then stops Docker and libvirt — the same enabled/masked-aware
+// ServiceUnitController startDependents already uses, mirrored for
+// stopping, since a refusal to stop must hold the sequence up exactly
+// like a refused Samba/NFS stop, not be skipped past on the way to
+// unmounting — then removes the runtime flag before it stops the gate
+// unit itself (#387): an smbd or
+// NFS start landing between the two steps (an unattended security
+// update, a hand-run systemctl) must find the flag already gone, so its
+// fixed `test -e` ExecStart fails on its own even before the unit stop
+// below reaches it — clearing the flag only after stopping the unit left
+// a window where that same start could still find the flag in place and
+// pass, immediately before Stop's own unmount served the boot disk
+// underneath it.
+func (s *storageTargetSync) Close(ctx context.Context, persist bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if persist {
+		if err := s.setStoppedFlag(); err != nil {
+			return err
+		}
+	}
+	for _, svc := range dependentServicesOutsideArraySequence {
+		ctrl := disk.ServiceUnitController{ServiceName: svc, Unit: svc, Runner: s.Runner}
+		if err := ctrl.Stop(ctx); err != nil {
+			return fmt.Errorf("stopping %s before closing the storage-target gate: %w", svc, err)
+		}
+	}
+	if err := s.clearFlag(); err != nil {
+		return err
+	}
+	readyGate := disk.ServiceUnitController{ServiceName: "storage-ready gate", Unit: pool.StorageReadyUnitName, Runner: s.Runner}
+	if err := readyGate.Stop(ctx); err != nil {
+		return fmt.Errorf("stopping %s: %w", pool.StorageReadyUnitName, err)
+	}
+	s.ready, s.applied = false, true
+	return nil
+}
+
+// Open implements job.StorageTarget for job.ArraySequence.Start (#387):
+// removes the array-stopped condition flag Close set, before Start ever
+// calls Mount on anything — every generated mount unit carries
+// ConditionPathExists=! that flag, so a start would otherwise find it
+// still set and silently skip, exactly like the external starts Close's
+// own flag exists to block.
+func (s *storageTargetSync) Open(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clearStoppedFlag()
+}
+
+// Reclose implements job.StorageTarget for job.ArraySequence.Start (#387):
+// restores the array-stopped condition flag Open removed, for a Start
+// that fails before ConfirmReady ever runs — a disk mount, UR9's own
+// disk-identity check, or a catch-all/share mount failure — while
+// maintenance mode (and SQLite's persisted row) stays on. Unlike Close, it
+// never stops a service and never touches the readiness flag or the gate
+// unit: nothing above those mount loops has started a service, a
+// dependent, or the gate itself at any point that calls this from there.
+// A Start failure at or after ConfirmReady normally never calls this
+// instead: ConfirmReady's own failure lands before it ever opens the gate
+// or starts Docker/libvirt, but by then every mount call Start's own
+// loops made has already succeeded and needs unmounting, which this
+// function alone never does. Once ConfirmReady has succeeded, the gate is
+// open and Docker/libvirt are running, so a Service Start failure or the
+// persisted exited-maintenance write failing happens with that gate open
+// (and any already-started Service still running). Either way
+// job.ArraySequence's own rollbackToStopped calls Close (persist=true)
+// there instead, which both restores this same flag and actually stops
+// whatever ConfirmReady or Services actually started, and unmounts
+// everything Start had already brought up. rollbackToStopped falls back
+// to calling this directly
+// whenever its own stopSequence returns an error — a service that fails
+// to stop, a failure inside Close itself, or an unmount failure after
+// Close has already succeeded — and Close is not the only place that
+// restores the flag: this fallback restores it on every such path. Where
+// that leaves the gate depends on how far stopSequence got: a service
+// that failed to stop before stopSequence ever reached Close, or a
+// failure inside Close itself — Close stops Docker then libvirt, clears
+// the readiness flag, and only then stops the gate unit, so any failure
+// before that last step returns with the gate still open — leaves the
+// gate open, with whatever is still running underneath it (Docker,
+// libvirt, a VM, a container, Samba or NFS) until an operator clears it
+// and retries; only an unmount failure, which runs after Close has
+// already returned nil, leaves the gate already closed.
+func (s *storageTargetSync) Reclose(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.setStoppedFlag()
 }
 
 func equalStringSlices(a, b []string) bool {

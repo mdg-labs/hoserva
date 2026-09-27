@@ -6,6 +6,69 @@ import (
 	"strings"
 )
 
+// StorageStoppedFlagPath is the durable flag a persisted, user-requested
+// `array stop` creates and `array start` removes (#387, raised by L3
+// nightly runs 36258823325 and 36264953516): every Hoserva-generated
+// mount unit — every physical disk/parity/cache mount here, and the
+// catch-all and every per-share mount (pool.Mount.Render) — carries
+// ConditionPathExists=!<this path>, so a start any of them ever receives
+// while it exists is skipped as a no-op, never merely refused. A
+// transient stop (StopForShutdown, a reboot or a UPS low-battery
+// shutdown) never creates this flag and never clears one already in
+// force (#387): neither is a user asking the array to stay
+// stopped once the box comes back, and a flag left behind here would
+// fail every mount unit's own condition in the boot-time systemd
+// transaction that runs before hoservad is even exec'd.
+//
+// This exists because a hard dependency on the storage-readiness gate
+// (hoserva-storage-ready.service) cannot live on these units themselves:
+// nfs-utils' own systemd integration derives a RequiresMountsFor=
+// directly on nfs-server.service for every path listed in /etc/exports —
+// confirmed empirically (`systemctl show mnt-user.mount -p RequiredBy`
+// named nfs-server.service the moment a share's own NFS export was
+// enabled) — an edge entirely outside any unit Hoserva itself writes, and
+// reachable the instant the guest boots: smbd.service and
+// nfs-kernel-server.service are both systemd-enabled (WantedBy=
+// multi-user.target), so systemd starts pulling this same chain — the
+// exported share's own mount, the catch-all, the physical data disks
+// under it — before hoservad's own process has even been exec'd, let
+// alone reached Startup. A `/run`-backed flag (this constant's own first
+// shape) cannot gate that: `/run` is a fresh tmpfs every boot, so
+// immediately after a crash or a `virsh destroy` the flag is absent no
+// matter what was persisted, and confirmed directly against a real
+// guest reboot: the boot-time cascade above mounted a data disk and the
+// catch-all a full 9 seconds before hoservad's own "Starting
+// hoserva.service" line — long before Startup could ever have written a
+// tmpfs flag from the persisted array_maintenance row. This path is
+// therefore under Hoserva's own durable state directory instead: `array
+// stop` writes it as part of closing the storage-target gate (Close,
+// cmd/hoservad/storagetarget.go) and it survives a crash or `virsh
+// destroy` exactly like the array_maintenance row it mirrors, so it is
+// already present — before hoservad, systemd, or anything else has done
+// anything this boot — for every mount unit's own condition check to see,
+// with no dependency on hoservad's own startup timing at all.
+//
+// A ConditionPathExists= failure makes systemd skip the mount unit's
+// start silently rather than fail it, so nfs-server.service's own
+// unrelated dependency job for it still succeeds trivially — exactly as
+// if there had been nothing left to mount — instead of remounting a disk
+// the user may be mid-swap on.
+//
+// hoservad's own explicit mounts (ArraySequence.Start's Disks/CatchAll/
+// ShareMounts loops) are never affected: StorageTarget.Open removes this
+// flag before Start ever calls Mount on anything (job/array.go), and
+// Startup (cmd/hoservad/storagetarget.go) reconciles it against the
+// persisted array_maintenance row before evaluating readiness at all —
+// the row is authoritative (D4); this file is a generated artifact of it,
+// exactly like the systemd units themselves. Startup also regenerates
+// every managed disk and pool mount unit from SQLite and explicitly
+// (re)mounts every physical disk itself before reporting the gate ready,
+// so a boot where this flag was stale when the boot-time systemd
+// transaction ran — silently skipping a disk's own automatic nofail
+// activation — can never leave a disk or the pool unmounted just because
+// nothing else was going to retry it.
+const StorageStoppedFlagPath = "/var/lib/hoserva/array-stopped"
+
 // MountUnit is one systemd .mount unit for a physical disk (doc 01 §6,
 // doc 02 §1): mounted by filesystem UUID (Q21) rather than /dev/sdX,
 // which can renumber on reboot; nofail so a missing disk never hangs
@@ -37,7 +100,8 @@ func UnitFileName(where string) string {
 // config files are generated, never hand-edited).
 func (u MountUnit) Render() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "[Unit]\nDescription=%s\n\n", u.Description)
+	fmt.Fprintf(&b, "[Unit]\nDescription=%s\n", u.Description)
+	fmt.Fprintf(&b, "ConditionPathExists=!%s\n\n", StorageStoppedFlagPath)
 	fmt.Fprintf(&b, "[Mount]\nWhat=/dev/disk/by-uuid/%s\nWhere=%s\nType=%s\n", u.UUID, u.Where, u.Filesystem)
 	fmt.Fprintf(&b, "Options=defaults,nofail\n")
 	return b.String()

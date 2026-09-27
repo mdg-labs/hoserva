@@ -64,6 +64,47 @@ func newTestScheduler(t *testing.T) *job.Scheduler {
 	return job.NewScheduler(job.NewStore(db), job.NewLogStore(t.TempDir()), job.NewHub(), job.NewRegistry())
 }
 
+// newTestArrayAndShareStore is a real *store.ArrayStore/*store.ShareStore
+// pair backed by a throwaway SQLite database, for
+// TestStorageTargetSync_Startup_RegeneratesArrayMountsFromStore: unlike
+// newTestScheduler above, job.RegenerateArrayMountsFromStore reads these
+// two directly, not through a fake.
+func newTestArrayAndShareStore(t *testing.T) (*store.ArrayStore, *store.ShareStore) {
+	t.Helper()
+	migrations, err := store.Load()
+	if err != nil {
+		t.Fatalf("loading embedded migrations: %v", err)
+	}
+	dbPath := filepath.Join(t.TempDir(), "storagetarget-store-test.db")
+	db, err := sql.Open("sqlite", store.DSN(dbPath))
+	if err != nil {
+		t.Fatalf("opening test database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	runner := &store.Runner{DB: db, Migrations: migrations, SnapshotDir: t.TempDir()}
+	if _, _, err := runner.Apply(context.Background()); err != nil {
+		t.Fatalf("applying migrations: %v", err)
+	}
+	return store.NewArrayStore(db), store.NewShareStore(db)
+}
+
+// seedTestArray puts a minimal one-parity, two-data-disk array into st
+// (parity.Layout.ContentPaths' own Q18 minimum: parity-disks+2 distinct
+// devices for the content file), for
+// TestStorageTargetSync_Startup_RegeneratesArrayMountsFromStore.
+func seedTestArray(t *testing.T, ctx context.Context, st *store.ArrayStore) {
+	t.Helper()
+	settings := store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "20G", CreatedAt: time.Now().UTC()}
+	disks := []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", Mountpoint: "/mnt/parity1"},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", Mountpoint: "/mnt/disk1"},
+		{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-d2", Mountpoint: "/mnt/disk2"},
+	}
+	if err := st.PutArray(ctx, settings, disks); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+}
+
 // storageTargetTestGate is job.ReadinessGate's own fake.
 type storageTargetTestGate struct{ ready bool }
 
@@ -72,9 +113,10 @@ func (g storageTargetTestGate) Ready() bool { return g.ready }
 func newTestStorageTargetSync(t *testing.T) *storageTargetSync {
 	t.Helper()
 	return &storageTargetSync{
-		Generator: cfggen.NewGenerator(t.TempDir()),
-		Runner:    disk.NewFakeRunner(),
-		FlagPath:  filepath.Join(t.TempDir(), "storage-ready"),
+		Generator:       cfggen.NewGenerator(t.TempDir()),
+		Runner:          disk.NewFakeRunner(),
+		FlagPath:        filepath.Join(t.TempDir(), "storage-ready"),
+		StoppedFlagPath: filepath.Join(t.TempDir(), "array-stopped"),
 	}
 }
 
@@ -144,7 +186,7 @@ func TestStorageTargetSync_NilSequenceIsNoOp(t *testing.T) {
 // version of this fix that made Startup only ever *confirm* left every
 // share unmounted forever after a real reboot, with smbd/nfs-kernel-
 // server reporting active over an unmounted /mnt/user/massdel. Half 2
-// (finding 3, still true): whatever the gate says, Startup never issues
+// (#387, still true): whatever the gate says, Startup never issues
 // a systemctl start or restart of a unit ordered After=hoserva.service —
 // only that ordering keeps hoserva-storage-ready.service from
 // deadlocking this process before it can send systemd's own READY=1
@@ -193,12 +235,106 @@ func TestStorageTargetSync_Startup_MountsPoolButNeverStartsAUnitAfterHoservad(t 
 	}
 }
 
+// TestStorageTargetSync_Startup_MountsDisksEvenIfSkippedByABootTimeCondition
+// proves (#387) a physical disk's nofail .mount
+// unit is ordinarily expected to activate on its own the moment its
+// device appears, well before Startup ever runs — but a boot where the
+// array-stopped condition flag was still set from before this boot's own
+// reconciliation (already run ahead of this point) skips that automatic
+// activation silently, in the very same boot-time systemd transaction,
+// and nothing else ever retries it. Startup must bring every physical
+// disk mount up itself rather than assume the automatic mount already
+// happened just because the gate now reports every expected disk present.
+func TestStorageTargetSync_Startup_MountsDisksEvenIfSkippedByABootTimeCondition(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	s.PoolMounted = func(string) (bool, error) { return true, nil }
+	var diskCalls int32
+	disk1 := storageTargetTestMount{where: "/mnt/disk1", calls: &diskCalls}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	if err := s.Startup(context.Background(), seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+
+	if atomic.LoadInt32(&diskCalls) != 1 {
+		t.Fatalf("disk Mount() called %d times, want 1 — Startup must bring every physical disk mount up itself (#387)", diskCalls)
+	}
+}
+
+// TestStorageTargetSync_Startup_InMaintenanceDoesNotMountDisks proves the
+// other half of the above: while the array is in maintenance mode at
+// startup, Startup must not mount the disks either — a hoservad that
+// restarts mid-swap must not remount storage the user explicitly took
+// down, even physical disks.
+func TestStorageTargetSync_Startup_InMaintenanceDoesNotMountDisks(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	var diskCalls int32
+	disk1 := storageTargetTestMount{where: "/mnt/disk1", calls: &diskCalls}
+	scheduler := newTestScheduler(t)
+	if err := scheduler.EnterMaintenance(context.Background()); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}, Scheduler: scheduler}
+
+	if err := s.Startup(context.Background(), seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+
+	if atomic.LoadInt32(&diskCalls) != 0 {
+		t.Fatalf("disk Mount() called %d times, want 0 while the array is in maintenance mode at startup", diskCalls)
+	}
+}
+
+// TestStorageTargetSync_Startup_RegeneratesArrayMountsFromStore proves
+// (#387) an array or a share created before
+// ConditionPathExists=!disk.StorageStoppedFlagPath existed in
+// disk.MountUnit.Render/pool.Mount.Render left its own unit
+// condition-less forever, since array creation, a share mutation, and the
+// disk add/replace/upgrade flows are the only other writers of those
+// files — none of which a plain restart or a package upgrade of an
+// otherwise untouched array ever runs again. Startup must rewrite every
+// managed disk and pool mount unit from SQLite itself.
+func TestStorageTargetSync_Startup_RegeneratesArrayMountsFromStore(t *testing.T) {
+	ctx := context.Background()
+	arrayStore, shareStore := newTestArrayAndShareStore(t)
+	seedTestArray(t, ctx, arrayStore)
+
+	generator := cfggen.NewGenerator(t.TempDir())
+	diskUnitPath := "systemd/system/mnt-disk1.mount"
+	if err := generator.Write(ctx, cfggen.File{Path: diskUnitPath, Command: "array create", Body: []byte("[Unit]\nDescription=stale\n\n[Mount]\nWhat=/dev/disk/by-uuid/aaaa\nWhere=/mnt/disk1\nType=xfs\n")}, 1, time.Now()); err != nil {
+		t.Fatalf("seeding a pre-existing, condition-less disk mount unit: %v", err)
+	}
+
+	s := &storageTargetSync{
+		Generator:       generator,
+		Runner:          disk.NewFakeRunner(),
+		FlagPath:        filepath.Join(t.TempDir(), "storage-ready"),
+		StoppedFlagPath: filepath.Join(t.TempDir(), "array-stopped"),
+		ArrayStore:      arrayStore,
+		ShareStore:      shareStore,
+		PoolMounted:     func(string) (bool, error) { return true, nil },
+	}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}}
+
+	if err := s.Startup(ctx, seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(generator.Root, diskUnitPath))
+	if err != nil {
+		t.Fatalf("reading %s: %v", diskUnitPath, err)
+	}
+	if !strings.Contains(string(got), "ConditionPathExists=!"+disk.StorageStoppedFlagPath) {
+		t.Fatalf("%s = %q, want Startup to have rewritten it with the array-stopped condition (#387)", diskUnitPath, got)
+	}
+}
+
 // TestStorageTargetSync_Startup_InMaintenanceLeavesGateClosed proves
 // Startup's own maintenance-mode guard: a hoservad that starts up while
-// Scheduler.InMaintenance() is already true (an explicit `array stop`
-// whose in-memory state somehow survived, or once #387 persists it
-// across a restart) must not mount the pool a user explicitly took down,
-// even with every disk present.
+// Scheduler.InMaintenance() is already true — an explicit `array stop`
+// still in force within this same process, or restored from SQLite across
+// a restart (#387, RestorePersistedMaintenance) — must not mount the pool
+// a user explicitly took down, even with every disk present.
 func TestStorageTargetSync_Startup_InMaintenanceLeavesGateClosed(t *testing.T) {
 	s := newTestStorageTargetSync(t)
 	s.PoolMounted = func(string) (bool, error) { return true, nil }
@@ -219,6 +355,34 @@ func TestStorageTargetSync_Startup_InMaintenanceLeavesGateClosed(t *testing.T) {
 	}
 	if _, err := os.Stat(s.flagPath()); err == nil {
 		t.Fatal("the readiness flag exists even though the array is in maintenance mode at startup")
+	}
+	if _, err := os.Stat(s.stoppedFlagPath()); err != nil {
+		t.Fatalf("Stat(the array-stopped flag) = %v, want it set from persisted maintenance state at startup (#387)", err)
+	}
+}
+
+// TestStorageTargetSync_Startup_NotInMaintenanceClearsTheArrayStoppedFlag
+// is the other half of #387's own regression: a fresh install, or one
+// that has never run `array stop` (or already ran `array start`), must
+// not leave every generated mount unit gated by a stale flag from before
+// this boot.
+func TestStorageTargetSync_Startup_NotInMaintenanceClearsTheArrayStoppedFlag(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	s.PoolMounted = func(string) (bool, error) { return true, nil }
+	if err := os.MkdirAll(filepath.Dir(s.stoppedFlagPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(s.stoppedFlagPath(), []byte("stopped\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	scheduler := newTestScheduler(t)
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Scheduler: scheduler}
+
+	if err := s.Startup(context.Background(), seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+	if _, err := os.Stat(s.stoppedFlagPath()); err == nil {
+		t.Fatal("the array-stopped flag still exists after a Startup that is not in maintenance")
 	}
 }
 
@@ -242,7 +406,12 @@ func TestStorageTargetSync_Startup_ClearsAStaleFlagFirst(t *testing.T) {
 		t.Fatalf("KeepUnmanaged: %v", err)
 	}
 
-	s := &storageTargetSync{Generator: generator, Runner: disk.NewFakeRunner(), FlagPath: filepath.Join(t.TempDir(), "storage-ready")}
+	s := &storageTargetSync{
+		Generator:       generator,
+		Runner:          disk.NewFakeRunner(),
+		FlagPath:        filepath.Join(t.TempDir(), "storage-ready"),
+		StoppedFlagPath: filepath.Join(t.TempDir(), "array-stopped"),
+	}
 	if err := os.WriteFile(s.flagPath(), []byte("stale\n"), 0o644); err != nil {
 		t.Fatalf("seeding a stale flag: %v", err)
 	}
@@ -272,7 +441,12 @@ func TestStorageTargetSync_Startup_FailedWriteLeavesGateClosed(t *testing.T) {
 		t.Fatalf("KeepUnmanaged: %v", err)
 	}
 
-	s := &storageTargetSync{Generator: generator, Runner: disk.NewFakeRunner(), FlagPath: filepath.Join(t.TempDir(), "storage-ready")}
+	s := &storageTargetSync{
+		Generator:       generator,
+		Runner:          disk.NewFakeRunner(),
+		FlagPath:        filepath.Join(t.TempDir(), "storage-ready"),
+		StoppedFlagPath: filepath.Join(t.TempDir(), "array-stopped"),
+	}
 	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}}
 
 	if err := s.Startup(ctx, seq); err == nil {
@@ -307,7 +481,7 @@ func TestStorageTargetSync_Update_UnchangedIssuesNoSystemctlCall(t *testing.T) {
 	}
 }
 
-// TestStorageTargetSync_Update_NeverRestarts proves finding 1's actual
+// TestStorageTargetSync_Update_NeverRestarts proves (#372) the actual
 // mechanism, not just its symptom: even across a real transition, Update
 // never issues "systemctl restart" of anything — systemd's BindsTo=/
 // Requires= (pool.ServiceDropIn) would propagate a restart of
@@ -599,8 +773,8 @@ func TestStorageTargetSync_Update_InMaintenanceLeavesGateClosed(t *testing.T) {
 	}
 }
 
-// TestStorageTargetSync_Update_DisabledDependentIsNotStarted is #372
-// finding 5's own regression test: an admin who disabled a dependent on
+// TestStorageTargetSync_Update_DisabledDependentIsNotStarted proves
+// (#372) an admin who disabled a dependent on
 // purpose (no VMs or Apps, SMB-only sharing, ...) must not have it started
 // back up just because the storage gate opened. Without startDependents
 // reusing disk.ServiceUnitController's own LoadState/UnitFileState rule,
@@ -630,8 +804,8 @@ func TestStorageTargetSync_Update_DisabledDependentIsNotStarted(t *testing.T) {
 	}
 }
 
-// TestStorageTargetSync_ConfirmReady_SetsFlagAndStartsServices is #372
-// finding 1's own regression test for the explicit `array start` path:
+// TestStorageTargetSync_ConfirmReady_SetsFlagAndStartsServices proves
+// (#372) the explicit `array start` path:
 // job.ArraySequence.Start calls ConfirmReady once its own mounts are up,
 // and ConfirmReady must write the units, confirm the pool, set the
 // readiness flag and start every eligible dependent — the same
@@ -725,5 +899,221 @@ func TestStorageTargetSync_Startup_PoolNotMountedLeavesGateClosed(t *testing.T) 
 	}
 	if _, err := os.Stat(s.flagPath()); err == nil {
 		t.Fatal("the readiness flag exists even though the pool never confirmed mounted")
+	}
+}
+
+// TestStorageTargetSync_Close_StopsGateAndDockerAndLibvirtAndClearsFlag is
+// #387's own regression for the storage-target gate closing on `array
+// stop` (#372): hoserva-storage-ready.service is
+// RemainAfterExit=yes, so ArraySequence.Stop's own Services loop stopping
+// Samba and NFS directly never touches it — left alone, it stays
+// "active (exited)" and anything that later starts Samba or NFS during
+// maintenance still passes hoserva-storage.target. Close must stop it
+// (so its fixed `test -e` reruns — and fails — next time), stop Docker
+// and libvirt (doc 02 §1, Q70: neither is in ArraySequence's own Services
+// list, #309), and remove the flag.
+func TestStorageTargetSync_Close_StopsGateAndDockerAndLibvirtAndClearsFlag(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	if err := os.MkdirAll(filepath.Dir(s.flagPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(s.flagPath(), []byte("ready\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := s.Close(context.Background(), true); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, err := os.Stat(s.flagPath()); err == nil {
+		t.Fatal("the readiness flag still exists after Close")
+	}
+	if _, err := os.Stat(s.stoppedFlagPath()); err != nil {
+		t.Fatalf("Stat(the array-stopped flag) = %v, want it created by Close (#387)", err)
+	}
+	fakeRunner := s.Runner.(*disk.FakeRunner)
+	if !hasCall(fakeRunner.Calls(), "systemctl", "stop", "docker.service") {
+		t.Fatalf("Calls() = %v, want a systemctl stop docker.service from Close", fakeRunner.Calls())
+	}
+	if !hasCall(fakeRunner.Calls(), "systemctl", "stop", "libvirtd.service") {
+		t.Fatalf("Calls() = %v, want a systemctl stop libvirtd.service from Close", fakeRunner.Calls())
+	}
+	if !hasCall(fakeRunner.Calls(), "systemctl", "stop", pool.StorageReadyUnitName) {
+		t.Fatalf("Calls() = %v, want a systemctl stop %s from Close", fakeRunner.Calls(), pool.StorageReadyUnitName)
+	}
+	if s.Ready() {
+		t.Fatal("Ready() = true after Close")
+	}
+}
+
+// TestStorageTargetSync_Close_TransientNeverSetsTheStoppedFlag proves
+// (#387) Close(ctx, false) is StopForShutdown's own
+// call (a reboot or a UPS low-battery shutdown) — never a user asking the
+// array to stay stopped — so it must never create the durable
+// array-stopped condition flag, even though it still stops Docker,
+// libvirt and the gate unit exactly like a persisted close. A flag left
+// behind here would fail every mount unit's own ConditionPathExists in
+// the boot-time systemd transaction that runs before hoservad is even
+// exec'd, stranding the array unmounted after an ordinary reboot.
+func TestStorageTargetSync_Close_TransientNeverSetsTheStoppedFlag(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+
+	if err := s.Close(context.Background(), false); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, err := os.Stat(s.stoppedFlagPath()); err == nil {
+		t.Fatal("the array-stopped flag exists after a transient Close (persist=false) — a plain reboot must not strand the array unmounted")
+	}
+	fakeRunner := s.Runner.(*disk.FakeRunner)
+	if !hasCall(fakeRunner.Calls(), "systemctl", "stop", "docker.service") {
+		t.Fatalf("Calls() = %v, want a systemctl stop docker.service from a transient Close too", fakeRunner.Calls())
+	}
+	if !hasCall(fakeRunner.Calls(), "systemctl", "stop", pool.StorageReadyUnitName) {
+		t.Fatalf("Calls() = %v, want a systemctl stop %s from a transient Close too", fakeRunner.Calls(), pool.StorageReadyUnitName)
+	}
+}
+
+// TestStorageTargetSync_Close_TransientLeavesAnExistingStoppedFlagInPlace
+// proves the other half of #387: a persisted user `array stop`
+// already in force before a later reboot or UPS shutdown must survive it
+// — Close(ctx, false) must neither create nor clear the flag, only leave
+// it exactly as the persisted row already left it.
+func TestStorageTargetSync_Close_TransientLeavesAnExistingStoppedFlagInPlace(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	if err := os.MkdirAll(filepath.Dir(s.stoppedFlagPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(s.stoppedFlagPath(), []byte("stopped\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := s.Close(context.Background(), false); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, err := os.Stat(s.stoppedFlagPath()); err != nil {
+		t.Fatalf("Stat(the array-stopped flag) = %v, want a flag already set by an earlier persisted stop to survive a transient Close", err)
+	}
+}
+
+// TestStorageTargetSync_Open_RemovesTheArrayStoppedFlag is #387's own
+// regression: every generated mount unit now carries ConditionPathExists=
+// against this flag, so Open (job.ArraySequence.Start's own first call on
+// StorageTarget) must remove it before hoservad's own first Mount call —
+// without this, that Mount would find the condition unmet and silently
+// skip, exactly like the external starts the flag exists to block.
+func TestStorageTargetSync_Open_RemovesTheArrayStoppedFlag(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	if err := os.MkdirAll(filepath.Dir(s.stoppedFlagPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(s.stoppedFlagPath(), []byte("stopped\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := s.Open(context.Background()); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := os.Stat(s.stoppedFlagPath()); err == nil {
+		t.Fatal("the array-stopped flag still exists after Open")
+	}
+}
+
+// TestStorageTargetSync_Open_AbsentFlagIsSuccess proves Open is
+// idempotent: an array that was never stopped this way (or already
+// started) has nothing to remove, and that is success, not an error —
+// the same convention clearFlag already follows for the readiness flag.
+func TestStorageTargetSync_Open_AbsentFlagIsSuccess(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	if err := s.Open(context.Background()); err != nil {
+		t.Fatalf("Open with no flag present: %v", err)
+	}
+}
+
+// TestStorageTargetSync_Close_FailedDependentStopAbortsBeforeClosingTheGate
+// proves a Docker or libvirt stop failure — a container still holding a
+// file open on the pool is doc 02 §4's own example — aborts Close before
+// it ever touches the gate unit or the readiness flag: leaving the gate itself
+// closed while a service that never actually stopped is still running
+// would be reporting a stop that did not fully happen.
+func TestStorageTargetSync_Close_FailedDependentStopAbortsBeforeClosingTheGate(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	if err := os.MkdirAll(filepath.Dir(s.flagPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(s.flagPath(), []byte("ready\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	fakeRunner := s.Runner.(*disk.FakeRunner)
+	fakeRunner.Script("systemctl", []string{"stop", "docker.service"}, nil, errors.New("docker.service: still stopping"))
+
+	if err := s.Close(context.Background(), true); err == nil {
+		t.Fatal("Close with a failed docker.service stop = nil error, want one")
+	}
+	if _, err := os.Stat(s.flagPath()); err != nil {
+		t.Fatalf("Stat(flag) = %v, want the flag left in place after a failed Close", err)
+	}
+	if hasCall(fakeRunner.Calls(), "systemctl", "stop", pool.StorageReadyUnitName) {
+		t.Fatal("Close stopped the gate unit even though docker.service refused to stop first")
+	}
+}
+
+// flagCheckRunner wraps a disk.Runner and records, the moment name/args
+// is run, whether flagPath still existed at that instant — this file's
+// own probe for #387's ordering: a start landing between
+// removing the flag and stopping the gate unit must find the flag already
+// gone, not the reverse.
+type flagCheckRunner struct {
+	disk.Runner
+	flagPath   string
+	name       string
+	args       []string
+	ran        *bool
+	flagExists *bool
+}
+
+func (r flagCheckRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if name == r.name && equalStringSlices(args, r.args) {
+		*r.ran = true
+		if _, err := os.Stat(r.flagPath); err == nil {
+			*r.flagExists = true
+		}
+	}
+	return r.Runner.Run(ctx, name, args...)
+}
+
+// TestStorageTargetSync_Close_RemovesFlagBeforeStoppingTheGateUnit proves
+// (#387) a Samba or NFS start racing Close (an
+// unattended-upgrades restart, or a manual `systemctl start`) must land
+// on a `test -e` that already fails, not on a flag Close has not gotten
+// around to removing yet. Close must therefore remove the flag before it
+// stops hoserva-storage-ready.service, never after.
+func TestStorageTargetSync_Close_RemovesFlagBeforeStoppingTheGateUnit(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	if err := os.MkdirAll(filepath.Dir(s.flagPath()), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(s.flagPath(), []byte("ready\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	var ran, flagExists bool
+	s.Runner = flagCheckRunner{
+		Runner:     s.Runner,
+		flagPath:   s.flagPath(),
+		name:       "systemctl",
+		args:       []string{"stop", pool.StorageReadyUnitName},
+		ran:        &ran,
+		flagExists: &flagExists,
+	}
+
+	if err := s.Close(context.Background(), true); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !ran {
+		t.Fatal("Close never stopped the gate unit")
+	}
+	if flagExists {
+		t.Fatal("the readiness flag still existed when Close stopped the gate unit — a start landing exactly here would still find it present and pass hoserva-storage.target (#387)")
 	}
 }

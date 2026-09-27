@@ -42,6 +42,20 @@ func TestStorageTargetUnit_Render(t *testing.T) {
 	if strings.Contains(got, "Requires=mnt-") {
 		t.Fatalf("Render() = %q, must never put a hard Requires= directly on a disk mount unit (Q69: a missing disk must not block the target after acknowledgement — only the readiness unit gates)", got)
 	}
+
+	// #387 (L3 nightly runs 36258823325 and 36264953516): Wants= on the
+	// disk mounts is back, reversing an intermediate fix from an earlier
+	// round (36250289714) that removed it — with disk.MountUnit's own
+	// ConditionPathExists=!disk.StorageStoppedFlagPath now doing the actual
+	// gating (see its own doc comment), a Wants= reaching a disk mount
+	// while the array is genuinely stopped is skipped, not remounted; while
+	// dropping it altogether left parity — never referenced by any share's
+	// own RequiresMountsFor= — with no path back after an ordinary
+	// crash-and-reboot of a running array, confirmed empirically: the data
+	// disks and the catch-all still self-healed (pulled by an unrelated
+	// NFS-exported share's own RequiresMountsFor=), but parity did not, and
+	// the next sync failed outright for want of its own parity file's
+	// mount.
 }
 
 func TestStorageTargetUnit_Render_NoDisks(t *testing.T) {

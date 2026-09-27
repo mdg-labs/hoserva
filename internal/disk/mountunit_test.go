@@ -31,6 +31,7 @@ func TestMountUnit_Render(t *testing.T) {
 
 	for _, want := range []string{
 		"Description=Hoserva data disk 1",
+		"ConditionPathExists=!" + StorageStoppedFlagPath,
 		"What=/dev/disk/by-uuid/1234-5678",
 		"Where=/mnt/disk1",
 		"Type=xfs",
@@ -39,6 +40,33 @@ func TestMountUnit_Render(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Render() = %q, want it to contain %q", got, want)
 		}
+	}
+}
+
+// TestMountUnit_Render_ConditionSkipsAnExternalStartWhileArrayStopped is
+// #387's own regression (L3 nightly run 36258823325): nfs-utils' own
+// systemd integration derives a RequiresMountsFor= directly on
+// nfs-server.service for every NFS-exported path, entirely outside any
+// unit Hoserva writes, so `systemctl start nfs-kernel-server` remounted a
+// physical data disk during `array stop` even after hoserva-storage
+// .target's own Wants= on it was removed. ConditionPathExists= is what
+// closes that: unlike a Requires=/Wants= edge on this unit, it is
+// evaluated only when this unit's own start job actually runs, so an
+// external RequiresMountsFor= reaching this unit finds nothing to
+// mount — a skip, not a failure — while StorageStoppedFlagPath exists.
+func TestMountUnit_Render_ConditionSkipsAnExternalStartWhileArrayStopped(t *testing.T) {
+	u := MountUnit{Where: "/mnt/disk1", UUID: "1234-5678", Filesystem: XFS, Description: "Hoserva data disk 1"}
+	got := u.Render()
+	wantLine := "ConditionPathExists=!" + StorageStoppedFlagPath
+	found := false
+	for _, line := range strings.Split(got, "\n") {
+		if line == wantLine {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Render() = %q, want a line exactly %q", got, wantLine)
 	}
 }
 

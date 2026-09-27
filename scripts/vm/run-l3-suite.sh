@@ -1219,6 +1219,17 @@ else
   not_yet "storage-target boot ordering" "no active hoservad on the guest (install or array setup above did not complete — see step 1 and step 3)"
 fi
 
+echo "vm-suite[$HOSERVA_LAB_ID]: === maintenance gate closes on array stop (issue #387) ==="
+if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+  if ARRAY_ADMIN_USERNAME="$ARRAY_ADMIN_USERNAME" ARRAY_ADMIN_PASSWORD="$ARRAY_ADMIN_PASSWORD" ARRAY_SMB_SHARE="$JOURNEY5_SHARE" "$script_dir/maintenance-gate-check.sh"; then
+    pass "maintenance gate closes on array stop"
+  else
+    fail "maintenance gate closes on array stop" "see maintenance-gate-check.sh output above (issue #387) — needs array setup (step 3)'s own admin account and '$JOURNEY5_SHARE' share still present and the array still mounted"
+  fi
+else
+  not_yet "maintenance gate closes on array stop" "no active hoservad on the guest (install or array setup above did not complete — see step 1 and step 3)"
+fi
+
 echo "vm-suite[$HOSERVA_LAB_ID]: === 5/13 disk yank and reconstruction ==="
 if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if ARRAY_ADMIN_USERNAME="$ARRAY_ADMIN_USERNAME" ARRAY_ADMIN_PASSWORD="$ARRAY_ADMIN_PASSWORD" "$script_dir/disk-yank-check.sh"; then
