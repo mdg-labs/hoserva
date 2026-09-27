@@ -73,8 +73,15 @@ func createLoopImage(ctx context.Context, t *testing.T, r Runner, lab, name stri
 	return dev
 }
 
+// blkidType reads dev's filesystem type by direct probe (`blkid -p`),
+// bypassing libblkid's own cache: a loop device just detached by an
+// earlier test in this lab run can be reattached under the same minor
+// number within this suite's own runtime (the host's udev holds a
+// detach open briefly, confirmed in this lab), and a plain `blkid`
+// without `-p` returns that stale cache entry rather than reprobing the
+// device now in front of it (finding 1, #398).
 func blkidType(ctx context.Context, r Runner, dev string) string {
-	out, _ := r.Run(ctx, "blkid", "-s", "TYPE", "-o", "value", dev)
+	out, _ := r.Run(ctx, "blkid", "-p", "-s", "TYPE", "-o", "value", dev)
 	return strings.TrimSpace(string(out))
 }
 

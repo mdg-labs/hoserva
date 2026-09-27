@@ -49,6 +49,26 @@ type Handler struct {
 	// Disks is the disk provider for list/doctor/status — nil returns empty
 	// inventory rather than an error.
 	Disks disk.Provider
+	// BlankProbe is the one-off, bounded blank-disk probe (#398) PlanDisk-
+	// Replace and ReplaceDisk pass through to job.ConfirmReplacementTarget-
+	// Absent, never called from List() or any poll path. nil (an older
+	// daemon build, or a caller's own test that never exercises the
+	// same-serial-blank scenario) means that exception never applies —
+	// every other refusal in ConfirmReplacementTargetAbsent is unaffected.
+	BlankProbe disk.BlankProber
+	// MountFailedSlots is cmd/hoservad's own hook for GetPool (#398): the
+	// mountpoints whose own physical disk mount Startup's bounded mount
+	// loop most recently failed or timed out to bring up — present by
+	// identity (disk.StorageGate itself reports the array ready for it,
+	// since neither side's filesystem UUID is positively known to differ,
+	// the same #388 fix that stops hoservad's own restart loop), but never
+	// actually mounted. Read live, never derived from arrayDegraded: a
+	// present-by-identity mount failure is not something disk.StorageGate's
+	// own identity/FSUUID check can see at all — it only ever learns of it
+	// once an actual mount attempt times out or fails. nil (an older
+	// daemon build, or a caller's own test predating it) reports no slot
+	// needing attention from this signal.
+	MountFailedSlots func() map[string]bool
 	// Parity is the SnapRAID engine for doctor freshness — nil skips that
 	// check with a warning. #265: main.go's parityRegistrar sets this
 	// (with ParityGuard, RelocationManifest and RebalanceShares below)

@@ -77,7 +77,11 @@ func TestLabExternal_FormatMountEjectByUUID(t *testing.T) {
 	}
 }
 
+// blkidUUID reads dev's filesystem UUID by direct probe (`blkid -p`),
+// for the same reason blkidType in format_lab_test.go does: a plain
+// `blkid` can return a cached result from a device that previously held
+// this loop minor (finding 1, #398).
 func blkidUUID(ctx context.Context, r Runner, dev string) string {
-	out, _ := r.Run(ctx, "blkid", "-s", "UUID", "-o", "value", dev)
+	out, _ := r.Run(ctx, "blkid", "-p", "-s", "UUID", "-o", "value", dev)
 	return strings.TrimSpace(string(out))
 }

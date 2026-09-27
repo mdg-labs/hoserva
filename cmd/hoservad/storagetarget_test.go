@@ -1245,3 +1245,223 @@ func TestStorageTargetSync_Close_RemovesFlagBeforeStoppingTheGateUnit(t *testing
 		t.Fatal("the readiness flag still existed when Close stopped the gate unit — a start landing exactly here would still find it present and pass hoserva-storage.target (#387)")
 	}
 }
+
+// TestStorageTargetSync_Startup_RecordsAFailedDiskMount is #398's own
+// signal: a disk present by identity — the gate itself reports ready,
+// since #388's own fix never treats an unknown filesystem as a mismatch
+// — whose own mount call fails must have its mountpoint recorded, so
+// api.Handler.MountFailedSlots (wired to this method in main.go) can tell
+// GetPool which present slot actually never mounted.
+func TestStorageTargetSync_Startup_RecordsAFailedDiskMount(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	disk1 := storageTargetTestMount{where: "/mnt/disk1", mountErr: errors.New("device dependency never resolved")}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	if err := s.Startup(context.Background(), seq); err == nil {
+		t.Fatal("Startup with a failing disk mount = nil error, want one")
+	}
+
+	failed := s.MountFailedMountpoints()
+	if !failed["/mnt/disk1"] {
+		t.Fatalf("MountFailedMountpoints() = %v, want /mnt/disk1 recorded", failed)
+	}
+}
+
+// TestStorageTargetSync_Startup_NeverRecordsAMountpointThatSucceeded is
+// the same test's negative half: an ordinary, successful mount records
+// nothing — MountFailedMountpoints must never carry a slot that is
+// genuinely serving.
+func TestStorageTargetSync_Startup_NeverRecordsAMountpointThatSucceeded(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	s.PoolMounted = func(string) (bool, error) { return true, nil }
+	disk1 := storageTargetTestMount{where: "/mnt/disk1"}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	if err := s.Startup(context.Background(), seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+
+	if failed := s.MountFailedMountpoints(); len(failed) != 0 {
+		t.Fatalf("MountFailedMountpoints() = %v, want none after a successful mount", failed)
+	}
+}
+
+// TestStorageTargetSync_Startup_ReconcilesAMountpointThatIsNowMounted
+// proves the self-healing half of #398: a mountpoint left over from an
+// earlier failed attempt (as if a previous boot had recorded it) is
+// dropped once the live mount table (s.poolMounted, overridden here)
+// reports it genuinely mounted — a slot must not stay "needs attention"
+// forever just because the flag this sync tracks in memory was never
+// cleared by hand.
+func TestStorageTargetSync_Startup_ReconcilesAMountpointThatIsNowMounted(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	s.mountFailedMountpoints = map[string]bool{"/mnt/disk1": true}
+	s.PoolMounted = func(path string) (bool, error) { return path == "/mnt/disk1", nil }
+	disk1 := storageTargetTestMount{where: "/mnt/disk1"}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	if err := s.Startup(context.Background(), seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+
+	if failed := s.MountFailedMountpoints(); len(failed) != 0 {
+		t.Fatalf("MountFailedMountpoints() = %v, want empty — /mnt/disk1 is now genuinely mounted", failed)
+	}
+}
+
+// TestStorageTargetSync_Update_ReconcilesAMountpointThatIsNowMounted is
+// the same self-healing proof on the rebuild path (the one a successful
+// disk_replace job's own topologyChanged hook actually reaches, unlike
+// Startup, which only ever runs once at boot): a mountpoint recorded
+// failed earlier in this process's own lifetime must clear on the next
+// rebuild once it is genuinely mounted, without waiting for a restart.
+func TestStorageTargetSync_Update_ReconcilesAMountpointThatIsNowMounted(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	s.mountFailedMountpoints = map[string]bool{"/mnt/disk1": true}
+	s.PoolMounted = func(path string) (bool, error) { return path == "/mnt/disk1", nil }
+	disk1 := storageTargetTestMount{where: "/mnt/disk1"}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	s.Update(context.Background(), seq)
+
+	if failed := s.MountFailedMountpoints(); len(failed) != 0 {
+		t.Fatalf("MountFailedMountpoints() = %v, want empty — /mnt/disk1 is now genuinely mounted", failed)
+	}
+}
+
+// TestStorageTargetSync_Update_RecordsAFailedDiskMount is finding 4's own
+// regression: a same-serial disk that arrives while hoservad is already
+// running (the SIGHUP path, never a restart) must still have its own
+// mount failure recorded. Before this fix, updateTransition never called
+// mountArrayDisks at all — only mountAndConfirmPool (the pool, never the
+// physical disk) — so this slot's own mountpoint never reached
+// MountFailedMountpoints, and GetPool kept reporting it active even
+// though its disk had never actually mounted.
+func TestStorageTargetSync_Update_RecordsAFailedDiskMount(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	disk1 := storageTargetTestMount{where: "/mnt/disk1", mountErr: errors.New("device dependency never resolved")}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	s.Update(context.Background(), seq)
+
+	failed := s.MountFailedMountpoints()
+	if !failed["/mnt/disk1"] {
+		t.Fatalf("MountFailedMountpoints() = %v, want /mnt/disk1 recorded — a live SIGHUP arrival must record a mount failure exactly like Startup does", failed)
+	}
+}
+
+// TestStorageTargetSync_Update_BoundsAMountThatNeverReturns is finding
+// 3's own regression, mirroring TestStorageTargetSync_Startup_BoundsA-
+// MountThatNeverReturns for the live rebuild path: before this fix,
+// updateTransition's own mount call ran on ctx directly, with no bound
+// at all — the exact call installReloadHandler's own unconditional first
+// rebuild makes, before main.go's own API listeners ever start (a real
+// nightly L3 failure this fix closes), so a same-serial disk whose mount
+// unit never resolves its device left the API unreachable for however
+// long systemd's own default unit-start timeout (90s) took to give up.
+func TestStorageTargetSync_Update_BoundsAMountThatNeverReturns(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	s.StartupMountTimeout = 50 * time.Millisecond
+	disk1 := blockingUntilCancelledMount{where: "/mnt/disk1"}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { done <- s.UpdateOrError(context.Background(), seq) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Update with a mount that never returns = nil error, want one")
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("Update took %v, want it bounded near StartupMountTimeout (%v)", elapsed, s.StartupMountTimeout)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Update did not return within 5s of a mount that never returns on its own — it would block installReloadHandler's own synchronous first rebuild, and with it main.go's own API listeners, indefinitely")
+	}
+	if _, err := os.Stat(s.flagPath()); err == nil {
+		t.Fatal("the readiness flag exists even though the mount never confirmed")
+	}
+}
+
+// signalingBlockingMount is blockingUntilCancelledMount's own cousin, with
+// a channel closed the instant Mount actually starts running — so a test
+// can wait for a caller to genuinely be inside the mount call (and
+// therefore genuinely holding s.mu) before asserting on something else
+// that must not be blocked behind it — and a second channel the test
+// itself closes only once that assertion has already returned, so Mount
+// stays blocked for as long as the test needs rather than resolving on a
+// fixed bound a mutation could still race. TestStorageTargetSync_
+// MountFailedMountpoints_NeverBlocksBehindALiveMountAttempt found that
+// race directly: a 500ms StartupMountTimeout next to a 1s assertion
+// window let MountFailedMountpoints go back to sharing s.mu and still
+// pass, because Startup's own mount always finished (via that bound)
+// before the window ran out either way.
+type signalingBlockingMount struct {
+	where   string
+	started chan struct{}
+	release chan struct{}
+}
+
+func (m signalingBlockingMount) Where() string { return m.where }
+func (m signalingBlockingMount) Mount(ctx context.Context) error {
+	close(m.started)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.release:
+		return errors.New("mount released by test")
+	}
+}
+func (m signalingBlockingMount) Unmount(context.Context) error { return nil }
+
+// TestStorageTargetSync_MountFailedMountpoints_NeverBlocksBehindALiveMountAttempt
+// is finding 3's own regression: GET /pool (api.Handler's own
+// MountFailedSlots hook, wired to MountFailedMountpoints) must never wait
+// behind s.mu while Startup or updateTransition holds it across a slow,
+// live mount attempt — a nightly L3 failure this fix closes had exactly
+// that: GET /pool blocked for the whole span of a stuck `systemctl`
+// call, because MountFailedMountpoints used to share s.mu with it.
+// StartupMountTimeout is left at its real production default (20s)
+// deliberately: the mount below never resolves on its own, only once
+// this test's own release channel closes it — well after the assertion
+// below has already returned — so nothing here depends on winning a race
+// against a fixed bound (see signalingBlockingMount's own doc comment).
+func TestStorageTargetSync_MountFailedMountpoints_NeverBlocksBehindALiveMountAttempt(t *testing.T) {
+	s := newTestStorageTargetSync(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	disk1 := signalingBlockingMount{where: "/mnt/disk1", started: started, release: release}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	startupDone := make(chan struct{})
+	go func() {
+		_ = s.Startup(context.Background(), seq)
+		close(startupDone)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Startup's own mount attempt never started within 5s")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.MountFailedMountpoints()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("MountFailedMountpoints() did not return within 1s while Startup's own mount attempt was still in flight, holding s.mu")
+	}
+
+	close(release)
+	select {
+	case <-startupDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Startup did not return within 5s of its own mount being released")
+	}
+}

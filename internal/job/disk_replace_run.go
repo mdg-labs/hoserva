@@ -17,8 +17,13 @@ import (
 // the replacement's contents from parity once it is formatted and
 // mounted back at the failed disk's own slot.
 type DiskReplaceDeps struct {
-	Provider  disk.Provider
-	Runner    disk.Runner
+	Provider disk.Provider
+	Runner   disk.Runner
+	// Probe is the one-off, bounded blank-disk probe (#398)
+	// ConfirmReplacementTargetAbsent's own re-check below passes through —
+	// nil means that exception never applies, the same as every caller
+	// that predates it.
+	Probe     disk.BlankProber
 	Store     *store.ArrayStore
 	Generator *config.Generator
 	Mounter   disk.UnitMounter
@@ -130,7 +135,7 @@ func RunDiskReplace(d DiskReplaceDeps) RunFunc {
 		if err := ValidateDiskReplacement(disks, params.Mountpoint, target, params.Sizes); err != nil {
 			return err
 		}
-		if err := ConfirmReplacementTargetAbsent(params.Mountpoint, oldDisk, listed, target.Device); err != nil {
+		if err := ConfirmReplacementTargetAbsent(ctx, params.Mountpoint, oldDisk, listed, target.Device, d.Probe); err != nil {
 			return err
 		}
 

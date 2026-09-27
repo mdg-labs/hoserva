@@ -27,6 +27,15 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 	entries := []apiv1.PoolDiskEntry{}
 	matched := make([]bool, len(arrayDisks))
 	presentDevices := map[string]bool{}
+	// mountFailed is cmd/hoservad's own live record of the storage-target
+	// gate's last bounded mount attempt (#398) — never a device probe on
+	// this poll path (Q13): h.MountFailedSlots reads state storageTargetSync
+	// already recorded when it happened. nil (no hook wired) reports no
+	// slot needing attention from this signal.
+	mountFailed := map[string]bool{}
+	if h.MountFailedSlots != nil {
+		mountFailed = h.MountFailedSlots()
+	}
 	if h.Disks != nil {
 		disks, err := h.Disks.List(ctx)
 		if err != nil {
@@ -68,8 +77,11 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 				entry.MountPoint = arrayDisks[idx].Mountpoint
 				entry.RemovalState = removalStateToAPI(arrayDisks[idx].RemovalState)
 				entry.FinishConfirmation = finishConfirmationForState(arrayDisks[idx].Mountpoint, arrayDisks[idx].RemovalState)
-				if wrongFilesystem(arrayDisks[idx], d) {
+				switch {
+				case wrongFilesystem(arrayDisks[idx], d):
 					entry.State = apiv1.DiskStateWrongFilesystem
+				case mountFailed[arrayDisks[idx].Mountpoint]:
+					entry.State = apiv1.DiskStateMountFailed
 				}
 			}
 			entries = append(entries, entry)

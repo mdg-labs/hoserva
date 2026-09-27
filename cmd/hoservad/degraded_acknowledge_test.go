@@ -701,3 +701,75 @@ func TestAcknowledgeDegraded_WaitsForAnInFlightRebuild(t *testing.T) {
 		t.Fatal("the rebuilt gate is not acknowledged — the acknowledgement landed on the gate the rebuild replaced")
 	}
 }
+
+// TestNoBlankProbeOnStartupUpdateOrSighupRebuild is #398's own no-probe
+// acceptance criterion, proved against cmd/hoservad's real production
+// wiring: Startup, a not-ready→ready Update/UpdateOrError transition, and
+// the SIGHUP rebuild (newRebuildArraySequence — the exact function
+// installReloadHandler, shareService.PostCommit and every disk-topology
+// job's ArrayReady hook all call, never a hand copy) must never reach for
+// disk.BlankProber.ProbeBlank — reserved for the one device a replace
+// request actually names, through job.ConfirmReplacementTargetAbsent —
+// even for the scenario that might otherwise seem to invite it: a
+// same-serial slot, present and matching SQLite's own recorded filesystem
+// UUID, whose own physical-disk mount unit still fails to come up. A
+// FakeBlankProber wired as handler.BlankProbe the same way main.go wires
+// the real disk.LinuxBlankProber proves Probed() stays empty across every
+// one of these calls; the single FakeRunner shared between storageTarget
+// and every disk mount unit in this test proves it a second, independent
+// way — no "blkid" argv of any kind reached it, not only the probe's own
+// "-p" form, so a future regression that ran blkid directly from this
+// path rather than through BlankProber would still be caught.
+func TestNoBlankProbeOnStartupUpdateOrSighupRebuild(t *testing.T) {
+	ctx, h, arrays, shares, provider, runner := newArrayTestEnv(t)
+	disks := persistSampleArray(t, arrays)
+	// Both disks are present, matched by identity and by SQLite's own
+	// recorded filesystem UUID — disk.StorageGate reports this array fully
+	// ready. Only DATA1's own physical mount unit is scripted to fail
+	// below, so every mount attempt in this test bails out on it before
+	// ever reaching the pool's own catch-all mount.
+	provider.AddDisk(disks[0].Device, disk.Disk{WWN: disks[0].WWN, Serial: disks[0].Serial, ByIDName: disks[0].ByIDName, FSUUID: disks[0].FSUUID})
+	provider.AddDisk(disks[1].Device, disk.Disk{WWN: disks[1].WWN, Serial: disks[1].Serial, ByIDName: disks[1].ByIDName, FSUUID: disks[1].FSUUID})
+
+	seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, provider, runner)
+	if err != nil {
+		t.Fatalf("newArraySequence: %v", err)
+	}
+	h.SetArray(seq)
+
+	runner.Script("systemctl", []string{"start", disk.UnitFileName(disks[1].Mountpoint)}, nil, errors.New("device dependency never resolved"))
+
+	s := newTestStorageTargetSync(t)
+	s.Runner = runner // the same Runner every disk mount unit in seq uses, so every call this test makes lands on one FakeRunner
+	s.PoolMounted = func(string) (bool, error) { return true, nil }
+
+	probe := disk.NewFakeBlankProber()
+	h.BlankProbe = probe
+
+	if err := s.Startup(ctx, seq); err == nil {
+		t.Fatal("Startup with a failing disk mount = nil error, want one")
+	}
+	if failed := s.MountFailedMountpoints(); !failed[disks[1].Mountpoint] {
+		t.Fatalf("MountFailedMountpoints() = %v, want %s recorded", failed, disks[1].Mountpoint)
+	}
+
+	s.Update(ctx, seq)
+	if err := s.UpdateOrError(ctx, seq); err == nil {
+		t.Fatal("UpdateOrError with a still-failing disk mount = nil error, want one")
+	}
+
+	ack := &acknowledgedDegraded{}
+	rebuild := newRebuildArraySequence(h.Scheduler, arrays, shares, provider, runner, s, h, ack)
+	if err := rebuild(ctx); err != nil {
+		t.Fatalf("rebuild (the SIGHUP path): %v", err)
+	}
+
+	if probed := probe.Probed(); len(probed) != 0 {
+		t.Fatalf("BlankProber.Probed() = %v, want none — Startup, Update/UpdateOrError and the SIGHUP rebuild must never probe a device, even for a same-serial slot whose mount failed", probed)
+	}
+	for _, c := range runner.Calls() {
+		if c.Name == "blkid" {
+			t.Fatalf("unexpected blkid call during Startup/Update/rebuild: %+v — the replace-path probe must be the only caller of blkid -p, and List/GetPool/the rebuild/the timer must never open a device (Q13)", c)
+		}
+	}
+}

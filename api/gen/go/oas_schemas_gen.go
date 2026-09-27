@@ -1858,6 +1858,17 @@ func (s *DiskRemovalState) UnmarshalText(data []byte) error {
 // pool's own slot list must say so rather than report it `active`. The storage gate treats it exactly
 // like a missing disk (not ready, no mount attempted for that slot) and never emits it on
 // `DiskStateEvent`, since it is not a spindown state.
+//
+// `mount_failed` (#398) is also `PoolDiskEntry`-only, and covers the case `wrong_filesystem`
+// deliberately does not: a disk matched to a slot by identity whose filesystem UUID was never
+// positively read at all — most commonly a genuinely blank same-serial replacement, the literal #388
+// scenario — so the storage gate's own identity/FSUUID check reports the array ready for it, but
+// hoservad's own bounded attempt to mount that slot's disk still failed or timed out. Never derived
+// from a device probe on this state's own read path (Q13) — it reflects the daemon's last actual
+// mount attempt, recorded when it happened. The web/CLI Replace disk flow offers this slot's own
+// device as its only replacement target, the same way it does for `wrong_filesystem`; the replace
+// job's own one-off probe of that exact device is what actually confirms it is blank before formatting
+// it. Never emitted on `DiskStateEvent`, since it is not a spindown state.
 // Ref: #/components/schemas/DiskState
 type DiskState string
 
@@ -1868,6 +1879,7 @@ const (
 	DiskStateMissing         DiskState = "missing"
 	DiskStateFailed          DiskState = "failed"
 	DiskStateWrongFilesystem DiskState = "wrong_filesystem"
+	DiskStateMountFailed     DiskState = "mount_failed"
 )
 
 // AllValues returns all DiskState values.
@@ -1879,6 +1891,7 @@ func (DiskState) AllValues() []DiskState {
 		DiskStateMissing,
 		DiskStateFailed,
 		DiskStateWrongFilesystem,
+		DiskStateMountFailed,
 	}
 }
 
@@ -1896,6 +1909,8 @@ func (s DiskState) MarshalText() ([]byte, error) {
 	case DiskStateFailed:
 		return []byte(s), nil
 	case DiskStateWrongFilesystem:
+		return []byte(s), nil
+	case DiskStateMountFailed:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -1922,6 +1937,9 @@ func (s *DiskState) UnmarshalText(data []byte) error {
 		return nil
 	case DiskStateWrongFilesystem:
 		*s = DiskStateWrongFilesystem
+		return nil
+	case DiskStateMountFailed:
+		*s = DiskStateMountFailed
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

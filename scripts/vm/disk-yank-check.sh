@@ -34,41 +34,27 @@
 # a final `POST /parity/diff` (never a raw `snapraid diff` on the guest,
 # per this round's own review note) must come back clean.
 #
-# The replacement's own <serial> is deliberately never the original
-# disk1's own — confirmed necessary the hard way (#388, nightly run
-# 36236553908): reusing it puts a disk satisfying disk.StorageGate's
-# identity check (Q21: matched by serial) into disk1's own slot. #388
-# fixed the restart-loop half of that for real (cmd/hoservad's
-# storageTargetSync now bounds every mount call it issues, so hoservad
-# always reaches READY=1 regardless), and fixed identity-plus-filesystem
-# detection for a same-serial disk carrying an actual, positively
-# readable *different* filesystem (disk.StorageGate.WrongFilesystem,
-# GetPool's own wrong_filesystem state, job.ConfirmReplacementTargetAbsent's
-# own replace exception) — but not for a same-serial disk that is
-# genuinely blank (no filesystem at all), which is what a same-serial
-# replacement normally looks like before anything writes to it. Blkid's
-# own udev builtin (60-persistent-storage.rules' IMPORT{builtin}="blkid",
-# the same one this file's own sibling hoserva-storage.rules depends on)
-# exports ID_FS_TYPE/ID_FS_UUID into the udev database only on a
-# *positive* probe (blkid_do_safeprobe() returning 0, confirmed against
-# this project's own dev host: a GPT-partitioned disk's whole-disk udev
-# record carries ID_PART_TABLE_TYPE with no ID_FS_TYPE, proving udev does
-# export a distinguishing key when it finds something) — but on every
-# other outcome (nothing found, ambiguous, a real read error) it exports
-# nothing at all, so "positively blank" and "unread/unknown" are
-# indistinguishable from udev's cache alone. The one command that *can*
-# tell them apart, `blkid <dev>` (exit 2 means "no signature", distinct
-# from a real error), only works by reading the device directly — which
-# disk.Provider.List() (the same call GetPool and disk.StorageGate.Evaluate
-# both make on every `GET /pool` poll, every SIGHUP, and every topology
-# rebuild) must never do (doc 02 §1, Q13: never opens a block device,
-# never risks waking a disk). That gap is real product behaviour outside
-# this file's own scope (cmd/hoservad/, internal/disk/), reported to the
-# maintainer rather than worked around here — see this commit's own
-# message. A distinct serial (matching a real disk swap, which is never
-# the same physical unit) keeps the gate correctly reporting the original
-# disk still missing — the same fast path the missing-disk boot already
-# takes.
+# The replacement's own <serial> is deliberately the ORIGINAL disk1's own
+# — the literal #388 report, and #398's own acceptance test: a blank
+# replacement disk that happens to keep the previous disk's serial (a
+# clone, a reused drive, or just the enclosure/controller re-assigning
+# the same identity) satisfies disk.StorageGate's identity check (Q21:
+# matched by serial) in disk1's own slot, with no filesystem at all to
+# read a UUID from. #388 fixed the restart-loop half of that
+# (cmd/hoservad's storageTargetSync bounds every mount call it issues, so
+# hoservad always reaches READY=1 regardless) and the positively-
+# different-filesystem half (disk.StorageGate.WrongFilesystem, GetPool's
+# own wrong_filesystem state) — but deliberately left refusing this exact
+# genuinely-blank scenario, since telling "positively blank" from
+# "unread/unknown" needs opening the device, which disk.Provider.List()
+# (GetPool's and disk.StorageGate.Evaluate's own poll path) must never do
+# (doc 02 §1, Q13). #398 closes that gap on the replace path alone: GetPool
+# reports the slot `mount_failed` (cmd/hoservad's own storageTargetSync
+# records its last bounded mount failure, never a fresh probe), and
+# planDiskReplace/replaceDisk run a one-off, bounded `blkid -p` against
+# exactly the one device being replaced (job.ConfirmReplacementTargetAbsent's
+# own narrower exception) to positively confirm it before allowing the
+# same exact-target-only replace #388 already offers for wrong_filesystem.
 #
 # Failing loudly here must never cascade into later steps (the #372
 # lesson run-l3-suite.sh's own header already names): trap
@@ -111,6 +97,35 @@ wait_hoserva_active() {
   local deadline=$((SECONDS + timeout_s))
   while (( SECONDS < deadline )); do
     vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  return 1
+}
+
+# wait_pool_entry_state polls, bounded by timeout_s, logging in fresh on
+# every attempt, until GET /pool reports mountpoint mp in state want.
+# systemd reporting hoservad "active" (wait_hoserva_active above) means
+# only that its own process started and sent READY=1 — never that its API
+# listeners are already serving (the known-escape pattern PR 344 named: a
+# restart check that treats systemd active as API-ready races the
+# listener). A single login-then-GET-/pool attempt right after
+# wait_hoserva_active returns can lose that race — the nightly L3 finding
+# #398's own fix closes had exactly that: hoservad reported active well
+# within 60s, but its listeners were not yet up because the SIGHUP reload
+# handler's own first, synchronous rebuild was still mounting a stuck
+# same-serial disk. Sets POOL_JSON to the last response body seen, for
+# the caller's own diagnostics on a timeout.
+wait_pool_entry_state() {
+  local mp=$1 want=$2 timeout_s=$3
+  local deadline=$((SECONDS + timeout_s))
+  POOL_JSON=""
+  while (( SECONDS < deadline )); do
+    if array_login; then
+      POOL_JSON="$(vm_ssh "curl -sk -b $COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
+      if [[ "$POOL_JSON" =~ \"mountPoint\":\"$mp\",\"role\":\"([^\"]+)\",\"state\":\"([^\"]+)\" ]]; then
+        [[ "${BASH_REMATCH[2]}" == "$want" ]] && return 0
+      fi
+    fi
     sleep 2
   done
   return 1
@@ -360,7 +375,7 @@ else
 fi
 echo "disk-yank-check[$HOSERVA_LAB_ID]: confirmed — $MOUNTPOINT reports state 'missing'"
 
-echo "disk-yank-check[$HOSERVA_LAB_ID]: creating a fresh blank replacement image and attaching it at disk1's own slot (0x$DISK1_SLOT, target $DISK1_TARGET)"
+echo "disk-yank-check[$HOSERVA_LAB_ID]: creating a fresh blank replacement image carrying disk1's own original serial, and attaching it at disk1's own slot (0x$DISK1_SLOT, target $DISK1_TARGET)"
 OLD_IMG="$(printf '%s' "$DISK1_ORIGINAL_XML" | sed -n "s/.*<source file='\\([^']*\\)'.*/\\1/p")"
 [[ -n "$OLD_IMG" ]] || die "could not find the original disk1 image path in its own captured XML"
 SIZE_BYTES="$(qemu-img info "$OLD_IMG" | sed -n -E 's/.*\(([0-9]+) bytes\).*/\1/p' | head -n1)"
@@ -375,18 +390,14 @@ DISK1_REPLACEMENT_XML_FILE="$VM_STATE_DIR/disk-yank-check-disk1-replacement.xml"
   echo "  <driver name='qemu' type='qcow2'/>"
   echo "  <source file='$(vm_xml_attr_escape "$NEW_IMG")'/>"
   echo "  <target dev='$DISK1_TARGET' bus='virtio'/>"
-  # A genuinely distinct serial, never the original disk1's own
-  # ("disk1repl-", still matching every later step's own "-hoserva-
-  # $HOSERVA_LAB_ID" and "disk*-hoserva-..." filters, e.g. array-sequence-
-  # check.sh's) — matching a real disk swap, which is never the same
-  # physical unit. See this script's own header comment (#388) for why a
-  # same-serial blank replacement is not exercised here: hoservad no
-  # longer restart-loops over one (the mount bound is unconditional), but
-  # neither the storage gate nor GetPool can positively tell a genuinely
-  # blank disk from one this build simply could not read a filesystem UUID
-  # for, without opening the device — which disk.Provider.List() must never
-  # do (doc 02 §1, Q13).
-  echo "  <serial>disk1repl-hoserva-$HOSERVA_LAB_ID</serial>"
+  # The ORIGINAL disk1 serial, not a distinct one — the literal #388
+  # report and #398's own acceptance test (this script's own header
+  # comment): a same-serial blank replacement. disk.StorageGate's
+  # identity check (Q21) recognises this as disk1's own slot with no
+  # filesystem to read a UUID from; hoservad no longer restart-loops
+  # over it (#388) and GetPool now reports the slot 'mount_failed'
+  # rather than silently 'active' (#398, checked below).
+  echo "  <serial>disk1-hoserva-$HOSERVA_LAB_ID</serial>"
   echo "  <address type='pci' domain='0x0000' bus='0x00' slot='0x$DISK1_SLOT' function='0x0'/>"
   echo "</disk>"
 } >"$DISK1_REPLACEMENT_XML_FILE"
@@ -394,10 +405,19 @@ DISK1_REPLACEMENT_XML_FILE="$VM_STATE_DIR/disk-yank-check-disk1-replacement.xml"
 shutdown_guest
 virsh -c "$VM_CONNECT" attach-device "$VM_DOMAIN" "$DISK1_REPLACEMENT_XML_FILE" --config >/dev/null
 boot_guest "the replacement-disk boot"
-wait_hoserva_active 120 || die "hoservad did not report active within 120s of the replacement-disk boot"
+# 60s, not the 120s the missing-disk boot above allows: #398's own
+# acceptance criterion is that hoservad reaches active within 60s of this
+# exact scenario — startupMountTimeout (#388) bounds the stuck mount well
+# under that, so this is the check that the fix actually holds, not just
+# a generous ceiling.
+wait_hoserva_active 60 || die "hoservad did not report active within 60s of the same-serial blank replacement boot (#398's own acceptance criterion)"
+
+echo "disk-yank-check[$HOSERVA_LAB_ID]: confirming the array reports $MOUNTPOINT needing attention (mount_failed) for the same-serial blank replacement"
+wait_pool_entry_state "$MOUNTPOINT" "mount_failed" 60 \
+  || die "getPool never reported $MOUNTPOINT as 'mount_failed' within 60s of the same-serial blank replacement boot (#398's own acceptance criterion): $POOL_JSON"
+echo "disk-yank-check[$HOSERVA_LAB_ID]: confirmed — $MOUNTPOINT reports state 'mount_failed', needing attention"
 
 echo "disk-yank-check[$HOSERVA_LAB_ID]: driving the real replace flow — planDiskReplace, then replaceDisk"
-array_login || die "login as $ADMIN_USERNAME failed after the replacement-disk boot"
 
 PLAN_BODY="{\"mountpoint\":\"$MOUNTPOINT\",\"device\":\"/dev/$DISK1_TARGET\",\"filesystem\":\"ext4\"}"
 PLAN_RESULT="$(vm_ssh "curl -sk -b $COOKIE_JAR -X POST https://127.0.0.1:8008/api/v1/disks/array/replace/plan -H 'Content-Type: application/json' -d '$PLAN_BODY'" 2>/dev/null)"

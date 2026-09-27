@@ -409,6 +409,161 @@ func TestHandler_ReplaceDisk_Success_StartsJobAndSwitchesTopology(t *testing.T) 
 	}
 }
 
+// newDiskLifecycleHandlerWithProbe is newDiskLifecycleHandler plus a
+// scriptable disk.BlankProber wired both onto the returned *api.Handler
+// (PlanDiskReplace/ReplaceDisk's own synchronous re-check) and onto
+// TypeDiskReplace's own job.DiskReplaceDeps (RunDiskReplace's re-check) —
+// #398's own reachable-via-both-entry-points proof, since a plan or an
+// apply call can each reach ConfirmReplacementTargetAbsent independently.
+func newDiskLifecycleHandlerWithProbe(t *testing.T, probe disk.BlankProber) (*api.Handler, *job.Scheduler, *disk.FakeProvider, *store.ArrayStore, *parity.FakeEngine, *disk.FakeRunner) {
+	t.Helper()
+
+	migrations, err := store.Load()
+	if err != nil {
+		t.Fatalf("loading embedded migrations: %v", err)
+	}
+	dbPath := filepath.Join(t.TempDir(), "disk-lifecycle-probe-test.db")
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("opening test database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	runner := &store.Runner{DB: db, Migrations: migrations, SnapshotDir: t.TempDir()}
+	if _, _, err := runner.Apply(context.Background()); err != nil {
+		t.Fatalf("applying migrations: %v", err)
+	}
+
+	jobStore := job.NewStore(db)
+	logs := job.NewLogStore(t.TempDir())
+	registry := job.NewRegistry()
+	scheduler := job.NewScheduler(jobStore, logs, job.NewHub(), registry)
+	arrayStore := store.NewArrayStore(db)
+
+	p := disk.NewFakeProvider()
+	fakeRun := disk.NewFakeRunner()
+	genRoot := t.TempDir()
+	eng := parity.NewFakeEngine()
+	eng.ScriptFix([]parity.Progress{{}}, nil)
+
+	registry.Register(job.TypeDiskReplace, false, job.RunDiskReplace(job.DiskReplaceDeps{
+		Provider:  p,
+		Runner:    fakeRun,
+		Probe:     probe,
+		Store:     arrayStore,
+		Generator: config.NewGenerator(genRoot),
+		Mounter:   disk.NewFakeMounter(),
+		Parity:    eng,
+		Now:       func() time.Time { return time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC) },
+	}))
+
+	h := &api.Handler{
+		Scheduler:  scheduler,
+		Store:      jobStore,
+		Logs:       logs,
+		Disks:      p,
+		ArrayStore: arrayStore,
+		BlankProbe: probe,
+	}
+	return h, scheduler, p, arrayStore, eng, fakeRun
+}
+
+// seedSameSerialBlankSlot puts a two-data-disk array whose disk1 (WWN
+// wwn-d1) has since been replaced, at the exact same device path, by a
+// present disk carrying the same WWN but no filesystem UUID at all — the
+// literal #388/#398 same-serial-blank scenario — into st and p.
+func seedSameSerialBlankSlot(t *testing.T, ctx context.Context, st *store.ArrayStore, p *disk.FakeProvider) {
+	t.Helper()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-d1"})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB})
+	if err := st.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs", MinFreeSpace: "20G", CreatedAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", Mountpoint: "/mnt/parity1"},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", WWN: "wwn-d1", Mountpoint: "/mnt/disk1"},
+		{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-d2", Mountpoint: "/mnt/disk2"},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+}
+
+// TestHandler_PlanDiskReplace_SameSerialBlankRefusedWithNoProbeConfigured
+// is #398's own fail-closed proof at the API entry point: with no
+// disk.BlankProber wired at all (h.BlankProbe nil, an older daemon build
+// or a caller's own test predating it), the same-serial-blank scenario
+// refuses exactly as it did before #398 — the exception never silently
+// applies just because nothing was configured to check it.
+func TestHandler_PlanDiskReplace_SameSerialBlankRefusedWithNoProbeConfigured(t *testing.T) {
+	ctx := context.Background()
+	h, _, p, st, _, _ := newDiskLifecycleHandler(t)
+	seedSameSerialBlankSlot(t, ctx, st, p)
+
+	_, err := h.PlanDiskReplace(ctx, &apiv1.ReplaceDiskPlanRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdb"})
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "slot_disk_present" {
+		t.Fatalf("PlanDiskReplace(same-serial blank, no probe) = %+v, want 409 slot_disk_present", status)
+	}
+}
+
+// TestHandler_PlanDiskReplace_SameSerialBlankAllowedWithPositiveProbe is
+// #398's own fix reachable through PlanDiskReplace: the exact same slot
+// as above, but with a disk.BlankProber scripted to positively confirm
+// /dev/sdb carries no signature at all.
+func TestHandler_PlanDiskReplace_SameSerialBlankAllowedWithPositiveProbe(t *testing.T) {
+	ctx := context.Background()
+	probe := disk.NewFakeBlankProber()
+	probe.ScriptBlank("/dev/sdb")
+	h, _, p, st, _, _ := newDiskLifecycleHandlerWithProbe(t, probe)
+	seedSameSerialBlankSlot(t, ctx, st, p)
+
+	plan, err := h.PlanDiskReplace(ctx, &apiv1.ReplaceDiskPlanRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdb"})
+	if err != nil {
+		t.Fatalf("PlanDiskReplace(same-serial blank, positive probe): %v", err)
+	}
+	if plan.ReplacementDevice != "/dev/sdb" {
+		t.Fatalf("ReplacementDevice = %q, want /dev/sdb", plan.ReplacementDevice)
+	}
+	if probed := probe.Probed(); len(probed) != 1 || probed[0] != "/dev/sdb" {
+		t.Fatalf("probe.Probed() = %v, want exactly one call against /dev/sdb", probed)
+	}
+}
+
+// TestHandler_ReplaceDisk_SameSerialBlankAllowedAsExactTarget_Succeeds is
+// #398's own end-to-end proof through ReplaceDisk: the queued
+// TypeDiskReplace job re-checks ConfirmReplacementTargetAbsent itself
+// (RunDiskReplace's own defense-in-depth, disk_replace_run.go), through
+// its own DiskReplaceDeps.Probe — wired independently from h.BlankProbe
+// above, proving both entry points this issue's "Reachable via" names.
+func TestHandler_ReplaceDisk_SameSerialBlankAllowedAsExactTarget_Succeeds(t *testing.T) {
+	ctx := context.Background()
+	probe := disk.NewFakeBlankProber()
+	probe.ScriptBlank("/dev/sdb")
+	h, s, p, st, eng, r := newDiskLifecycleHandlerWithProbe(t, probe)
+	seedSameSerialBlankSlot(t, ctx, st, p)
+	scriptUUID(r, "/dev/sdb", "uuid-replaced")
+	scriptReplaceMountedUUID(r, "/mnt/disk1", "uuid-replaced")
+	eng.SetStatus(parity.ParityStatus{DataMounts: map[string]string{"d1": "/mnt/disk1", "d2": "/mnt/disk2"}})
+
+	got, err := h.ReplaceDisk(ctx, &apiv1.ReplaceDiskRequest{Mountpoint: "/mnt/disk1", Device: "/dev/sdb", Confirmation: "ERASE /dev/sdb"})
+	if err != nil {
+		t.Fatalf("ReplaceDisk: %v", err)
+	}
+	finished := awaitJob(t, s, got.ID.String())
+	if finished.Status != job.StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
+	}
+	switched, err := st.GetDataDiskByMountpoint(ctx, "/mnt/disk1")
+	if err != nil {
+		t.Fatalf("GetDataDiskByMountpoint(/mnt/disk1): %v", err)
+	}
+	if switched.FSUUID != "uuid-replaced" {
+		t.Fatalf("disk1 FSUUID = %q, want uuid-replaced", switched.FSUUID)
+	}
+	if _, ok := p.FormattedAs("/dev/sdb"); !ok {
+		t.Fatal("the positively-blank exact target was not formatted")
+	}
+}
+
 // TestHandler_ReplaceDisk_AllowsAnEvacuatedOrUnpooledDiskOnceGenuinelyMissing
 // is #384's own regression: a slot marked evacuated or unpooled is no
 // longer refused (disk_leaving_array) on the removal state alone once its

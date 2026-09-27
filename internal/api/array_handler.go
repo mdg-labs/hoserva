@@ -501,7 +501,7 @@ func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
-	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, listed, req.Device); err != nil {
+	if err := job.ConfirmReplacementTargetAbsent(ctx, req.Mountpoint, existing, listed, req.Device, h.BlankProbe); err != nil {
 		return nil, errSlotDiskPresent(err)
 	}
 	assigned, err := resolveAssignedDisk(req.Device, req.Filesystem, req.Adopt, listed)
@@ -561,7 +561,7 @@ func (h *Handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
-	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, listed, req.Device); err != nil {
+	if err := job.ConfirmReplacementTargetAbsent(ctx, req.Mountpoint, existing, listed, req.Device, h.BlankProbe); err != nil {
 		return nil, errSlotDiskPresent(err)
 	}
 	assigned, err := resolveAssignedDisk(req.Device, req.Filesystem, req.Adopt, listed)
