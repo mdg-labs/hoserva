@@ -499,6 +499,21 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	// disk that is not "format before mounting".
 	extRunner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdf"}, []byte("ext-fixture-uuid\n"), nil)
 
+	// Registered last, so t.Cleanup's LIFO order runs this before every
+	// other cleanup above — the db.Close, the netSvc.Close, the mount.Close
+	// and every t.TempDir() removal registered while building this handler.
+	// A contractCase (e.g. StartMover/valid) can submit a real job and
+	// return before it finishes; without this, the job's own goroutine can
+	// still be writing to jobStore (through db) or to logs' t.TempDir()
+	// when those get closed or removed out from under it (#397).
+	t.Cleanup(func() {
+		drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := scheduler.Drain(drainCtx); err != nil {
+			t.Errorf("draining contract rig jobs before cleanup: %v", err)
+		}
+	})
+
 	return &api.Handler{
 		Scheduler:  scheduler,
 		Store:      jobStore,
