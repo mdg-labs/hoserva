@@ -37,32 +37,27 @@ var ErrEvacuationUnsupportedEntry = errors.New("cache: evacuated disk holds an e
 
 // ErrEvacuationNonShareContent is PlanEvacuation's refusal when disk
 // holds any top-level entry that is neither a configured share's own
-// branch there nor SnapRAID's own bookkeeping (lost+found,
-// snapraid.content*) — a stray directory or file outside every share
-// (#367). doc 09 §4 describes evacuation entirely in terms of share
+// branch there nor SnapRAID's own content files (snapraid.content*) — a
+// stray file outside every share, or a directory (lost+found included)
+// holding one (#367). doc 09 §4 describes evacuation entirely in terms of share
 // branches and has no procedure for moving anything else, so evacuation
 // refuses to start rather than silently leaving it on the disk.
 var ErrEvacuationNonShareContent = errors.New("cache: disk holds content outside every configured share")
 
-// evacuationLostAndFound and evacuationContentPrefix name the same
-// SnapRAID bookkeeping job.diskLeftover excludes from a disk's own root
-// (#358): lost+found is the filesystem's own directory, and
-// snapraid.content* (and its own temporary copies) is what Layout places
-// directly on a data disk's root and every snapraid.conf excludes. Kept
-// in sync with disk_remove_run.go's own lostAndFound/contentFilePrefix
-// so nonShareTopLevelEntries and the finish job's own leftover check
-// never disagree about what a data disk's root may legitimately hold
-// outside a share.
-const (
-	evacuationLostAndFound  = "lost+found"
-	evacuationContentPrefix = "snapraid.content"
-)
+// evacuationContentPrefix names the SnapRAID bookkeeping job.diskLeftover
+// excludes from a disk's own root (#358): snapraid.content* (and its own
+// temporary copies) is what Layout places directly on a data disk's root
+// and every snapraid.conf excludes. Kept in sync with disk_remove_run.go's
+// own contentFilePrefix so nonShareTopLevelEntries and the finish job's
+// own leftover check never disagree about what a data disk's root may
+// legitimately hold outside a share. lost+found gets no exemption beyond
+// any other directory: fsck-recovered files inside it fail both checks.
+const evacuationContentPrefix = "snapraid.content"
 
 // nonShareTopLevelEntries lists every entry directly under disk's own
 // mountpoint that is neither a configured share's own branch there nor
-// SnapRAID's own bookkeeping (evacuationLostAndFound,
-// evacuationContentPrefix) — content doc 09 §4 has no procedure for
-// moving or checking — and that actually holds something: a top-level
+// SnapRAID's own content files (evacuationContentPrefix) — content doc
+// 09 §4 has no procedure for moving or checking — and that actually holds something: a top-level
 // directory tree with no file (or other non-directory entry) anywhere
 // beneath it is tolerated here, the same way EvacuationPostCheck's own
 // whole-disk scan (nonShareLeftover) and job.diskLeftover's
@@ -96,9 +91,6 @@ func nonShareTopLevelEntries(disk string, shares []Share) ([]string, error) {
 		}
 		path := filepath.Join(disk, name)
 		if e.IsDir() {
-			if name == evacuationLostAndFound {
-				continue
-			}
 			holds, err := dirHoldsNonDirEntry(path)
 			if err != nil {
 				return nil, fmt.Errorf("scanning %q: %w", path, err)

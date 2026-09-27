@@ -557,6 +557,40 @@ func TestPlanEvacuation_LostAndFoundAndContentFilesDoNotBlock(t *testing.T) {
 	}
 }
 
+// TestPlanEvacuation_RefusesRecoveredFilesInLostAndFound proves a file
+// fsck recovered into lost+found blocks evacuation at plan time, before
+// any copy, sync or delete runs — EvacuationPostCheck and
+// job.diskLeftover both flag that same file, so a plan that ignored it
+// would only surface the refusal after a full evacuation.
+func TestPlanEvacuation_RefusesRecoveredFilesInLostAndFound(t *testing.T) {
+	base := t.TempDir()
+	disk1 := filepath.Join(base, "disk1")
+	disk2 := filepath.Join(base, "disk2")
+	s := evacuateShare(t, "movies", []string{disk1, disk2})
+	rebalanceWriteSize(t, filepath.Join(s.Branches[0], "a.bin"), 100)
+	lostAndFound := filepath.Join(disk1, "lost+found")
+	if err := os.MkdirAll(lostAndFound, 0o700); err != nil {
+		t.Fatalf("mkdir lost+found: %v", err)
+	}
+	rebalanceWriteSize(t, filepath.Join(lostAndFound, "#12345"), 10)
+
+	deps := rebalanceTestDeps(NewFakeOpenChecker())
+	deps.Usage = fakeUsage(map[string]DiskUsage{
+		s.Branches[1]: {TotalBytes: 1000, FreeBytes: 900},
+	})
+
+	plan, err := PlanEvacuation(context.Background(), disk1, []Share{s}, deps)
+	if !errors.Is(err, ErrEvacuationNonShareContent) {
+		t.Fatalf("PlanEvacuation err = %v, want ErrEvacuationNonShareContent", err)
+	}
+	if len(plan.NonShareContent) != 1 || plan.NonShareContent[0] != lostAndFound {
+		t.Fatalf("plan.NonShareContent = %v, want [%s]", plan.NonShareContent, lostAndFound)
+	}
+	if err := EvacuationPostCheck(disk1, []Share{s}); err == nil {
+		t.Fatal("EvacuationPostCheck passed with a file in lost+found — the plan-time scan and the post-check must agree")
+	}
+}
+
 // TestEvacuationPostCheck_FailsOnNonShareLeftoverAfterSuccessfulEvacuation
 // simulates the report's own scenario (#367): a share's own content
 // evacuates cleanly, but something appears on the disk's root outside

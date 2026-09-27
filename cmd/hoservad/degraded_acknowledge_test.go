@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/disk"
@@ -422,5 +424,93 @@ func TestAcknowledgedDegraded_Reapply_RefusesWhenADifferentDiskIsAlsoMissing(t *
 	ack.reapply(gate)
 	if !gate.Ready() {
 		t.Fatal("reapply did not re-acknowledge a gate whose only missing disk is the one already recorded")
+	}
+}
+
+// blockingListProvider holds List until release is closed, once armed,
+// so a test can park newRebuildArraySequence mid-rebuild.
+type blockingListProvider struct {
+	*disk.FakeProvider
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingListProvider) List(ctx context.Context) ([]disk.Disk, error) {
+	if p.armed.CompareAndSwap(true, false) {
+		close(p.entered)
+		<-p.release
+	}
+	return p.FakeProvider.List(ctx)
+}
+
+// TestAcknowledgeDegraded_WaitsForAnInFlightRebuild covers the
+// acknowledge/rebuild interleaving (PR 394 review): a rebuild that
+// re-applied acknowledgements onto its fresh gate before the hook
+// recorded, then published that gate after the hook opened the storage
+// target, would close the target again under an acknowledgement already
+// reported as successful. The hook must wait for an in-flight rebuild and
+// then acknowledge the gate that rebuild published.
+func TestAcknowledgeDegraded_WaitsForAnInFlightRebuild(t *testing.T) {
+	ctx, h, arrays, shares, fake, runner := newArrayTestEnv(t)
+	disks := persistSampleArray(t, arrays)
+	fake.AddDisk(disks[0].Device, disk.Disk{WWN: disks[0].WWN, Serial: disks[0].Serial, ByIDName: disks[0].ByIDName})
+	provider := &blockingListProvider{FakeProvider: fake, entered: make(chan struct{}), release: make(chan struct{})}
+	scheduler := h.Scheduler
+	// Maintenance mode makes every storage-target transition below refuse
+	// before it mounts anything, so neither sequence's real catch-all is
+	// ever mounted in this unit test.
+	if err := scheduler.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+
+	seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, runner)
+	if err != nil {
+		t.Fatalf("newArraySequence: %v", err)
+	}
+	h.SetArray(seq)
+
+	s := newTestStorageTargetSync(t)
+	ack := &acknowledgedDegraded{}
+	wireAcknowledgeDegraded(h, s, ack)
+	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, h, ack)
+
+	provider.armed.Store(true)
+	rebuildErr := make(chan error, 1)
+	go func() { rebuildErr <- rebuild(ctx) }()
+	<-provider.entered
+
+	ackErr := make(chan error, 1)
+	go func() {
+		_, err := h.AcknowledgeDegradedArray(ctx)
+		ackErr <- err
+	}()
+	select {
+	case err := <-ackErr:
+		close(provider.release)
+		t.Fatalf("AcknowledgeDegradedArray returned (%v) while a rebuild was still in flight", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(provider.release)
+	if err := <-rebuildErr; err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	select {
+	case <-ackErr:
+	case <-time.After(5 * time.Second):
+		t.Fatal("AcknowledgeDegradedArray never returned once the rebuild finished")
+	}
+
+	rebuilt := h.CurrentArray()
+	if rebuilt == seq {
+		t.Fatal("the rebuild did not publish a new sequence")
+	}
+	gate, ok := storageGateOf(rebuilt.Gate)
+	if !ok {
+		t.Fatalf("rebuilt Gate is %T, want the storage gate wrapper", rebuilt.Gate)
+	}
+	if !gate.Ready() {
+		t.Fatal("the rebuilt gate is not acknowledged — the acknowledgement landed on the gate the rebuild replaced")
 	}
 }

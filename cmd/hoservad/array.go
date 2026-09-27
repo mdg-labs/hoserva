@@ -235,6 +235,13 @@ func storageGateOf(g job.ReadinessGate) (*disk.StorageGate, bool) {
 type acknowledgedDegraded struct {
 	mu         sync.Mutex
 	identities []disk.Identity
+	// seqMu serializes wireAcknowledgeDegraded's hook against
+	// newRebuildArraySequence's closure: otherwise a rebuild can reapply
+	// onto its fresh gate before the hook records, then publish that
+	// still-unacknowledged gate after the hook already opened the storage
+	// target, closing it again under an acknowledgement reported as
+	// successful. Always taken before storageTargetSync.mu.
+	seqMu sync.Mutex
 }
 
 // record captures the identities behind an acknowledgement that has just
@@ -307,6 +314,8 @@ func (a *acknowledgedDegraded) reapply(gate *disk.StorageGate) {
 func wireAcknowledgeDegraded(handler *api.Handler, storageTarget *storageTargetSync, ack *acknowledgedDegraded) {
 	handler.StorageServicesReleased = storageTarget.Ready
 	handler.AcknowledgeDegraded = func(ctx context.Context) error {
+		ack.seqMu.Lock()
+		defer ack.seqMu.Unlock()
 		seq := handler.CurrentArray()
 		if seq == nil {
 			return disk.ErrNothingToAcknowledge
@@ -339,6 +348,8 @@ func wireAcknowledgeDegraded(handler *api.Handler, storageTarget *storageTargetS
 // acknowledgement the moment it ran.
 func newRebuildArraySequence(scheduler *job.Scheduler, arrayStore *store.ArrayStore, shareStore *store.ShareStore, disks disk.Provider, runner disk.Runner, storageTarget *storageTargetSync, handler *api.Handler, ack *acknowledgedDegraded) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
+		ack.seqMu.Lock()
+		defer ack.seqMu.Unlock()
 		seq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, runner)
 		if err != nil {
 			return err
