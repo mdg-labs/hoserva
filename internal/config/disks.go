@@ -17,7 +17,7 @@ func (g *Generator) WriteDiskMounts(ctx context.Context, units []disk.MountUnit,
 		file := File{
 			Path:    poolMountUnitDir + disk.UnitFileName(u.Where),
 			Command: command,
-			Body:    []byte(u.Render()),
+			Body:    []byte(u.Render(g.stoppedFlagPath())),
 		}
 		if err := g.Write(ctx, file, revision, now); err != nil {
 			return err

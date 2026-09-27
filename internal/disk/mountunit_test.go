@@ -27,7 +27,7 @@ func TestMountUnit_Render(t *testing.T) {
 		Filesystem:  XFS,
 		Description: "Hoserva data disk 1",
 	}
-	got := u.Render()
+	got := u.Render(StorageStoppedFlagPath)
 
 	for _, want := range []string{
 		"Description=Hoserva data disk 1",
@@ -56,7 +56,7 @@ func TestMountUnit_Render(t *testing.T) {
 // mount — a skip, not a failure — while StorageStoppedFlagPath exists.
 func TestMountUnit_Render_ConditionSkipsAnExternalStartWhileArrayStopped(t *testing.T) {
 	u := MountUnit{Where: "/mnt/disk1", UUID: "1234-5678", Filesystem: XFS, Description: "Hoserva data disk 1"}
-	got := u.Render()
+	got := u.Render(StorageStoppedFlagPath)
 	wantLine := "ConditionPathExists=!" + StorageStoppedFlagPath
 	found := false
 	for _, line := range strings.Split(got, "\n") {
@@ -76,7 +76,7 @@ func TestMountUnit_Render_ConditionSkipsAnExternalStartWhileArrayStopped(t *test
 // an option that does nothing here.
 func TestMountUnit_Render_NeverEmitsTheInertFstabOnlyTimeoutOption(t *testing.T) {
 	u := MountUnit{Where: "/mnt/disk1", UUID: "1234-5678", Filesystem: XFS, Description: "Hoserva data disk 1"}
-	if got := u.Render(); strings.Contains(got, "device-timeout") {
+	if got := u.Render(StorageStoppedFlagPath); strings.Contains(got, "device-timeout") {
 		t.Fatalf("Render() = %q, must not contain x-systemd.device-timeout (ignored outside /etc/fstab)", got)
 	}
 }

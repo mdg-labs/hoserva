@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mdg-labs/hoserva/internal/config/golden"
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 // poolTestdataDir is package-owned (internal/pool/testdata/pool-mounts),
@@ -51,7 +52,7 @@ func TestRenderPoolMounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CatchAllMount: %v", err)
 	}
-	golden.Compare(t, filepath.Join(poolTestdataDir, UnitFileName(catchAll.Where)+".golden"), []byte(catchAll.Render()))
+	golden.Compare(t, filepath.Join(poolTestdataDir, UnitFileName(catchAll.Where)+".golden"), []byte(catchAll.Render(disk.StorageStoppedFlagPath)))
 
 	for _, s := range state.Shares {
 		share := Share{Name: s.Name, CacheMode: CacheMode(s.CacheMode), CreatePolicy: CreatePolicy(s.CreatePolicy)}
@@ -60,7 +61,7 @@ func TestRenderPoolMounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ShareMount(%s): %v", s.Name, err)
 		}
-		golden.Compare(t, filepath.Join(poolTestdataDir, UnitFileName(shareMount.Where)+".golden"), []byte(shareMount.Render()))
+		golden.Compare(t, filepath.Join(poolTestdataDir, UnitFileName(shareMount.Where)+".golden"), []byte(shareMount.Render(disk.StorageStoppedFlagPath)))
 
 		if share.CacheMode == CacheOnly {
 			// CacheOnly data lives on cache permanently and is never
@@ -72,6 +73,6 @@ func TestRenderPoolMounts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("MoverTargetMount(%s): %v", s.Name, err)
 		}
-		golden.Compare(t, filepath.Join(poolTestdataDir, UnitFileName(moverMount.Where)+".golden"), []byte(moverMount.Render()))
+		golden.Compare(t, filepath.Join(poolTestdataDir, UnitFileName(moverMount.Where)+".golden"), []byte(moverMount.Render(disk.StorageStoppedFlagPath)))
 	}
 }

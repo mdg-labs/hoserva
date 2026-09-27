@@ -3,8 +3,6 @@ package pool
 import (
 	"fmt"
 	"strings"
-
-	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 // Mount is one systemd .mount unit for a mergerfs pool mount — the
@@ -71,11 +69,12 @@ func (m Mount) optionsString() string {
 // RequiresMountsFor=, the physical disks under it) when `systemctl start
 // nfs-kernel-server` ran during `array stop`, entirely outside any edge
 // hoserva-storage.target itself carries. See disk.StorageStoppedFlagPath
-// for the full mechanism.
-func (m Mount) Render() string {
+// for the full mechanism; stoppedFlag is that flag's path for this
+// daemon's state directory.
+func (m Mount) Render(stoppedFlag string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Unit]\nDescription=%s\n", m.Description)
-	fmt.Fprintf(&b, "ConditionPathExists=!%s\n", disk.StorageStoppedFlagPath)
+	fmt.Fprintf(&b, "ConditionPathExists=!%s\n", stoppedFlag)
 	if len(m.RequiresMountsFor) > 0 {
 		fmt.Fprintf(&b, "RequiresMountsFor=%s\n", strings.Join(m.RequiresMountsFor, " "))
 	}

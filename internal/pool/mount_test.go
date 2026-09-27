@@ -17,7 +17,7 @@ func TestMount_Render(t *testing.T) {
 		Description:       "Hoserva share movies",
 		RequiresMountsFor: []string{"/mnt/user", "/mnt/cache", "/mnt/disk1"},
 	}
-	got := m.Render()
+	got := m.Render(disk.StorageStoppedFlagPath)
 
 	for _, want := range []string{
 		"Description=Hoserva share movies",
@@ -39,7 +39,7 @@ func TestMount_Render(t *testing.T) {
 // disk.StorageStoppedFlagPath's own doc comment for the full mechanism.
 func TestMount_Render_ConditionSkipsAnExternalStartWhileArrayStopped(t *testing.T) {
 	m := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
-	got := m.Render()
+	got := m.Render(disk.StorageStoppedFlagPath)
 	wantLine := "ConditionPathExists=!" + disk.StorageStoppedFlagPath
 	found := false
 	for _, line := range strings.Split(got, "\n") {
@@ -55,7 +55,7 @@ func TestMount_Render_ConditionSkipsAnExternalStartWhileArrayStopped(t *testing.
 
 func TestMount_Render_OmitsRequiresMountsForWhenEmpty(t *testing.T) {
 	m := Mount{Where: "/mnt/user", What: "/mnt/disk1=RW", FSName: "hoserva-pool", CreatePolicy: DefaultCreatePolicy, Options: DefaultOptions()}
-	got := m.Render()
+	got := m.Render(disk.StorageStoppedFlagPath)
 	if strings.Contains(got, "RequiresMountsFor") {
 		t.Fatalf("Render() = %q, want no RequiresMountsFor line when none is set", got)
 	}

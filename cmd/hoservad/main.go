@@ -255,6 +255,16 @@ func run(cfg config) error {
 		configRoot = "/etc"
 	}
 	generator := cfggen.NewGenerator(configRoot)
+	// The array-stopped flag lives in this daemon's own state directory
+	// (absolute: it is rendered into every mount unit's
+	// ConditionPathExists=), so a --dev or custom --state-dir daemon never
+	// writes /var/lib/hoserva.
+	absStateDir, err := filepath.Abs(cfg.stateDir)
+	if err != nil {
+		return fmt.Errorf("resolving state directory: %w", err)
+	}
+	stoppedFlag := filepath.Join(absStateDir, disk.StorageStoppedFlagName)
+	generator.StoppedFlagPath = stoppedFlag
 	// The mover cooperatively checks StopRequested between files and
 	// leaves consistent on-disk state at any stopping point (a duplicate,
 	// never a gap — doc 09 §2), so it honestly supports being cancelled,
@@ -326,7 +336,7 @@ func run(cfg config) error {
 	storageTarget := &storageTargetSync{
 		Generator:       generator,
 		Runner:          linuxDisks.Exec,
-		StoppedFlagPath: disk.StorageStoppedFlagPath,
+		StoppedFlagPath: stoppedFlag,
 		ArrayStore:      arrayStore,
 		ShareStore:      shareStore,
 	}

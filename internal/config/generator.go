@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
 // ErrUnmanaged is returned when a caller asks Generator to write a file
@@ -82,6 +84,17 @@ type Generator struct {
 	// LookupGroup resolves File.Group to a gid; nil uses the host's
 	// group database.
 	LookupGroup func(name string) (int, error)
+	// StoppedFlagPath is the array-stopped flag every rendered mount unit
+	// conditions on; empty uses disk.StorageStoppedFlagPath. main.go sets
+	// it from --state-dir, the same path storageTargetSync writes.
+	StoppedFlagPath string
+}
+
+func (g *Generator) stoppedFlagPath() string {
+	if g.StoppedFlagPath != "" {
+		return g.StoppedFlagPath
+	}
+	return disk.StorageStoppedFlagPath
 }
 
 func (g *Generator) groupID(name string) (int, error) {

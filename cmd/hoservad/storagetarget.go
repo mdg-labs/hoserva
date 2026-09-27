@@ -44,8 +44,9 @@ type storageTargetSync struct {
 	// FlagPath overrides pool.StorageReadyFlagPath — set only by this
 	// package's own tests, never in production.
 	FlagPath string
-	// StoppedFlagPath is disk.StorageStoppedFlagPath in production
-	// (main.go sets it explicitly) and a temp path in every test (#387):
+	// StoppedFlagPath is disk.StorageStoppedFlagName inside --state-dir in
+	// production (main.go sets it, and the same path on its Generator so
+	// every unit's condition matches) and a temp path in every test (#387):
 	// unlike FlagPath above, this has no silent fallback —
 	// a test that forgot to set it would otherwise delete or write the
 	// real host's array-stopped flag under /var/lib/hoserva the moment it
@@ -211,8 +212,8 @@ func (s *storageTargetSync) setFlagReady() error {
 }
 
 // stoppedFlagPath returns s.StoppedFlagPath as set — main.go sets it to
-// disk.StorageStoppedFlagPath for production, and every test sets it to a
-// temp path (#387). Deliberately no fallback: a caller that
+// disk.StorageStoppedFlagName inside --state-dir, and every test sets it to
+// a temp path (#387). Deliberately no fallback: a caller that
 // forgot to set it gets an empty path, which os.WriteFile/os.Remove
 // refuse outright, rather than silently defaulting to the real host path.
 func (s *storageTargetSync) stoppedFlagPath() string {

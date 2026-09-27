@@ -67,7 +67,16 @@ import (
 // transaction ran — silently skipping a disk's own automatic nofail
 // activation — can never leave a disk or the pool unmounted just because
 // nothing else was going to retry it.
-const StorageStoppedFlagPath = "/var/lib/hoserva/array-stopped"
+//
+// This is the path under hoservad's default --state-dir; a daemon run
+// with another state directory (--dev, or an explicit --state-dir) keeps
+// its flag at StorageStoppedFlagName inside that directory instead, and
+// renders that same path into every unit's condition.
+const StorageStoppedFlagPath = "/var/lib/hoserva/" + StorageStoppedFlagName
+
+// StorageStoppedFlagName is StorageStoppedFlagPath's file name inside
+// hoservad's state directory.
+const StorageStoppedFlagName = "array-stopped"
 
 // MountUnit is one systemd .mount unit for a physical disk (doc 01 §6,
 // doc 02 §1): mounted by filesystem UUID (Q21) rather than /dev/sdX,
@@ -97,11 +106,13 @@ func UnitFileName(where string) string {
 
 // Render returns u's systemd unit file content — the body a caller
 // writes through config.Generator under its own doc 01 §2 header (D4:
-// config files are generated, never hand-edited).
-func (u MountUnit) Render() string {
+// config files are generated, never hand-edited). stoppedFlag is the
+// array-stopped flag the unit's condition checks (StorageStoppedFlagPath
+// under the default state directory).
+func (u MountUnit) Render(stoppedFlag string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Unit]\nDescription=%s\n", u.Description)
-	fmt.Fprintf(&b, "ConditionPathExists=!%s\n\n", StorageStoppedFlagPath)
+	fmt.Fprintf(&b, "ConditionPathExists=!%s\n\n", stoppedFlag)
 	fmt.Fprintf(&b, "[Mount]\nWhat=/dev/disk/by-uuid/%s\nWhere=%s\nType=%s\n", u.UUID, u.Where, u.Filesystem)
 	fmt.Fprintf(&b, "Options=defaults,nofail\n")
 	return b.String()
