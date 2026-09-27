@@ -88,13 +88,14 @@ func createLoopImage(ctx context.Context, t *testing.T, r Runner, lab, name stri
 // it could not even open (confirmed against real blkid, util-linux
 // 2.41.5, in this lab: a nonexistent path, an unreadable one and a truly
 // blank device all exit 2 alike), so exit code alone cannot tell a blank
-// device from a wrong path; this checks dev exists before ever invoking
-// blkid, and still fails on any non-exit-2 blkid result, so a refused
-// format's blank-device assertion cannot pass vacuously (#400).
+// device from a wrong path; this opens dev and reads its first byte
+// before ever invoking blkid, and still fails on any non-exit-2 blkid
+// result, so a refused format's blank-device assertion cannot pass
+// vacuously (#400).
 func blkidType(t testing.TB, ctx context.Context, r Runner, dev string) string {
 	t.Helper()
-	if _, err := os.Stat(dev); err != nil {
-		t.Fatalf("blkid -p -s TYPE -o value %s: device not accessible: %v", dev, err)
+	if err := readFirstByte(dev); err != nil {
+		t.Fatalf("blkid -p -s TYPE -o value %s: device not readable: %v", dev, err)
 	}
 	out, err := r.Run(ctx, "blkid", "-p", "-s", "TYPE", "-o", "value", dev)
 	if err != nil {
@@ -105,6 +106,49 @@ func blkidType(t testing.TB, ctx context.Context, r Runner, dev string) string {
 		t.Fatalf("blkid -p -s TYPE -o value %s: %v (output %q)", dev, err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func readFirstByte(dev string) error {
+	f, err := os.Open(dev)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = f.Read(make([]byte, 1))
+	return err
+}
+
+// assertBlkidProbeFails runs probe against a nonexistent path and an
+// existing but unreadable one and requires both to fail the caller. The
+// unreadable stand-in is a directory: this lab's tests run as root, so a
+// mode-000 file would still be readable, and blkid exits 2 for it exactly
+// as for a blank device.
+func assertBlkidProbeFails(t *testing.T, lab, name string, probe func(testing.TB, context.Context, Runner, string) string) {
+	t.Helper()
+	unreadable := filepath.Join(lab, "unreadable-device-403-"+name)
+	if err := os.Mkdir(unreadable, 0o700); err != nil {
+		t.Fatalf("creating unreadable stand-in: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(unreadable) })
+
+	for _, dev := range []struct{ kind, path string }{
+		{"nonexistent", filepath.Join(lab, "no-such-device-400")},
+		{"unreadable", unreadable},
+	} {
+		t.Run(dev.kind, func(t *testing.T) {
+			rec := &recordingTB{}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				probe(rec, context.Background(), CommandRunner{}, dev.path)
+			}()
+			<-done
+			if !rec.failed {
+				t.Fatalf("%s(%s path) returned instead of failing — a swallowed error would pass a blank-device assertion vacuously", name, dev.kind)
+			}
+			t.Logf("%s correctly failed: %s", name, rec.message)
+		})
+	}
 }
 
 // recordingTB is a minimal testing.TB whose Fatalf records a failure
@@ -175,23 +219,8 @@ func TestLabFormat_RefusesUnassignedDevicesThenFormatsTheAssignedOne(t *testing.
 // missing binary, a permission error — must fail the caller rather than
 // read back "" the same way, or a refused format's own blank-device
 // assertion would pass vacuously. Run against real blkid in this lab
-// container: a nonexistent device path is a genuine "can't open"
-// failure, never exit 2.
+// container: a nonexistent path and an existing but unreadable one must
+// both fail the caller.
 func TestLabBlkidType_FailsOnNonExitTwoError(t *testing.T) {
-	lab := labDir(t)
-	ctx := context.Background()
-	r := CommandRunner{}
-	nonexistent := filepath.Join(lab, "no-such-device-400")
-
-	rec := &recordingTB{}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		blkidType(rec, ctx, r, nonexistent)
-	}()
-	<-done
-	if !rec.failed {
-		t.Fatal("blkidType(nonexistent path) returned instead of failing — a swallowed non-exit-2 error would pass a blank-device assertion vacuously")
-	}
-	t.Logf("blkidType correctly failed: %s", rec.message)
+	assertBlkidProbeFails(t, labDir(t), "blkidType", blkidType)
 }

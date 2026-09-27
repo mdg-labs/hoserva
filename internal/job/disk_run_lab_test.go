@@ -127,8 +127,8 @@ func loopStillBacksImage(t *testing.T, dev, img string) bool {
 // could not even open (confirmed against real blkid, util-linux 2.41.5,
 // in this lab: a nonexistent path, an unreadable one and a truly blank
 // device all exit 2 alike), so exit code alone cannot tell a blank
-// device from a wrong path; blkidProbe below checks dev exists before
-// ever invoking blkid, and still fails on any non-exit-2 blkid result
+// device from a wrong path; blkidProbe below opens dev and reads its
+// first byte before ever invoking blkid, and still fails on any non-exit-2 blkid result
 // (blkid missing, killed, or another genuine error), so a refused
 // format/replace's blank-device assertion cannot pass vacuously (#400).
 func blkidType(t testing.TB, ctx context.Context, r disk.Runner, dev string) string {
@@ -146,8 +146,8 @@ func blkidUUID(t testing.TB, ctx context.Context, r disk.Runner, dev string) str
 
 func blkidProbe(t testing.TB, ctx context.Context, r disk.Runner, tag, dev string) string {
 	t.Helper()
-	if _, err := os.Stat(dev); err != nil {
-		t.Fatalf("blkid -p -s %s -o value %s: device not accessible: %v", tag, dev, err)
+	if err := readFirstByte(dev); err != nil {
+		t.Fatalf("blkid -p -s %s -o value %s: device not readable: %v", tag, dev, err)
 	}
 	out, err := r.Run(ctx, "blkid", "-p", "-s", tag, "-o", "value", dev)
 	if err != nil {
@@ -158,6 +158,16 @@ func blkidProbe(t testing.TB, ctx context.Context, r disk.Runner, tag, dev strin
 		t.Fatalf("blkid -p -s %s -o value %s: %v (output %q)", tag, dev, err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func readFirstByte(dev string) error {
+	f, err := os.Open(dev)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = f.Read(make([]byte, 1))
+	return err
 }
 
 func findmntUUID(ctx context.Context, r disk.Runner, where string) string {
@@ -730,42 +740,49 @@ func (r *recordingTB) Fatalf(format string, args ...any) {
 // missing binary, a permission error — must fail the caller rather than
 // read back "" the same way, or a refused format/replace's own
 // blank-device assertion would pass vacuously. Run against real blkid
-// in this lab container: a nonexistent device path is a genuine "can't
-// open" failure, never exit 2, and a real blank loop device's own
-// exit-2 result must still read back as "".
+// in this lab container: a nonexistent path and an existing but
+// unreadable one must both fail the caller, and a real blank loop
+// device's own exit-2 result must still read back as "".
 func TestLabBlkidHelpers_FailOnNonExitTwoError(t *testing.T) {
 	lab := labDir(t)
 	ctx := context.Background()
 	exec := disk.CommandRunner{}
-	nonexistent := filepath.Join(lab, "no-such-device-400")
+	// A directory exists but cannot be read as a device even by root (this
+	// lab's tests run as root, so a mode-000 file would still be readable):
+	// it stands in for a device path that exists yet blkid cannot open,
+	// which exits 2 exactly like a blank device.
+	unreadable := filepath.Join(lab, "unreadable-device-403")
+	if err := os.Mkdir(unreadable, 0o700); err != nil {
+		t.Fatalf("creating unreadable stand-in: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(unreadable) })
 
-	t.Run("blkidType", func(t *testing.T) {
-		rec := &recordingTB{}
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			blkidType(rec, ctx, exec, nonexistent)
-		}()
-		<-done
-		if !rec.failed {
-			t.Fatal("blkidType(nonexistent path) returned instead of failing — a swallowed non-exit-2 error would pass a blank-device assertion vacuously")
+	for _, dev := range []struct{ name, path string }{
+		{"nonexistent", filepath.Join(lab, "no-such-device-400")},
+		{"unreadable", unreadable},
+	} {
+		for _, probe := range []struct {
+			name string
+			fn   func(testing.TB, context.Context, disk.Runner, string) string
+		}{
+			{"blkidType", blkidType},
+			{"blkidUUID", blkidUUID},
+		} {
+			t.Run(probe.name+"/"+dev.name, func(t *testing.T) {
+				rec := &recordingTB{}
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					probe.fn(rec, ctx, exec, dev.path)
+				}()
+				<-done
+				if !rec.failed {
+					t.Fatalf("%s(%s path) returned instead of failing — a swallowed error would pass a blank-device assertion vacuously", probe.name, dev.name)
+				}
+				t.Logf("%s correctly failed: %s", probe.name, rec.message)
+			})
 		}
-		t.Logf("blkidType correctly failed: %s", rec.message)
-	})
-
-	t.Run("blkidUUID", func(t *testing.T) {
-		rec := &recordingTB{}
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			blkidUUID(rec, ctx, exec, nonexistent)
-		}()
-		<-done
-		if !rec.failed {
-			t.Fatal("blkidUUID(nonexistent path) returned instead of failing — a swallowed non-exit-2 error would pass a blank-device assertion vacuously")
-		}
-		t.Logf("blkidUUID correctly failed: %s", rec.message)
-	})
+	}
 
 	blank := createLoopImage(ctx, t, exec, lab, "p400-blank", "320M")
 	if got := blkidType(t, ctx, exec, blank); got != "" {

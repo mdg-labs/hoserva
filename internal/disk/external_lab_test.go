@@ -84,13 +84,13 @@ func TestLabExternal_FormatMountEjectByUUID(t *testing.T) {
 // `blkid` can return a cached result from a device that previously held
 // this loop minor (finding 1, #398). blkid -p exits 2 both for "no
 // signature found" and for a device it could not even open (confirmed
-// against real blkid in this lab, same as blkidType), so this checks dev
-// exists before ever invoking blkid, and still fails on any non-exit-2
-// blkid result (#400).
+// against real blkid in this lab, same as blkidType), so this opens dev
+// and reads its first byte before ever invoking blkid, and still fails
+// on any non-exit-2 blkid result (#400).
 func blkidUUID(t testing.TB, ctx context.Context, r Runner, dev string) string {
 	t.Helper()
-	if _, err := os.Stat(dev); err != nil {
-		t.Fatalf("blkid -p -s UUID -o value %s: device not accessible: %v", dev, err)
+	if err := readFirstByte(dev); err != nil {
+		t.Fatalf("blkid -p -s UUID -o value %s: device not readable: %v", dev, err)
 	}
 	out, err := r.Run(ctx, "blkid", "-p", "-s", "UUID", "-o", "value", dev)
 	if err != nil {
@@ -106,23 +106,8 @@ func blkidUUID(t testing.TB, ctx context.Context, r Runner, dev string) string {
 // TestLabBlkidUUID_FailsOnNonExitTwoError is this issue's own proving
 // test (#400) for blkidUUID, mirroring
 // TestLabBlkidType_FailsOnNonExitTwoError in format_lab_test.go: a
-// nonexistent device path is a genuine "can't open" failure, never
-// exit 2, and must fail the caller rather than read back "".
+// nonexistent path and an existing but unreadable one must both fail the
+// caller rather than read back "".
 func TestLabBlkidUUID_FailsOnNonExitTwoError(t *testing.T) {
-	lab := labDir(t)
-	ctx := context.Background()
-	r := CommandRunner{}
-	nonexistent := filepath.Join(lab, "no-such-device-400")
-
-	rec := &recordingTB{}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		blkidUUID(rec, ctx, r, nonexistent)
-	}()
-	<-done
-	if !rec.failed {
-		t.Fatal("blkidUUID(nonexistent path) returned instead of failing — a swallowed non-exit-2 error would pass a blank-device assertion vacuously")
-	}
-	t.Logf("blkidUUID correctly failed: %s", rec.message)
+	assertBlkidProbeFails(t, labDir(t), "blkidUUID", blkidUUID)
 }
