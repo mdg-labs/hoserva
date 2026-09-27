@@ -68,6 +68,7 @@ Not included: `metrics.db` and job logs (Q74) — history, not configuration.
 - Default: nightly, as the last step of the maintenance chain (Q30), plus automatically before every self-update and every array-topology change
 - Retention: keep 7 daily, 4 weekly, 6 monthly, pruned per destination
 - Each backup is small (single-digit MB without content files), so retention is generous by default
+- **Pre-change exemption (#401):** the pre-import safety backup (`POST /config/import`) and the pre-update backup (the self-update path) mark their archive with that reason in its filename (`hoserva-config-<timestamp>.pre-import.tar.zst`, `.pre-update.`; `.pre-topology.` is reserved for the array-topology-change backup once that trigger exists). Retention keeps the **5 most recent pre-change archives per destination** in addition to the daily/weekly/monthly tiers above, so a second same-day change never prunes the one copy of the state from before the first. A pre-change archive beyond that bound falls back to the ordinary tiers like any other archive. Archive filenames carry second resolution, with a numeric suffix on collision, so two backups in the same minute — or the same second — never overwrite each other; an archive written before this fix, with the original minute-only name and no reason marker, still parses and prunes exactly as it always did.
 
 ### Multi-destination — yes, from v1
 

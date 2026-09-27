@@ -22,11 +22,48 @@ type Service struct {
 	Now          func() time.Time
 }
 
-// Run builds a config archive, verifies it, and writes it to every enabled
-// local destination with retention pruning. The same method is invoked as
-// the nightly chain's last step and before self-updates and topology
-// changes (doc 10 §1).
+// Reason marks an archive as taken immediately before a destructive change,
+// exempting it from ordinary daily-tier pruning (doc 10 §1, #401). The zero
+// value, ReasonNone, is an ordinary nightly archive.
+type Reason string
+
+const (
+	ReasonNone        Reason = ""
+	ReasonPreImport   Reason = "pre-import"
+	ReasonPreUpdate   Reason = "pre-update"
+	ReasonPreTopology Reason = "pre-topology"
+)
+
+func (r Reason) valid() bool {
+	switch r {
+	case ReasonNone, ReasonPreImport, ReasonPreUpdate, ReasonPreTopology:
+		return true
+	default:
+		return false
+	}
+}
+
+// Run builds an ordinary config archive, verifies it, and writes it to
+// every enabled local destination with retention pruning. It is job.
+// ConfigBackup and update.ConfigBackup's method — the nightly chain's last
+// step reaches it through this exact signature — so a caller that needs to
+// mark the archive as taken before a destructive change calls RunReason
+// directly, or through an adapter satisfying one of those two interfaces
+// (cmd/hoservad/update.go's preUpdateBackup).
 func (s *Service) Run(ctx context.Context) error {
+	return s.RunReason(ctx, ReasonNone)
+}
+
+// RunReason is Run, with the archive marked as taken before a destructive
+// change (doc 10 §1, #401): the pre-import safety backup
+// (internal/api/phase1_handler.go's ImportConfig) and the pre-update backup
+// (cmd/hoservad/update.go) both call it so retention keeps their archive
+// even when a later same-day backup would otherwise take today's daily-tier
+// slot and prune it.
+func (s *Service) RunReason(ctx context.Context, reason Reason) error {
+	if !reason.valid() {
+		return fmt.Errorf("backup: unknown reason %q", reason)
+	}
 	if s.DB == nil {
 		return fmt.Errorf("backup: no database configured")
 	}
@@ -58,7 +95,7 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	defer func() { _ = os.RemoveAll(archiveDir) }()
 
-	name := archiveName(now)
+	name := resolveArchiveName(now, reason, s.Destinations)
 	archivePath := filepath.Join(archiveDir, name)
 	if err := packArchive(staging, archivePath); err != nil {
 		return fmt.Errorf("packing archive: %w", err)
@@ -125,6 +162,55 @@ func (s *Service) buildArtifacts(archivePath, passphrase string) (*encryptedArti
 	return buildEncryptedArtifacts(archivePath, s.Recipient.Public, sidecar)
 }
 
-func archiveName(now time.Time) string {
-	return fmt.Sprintf("hoserva-config-%s.tar.zst", now.UTC().Format("2006-01-02T15-04"))
+// archiveName formats one candidate archive filename. suffix is 0 for the
+// unadorned name; any value 2 or above appends "-<suffix>" to the
+// timestamp to resolve a collision (#401) — 1 is never passed, since the
+// first archive at a given second is the unsuffixed name. Second
+// resolution (not doc 10 §1's original minute resolution) is itself part
+// of that fix: two runs in the same minute now produce different base
+// names before collision suffixing is even needed.
+func archiveName(now time.Time, reason Reason, suffix int) string {
+	ts := now.UTC().Format("2006-01-02T15-04-05")
+	if suffix > 0 {
+		ts = fmt.Sprintf("%s-%d", ts, suffix)
+	}
+	if reason != ReasonNone {
+		return fmt.Sprintf("hoserva-config-%s.%s.tar.zst", ts, reason)
+	}
+	return fmt.Sprintf("hoserva-config-%s.tar.zst", ts)
+}
+
+// resolveArchiveName picks the first candidate archiveName produces that no
+// enabled destination already has on disk, plain or age-encrypted (#401):
+// second resolution alone still collides when two runs share a wall-clock
+// second, as every fake-clock test in this package and any two real runs
+// launched from the same request do. Checking every enabled destination,
+// not just one, keeps a single archive name meaningful across all of them
+// for the same run.
+func resolveArchiveName(now time.Time, reason Reason, destinations []Destination) string {
+	name := archiveName(now, reason, 0)
+	if !archiveNameTaken(name, destinations) {
+		return name
+	}
+	for suffix := 2; ; suffix++ {
+		name := archiveName(now, reason, suffix)
+		if !archiveNameTaken(name, destinations) {
+			return name
+		}
+	}
+}
+
+func archiveNameTaken(name string, destinations []Destination) bool {
+	for _, dest := range destinations {
+		if !dest.Enabled {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dest.Path, name)); err == nil {
+			return true
+		}
+		if _, err := os.Stat(filepath.Join(dest.Path, name+".age")); err == nil {
+			return true
+		}
+	}
+	return false
 }

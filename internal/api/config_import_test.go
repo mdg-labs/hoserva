@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -243,10 +244,10 @@ func TestImportConfig_RefusesWhileJobActive(t *testing.T) {
 // be the very last thing before backup.RestoreDatabase, not the first
 // thing ImportConfig does. A job submitted any time before that point —
 // including during the upload, the two verification passes, or the
-// pre-import safety backup (h.Backup.Run) itself — must still be refused,
-// never silently orphaned by a restore that overwrites the jobs table out
-// from under it. h.Backup.Now, called exactly once by Run, stands in for
-// that submission landing mid-backup.
+// pre-import safety backup (h.Backup.RunReason) itself — must still be
+// refused, never silently orphaned by a restore that overwrites the jobs
+// table out from under it. h.Backup.Now, called exactly once by
+// RunReason, stands in for that submission landing mid-backup.
 func TestImportConfig_RefusesJobSubmittedDuringPreImportBackup(t *testing.T) {
 	ctx := context.Background()
 	h, db, _ := newImportTestHandler(t)
@@ -299,6 +300,49 @@ func TestImportConfig_RefusesJobSubmittedDuringPreImportBackup(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("shares after refused import = %+v, want none (the interim delete, not the export the refused restore never applied)", list)
+	}
+}
+
+// TestImportConfig_MarksPreImportSafetyBackup proves #401's own wiring:
+// ImportConfig's safety backup reaches h.Backup.RunReason with
+// backup.ReasonPreImport, not the unmarked Run a second same-day import
+// would otherwise let retention prune by taking today's daily-tier slot.
+func TestImportConfig_MarksPreImportSafetyBackup(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newImportTestHandler(t)
+	destDir := t.TempDir()
+	h.Backup.Destinations = []backup.Destination{{
+		ID:      "local",
+		Path:    destDir,
+		Enabled: true,
+		Retention: backup.Retention{
+			Daily:   backup.DefaultRetentionDaily,
+			Weekly:  backup.DefaultRetentionWeekly,
+			Monthly: backup.DefaultRetentionMonthly,
+		},
+	}}
+
+	archive := exportBytes(t, h)
+	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+		t.Fatalf("ImportConfig: %v", err)
+	}
+
+	entries, err := os.ReadDir(destDir)
+	if err != nil {
+		t.Fatalf("reading destination: %v", err)
+	}
+	var found bool
+	for _, e := range entries {
+		if !e.IsDir() && strings.Contains(e.Name(), ".pre-import.") {
+			found = true
+		}
+	}
+	if !found {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Fatalf("expected an archive marked pre-import in %v, found none", names)
 	}
 }
 

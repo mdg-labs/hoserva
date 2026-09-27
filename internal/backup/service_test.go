@@ -117,7 +117,7 @@ func TestService_RunCreatesVerifiedArchive(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	name := archiveName(now)
+	name := archiveName(now, ReasonNone, 0)
 	archivePath := filepath.Join(destDir, name)
 	if _, err := os.Stat(archivePath); err != nil {
 		t.Fatalf("archive missing: %v", err)
@@ -194,7 +194,7 @@ func TestService_RunEncryptsArchiveForEncryptDestination(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	name := archiveName(now)
+	name := archiveName(now, ReasonNone, 0)
 	plainPath := filepath.Join(destDir, name)
 	if _, err := os.Stat(plainPath); err == nil {
 		t.Fatalf("an Encrypt destination must never receive the plaintext archive %q", plainPath)
@@ -281,7 +281,7 @@ func TestService_RunEmbedsIdentityAgeInArchiveWrittenToDestination(t *testing.T)
 		t.Fatalf("Run: %v", err)
 	}
 
-	archivePath := filepath.Join(destDir, archiveName(now))
+	archivePath := filepath.Join(destDir, archiveName(now, ReasonNone, 0))
 	verifyDir := t.TempDir()
 	if err := unpackArchive(archivePath, verifyDir); err != nil {
 		t.Fatalf("unpackArchive: %v", err)
@@ -455,7 +455,7 @@ func TestService_RunConcurrentRunsDoNotShareArchivePath(t *testing.T) {
 	}
 
 	for _, r := range plan {
-		archivePath := filepath.Join(r.destDir, archiveName(now))
+		archivePath := filepath.Join(r.destDir, archiveName(now, ReasonNone, 0))
 		if err := unpackArchive(archivePath, r.verifyDir); err != nil {
 			t.Fatalf("unpackArchive for %q: %v", r.host, err)
 		}
@@ -547,7 +547,7 @@ func TestService_RunConcurrentEncryptRunsDoNotShareArchivePath(t *testing.T) {
 	}
 
 	for _, r := range plan {
-		encPath := filepath.Join(r.destDir, archiveName(now)+".age")
+		encPath := filepath.Join(r.destDir, archiveName(now, ReasonNone, 0)+".age")
 		sidecarPath := encPath + identitySidecarSuffix
 		got, err := decryptArchiveWithPassphrase(encPath, sidecarPath, "backup-pass")
 		if err != nil {
@@ -687,13 +687,221 @@ func TestRetentionPrune_RemovesOrphanedIdentitySidecar(t *testing.T) {
 }
 
 func TestArchiveName_MatchesRetentionPattern(t *testing.T) {
-	now := time.Date(2026, 9, 14, 15, 42, 0, 0, time.UTC)
-	name := archiveName(now)
-	want := "hoserva-config-2026-09-14T15-42.tar.zst"
+	now := time.Date(2026, 9, 14, 15, 42, 7, 0, time.UTC)
+	name := archiveName(now, ReasonNone, 0)
+	want := "hoserva-config-2026-09-14T15-42-07.tar.zst"
 	if name != want {
 		t.Fatalf("archiveName = %q, want %q", name, want)
 	}
 	if archiveNamePattern.FindStringSubmatch(name) == nil {
 		t.Fatalf("%q does not match archiveNamePattern", name)
+	}
+}
+
+// TestArchiveName_LegacyMinuteResolutionStillMatches proves an archive
+// written before #401 — minute resolution, no reason marker — still
+// parses as a retention candidate: a filename already on a destination
+// from before this fix must keep pruning exactly as it always did.
+func TestArchiveName_LegacyMinuteResolutionStillMatches(t *testing.T) {
+	name := "hoserva-config-2026-09-14T15-42.tar.zst"
+	m := archiveNamePattern.FindStringSubmatch(name)
+	if m == nil {
+		t.Fatalf("%q does not match archiveNamePattern", name)
+	}
+	if m[2] != "" {
+		t.Fatalf("legacy archive %q parsed reason %q, want none", name, m[2])
+	}
+}
+
+// TestArchiveName_MarksPreChangeReason proves a pre-change archive name
+// carries its reason and still matches archiveNamePattern, with a
+// collision suffix parsed correctly alongside it (#401).
+func TestArchiveName_MarksPreChangeReason(t *testing.T) {
+	now := time.Date(2026, 9, 14, 15, 42, 7, 0, time.UTC)
+	name := archiveName(now, ReasonPreImport, 2)
+	want := "hoserva-config-2026-09-14T15-42-07-2.pre-import.tar.zst"
+	if name != want {
+		t.Fatalf("archiveName = %q, want %q", name, want)
+	}
+	m := archiveNamePattern.FindStringSubmatch(name)
+	if m == nil {
+		t.Fatalf("%q does not match archiveNamePattern", name)
+	}
+	if m[2] != "pre-import" {
+		t.Fatalf("archiveNamePattern parsed reason %q, want pre-import", m[2])
+	}
+}
+
+// newSameDestinationService builds a Service pointed at destDir with its
+// own database and source tree, so two calls with different clocks each
+// produce a genuine archive rather than reusing state across runs — the
+// way two separate ImportConfig requests on the same day each build their
+// own.
+func newSameDestinationService(t *testing.T, destDir, hostname string, now time.Time) *Service {
+	t.Helper()
+	db := openTestDB(t)
+	paths, _ := testLayout(t)
+	return &Service{
+		DB:    db,
+		Paths: paths,
+		Secrets: &FakeSecretSource{
+			Passphrase: "backup-pass",
+			HasPass:    true,
+		},
+		Cipher: FakeSecretCipher{},
+		Destinations: []Destination{{
+			ID:      "local",
+			Path:    destDir,
+			Enabled: true,
+			Retention: Retention{
+				Daily:   7,
+				Weekly:  4,
+				Monthly: 6,
+			},
+		}},
+		Hostname: hostname,
+		Version:  "0.0.0-test",
+		Now:      func() time.Time { return now },
+	}
+}
+
+// TestService_RunReasonSurvivesSameDayOrdinaryBackup reproduces #401: a
+// pre-import safety backup taken earlier in the day must survive a later
+// same-day backup's retention prune. Before the fix, retentionKeepers'
+// daily tier keeps only the newest archive per calendar day, so the
+// second run — an ordinary backup, exactly what a second import's own
+// pre-import backup or a same-day self-update produces — deletes the
+// first run's archive: the only copy of the state from before the first
+// destructive change. Reverting retentionKeepers' pre-change loop
+// (destination.go) makes this test fail with the first archive missing.
+func TestService_RunReasonSurvivesSameDayOrdinaryBackup(t *testing.T) {
+	ctx := context.Background()
+	destDir := t.TempDir()
+
+	firstRun := time.Date(2026, 9, 14, 15, 4, 0, 0, time.UTC)
+	first := newSameDestinationService(t, destDir, "host-a", firstRun)
+	if err := first.RunReason(ctx, ReasonPreImport); err != nil {
+		t.Fatalf("first RunReason: %v", err)
+	}
+	firstName := archiveName(firstRun, ReasonPreImport, 0)
+	firstPath := filepath.Join(destDir, firstName)
+	if _, err := os.Stat(firstPath); err != nil {
+		t.Fatalf("first pre-import archive missing right after it was written: %v", err)
+	}
+
+	secondRun := firstRun.Add(6 * time.Minute)
+	second := newSameDestinationService(t, destDir, "host-b", secondRun)
+	if err := second.RunReason(ctx, ReasonPreImport); err != nil {
+		t.Fatalf("second RunReason: %v", err)
+	}
+
+	if _, err := os.Stat(firstPath); err != nil {
+		t.Fatalf("earlier same-day pre-import archive was pruned by the later backup: %v", err)
+	}
+}
+
+// TestService_RunTwiceInSameMinuteProducesDistinctArchives proves the
+// second half of #401: two Run calls whose clock lands in the very same
+// second — the tightest case of "the same minute" the original,
+// minute-only archiveName always collided on — no longer collide. Both
+// runs are marked pre-import, the realistic case of a double-submitted
+// import request, so retention's own daily-tier collapsing (by design,
+// one ordinary archive survives per calendar day) never enters into it:
+// this test is purely about the write no longer overwriting. The first
+// archive's own content (its manifest host) must still be readable
+// afterward, proving the second run did not overwrite it — before the
+// fix, both runs computed the identical archiveName(now) and the second
+// run's os.Rename onto that shared final path silently replaced the
+// first run's file.
+func TestService_RunTwiceInSameMinuteProducesDistinctArchives(t *testing.T) {
+	ctx := context.Background()
+	destDir := t.TempDir()
+
+	now := time.Date(2026, 9, 14, 3, 0, 30, 0, time.UTC)
+	first := newSameDestinationService(t, destDir, "host-a", now)
+	if err := first.RunReason(ctx, ReasonPreImport); err != nil {
+		t.Fatalf("first RunReason: %v", err)
+	}
+	second := newSameDestinationService(t, destDir, "host-b", now)
+	if err := second.RunReason(ctx, ReasonPreImport); err != nil {
+		t.Fatalf("second RunReason: %v", err)
+	}
+
+	entries, err := listArchives(destDir)
+	if err != nil {
+		t.Fatalf("listArchives: %v", err)
+	}
+	if len(entries) != 2 {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.name
+		}
+		t.Fatalf("expected 2 distinct archives, got %d: %v", len(entries), names)
+	}
+
+	firstName := archiveName(now, ReasonPreImport, 0)
+	firstPath := filepath.Join(destDir, firstName)
+	verifyDir := t.TempDir()
+	if err := unpackArchive(firstPath, verifyDir); err != nil {
+		t.Fatalf("unpackArchive on the first run's own archive: %v", err)
+	}
+	manifest, err := readManifest(filepath.Join(verifyDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("readManifest: %v", err)
+	}
+	if manifest.Host != "host-a" {
+		t.Fatalf("first archive's manifest host = %q, want %q (second run overwrote it)", manifest.Host, "host-a")
+	}
+}
+
+// TestRetentionPrune_BoundsPreChangeArchives proves the third acceptance
+// criterion: pre-change archives are kept up to preChangeKeepCount on top
+// of the daily/weekly/monthly tiers, and the oldest pre-change archive
+// beyond that bound is pruned like any other archive once its tiers no
+// longer protect it. Retention is set to keep nothing in any tier, so
+// only the pre-change bound is under test.
+func TestRetentionPrune_BoundsPreChangeArchives(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+
+	var names []string
+	for i := 0; i < 6; i++ {
+		day := now.AddDate(0, 0, -i)
+		name := archiveName(day, ReasonPreImport, 0)
+		names = append(names, name)
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, day, day); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dest := Destination{Path: dir, Retention: Retention{Daily: 0, Weekly: 0, Monthly: 0}}
+	if err := pruneDestination(dest, now, names[0]); err != nil {
+		t.Fatalf("pruneDestination: %v", err)
+	}
+
+	remaining, err := listArchives(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != preChangeKeepCount {
+		got := make([]string, len(remaining))
+		for i, e := range remaining {
+			got[i] = e.name
+		}
+		t.Fatalf("expected %d surviving pre-change archives, got %d: %v", preChangeKeepCount, len(remaining), got)
+	}
+	for _, e := range remaining {
+		if e.name == names[5] {
+			t.Fatalf("oldest pre-change archive %q beyond the bound of %d should have been pruned", names[5], preChangeKeepCount)
+		}
+	}
+	for i := 0; i < preChangeKeepCount; i++ {
+		if _, err := os.Stat(filepath.Join(dir, names[i])); err != nil {
+			t.Fatalf("expected pre-change archive %q to survive: %v", names[i], err)
+		}
 	}
 }

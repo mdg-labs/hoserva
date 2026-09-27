@@ -106,6 +106,21 @@ func (u updateShutdownLookup) Stop(ctx context.Context) error {
 	return seq.StopForShutdown(ctx)
 }
 
+// preUpdateBackup adapts *backup.Service to update.ConfigBackup, marking
+// the pre-update archive with backup.ReasonPreUpdate (doc 10 §1, #401) so
+// retention keeps it even if a later same-day backup — another update, or
+// a config import — would otherwise take today's daily-tier slot and prune
+// it. update.Engine's own ConfigBackup field only ever calls Run(ctx)
+// error, so this is the narrowest way to pass the reason through without
+// changing that interface.
+type preUpdateBackup struct {
+	svc *backup.Service
+}
+
+func (p preUpdateBackup) Run(ctx context.Context) error {
+	return p.svc.RunReason(ctx, backup.ReasonPreUpdate)
+}
+
 func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, settings *api.SettingsService, scheduler *job.Scheduler, currentArray func() *job.ArraySequence, notifyService *notify.Service, runner disk.Runner, backupSvc *backup.Service) *update.Engine {
 	exe, err := os.Executable()
 	if err != nil {
@@ -126,7 +141,7 @@ func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *au
 		Host:     update.DebianHost{Runner: runner},
 		Jobs:     scheduler,
 		Shutdown: updateShutdownLookup{currentArray: currentArray},
-		Backup:   backupSvc,
+		Backup:   preUpdateBackup{svc: backupSvc},
 		Notify:   notifyService,
 		Settings: api.NewUpdateSettings(settings),
 	}
