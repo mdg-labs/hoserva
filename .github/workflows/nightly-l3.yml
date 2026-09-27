@@ -133,10 +133,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.l3-matrix.outputs.matrix) }}
-    # A generous, fixed backstop covering either group's own setup and
-    # teardown; the vm-suite step below carries the tighter, group-sized
-    # bound (l3-build-matrix.sh's own timeout field) for the run itself.
-    timeout-minutes: 90
+    # Per-entry backstop (l3-build-matrix.sh's job_timeout field): the
+    # vm-suite step's own group-sized bound plus this job's setup and
+    # teardown, so the job never cancels a step still within that bound.
+    timeout-minutes: ${{ matrix.job_timeout }}
     steps:
       # fetch-depth: 0 — the default (1) skips tags entirely (fetch-tags
       # defaults to false), which would make the vm-suite step's own
@@ -216,8 +216,8 @@ jobs:
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
           L3_STEPS: ${{ matrix.l3_steps }}
-        # timeout-minutes here, not only the job's own 90-minute backstop
-        # above, is what actually gives each group its own group-sized
+        # timeout-minutes here, not only the job's own backstop above,
+        # is what actually gives each group its own group-sized
         # bound (l3-build-matrix.sh's own timeout field): 75 for the
         # spindown group, 60 for the rest group, 105 for an explicit
         # workflow_dispatch selection.

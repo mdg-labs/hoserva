@@ -43,4 +43,9 @@ else
     '{include: [{group: "spindown", l3_steps: "spindown", timeout: 75}, {group: "rest", l3_steps: $rest, timeout: 60}]}')
 fi
 
+# job_timeout is the l3 job's own backstop: the vm-suite step's timeout
+# plus room for the runner setup before it and the diagnostics/teardown
+# after it, so the job never cancels a step still inside its own bound.
+matrix_json=$(jq -c '.include |= map(. + {job_timeout: (.timeout + 30)})' <<<"$matrix_json")
+
 printf 'matrix=%s\n' "$matrix_json"
