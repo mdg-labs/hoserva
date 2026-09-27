@@ -310,6 +310,18 @@ Runs against the VM's UI over the network. Covers the critical journeys:
 
 Test 5 is the one that must never be allowed to regress.
 
+### Running only some steps (issue #391)
+
+`make vm-suite` runs every step of `scripts/vm/run-l3-suite.sh` by default — the always-run setup (install, onboarding, existing host config, array setup), then every selectable step below, in this fixed order (selection only filters which of these run; it never reorders them, so UPS always runs last and the array stop/start sequence step second-to-last, whatever order a selection names them in):
+
+`array-stop-start`, `smb-stop-start`, `pool-restart`, `storage-target`, `maintenance-gate`, `disk-yank`, `midsync-destroy`, `reboot-persistence`, `config-backup-restore`, `playwright`, `spindown`, `spindown-30min`, `nfs-export`, `network-revert`, `array-sequence`, `ups`.
+
+`make vm-suite L3_STEPS=storage-target,disk-yank` runs only those two (plus the always-run setup). Each id may name its own prerequisite ids in the script's own `L3_STEP_PREREQS` map — a selected step whose prerequisite is not also selected has that prerequisite pulled in automatically, reported in the run's own "step selection" log line; requesting an id not in the list fails before `create-vm.sh` ever runs. No step in the suite today has another selectable step as a prerequisite (every step's only real prerequisite is the always-run setup), so this pulling-in currently never fires in practice — the mechanism exists for whenever a later step gains one. `make vm-suite-plan L3_STEPS=…` prints the resolved plan (selected, pulled-in, or `SKIPPED (not selected)`, per id) without creating a VM, in well under a second — useful for checking a selection before spending the full suite's wall time on it.
+
+Empty/unset `L3_STEPS` (the default) means every step, exactly as before this issue existed. The `Nightly L3` workflow's `workflow_dispatch` trigger has an `l3_steps` input passed straight through as `L3_STEPS`; its `schedule` trigger has no such input at all, so the nightly run always covers the full suite regardless of what a manual run last used.
+
+A CI run proving one step (e.g. after a change to `storage-target-boot-check.sh`) finishes in roughly the time that one step and the always-run setup take — a fraction of the full suite's own wall time, dominated by the spindown step's own 30+-minute observation window (Q13, doc 08 Spike 1) when that step is included.
+
 ### Testing Hoserva's own VM management (doc 14)
 
 The L3 test VM already runs on libvirt/QEMU to test Hoserva itself. Testing Hoserva's *own* VM-management feature end to end means running KVM **inside** that VM, for a domain Hoserva-under-test creates — nested virtualization. Whether hosted CI runners support nested KVM (as opposed to the outer `/dev/kvm` access S9 already confirmed) is a Phase 3.5 spike (S10, doc 07 §1); if not, agents run that suite on the development host before every release, the same posture as the rest of L3 (§7 below, Q79). PCI/USB passthrough is exercised in a nested guest with an emulated IOMMU (§6); real IOMMU topology and BIOS behaviour stay stated residual risk.

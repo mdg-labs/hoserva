@@ -25,11 +25,23 @@ name: Nightly L3
 # schedule runs it nightly against main. Never runs on `pull_request` —
 # this is exactly the privileged, slow, resource-heavy job class Q42
 # keeps off of untrusted PR code.
+#
+# workflow_dispatch's own l3_steps input (issue #391) runs only the named
+# steps of scripts/vm/run-l3-suite.sh, after its always-run setup — doc 06
+# §4 lists the ids. Left empty (the default), every step runs, exactly
+# like a full nightly. The schedule trigger has no such input at all, so
+# it always runs the full suite regardless of what l3_steps was last set
+# to on a manual run.
 
 on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      l3_steps:
+        description: "Comma-separated L3 step ids to run (doc 06 §4); empty runs every step"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -164,6 +176,7 @@ jobs:
       - name: vm-suite
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+          L3_STEPS: ${{ github.event.inputs.l3_steps }}
         # deploy.sh (rightly) refuses to build against a hand-maintained
         # version string — it wants the latest released 'v*' tag, or an
         # explicit TAG=. Pre-1.0, no tag exists yet, so every nightly run

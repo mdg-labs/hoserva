@@ -258,7 +258,21 @@ $(error invalid DEB: must not contain '$$' — no Make or shell expansion syntax
 endif
 export DEB
 
-.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite vm-soak hooks-install
+# L3_STEPS (issue #391) — `make vm-suite L3_STEPS=storage-target,disk-yank`
+# — the same guard as every other command-line-supplied variable above.
+# Once past it, scripts/vm/run-l3-suite.sh's own l3_resolve_steps is what
+# actually validates the ids, refusing an unknown one before any VM
+# operation. Empty (the default) means every step, exactly as before this
+# issue existed — always what the nightly workflow's schedule trigger
+# passes.
+L3_STEPS ?=
+unexport L3_STEPS
+ifneq ($(findstring $$,$(value L3_STEPS)),)
+$(error invalid L3_STEPS: must not contain '$$' — no Make or shell expansion syntax is accepted in a step list)
+endif
+export L3_STEPS
+
+.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -675,9 +689,19 @@ vm-destroy:
 # mid-sync recovery, reboot persistence, config backup/restore, and the
 # Playwright journeys — itemized honestly (not silently skipped) against
 # what the product actually exposes today, in scripts/vm/run-l3-suite.sh.
+# L3_STEPS (issue #391) runs only the named steps, after the always-run
+# setup; empty (the default) runs every step, unchanged from before.
 vm-suite:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-suite)" >&2; exit 1; }
 	scripts/vm/run-l3-suite.sh
+
+# vm-suite-plan (issue #391) prints which steps an L3_STEPS selection would
+# run, in what order, with prerequisites pulled in or an unknown id
+# refused — without creating a VM, so a selection can be checked in well
+# under a second.
+vm-suite-plan:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-suite-plan)" >&2; exit 1; }
+	L3_PLAN=1 scripts/vm/run-l3-suite.sh
 
 # Phase 1's L3 soak (doc 06 §6, Q16): 30 nightly chains back to back over
 # seeded churn, with injected failures. Time-compressed; does not wait

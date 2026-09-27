@@ -48,6 +48,130 @@ fail() {
   record "$1" "FAIL: $2"
 }
 
+# Step selection (issue #391): L3_STEPS is a comma-separated list of the
+# ids below; empty/unset (the default, and always what the schedule
+# trigger passes) means every step, exactly as before this issue existed.
+# Setup — install, onboarding, existing host config, array setup — has no
+# id and always runs regardless of selection; it is what every selectable
+# step below actually depends on. This is the one place that lists the
+# ids: L3_STEP_ORDER is the suite's own fixed running order (selection
+# only filters which of these run — it never reorders them, so UPS is
+# always the last selectable step to run and array stop/start sequence
+# the second-to-last, whatever order L3_STEPS names them in), and
+# L3_STEP_PREREQS names, for each id, which other *selectable* ids it
+# needs already run first (space-separated; empty when its only real
+# prerequisite is the always-run setup above — true for every step today,
+# since no two selectable steps in this suite currently depend on each
+# other). A selected step whose own prerequisite is not also selected has
+# that prerequisite pulled in automatically, reported below; requesting an
+# id not in L3_STEP_ORDER exits before create-vm.sh ever runs (lib.sh's
+# die, via l3_resolve_steps).
+L3_STEP_ORDER=(
+  array-stop-start smb-stop-start pool-restart storage-target
+  maintenance-gate disk-yank midsync-destroy reboot-persistence
+  config-backup-restore playwright spindown spindown-30min nfs-export
+  network-revert array-sequence ups
+)
+declare -A L3_STEP_PREREQS=(
+  [array-stop-start]="" [smb-stop-start]="" [pool-restart]=""
+  [storage-target]="" [maintenance-gate]="" [disk-yank]=""
+  [midsync-destroy]="" [reboot-persistence]="" [config-backup-restore]=""
+  [playwright]="" [spindown]="" [spindown-30min]="" [nfs-export]=""
+  [network-revert]="" [array-sequence]="" [ups]=""
+)
+# Exactly the label text each step's own pass/fail/not_yet call below
+# uses as STEP_NAMES's entry, so a skipped step's summary row lines up
+# under the same name a run of that same step would use.
+declare -A L3_STEP_LABELS=(
+  [array-stop-start]="array stop/start with a live share"
+  [smb-stop-start]="SMB-connected array stop/start"
+  [pool-restart]="pool survives hoservad restart"
+  [storage-target]="storage-target boot ordering"
+  [maintenance-gate]="maintenance gate closes on array stop"
+  [disk-yank]="disk yank and reconstruction"
+  [midsync-destroy]="virsh destroy mid-sync recovery"
+  [reboot-persistence]="reboot persistence"
+  [config-backup-restore]="config backup and restore"
+  [playwright]="Playwright journeys"
+  [spindown]="spindown: SMART-poll IO-neutrality"
+  [spindown-30min]="spindown: 30-min flat counters with a running pool"
+  [nfs-export]="NFS export mount"
+  [network-revert]="network confirm-or-revert"
+  [array-sequence]="array stop/start sequence"
+  [ups]="UPS on-battery/power-restored/low-battery"
+)
+
+declare -A L3_SELECTED=()
+
+l3_step_known() { [[ -n "${L3_STEP_PREREQS[$1]+x}" ]]; }
+
+# l3_resolve_steps fills L3_SELECTED from a comma-separated id list ($1;
+# empty selects every id in L3_STEP_ORDER), pulling in each selected
+# step's own unselected prerequisites, and prints the resulting plan —
+# every id, marked selected, pulled in, or SKIPPED. Exits immediately
+# (before any VM operation — the only two callers below both run this
+# ahead of create-vm.sh) on an id that is not in L3_STEP_ORDER.
+l3_resolve_steps() {
+  local requested=$1
+  local -a wanted=()
+  if [[ -z "$requested" ]]; then
+    wanted=("${L3_STEP_ORDER[@]}")
+  else
+    local id
+    IFS=',' read -ra wanted <<<"$requested"
+    for id in "${wanted[@]}"; do
+      l3_step_known "$id" || die "unknown L3 step id '$id' — valid ids: ${L3_STEP_ORDER[*]}"
+    done
+  fi
+
+  local -a queue=("${wanted[@]}")
+  local -A pulled_in=()
+  while ((${#queue[@]})); do
+    local id=${queue[0]}
+    queue=("${queue[@]:1}")
+    [[ -n "${L3_SELECTED[$id]:-}" ]] && continue
+    L3_SELECTED[$id]=1
+    local prereq
+    for prereq in ${L3_STEP_PREREQS[$id]}; do
+      if [[ -z "${L3_SELECTED[$prereq]:-}" ]]; then
+        pulled_in[$prereq]=1
+        queue+=("$prereq")
+      fi
+    done
+  done
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: step selection (L3_STEPS='${requested:-<all>}'):"
+  local step_id
+  for step_id in "${L3_STEP_ORDER[@]}"; do
+    if [[ -n "${L3_SELECTED[$step_id]:-}" ]]; then
+      if [[ -n "${pulled_in[$step_id]:-}" ]]; then
+        echo "vm-suite[$HOSERVA_LAB_ID]:   $step_id — selected (pulled in as a prerequisite)"
+      else
+        echo "vm-suite[$HOSERVA_LAB_ID]:   $step_id — selected"
+      fi
+    else
+      echo "vm-suite[$HOSERVA_LAB_ID]:   $step_id — SKIPPED (not selected)"
+    fi
+  done
+}
+
+l3_step_selected() { [[ -n "${L3_SELECTED[$1]:-}" ]]; }
+
+l3_skip() {
+  echo "vm-suite[$HOSERVA_LAB_ID]: $1 — SKIPPED (not selected)"
+  record "$1" "SKIPPED (not selected)"
+}
+
+l3_resolve_steps "${L3_STEPS:-}"
+
+# L3_PLAN (set only by `make vm-suite-plan`, never a user-facing knob of
+# its own) prints the plan above and stops here — before create-vm.sh,
+# deploy.sh or anything else below ever runs — so a selection can be
+# checked in well under a second, with no VM, lab or Docker involved.
+if [[ "${L3_PLAN:-}" == "1" ]]; then
+  exit 0
+fi
+
 # Array setup (step 3) and journey 5's own fixture (seeded ahead of step 8,
 # doc 06 §4) share this L3 admin session and cookie jar — the same account
 # step 2's onboarding creates.
@@ -1176,7 +1300,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 4/13 array stop/start with a live share (issue #268) ==="
-if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+if ! l3_step_selected array-stop-start; then
+  l3_skip "${L3_STEP_LABELS[array-stop-start]}"
+elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if array_stop_start_share_check; then
     pass "array stop/start with a live share"
   else
@@ -1187,7 +1313,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === SMB-connected array stop/start (issue #309) ==="
-if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+if ! l3_step_selected smb-stop-start; then
+  l3_skip "${L3_STEP_LABELS[smb-stop-start]}"
+elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if ARRAY_ADMIN_USERNAME="$ARRAY_ADMIN_USERNAME" ARRAY_ADMIN_PASSWORD="$ARRAY_ADMIN_PASSWORD" ARRAY_SMB_SHARE="$JOURNEY5_SHARE" "$script_dir/smb-stop-check.sh"; then
     pass "SMB-connected array stop/start"
   else
@@ -1198,7 +1326,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === pool survives hoservad restart (issue #335) ==="
-if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+if ! l3_step_selected pool-restart; then
+  l3_skip "${L3_STEP_LABELS[pool-restart]}"
+elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if ARRAY_ADMIN_USERNAME="$ARRAY_ADMIN_USERNAME" ARRAY_ADMIN_PASSWORD="$ARRAY_ADMIN_PASSWORD" ARRAY_RESTART_SHARE="$JOURNEY5_SHARE" "$script_dir/pool-restart-check.sh"; then
     pass "pool survives hoservad restart"
   else
@@ -1209,7 +1339,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === storage-target boot ordering: Samba/NFS never serve an unmounted pool path (issue #372) ==="
-if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+if ! l3_step_selected storage-target; then
+  l3_skip "${L3_STEP_LABELS[storage-target]}"
+elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if ARRAY_ADMIN_USERNAME="$ARRAY_ADMIN_USERNAME" ARRAY_ADMIN_PASSWORD="$ARRAY_ADMIN_PASSWORD" ARRAY_SMB_SHARE="$JOURNEY5_SHARE" "$script_dir/storage-target-boot-check.sh"; then
     pass "storage-target boot ordering"
   else
@@ -1220,7 +1352,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === maintenance gate closes on array stop (issue #387) ==="
-if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+if ! l3_step_selected maintenance-gate; then
+  l3_skip "${L3_STEP_LABELS[maintenance-gate]}"
+elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if ARRAY_ADMIN_USERNAME="$ARRAY_ADMIN_USERNAME" ARRAY_ADMIN_PASSWORD="$ARRAY_ADMIN_PASSWORD" ARRAY_SMB_SHARE="$JOURNEY5_SHARE" "$script_dir/maintenance-gate-check.sh"; then
     pass "maintenance gate closes on array stop"
   else
@@ -1231,7 +1365,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 5/13 disk yank and reconstruction ==="
-if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+if ! l3_step_selected disk-yank; then
+  l3_skip "${L3_STEP_LABELS[disk-yank]}"
+elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if ARRAY_ADMIN_USERNAME="$ARRAY_ADMIN_USERNAME" ARRAY_ADMIN_PASSWORD="$ARRAY_ADMIN_PASSWORD" "$script_dir/disk-yank-check.sh"; then
     pass "disk yank and reconstruction"
   else
@@ -1242,7 +1378,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 6/13 virsh destroy mid-sync recovery ==="
-if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+if ! l3_step_selected midsync-destroy; then
+  l3_skip "${L3_STEP_LABELS[midsync-destroy]}"
+elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   midsync_ok=1
   midsync_iteration=0
   midsync_last_reason=""
@@ -1279,7 +1417,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 7/13 reboot persistence ==="
-if vm_domain_running "$VM_DOMAIN"; then
+if ! l3_step_selected reboot-persistence; then
+  l3_skip "${L3_STEP_LABELS[reboot-persistence]}"
+elif vm_domain_running "$VM_DOMAIN"; then
   # sshd answering (the existing service, still up from before any
   # reboot happened) can satisfy a plain "wait for SSH" check without the
   # guest ever having rebooted — 'virsh reboot' returns as soon as it has
@@ -1342,7 +1482,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 8/13 config backup and restore ==="
-if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+if ! l3_step_selected config-backup-restore; then
+  l3_skip "${L3_STEP_LABELS[config-backup-restore]}"
+elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if config_backup_restore; then
     pass "config backup and restore"
   elif [[ "$CONFIG_NOT_YET" == "1" ]]; then
@@ -1355,25 +1497,31 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 9/13 Playwright journeys ==="
-if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
-  if seed_journey5_fixture; then
-    echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture ready (share seeded, baseline synced, mass deletion applied)"
-  else
-    echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture preparation failed above — journey 5 must now fail for real, not skip" >&2
-  fi
-fi
-if [[ -x "$script_dir/run-playwright.sh" ]]; then
-  if HOSERVA_E2E_BASE_URL="https://127.0.0.1:$VM_HTTPS_PORT" "$script_dir/run-playwright.sh"; then
-    pass "Playwright journeys"
-  else
-    fail "Playwright journeys" "see web/'s own Playwright report above"
-  fi
+if ! l3_step_selected playwright; then
+  l3_skip "${L3_STEP_LABELS[playwright]}"
 else
-  not_yet "Playwright journeys" "scripts/vm/run-playwright.sh is missing or not executable"
+  if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+    if seed_journey5_fixture; then
+      echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture ready (share seeded, baseline synced, mass deletion applied)"
+    else
+      echo "vm-suite[$HOSERVA_LAB_ID]: journey 5 fixture preparation failed above — journey 5 must now fail for real, not skip" >&2
+    fi
+  fi
+  if [[ -x "$script_dir/run-playwright.sh" ]]; then
+    if HOSERVA_E2E_BASE_URL="https://127.0.0.1:$VM_HTTPS_PORT" "$script_dir/run-playwright.sh"; then
+      pass "Playwright journeys"
+    else
+      fail "Playwright journeys" "see web/'s own Playwright report above"
+    fi
+  else
+    not_yet "Playwright journeys" "scripts/vm/run-playwright.sh is missing or not executable"
+  fi
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 10/13 spindown: SMART-poll IO-neutrality ==="
-if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+if ! l3_step_selected spindown; then
+  l3_skip "${L3_STEP_LABELS[spindown]}"
+elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if "$script_dir/spindown-check.sh"; then
     pass "spindown: SMART-poll IO-neutrality"
   else
@@ -1384,10 +1532,16 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 11/13 spindown: 30-min flat counters with a running pool ==="
-not_yet "spindown: 30-min flat counters with a running pool" "array setup (step 3, #258) now gives this a real mergerfs/SnapRAID pool with a mounted share to test against — that half of the old gap is closed — but hoservad still does not run internal/disk's SMART poller or internal/parity's change journal on a timer (both exist as Go packages, issue #24, but cmd/hoservad/main.go wires neither into a scheduled job). spindown-check.sh (step 10) already stands in for that missing scheduler by looping the poller's own smartctl command directly against the array's already-mounted disks; doing the same loop against this step's live pool would still only be standing in for the scheduler, not proving hoservad's own 30-minute window produces zero drive writes with a pool mounted underneath it — re-check once cmd/hoservad/main.go wires the SMART poller and change journal on a timer"
+if ! l3_step_selected spindown-30min; then
+  l3_skip "${L3_STEP_LABELS[spindown-30min]}"
+else
+  not_yet "spindown: 30-min flat counters with a running pool" "array setup (step 3, #258) now gives this a real mergerfs/SnapRAID pool with a mounted share to test against — that half of the old gap is closed — but hoservad still does not run internal/disk's SMART poller or internal/parity's change journal on a timer (both exist as Go packages, issue #24, but cmd/hoservad/main.go wires neither into a scheduled job). spindown-check.sh (step 10) already stands in for that missing scheduler by looping the poller's own smartctl command directly against the array's already-mounted disks; doing the same loop against this step's live pool would still only be standing in for the scheduler, not proving hoservad's own 30-minute window produces zero drive writes with a pool mounted underneath it — re-check once cmd/hoservad/main.go wires the SMART poller and change journal on a timer"
+fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === NFS export mount (issue #47) ==="
-if vm_domain_running "$VM_DOMAIN"; then
+if ! l3_step_selected nfs-export; then
+  l3_skip "${L3_STEP_LABELS[nfs-export]}"
+elif vm_domain_running "$VM_DOMAIN"; then
   if "$script_dir/nfs-export-check.sh"; then
     pass "NFS export mount"
   else
@@ -1398,7 +1552,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 12/13 network confirm-or-revert (Q75) ==="
-if vm_domain_running "$VM_DOMAIN"; then
+if ! l3_step_selected network-revert; then
+  l3_skip "${L3_STEP_LABELS[network-revert]}"
+elif vm_domain_running "$VM_DOMAIN"; then
   if "$script_dir/network-revert-check.sh"; then
     pass "network confirm-or-revert"
   else
@@ -1409,7 +1565,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 13/13 array stop/start sequence: missing disk at boot, service stops before unmount ==="
-if vm_domain_running "$VM_DOMAIN"; then
+if ! l3_step_selected array-sequence; then
+  l3_skip "${L3_STEP_LABELS[array-sequence]}"
+elif vm_domain_running "$VM_DOMAIN"; then
   if "$script_dir/array-sequence-check.sh"; then
     pass "array stop/start sequence"
   else
@@ -1420,7 +1578,9 @@ else
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === UPS: on battery, power restored, low battery (NUT's own dummy-ups driver, issue #250) ==="
-if vm_domain_running "$VM_DOMAIN"; then
+if ! l3_step_selected ups; then
+  l3_skip "${L3_STEP_LABELS[ups]}"
+elif vm_domain_running "$VM_DOMAIN"; then
   if "$script_dir/ups-check.sh"; then
     pass "UPS on-battery/power-restored/low-battery"
   else

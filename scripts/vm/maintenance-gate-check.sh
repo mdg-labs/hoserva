@@ -12,12 +12,16 @@
 # nfs-kernel-server during maintenance still passed the target and served
 # the unmounted pool straight off the boot disk.
 #
-# Runs after array setup (run-l3-suite.sh's own step 3) and the
-# storage-target boot-ordering check (issue #372, which leaves the array
-# whole and running) — reuses that step's own admin account and
-# 'massdel' share from the environment (ARRAY_ADMIN_USERNAME/
-# ARRAY_ADMIN_PASSWORD/ARRAY_SMB_SHARE), never a second, possibly-
-# diverging copy of run-l3-suite.sh's own constants. Leaves the array
+# Runs after array setup (run-l3-suite.sh's own step 3) — its own admin
+# account and 'massdel' share, taken from the environment
+# (ARRAY_ADMIN_USERNAME/ARRAY_ADMIN_PASSWORD/ARRAY_SMB_SHARE) rather than
+# a second, possibly-diverging copy of run-l3-suite.sh's own constants,
+# are the only real prerequisite: this script creates its own SMB
+# account below (ensure_smb_account) exactly like storage-target-boot-
+# check.sh does, so it never actually depends on that check (issue #372)
+# or smb-stop-check.sh (issue #309) having run first, whichever of them
+# also happen to be selected (issue #391's own selectable-step audit
+# confirmed this by reading both scripts, not assumed). Leaves the array
 # started again before returning — on every exit path, including a
 # failing one — so every later run-l3-suite.sh step still finds it
 # running.
@@ -32,6 +36,9 @@ vm_assert_own_domain "$VM_DOMAIN"
 
 vm_domain_exists "$VM_DOMAIN" || die "domain '$VM_DOMAIN' does not exist — run 'make vm-up' first"
 vm_domain_running "$VM_DOMAIN" || die "domain '$VM_DOMAIN' is not running — run 'make vm-up' first"
+
+echo "maintenance-gate-check[$HOSERVA_LAB_ID]: ensuring smbclient is present on the guest"
+vm_ssh 'command -v smbclient >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq smbclient)'
 
 ADMIN_USERNAME="${ARRAY_ADMIN_USERNAME:?maintenance-gate-check.sh needs ARRAY_ADMIN_USERNAME (set by run-l3-suite.sh from its own array setup step)}"
 ADMIN_PASSWORD="${ARRAY_ADMIN_PASSWORD:?maintenance-gate-check.sh needs ARRAY_ADMIN_PASSWORD}"
