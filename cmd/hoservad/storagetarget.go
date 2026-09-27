@@ -63,6 +63,9 @@ type storageTargetSync struct {
 	// PoolMounted overrides pool.IsMountedConfirmed — set only by this
 	// package's own tests, never in production.
 	PoolMounted func(path string) (bool, error)
+	// ConfirmMountedUUID overrides disk.ConfirmMountedUUID — set only by
+	// this package's own tests, never in production.
+	ConfirmMountedUUID func(ctx context.Context, where, uuid string) error
 	// StartupMountTimeout overrides startupMountTimeout — set only by
 	// this package's own tests, never in production.
 	StartupMountTimeout time.Duration
@@ -103,6 +106,13 @@ func (s *storageTargetSync) poolMounted(path string) (bool, error) {
 		return s.PoolMounted(path)
 	}
 	return pool.IsMountedConfirmed(path)
+}
+
+func (s *storageTargetSync) confirmMountedUUID(ctx context.Context, where, uuid string) error {
+	if s.ConfirmMountedUUID != nil {
+		return s.ConfirmMountedUUID(ctx, where, uuid)
+	}
+	return disk.ConfirmMountedUUID(ctx, s.Runner, where, uuid)
 }
 
 // startupMountTimeout bounds every mount `systemctl start` Startup issues
@@ -355,18 +365,53 @@ func (s *storageTargetSync) recordMountFailure(where string) {
 	s.mountFailedMountpoints[where] = true
 }
 
+// expectedDiskUUIDs returns every array disk's own mountpoint and
+// filesystem UUID from SQLite (doc 02 §4 UR4) — the same s.ArrayStore
+// regenerateArrayMounts already reads, so reconcileMountFailures below can
+// tell a slot's own disk apart from any other filesystem a manual mount or
+// a leftover unit left at its mountpoint (#404). A nil s.ArrayStore
+// (every test in this package but the ones that set it) reports no
+// expected UUIDs at all — production (main.go) always sets it, and
+// reconcileMountFailures falls back to a bare mount-presence check when
+// no expected UUID is known for a given mountpoint, exactly like before
+// this UUID check existed. ErrNoArray (topology deleted or never created)
+// is not an error here: there is nothing to expect.
+func (s *storageTargetSync) expectedDiskUUIDs(ctx context.Context) (map[string]string, error) {
+	if s.ArrayStore == nil {
+		return nil, nil
+	}
+	_, disks, err := s.ArrayStore.GetArray(ctx)
+	if err != nil {
+		if errors.Is(err, store.ErrNoArray) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	uuids := make(map[string]string, len(disks))
+	for _, d := range disks {
+		uuids[d.Mountpoint] = d.FSUUID
+	}
+	return uuids, nil
+}
+
 // reconcileMountFailures drops every mountpoint currently tracked as
-// failed (#398) that is now, in fact, a genuine mount — a stat of the
-// live mount table (s.poolMounted, the same pool.IsMountedConfirmed stat
-// mountAndConfirmPool itself uses — never a device open, Q13) — so a
-// slot self-heals the moment its disk actually mounts again (a
-// successful replace's own applyArrayFromStore, or the physical swap
-// coming back on its own) rather than staying "needs attention" until
-// the next restart. Runs under mountFailedMu, not s.mu (see that field's
-// own doc comment). Cheap in the ordinary case: this only ever stats a
-// mountpoint this sync itself previously recorded failed, typically none
-// at all.
-func (s *storageTargetSync) reconcileMountFailures(seq *job.ArraySequence) {
+// failed (#398) that is now, in fact, a genuine mount of the slot's own
+// disk — a stat of the live mount table (s.poolMounted, the same
+// pool.IsMountedConfirmed stat mountAndConfirmPool itself uses) confirming
+// something is mounted there, and, when this slot's own expected
+// filesystem UUID is known (expectedDiskUUIDs), s.confirmMountedUUID
+// confirming it is specifically that filesystem the mount table names
+// (disk.ConfirmMountedUUID, findmnt — never a device open, Q13, doc 02 §4
+// UR4) — so a slot self-heals the moment its own disk actually mounts
+// again (a successful replace's own applyArrayFromStore, or the physical
+// swap coming back on its own) rather than staying "needs attention"
+// until the next restart, but a different filesystem left mounted at the
+// same path by hand, or by a leftover unit, never clears it (#404). Runs
+// under mountFailedMu, not s.mu (see that field's own doc comment). Cheap
+// in the ordinary case: this only ever stats a mountpoint this sync
+// itself previously recorded failed, typically none at all, and the
+// SQLite read only runs when there is one.
+func (s *storageTargetSync) reconcileMountFailures(ctx context.Context, seq *job.ArraySequence) {
 	if seq == nil {
 		return
 	}
@@ -375,14 +420,28 @@ func (s *storageTargetSync) reconcileMountFailures(seq *job.ArraySequence) {
 	if len(s.mountFailedMountpoints) == 0 {
 		return
 	}
+	// A store read that fails outright leaves every recorded failure
+	// exactly as it is — never clear a slot on a mount check this couldn't
+	// actually confirm.
+	expected, err := s.expectedDiskUUIDs(ctx)
+	if err != nil {
+		return
+	}
 	for _, d := range seq.Disks {
 		where := d.Where()
 		if !s.mountFailedMountpoints[where] {
 			continue
 		}
-		if mounted, err := s.poolMounted(where); err == nil && mounted {
-			delete(s.mountFailedMountpoints, where)
+		mounted, err := s.poolMounted(where)
+		if err != nil || !mounted {
+			continue
 		}
+		if uuid, ok := expected[where]; ok {
+			if err := s.confirmMountedUUID(ctx, where, uuid); err != nil {
+				continue
+			}
+		}
+		delete(s.mountFailedMountpoints, where)
 	}
 }
 
@@ -511,7 +570,7 @@ func (s *storageTargetSync) Startup(ctx context.Context, seq *job.ArraySequence)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.reconcileMountFailures(seq)
+	s.reconcileMountFailures(ctx, seq)
 	if err := s.clearFlag(); err != nil {
 		return err
 	}
@@ -660,7 +719,7 @@ func (s *storageTargetSync) updateTransition(ctx context.Context, seq *job.Array
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.reconcileMountFailures(seq)
+	s.reconcileMountFailures(ctx, seq)
 
 	units := diskMountUnitNames(seq)
 	ready := gateReady(seq)
