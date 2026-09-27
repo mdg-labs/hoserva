@@ -121,6 +121,29 @@ func (p preUpdateBackup) Run(ctx context.Context) error {
 	return p.svc.RunReason(ctx, backup.ReasonPreUpdate)
 }
 
+// preTopologyBackup adapts *backup.Service to job.ConfigBackup, marking the
+// archive with backup.ReasonPreTopology (doc 10 §1, #406) so retention
+// keeps it the same way a pre-update or pre-import archive is kept. It is
+// the type wireTopologyBackup wires into Scheduler.SetTopologyBackup, the
+// one place a disk add/remove/replace/upgrade, format, or pool remount
+// reaches this backup — none of them call backup.Service directly.
+type preTopologyBackup struct {
+	svc *backup.Service
+}
+
+func (p preTopologyBackup) Run(ctx context.Context) error {
+	return p.svc.RunReason(ctx, backup.ReasonPreTopology)
+}
+
+// wireTopologyBackup connects backupService to scheduler through
+// job.Scheduler.SetTopologyBackup, so Submit runs the pre-topology backup
+// before any ClassTopology job (#406). Kept as its own function, following
+// wireBackup's own pattern above, so a test can call exactly what main.go
+// calls rather than a hand copy of the assignment.
+func wireTopologyBackup(scheduler *job.Scheduler, backupService *backup.Service) {
+	scheduler.SetTopologyBackup(preTopologyBackup{svc: backupService})
+}
+
 func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, settings *api.SettingsService, scheduler *job.Scheduler, currentArray func() *job.ArraySequence, notifyService *notify.Service, runner disk.Runner, backupSvc *backup.Service) *update.Engine {
 	exe, err := os.Executable()
 	if err != nil {

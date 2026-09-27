@@ -235,6 +235,13 @@ type Scheduler struct {
 	// deterministically inside that exact window instead of racing the
 	// real clock. Never set outside a test.
 	beforeFinishedHook func(jobID string)
+	// topologyBackup, when set, is run by Submit before it creates any
+	// job whose class is ClassTopology (doc 10 §1, #406): a disk add,
+	// remove, replace, data or parity upgrade, format, or pool remount is
+	// never entered without a config snapshot from just before it. Set
+	// through SetTopologyBackup, never directly — every other Scheduler
+	// hook that isn't a test-only field is reached the same way.
+	topologyBackup ConfigBackup
 }
 
 // NewScheduler wires a Scheduler to its persistence, log capture, event
@@ -262,12 +269,50 @@ func (s *Scheduler) RecoverFromRestart(ctx context.Context) error {
 	return s.store.InterruptActive(ctx, time.Now().UTC())
 }
 
+// SetTopologyBackup wires the pre-topology config backup doc 10 §1
+// promises (#406): from this point on, Submit runs it before creating any
+// job whose class is ClassTopology (disk add/remove/replace/upgrade,
+// format, or pool remount). cmd/hoservad's main.go calls this once,
+// right after building the daemon's backup.Service. Unset (the zero
+// value, nil), Submit runs no such backup — the same "not configured, skip"
+// behaviour update.Engine.backup uses when its own Backup field is nil.
+func (s *Scheduler) SetTopologyBackup(b ConfigBackup) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.topologyBackup = b
+}
+
+// runTopologyBackup runs the pre-topology config backup (doc 10 §1, #406),
+// if one is wired, before Submit takes s.mu or persists anything for a
+// ClassTopology job: a slow backup never holds the lock every other Submit
+// and Cancel needs, and a failure here creates no job row at all — the
+// job never starts, and Submit's caller sees exactly why.
+func (s *Scheduler) runTopologyBackup(ctx context.Context) error {
+	s.mu.Lock()
+	backup := s.topologyBackup
+	s.mu.Unlock()
+	if backup == nil {
+		return nil
+	}
+	if err := backup.Run(ctx); err != nil {
+		return fmt.Errorf("job: pre-topology config backup: %w", err)
+	}
+	return nil
+}
+
 // Submit persists a new job of type t and starts it immediately unless its
 // class conflicts with a job already running (doc 01 §4), in which case it
 // is queued until dispatch() finds it a slot. t must have a RunFunc bound
 // through Registry.Register — nothing here knows how to run any job type
 // itself. params is the JSON request payload for types that have one
 // (validated here against t); nil or empty for types that have none.
+//
+// A ClassTopology job runs its pre-topology backup (doc 10 §1, #406) here,
+// ahead of everything below — including the class-conflict and
+// maintenance-mode admission checks — so a slow or failing backup never
+// holds s.mu, and a failing one refuses the submission outright before any
+// of those checks even run: no job row is created, and nothing about the
+// job system's own state changes.
 func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, params []byte) (*Job, error) {
 	if err := ValidateType(t); err != nil {
 		return nil, err
@@ -280,6 +325,12 @@ func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, pa
 		return nil, fmt.Errorf("%w: %s", ErrJobTypeNotRegistered, t)
 	}
 	class, _ := ClassOf(t)
+
+	if class == ClassTopology {
+		if err := s.runTopologyBackup(ctx); err != nil {
+			return nil, err
+		}
+	}
 
 	s.mu.Lock()
 	if s.databaseRestore {
