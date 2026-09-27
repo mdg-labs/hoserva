@@ -109,6 +109,9 @@ assert_nothing_serves_pool() {
     written="$(vm_ssh 'sudo find /mnt/user -mindepth 1 -type f' 2>/dev/null || true)"
     if [[ -n "$written" ]]; then
       echo "maintenance-gate-check[$HOSERVA_LAB_ID]: a write through smbd landed on the boot disk underneath the unmounted pool $label: $written" >&2
+      # Remove it now: array/start later mounts mergerfs over this
+      # directory, and the final cleanup can no longer reach it.
+      vm_ssh "sudo find /mnt/user -mindepth 1 -type f -name 'maintenance-gate-check-*.txt' -delete" || true
     fi
   fi
 
