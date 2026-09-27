@@ -312,6 +312,29 @@ CREATE TABLE machine_key_check (
     created_at TEXT NOT NULL
 ) STRICT;
 
+-- The onboarding age recipient every backup archive is encrypted to
+-- (#275, Q80). Written once, the moment this installation's recipient is
+-- first generated (backup.LoadOrGenerateRecipient), and read at every
+-- later start. public_recipient is the age X25519 recipient string — safe
+-- in the clear, and the only half a remote destination write needs.
+-- wrapped_identity is the matching private identity, encrypted under the
+-- machine key (Q28) so the daemon can re-wrap it into every archive's
+-- identity.age (under the backup passphrase, Q80) unattended, at 03:00,
+-- with no one to type a passphrase. check_value is an HMAC-SHA256 of
+-- public_recipient and a fixed constant, keyed by the private identity —
+-- never the identity alone, and never reversible back to it — verified on
+-- every later load so a corrupted row, or an identity that decrypts under
+-- the wrong machine key, is a fatal startup error naming this entry, not
+-- a silent regeneration that would no longer match the identity already
+-- wrapped into every past archive.
+CREATE TABLE backup_recipient (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    public_recipient TEXT NOT NULL,
+    wrapped_identity BLOB NOT NULL,
+    check_value BLOB NOT NULL,
+    created_at TEXT NOT NULL
+) STRICT;
+
 -- Array topology (#180, D4, doc 01 §2, doc 02 §1): the wizard's plan after
 -- a successful create-array job, which is the source of truth config
 -- generators read. One array per install in v1 (singleton, same pattern as

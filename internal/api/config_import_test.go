@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 	ht "github.com/ogen-go/ogen/http"
 
@@ -619,6 +620,56 @@ func TestImportConfig_SecretsAgePresentButNoPassphraseStillImports(t *testing.T)
 
 	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig(archive with secrets.age, no passphrase given anywhere): %v", err)
+	}
+}
+
+// TestExportConfig_EmbedsIdentityAgeDecryptableWithPassphrase proves
+// criterion 3 ("the private identity is embedded in every archive") holds
+// through ExportConfig (POST /config/export), the on-demand path. The
+// nightly config-backup chain (Service.Run) is proven the same way by
+// internal/backup's own
+// TestService_RunEmbedsIdentityAgeInArchiveWrittenToDestination, which
+// unpacks the archive Run actually writes to a destination rather than
+// BuildArchive's output in isolation. A BuildArchive call that dropped
+// WithRecipient, or ExportConfig calling it without a recipient, would
+// leave identity.age missing and fail the os.ReadFile below before the
+// decrypt is ever reached.
+func TestExportConfig_EmbedsIdentityAgeDecryptableWithPassphrase(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newImportTestHandler(t)
+
+	recipient, err := backup.LoadOrGenerateRecipient(ctx, backup.FakeSecretCipher{}, &backup.FakeRecipientStore{}, nil)
+	if err != nil {
+		t.Fatalf("LoadOrGenerateRecipient: %v", err)
+	}
+	h.Backup.Recipient = recipient
+	h.Backup.Secrets = &backup.FakeSecretSource{Passphrase: "export-pass", HasPass: true}
+
+	archive := exportBytes(t, h)
+
+	staging := t.TempDir()
+	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
+		t.Fatalf("unpacking exported archive: %v", err)
+	}
+	identityAge, err := os.ReadFile(filepath.Join(staging, "identity.age"))
+	if err != nil {
+		t.Fatalf("exported archive has no identity.age: %v", err)
+	}
+
+	scryptIdentity, err := age.NewScryptIdentity("export-pass")
+	if err != nil {
+		t.Fatalf("creating scrypt identity: %v", err)
+	}
+	r, err := age.Decrypt(bytes.NewReader(identityAge), scryptIdentity)
+	if err != nil {
+		t.Fatalf("decrypting identity.age with the backup passphrase: %v", err)
+	}
+	plain, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading decrypted identity.age: %v", err)
+	}
+	if string(plain) != recipient.Identity {
+		t.Fatalf("decrypted identity.age = %q, want %q", plain, recipient.Identity)
 	}
 }
 

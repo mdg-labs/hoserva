@@ -1,13 +1,16 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	_ "modernc.org/sqlite"
 )
 
@@ -148,6 +151,224 @@ func TestService_RunCreatesVerifiedArchive(t *testing.T) {
 	}
 }
 
+func TestService_RunEncryptsArchiveForEncryptDestination(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+	destDir := filepath.Join(root, "backups-encrypted")
+
+	recipient, err := LoadOrGenerateRecipient(ctx, FakeSecretCipher{}, &FakeRecipientStore{}, nil)
+	if err != nil {
+		t.Fatalf("LoadOrGenerateRecipient: %v", err)
+	}
+
+	now := time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
+	svc := &Service{
+		DB:    db,
+		Paths: paths,
+		Secrets: &FakeSecretSource{
+			Passphrase: "backup-pass",
+			HasPass:    true,
+		},
+		Cipher:    FakeSecretCipher{},
+		Recipient: recipient,
+		Destinations: []Destination{{
+			ID:      "remote",
+			Path:    destDir,
+			Enabled: true,
+			Encrypt: true,
+			Retention: Retention{
+				Daily:   7,
+				Weekly:  4,
+				Monthly: 6,
+			},
+		}},
+		Hostname: "test-host",
+		Version:  "0.0.0-test",
+		Now:      func() time.Time { return now },
+	}
+
+	if err := svc.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	name := archiveName(now)
+	plainPath := filepath.Join(destDir, name)
+	if _, err := os.Stat(plainPath); err == nil {
+		t.Fatalf("an Encrypt destination must never receive the plaintext archive %q", plainPath)
+	}
+
+	encPath := plainPath + ".age"
+	sidecarPath := encPath + identitySidecarSuffix
+	if _, err := os.Stat(encPath); err != nil {
+		t.Fatalf("encrypted archive missing: %v", err)
+	}
+	if _, err := os.Stat(sidecarPath); err != nil {
+		t.Fatalf("identity sidecar missing: %v", err)
+	}
+
+	got, err := decryptArchiveWithPassphrase(encPath, sidecarPath, "backup-pass")
+	if err != nil {
+		t.Fatalf("decryptArchiveWithPassphrase: %v", err)
+	}
+	// A decrypted archive is still a plain tar.zst — unpackArchive must
+	// read it back the same way a local archive is verified.
+	verifyDir := t.TempDir()
+	decrypted := filepath.Join(verifyDir, "decrypted.tar.zst")
+	if err := os.WriteFile(decrypted, got, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := unpackArchive(decrypted, filepath.Join(verifyDir, "out")); err != nil {
+		t.Fatalf("unpackArchive on decrypted content: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(verifyDir, "out", "state.db")); err != nil {
+		t.Fatalf("state.db missing from decrypted archive: %v", err)
+	}
+}
+
+// TestService_RunEmbedsIdentityAgeInArchiveWrittenToDestination proves
+// criterion 3 ("the private identity is embedded in every archive") holds
+// for the archive Service.Run itself writes to a destination — the nightly
+// config-backup chain this issue's "Reachable via" names — not only for
+// BuildArchive in isolation or for ExportConfig's on-demand path (covered
+// separately by internal/api's own TestExportConfig test). It uses a plain,
+// unencrypted local destination so the file written to disk is exactly the
+// tar.zst BuildArchive staged, unpacks it, and decrypts identity.age with
+// the backup passphrase through the same scrypt path secrets.age uses. A
+// Service.Run that stopped passing WithRecipient(s.Recipient) to
+// BuildArchive would leave identity.age out of the staged archive
+// entirely, and the os.ReadFile below would fail before the decrypt is
+// ever reached.
+func TestService_RunEmbedsIdentityAgeInArchiveWrittenToDestination(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+	destDir := filepath.Join(root, "backups")
+
+	recipient, err := LoadOrGenerateRecipient(ctx, FakeSecretCipher{}, &FakeRecipientStore{}, nil)
+	if err != nil {
+		t.Fatalf("LoadOrGenerateRecipient: %v", err)
+	}
+
+	now := time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
+	svc := &Service{
+		DB:    db,
+		Paths: paths,
+		Secrets: &FakeSecretSource{
+			Passphrase: "backup-pass",
+			HasPass:    true,
+		},
+		Cipher:    FakeSecretCipher{},
+		Recipient: recipient,
+		Destinations: []Destination{{
+			ID:      "local",
+			Path:    destDir,
+			Enabled: true,
+			Retention: Retention{
+				Daily:   7,
+				Weekly:  4,
+				Monthly: 6,
+			},
+		}},
+		Hostname: "test-host",
+		Version:  "0.0.0-test",
+		Now:      func() time.Time { return now },
+	}
+
+	if err := svc.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	archivePath := filepath.Join(destDir, archiveName(now))
+	verifyDir := t.TempDir()
+	if err := unpackArchive(archivePath, verifyDir); err != nil {
+		t.Fatalf("unpackArchive: %v", err)
+	}
+
+	identityAge, err := os.ReadFile(filepath.Join(verifyDir, "identity.age"))
+	if err != nil {
+		t.Fatalf("archive written by Run has no identity.age: %v", err)
+	}
+	scryptIdentity, err := age.NewScryptIdentity("backup-pass")
+	if err != nil {
+		t.Fatalf("creating scrypt identity: %v", err)
+	}
+	r, err := age.Decrypt(bytes.NewReader(identityAge), scryptIdentity)
+	if err != nil {
+		t.Fatalf("decrypting identity.age with the backup passphrase: %v", err)
+	}
+	plain, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading decrypted identity.age: %v", err)
+	}
+	if string(plain) != recipient.Identity {
+		t.Fatalf("decrypted identity.age = %q, want %q", plain, recipient.Identity)
+	}
+}
+
+func TestService_RunFailsClosedWhenEncryptRequestedWithoutPassphrase(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+	destDir := filepath.Join(root, "backups-encrypted")
+
+	recipient, err := LoadOrGenerateRecipient(ctx, FakeSecretCipher{}, &FakeRecipientStore{}, nil)
+	if err != nil {
+		t.Fatalf("LoadOrGenerateRecipient: %v", err)
+	}
+
+	svc := &Service{
+		DB:        db,
+		Paths:     paths,
+		Secrets:   &FakeSecretSource{HasPass: false},
+		Cipher:    FakeSecretCipher{},
+		Recipient: recipient,
+		Destinations: []Destination{{
+			ID:      "remote",
+			Path:    destDir,
+			Enabled: true,
+			Encrypt: true,
+		}},
+		Hostname: "test-host",
+		Version:  "0.0.0-test",
+		Now:      func() time.Time { return time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC) },
+	}
+
+	if err := svc.Run(ctx); err == nil {
+		t.Fatal("expected Run to fail when Encrypt is requested with no backup passphrase configured")
+	}
+	if entries, _ := os.ReadDir(destDir); len(entries) != 0 {
+		t.Fatalf("expected no files written to the destination, found %d", len(entries))
+	}
+}
+
+func TestService_RunFailsClosedWhenEncryptRequestedWithoutRecipient(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+	destDir := filepath.Join(root, "backups-encrypted")
+
+	svc := &Service{
+		DB:      db,
+		Paths:   paths,
+		Secrets: &FakeSecretSource{Passphrase: "backup-pass", HasPass: true},
+		Cipher:  FakeSecretCipher{},
+		Destinations: []Destination{{
+			ID:      "remote",
+			Path:    destDir,
+			Enabled: true,
+			Encrypt: true,
+		}},
+		Hostname: "test-host",
+		Version:  "0.0.0-test",
+		Now:      func() time.Time { return time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC) },
+	}
+
+	if err := svc.Run(ctx); err == nil {
+		t.Fatal("expected Run to fail when Encrypt is requested with no onboarding recipient available")
+	}
+}
+
 func TestDefaultDestinations(t *testing.T) {
 	dests := DefaultDestinations()
 	if len(dests) != 2 {
@@ -211,6 +432,43 @@ func TestRetentionPrune(t *testing.T) {
 			// oldest may be pruned depending on weekly/monthly buckets
 			continue
 		}
+	}
+}
+
+func TestRetentionPrune_RemovesOrphanedIdentitySidecar(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	pruned := "hoserva-config-2020-01-01T03-00.tar.zst.age"
+	kept := "hoserva-config-2026-09-14T03-00.tar.zst.age"
+	for _, name := range []string{pruned, kept} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name+identitySidecarSuffix), []byte("identity"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldMod := now.AddDate(-1, 0, 0)
+	if err := os.Chtimes(filepath.Join(dir, pruned), oldMod, oldMod); err != nil {
+		t.Fatal(err)
+	}
+
+	dest := Destination{Path: dir, Retention: Retention{Daily: 1, Weekly: 1, Monthly: 1}}
+	if err := pruneDestination(dest, now, kept); err != nil {
+		t.Fatalf("pruneDestination: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, pruned)); !os.IsNotExist(err) {
+		t.Fatalf("expected pruned archive to be removed, stat error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, pruned+identitySidecarSuffix)); !os.IsNotExist(err) {
+		t.Fatalf("expected pruned archive's identity sidecar to be removed, stat error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, kept)); err != nil {
+		t.Fatalf("kept archive missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, kept+identitySidecarSuffix)); err != nil {
+		t.Fatalf("kept archive's identity sidecar missing: %v", err)
 	}
 }
 

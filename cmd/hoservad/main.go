@@ -238,6 +238,12 @@ func run(cfg config) error {
 	settingsStore := api.NewSettingsStore(db)
 	settingsService := api.NewSettingsService(settingsStore, machineKey)
 	scheduleService := api.NewScheduleService(api.NewScheduleStore(db), settingsStore)
+
+	backupRecipientStore := api.NewBackupRecipientStore(db)
+	backupRecipient, err := backup.LoadOrGenerateRecipient(ctx, machineKey, backupRecipientStore, time.Now)
+	if err != nil {
+		return fmt.Errorf("loading onboarding backup recipient: %w", err)
+	}
 	upsStore := api.NewUPSStore(db)
 
 	logsDir := filepath.Join(cfg.stateDir, "jobs")
@@ -407,7 +413,7 @@ func run(cfg config) error {
 	if parityEngine != nil {
 		parityReg.register(parityEngine)
 	}
-	backupService := newBackupService(ctx, cfg, db, machineKey, settingsService, linuxDisks.Exec)
+	backupService := newBackupService(ctx, cfg, db, machineKey, backupRecipient, settingsService, linuxDisks.Exec)
 	acmeStore := acme.NewStore(db)
 	acmeService := &acme.Service{
 		Store:     acmeStore,

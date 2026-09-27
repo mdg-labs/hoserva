@@ -16,6 +16,7 @@ type Service struct {
 	Destinations []Destination
 	Secrets      SecretSource
 	Cipher       SecretCipher
+	Recipient    *Recipient
 	Hostname     string
 	Version      string
 	Now          func() time.Time
@@ -40,7 +41,7 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
-	_, err = BuildArchive(ctx, s.DB, s.Paths, s.Secrets, s.Cipher, s.Hostname, s.Version, now, staging)
+	_, err = BuildArchive(ctx, s.DB, s.Paths, s.Secrets, s.Cipher, s.Hostname, s.Version, now, staging, WithRecipient(s.Recipient))
 	if err != nil {
 		return err
 	}
@@ -64,18 +65,52 @@ func (s *Service) Run(ctx context.Context) error {
 		return fmt.Errorf("verifying archive: %w", err)
 	}
 
+	var artifacts *encryptedArtifacts
 	for _, dest := range s.Destinations {
 		if !dest.Enabled {
 			continue
 		}
-		if err := writeArchive(dest, archivePath); err != nil {
+		writePath, writeName := archivePath, name
+		if dest.Encrypt {
+			if artifacts == nil {
+				artifacts, err = s.buildArtifacts(archivePath, passphrase)
+				if err != nil {
+					return fmt.Errorf("encrypting archive for destination %q: %w", dest.ID, err)
+				}
+				defer func() { _ = os.Remove(artifacts.ArchivePath) }()
+				defer func() { _ = os.Remove(artifacts.SidecarPath) }()
+			}
+			writePath, writeName = artifacts.ArchivePath, filepath.Base(artifacts.ArchivePath)
+			if err := writeArchive(dest, artifacts.SidecarPath); err != nil {
+				return fmt.Errorf("writing destination %q: %w", dest.ID, err)
+			}
+		}
+		if err := writeArchive(dest, writePath); err != nil {
 			return fmt.Errorf("writing destination %q: %w", dest.ID, err)
 		}
-		if err := pruneDestination(dest, now, name); err != nil {
+		if err := pruneDestination(dest, now, writeName); err != nil {
 			return fmt.Errorf("pruning destination %q: %w", dest.ID, err)
 		}
 	}
 	return nil
+}
+
+// buildArtifacts age-encrypts archivePath to s.Recipient's public key and
+// wraps the matching private identity under passphrase into a sidecar
+// file (Q80) — called at most once per Run, and reused across every
+// destination that requests encryption.
+func (s *Service) buildArtifacts(archivePath, passphrase string) (*encryptedArtifacts, error) {
+	if s.Recipient == nil || s.Recipient.Public == "" || s.Recipient.Identity == "" {
+		return nil, fmt.Errorf("encryption requested but no onboarding recipient is available")
+	}
+	if passphrase == "" {
+		return nil, fmt.Errorf("encryption requires a backup passphrase to be set")
+	}
+	sidecar, err := encryptWithPassphrase([]byte(s.Recipient.Identity), passphrase)
+	if err != nil {
+		return nil, fmt.Errorf("wrapping onboarding recipient identity: %w", err)
+	}
+	return buildEncryptedArtifacts(archivePath, s.Recipient.Public, sidecar)
 }
 
 func archiveName(now time.Time) string {

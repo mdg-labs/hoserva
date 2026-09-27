@@ -31,12 +31,23 @@ hoserva-config-2026-09-14T03-00.tar.zst
 ├── manifest.json            version, timestamp, host, checksums
 ├── state.db                 SQLite, consistent snapshot via VACUUM INTO
 ├── secrets.age              secret columns and stack .env files, under the backup passphrase (Q28, Q80)
+├── identity.age             the onboarding recipient's own private identity, under the backup passphrase (Q80)
 ├── generated/               snapraid.conf, smb.conf, exports, mount units
 ├── stacks/                  every docker-compose.yml (their .env files are in secrets.age)
 ├── templates/               installed app templates
 ├── custom/                  user-owned config (smb.custom.conf etc.)
 └── snapraid-content/        SnapRAID content files (optional, large)
 ```
+
+For a destination that encrypts (below), what actually leaves the box is two files, not one:
+`hoserva-config-2026-09-14T03-00.tar.zst.age` — the tree above, age-encrypted whole to the
+onboarding recipient's public key — and a small sidecar,
+`hoserva-config-2026-09-14T03-00.tar.zst.age.identity.age`, carrying the same private identity
+as `identity.age` above, age-scrypt-encrypted under the backup passphrase on its own. They are
+two files because age's own format refuses to combine a scrypt recipient with any other
+recipient in one encrypted file — a restore recovers the identity from the sidecar with the
+passphrase, then uses it to open the main archive; the box itself can also open the main archive
+directly with its own copy of the identity, without the sidecar or the passphrase at all.
 
 Not included: `metrics.db` and job logs (Q74) — history, not configuration.
 
@@ -48,7 +59,9 @@ Not included: `metrics.db` and job logs (Q74) — history, not configuration.
 
 - **At runtime**, secret columns are encrypted with a machine key in `/etc/hoserva/secret.key` (root, `0600`, generated at install). This protects against the database file leaking — in a diagnostics bundle or a copied backup.
 - **In backups**, the secrets section is re-encrypted under a **backup passphrase** the user sets during onboarding (doc 03 §1). The machine key itself is never included. A backup restored without the passphrase restores everything except secrets, and says so clearly.
-- **Off-box, the whole archive is encrypted** with age before it leaves the box (Q80). The box keeps only the public recipient generated at onboarding; the matching private identity travels inside every archive under the backup passphrase, so encryption runs unattended and a restore needs only the passphrase. A remote destination can't be added until a backup passphrase is set.
+- **Off-box, the whole archive is encrypted** with age before it leaves the box (Q80). An onboarding age recipient (X25519) is generated exactly once, at first start; the box keeps only its public half in the clear, and the matching private identity is kept at rest only wrapped under the machine key — never in the clear — so the daemon can use it unattended, the same reasoning as the machine key itself. Every destination other than a local path always encrypts; a local path may opt in.
+
+  Encrypting to the recipient alone would strand every off-box archive the moment the box holding the private identity is lost, so the private identity also travels with every encrypted archive, itself wrapped under the backup passphrase (age's scrypt mode, `identity.age` above): a restore recovers it with only the passphrase, then uses it to open the archive, and can go on protecting future archives with the same recipient rather than starting a fresh one. **A restore of an *encrypted* archive needs the passphrase — there is no path around it, because the passphrase is what unlocks the identity that unlocks the archive.** This is stricter than the secrets-only case above: losing the passphrase for an off-box archive, with the box itself gone too, loses the whole archive, not only its secrets section. A *local, unencrypted* archive is unaffected — state.db and every plain file restore exactly as they do today, and only its embedded secrets.age is passphrase-gated. A remote destination can't be added until a backup passphrase is set.
 
 ### Schedule and retention
 

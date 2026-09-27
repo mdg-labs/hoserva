@@ -40,7 +40,7 @@ func packageVersion(ctx context.Context, runner disk.Runner, name string) string
 	return v
 }
 
-func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, settings *api.SettingsService, runner disk.Runner) *backup.Service {
+func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, recipient *backup.Recipient, settings *api.SettingsService, runner disk.Runner) *backup.Service {
 	configRoot := cfg.configRoot
 	if configRoot == "" {
 		configRoot = "/etc"
@@ -58,9 +58,10 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 				Monthly: backup.DefaultRetentionMonthly,
 			},
 		}},
-		Secrets: &backup.ServiceSecretSource{BackupPassphraseFn: settings.BackupPassphrase},
-		Cipher:  machineKey,
-		Version: packageVersion(ctx, runner, "hoserva"),
+		Secrets:   &backup.ServiceSecretSource{BackupPassphraseFn: settings.BackupPassphrase},
+		Cipher:    machineKey,
+		Recipient: recipient,
+		Version:   packageVersion(ctx, runner, "hoserva"),
 	}
 }
 

@@ -10,16 +10,22 @@ import (
 )
 
 // archiveNamePattern matches doc 10 §1's archive filenames:
-// hoserva-config-2026-09-14T03-00.tar.zst
-var archiveNamePattern = regexp.MustCompile(`^hoserva-config-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2})\.tar\.zst$`)
+// hoserva-config-2026-09-14T03-00.tar.zst, and the same name with a
+// trailing ".age" when the archive written to a destination was
+// age-encrypted (Q80).
+var archiveNamePattern = regexp.MustCompile(`^hoserva-config-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2})\.tar\.zst(\.age)?$`)
 
 // Destination is one local backup target (doc 10 §1, Q40). Remote and
 // rclone-backed destinations are issue #60's scope — this issue is local
-// paths only.
+// paths only. Encrypt requests age encryption of the archive written here
+// (Q80): local destinations may opt in; #60's remote destinations set it
+// unconditionally, after ValidateRemoteDestination has already refused
+// one with no backup passphrase configured.
 type Destination struct {
 	ID        string
 	Path      string
 	Enabled   bool
+	Encrypt   bool
 	Retention Retention
 }
 
@@ -90,7 +96,11 @@ func writeArchive(dest Destination, archivePath string) error {
 }
 
 // pruneDestination enforces dest's retention on archives it owns — only
-// filenames matching archiveNamePattern are candidates.
+// filenames matching archiveNamePattern are candidates. An encrypted
+// archive's identity sidecar (identitySidecarSuffix) is never itself a
+// candidate — it never matches archiveNamePattern — but is removed
+// alongside its own archive so pruning an old encrypted archive never
+// leaves its sidecar behind as an orphan.
 func pruneDestination(dest Destination, now time.Time, justWritten string) error {
 	entries, err := listArchives(dest.Path)
 	if err != nil {
@@ -100,6 +110,9 @@ func pruneDestination(dest Destination, now time.Time, justWritten string) error
 	for _, e := range entries {
 		if keep[e.name] {
 			continue
+		}
+		if err := os.Remove(e.path + identitySidecarSuffix); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("pruning identity sidecar for %q: %w", e.path, err)
 		}
 		if err := os.Remove(e.path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("pruning archive %q: %w", e.path, err)

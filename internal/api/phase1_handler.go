@@ -417,7 +417,7 @@ func (h *Handler) ExportConfig(ctx context.Context) (apiv1.ExportConfigOK, error
 		now = h.Backup.Now().UTC()
 	}
 	if _, err := backup.BuildArchive(ctx, h.Backup.DB, h.Backup.Paths, h.Backup.Secrets, h.Backup.Cipher,
-		h.Backup.Hostname, h.Backup.Version, now, staging); err != nil {
+		h.Backup.Hostname, h.Backup.Version, now, staging, backup.WithRecipient(h.Backup.Recipient)); err != nil {
 		return apiv1.ExportConfigOK{}, err
 	}
 
