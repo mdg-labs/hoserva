@@ -118,7 +118,7 @@ func newLabUpgradeEnv(t *testing.T, prefix string) *labUpgradeEnv {
 	if done := labAwait(t, e.s, j.ID); done.Status != StatusSucceeded {
 		t.Fatalf("disk_format = %s (%s)", done.Status, done.ErrorMessage)
 	}
-	e.oldUUID = blkidUUID(e.ctx, e.runner, e.oldDev)
+	e.oldUUID = blkidUUID(t, e.ctx, e.runner, e.oldDev)
 
 	e.engine = &parity.SnapraidEngine{
 		ConfPath: filepath.Join(e.genRoot, "snapraid.conf"),
@@ -346,8 +346,8 @@ func TestLabDiskUpgradeData_E1_E4_E5_InterruptedMidCopyResumedAfterRestartLosesN
 	if interrupted.Status != StatusInterrupted || cp.Phase != disk.DataDiskUpgradePhaseCopying {
 		t.Fatalf("status %s at %s, want interrupted mid-copy", interrupted.Status, cp.Phase)
 	}
-	if cp.NewUUID == "" || cp.NewUUID != blkidUUID(e.ctx, e.runner, e.newDev) {
-		t.Fatalf("checkpoint UUID %q, want B's %q (UR4)", cp.NewUUID, blkidUUID(e.ctx, e.runner, e.newDev))
+	if cp.NewUUID == "" || cp.NewUUID != blkidUUID(t, e.ctx, e.runner, e.newDev) {
+		t.Fatalf("checkpoint UUID %q, want B's %q (UR4)", cp.NewUUID, blkidUUID(t, e.ctx, e.runner, e.newDev))
 	}
 	e.assertNothingMounted("after the interruption")
 	e.assertOldDiskUnchanged("after the interruption")
@@ -387,7 +387,7 @@ func TestLabDiskUpgradeData_E1_E4_E5_InterruptedMidCopyResumedAfterRestartLosesN
 	if err != nil {
 		t.Fatal(err)
 	}
-	newUUID := blkidUUID(e.ctx, e.runner, e.newDev)
+	newUUID := blkidUUID(t, e.ctx, e.runner, e.newDev)
 	if switched.Device != e.newDev || switched.FSUUID != newUUID {
 		t.Fatalf("SQLite names %s/%s, want B %s/%s", switched.Device, switched.FSUUID, e.newDev, newUUID)
 	}
@@ -604,7 +604,7 @@ func TestLabDiskUpgradeParity_HappyPathThroughJobSystem(t *testing.T) {
 		t.Fatalf("disk_upgrade_parity status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
 	}
 
-	if got := blkidType(ctx, execRunner, newDev); got != "xfs" {
+	if got := blkidType(t, ctx, execRunner, newDev); got != "xfs" {
 		t.Fatalf("new parity disk %s: blkid TYPE = %q, want xfs", newDev, got)
 	}
 
@@ -619,7 +619,7 @@ func TestLabDiskUpgradeParity_HappyPathThroughJobSystem(t *testing.T) {
 	t.Cleanup(func() { unmountIfMounted(execRunner, oldParityRemount) })
 	if err := mounter.Mount(ctx, disk.MountUnit{
 		Where:      oldParityRemount,
-		UUID:       blkidUUID(ctx, execRunner, parityDev),
+		UUID:       blkidUUID(t, ctx, execRunner, parityDev),
 		Filesystem: disk.XFS,
 	}); err != nil {
 		t.Fatalf("remounting the old parity disk to verify its content: %v", err)

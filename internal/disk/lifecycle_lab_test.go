@@ -43,7 +43,7 @@ func TestLabAddDisk_FormatsAndMountsANewDataDisk(t *testing.T) {
 	if err := FormatForAddition(ctx, provider, r, addition); err != nil {
 		t.Fatalf("FormatForAddition: %v", err)
 	}
-	if got := blkidType(ctx, r, dev); got != "xfs" {
+	if got := blkidType(t, ctx, r, dev); got != "xfs" {
 		t.Fatalf("blkid TYPE = %q, want xfs", got)
 	}
 
@@ -106,7 +106,7 @@ func TestLabReplace_IdentifiesAndFormatsTheReplacementAtTheSameMountpoint(t *tes
 	if err := FormatForAddition(ctx, provider, r, addition); err != nil {
 		t.Fatalf("FormatForAddition: %v", err)
 	}
-	if got := blkidType(ctx, r, replacement); got != "xfs" {
+	if got := blkidType(t, ctx, r, replacement); got != "xfs" {
 		t.Fatalf("blkid TYPE = %q, want xfs", got)
 	}
 
