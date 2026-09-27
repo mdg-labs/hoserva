@@ -119,7 +119,7 @@ export function WakeEventsPage(): React.ReactElement {
         <h1 className="text-2xl font-semibold font-heading">{t("storageNav.wakeEvents")}</h1>
         <p className="text-muted-foreground">{t("wakeEvents.description")}</p>
       </div>
-      <InlineNote description={t("wakeEvents.phase1Note")} />
+      <InlineNote description={t("wakeEvents.eventLogNote")} />
       {error ? (
         <p className="text-destructive">{error}</p>
       ) : rows === null ? (

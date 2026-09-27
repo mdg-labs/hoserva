@@ -56,7 +56,7 @@ func (s *Service) Run(ctx context.Context) error {
 
 // RunReason is Run, with the archive marked as taken before a destructive
 // change (doc 10 §1, #401): the pre-import safety backup
-// (internal/api/phase1_handler.go's ImportConfig) and the pre-update backup
+// (internal/api/pool_handler.go's ImportConfig) and the pre-update backup
 // (cmd/hoservad/update.go) both call it so retention keeps their archive
 // even when a later same-day backup would otherwise take today's daily-tier
 // slot and prune it.

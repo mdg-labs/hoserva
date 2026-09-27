@@ -197,7 +197,7 @@ var contractSkip = map[string]string{
 
 	// ExportConfig: this rig's production handler now carries a real,
 	// migrated backup.Service (#269, alongside ImportConfig's own cases
-	// below), but the mock's own ExportConfig (phase1.go) always returns
+	// below), but the mock's own ExportConfig (pool.go) always returns
 	// fixed stub bytes unconditionally — it has no failure path of its
 	// own, and no scenario makes either side fail, so there is nothing
 	// for a table entry to compare beyond "both return 200", which
@@ -240,7 +240,7 @@ var contractNoValidCase = map[string]string{
 	// case succeeds at all, are both job-timing/run-registration state
 	// (#272's own out-of-scope list), so no CancelJob valid case is
 	// added here.
-	"CancelJob": "a just-queued sync job is cancellable in this rig's production registration (contractProductionRunFuncs registers every job type cancellable) but not in the mock's (StartSync submits with cancellable=false, phase1.go) — job-timing/run-registration state either way, out of scope (#272)",
+	"CancelJob": "a just-queued sync job is cancellable in this rig's production registration (contractProductionRunFuncs registers every job type cancellable) but not in the mock's (StartSync submits with cancellable=false, pool.go) — job-timing/run-registration state either way, out of scope (#272)",
 
 	// ResumeJob only ever succeeds against an interrupted, resumable
 	// job — reachable only by catching a running TypeDiskUpgradeData

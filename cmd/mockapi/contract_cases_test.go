@@ -1842,7 +1842,7 @@ var contractCases = []contractCase{
 		// Production's ApplyHostConfig refuses a host-config id it
 		// doesn't recognise with invalid_host_config/400
 		// (config.KindFromCheckID, hostconfig.go); the mock mirrors
-		// that check against mockHostConfigKinds (phase1.go) instead
+		// that check against mockHostConfigKinds (pool.go) instead
 		// of echoing any id back as if it had been applied.
 		op:   "ApplyHostConfig",
 		name: "unknown_host_config_id_is_refused",

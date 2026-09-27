@@ -26,7 +26,7 @@ type Paths struct {
 // A variadic trailing parameter, rather than growing BuildArchive's fixed
 // argument list, so every existing caller keeps compiling unchanged. Both
 // production callers — Service.Run (the nightly config-backup chain) and
-// internal/api/phase1_handler.go's on-demand ExportConfig — pass
+// internal/api/pool_handler.go's on-demand ExportConfig — pass
 // WithRecipient, so every archive carries identity.age (criterion 3)
 // whether it is written to a destination or downloaded directly.
 type ArchiveOption func(*archiveOptions)

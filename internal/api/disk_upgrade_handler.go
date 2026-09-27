@@ -36,7 +36,7 @@ var parityDiskUpgradeSteps = []string{
 }
 
 // arrayDiskRoleToAPI maps a persisted store.ArrayRole* spelling to
-// apiv1.ArrayDiskRole — arrayRoleToAPI's own mapping (phase1_handler.go),
+// apiv1.ArrayDiskRole — arrayRoleToAPI's own mapping (pool_handler.go),
 // but returning the enum planDiskUpgrade's own DiskUpgradePlan.role uses
 // rather than PoolDiskEntryRole.
 func arrayDiskRoleToAPI(role string) apiv1.ArrayDiskRole {

@@ -137,7 +137,7 @@ function mockMatchMedia(prefersDark = false): void {
   })) as unknown as typeof window.matchMedia;
 }
 
-describe("Tier 1 pages", () => {
+describe("dashboard, parity, wake-events and jobs pages", () => {
   beforeEach(() => {
     cleanup();
     mockGet.mockReset();
@@ -475,6 +475,11 @@ describe("Tier 1 pages", () => {
     expect(await screen.findByText("Awake duration")).toBeInTheDocument();
     expect(screen.getByText("1h 1m 1s")).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Phase 1 shows timestamps and daily wake counts from the spin-state event log once that collection is exposed through the API.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("keeps the sync dialog open when the parity sync request fails", async () => {

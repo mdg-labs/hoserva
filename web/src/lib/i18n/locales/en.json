@@ -426,7 +426,7 @@
   },
   "wakeEvents": {
     "description": "When disks woke and how often — the first step toward answering spindown questions.",
-    "phase1Note": "Phase 1 shows timestamps and daily wake counts from the spin-state event log once that collection is exposed through the API.",
+    "eventLogNote": "Phase 1 shows timestamps and daily wake counts from the spin-state event log once that collection is exposed through the API.",
     "columns": {
       "device": "Disk",
       "timestamp": "Last wake",

@@ -126,7 +126,7 @@ func (i Identity) Matches(other Identity) bool {
 // FSUUIDMismatch reports whether want and got were both positively read
 // and differ (#388) — the one shared definition of "wrong filesystem"
 // disk.StorageGate.evaluate, GetPool's own per-slot state
-// (internal/api/phase1_handler.go's wrongFilesystem) and
+// (internal/api/pool_handler.go's wrongFilesystem) and
 // ConfirmReplacementTargetAbsent's own relaxation (internal/job) all call,
 // rather than each keeping its own copy of the rule. It is deliberately
 // fail-closed: an empty want (a slot never formatted) or an empty got (a
