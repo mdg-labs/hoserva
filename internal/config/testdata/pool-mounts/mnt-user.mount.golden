@@ -6,6 +6,7 @@
 # ============================================================
 [Unit]
 Description=Hoserva catch-all pool
+ConditionPathExists=!/var/lib/hoserva/array-stopped
 RequiresMountsFor=/mnt/disk1 /mnt/disk2
 
 [Mount]

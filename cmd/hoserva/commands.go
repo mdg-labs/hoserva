@@ -45,6 +45,11 @@ func arrayCmd() *cobra.Command {
 		Short: "Mount the array and leave maintenance mode (Q70)",
 		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.StartArray(apiCtx()) }),
 	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "acknowledge-degraded",
+		Short: "Acknowledge a degraded array and start the services waiting on it (doc 02 §1, Q69)",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.AcknowledgeDegradedArray(apiCtx()) }),
+	})
 	return cmd
 }
 
@@ -127,7 +132,22 @@ func diskRemoveCmd() *cobra.Command {
 		Short: "Preview evacuating a disk: the files it would move and the exact confirmation phrase to type",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req := &apiv1.EvacuateDiskPlanRequest{Mountpoint: mountpoint}
-			return runAPI(func(c *apiv1.Client) (any, error) { return c.PlanDiskEvacuation(apiCtx(), req) })(cmd, args)
+			return runAPI(func(c *apiv1.Client) (any, error) {
+				res, err := c.PlanDiskEvacuation(apiCtx(), req)
+				if err != nil {
+					return nil, err
+				}
+				// planDiskEvacuation's 200 and 400 are both a nil client
+				// error (#367): ogen treats a documented non-default 400
+				// as a normal sum-type member, not an error, so a
+				// refusal must be turned into a command failure here —
+				// otherwise it would print and exit 0, indistinguishable
+				// from a real plan for any script or chained command.
+				if refusal, ok := res.(*apiv1.EvacuationPlanRefusal); ok {
+					return nil, fmt.Errorf("%s", refusal.Message)
+				}
+				return res, nil
+			})(cmd, args)
 		},
 	}
 	plan.Flags().StringVar(&mountpoint, "mountpoint", "", "The data disk slot to evacuate, e.g. /mnt/disk3 (required)")

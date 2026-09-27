@@ -1,0 +1,23 @@
+# Hoserva storage-target boot ordering (doc 02 §1, Q69, issue #372):
+# reaches disk.StorageGate the moment a block device carrying a
+# filesystem appears — a reseated cable, or the disk a degraded boot's
+# own missing-and-unacknowledged state left waiting for — instead of only
+# at the next reboot or an unrelated share edit. `systemctl --no-block
+# reload` sends hoserva.service SIGHUP (ExecReload=,
+# packaging/debian/hoserva.service); cmd/hoservad's own SIGHUP handler
+# (installReloadHandler, cmd/hoservad/reload.go) re-lists disks and
+# re-evaluates the gate from that list alone — it never reads a data
+# disk's own content, so this stays event-driven, never a timer walking a
+# data disk (CLAUDE.md).
+#
+# debian/rules installs this file itself, as
+# /lib/udev/rules.d/90-hoserva-storage.rules — never through
+# dh_installudev's own debian/hoserva.udev naming convention, and the
+# "90-" prefix is deliberate, not cosmetic: udev evaluates same-priority
+# rule *files* in filename order, and Debian's own udev package ships
+# /lib/udev/rules.d/60-persistent-storage.rules, whose own
+# `IMPORT{builtin}="blkid"` is what actually sets ENV{ID_FS_UUID} in the
+# first place (confirmed directly with `udevadm test`). This file's own
+# name has to sort after that one, or the condition below always sees an
+# empty ENV{ID_FS_UUID} and never matches.
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_UUID}!="", RUN+="/usr/bin/systemctl --no-block reload hoserva.service"

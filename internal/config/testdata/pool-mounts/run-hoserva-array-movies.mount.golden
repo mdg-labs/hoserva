@@ -6,6 +6,7 @@
 # ============================================================
 [Unit]
 Description=Hoserva share movies — mover write target
+ConditionPathExists=!/var/lib/hoserva/array-stopped
 RequiresMountsFor=/mnt/disk1 /mnt/disk2
 
 [Mount]

@@ -2398,6 +2398,11 @@ type EvacuationPlan struct {
 	Mountpoint string             `json:"mountpoint"`
 	Moves      []RebalanceMove    `json:"moves"`
 	Warnings   []RebalanceWarning `json:"warnings"`
+	// Every top-level entry on the disk's own mountpoint that is neither a configured share's own branch
+	// there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — content doc 09 §4 has
+	// no procedure for moving (#367). Always empty on a plan this operation actually returns: any such
+	// content refuses the plan outright (`EvacuationPlanRefusal`) instead.
+	NonSharePaths []string `json:"nonSharePaths"`
 	// Exact typed confirmation `evacuateDisk` requires for this plan (`REMOVE <mountpoint>`).
 	Confirmation string `json:"confirmation"`
 }
@@ -2415,6 +2420,11 @@ func (s *EvacuationPlan) GetMoves() []RebalanceMove {
 // GetWarnings returns the value of Warnings.
 func (s *EvacuationPlan) GetWarnings() []RebalanceWarning {
 	return s.Warnings
+}
+
+// GetNonSharePaths returns the value of NonSharePaths.
+func (s *EvacuationPlan) GetNonSharePaths() []string {
+	return s.NonSharePaths
 }
 
 // GetConfirmation returns the value of Confirmation.
@@ -2437,10 +2447,62 @@ func (s *EvacuationPlan) SetWarnings(val []RebalanceWarning) {
 	s.Warnings = val
 }
 
+// SetNonSharePaths sets the value of NonSharePaths.
+func (s *EvacuationPlan) SetNonSharePaths(val []string) {
+	s.NonSharePaths = val
+}
+
 // SetConfirmation sets the value of Confirmation.
 func (s *EvacuationPlan) SetConfirmation(val string) {
 	s.Confirmation = val
 }
+
+func (*EvacuationPlan) planDiskEvacuationRes() {}
+
+// `planDiskEvacuation`'s 400 refusal (#367): the shared `Error` schema has no room for
+// `nonSharePaths`, so a refusal caused by non-share content on the disk gets its own body naming every
+// offending path structurally, not only in `message`.
+// Ref: #/components/schemas/EvacuationPlanRefusal
+type EvacuationPlanRefusal struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Every top-level entry on the disk's own mountpoint that is neither a configured share's own branch
+	// there nor SnapRAID's own bookkeeping — empty when the refusal has a different cause (no other
+	// branch, an unsupported entry, or the remaining disks not having room).
+	NonSharePaths []string `json:"nonSharePaths"`
+}
+
+// GetCode returns the value of Code.
+func (s *EvacuationPlanRefusal) GetCode() string {
+	return s.Code
+}
+
+// GetMessage returns the value of Message.
+func (s *EvacuationPlanRefusal) GetMessage() string {
+	return s.Message
+}
+
+// GetNonSharePaths returns the value of NonSharePaths.
+func (s *EvacuationPlanRefusal) GetNonSharePaths() []string {
+	return s.NonSharePaths
+}
+
+// SetCode sets the value of Code.
+func (s *EvacuationPlanRefusal) SetCode(val string) {
+	s.Code = val
+}
+
+// SetMessage sets the value of Message.
+func (s *EvacuationPlanRefusal) SetMessage(val string) {
+	s.Message = val
+}
+
+// SetNonSharePaths sets the value of NonSharePaths.
+func (s *EvacuationPlanRefusal) SetNonSharePaths(val []string) {
+	s.NonSharePaths = val
+}
+
+func (*EvacuationPlanRefusal) planDiskEvacuationRes() {}
 
 type ExportConfigOK struct {
 	Data io.Reader
@@ -9762,12 +9824,34 @@ func (s *StopArrayRequest) SetConfirm(val bool) {
 
 // Ref: #/components/schemas/SystemStatus
 type SystemStatus struct {
-	Healthy         bool     `json:"healthy"`
-	Summary         string   `json:"summary"`
-	MaintenanceMode OptBool  `json:"maintenanceMode"`
-	ArrayDegraded   OptBool  `json:"arrayDegraded"`
-	ParityBlocked   OptBool  `json:"parityBlocked"`
-	ActiveJobs      OptInt32 `json:"activeJobs"`
+	Healthy         bool    `json:"healthy"`
+	Summary         string  `json:"summary"`
+	MaintenanceMode OptBool `json:"maintenanceMode"`
+	// True whenever any disk `hoservad` expects is currently missing by identity (doc 02 §1, Q69) —
+	// including once the user has acknowledged the degraded state through
+	// `POST /array/degraded/acknowledge`. It clears only once the missing disk actually reappears;
+	// `arrayDegradedAcknowledged` is what distinguishes an acknowledged degraded array from one still
+	// waiting on the user.
+	ArrayDegraded OptBool `json:"arrayDegraded"`
+	// True once the user has acknowledged the current degraded state
+	// (`hoserva array acknowledge-degraded`) — only meaningful while `arrayDegraded` is also true. It
+	// resets the moment the missing disk reappears, the same way the acknowledgement itself does. It can
+	// be true while `storageServicesReleased` is still false: the acknowledgement stands even when the
+	// transition it triggers does not actually start anything (maintenance mode, or a mount failure,
+	// `array_services_not_started`) — a client must never read this field alone as "services are
+	// running" (#385 finding 2).
+	ArrayDegradedAcknowledged OptBool `json:"arrayDegradedAcknowledged"`
+	// True once `hoservad`'s storage-target gate has actually released Samba, NFS, Docker and libvirt —
+	// read live from the same runtime flag (`/run/hoserva/storage-ready`) hoservad itself sets only after
+	// mounting and confirming the pool — and the array is not currently in maintenance mode. This is the
+	// field a client checks before ever telling the user services are running; `arrayDegradedAcknowledged`
+	// alone only reports the acknowledgement, not whether it took effect (#385 finding 2). It goes false
+	// again the moment `array stop` enters maintenance mode, even while the runtime flag from an earlier
+	// acknowledgement is still set — an explicit stop takes those services back down, so a standing
+	// acknowledgement must never be read as "still running".
+	StorageServicesReleased OptBool  `json:"storageServicesReleased"`
+	ParityBlocked           OptBool  `json:"parityBlocked"`
+	ActiveJobs              OptInt32 `json:"activeJobs"`
 }
 
 // GetHealthy returns the value of Healthy.
@@ -9788,6 +9872,16 @@ func (s *SystemStatus) GetMaintenanceMode() OptBool {
 // GetArrayDegraded returns the value of ArrayDegraded.
 func (s *SystemStatus) GetArrayDegraded() OptBool {
 	return s.ArrayDegraded
+}
+
+// GetArrayDegradedAcknowledged returns the value of ArrayDegradedAcknowledged.
+func (s *SystemStatus) GetArrayDegradedAcknowledged() OptBool {
+	return s.ArrayDegradedAcknowledged
+}
+
+// GetStorageServicesReleased returns the value of StorageServicesReleased.
+func (s *SystemStatus) GetStorageServicesReleased() OptBool {
+	return s.StorageServicesReleased
 }
 
 // GetParityBlocked returns the value of ParityBlocked.
@@ -9818,6 +9912,16 @@ func (s *SystemStatus) SetMaintenanceMode(val OptBool) {
 // SetArrayDegraded sets the value of ArrayDegraded.
 func (s *SystemStatus) SetArrayDegraded(val OptBool) {
 	s.ArrayDegraded = val
+}
+
+// SetArrayDegradedAcknowledged sets the value of ArrayDegradedAcknowledged.
+func (s *SystemStatus) SetArrayDegradedAcknowledged(val OptBool) {
+	s.ArrayDegradedAcknowledged = val
+}
+
+// SetStorageServicesReleased sets the value of StorageServicesReleased.
+func (s *SystemStatus) SetStorageServicesReleased(val OptBool) {
+	s.StorageServicesReleased = val
 }
 
 // SetParityBlocked sets the value of ParityBlocked.

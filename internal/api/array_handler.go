@@ -193,6 +193,80 @@ func (h *Handler) StartArray(ctx context.Context) (*apiv1.SystemStatus, error) {
 	return h.GetStatus(ctx)
 }
 
+// degradedGate unwraps seq's own storage readiness gate: newArraySequence
+// (cmd/hoservad) always wraps the *disk.StorageGate it builds in a
+// job.PendingUpgradeGate (doc 02 §4 UR2), so this package — which never
+// imports cmd/hoservad — reaches the same concrete gate that Acknowledge
+// belongs to by asserting through that wrapper, exactly as
+// cmd/hoservad's own storageGateOf does for its production wiring and its
+// tests. nil (seq nil, or Gate not built this way — every existing
+// caller's own tests that predate the gate) means there is nothing this
+// package can report on, never that the array is degraded.
+func degradedGate(seq *job.ArraySequence) *disk.StorageGate {
+	if seq == nil {
+		return nil
+	}
+	wrapped, ok := seq.Gate.(job.PendingUpgradeGate)
+	if !ok {
+		return nil
+	}
+	gate, _ := wrapped.Gate.(*disk.StorageGate)
+	return gate
+}
+
+func errArrayDegradedNotConfigured() error {
+	return &apiError{code: "not_configured", statusCode: 501, message: "acknowledging a degraded array is not configured on this daemon"}
+}
+
+func errArrayNotDegraded() error {
+	return &apiError{code: "array_not_degraded", statusCode: 409, message: "the array is not degraded — nothing to acknowledge"}
+}
+
+// ErrDegradedServicesNotStarted is cmd/hoservad's own AcknowledgeDegraded
+// hook's signal (#385 finding 3) that disk.StorageGate.Acknowledge
+// succeeded but the not-ready→ready transition it then ran did not
+// actually start anything — the array is in maintenance mode (an explicit
+// `array stop`), or mounting or confirming the pool failed. The
+// acknowledgement itself still stands (a later call still finds nothing
+// new to acknowledge); only the transition that was supposed to bring
+// Samba, NFS, Docker and libvirt up did not run, so the caller must never
+// report this as success.
+var ErrDegradedServicesNotStarted = errors.New("api: the array was acknowledged, but the gated services could not be started")
+
+func errArrayServicesNotStarted(err error) error {
+	return &apiError{code: "array_services_not_started", statusCode: 409, message: err.Error()}
+}
+
+// AcknowledgeDegradedArray is `POST /array/degraded/acknowledge` (#385, doc
+// 02 §1, Q69): it delegates to cmd/hoservad's own AcknowledgeDegraded hook,
+// which calls disk.StorageGate.Acknowledge on the daemon's live gate and
+// then runs the same not-ready→ready transition a returning disk reaches
+// — mounting and confirming the pool, then starting every enabled,
+// unmasked dependent service — never a second mechanism. Refused with
+// array_not_degraded (409) when the hook reports
+// disk.ErrNothingToAcknowledge: there is no degraded state to
+// acknowledge, and accepting the call anyway would let a stale
+// acknowledgement outlive the situation it was about. Refused with
+// array_services_not_started (409) when the hook reports
+// ErrDegradedServicesNotStarted: the acknowledgement itself succeeded, but
+// nothing actually started, so this must never look like success to the
+// caller.
+func (h *Handler) AcknowledgeDegradedArray(ctx context.Context) (*apiv1.SystemStatus, error) {
+	if h.AcknowledgeDegraded == nil {
+		return nil, errArrayDegradedNotConfigured()
+	}
+	if err := h.AcknowledgeDegraded(ctx); err != nil {
+		if errors.Is(err, disk.ErrNothingToAcknowledge) {
+			return nil, errArrayNotDegraded()
+		}
+		if errors.Is(err, ErrDegradedServicesNotStarted) {
+			return nil, errArrayServicesNotStarted(err)
+		}
+		return nil, err
+	}
+	return h.GetStatus(ctx)
+}
+
 func errArrayDisksNotConfigured() error {
 	return &apiError{code: "not_configured", statusCode: 501, message: "disk add/replace is not configured on this daemon"}
 }
@@ -398,10 +472,13 @@ func (h *Handler) AddDisk(ctx context.Context, req *apiv1.AddDiskRequest) (*apiv
 // and refused (slot_disk_present) unless the slot's own recorded disk is
 // genuinely gone (job.ConfirmReplacementTargetAbsent, doc 02 §4 steps
 // 1-2) — a disk that has not actually failed or been removed goes through
-// the upgrade flow instead (#289), never replace. A disk in removal is
-// refused (disk_leaving_array, #366): store.ReplaceDataDisk keeps the
-// slot's removal state, so the replacement would inherit it. Read-only —
-// nothing is formatted or persisted.
+// the upgrade flow instead (#289), never replace. A disk still evacuating
+// or already unlisted is refused (disk_leaving_array, #366); evacuated
+// and unpooled are not, on the removal state alone
+// (job.ReplaceEligibleDuringRemoval, doc 09 §4 "Other operations…",
+// #384) — ConfirmReplacementTargetAbsent below is what still refuses one
+// whose old disk is not genuinely missing. Read-only — nothing is
+// formatted or persisted.
 func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPlanRequest) (*apiv1.ReplaceDiskPlan, error) {
 	if h.Disks == nil || h.ArrayStore == nil {
 		return nil, errArrayDisksNotConfigured()
@@ -417,7 +494,7 @@ func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 		}
 		return nil, err
 	}
-	if existing.LeavingArray() {
+	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, listed); err != nil {
@@ -456,8 +533,9 @@ func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 // and typed confirmation planDiskReplace already computed — a stale or
 // forged confirmation is refused (confirmation_required) before anything
 // is submitted, and the queued job re-validates the slot, identity and
-// topology checks again itself. A disk in removal is refused
-// (disk_leaving_array) as planDiskReplace refuses it.
+// topology checks again itself. A disk still evacuating or already
+// unlisted is refused (disk_leaving_array) as planDiskReplace refuses it;
+// evacuated and unpooled are not, on the removal state alone (#384).
 func (h *Handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest) (*apiv1.Job, error) {
 	if h.Disks == nil || h.ArrayStore == nil {
 		return nil, errArrayDisksNotConfigured()
@@ -476,7 +554,7 @@ func (h *Handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 		}
 		return nil, err
 	}
-	if existing.LeavingArray() {
+	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, listed); err != nil {

@@ -400,7 +400,17 @@ func (e *SnapraidEngine) Sync(ctx context.Context, opts SyncOpts) (<-chan Progre
 		}
 		return e.runStream(ctx, logPath, diffArgv(), func(s RunSummary, waitErr error) error {
 			defer cleanup()
-			if s.Exit == "ok" || s.Exit == "diff" {
+			// s.Exit == "equal" (#389): a bare `snapraid diff` against an
+			// already-synced array — real UUID support or not, confirmed
+			// against a real snapraid 12.4-1 binary both in the
+			// loop-device lab and on a real Debian 13 guest
+			// (testdata/parsers/snapraid_diff_idle.log) — reports its own
+			// "no differences" outcome as `summary:exit:equal`, the same
+			// value sync's own no-op case uses (#267), never "ok" or
+			// "diff". A dry-run sync against an array with nothing to
+			// sync was reaching this branch's else arm as an "unexpected
+			// exit" failure.
+			if s.Exit == "ok" || s.Exit == "diff" || s.Exit == "equal" {
 				return nil
 			}
 			return exitErr("snapraid diff (dry-run sync)", "unexpected exit", s.Exit, waitErr)

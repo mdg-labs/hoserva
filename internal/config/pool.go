@@ -246,7 +246,7 @@ func (g *Generator) writeMount(ctx context.Context, m pool.Mount, command string
 	file := File{
 		Path:    mountUnitPath(m.Where),
 		Command: command,
-		Body:    []byte(m.Render()),
+		Body:    []byte(m.Render(g.stoppedFlagPath())),
 	}
 	if err := g.Write(ctx, file, revision, now); err != nil {
 		return err

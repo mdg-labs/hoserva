@@ -74,7 +74,7 @@ Routes with a `[param]` segment are resolved client-side; the SPA is served for 
 
 Shown above page content, dismissible only when the underlying condition clears:
 
-- Array degraded — disk failed, with a direct link to the replace flow
+- Array degraded — disk failed, with a direct link to the replace flow and an inline "Acknowledge and start services" action (`hoserva array acknowledge-degraded`, #385); the banner only drops that action, and shows the acknowledged variant, once the returned status reports both `arrayDegradedAcknowledged` and `storageServicesReleased` — an acknowledgement refused with `array_services_not_started` (maintenance mode, or a mount failure) leaves the action in place so the user can retry, rather than claiming services are running while they are still gated closed
 - Sync blocked by threshold guard — with the diff summary and both actions inline
 - Config drift detected — which file, with the three resolution options
 - Prerequisite missing — Docker not found / wrong version

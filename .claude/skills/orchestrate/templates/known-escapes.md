@@ -15,6 +15,7 @@ existing line by adding its PR number.
 - **wiring** — job type implemented but never registered with the scheduler, so `Submit` rejects it — PR 177 (sync/scrub/fix), #244, #245
 - **wiring** — a dependency captured once at startup from a value a live reconfiguration later supplies (parity engine, usage reader after a live array creation), so jobs and services wired from the snapshot keep nil until a restart — PR 370
 - **wiring** — publisher or alert function with no production call site — PR 236 (space alerts)
+- **wiring** — a runtime path hard-coded to the production location instead of derived from `--state-dir`/`--config-root`, so a `--dev` daemon writes outside its workspace — PR 395
 - **wiring** — settings persisted but nothing reads them at runtime (schedules, create policy) — PR 182, 199
 - **wiring** — a second, independent path bypasses the one Hoserva owns (NUT `SHUTDOWNCMD` skipping the clean array stop) — PR 254
 - **wiring** — test or check script that no `make` target or CI job runs — #42, PR 221
@@ -38,6 +39,7 @@ existing line by adding its PR number.
 - **atomicity** — check-then-act on a path (validate, then re-resolve by name) — PR 228, 236
 - **atomicity** — a conditional clear keyed only on the row, not on the state and holder the caller checked, so a transition that lands between read and write is wiped — PR 382
 - **atomicity** — a maintenance check that returns before the mutation, so array stop can unmount while the mutation is still writing under the mountpoint — PR 344
+- **atomicity** — two paths that each rebuild and publish the same live object (degraded acknowledge vs. array-sequence rebuild) under no shared lock, so one publishes state computed before the other's change landed and silently undoes it — PR 394
 
 ## Fail-open and error handling
 - **fail-open** — a safety or readiness check that continues on error (boot-disk detection with an unreadable mount table, identity-less format fallback) — PR 150, 159
@@ -46,7 +48,7 @@ existing line by adding its PR number.
 - **fail-open** — an input that matches nothing turns a protective change into a silent no-op (a removing disk not in the data-disk list leaves every branch RW) — PR 337
 - **fail-open** — a destructive call treats a missing path as success while the disks are unmounted, so the data is still on disk — PR 344
 - **fail-open** — a cleanup step skipped because a status signal still reads good from an earlier successful run (stale freshness/lastSyncAt), not from the run that just failed — PR 357
-- **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor, a completed-stop flag cleared before the start's fallible checks) — PR 199, 246, 338
+- **errors** — state advanced before the operation succeeded, so a transient failure is never retried (alert state, spin-event cursor, a completed-stop flag cleared before the start's fallible checks, and not put back by a rollback that did complete the stop) — PR 199, 246, 338, 395
 - **errors** — a secondary failure (a usage breakdown, a cancelled job context) discards a result that was already produced — PR 344
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201
 - **errors** — infrastructure failure mapped to HTTP 400 with raw internal text — PR 216
@@ -76,12 +78,13 @@ existing line by adding its PR number.
 - **mock-drift** — `cmd/mockapi` accepts what the production handler rejects, or defaults differently — PR 166, 182, 213, 228, 382
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
 - **doc-drift** — a design doc names a state or identifier the code never persists — PR 370
+- **doc-drift** — a code comment still describes behaviour a later fix removed, inviting the next change to put it back — PR 394
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
 - **validation** — mode selected by a flag's non-empty value rather than its presence, so an empty value falls through to the default path (`-ups-notify ""` starting a second daemon) — PR 337
 - **validation** — a required phrase checked anywhere in a document instead of inside the section it must appear in — PR 337
 - **identity** — first match taken when several candidates match (a weak-identity disk and its clone), or a stale path reported beside the disk that now holds it, so one record appears twice — PR 337
 - **accounting** — capacity tracked per consumer (per share) instead of per filesystem, or a negative headroom summed into a total, so a plan overcommits or wrongly refuses — PR 337
-- **planning** — planner and post-check disagree on which entries count (the planner skips symlinks, the post-check rejects them), so the refusal comes only after all the work, on every retry — PR 337
+- **planning** — planner and post-check disagree on which entries count (the planner skips symlinks or all of lost+found, the post-check rejects them), so the refusal comes only after all the work, on every retry — PR 337, 394
 
 ## Security
 - **security** — host or URL checked by substring instead of parsed host; redirects not validated — PR 201, 228
@@ -98,6 +101,7 @@ existing line by adding its PR number.
 - **tests** — a process probe matches any process in `/proc` instead of this test's own child, so an unrelated one triggers the next step early — PR 357
 - **tests** — a readiness gate waits on more than the acceptance criterion measures (the cache disk in an array-disk settle), so unrelated activity fails it — PR 357
 - **tests** — nested mounts torn down in mount-table order (parent before child), so the parent stays busy — PR 357
+- **tests** — a check's cleanup runs after a later step shadows what it must remove (a mount over the directory holding a stray probe), so the leftover survives into later steps — PR 395
 
 ## External tool semantics
 - **platform** — systemd unit names need `systemd-escape` (`-` → `\x2d`); `x-systemd.*` options are ignored in a native `.mount` unit — PR 150, 156

@@ -40,6 +40,13 @@ override_dh_auto_install:
 	# -ups-shutdown (#255).
 	install -D -m0755 packaging/nut-notify debian/hoserva/usr/lib/hoserva/nut-notify
 	install -D -m0755 packaging/nut-shutdown debian/hoserva/usr/lib/hoserva/nut-shutdown
+	# Installed here, by name, rather than through dh_installudev's own
+	# debian/hoserva.udev convention (source file deliberately not named
+	# that): this file's own filename ordering relative to Debian's udev
+	# package is safety-relevant (its own header comment explains why),
+	# so the exact installed name is this repo's choice, never whatever a
+	# debhelper version happens to derive it as.
+	install -D -m0644 packaging/debian/hoserva-storage.rules debian/hoserva/lib/udev/rules.d/90-hoserva-storage.rules
 
 # hoservad and hoserva are fully static (CGO_ENABLED=0, modernc.org/sqlite
 # is pure Go) — there is nothing for dpkg-shlibdeps to scan, and no

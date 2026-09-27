@@ -288,7 +288,7 @@ func (h *handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 	if !ok {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
 	}
-	if existing.LeavingArray() {
+	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, mockInventoryAsDisks(listed)); err != nil {
@@ -331,7 +331,7 @@ func (h *handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 	if !ok {
 		return nil, errDiskSlotNotFound(req.Mountpoint)
 	}
-	if existing.LeavingArray() {
+	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
 	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, mockInventoryAsDisks(listed)); err != nil {

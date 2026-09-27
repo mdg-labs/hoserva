@@ -42,6 +42,20 @@ func TestStorageTargetUnit_Render(t *testing.T) {
 	if strings.Contains(got, "Requires=mnt-") {
 		t.Fatalf("Render() = %q, must never put a hard Requires= directly on a disk mount unit (Q69: a missing disk must not block the target after acknowledgement — only the readiness unit gates)", got)
 	}
+
+	// #387 (L3 nightly runs 36258823325 and 36264953516): Wants= on the
+	// disk mounts is back, reversing an intermediate fix from an earlier
+	// round (36250289714) that removed it — with disk.MountUnit's own
+	// ConditionPathExists=!disk.StorageStoppedFlagPath now doing the actual
+	// gating (see its own doc comment), a Wants= reaching a disk mount
+	// while the array is genuinely stopped is skipped, not remounted; while
+	// dropping it altogether left parity — never referenced by any share's
+	// own RequiresMountsFor= — with no path back after an ordinary
+	// crash-and-reboot of a running array, confirmed empirically: the data
+	// disks and the catch-all still self-healed (pulled by an unrelated
+	// NFS-exported share's own RequiresMountsFor=), but parity did not, and
+	// the next sync failed outright for want of its own parity file's
+	// mount.
 }
 
 func TestStorageTargetUnit_Render_NoDisks(t *testing.T) {
@@ -54,16 +68,22 @@ func TestStorageTargetUnit_Render_NoDisks(t *testing.T) {
 	}
 }
 
+// TestStorageReadyUnit_Render proves the unit's own content never encodes
+// disk.StorageGate.Ready() itself: ExecStart is always the same fixed
+// existence test against StorageReadyFlagPath, the runtime flag cmd/
+// hoservad alone writes and removes (doc 02 §1, Q69) — a caller has
+// nothing to pass in because there is nothing left here that varies with
+// readiness.
 func TestStorageReadyUnit_Render(t *testing.T) {
-	u := StorageReadyUnit{ExecStart: []string{"/usr/lib/hoserva/hoservad", "storage-ready-check"}}
-	got := u.Render()
+	got := StorageReadyUnit{}.Render()
 
 	for _, want := range []string{
 		"Description=Hoserva storage readiness gate",
+		"After=" + HoservadServiceUnit,
 		"[Service]",
 		"Type=oneshot",
 		"RemainAfterExit=yes",
-		"ExecStart=/usr/lib/hoserva/hoservad storage-ready-check",
+		"ExecStart=/usr/bin/test -e " + StorageReadyFlagPath,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Render() = %q, want it to contain %q", got, want)

@@ -81,6 +81,7 @@ func TestWritePoolMounts(t *testing.T) {
 func TestWritePoolMountsBodyMatchesRenderExactly(t *testing.T) {
 	state := loadPoolState(t)
 	g := NewGenerator(t.TempDir())
+	g.StoppedFlagPath = "/srv/hoserva-state/array-stopped"
 	ctx := context.Background()
 	now := time.Date(2026, 9, 14, 10, 33, 12, 0, time.UTC)
 	const revision = 3
@@ -100,7 +101,7 @@ func TestWritePoolMountsBodyMatchesRenderExactly(t *testing.T) {
 		t.Fatalf("reading written catch-all unit: %v", err)
 	}
 
-	want := Header(command, revision, now) + catchAll.Render()
+	want := Header(command, revision, now) + catchAll.Render(g.StoppedFlagPath)
 	if string(got) != want {
 		t.Fatalf("catch-all unit mismatch:\ngot:\n%s\nwant:\n%s", got, want)
 	}

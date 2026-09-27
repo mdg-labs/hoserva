@@ -1,0 +1,87 @@
+version:none
+unixtime:1790429594
+time:2026-09-26 13:33:14
+command:sync
+argv:0:snapraid
+argv:1:-c
+argv:2:/home/hoserva/p389/snapraid.conf
+argv:3:-l
+argv:4:/home/hoserva/p389/logs/sync-postreplace-cleanup.log
+argv:5:sync
+selftest:
+msg:progress: Self test...
+conf:file:/home/hoserva/p389/snapraid.conf
+uuid:by-uuid:254:32:bdc84a1e-7918-435f-9a31-e63ea296a870: found ../../vdc
+uuid:by-uuid:254:48:8b277031-2f4c-4358-ad49-a3c4932a745f: found ../../vdd
+uuid:by-uuid:254:64:1f61d1a1-3083-4389-a1a0-26471a6e34ee: found ../../vde
+blocksize:262144
+data:d1:/mnt/disk1/
+data:d2:/mnt/disk2/
+data:d3:/mnt/disk3/
+mode:par1
+parity:0:/mnt/parity1/snapraid.parity
+content:/mnt/parity1/snapraid.content
+msg:progress: Loading state from /mnt/parity1/snapraid.content...
+msg:verbose:        1 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        0 empty dirs
+msg:fatal: UUID change for disk 'd1' from '3e258010-026a-4584-a8e6-70784f027210' to 'bdc84a1e-7918-435f-9a31-e63ea296a870'
+uuid:by-uuid:254:16:9621c0e6-1d2e-4a94-84f2-5a2d69ee00d5: found ../../vdb
+msg:progress: Scanning...
+statfs:xfs: /mnt/disk1/ 
+statfs:xfs: /mnt/disk2/ 
+statfs:xfs: /mnt/disk3/ 
+msg:progress: Scanned d1 in 0 seconds
+msg:progress: Scanned d3 in 0 seconds
+msg:progress: Scanned d2 in 0 seconds
+msg:fatal: WARNING! UUID is changed for disks: 'd1'msg:fatal: . Inodes are not used to detect move operations.
+msg:verbose:        1 equal
+msg:verbose:        0 added
+msg:verbose:        0 removed
+msg:verbose:        0 updated
+msg:verbose:        0 moved
+msg:verbose:        0 copied
+msg:verbose:        0 restored
+summary:equal:1
+summary:added:0
+summary:removed:0
+summary:updated:0
+summary:moved:0
+summary:copied:0
+summary:restored:0
+summary:exit:equal
+statfs:xfs: /mnt/disk1/ 
+statfs:xfs: /mnt/disk2/ 
+statfs:xfs: /mnt/disk3/ 
+statfs:xfs: /mnt/parity1/snapraid.parity 
+memory:used:265846
+memory:block:17
+memory:extent:88
+memory:file:192
+memory:link:88
+memory:dir:80
+msg:progress: Using 0 MiB of memory for the file-system.
+msg:progress: Initializing...
+msg:progress: Resizing...
+statfs:xfs: /mnt/disk1/ 
+statfs:xfs: /mnt/disk2/ 
+statfs:xfs: /mnt/disk3/ 
+statfs:xfs: /mnt/parity1/snapraid.parity 
+msg:progress: Saving state to /mnt/parity1/snapraid.content...
+msg:progress: Saving state to /home/hoserva/p389/cache.content...
+msg:verbose:        1 files
+msg:verbose:        0 hardlinks
+msg:verbose:        0 symlinks
+msg:verbose:        0 empty dirs
+msg:progress: Verifying...
+msg:progress: Verified /mnt/parity1/snapraid.content in 0 seconds
+msg:progress: Verified /home/hoserva/p389/cache.content in 0 seconds
+msg:progress: Using 64 MiB of memory for 64 cached blocks.
+msg:progress: Selecting...
+msg:progress: Syncing...
+msg:status: Nothing to do
+summary:error_file:0
+summary:error_io:0
+summary:error_data:0
+summary:exit:ok

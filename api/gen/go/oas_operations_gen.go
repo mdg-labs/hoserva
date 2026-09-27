@@ -6,6 +6,7 @@ package apiv1
 type OperationName = string
 
 const (
+	AcknowledgeDegradedArrayOperation       OperationName = "AcknowledgeDegradedArray"
 	AddDiskOperation                        OperationName = "AddDisk"
 	ApplyHostConfigOperation                OperationName = "ApplyHostConfig"
 	ApplyNetworkSettingsOperation           OperationName = "ApplyNetworkSettings"

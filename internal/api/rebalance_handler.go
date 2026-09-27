@@ -19,24 +19,35 @@ func errRebalanceNotConfigured() error {
 	return &apiError{code: "not_configured", statusCode: 501, message: "rebalancing is not configured on this daemon"}
 }
 
-// errEvacuationPlan classifies a cache.PlanEvacuation error: only its own
-// three documented refusals (ErrEvacuationWontFit,
-// ErrEvacuationNoOtherBranch, ErrEvacuationUnsupportedEntry — matched with
-// errors.Is, never a raw string compare, since PlanEvacuation always
-// wraps them with the share/path/entry that tripped them) become a 400
-// invalid_plan. PlanEvacuation also walks the disk being evacuated with
-// plain os.Stat/os.Lstat and filepath.WalkDir (refuseUnsupportedEntries
-// and enumerateFiles, internal/cache/evacuate.go and mover.go) while it
-// is still being planned for removal — a failing disk can return a raw
-// I/O error (EIO, and other errors that are not documented refusals)
-// that has nothing to do with the plan being invalid, and reporting it
-// as invalid_plan would tell the caller to fix a plan that was never the
-// problem (the known-escapes "os.IsNotExist on a wrapped error" class of
-// bug, generalized to any undistinguished error). Everything else is
-// left as an unclassified internal error, which Handler.NewError already
-// logs server-side and reports as an opaque 500.
+// isEvacuationPlanRefusal reports whether err is one of
+// cache.PlanEvacuation's own four documented refusals
+// (ErrEvacuationWontFit, ErrEvacuationNoOtherBranch,
+// ErrEvacuationUnsupportedEntry, ErrEvacuationNonShareContent — matched
+// with errors.Is, never a raw string compare, since PlanEvacuation always
+// wraps them with the share/path/entry that tripped them) rather than a
+// raw I/O error. PlanEvacuation walks the disk being evacuated with plain
+// os.Stat/os.Lstat, os.ReadDir and filepath.WalkDir
+// (nonShareTopLevelEntries, refuseUnsupportedEntries and enumerateFiles,
+// internal/cache/evacuate.go and mover.go) while it is still being
+// planned for removal — a failing disk can return a raw I/O error (EIO,
+// and other errors that are not documented refusals) that has nothing to
+// do with the plan being invalid, and reporting it as invalid_plan would
+// tell the caller to fix a plan that was never the problem (the
+// known-escapes "os.IsNotExist on a wrapped error" class of bug,
+// generalized to any undistinguished error).
+func isEvacuationPlanRefusal(err error) bool {
+	return errors.Is(err, cache.ErrEvacuationWontFit) || errors.Is(err, cache.ErrEvacuationNoOtherBranch) || errors.Is(err, cache.ErrEvacuationUnsupportedEntry) || errors.Is(err, cache.ErrEvacuationNonShareContent)
+}
+
+// errEvacuationPlan classifies a cache.PlanEvacuation error the same way
+// isEvacuationPlanRefusal does, for EvacuateDisk's own re-plan (whose
+// response is a *apiv1.Job, so its 400 still goes through the shared
+// Error schema): one of the four documented refusals becomes a 400
+// invalid_plan; everything else is left as an unclassified internal
+// error, which Handler.NewError already logs server-side and reports as
+// an opaque 500.
 func errEvacuationPlan(context string, err error) error {
-	if errors.Is(err, cache.ErrEvacuationWontFit) || errors.Is(err, cache.ErrEvacuationNoOtherBranch) || errors.Is(err, cache.ErrEvacuationUnsupportedEntry) {
+	if isEvacuationPlanRefusal(err) {
 		return errInvalidPlan(err)
 	}
 	return fmt.Errorf("%s: %w", context, err)
@@ -230,7 +241,7 @@ func (h *Handler) refuseIfAnotherDiskRemoving(ctx context.Context, mountpoint st
 // either this or EvacuateDisk, api/openapi.yaml's own description),
 // purely for display: nothing is copied, synced or deleted, and the disk
 // keeps taking new writes.
-func (h *Handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDiskPlanRequest) (*apiv1.EvacuationPlan, error) {
+func (h *Handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDiskPlanRequest) (apiv1.PlanDiskEvacuationRes, error) {
 	_, _, _, rebalanceShares := h.CurrentParity()
 	if rebalanceShares == nil || h.ArrayStore == nil {
 		return nil, errRebalanceNotConfigured()
@@ -247,14 +258,38 @@ func (h *Handler) PlanDiskEvacuation(ctx context.Context, req *apiv1.EvacuateDis
 	}
 	plan, err := cache.PlanEvacuation(ctx, req.Mountpoint, shares, cache.Deps{})
 	if err != nil {
-		return nil, errEvacuationPlan("evacuation plan", err)
+		// A refusal carries its own EvacuationPlanRefusal body — including
+		// NonSharePaths, so the caller can show exactly what blocks
+		// evacuation — rather than the shared Error schema's bare
+		// code/message, which can't carry the paths structurally (#367).
+		// An unclassified error (e.g. a failing disk's raw I/O error) is
+		// still reported through the error return, as an opaque 500.
+		if !isEvacuationPlanRefusal(err) {
+			return nil, fmt.Errorf("evacuation plan: %w", err)
+		}
+		return &apiv1.EvacuationPlanRefusal{
+			Code:          "invalid_plan",
+			Message:       err.Error(),
+			NonSharePaths: nonSharePathsToAPI(plan.NonShareContent),
+		}, nil
 	}
 	return &apiv1.EvacuationPlan{
-		Mountpoint:   req.Mountpoint,
-		Moves:        rebalanceMovesToAPI(plan.Moves),
-		Warnings:     rebalanceWarningsToAPI(plan.Warnings),
-		Confirmation: job.EvacuationConfirmation(req.Mountpoint),
+		Mountpoint:    req.Mountpoint,
+		Moves:         rebalanceMovesToAPI(plan.Moves),
+		Warnings:      rebalanceWarningsToAPI(plan.Warnings),
+		NonSharePaths: nonSharePathsToAPI(plan.NonShareContent),
+		Confirmation:  job.EvacuationConfirmation(req.Mountpoint),
 	}, nil
+}
+
+// nonSharePathsToAPI never returns a nil slice: EvacuationPlan.NonSharePaths
+// is required (D18), so a plan with none must still encode `[]`, not a
+// JSON null, the same reasoning rebalanceMovesToAPI/rebalanceWarningsToAPI
+// already apply to their own required array fields.
+func nonSharePathsToAPI(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	out = append(out, paths...)
+	return out
 }
 
 // EvacuateDisk recomputes the evacuation plan fresh — startRebalance's

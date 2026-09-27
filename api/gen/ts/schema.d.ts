@@ -1230,7 +1230,7 @@ export interface paths {
         put?: never;
         /**
          * Preview replacing a data disk
-         * @description Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that reconstructs the slot's contents after it is formatted, and the exact typed confirmation `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02 §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a replacement that would leave a parity disk smaller than the array's largest data disk. Refuses (`disk_leaving_array`, 409) a slot whose disk is in removal (any `removalState`): the replacement would inherit that state. Read-only: nothing is formatted or persisted.
+         * @description Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity (model, WWN or serial, size, its existing filesystem if any), the SnapRAID `fix` command that reconstructs the slot's contents after it is formatted, and the exact typed confirmation `replaceDisk` requires. Refuses (`slot_disk_present`) unless the slot's own recorded disk is genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02 §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a replacement that would leave a parity disk smaller than the array's largest data disk. Refuses (`disk_leaving_array`, 409) a slot whose disk is still `evacuating` or already `unlisted`: the replacement would inherit that state. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is genuinely missing, refused with `slot_disk_present` otherwise like any other slot — replace abandons the removal and rebuilds the disk's recorded files from parity (#384). Read-only: nothing is formatted or persisted.
          */
         post: operations["planDiskReplace"];
         delete?: never;
@@ -1250,7 +1250,7 @@ export interface paths {
         put?: never;
         /**
          * Replace a data disk
-         * @description Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix` to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted or still present by identity, and (`disk_leaving_array`, 409) a slot whose disk is in removal. The confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
+         * @description Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same mountpoint, regenerates mount units, the pool and `snapraid.conf` from SQLite, confirms the mountpoint is genuinely backed by the replacement before touching parity, then runs `snapraid fix` to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted or still present by identity, and (`disk_leaving_array`, 409) a slot still `evacuating` or already `unlisted`. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is genuinely missing: the job clears the removal state as part of adopting the replacement, so the disk rejoins the array as an ordinary member and its recorded files rebuild from parity (#384). The confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or missing one is refused with `confirmation_required` and formats nothing.
          */
         post: operations["replaceDisk"];
         delete?: never;
@@ -1310,7 +1310,7 @@ export interface paths {
         put?: never;
         /**
          * Preview evacuating a data disk before removal
-         * @description Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no other branch to evacuate onto, when an entry on the disk is something the evacuation copy path cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the disk keeps taking new writes only until that job starts, never for as long as it runs. Refused (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed or repeated evacuation. No other disk in removal is ever a target. This operation carries out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not performed by either.
+         * @description Computes the evacuation plan for the data disk at `mountpoint` (doc 09 §4 steps 1-3, "mechanically a rebalance targeting one specific source disk"): every file `cache.PlanEvacuation` would move from that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no other branch to evacuate onto, when an entry on the disk is something the evacuation copy path cannot move (a symlink, fifo, socket or device node), when the remaining disks do not have room even after each one's own minimum free space is kept, or when the disk holds any top-level entry that is neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — doc 09 §4 has no procedure for moving such content, so evacuation refuses to start rather than leave it behind unreported (#367); that refusal's own 400 body, `EvacuationPlanRefusal`, names every offending path in `nonSharePaths`. Read-only: nothing is copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the disk keeps taking new writes only until that job starts, never for as long as it runs. Refused (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is already in removal. An `evacuating` or `evacuated` disk is planned again, as the source of a resumed or repeated evacuation. No other disk in removal is ever a target. This operation carries out doc 09 §4 steps 1 and 3-6 (moving the disk's own already-present files off, protected through the threshold guard, Q14); step 2's own no-create switch is applied by `evacuateDisk`'s job, not by this preview, and the mergerfs branch-list removal, SnapRAID removal and unmount in steps 7-9 are not performed by either.
          */
         post: operations["planDiskEvacuation"];
         delete?: never;
@@ -1413,6 +1413,26 @@ export interface paths {
          * @description Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share paths, then start services in the reverse of stop order, and exit maintenance mode only once every step succeeds. The handler calls `job.ArraySequence.Start`. Refused with `storage_not_ready` when the storage gate is not ready (Q69, `ErrStorageNotReady`) — nothing is mounted. Also refused with `disk_upgrade_pending` while a data-disk upgrade is pending — queued, running or interrupted at any checkpoint (doc 02 §4 E6); the error names the job to resume or cancel, and nothing is mounted. Once the disks are mounted, each must hold the filesystem SQLite names for it before the pool or any service starts (UR9); otherwise it is refused with `array_disk_mismatch`, the disks are unmounted again and maintenance mode stays on.
          */
         post: operations["startArray"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/array/degraded/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Acknowledge a degraded array
+         * @description Records the user's explicit choice to proceed while the array is degraded (doc 02 §1, Q69, `hoserva array acknowledge-degraded`): the handler calls `disk.StorageGate.Acknowledge` on the daemon's live gate and then runs the exact not-ready→ready transition a returning disk reaches (`storageTargetSync.UpdateOrError`) — mounting and confirming the pool, then starting every enabled, unmasked unit in `pool.DependentServiceUnits` (Samba, NFS, Docker, libvirtd), never `sh -c` and never a second mechanism. The acknowledgement itself survives every later rebuild of the daemon's array sequence (a share change, a disk-topology change, a SIGHUP) for as long as the same disk stays missing. Refused with `array_not_degraded` (409, `disk.ErrNothingToAcknowledge`) when nothing is currently missing — acknowledging a degraded state that does not exist would let a stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started` (409) when the acknowledgement itself succeeds but the transition it triggers does not actually start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or confirming the pool fails — so this never reports success over services that never came up — in that refusal case `arrayDegradedAcknowledged` on a later `GetStatus` still reports true (the acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both before ever telling the user services are running. `arrayDegraded` on the returned status stays true for as long as the disk is still missing — acknowledging never reports a degraded array as healthy — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
+         */
+        post: operations["acknowledgeDegradedArray"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2679,7 +2699,12 @@ export interface components {
             healthy: boolean;
             summary: string;
             maintenanceMode?: boolean;
+            /** @description True whenever any disk `hoservad` expects is currently missing by identity (doc 02 §1, Q69) — including once the user has acknowledged the degraded state through `POST /array/degraded/acknowledge`. It clears only once the missing disk actually reappears; `arrayDegradedAcknowledged` is what distinguishes an acknowledged degraded array from one still waiting on the user. */
             arrayDegraded?: boolean;
+            /** @description True once the user has acknowledged the current degraded state (`hoserva array acknowledge-degraded`) — only meaningful while `arrayDegraded` is also true. It resets the moment the missing disk reappears, the same way the acknowledgement itself does. It can be true while `storageServicesReleased` is still false: the acknowledgement stands even when the transition it triggers does not actually start anything (maintenance mode, or a mount failure, `array_services_not_started`) — a client must never read this field alone as "services are running" (#385 finding 2). */
+            arrayDegradedAcknowledged?: boolean;
+            /** @description True once `hoservad`'s storage-target gate has actually released Samba, NFS, Docker and libvirt — read live from the same runtime flag (`/run/hoserva/storage-ready`) hoservad itself sets only after mounting and confirming the pool — and the array is not currently in maintenance mode. This is the field a client checks before ever telling the user services are running; `arrayDegradedAcknowledged` alone only reports the acknowledgement, not whether it took effect (#385 finding 2). It goes false again the moment `array stop` enters maintenance mode, even while the runtime flag from an earlier acknowledgement is still set — an explicit stop takes those services back down, so a standing acknowledgement must never be read as "still running". */
+            storageServicesReleased?: boolean;
             parityBlocked?: boolean;
             /** Format: int32 */
             activeJobs?: number;
@@ -2984,8 +3009,17 @@ export interface components {
             mountpoint: string;
             moves: components["schemas"]["RebalanceMove"][];
             warnings: components["schemas"]["RebalanceWarning"][];
+            /** @description Every top-level entry on the disk's own mountpoint that is neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`, `snapraid.content*`) — content doc 09 §4 has no procedure for moving (#367). Always empty on a plan this operation actually returns: any such content refuses the plan outright (`EvacuationPlanRefusal`) instead. */
+            nonSharePaths: string[];
             /** @description Exact typed confirmation `evacuateDisk` requires for this plan (`REMOVE <mountpoint>`). */
             confirmation: string;
+        };
+        /** @description `planDiskEvacuation`'s 400 refusal (#367): the shared `Error` schema has no room for `nonSharePaths`, so a refusal caused by non-share content on the disk gets its own body naming every offending path structurally, not only in `message`. */
+        EvacuationPlanRefusal: {
+            code: string;
+            message: string;
+            /** @description Every top-level entry on the disk's own mountpoint that is neither a configured share's own branch there nor SnapRAID's own bookkeeping — empty when the refusal has a different cause (no other branch, an unsupported entry, or the remaining disks not having room). */
+            nonSharePaths: string[];
         };
         EvacuateDiskPlanRequest: {
             /** @description The data disk slot to evacuate, e.g. `/mnt/disk3`. */
@@ -5236,6 +5270,15 @@ export interface operations {
                     "application/json": components["schemas"]["EvacuationPlan"];
                 };
             };
+            /** @description The disk holds content outside every configured share; `nonSharePaths` names it. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvacuationPlanRefusal"];
+                };
+            };
             default: components["responses"]["Error"];
         };
     };
@@ -5347,6 +5390,27 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description System status after the sequence. `maintenanceMode` is false on success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    acknowledgeDegradedArray: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description System status after acknowledging. `arrayDegraded` stays true while the disk is still missing; `arrayDegradedAcknowledged` is true; `storageServicesReleased` is true only once the transition actually started the gated services. */
             200: {
                 headers: {
                     [name: string]: unknown;

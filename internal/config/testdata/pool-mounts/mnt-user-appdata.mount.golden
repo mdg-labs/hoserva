@@ -6,6 +6,7 @@
 # ============================================================
 [Unit]
 Description=Hoserva share appdata
+ConditionPathExists=!/var/lib/hoserva/array-stopped
 RequiresMountsFor=/mnt/user /mnt/cache
 
 [Mount]

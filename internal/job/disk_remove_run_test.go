@@ -384,16 +384,6 @@ func TestRunDiskRemove_RefusesBeforeAnyChange(t *testing.T) {
 			want: "not-a-share/notes.txt",
 		},
 		{
-			name: "the disk is not mounted, so its emptiness cannot be seen", dataDisks: 3,
-			setup: func(t *testing.T, h *diskRemoveHarness, target string) {
-				h.setState(t, target, hoservastore.RemovalStateEvacuated)
-				if err := h.mounts.UnmountOnce(context.Background(), target); err != nil {
-					t.Fatal(err)
-				}
-			},
-			want: "is not mounted",
-		},
-		{
 			name: "another filesystem is mounted at the slot", dataDisks: 3,
 			setup: func(t *testing.T, h *diskRemoveHarness, target string) {
 				h.setState(t, target, hoservastore.RemovalStateUnpooled)
@@ -475,6 +465,113 @@ func TestRunDiskRemove_RefusesBeforeAnyChange(t *testing.T) {
 				t.Fatalf("mounted paths changed on a refusal: %v -> %v", beforeMounted, afterMounted)
 			}
 		})
+	}
+}
+
+// TestRunDiskRemove_UnmountedAfterEvacuation_FinishesFromDiffAlone is
+// #369's recovery path: a data disk whose removal state is "evacuated" or
+// "unpooled" and which is no longer mounted — it failed after being
+// proven empty, before finishDiskRemoval ever ran or ever got to finish —
+// still finishes, using only a fresh SnapRAID diff to confirm it is
+// empty. A leftover file that every mounted-only check (postCheck,
+// diskLeftover, removeEmptyDirs) would refuse on is left in place to
+// prove none of them ran: the job succeeds anyway, because the disk is
+// unmounted and they are skipped, not passed.
+func TestRunDiskRemove_UnmountedAfterEvacuation_FinishesFromDiffAlone(t *testing.T) {
+	for _, state := range []string{hoservastore.RemovalStateEvacuated, hoservastore.RemovalStateUnpooled} {
+		t.Run(state, func(t *testing.T) {
+			h := newDiskRemoveHarness(t, 3)
+			disk2 := h.disks[1]
+			h.setState(t, disk2, state)
+			if err := os.WriteFile(filepath.Join(disk2, diskRemoveTestShare, "leftover.bin"), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := h.mounts.UnmountOnce(context.Background(), disk2); err != nil {
+				t.Fatal(err)
+			}
+
+			j := h.run(t, disk2, EvacuationConfirmation(disk2))
+			if j.Status != StatusSucceeded {
+				t.Fatalf("status = %s (%s), want succeeded", j.Status, j.ErrorMessage)
+			}
+			if strings.Contains(h.snapraidConf(t), disk2) {
+				t.Fatal("snapraid.conf still names disk2")
+			}
+			if _, present := h.row(t, disk2); present {
+				t.Fatal("disk2's row survived")
+			}
+			if len(h.unmounter.calls) != 0 {
+				t.Fatalf("unmounted an already unmounted disk: %v", h.unmounter.calls)
+			}
+			if calls, ok := h.parity.counts(); calls != 1 || ok != 1 {
+				t.Fatalf("sync calls = %d, succeeded = %d, want exactly one successful sync", calls, ok)
+			}
+		})
+	}
+}
+
+// TestRunDiskRemove_UnmountedWithDirtyDiff_StillRefused proves the
+// recovery path never advances an unmounted disk past "unpooled" on
+// anything but a clean, fresh SnapRAID diff: unmounted alone is not
+// proof of emptiness, exactly as it is not for a mounted disk. It also
+// proves that diff is read before step 8's own sync ever runs: a sync
+// that ran first would rewrite what "before" means (a real
+// --force-empty sync always makes its own next diff read 0/0, #369), so
+// Sync must never be called at all once the pre-sync diff is already
+// dirty.
+func TestRunDiskRemove_UnmountedWithDirtyDiff_StillRefused(t *testing.T) {
+	h := newDiskRemoveHarness(t, 3)
+	disk2 := h.disks[1]
+	h.setState(t, disk2, hoservastore.RemovalStateEvacuated)
+	h.setTrackedFiles(3, 3)
+	if err := h.mounts.UnmountOnce(context.Background(), disk2); err != nil {
+		t.Fatal(err)
+	}
+	confBefore := h.snapraidConf(t)
+
+	j := h.run(t, disk2, EvacuationConfirmation(disk2))
+	if j.Status != StatusFailed || !strings.Contains(j.ErrorMessage, "still records") {
+		t.Fatalf("status = %s (%s), want failed on SnapRAID still recording files", j.Status, j.ErrorMessage)
+	}
+	if row, _ := h.row(t, disk2); row.RemovalState != hoservastore.RemovalStateUnpooled {
+		t.Fatalf("removal state = %q, want unpooled", row.RemovalState)
+	}
+	if h.snapraidConf(t) != confBefore {
+		t.Fatal("snapraid.conf dropped disk2 while SnapRAID still tracks files on it")
+	}
+	if len(h.unmounter.calls) != 0 {
+		t.Fatal("disk2 was unmounted")
+	}
+	if calls, _ := h.parity.counts(); calls != 0 {
+		t.Fatalf("Sync ran %d times before the pre-sync diff refused — the dirty diff must be caught before syncing, never laundered by it", calls)
+	}
+}
+
+// TestRunDiskRemove_UnmountedDisk_RemovesStrayContentFile proves the
+// second half of #369: while disk2 was still listed in snapraid.conf,
+// its mountpoint named one of SnapRAID's own content-file copies (Q18),
+// and a real step-8 sync writes one there like any other data disk's —
+// onto what is really just an ordinary directory on the boot filesystem
+// once the disk itself is gone. A finish must not leave that file
+// behind once snapraid.conf no longer names it there.
+func TestRunDiskRemove_UnmountedDisk_RemovesStrayContentFile(t *testing.T) {
+	h := newDiskRemoveHarness(t, 3)
+	disk2 := h.disks[1]
+	h.setState(t, disk2, hoservastore.RemovalStateEvacuated)
+	if err := h.mounts.UnmountOnce(context.Background(), disk2); err != nil {
+		t.Fatal(err)
+	}
+	strayPath := filepath.Join(disk2, "snapraid.content")
+	if err := os.WriteFile(strayPath, []byte("stray"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	j := h.run(t, disk2, EvacuationConfirmation(disk2))
+	if j.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded", j.Status, j.ErrorMessage)
+	}
+	if _, err := os.Stat(strayPath); !os.IsNotExist(err) {
+		t.Fatalf("stray content file at %s survived the finish, err=%v", strayPath, err)
 	}
 }
 

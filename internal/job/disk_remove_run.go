@@ -59,30 +59,48 @@ type DiskRemoveDeps struct {
 // Before it changes anything it requires: the typed confirmation; a data
 // disk at the slot whose removal state is "evacuated" or later; that the
 // array without it still validates, with at least one data disk and
-// room for every content-file copy (Q18); that the disk is mounted by its
-// own filesystem; that cache.EvacuationPostCheck finds every share's
-// branch on it empty; and that nothing but directories and SnapRAID's
-// own content files is left anywhere else on it. Then, each step keyed
-// on the persisted removal state (D4: state first), so a re-run carries
-// on from the last one that finished (Q29: re-run, not resumed):
+// room for every content-file copy (Q18). When the disk is mounted by
+// its own filesystem, it also requires that cache.EvacuationPostCheck
+// finds every share's branch on it empty, and that nothing but
+// directories and SnapRAID's own content files is left anywhere else on
+// it. A disk that is no longer mounted at all skips every check that
+// reads its filesystem — there is nothing left to read — but the
+// evacuation's own post-check only ever proved its share branches
+// empty, never the whole disk, so its emptiness beyond that comes only
+// from a fresh SnapRAID diff, read before step 8's own sync runs, not
+// only after (doc 09 §4, #369); a disk mounted with the wrong
+// filesystem stays a hard refusal either way. Then, each step keyed on
+// the persisted removal state (D4: state first), so a re-run carries on
+// from the last one that finished (Q29: re-run, not resumed):
 //
 //   - Step 7: "unpooled" is persisted and ArrayReady takes the disk out
 //     of every pool mount, live. A failed live update fails the job here.
-//   - Step 8: the empty directories the evacuation left are removed
-//     (rmdir only) — SnapRAID records directories too. With the disk
-//     still listed in snapraid.conf, a sync through the threshold guard
-//     exempts this disk alone (RemovingDisks), a fresh diff must show
-//     SnapRAID tracking no file on it, and nothing but its content files
-//     may be left on it. Only then is "unlisted" persisted and
-//     snapraid.conf regenerated without its data line, and `snapraid
-//     status` must accept the result — SnapRAID refuses every later
-//     status, diff and sync if the line goes while it still records
-//     anything on the disk. A guard trip or failed sync leaves the disk
-//     "unpooled", still listed, and a re-run syncs again; once
-//     "unlisted", a re-run never syncs.
-//   - Step 9: the disk's own mount unit is stopped (unless it is already
-//     unmounted), its unit file removed, the row deleted and ArrayReady
-//     rebuilds the daemon's view. The filesystem is never wiped.
+//   - Step 8: when mounted, the empty directories the evacuation left
+//     are removed (rmdir only) — SnapRAID records directories too. When
+//     unmounted, a fresh diff must already show SnapRAID tracking no
+//     file on the disk before the sync runs at all — checking only
+//     afterwards would always pass, since the sync itself (below)
+//     rewrites what "before" means. With the disk still listed in
+//     snapraid.conf, a sync through the threshold guard exempts this
+//     disk alone (RemovingDisks); a fresh diff must show SnapRAID
+//     tracking no file on it — the safety-load-bearing check, run again
+//     here whether or not the disk is mounted, since it reads
+//     Parity.Diff rather than the filesystem — and, when mounted,
+//     nothing but its content files may be left on it. Only then is
+//     "unlisted" persisted and snapraid.conf regenerated without its
+//     data line, and `snapraid status` must accept the result —
+//     SnapRAID refuses every later status, diff and sync if the line
+//     goes while it still records anything on the disk. A guard trip or
+//     failed sync leaves the disk "unpooled", still listed, and a
+//     re-run syncs again; once "unlisted", a re-run never syncs. For a
+//     disk that was unmounted, any content-file copy that sync wrote at
+//     its own mountpoint — really just an ordinary directory on the
+//     boot filesystem by then — is removed once snapraid.conf no longer
+//     names it there.
+//   - Step 9: the disk's own mount unit is stopped (unless it was
+//     already unmounted going into this run), its unit file removed,
+//     the row deleted and ArrayReady rebuilds the daemon's view. The
+//     filesystem is never wiped.
 func RunDiskRemove(d DiskRemoveDeps) RunFunc {
 	return func(ctx context.Context, rc *RunContext) error {
 		p, err := decodeDiskRemoveParams(rc.Params())
@@ -131,15 +149,14 @@ func (d DiskRemoveDeps) run(ctx context.Context, rc *RunContext, p DiskRemovePar
 	if _, err := layoutFromStore(remaining).ContentPaths(); err != nil {
 		return fmt.Errorf("job: disk_remove: the array without %s would not be valid: %w", row.Mountpoint, err)
 	}
+	// mountedAs still refuses hard when something unexpected is mounted
+	// at the slot; an evacuated/unpooled disk that is genuinely
+	// unmounted is not refused here — its emptiness, once the disk is
+	// gone, comes only from a fresh SnapRAID diff (step 8 below), never
+	// from a filesystem that can no longer be read.
 	mounted, err := mountedAs(ctx, d.Mounts, row.Mountpoint, row.FSUUID)
 	if err != nil {
 		return err
-	}
-	// Until the step-8 sync has recorded the disk empty, its emptiness
-	// must be seen, not assumed: an unmounted slot shows the boot disk's
-	// empty directory, and would pass any check.
-	if !mounted && state != store.RemovalStateUnlisted {
-		return fmt.Errorf("job: disk_remove: %s is not mounted, so it cannot be confirmed empty — start the array and finish the removal again", row.Mountpoint)
 	}
 	if mounted {
 		if err := d.postCheck(ctx, row.Mountpoint); err != nil {
@@ -148,6 +165,8 @@ func (d DiskRemoveDeps) run(ctx context.Context, rc *RunContext, p DiskRemovePar
 		if err := diskLeftover(row.Mountpoint, true); err != nil {
 			return err
 		}
+	} else if state != store.RemovalStateUnlisted {
+		logf("%s is not mounted — finishing its removal from a fresh SnapRAID diff alone, since its filesystem can no longer be read", row.Mountpoint)
 	}
 
 	if state == store.RemovalStateEvacuated {
@@ -161,21 +180,35 @@ func (d DiskRemoveDeps) run(ctx context.Context, rc *RunContext, p DiskRemovePar
 		if err := d.ArrayReady(ctx); err != nil {
 			return fmt.Errorf("job: disk_remove: taking %s out of the running pool: %w", row.Mountpoint, err)
 		}
-		// Nothing places new files on the disk any more; check once more
-		// right before parity records it empty.
-		if err := d.postCheck(ctx, row.Mountpoint); err != nil {
-			return err
-		}
-		if err := diskLeftover(row.Mountpoint, true); err != nil {
-			return err
-		}
-		// SnapRAID records empty directories too, and refuses every later
-		// run once a disk whose directories it still records leaves
-		// snapraid.conf. The evacuation leaves each share's directory
-		// tree behind, so it goes before the sync that records the disk
-		// empty.
-		if err := removeEmptyDirs(row.Mountpoint); err != nil {
-			return err
+		if mounted {
+			// Nothing places new files on the disk any more; check once
+			// more right before parity records it empty.
+			if err := d.postCheck(ctx, row.Mountpoint); err != nil {
+				return err
+			}
+			if err := diskLeftover(row.Mountpoint, true); err != nil {
+				return err
+			}
+			// SnapRAID records empty directories too, and refuses every
+			// later run once a disk whose directories it still records
+			// leaves snapraid.conf. The evacuation leaves each share's
+			// directory tree behind, so it goes before the sync that
+			// records the disk empty.
+			if err := removeEmptyDirs(row.Mountpoint); err != nil {
+				return err
+			}
+		} else {
+			// The disk's own filesystem cannot be walked, so nothing but
+			// a fresh SnapRAID diff, read now — before the sync below —
+			// can prove it holds no file, including one outside every
+			// share, which the post-check never inspects (#369). The
+			// sync passes --force-empty and, once it runs, itself
+			// becomes the new "before": a diff read only afterwards
+			// would always show 0/0 regardless of what was really on
+			// the disk, since that sync just rewrote it.
+			if err := d.confirmUntracked(ctx, mountpoint); err != nil {
+				return err
+			}
 		}
 		logf("step 8: syncing parity with %s recorded empty, through the threshold guard", row.Mountpoint)
 		ch, err := d.Parity.Sync(ctx, parity.SyncOpts{RemovingDisks: map[string]bool{mountpoint: true}})
@@ -185,8 +218,10 @@ func (d DiskRemoveDeps) run(ctx context.Context, rc *RunContext, p DiskRemovePar
 		if err := d.confirmUntracked(ctx, mountpoint); err != nil {
 			return err
 		}
-		if err := diskLeftover(row.Mountpoint, false); err != nil {
-			return fmt.Errorf("%w — finish the removal again to record it empty", err)
+		if mounted {
+			if err := diskLeftover(row.Mountpoint, false); err != nil {
+				return fmt.Errorf("%w — finish the removal again to record it empty", err)
+			}
 		}
 		if err := d.Store.AdvanceRemovalState(ctx, row.Mountpoint, store.RemovalStateUnpooled, store.RemovalStateUnlisted, rc.JobID()); err != nil {
 			return fmt.Errorf("job: disk_remove: marking %s unlisted: %w", row.Mountpoint, err)
@@ -205,8 +240,23 @@ func (d DiskRemoveDeps) run(ctx context.Context, rc *RunContext, p DiskRemovePar
 		return fmt.Errorf("job: disk_remove: SnapRAID does not accept the configuration without %s: %w", row.Mountpoint, err)
 	}
 
-	logf("step 9: unmounting %s", row.Mountpoint)
+	if !mounted {
+		// While the disk was still listed, snapraid.conf named its
+		// mountpoint as one of its own content-file copies (Q18), and
+		// step 8's sync — reading and writing that path like any other
+		// data disk's — wrote one there, onto what is really just an
+		// ordinary directory on the boot filesystem now that the
+		// disk's own filesystem is gone. snapraid.conf no longer names
+		// it as of the regeneration above; nothing else will ever read
+		// or write it again, so it is removed rather than left to sit
+		// on the boot disk indefinitely.
+		if err := removeStrayContentFile(row.Mountpoint); err != nil {
+			return err
+		}
+	}
+
 	if mounted {
+		logf("step 9: unmounting %s", row.Mountpoint)
 		unit := disk.MountUnit{Where: row.Mountpoint, UUID: row.FSUUID, Filesystem: disk.FilesystemType(row.Filesystem)}
 		if err := d.Unmounter.Unmount(ctx, unit); err != nil {
 			return fmt.Errorf("job: disk_remove: unmounting %s: %w", row.Mountpoint, err)
@@ -218,6 +268,8 @@ func (d DiskRemoveDeps) run(ctx context.Context, rc *RunContext, p DiskRemovePar
 		if still {
 			return fmt.Errorf("job: disk_remove: %s is still mounted after stopping its mount unit", row.Mountpoint)
 		}
+	} else {
+		logf("step 9: %s was already unmounted going into this run — nothing to stop", row.Mountpoint)
 	}
 	if err := d.Generator.RemoveDiskMount(ctx, row.Mountpoint); err != nil {
 		return fmt.Errorf("job: disk_remove: removing %s's mount unit: %w", row.Mountpoint, err)
@@ -228,7 +280,11 @@ func (d DiskRemoveDeps) run(ctx context.Context, rc *RunContext, p DiskRemovePar
 	if err := d.ArrayReady(ctx); err != nil {
 		return fmt.Errorf("job: disk_remove: %s has left the array and is unmounted, but updating the running daemon failed — restart hoservad: %w", row.Mountpoint, err)
 	}
-	logf("%s is out of the array and unmounted: disk %s — safe to physically remove. Its filesystem was not wiped.", row.Mountpoint, describeRemovedDisk(row))
+	if mounted {
+		logf("%s is out of the array and unmounted: disk %s — safe to physically remove. Its filesystem was not wiped.", row.Mountpoint, describeRemovedDisk(row))
+	} else {
+		logf("%s is out of the array: disk %s was already missing when this run finished it — retired from parity using SnapRAID's own diff alone, without ever being remounted or read again.", row.Mountpoint, describeRemovedDisk(row))
+	}
 	return nil
 }
 
@@ -319,6 +375,28 @@ func removeEmptyDirs(mountpoint string) error {
 	for i := len(dirs) - 1; i >= 0; i-- {
 		if err := syscall.Rmdir(dirs[i]); err != nil {
 			return fmt.Errorf("job: disk_remove: removing the empty directory %s: %w", dirs[i], err)
+		}
+	}
+	return nil
+}
+
+// removeStrayContentFile removes any snapraid.content* file directly at
+// mountpoint's own root: while an unmounted disk was still listed,
+// snapraid.conf named that path as one of its content-file copies (Q18),
+// and step 8's sync wrote one there like any other data disk's — onto
+// what is really just an ordinary directory on the boot filesystem, not
+// the disk's own. A missing file is not an error: most data disks never
+// hold a content copy at all (Layout.ContentPaths only places as many as
+// Q18 requires).
+func removeStrayContentFile(mountpoint string) error {
+	root := filepath.Clean(mountpoint)
+	matches, err := filepath.Glob(filepath.Join(root, contentFilePrefix+"*"))
+	if err != nil {
+		return fmt.Errorf("job: disk_remove: listing stray content files under %s: %w", root, err)
+	}
+	for _, m := range matches {
+		if err := syscall.Unlink(m); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("job: disk_remove: removing the stray content file %s: %w", m, err)
 		}
 	}
 	return nil

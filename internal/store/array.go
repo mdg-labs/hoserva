@@ -309,6 +309,43 @@ func (s *ArrayStore) ReplaceDataDisk(ctx context.Context, mountpoint string, d A
 	return nil
 }
 
+// ReplaceDataDiskAbandoningRemoval is ReplaceDataDisk for a slot whose old
+// disk is evacuated or unpooled (doc 09 §4 "Other operations…", #384): the
+// same identity swap, plus clearing removal_state and removal_job_id back
+// to NULL in the same UPDATE, so the replacement rejoins the pool as an
+// ordinary disk instead of silently inheriting the old disk's removal
+// state the way ReplaceDataDisk alone would (#368) — the caller
+// (RunDiskReplace) has already confirmed the old disk is genuinely
+// missing before this runs. Refuses (ErrArrayDiskNotFound) when no data
+// disk at mountpoint is currently evacuated or unpooled, including when a
+// concurrent writer has already moved it past that state, so a failure
+// here never leaves a half-adopted disk still carrying the old removal
+// state. Refuses (ErrArrayDiskExists) when the replacement's own device or
+// filesystem UUID collides with a disk already in the array.
+func (s *ArrayStore) ReplaceDataDiskAbandoningRemoval(ctx context.Context, mountpoint string, d ArrayDisk) error {
+	n, err := s.q.ReplaceArrayDataDiskIdentityAbandoningRemoval(ctx, storedb.ReplaceArrayDataDiskIdentityAbandoningRemovalParams{
+		Device:       d.Device,
+		Filesystem:   d.Filesystem,
+		FsUuid:       d.FSUUID,
+		SizeBytes:    nullInt64(d.Size, d.SizeSet),
+		Wwn:          nullString(d.WWN),
+		Serial:       nullString(d.Serial),
+		ByIDName:     nullString(d.ByIDName),
+		WeakIdentity: boolToInt(d.WeakIdentity),
+		Mountpoint:   mountpoint,
+	})
+	if err != nil {
+		if isUniqueConstraint(err) {
+			return fmt.Errorf("%w: %s", ErrArrayDiskExists, d.Device)
+		}
+		return fmt.Errorf("store: replacing data disk at %s while abandoning its removal: %w", mountpoint, err)
+	}
+	if n == 0 {
+		return ErrArrayDiskNotFound
+	}
+	return nil
+}
+
 // UpgradeParityDisk re-points the parity slot at oldMountpoint to d's own
 // identity and mountpoint (doc 02 §4 "Larger parity disk" #289): role and
 // role_index are left unchanged, so the array keeps exactly the same

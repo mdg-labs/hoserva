@@ -177,6 +177,28 @@ func ValidateDiskReplacement(disks []store.ArrayDisk, mountpoint string, replace
 // own fix must never run against a slot whose real disk is still there.
 var ErrReplacementSlotDiskPresent = errors.New("disk: the disk at this slot is still present; use the upgrade flow instead")
 
+// ReplaceEligibleDuringRemoval reports whether a data disk currently
+// carrying removal state state may still go through replace at all (doc
+// 09 §4 "Other operations…", narrowed from #366/#368 by #384): "" (no
+// removal in progress) is always eligible; evacuating and unlisted
+// always refuse — an evacuation still running is not this job's job, and
+// a disk already dropped from snapraid.conf has nothing left for
+// SnapRAID's fix to rebuild against. Evacuated and unpooled, where the
+// evacuation has already succeeded and SnapRAID still records whatever
+// the evacuation's own post-check never inspected, do not refuse on the
+// removal state alone — ConfirmReplacementTargetAbsent is what still
+// refuses one whose old disk is not genuinely missing. Shared by
+// RunDiskReplace and the replaceDisk API handler's own request-time
+// check so the two never drift apart on which states this covers.
+func ReplaceEligibleDuringRemoval(state string) bool {
+	switch state {
+	case "", store.RemovalStateEvacuated, store.RemovalStateUnpooled:
+		return true
+	default:
+		return false
+	}
+}
+
 // ConfirmReplacementTargetAbsent refuses (ErrReplacementSlotDiskPresent)
 // replacing old's slot at mountpoint unless old's own disk is genuinely
 // gone: nothing is currently mounted at mountpoint, and no disk in listed

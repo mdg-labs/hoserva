@@ -200,6 +200,14 @@ func run(cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// sighup is registered here, at the top of run(), before any of its
+	// own IO (state directory, database, migrations, job recovery, disk
+	// listing), so no SIGHUP delivered from this point on can take Go's
+	// default (process-exit) action (#372) — installReloadHandler
+	// (further down, once rebuildArraySequence exists) is what actually
+	// drains it.
+	sighup := newReloadSignal()
+
 	if err := os.MkdirAll(cfg.stateDir, 0o700); err != nil {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
@@ -247,6 +255,16 @@ func run(cfg config) error {
 		configRoot = "/etc"
 	}
 	generator := cfggen.NewGenerator(configRoot)
+	// The array-stopped flag lives in this daemon's own state directory
+	// (absolute: it is rendered into every mount unit's
+	// ConditionPathExists=), so a --dev or custom --state-dir daemon never
+	// writes /var/lib/hoserva.
+	absStateDir, err := filepath.Abs(cfg.stateDir)
+	if err != nil {
+		return fmt.Errorf("resolving state directory: %w", err)
+	}
+	stoppedFlag := filepath.Join(absStateDir, disk.StorageStoppedFlagName)
+	generator.StoppedFlagPath = stoppedFlag
 	// The mover cooperatively checks StopRequested between files and
 	// leaves consistent on-disk state at any stopping point (a duplicate,
 	// never a gap — doc 09 §2), so it honestly supports being cancelled,
@@ -292,11 +310,53 @@ func run(cfg config) error {
 	if err := scheduler.RecoverFromRestart(ctx); err != nil {
 		return fmt.Errorf("recovering jobs after restart: %w", err)
 	}
+	// RestorePersistedMaintenance (#387, doc 02 §4, Q70) runs before
+	// anything below can admit a job, build the array's stop/start
+	// sequence, or evaluate the storage-target gate: a crash or restart
+	// while the user had `array stop` active must come back up still
+	// stopped — new jobs refused, the pool unmounted, Samba/NFS/Docker/
+	// libvirt down — never silently return to normal operation because
+	// maintenance mode used to live only in this scheduler's own memory.
+	if err := scheduler.RestorePersistedMaintenance(ctx); err != nil {
+		return fmt.Errorf("restoring persisted maintenance mode: %w", err)
+	}
 
 	arraySeq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, linuxDisks.Exec)
 	if err != nil {
 		return fmt.Errorf("building array stop/start sequence: %w", err)
 	}
+	// storageTarget is shared with rebuildArraySequence below (and the
+	// SIGHUP handler installed once it exists) so every later call can
+	// tell an unchanged rebuild from a real readiness or topology
+	// transition (storageTargetSync's own doc comment). It is also
+	// arraySeq's own StorageTarget (#372): an explicit `array
+	// start` brings the boot-ordering gate current itself, right before
+	// starting Samba/NFS, instead of hitting whatever this boot's own
+	// evaluation last left the flag as.
+	storageTarget := &storageTargetSync{
+		Generator:       generator,
+		Runner:          linuxDisks.Exec,
+		StoppedFlagPath: stoppedFlag,
+		ArrayStore:      arrayStore,
+		ShareStore:      shareStore,
+	}
+	if arraySeq != nil {
+		arraySeq.StorageTarget = storageTarget
+	}
+	// Startup brings the pool up itself on an ordinary boot (see its own
+	// doc comment), and never issues a systemctl start/restart of a unit
+	// ordered After=hoserva.service. A failed
+	// write, reload, mount or confirmation leaves the flag cleared, so
+	// the gate stays closed until the next rebuild or SIGHUP retries it —
+	// but hoservad reports itself ready to systemd regardless (#372):
+	// withholding READY=1 here buys no safety (the flag is
+	// already cleared either way) and would instead put hoservad in a
+	// permanent kill-and-restart loop under Type=notify's own
+	// TimeoutStartSec, taking the API and UI down with it on every cycle.
+	if err := storageTarget.Startup(ctx, arraySeq); err != nil {
+		log.Printf("hoservad: installing storage-target boot ordering: %v — Samba/NFS/Docker/libvirt stay gated closed until this is retried", err)
+	}
+	notifySystemdReady()
 	// handler is created here, ahead of its other fields, so upsController
 	// and updateEngine (below) can both resolve handler.CurrentArray at
 	// shutdown time instead of capturing arraySeq's own startup value
@@ -304,6 +364,16 @@ func run(cfg config) error {
 	// writer once the daemon starts serving requests.
 	handler := &api.Handler{}
 	handler.SetArray(arraySeq)
+	// AcknowledgeDegraded (#385, doc 02 §1, Q69) is wired by
+	// wireAcknowledgeDegraded (cmd/hoservad/array.go) — the same function
+	// this package's own tests call, so a test built the way this line
+	// builds the handler fails if the wiring is ever skipped. ackHolder
+	// remembers which missing disks were acknowledged for as long as this
+	// process runs, so a later rebuild of arraySeq (a share change, a
+	// disk-topology change, a SIGHUP) can re-apply it to the fresh,
+	// otherwise-unacknowledged gate that rebuild builds (#385).
+	ackHolder := &acknowledgedDegraded{}
+	wireAcknowledgeDegraded(handler, storageTarget, ackHolder)
 	upsController := newUPSController(scheduler, handler.CurrentArray, notifyService, linuxDisks.Exec)
 
 	// Losing metrics.db must not look like array failure (#186): log and
@@ -380,15 +450,20 @@ func run(cfg config) error {
 	// stays exactly as stale as it was at the last daemon start or
 	// disk-topology change — array/stop then fails EBUSY on a share that
 	// exists and is mounted, but that the running daemon has never once
-	// rebuilt its ArraySequence to know about (#268).
-	rebuildArraySequence := func(ctx context.Context) error {
-		seq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, linuxDisks.Exec)
-		if err != nil {
-			return err
-		}
-		handler.SetArray(seq)
-		return nil
-	}
+	// rebuilt its ArraySequence to know about (#268). newRebuildArraySequence
+	// (cmd/hoservad/array.go) also re-applies ackHolder to the fresh gate
+	// it builds, so an earlier acknowledgement of a still-missing disk
+	// survives this rebuild instead of being undone by it (#385).
+	rebuildArraySequence := newRebuildArraySequence(scheduler, arrayStore, shareStore, disks, linuxDisks.Exec, storageTarget, handler, ackHolder)
+	// installReloadHandler (cmd/hoservad/reload.go) re-runs
+	// rebuildArraySequence on SIGHUP — packaging/debian/hoserva-storage.rules's own
+	// trigger for a disk arriving or leaving while hoservad is already
+	// running, so that reaches the gate without waiting for an unrelated
+	// share edit or a reboot (doc 02 §1, Q69) — and, on install, once
+	// unconditionally, so a disk that arrived earlier in startup (sighup
+	// was registered before any disk listing, above) is re-evaluated here
+	// even if systemd never delivered a SIGHUP for it at all (#372).
+	installReloadHandler(ctx, sighup, rebuildArraySequence)
 	shareService := newShareService(shareStore, arrayStore, generator, pool.SystemdMounter{Runner: linuxDisks.Exec}, parity.NewUsageStore(db))
 	shareService.PostCommit = rebuildArraySequence
 	// topologyChanged is the disk-topology jobs' ArrayReady hook, built by

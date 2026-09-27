@@ -13,6 +13,33 @@ type UnimplementedHandler struct{}
 
 var _ Handler = UnimplementedHandler{}
 
+// AcknowledgeDegradedArray implements acknowledgeDegradedArray operation.
+//
+// Records the user's explicit choice to proceed while the array is degraded (doc 02 §1, Q69,
+// `hoserva array acknowledge-degraded`): the handler calls `disk.StorageGate.Acknowledge` on the
+// daemon's live gate and then runs the exact not-ready→ready transition a returning disk reaches
+// (`storageTargetSync.UpdateOrError`) — mounting and confirming the pool, then starting every
+// enabled, unmasked unit in `pool.DependentServiceUnits` (Samba, NFS, Docker, libvirtd), never `sh -c`
+// and never a second mechanism. The acknowledgement itself survives every later rebuild of the
+// daemon's array sequence (a share change, a disk-topology change, a SIGHUP) for as long as the same
+// disk stays missing. Refused with `array_not_degraded` (409, `disk.ErrNothingToAcknowledge`) when
+// nothing is currently missing — acknowledging a degraded state that does not exist would let a
+// stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started`
+// (409) when the acknowledgement itself succeeds but the transition it triggers does not actually
+// start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or
+// confirming the pool fails — so this never reports success over services that never came up — in
+// that refusal case `arrayDegradedAcknowledged` on a later `GetStatus` still reports true (the
+// acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both
+// before ever telling the user services are running. `arrayDegraded` on the returned status stays true
+// for as long as the disk is still missing — acknowledging never reports a degraded array as healthy
+// — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and
+// top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
+//
+// POST /array/degraded/acknowledge
+func (UnimplementedHandler) AcknowledgeDegradedArray(ctx context.Context) (r *SystemStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // AddDisk implements addDisk operation.
 //
 // Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
@@ -832,10 +859,14 @@ func (UnimplementedHandler) PlanDiskAdd(ctx context.Context, req *AddDiskPlanReq
 // that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed
 // confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no
 // other branch to evacuate onto, when an entry on the disk is something the evacuation copy path
-// cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room
-// even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or
-// deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own
-// `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
+// cannot move (a symlink, fifo, socket or device node), when the remaining disks do not have room even
+// after each one's own minimum free space is kept, or when the disk holds any top-level entry that is
+// neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`,
+// `snapraid.content*`) — doc 09 §4 has no procedure for moving such content, so evacuation refuses
+// to start rather than leave it behind unreported (#367); that refusal's own 400 body,
+// `EvacuationPlanRefusal`, names every offending path in `nonSharePaths`. Read-only: nothing is
+// copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's
+// own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
 // disk keeps taking new writes only until that job starts, never for as long as it runs. Refused
 // (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
 // `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is
@@ -847,7 +878,7 @@ func (UnimplementedHandler) PlanDiskAdd(ctx context.Context, req *AddDiskPlanReq
 // performed by either.
 //
 // POST /disks/array/evacuate/plan
-func (UnimplementedHandler) PlanDiskEvacuation(ctx context.Context, req *EvacuateDiskPlanRequest) (r *EvacuationPlan, _ error) {
+func (UnimplementedHandler) PlanDiskEvacuation(ctx context.Context, req *EvacuateDiskPlanRequest) (r PlanDiskEvacuationRes, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -860,8 +891,11 @@ func (UnimplementedHandler) PlanDiskEvacuation(ctx context.Context, req *Evacuat
 // genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
 // §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
 // replacement that would leave a parity disk smaller than the array's largest data disk. Refuses
-// (`disk_leaving_array`, 409) a slot whose disk is in removal (any `removalState`): the replacement
-// would inherit that state. Read-only: nothing is formatted or persisted.
+// (`disk_leaving_array`, 409) a slot whose disk is still `evacuating` or already `unlisted`: the
+// replacement would inherit that state. A slot that is `evacuated` or `unpooled` is allowed once the
+// slot's own disk is genuinely missing, refused with `slot_disk_present` otherwise like any other slot
+// — replace abandons the removal and rebuilds the disk's recorded files from parity (#384).
+// Read-only: nothing is formatted or persisted.
 //
 // POST /disks/array/replace/plan
 func (UnimplementedHandler) PlanDiskReplace(ctx context.Context, req *ReplaceDiskPlanRequest) (r *ReplaceDiskPlan, _ error) {
@@ -942,7 +976,10 @@ func (UnimplementedHandler) RegisterExternalDisk(ctx context.Context, req *Regis
 // to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
 // disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
 // (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
-// or still present by identity, and (`disk_leaving_array`, 409) a slot whose disk is in removal. The
+// or still present by identity, and (`disk_leaving_array`, 409) a slot still `evacuating` or already
+// `unlisted`. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is
+// genuinely missing: the job clears the removal state as part of adopting the replacement, so the disk
+// rejoins the array as an ordinary member and its recorded files rebuild from parity (#384). The
 // confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or
 // missing one is refused with `confirmation_required` and formats nothing.
 //

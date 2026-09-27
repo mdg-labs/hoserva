@@ -57,9 +57,24 @@ func (m Mount) optionsString() string {
 // writes through config.Generator under its own doc 01 §2 header (D4:
 // config files are generated, never hand-edited), the same convention
 // disk.MountUnit.Render follows for a block-device mount.
-func (m Mount) Render() string {
+//
+// ConditionPathExists=!disk.StorageStoppedFlagPath (#387, raised by L3
+// nightly run 36258823325) is what actually keeps this mount from
+// remounting during `array stop`: RequiresMountsFor= alone only means
+// whoever depends on THIS unit orders after and requires it — it never
+// gates whether THIS unit itself may start, and nfs-utils' own systemd
+// integration derives exactly such a dependency, directly on
+// nfs-server.service, for every path in /etc/exports — confirmed
+// empirically to remount this exact unit (and, through its own
+// RequiresMountsFor=, the physical disks under it) when `systemctl start
+// nfs-kernel-server` ran during `array stop`, entirely outside any edge
+// hoserva-storage.target itself carries. See disk.StorageStoppedFlagPath
+// for the full mechanism; stoppedFlag is that flag's path for this
+// daemon's state directory.
+func (m Mount) Render(stoppedFlag string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Unit]\nDescription=%s\n", m.Description)
+	fmt.Fprintf(&b, "ConditionPathExists=!%s\n", stoppedFlag)
 	if len(m.RequiresMountsFor) > 0 {
 		fmt.Fprintf(&b, "RequiresMountsFor=%s\n", strings.Join(m.RequiresMountsFor, " "))
 	}

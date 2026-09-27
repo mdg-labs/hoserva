@@ -116,7 +116,18 @@ func relocateCreateAndMountLoopDisk(t *testing.T, lab, name, mountpoint string) 
 	if out, err := exec.Command("mount", dev, mountpoint).CombinedOutput(); err != nil {
 		t.Fatalf("mount %s %s: %v: %s", dev, mountpoint, err, out)
 	}
+	// Loop device numbers are host-global and freed as soon as they are
+	// detached, so this re-checks ownership straight from sysfs rather
+	// than trusting dev still names this test's own device — a
+	// concurrently running lab may have since claimed the freed number
+	// for its own image (CLAUDE.md: detach only devices backed by your
+	// own lab's image files). cacheLoopStillBacksImage is shared with
+	// rebalance_lab_test.go's own rebalanceCreateAndMountLoopDisk.
 	t.Cleanup(func() {
+		if !cacheLoopStillBacksImage(t, dev, img) {
+			t.Logf("skipping unmount/detach of %s: no longer backed by %s (likely reused by another lab)", dev, img)
+			return
+		}
 		_, _ = exec.Command("umount", mountpoint).CombinedOutput()
 		_, _ = exec.Command("losetup", "-d", dev).CombinedOutput()
 	})
@@ -136,6 +147,95 @@ func relocateAssertOwnLoop(t *testing.T, dev, img string) {
 	}
 	if resolved := strings.TrimSpace(string(out)); resolved != dev {
 		t.Fatalf("refusing %s: not backed by %s (losetup -j reports %q)", dev, img, resolved)
+	}
+}
+
+// cacheLoopOwnerSysfsRoot stands in for /sys/block; overridden by
+// TestLabLoopStillBacksImage_RefusesReusedDevice to inject a temp
+// directory so the ownership check below can be exercised without a
+// real loop device. Shared by this package's two lab-tagged files that
+// pair a loop-device detach with an unmount — relocate_lab_test.go and
+// rebalance_lab_test.go — so neither carries its own copy.
+var cacheLoopOwnerSysfsRoot = "/sys/block"
+
+// cacheLoopStillBacksImage reports whether dev is still the loop
+// device backing img, read straight from
+// /sys/block/<loopN>/loop/backing_file rather than trusted from when
+// this test first attached it. Loop device numbers are host-global
+// (doc 06 §3, Q45) and freed the moment another process detaches them,
+// so by the time a t.Cleanup runs, dev may already belong to a
+// concurrently running lab's own image — CLAUDE.md's "detach only the
+// ones backed by your own lab's image files".
+func cacheLoopStillBacksImage(t *testing.T, dev, img string) bool {
+	t.Helper()
+	loopName := filepath.Base(dev)
+	if !strings.HasPrefix(loopName, "loop") {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(cacheLoopOwnerSysfsRoot, loopName, "loop", "backing_file"))
+	if err != nil {
+		// Not attached any more — nothing left for dev to own.
+		return false
+	}
+	backing := strings.TrimSuffix(strings.TrimSpace(string(raw)), " (deleted)")
+
+	wantImg, err := filepath.EvalSymlinks(img)
+	if err != nil {
+		wantImg = filepath.Clean(img)
+	}
+	gotImg, err := filepath.EvalSymlinks(backing)
+	if err != nil {
+		gotImg = filepath.Clean(backing)
+	}
+	return gotImg == wantImg
+}
+
+// TestLabLoopStillBacksImage_RefusesReusedDevice is this issue's own
+// acceptance test (#383): a temp directory stands in for /sys/block, so
+// this runs on any machine, not only inside the lab. A device number
+// whose backing file no longer names this helper's own image — the
+// shape left once a concurrently running lab reuses a freed loop
+// number — is refused, never trusted from when it was first attached.
+func TestLabLoopStillBacksImage_RefusesReusedDevice(t *testing.T) {
+	root := t.TempDir()
+	orig := cacheLoopOwnerSysfsRoot
+	cacheLoopOwnerSysfsRoot = root
+	t.Cleanup(func() { cacheLoopOwnerSysfsRoot = orig })
+
+	ownImg := filepath.Join(t.TempDir(), "own.img")
+	if err := os.WriteFile(ownImg, nil, 0o644); err != nil {
+		t.Fatalf("writing %s: %v", ownImg, err)
+	}
+	otherImg := filepath.Join(t.TempDir(), "other-lab.img")
+	if err := os.WriteFile(otherImg, nil, 0o644); err != nil {
+		t.Fatalf("writing %s: %v", otherImg, err)
+	}
+
+	loopDir := filepath.Join(root, "loop7", "loop")
+	if err := os.MkdirAll(loopDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", loopDir, err)
+	}
+	backingFile := filepath.Join(loopDir, "backing_file")
+
+	if err := os.WriteFile(backingFile, []byte(ownImg+"\n"), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", backingFile, err)
+	}
+	if !cacheLoopStillBacksImage(t, "/dev/loop7", ownImg) {
+		t.Fatalf("cacheLoopStillBacksImage(own image) = false, want true")
+	}
+
+	if err := os.WriteFile(backingFile, []byte(otherImg+"\n"), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", backingFile, err)
+	}
+	if cacheLoopStillBacksImage(t, "/dev/loop7", ownImg) {
+		t.Fatalf("cacheLoopStillBacksImage(reused device) = true, want false — /dev/loop7 no longer backs this lab's image")
+	}
+
+	if err := os.RemoveAll(filepath.Join(root, "loop7", "loop")); err != nil {
+		t.Fatalf("removing %s: %v", filepath.Join(root, "loop7", "loop"), err)
+	}
+	if cacheLoopStillBacksImage(t, "/dev/loop7", ownImg) {
+		t.Fatalf("cacheLoopStillBacksImage(detached device) = true, want false — no loop/ subdirectory means not attached")
 	}
 }
 

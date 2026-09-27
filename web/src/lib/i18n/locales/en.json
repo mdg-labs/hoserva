@@ -158,7 +158,15 @@
     "degraded": {
       "title": "Array degraded",
       "description": "A disk has failed or parity is out of date. Review disks before writing more data.",
-      "action": "View disks"
+      "action": "View disks",
+      "acknowledgeAction": "Acknowledge and start services",
+      "confirmTitle": "Acknowledge the degraded array?",
+      "confirmDescription_one": "Shares, containers and VMs have been waiting for this. Acknowledging starts them now, even though the disk below is still missing.",
+      "confirmDescription_other": "Shares, containers and VMs have been waiting for this. Acknowledging starts them now, even though the disks below are still missing.",
+      "missingDiskItem": "{{mountPoint}} ({{device}})",
+      "confirmAction": "Acknowledge and start services",
+      "acknowledgedTitle": "Array degraded — running acknowledged",
+      "acknowledgedDescription": "Shares, containers and VMs are running with a disk still missing. Replace it and let parity sync to clear this."
     },
     "syncBlocked": {
       "title": "Sync blocked by threshold guard",

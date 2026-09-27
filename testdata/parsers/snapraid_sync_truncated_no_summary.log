@@ -1,0 +1,12 @@
+version:none
+unixtime:1790428696
+time:2026-09-26 13:18:16
+command:sync
+argv:0:snapraid
+argv:1:-c
+argv:2:/lab/389-a1/p389-capture/snapraid.conf
+argv:3:-l
+argv:4:/lab/389-a1/p389-capture/logs/sync-earlykill.log
+argv:5:sync
+selftest:
+msg:progress: Self test...

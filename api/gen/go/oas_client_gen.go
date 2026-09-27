@@ -29,6 +29,30 @@ func trimTrailingSlashes(u *url.URL) {
 
 // Invoker invokes operations described by OpenAPI v3 specification.
 type Invoker interface {
+	// AcknowledgeDegradedArray invokes acknowledgeDegradedArray operation.
+	//
+	// Records the user's explicit choice to proceed while the array is degraded (doc 02 §1, Q69,
+	// `hoserva array acknowledge-degraded`): the handler calls `disk.StorageGate.Acknowledge` on the
+	// daemon's live gate and then runs the exact not-ready→ready transition a returning disk reaches
+	// (`storageTargetSync.UpdateOrError`) — mounting and confirming the pool, then starting every
+	// enabled, unmasked unit in `pool.DependentServiceUnits` (Samba, NFS, Docker, libvirtd), never `sh -c`
+	// and never a second mechanism. The acknowledgement itself survives every later rebuild of the
+	// daemon's array sequence (a share change, a disk-topology change, a SIGHUP) for as long as the same
+	// disk stays missing. Refused with `array_not_degraded` (409, `disk.ErrNothingToAcknowledge`) when
+	// nothing is currently missing — acknowledging a degraded state that does not exist would let a
+	// stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started`
+	// (409) when the acknowledgement itself succeeds but the transition it triggers does not actually
+	// start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or
+	// confirming the pool fails — so this never reports success over services that never came up — in
+	// that refusal case `arrayDegradedAcknowledged` on a later `GetStatus` still reports true (the
+	// acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both
+	// before ever telling the user services are running. `arrayDegraded` on the returned status stays true
+	// for as long as the disk is still missing — acknowledging never reports a degraded array as healthy
+	// — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and
+	// top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
+	//
+	// POST /array/degraded/acknowledge
+	AcknowledgeDegradedArray(ctx context.Context) (*SystemStatus, error)
 	// AddDisk invokes addDisk operation.
 	//
 	// Queues a Topology job (`job.TypeDiskAdd`) that formats or adopts the disk, then regenerates mount
@@ -638,10 +662,14 @@ type Invoker interface {
 	// that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed
 	// confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no
 	// other branch to evacuate onto, when an entry on the disk is something the evacuation copy path
-	// cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room
-	// even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or
-	// deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own
-	// `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
+	// cannot move (a symlink, fifo, socket or device node), when the remaining disks do not have room even
+	// after each one's own minimum free space is kept, or when the disk holds any top-level entry that is
+	// neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`,
+	// `snapraid.content*`) — doc 09 §4 has no procedure for moving such content, so evacuation refuses
+	// to start rather than leave it behind unreported (#367); that refusal's own 400 body,
+	// `EvacuationPlanRefusal`, names every offending path in `nonSharePaths`. Read-only: nothing is
+	// copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's
+	// own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
 	// disk keeps taking new writes only until that job starts, never for as long as it runs. Refused
 	// (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
 	// `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is
@@ -653,7 +681,7 @@ type Invoker interface {
 	// performed by either.
 	//
 	// POST /disks/array/evacuate/plan
-	PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (*EvacuationPlan, error)
+	PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (PlanDiskEvacuationRes, error)
 	// PlanDiskReplace invokes planDiskReplace operation.
 	//
 	// Computes the replace plan (doc 02 §4 "Replacing a failed disk"): the replacement's own identity
@@ -663,8 +691,11 @@ type Invoker interface {
 	// genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
 	// §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
 	// replacement that would leave a parity disk smaller than the array's largest data disk. Refuses
-	// (`disk_leaving_array`, 409) a slot whose disk is in removal (any `removalState`): the replacement
-	// would inherit that state. Read-only: nothing is formatted or persisted.
+	// (`disk_leaving_array`, 409) a slot whose disk is still `evacuating` or already `unlisted`: the
+	// replacement would inherit that state. A slot that is `evacuated` or `unpooled` is allowed once the
+	// slot's own disk is genuinely missing, refused with `slot_disk_present` otherwise like any other slot
+	// — replace abandons the removal and rebuilds the disk's recorded files from parity (#384).
+	// Read-only: nothing is formatted or persisted.
 	//
 	// POST /disks/array/replace/plan
 	PlanDiskReplace(ctx context.Context, request *ReplaceDiskPlanRequest) (*ReplaceDiskPlan, error)
@@ -727,7 +758,10 @@ type Invoker interface {
 	// to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
 	// disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
 	// (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
-	// or still present by identity, and (`disk_leaving_array`, 409) a slot whose disk is in removal. The
+	// or still present by identity, and (`disk_leaving_array`, 409) a slot still `evacuating` or already
+	// `unlisted`. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is
+	// genuinely missing: the job clears the removal state as part of adopting the replacement, so the disk
+	// rejoins the array as an ordinary member and its recorded files rebuild from parity (#384). The
 	// confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or
 	// missing one is refused with `confirmation_required` and formats nothing.
 	//
@@ -1065,6 +1099,149 @@ func (c *Client) requestURL(ctx context.Context) *url.URL {
 		return c.serverURL
 	}
 	return u
+}
+
+// AcknowledgeDegradedArray invokes acknowledgeDegradedArray operation.
+//
+// Records the user's explicit choice to proceed while the array is degraded (doc 02 §1, Q69,
+// `hoserva array acknowledge-degraded`): the handler calls `disk.StorageGate.Acknowledge` on the
+// daemon's live gate and then runs the exact not-ready→ready transition a returning disk reaches
+// (`storageTargetSync.UpdateOrError`) — mounting and confirming the pool, then starting every
+// enabled, unmasked unit in `pool.DependentServiceUnits` (Samba, NFS, Docker, libvirtd), never `sh -c`
+// and never a second mechanism. The acknowledgement itself survives every later rebuild of the
+// daemon's array sequence (a share change, a disk-topology change, a SIGHUP) for as long as the same
+// disk stays missing. Refused with `array_not_degraded` (409, `disk.ErrNothingToAcknowledge`) when
+// nothing is currently missing — acknowledging a degraded state that does not exist would let a
+// stale acknowledgement outlive the situation it was about. Refused with `array_services_not_started`
+// (409) when the acknowledgement itself succeeds but the transition it triggers does not actually
+// start anything — the array is in maintenance mode (`hoserva array stop`), or mounting or
+// confirming the pool fails — so this never reports success over services that never came up — in
+// that refusal case `arrayDegradedAcknowledged` on a later `GetStatus` still reports true (the
+// acknowledgement stands) while `storageServicesReleased` stays false, so a client must check both
+// before ever telling the user services are running. `arrayDegraded` on the returned status stays true
+// for as long as the disk is still missing — acknowledging never reports a degraded array as healthy
+// — and `arrayDegradedAcknowledged` becomes true instead, the field the persistent banner and
+// top-bar pill use to show "acknowledged, running degraded" rather than clearing the warning outright.
+//
+// POST /array/degraded/acknowledge
+func (c *Client) AcknowledgeDegradedArray(ctx context.Context) (*SystemStatus, error) {
+	res, err := c.sendAcknowledgeDegradedArray(ctx)
+	return res, err
+}
+
+func (c *Client) sendAcknowledgeDegradedArray(ctx context.Context) (res *SystemStatus, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("acknowledgeDegradedArray"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/array/degraded/acknowledge"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, AcknowledgeDegradedArrayOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/array/degraded/acknowledge"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, AcknowledgeDegradedArrayOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, AcknowledgeDegradedArrayOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeAcknowledgeDegradedArrayResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
 }
 
 // AddDisk invokes addDisk operation.
@@ -10484,10 +10661,14 @@ func (c *Client) sendPlanDiskAdd(ctx context.Context, request *AddDiskPlanReques
 // that disk onto the pool's remaining disks, any path-preserving warnings, and the exact typed
 // confirmation `evacuateDisk` requires. Refused (`invalid_plan`) when a share on this disk has no
 // other branch to evacuate onto, when an entry on the disk is something the evacuation copy path
-// cannot move (a symlink, fifo, socket or device node), or when the remaining disks do not have room
-// even after each one's own minimum free space is kept. Read-only: nothing is copied, synced or
-// deleted, and this preview does not itself put the disk into doc 09 §4 step 2's own
-// `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
+// cannot move (a symlink, fifo, socket or device node), when the remaining disks do not have room even
+// after each one's own minimum free space is kept, or when the disk holds any top-level entry that is
+// neither a configured share's own branch there nor SnapRAID's own bookkeeping (`lost+found`,
+// `snapraid.content*`) — doc 09 §4 has no procedure for moving such content, so evacuation refuses
+// to start rather than leave it behind unreported (#367); that refusal's own 400 body,
+// `EvacuationPlanRefusal`, names every offending path in `nonSharePaths`. Read-only: nothing is
+// copied, synced or deleted, and this preview does not itself put the disk into doc 09 §4 step 2's
+// own `removing`/no-create state — `evacuateDisk`'s own job does that, before its first copy, so the
 // disk keeps taking new writes only until that job starts, never for as long as it runs. Refused
 // (`disk_leaving_array`, 409) when the disk is already `unpooled` or `unlisted` — only
 // `finishDiskRemoval` takes it further — and (`disk_removal_in_progress`) while a different disk is
@@ -10499,12 +10680,12 @@ func (c *Client) sendPlanDiskAdd(ctx context.Context, request *AddDiskPlanReques
 // performed by either.
 //
 // POST /disks/array/evacuate/plan
-func (c *Client) PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (*EvacuationPlan, error) {
+func (c *Client) PlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (PlanDiskEvacuationRes, error) {
 	res, err := c.sendPlanDiskEvacuation(ctx, request)
 	return res, err
 }
 
-func (c *Client) sendPlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (res *EvacuationPlan, err error) {
+func (c *Client) sendPlanDiskEvacuation(ctx context.Context, request *EvacuateDiskPlanRequest) (res PlanDiskEvacuationRes, err error) {
 	otelAttrs := []attribute.KeyValue{
 		otelogen.OperationID("planDiskEvacuation"),
 		semconv.HTTPRequestMethodKey.String("POST"),
@@ -10631,8 +10812,11 @@ func (c *Client) sendPlanDiskEvacuation(ctx context.Context, request *EvacuateDi
 // genuinely gone — not merely unmounted, but absent from a fresh disk inventory by identity (doc 02
 // §4 steps 1-2; a healthy disk goes through the upgrade flow instead, #289) — and (Q20) a
 // replacement that would leave a parity disk smaller than the array's largest data disk. Refuses
-// (`disk_leaving_array`, 409) a slot whose disk is in removal (any `removalState`): the replacement
-// would inherit that state. Read-only: nothing is formatted or persisted.
+// (`disk_leaving_array`, 409) a slot whose disk is still `evacuating` or already `unlisted`: the
+// replacement would inherit that state. A slot that is `evacuated` or `unpooled` is allowed once the
+// slot's own disk is genuinely missing, refused with `slot_disk_present` otherwise like any other slot
+// — replace abandons the removal and rebuilds the disk's recorded files from parity (#384).
+// Read-only: nothing is formatted or persisted.
 //
 // POST /disks/array/replace/plan
 func (c *Client) PlanDiskReplace(ctx context.Context, request *ReplaceDiskPlanRequest) (*ReplaceDiskPlan, error) {
@@ -11421,7 +11605,10 @@ func (c *Client) sendRegisterExternalDisk(ctx context.Context, request *Register
 // to reconstruct its contents from parity and the remaining disks (doc 02 §4 "Replacing a failed
 // disk"). Identity is re-checked at format time and the boot disk is always refused. Refuses
 // (`slot_disk_present`) the same way `planDiskReplace` does when the slot's own disk is still mounted
-// or still present by identity, and (`disk_leaving_array`, 409) a slot whose disk is in removal. The
+// or still present by identity, and (`disk_leaving_array`, 409) a slot still `evacuating` or already
+// `unlisted`. A slot that is `evacuated` or `unpooled` is allowed once the slot's own disk is
+// genuinely missing: the job clears the removal state as part of adopting the replacement, so the disk
+// rejoins the array as an ordinary member and its recorded files rebuild from parity (#384). The
 // confirmation must be the exact string the matching `planDiskReplace` call returned; a wrong or
 // missing one is refused with `confirmation_required` and formats nothing.
 //

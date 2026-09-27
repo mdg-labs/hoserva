@@ -331,7 +331,7 @@ func l3ForceUnmount(t *testing.T, ctx context.Context, r disk.Runner, target str
 func l3WriteMountUnit(t *testing.T, ctx context.Context, r disk.Runner, unit disk.MountUnit) {
 	t.Helper()
 	path := filepath.Join("/etc/systemd/system", disk.UnitFileName(unit.Where))
-	if err := os.WriteFile(path, []byte(unit.Render()), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(unit.Render(disk.StorageStoppedFlagPath)), 0o644); err != nil {
 		t.Fatalf("writing unit file %s: %v", path, err)
 	}
 	t.Cleanup(func() {

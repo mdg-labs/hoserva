@@ -180,6 +180,10 @@ export function postArrayStart() {
   return hoservaClient.POST("/array/start");
 }
 
+export function postAcknowledgeDegradedArray() {
+  return hoservaClient.POST("/array/degraded/acknowledge");
+}
+
 export function postPoolRebalancePlan() {
   return hoservaClient.POST("/pool/rebalance/plan");
 }

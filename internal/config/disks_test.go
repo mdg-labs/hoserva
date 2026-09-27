@@ -12,6 +12,7 @@ import (
 
 func TestWriteDiskMountsBodyMatchesRenderExactly(t *testing.T) {
 	g := NewGenerator(t.TempDir())
+	g.StoppedFlagPath = "/srv/hoserva-state/array-stopped"
 	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	unit := disk.MountUnit{
 		Where:       "/mnt/disk1",
@@ -28,7 +29,7 @@ func TestWriteDiskMountsBodyMatchesRenderExactly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading written unit: %v", err)
 	}
-	want := Header("array create", 1, now) + unit.Render()
+	want := Header("array create", 1, now) + unit.Render(g.StoppedFlagPath)
 	if string(got) != want {
 		t.Fatalf("written unit mismatch:\ngot:\n%s\nwant:\n%s", got, want)
 	}

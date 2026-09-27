@@ -175,6 +175,33 @@ func TestLabSync_WritesRealParity(t *testing.T) {
 	}
 }
 
+// TestLabSync_NoOpSyncSucceeds calls SnapraidEngine.Sync directly a
+// second time back to back with no changes in between, against a real
+// snapraid binary, and confirms it still reports success. It does not
+// go through the job path (job.RunSync, reached from
+// cmd/hoservad/main.go, already covers that for sync) — this is
+// regression coverage of SnapraidEngine.Sync's own no-op handling. The
+// real log this produces carries both the scan's own summary:exit:equal
+// and a final summary:exit:ok, the same shape snapraid_sync_noop_after_replace.log
+// (testdata/parsers/) is a raw capture of.
+func TestLabSync_NoOpSyncSucceeds(t *testing.T) {
+	lab := labDir(t)
+	ctx := context.Background()
+	engine, _ := labEngine(t, lab)
+
+	writeFile(t, filepath.Join(lab, "mnt/disk1/movies/lab-noop-sync.bin"), 300_000)
+	syncOnce(t, ctx, engine)
+
+	ch, err := engine.Sync(ctx, SyncOpts{})
+	if err != nil {
+		t.Fatalf("second Sync: %v", err)
+	}
+	final := drainReal(t, ch)
+	if final.Err != nil {
+		t.Fatalf("second Sync (nothing to sync) failed: %v", final.Err)
+	}
+}
+
 // TestLabScrub_DetectsCorruption injects real silent corruption directly
 // on a data disk's own loop device — targeted at a known file's exact
 // extent via `xfs_bmap`, mirroring spike S5's own recipe exactly (doc 08

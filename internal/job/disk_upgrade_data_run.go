@@ -535,8 +535,8 @@ func stopRequested(rc *RunContext) bool {
 
 // confirmBeforeFormat is E1 None's identity step: the typed confirmation
 // still matches, SQLite still names A at the slot, A and B are the disks
-// the plan was confirmed against by their by-id identities, and the Q20
-// and topology checks still pass.
+// the plan was confirmed against by their by-id identities, the slot is
+// not in removal, and the Q20 and topology checks still pass.
 func (d DiskUpgradeDataDeps) confirmBeforeFormat(ctx context.Context, disks []store.ArrayDisk, params DiskUpgradeDataParams) error {
 	if SingleDiskConfirmation(params.Disk) != params.Confirmation {
 		return disk.ErrConfirmationMismatch
@@ -544,6 +544,12 @@ func (d DiskUpgradeDataDeps) confirmBeforeFormat(ctx context.Context, disks []st
 	slot, ok := arrayDiskAtMountpoint(disks, params.Mountpoint)
 	if !ok || slot.FSUUID != params.Old.FSUUID {
 		return fmt.Errorf("job: SQLite no longer names the disk this upgrade was confirmed against at %s", params.Mountpoint)
+	}
+	// An evacuation queued ahead of this upgrade can mark the slot for
+	// removal after the plan was confirmed; store.ReplaceDataDisk would
+	// otherwise carry that removal state onto B unchanged (#368).
+	if slot.LeavingArray() {
+		return fmt.Errorf("job: %w: %s is %s", store.ErrDiskLeavingArray, params.Mountpoint, slot.RemovalState)
 	}
 	listed, err := d.Provider.List(ctx)
 	if err != nil {
