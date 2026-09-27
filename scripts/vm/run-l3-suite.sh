@@ -25,47 +25,18 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/vm/lib.sh
 source "$script_dir/lib.sh"
 
-vm_require_id
-vm_assert_own_domain "$VM_DOMAIN"
-
-declare -a STEP_NAMES=()
-declare -a STEP_RESULTS=()
-
-record() { STEP_NAMES+=("$1"); STEP_RESULTS+=("$2"); }
-
-not_yet() {
-  echo "vm-suite[$HOSERVA_LAB_ID]: $1 — NOT-YET-IMPLEMENTED: $2"
-  record "$1" "NOT-YET-IMPLEMENTED: $2"
-}
-
-pass() {
-  echo "vm-suite[$HOSERVA_LAB_ID]: $1 — PASS"
-  record "$1" "PASS"
-}
-
-fail() {
-  echo "vm-suite[$HOSERVA_LAB_ID]: $1 — FAIL: $2" >&2
-  record "$1" "FAIL: $2"
-}
-
-# Step selection (issue #391): L3_STEPS is a comma-separated list of the
-# ids below; empty/unset (the default, and always what the schedule
-# trigger passes) means every step, exactly as before this issue existed.
-# Setup — install, onboarding, existing host config, array setup — has no
-# id and always runs regardless of selection; it is what every selectable
-# step below actually depends on. This is the one place that lists the
-# ids: L3_STEP_ORDER is the suite's own fixed running order (selection
-# only filters which of these run — it never reorders them, so UPS is
-# always the last selectable step to run and array stop/start sequence
-# the second-to-last, whatever order L3_STEPS names them in), and
-# L3_STEP_PREREQS names, for each id, which other *selectable* ids it
-# needs already run first (space-separated; empty when its only real
-# prerequisite is the always-run setup above — true for every step today,
-# since no two selectable steps in this suite currently depend on each
-# other). A selected step whose own prerequisite is not also selected has
-# that prerequisite pulled in automatically, reported below; requesting an
-# id not in L3_STEP_ORDER exits before create-vm.sh ever runs (lib.sh's
-# die, via l3_resolve_steps).
+# Step registry (issue #391) and nightly-l3.yml's own two parallel groups
+# (issue #392) — defined before vm_require_id below so a pure listing or
+# group-coverage query (scripts/vm/l3-group-coverage-check.sh) needs no
+# HOSERVA_LAB_ID and touches no VM state at all. L3_STEP_ORDER is the
+# suite's own fixed running order (selection only filters which of these
+# run — it never reorders them, so UPS is always the last selectable step
+# to run and array stop/start sequence the second-to-last, whatever order
+# a selection names them in); L3_STEP_PREREQS names, for each id, which
+# other *selectable* ids it needs already run first (space-separated;
+# empty when its only real prerequisite is the always-run setup below —
+# true for every step today, since no two selectable steps in this suite
+# currently depend on each other).
 L3_STEP_ORDER=(
   array-stop-start smb-stop-start pool-restart storage-target
   maintenance-gate disk-yank midsync-destroy reboot-persistence
@@ -101,6 +72,74 @@ declare -A L3_STEP_LABELS=(
   [ups]="UPS on-battery/power-restored/low-battery"
 )
 
+# nightly-l3.yml's own two parallel jobs (issue #392): the spindown step's
+# own ~34.5-minute observation window in one job, every other id in a
+# second, parallel job, each with its own VM — wall time then tracks
+# whichever group takes longer, not their sum. These two lists are the
+# single record of which id is in which group; a workflow_dispatch run
+# with its own L3_STEPS selection ignores them entirely and runs as one
+# job (l3_resolve_steps below already handles that — the workflow only
+# consults these two when no selection was given). Every id in
+# L3_STEP_ORDER must be in exactly one of these two lists —
+# l3-group-coverage-check.sh fails the run otherwise.
+L3_GROUP_SPINDOWN=(spindown)
+L3_GROUP_REST=(
+  array-stop-start smb-stop-start pool-restart storage-target
+  maintenance-gate disk-yank midsync-destroy reboot-persistence
+  config-backup-restore playwright spindown-30min nfs-export
+  network-revert array-sequence ups
+)
+
+# L3_LIST_STEPS/L3_LIST_GROUPS (issue #392): pure data queries against the
+# registry above, for l3-group-coverage-check.sh — never set by a human or
+# by make vm-suite/vm-suite-plan. Checked here, before vm_require_id,
+# so neither needs HOSERVA_LAB_ID or touches any VM state.
+if [[ "${L3_LIST_STEPS:-}" == "1" ]]; then
+  printf '%s\n' "${L3_STEP_ORDER[@]}"
+  exit 0
+fi
+if [[ "${L3_LIST_GROUPS:-}" == "1" ]]; then
+  for l3_group_id in "${L3_GROUP_SPINDOWN[@]}"; do
+    printf 'spindown %s\n' "$l3_group_id"
+  done
+  for l3_group_id in "${L3_GROUP_REST[@]}"; do
+    printf 'rest %s\n' "$l3_group_id"
+  done
+  exit 0
+fi
+
+vm_require_id
+vm_assert_own_domain "$VM_DOMAIN"
+
+declare -a STEP_NAMES=()
+declare -a STEP_RESULTS=()
+
+record() { STEP_NAMES+=("$1"); STEP_RESULTS+=("$2"); }
+
+not_yet() {
+  echo "vm-suite[$HOSERVA_LAB_ID]: $1 — NOT-YET-IMPLEMENTED: $2"
+  record "$1" "NOT-YET-IMPLEMENTED: $2"
+}
+
+pass() {
+  echo "vm-suite[$HOSERVA_LAB_ID]: $1 — PASS"
+  record "$1" "PASS"
+}
+
+fail() {
+  echo "vm-suite[$HOSERVA_LAB_ID]: $1 — FAIL: $2" >&2
+  record "$1" "FAIL: $2"
+}
+
+# Step selection (issue #391): L3_STEPS is a comma-separated list of the
+# ids above; empty/unset (the default, and always what the schedule
+# trigger passes) means every step, exactly as before this issue existed.
+# Setup — install, onboarding, existing host config, array setup — has no
+# id and always runs regardless of selection; it is what every selectable
+# step below actually depends on. A selected step whose own prerequisite
+# is not also selected has that prerequisite pulled in automatically,
+# reported below; requesting an id not in L3_STEP_ORDER exits before
+# create-vm.sh ever runs (lib.sh's die, via l3_resolve_steps).
 declare -A L3_SELECTED=()
 
 l3_step_known() { [[ -n "${L3_STEP_PREREQS[$1]+x}" ]]; }

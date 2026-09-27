@@ -320,7 +320,7 @@ Test 5 is the one that must never be allowed to regress.
 
 Empty/unset `L3_STEPS` (the default) means every step, exactly as before this issue existed. The `Nightly L3` workflow's `workflow_dispatch` trigger has an `l3_steps` input passed straight through as `L3_STEPS`; its `schedule` trigger has no such input at all, so the nightly run always covers the full suite regardless of what a manual run last used.
 
-A CI run proving one step (e.g. after a change to `storage-target-boot-check.sh`) finishes in roughly the time that one step and the always-run setup take — a fraction of the full suite's own wall time, dominated by the spindown step's own 30+-minute observation window (Q13, doc 08 Spike 1) when that step is included.
+A CI run proving one step (e.g. after a change to `storage-target-boot-check.sh`) finishes in roughly the time that one step and the always-run setup take — a fraction of the full suite's own wall time, dominated by the spindown step's own 30+-minute observation window (Q13, doc 08 Spike 1) when that step is included. The nightly workflow itself splits the full-suite (no-selection) case into two parallel jobs along exactly this line — spindown alone in one, everything else in the other (§7) — so its own wall time no longer tracks the spindown step's window plus everything else's.
 
 ### Testing Hoserva's own VM management (doc 14)
 
@@ -413,6 +413,7 @@ The residual risks above are exercised by volunteers on their own hardware, neve
 - **No workflow uses `pull_request_target` to check out PR code.**
 - **First-time contributors' workflows require approval** (repository setting).
 - **Spike S9 is closed** (issue #10, doc 08 §9): hosted runners support loop devices, FUSE and a real SnapRAID sync on the pinned `ubuntu-24.04` image — `ci.yml`'s own `lab` job ran L2 in production (run 34950031773), and the pinned-image probe (`.github/workflows/s9-hosted-probe.yml`) added a hosted SnapRAID sync that also succeeded (run 35049304081). **S9's `/dev/kvm` half is CONFIRMED hosted**: a QEMU guest boots with KVM acceleration on the pinned `ubuntu-24.04` runner, confirmed host-side via QMP — this opens the hosted path for L3 (§4) and the suites that run inside it (below), for a single, non-nested guest. **S9's AppArmor-necessity question is CONFIRMED, not void**: `apparmor=unconfined` is required for the lab container's own `mount(2)` on a hosted runner (run 35076920766, an A-B-A comparison against the real `make lab-up`/`make lab-destroy` recipe — see doc 08 §9 for the run, the void history and the one open, unexplained detail, an EBUSY where AppArmor denials conventionally surface as EACCES). This affects `ci.yml`'s own merge-gate `lab` job, not L3. **S10 (nested KVM, needed only for Hoserva's own VM-management suite) is untouched and stays a separate, open spike.**
+- **`nightly-l3.yml`'s L3 VM suite runs as a matrix, split by step group** (issue #392, built on #391's step selector): a `l3-matrix` job computes the split (`scripts/vm/l3-build-matrix.sh`) and fails before either group's VM exists if `scripts/vm/l3-group-coverage-check.sh` finds a step id missing from, or listed in, more than one of the workflow's own two groups (`L3_GROUP_SPINDOWN`/`L3_GROUP_REST`, declared alongside `run-l3-suite.sh`'s own step registry). No selection (the nightly schedule, or a manual run left at its default) splits into two parallel `l3` jobs — one running only the spindown step's own ~34.5-minute observation window, one running every other step — each with its own runner, VM, `HOSERVA_LAB_ID`, setup, teardown and diagnostics artifact, so the workflow's wall time tracks whichever group takes longer (~40 minutes) rather than the two groups' sum (~56 minutes, the prior single-job baseline). A `workflow_dispatch` run with an explicit `l3_steps` selection (#391) still runs as a single, unsplit job.
 
 ### Pipeline
 
@@ -425,7 +426,7 @@ The residual risks above are exercised by volunteers on their own hardware, neve
 | Loop-device integration (L2) | Hosted (`sudo`, ephemeral) | Every push to `dev`, and PRs targeting `dev` or `main` |
 | Schema-migration fixture upgrade (D16) | Hosted | Every push to `dev`, and PRs targeting `dev` or `main` |
 | `.deb` build (amd64 + arm64) | Hosted | Every push to `dev`, and PRs targeting `dev` or `main` |
-| VM end-to-end (L3) | Hosted — S9's KVM half confirmed (run 35056076616, doc 08 §9) | Nightly on `main` where hosted; before every release |
+| VM end-to-end (L3) | Hosted — S9's KVM half confirmed (run 35056076616, doc 08 §9); runs as a two-group parallel matrix (issue #392) unless a `workflow_dispatch` selection makes it a single job (issue #391) | Nightly on `main` where hosted; before every release |
 | Hoserva's own VM-management suite (Phase 3.5, nested KVM) | Hosted if S10 allows; otherwise agents on the dev host | Nightly on `main` where hosted; before every release |
 | Migration suite | Hosted — S9's KVM half confirmed (run 35056076616, doc 08 §9) | Nightly on `main` where hosted; before every release |
 | Playwright | Hosted — S9's KVM half confirmed (run 35056076616, doc 08 §9) | Nightly on `main` where hosted; before every release |
