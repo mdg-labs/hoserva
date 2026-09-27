@@ -776,6 +776,19 @@ func TestArraySequence_Start_ServiceStartFailureRollsBackToStopped(t *testing.T)
 	if !s.InMaintenance() {
 		t.Fatal("Start: maintenance mode must stay active when a Service fails to start")
 	}
+	// The rollback completed the stop sequence, so "stop completed" is
+	// back in memory and in the persisted row — a data-disk upgrade stays
+	// admissible without another `array stop`, across a restart too.
+	if !s.arrayStopped {
+		t.Fatal("arrayStopped = false after a rollback that completed the stop sequence")
+	}
+	s2 := schedulerOnSameDB(t, s)
+	if err := s2.RestorePersistedMaintenance(context.Background()); err != nil {
+		t.Fatalf("RestorePersistedMaintenance: %v", err)
+	}
+	if !s2.arrayStopped {
+		t.Fatal("persisted array_stopped = false after a rollback that completed the stop sequence")
+	}
 }
 
 // TestArraySequence_Start_ServiceStartFailureRollbackRunsOnAnUncancellableContext

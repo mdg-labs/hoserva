@@ -488,6 +488,11 @@ func (s ArraySequence) rollbackToStopped(ctx context.Context, from int) error {
 	ctx = context.WithoutCancel(ctx)
 	err := s.stopSequence(ctx, from, true)
 	if err == nil {
+		// BeginArrayStart already cleared "stop completed"; a rollback
+		// that finished the stop sequence has put it back.
+		if s.Scheduler != nil {
+			s.Scheduler.MarkArrayStopped()
+		}
 		return nil
 	}
 	if s.StorageTarget != nil {
