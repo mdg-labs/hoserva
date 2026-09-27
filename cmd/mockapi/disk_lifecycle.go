@@ -291,7 +291,11 @@ func (h *handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
-	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, mockInventoryAsDisks(listed)); err != nil {
+	// No BlankProber: this mock never execs blkid, so the #398 same-
+	// serial-blank exception never applies here — every scenario it needs
+	// to mirror is already reachable through the wrong_filesystem shape
+	// (mockInventoryAsDisks' own doc comment).
+	if err := job.ConfirmReplacementTargetAbsent(ctx, req.Mountpoint, existing, mockInventoryAsDisks(listed), req.Device, nil); err != nil {
 		return nil, errSlotDiskPresent(err)
 	}
 	assigned, err := mockResolveAssignedDisk(req.Device, req.Filesystem, req.Adopt, listed)
@@ -334,7 +338,7 @@ func (h *handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
-	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, mockInventoryAsDisks(listed)); err != nil {
+	if err := job.ConfirmReplacementTargetAbsent(ctx, req.Mountpoint, existing, mockInventoryAsDisks(listed), req.Device, nil); err != nil {
 		return nil, errSlotDiskPresent(err)
 	}
 	assigned, err := mockResolveAssignedDisk(req.Device, req.Filesystem, req.Adopt, listed)

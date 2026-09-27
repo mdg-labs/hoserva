@@ -383,4 +383,147 @@ func (f *FakeRunner) Calls() []RunCall {
 	return out
 }
 
+// FakeBlankProber is a scriptable BlankProber (#398, CLAUDE.md): a test
+// scripts exactly what ProbeBlank(dev) returns and can assert on every
+// device it was actually called against — the property this issue's own
+// tests need is "the probe was never called for a device the replace
+// path had no reason to open", never only its return value.
+type FakeBlankProber struct {
+	mu     sync.Mutex
+	blank  map[string]bool
+	errs   map[string]error
+	probed []string
+}
+
+// NewFakeBlankProber returns a FakeBlankProber with nothing scripted —
+// ProbeBlank on an unscripted device reports not blank, no error, the
+// same "found nothing to say it's blank" default a real probe's blkid -p
+// gives for a device it cannot classify as either.
+func NewFakeBlankProber() *FakeBlankProber {
+	return &FakeBlankProber{blank: make(map[string]bool), errs: make(map[string]error)}
+}
+
+// ScriptBlank scripts dev's next ProbeBlank call to report blank (true,
+// nil) — blkid -p's own exit 2, "no signature found".
+func (f *FakeBlankProber) ScriptBlank(dev string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.blank[dev] = true
+	delete(f.errs, dev)
+}
+
+// ScriptFound scripts dev's next ProbeBlank call to report a positively
+// found signature (false, nil) — blkid -p's own exit 0, a filesystem or
+// a partition table.
+func (f *FakeBlankProber) ScriptFound(dev string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.blank[dev] = false
+	delete(f.errs, dev)
+}
+
+// ScriptError scripts dev's next ProbeBlank call to return err — an
+// ambiguous low-level result or any other probe failure.
+func (f *FakeBlankProber) ScriptError(dev string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.errs[dev] = err
+	delete(f.blank, dev)
+}
+
+// ProbeBlank implements BlankProber against whatever was scripted for
+// dev, recording every call regardless.
+func (f *FakeBlankProber) ProbeBlank(ctx context.Context, dev string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.probed = append(f.probed, dev)
+	if err, ok := f.errs[dev]; ok {
+		return false, err
+	}
+	return f.blank[dev], nil
+}
+
+// Probed returns every device ProbeBlank was actually called against, in
+// call order.
+func (f *FakeBlankProber) Probed() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.probed))
+	copy(out, f.probed)
+	return out
+}
+
+var _ BlankProber = (*FakeBlankProber)(nil)
+
+// FakeBlankReadback is a scriptable BlankReadback (#398, CLAUDE.md): a
+// test scripts exactly what Readback(dev) returns and can assert on
+// every device it was actually opened against. Unscripted defaults to an
+// error — a real device this fake was never told to open must never be
+// reported readable by accident, the same fail-closed default the real
+// readback has for any device it genuinely cannot read.
+type FakeBlankReadback struct {
+	mu     sync.Mutex
+	ok     map[string]bool
+	errs   map[string]error
+	opened []string
+}
+
+// NewFakeBlankReadback returns a FakeBlankReadback with nothing
+// scripted.
+func NewFakeBlankReadback() *FakeBlankReadback {
+	return &FakeBlankReadback{ok: make(map[string]bool), errs: make(map[string]error)}
+}
+
+// ScriptOK scripts dev's next Readback call to succeed.
+func (f *FakeBlankReadback) ScriptOK(dev string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ok[dev] = true
+	delete(f.errs, dev)
+}
+
+// ScriptError scripts dev's next Readback call to return err — an open
+// failure, a read error or a short read.
+func (f *FakeBlankReadback) ScriptError(dev string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.errs[dev] = err
+	delete(f.ok, dev)
+}
+
+// Readback implements BlankReadback against whatever was scripted for
+// dev, recording every call regardless. A dev with nothing scripted
+// refuses (fail-closed), the same as a real device this fake was never
+// told about.
+func (f *FakeBlankReadback) Readback(ctx context.Context, dev string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.opened = append(f.opened, dev)
+	if err, ok := f.errs[dev]; ok {
+		return err
+	}
+	if f.ok[dev] {
+		return nil
+	}
+	return fmt.Errorf("disk: no readback scripted for %s", dev)
+}
+
+// Opened returns every device Readback was actually called against, in
+// call order.
+func (f *FakeBlankReadback) Opened() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.opened))
+	copy(out, f.opened)
+	return out
+}
+
+var _ BlankReadback = (*FakeBlankReadback)(nil)
+
 var _ Runner = (*FakeRunner)(nil)

@@ -59,6 +59,15 @@ vm_assert_own_domain "$VM_DOMAIN"
 vm_domain_exists "$VM_DOMAIN" || die "domain '$VM_DOMAIN' does not exist — run 'make vm-up' first"
 vm_domain_running "$VM_DOMAIN" || die "domain '$VM_DOMAIN' is not running — run 'make vm-up' first"
 
+# Installed here, not assumed from smb-stop-check.sh (issue #309): this
+# script's own header already promises it never depends on that step
+# having run first (issue #391's own selectable-step audit confirmed the
+# gap for real — run alone, this script's own smbclient calls below
+# failed with the binary missing, reported as a misleading assertion
+# failure rather than "command not found").
+echo "storage-target-boot-check[$HOSERVA_LAB_ID]: ensuring smbclient is present on the guest"
+vm_ssh 'command -v smbclient >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y -qq smbclient)'
+
 ADMIN_USERNAME="${ARRAY_ADMIN_USERNAME:?storage-target-boot-check.sh needs ARRAY_ADMIN_USERNAME (set by run-l3-suite.sh from its own array setup step)}"
 ADMIN_PASSWORD="${ARRAY_ADMIN_PASSWORD:?storage-target-boot-check.sh needs ARRAY_ADMIN_PASSWORD}"
 SMB_SHARE="${ARRAY_SMB_SHARE:?storage-target-boot-check.sh needs ARRAY_SMB_SHARE}"

@@ -295,6 +295,48 @@ func TestSnapraidEngine_Sync_FailsWhenProcessDidNotRun(t *testing.T) {
 	}
 }
 
+// TestSnapraidEngine_Sync_NoSummaryNamesSnapraidsOwnFailure is #390's own
+// reproduction: a sync whose own -l log never reaches a summary section
+// because the process itself failed first — reproduced against a real
+// snapraid 12.4-1 binary in the loop-device lab by truncating every
+// snapraid.content copy, the shape an unclean shutdown can leave one in,
+// then running `snapraid sync` against it: it exits 1 in well under a
+// second having printed only the two msg:fatal lines corruptedContentSyncLog
+// carries (run_parse_test.go) and no summary tag of any kind. Before this
+// fix, Sync reported the generic, uninformative
+// "parity: could not parse snapraid run output: no summary section found"
+// for this exact case (the real error CI run 36264953516 hit) — this test
+// fails against that behaviour and requires the real snapraid diagnostic
+// and the process's own exit to come through instead.
+func TestSnapraidEngine_Sync_NoSummaryNamesSnapraidsOwnFailure(t *testing.T) {
+	dir := t.TempDir()
+	exitErr := &fakeExitError{code: 1}
+	r := &scriptedRunner{t: t, script: []scriptedResult{
+		{logBody: string(readCorpus(t, "snapraid_status_clean.log"))},
+		{logBody: noChangeDiffLog},
+		{logBody: corruptedContentSyncLog, err: exitErr},
+	}}
+	e := &SnapraidEngine{ConfPath: "snapraid.conf", LogDir: dir, Runner: r}
+
+	ch, err := e.Sync(context.Background(), SyncOpts{})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	final := drain(t, ch)
+	if final.Err == nil {
+		t.Fatal("Sync final Progress.Err = nil, want a failure naming what actually happened")
+	}
+	if strings.Contains(final.Err.Error(), "no summary section found") {
+		t.Fatalf("Sync final Progress.Err = %q, still the generic parse failure — want SnapRAID's own reason", final.Err.Error())
+	}
+	if !strings.Contains(final.Err.Error(), "This content file is truncated") {
+		t.Fatalf("Sync final Progress.Err = %q, want it to name SnapRAID's own fatal diagnostic", final.Err.Error())
+	}
+	if !errors.Is(final.Err, exitErr) {
+		t.Fatalf("Sync final Progress.Err = %v, want it to still wrap the process's own exit error", final.Err)
+	}
+}
+
 // TestSnapraidEngine_Sync_SucceedsWhenNothingToSync is #267's own
 // reproduction: a second sync run back-to-back with no changes in between
 // gets `summary:exit:equal` from a real snapraid binary (a legitimate,

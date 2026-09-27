@@ -68,6 +68,28 @@ func ParseRunSummary(log []byte) (RunSummary, error) {
 	return s, nil
 }
 
+// fatalMessages returns every "msg:fatal:" tagged line's own text from a
+// run's -l log, in order — SnapRAID's own fatal diagnostic (confirmed
+// against a real snapraid 12.4-1 binary: "This content file is
+// truncated. Please use an alternate copy.", printed right before exiting
+// non-zero with no summary section at all, #390) for a caller that needs
+// to report what actually failed, not just that ParseRunSummary found
+// nothing.
+func fatalMessages(log []byte) []string {
+	var msgs []string
+	for _, line := range splitLogLines(log) {
+		tag, rest, ok := cutTag(line)
+		if !ok || tag != "msg" {
+			continue
+		}
+		kind, tail, ok := strings.Cut(rest, ":")
+		if ok && kind == "fatal" {
+			msgs = append(msgs, strings.TrimSpace(tail))
+		}
+	}
+	return msgs
+}
+
 func parseRunSummaryField(s *RunSummary, rest string) {
 	fields := strings.Split(rest, ":")
 	if len(fields) < 2 {

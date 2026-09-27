@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	ht "github.com/ogen-go/ogen/http"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 )
@@ -1981,15 +1983,26 @@ var contractCases = []contractCase{
 		},
 	},
 
-	// --- Config export/import (#272: ImportConfig's own confirm check
-	// runs before touching h.Backup, so it needs no backup.Service
-	// wiring at all — see contract_test.go's contractSkip for why
+	// --- Config export/import (#272, #269: ImportConfig's own confirm
+	// check runs before touching h.Backup, so missing_confirm needs no
+	// backup.Service wiring at all; invalid_archive below does, and the
+	// rig now carries one — see contract_test.go's contractSkip for why
 	// ExportConfig itself is not here) ---
 	{
 		op:   "ImportConfig",
 		name: "missing_confirm",
 		run: func(ctx context.Context, h apiv1.Handler) error {
 			return h.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: false})
+		},
+	},
+	{
+		op:   "ImportConfig",
+		name: "invalid_archive",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.ImportConfig(ctx, &apiv1.ImportConfigReq{
+				Confirm: true,
+				Archive: ht.MultipartFile{File: bytes.NewReader([]byte("not a tar.zst archive"))},
+			})
 		},
 	},
 }

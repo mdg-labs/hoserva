@@ -144,6 +144,24 @@ func (s *Store) InterruptActive(ctx context.Context, at time.Time) error {
 	return s.q.InterruptActiveJobs(ctx, timeToSQL(&at))
 }
 
+// InterruptByID marks only the given ids interrupted, as of at, and only
+// those currently queued or running — never a blanket sweep over whatever
+// the table holds. A whole-database restore (ImportConfig, doc 10 §1)
+// calls this with exactly the ids that were queued or running in the
+// archive it restored (#402): a job inserted into the live database in
+// the narrow window around the restore, but not part of the archive, is
+// never touched by this call, however its own status reads. ids may be
+// empty, in which case nothing is updated.
+func (s *Store) InterruptByID(ctx context.Context, ids []string, at time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.q.InterruptJobsByID(ctx, storedb.InterruptJobsByIDParams{
+		FinishedAt: timeToSQL(&at),
+		Ids:        ids,
+	})
+}
+
 func fromRows(rows []*storedb.Job) ([]*Job, error) {
 	out := make([]*Job, 0, len(rows))
 	for _, row := range rows {

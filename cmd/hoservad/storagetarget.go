@@ -63,11 +63,39 @@ type storageTargetSync struct {
 	// PoolMounted overrides pool.IsMountedConfirmed — set only by this
 	// package's own tests, never in production.
 	PoolMounted func(path string) (bool, error)
+	// StartupMountTimeout overrides startupMountTimeout — set only by
+	// this package's own tests, never in production.
+	StartupMountTimeout time.Duration
 
 	mu      sync.Mutex
 	applied bool // false until Startup or Update has completed at least once
 	ready   bool
 	units   []string
+
+	// mountFailedMu guards mountFailedMountpoints on its own, deliberately
+	// never s.mu (#398): Startup and updateTransition hold s.mu for their
+	// whole bounded mount attempt (up to startupMountTimeout, a real
+	// systemctl call under it) — a nightly L3 failure this fix closes had
+	// GET /pool blocked behind exactly that hold, since MountFailedMount-
+	// points used to share s.mu too. A caller that only ever wants the
+	// last-known mount-failure snapshot (GetPool, api.Handler's own
+	// MountFailedSlots hook) must never wait behind a live mount attempt
+	// to read it.
+	mountFailedMu sync.Mutex
+	// mountFailedMountpoints records every mountpoint whose own physical
+	// disk mount this sync's own bounded mount attempt (mountArrayDisks,
+	// run from both Startup and updateTransition) most recently failed or
+	// timed out to bring up (#398): the smallest honest signal GetPool
+	// needs to tell a slot present by identity — disk.StorageGate itself
+	// reports the array ready for it, since neither side's filesystem
+	// UUID is positively known to differ, the same #388 fix that stops
+	// hoservad's own restart loop — from one that is actually serving.
+	// Reconciled against the live mount table (a stat, never a device
+	// open — Q13) on every Startup and Update call, so a slot clears
+	// itself the moment its disk actually mounts again — a successful
+	// replace, or the physical swap coming back on its own — never only
+	// on a restart.
+	mountFailedMountpoints map[string]bool
 }
 
 func (s *storageTargetSync) poolMounted(path string) (bool, error) {
@@ -75,6 +103,35 @@ func (s *storageTargetSync) poolMounted(path string) (bool, error) {
 		return s.PoolMounted(path)
 	}
 	return pool.IsMountedConfirmed(path)
+}
+
+// startupMountTimeout bounds every mount `systemctl start` Startup issues
+// before main.go sends systemd's own READY=1 (#388): a disk that satisfies
+// disk.StorageGate's identity check but carries the wrong filesystem is
+// the case this bound exists for, but it holds regardless of *why* a mount
+// unit's own device dependency never resolves — a generated `.mount` unit
+// carries no JobTimeoutSec= of its own, so `systemctl start` otherwise
+// waits on that job with no bound at all. Left unbounded, Type=notify's
+// own TimeoutStartSec (default 90s, packaging/debian/hoserva.service)
+// kills hoservad before Startup ever returns to send READY=1, and
+// Restart=on-failure repeats the identical wait forever — the restart
+// loop #388 reports. disk.Runner.Run execs through exec.CommandContext,
+// so a timed-out context kills the systemctl client the moment this
+// expires; the pending job it submitted may still be running in systemd
+// itself, exactly as it would be if an operator had run the same command
+// and given up on it, but Startup itself is unblocked and reports the
+// mount as failed — treated exactly like the gate reporting not ready:
+// no flag, no dependent start, and the next SIGHUP or rebuild retries it
+// once the disk is actually fixed. 20s leaves ample headroom under the
+// 90s default for every other step Startup and the rest of main.go's own
+// startup path still need to run.
+const startupMountTimeout = 20 * time.Second
+
+func (s *storageTargetSync) startupMountTimeout() time.Duration {
+	if s.StartupMountTimeout > 0 {
+		return s.StartupMountTimeout
+	}
+	return startupMountTimeout
 }
 
 // mountPool brings up seq's own mergerfs mounts — the catch-all and every
@@ -111,14 +168,18 @@ func mountPool(ctx context.Context, seq *job.ArraySequence) error {
 // boot-time systemd transaction, and nothing else ever retries it.
 // `systemctl start` on an already-active unit is a no-op (confirmed
 // against a real systemd), so calling this on a disk that is already
-// mounted costs nothing.
-func mountArrayDisks(ctx context.Context, seq *job.ArraySequence) error {
+// mounted costs nothing. failedWhere names the one mountpoint whose own
+// Mount call actually failed or timed out (#398), so the caller can
+// record it — this loop bails out on the first failure, so it is always
+// at most one; a later mountpoint's own state is simply not yet known,
+// never reported as failed.
+func mountArrayDisks(ctx context.Context, seq *job.ArraySequence) (failedWhere string, err error) {
 	for _, d := range seq.Disks {
 		if err := d.Mount(ctx); err != nil {
-			return fmt.Errorf("mounting %s: %w", d.Where(), err)
+			return d.Where(), fmt.Errorf("mounting %s: %w", d.Where(), err)
 		}
 	}
-	return nil
+	return "", nil
 }
 
 // confirmPoolMounted confirms the catch-all is genuinely a live mount —
@@ -278,6 +339,103 @@ func (s *storageTargetSync) Ready() bool {
 	return s.ready
 }
 
+// recordMountFailure records where's own disk mount as failed (#398),
+// under mountFailedMu — deliberately not s.mu (see that field's own doc
+// comment). Safe to call regardless of what other lock, if any, the
+// caller already holds.
+func (s *storageTargetSync) recordMountFailure(where string) {
+	if where == "" {
+		return
+	}
+	s.mountFailedMu.Lock()
+	defer s.mountFailedMu.Unlock()
+	if s.mountFailedMountpoints == nil {
+		s.mountFailedMountpoints = make(map[string]bool)
+	}
+	s.mountFailedMountpoints[where] = true
+}
+
+// reconcileMountFailures drops every mountpoint currently tracked as
+// failed (#398) that is now, in fact, a genuine mount — a stat of the
+// live mount table (s.poolMounted, the same pool.IsMountedConfirmed stat
+// mountAndConfirmPool itself uses — never a device open, Q13) — so a
+// slot self-heals the moment its disk actually mounts again (a
+// successful replace's own applyArrayFromStore, or the physical swap
+// coming back on its own) rather than staying "needs attention" until
+// the next restart. Runs under mountFailedMu, not s.mu (see that field's
+// own doc comment). Cheap in the ordinary case: this only ever stats a
+// mountpoint this sync itself previously recorded failed, typically none
+// at all.
+func (s *storageTargetSync) reconcileMountFailures(seq *job.ArraySequence) {
+	if seq == nil {
+		return
+	}
+	s.mountFailedMu.Lock()
+	defer s.mountFailedMu.Unlock()
+	if len(s.mountFailedMountpoints) == 0 {
+		return
+	}
+	for _, d := range seq.Disks {
+		where := d.Where()
+		if !s.mountFailedMountpoints[where] {
+			continue
+		}
+		if mounted, err := s.poolMounted(where); err == nil && mounted {
+			delete(s.mountFailedMountpoints, where)
+		}
+	}
+}
+
+// MountFailedMountpoints reports every mountpoint whose own disk mount
+// this sync's own bounded mount attempt most recently failed or timed
+// out to bring up (#398) — api.Handler's own MountFailedSlots hook reads
+// it from a request goroutine. Guarded by mountFailedMu alone (see that
+// field's own doc comment): this must never wait behind Startup or
+// updateTransition's own s.mu hold across a live, possibly slow mount
+// attempt just to read the last snapshot.
+func (s *storageTargetSync) MountFailedMountpoints() map[string]bool {
+	s.mountFailedMu.Lock()
+	defer s.mountFailedMu.Unlock()
+	out := make(map[string]bool, len(s.mountFailedMountpoints))
+	for k := range s.mountFailedMountpoints {
+		out[k] = true
+	}
+	return out
+}
+
+// mountArrayAndPool mounts seq's own physical disks (mountArrayDisks)
+// and then its pool (mountAndConfirmPool), together under a single
+// bounded deadline (#398, mirroring #388's own boot-time bound):
+// Startup's boot case and updateTransition's live SIGHUP-arrival case
+// both need the identical bound — a same-serial disk whose mount unit
+// can never resolve its device must return control to the caller within
+// startupMountTimeout, never hang on systemd's own default unit-start
+// timeout (90s). Left unbounded on the updateTransition path, a nightly
+// L3 run showed the concrete cost: installReloadHandler's own
+// unconditional first rebuild (main.go, run before the API listeners
+// ever start) called exactly this mount, and a same-serial blank
+// replacement's stuck `systemctl start mnt-user.mount` — waiting via
+// RequiresMountsFor= on the still-unmountable disk1 unit — kept the API
+// listeners from ever starting within the 60s the disk-yank check
+// allows. Any array-disk mount failure is recorded (recordMountFailure)
+// regardless of which caller hit it, so GetPool can surface the slot
+// mount_failed whether Startup or a later live rebuild is what actually
+// ran into it. Callers must hold s.mu.
+func (s *storageTargetSync) mountArrayAndPool(ctx context.Context, seq *job.ArraySequence) error {
+	mountCtx, cancel := context.WithTimeout(ctx, s.startupMountTimeout())
+	defer cancel()
+	if failedWhere, err := mountArrayDisks(mountCtx, seq); err != nil {
+		if failedWhere != "" {
+			s.recordMountFailure(failedWhere)
+		}
+		return fmt.Errorf("mounting the array's own disks: %w", err)
+	}
+	if err := s.mountAndConfirmPool(mountCtx, seq); err != nil {
+		return fmt.Errorf("mounting and confirming the pool: %w", err)
+	}
+	return nil
+}
+
 // writeUnits regenerates every storage-target unit from units and reloads
 // systemd. Every file it writes is independent of readiness (D4:
 // pool.StorageReadyUnit's own content never encodes
@@ -353,6 +511,7 @@ func (s *storageTargetSync) Startup(ctx context.Context, seq *job.ArraySequence)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.reconcileMountFailures(seq)
 	if err := s.clearFlag(); err != nil {
 		return err
 	}
@@ -397,18 +556,26 @@ func (s *storageTargetSync) Startup(ctx context.Context, seq *job.ArraySequence)
 		log.Printf("hoservad: storage gate is ready but the array is in maintenance mode at startup — leaving Samba/NFS/Docker/libvirt gated closed until array start")
 		ready = false
 	default:
-		// mountArrayDisks (#387) runs before mountAndConfirmPool:
-		// a boot where the array-stopped flag was still set from before this
-		// boot's own reconciliation above skipped every disk's automatic
-		// nofail activation silently, in the very same boot-time systemd
+		// mountArrayAndPool (#387, bounded by #388/#398) runs mount-
+		// ArrayDisks before mountAndConfirmPool: a boot where the array-
+		// stopped flag was still set from before this boot's own
+		// reconciliation above skipped every disk's automatic nofail
+		// activation silently, in the very same boot-time systemd
 		// transaction, and nothing else ever retries it — Startup must not
 		// assume that activation happened just because the gate now reports
-		// every expected disk present.
-		if err := mountArrayDisks(ctx, seq); err != nil {
-			return fmt.Errorf("mounting the array's own disks before reporting the storage gate ready: %w", err)
-		}
-		if err := s.mountAndConfirmPool(ctx, seq); err != nil {
-			return fmt.Errorf("mounting and confirming the pool before reporting the storage gate ready: %w", err)
+		// every expected disk present. Both mounts run under one bounded
+		// deadline (see mountArrayAndPool's own doc comment for why this
+		// cannot be left unbounded): the gate reporting ready by identity is
+		// not a guarantee either actually mounts cleanly (a wrong-filesystem
+		// slot is refused before it can reach here, evaluate/#388, but
+		// nothing rules out a mount unit's own device dependency hanging
+		// for some other reason). A mount that times out is returned as an
+		// error exactly like one that fails outright: the switch above
+		// already leaves the flag cleared and s.ready false, so main.go
+		// still sends READY=1 on schedule and the next SIGHUP or rebuild
+		// retries.
+		if err := s.mountArrayAndPool(ctx, seq); err != nil {
+			return fmt.Errorf("mounting the array's own disks and pool before reporting the storage gate ready: %w", err)
 		}
 		if err := s.setFlagReady(); err != nil {
 			return err
@@ -493,6 +660,8 @@ func (s *storageTargetSync) updateTransition(ctx context.Context, seq *job.Array
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.reconcileMountFailures(seq)
+
 	units := diskMountUnitNames(seq)
 	ready := gateReady(seq)
 
@@ -504,12 +673,18 @@ func (s *storageTargetSync) updateTransition(ctx context.Context, seq *job.Array
 	}
 
 	if unitsChanged {
+		// A refused write (a hand-edited managed unit) must fail this
+		// transition, not just log it (#388, raised by the #385 executor):
+		// UpdateOrError's whole point is telling a caller that surfaces an
+		// outcome — the acknowledge operation — that boot ordering did not
+		// actually update, rather than reporting success over stale units
+		// on disk. Update's own caller still only ever logs it, exactly as
+		// before, since it wraps this same call.
 		if err := s.writeUnits(ctx, units); err != nil {
-			log.Printf("hoservad: %v — Samba/NFS/Docker/libvirt boot ordering may be stale until this is retried", err)
-		} else {
-			s.units = units
-			s.applied = true
+			return fmt.Errorf("%w — Samba/NFS/Docker/libvirt boot ordering may be stale until this is retried", err)
 		}
+		s.units = units
+		s.applied = true
 	}
 
 	if !readyChanged {
@@ -534,16 +709,29 @@ func (s *storageTargetSync) updateTransition(ctx context.Context, seq *job.Array
 	if seq.Scheduler != nil && seq.Scheduler.InMaintenance() {
 		return errStorageTargetInMaintenance
 	}
-	// mountAndConfirmPool is what makes this transition trustworthy:
+	// mountArrayAndPool is what makes this transition trustworthy:
 	// disk.StorageGate.Ready() only reports every expected disk present by
-	// identity, never whether the pool that serves them actually mounted,
-	// and a physical disk returning does not pull the mergerfs catch-all
-	// up with it. A failure here must be treated exactly like the gate
-	// itself reporting not ready — no flag, no dependent start — or a
-	// client could still write straight into the unmounted mountpoint on
-	// the boot disk even though every unit this gate installs reports
-	// active.
-	if err := s.mountAndConfirmPool(ctx, seq); err != nil {
+	// identity, never whether its own disks or the pool that serves them
+	// actually mounted, and a physical disk returning does not pull the
+	// mergerfs catch-all up with it. A same-serial disk newly arrived while
+	// hoservad is already running (the SIGHUP path this transition serves)
+	// needs its own array-disk mount attempted here exactly as Startup
+	// attempts it at boot — Update never used to call mountArrayDisks at
+	// all, so a mount_failed slot that only ever arrived live, never
+	// present at the last boot, went unrecorded (#398). Bounded the same
+	// way Startup bounds it (mountArrayAndPool's own doc comment): a
+	// mount unit whose device dependency never resolves must return
+	// control here within startupMountTimeout, not hang on systemd's own
+	// default unit-start timeout — this call used to run on ctx directly,
+	// unbounded, and a nightly L3 run showed the cost: installReloadHandler's
+	// own unconditional first rebuild, run before main.go's API listeners
+	// ever start, blocked here for the better part of systemd's own 90s
+	// device timeout on a same-serial blank replacement. A failure here
+	// must be treated exactly like the gate itself reporting not ready —
+	// no flag, no dependent start — or a client could still write straight
+	// into the unmounted mountpoint on the boot disk even though every
+	// unit this gate installs reports active.
+	if err := s.mountArrayAndPool(ctx, seq); err != nil {
 		return fmt.Errorf("%w — leaving the storage-ready flag closed", err)
 	}
 	if err := s.setFlagReady(); err != nil {

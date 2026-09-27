@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 )
@@ -22,6 +25,10 @@ func errConfirmRequired() error {
 
 func errInvalidPlan(err error) error {
 	return &mockError{code: "invalid_plan", statusCode: 400, message: err.Error()}
+}
+
+func errInvalidArchive(err error) error {
+	return &mockError{code: "invalid_archive", statusCode: 400, message: err.Error()}
 }
 
 func errRootOnlyRecovery() error {
@@ -590,6 +597,27 @@ func (h *handler) ExportConfig(ctx context.Context) (apiv1.ExportConfigOK, error
 func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) error {
 	if !req.Confirm {
 		return errConfirmRequired()
+	}
+	// The mock never restores anything (doc 10 §1, ExportConfig's own
+	// stub-bytes comment above) — but it validates the body with the
+	// same backup.VerifyArchiveForImport production's own ImportConfig
+	// runs first (#269), so a non-archive upload is rejected the same
+	// way on both sides (D18).
+	tmp, err := os.CreateTemp("", "mockapi-config-import-*.tar.zst")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := io.Copy(tmp, req.Archive.File); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := backup.VerifyArchiveForImport(tmpPath); err != nil {
+		return errInvalidArchive(err)
 	}
 	return nil
 }

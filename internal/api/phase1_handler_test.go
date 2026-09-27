@@ -302,6 +302,178 @@ func TestHandler_GetPool_MatchesRenumberedDiskByIdentity(t *testing.T) {
 	}
 }
 
+// TestHandler_GetPool_SameSerialWrongFilesystemIsReportedDistinctly is
+// #388's own regression test: a disk that satisfies the identity check
+// (Q21: matched by serial/WWN — a cloned or reused drive, or a blank
+// replacement carrying the original disk's serial) but was formatted with
+// a different filesystem than SQLite recorded for the slot must never be
+// reported `active` — the replace flow needs a distinct state to offer
+// itself against, and the storage gate must not attempt to mount it.
+func TestHandler_GetPool_SameSerialWrongFilesystemIsReportedDistinctly(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	dataDir := t.TempDir()
+	p := disk.NewFakeProvider()
+	// Same serial/WWN as the recorded member, but a different filesystem —
+	// exactly the "blank disk carrying disk1's original serial" scenario
+	// #388 reports.
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-data", FSUUID: "blank-replacement-uuid"})
+	h.Disks = p
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "original-uuid", WWN: "wwn-data", Mountpoint: dataDir},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	if len(got.Disks) != 1 {
+		t.Fatalf("len(Disks) = %d, want 1", len(got.Disks))
+	}
+	if e := got.Disks[0]; e.State != apiv1.DiskStateWrongFilesystem || e.Role != apiv1.PoolDiskEntryRoleData || e.MountPoint != dataDir {
+		t.Fatalf("sdc (same serial, wrong filesystem) = state %q role %q mount %q, want wrong_filesystem/data/%s", e.State, e.Role, e.MountPoint, dataDir)
+	}
+}
+
+// TestHandler_GetPool_MountFailedSlotIsReportedDistinctly is #398's own
+// signal: a disk matched to a slot by identity, present, but whose
+// filesystem UUID was never positively read at all (empty, not
+// positively different) — the storage gate itself reports the array
+// ready for it (#388's own fix), so nothing here can be wrong_filesystem
+// — combined with h.MountFailedSlots reporting that slot's own mountpoint
+// as a mount hoservad's own bounded attempt could not bring up.
+func TestHandler_GetPool_MountFailedSlotIsReportedDistinctly(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	dataDir := t.TempDir()
+	p := disk.NewFakeProvider()
+	// Same WWN as the recorded member, no filesystem UUID at all — the
+	// literal #388 same-serial-blank scenario.
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-data"})
+	h.Disks = p
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "original-uuid", WWN: "wwn-data", Mountpoint: dataDir},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+	h.MountFailedSlots = func() map[string]bool { return map[string]bool{dataDir: true} }
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	if len(got.Disks) != 1 {
+		t.Fatalf("len(Disks) = %d, want 1", len(got.Disks))
+	}
+	if e := got.Disks[0]; e.State != apiv1.DiskStateMountFailed || e.Role != apiv1.PoolDiskEntryRoleData || e.MountPoint != dataDir {
+		t.Fatalf("sdc (same identity, mount failed) = state %q role %q mount %q, want mount_failed/data/%s", e.State, e.Role, e.MountPoint, dataDir)
+	}
+}
+
+// TestHandler_GetPool_MountFailedNeverOverridesWrongFilesystem proves
+// GetPool checks wrongFilesystem first: a slot whose filesystem was
+// positively read to differ is wrong_filesystem, never mount_failed,
+// even if h.MountFailedSlots also names its mountpoint (a boot's own
+// mount attempt for a wrong-filesystem slot never even runs — disk.
+// StorageGate treats WrongFilesystem exactly like Missing, doc 02 §1 —
+// so this would only ever be stale bookkeeping, never the live truth).
+func TestHandler_GetPool_MountFailedNeverOverridesWrongFilesystem(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	dataDir := t.TempDir()
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-data", FSUUID: "blank-replacement-uuid"})
+	h.Disks = p
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "original-uuid", WWN: "wwn-data", Mountpoint: dataDir},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+	h.MountFailedSlots = func() map[string]bool { return map[string]bool{dataDir: true} }
+
+	got, err := h.GetPool(ctx)
+	if err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	if len(got.Disks) != 1 {
+		t.Fatalf("len(Disks) = %d, want 1", len(got.Disks))
+	}
+	if e := got.Disks[0]; e.State != apiv1.DiskStateWrongFilesystem {
+		t.Fatalf("state = %q, want wrong_filesystem even with a stale MountFailedSlots entry", e.State)
+	}
+}
+
+// TestHandler_GetPool_NeverProbesADevice is #398's own acceptance
+// criterion for the poll path: GetPool serves every GET /pool request
+// and disk.Provider.List's own poll (Q13), so it must never open a
+// device — disk.BlankProber.ProbeBlank is reserved for the one device a
+// replace request actually names (job.ConfirmReplacementTargetAbsent,
+// PlanDiskReplace/ReplaceDisk). A same-serial, mount-failed slot is
+// exactly the scenario a probe might otherwise seem tempting to consult
+// here; wiring h.BlankProbe and asserting Probed() is empty proves
+// GetPool never reaches for it regardless.
+func TestHandler_GetPool_NeverProbesADevice(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newTestHandler(t)
+
+	dataDir := t.TempDir()
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-data"})
+	h.Disks = p
+
+	arrayStore := store.NewArrayStore(newArrayStoreDB(t))
+	if err := arrayStore.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "1000000",
+		CreatedAt:    time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "original-uuid", WWN: "wwn-data", Mountpoint: dataDir},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	h.ArrayStore = arrayStore
+	h.MountFailedSlots = func() map[string]bool { return map[string]bool{dataDir: true} }
+	probe := disk.NewFakeBlankProber()
+	h.BlankProbe = probe
+
+	if _, err := h.GetPool(ctx); err != nil {
+		t.Fatalf("GetPool: %v", err)
+	}
+	if _, err := h.Disks.List(ctx); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	if probed := probe.Probed(); len(probed) != 0 {
+		t.Fatalf("probe.Probed() = %v, want no calls — GetPool and List must never open a device", probed)
+	}
+}
+
 // TestHandler_GetPool_WeakIdentityDifferentSizeIsNotTheMember is #327
 // through GET /pool: a stored weak-identity member with a recorded size
 // must not be matched by a same-UUID inventory disk of a different

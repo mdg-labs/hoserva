@@ -233,7 +233,9 @@
       "standby": "Spun down",
       "spinning_up": "Spinning up",
       "missing": "Missing — not detected",
-      "failed": "Failed"
+      "failed": "Failed",
+      "wrong_filesystem": "Wrong filesystem — needs replacing",
+      "mount_failed": "Needs attention — could not be mounted"
     },
     "diskUsageUnavailable": "Usage unavailable",
     "stopArray": "Stop array",
@@ -274,6 +276,8 @@
       "slotLabel": "Disk to replace",
       "slotPlaceholder": "Select a slot",
       "slotMissing": "{{mountpoint}} (missing)",
+      "wrongFilesystemNote": "{{device}} carries a different filesystem than this slot's own record — it will be erased and rebuilt from parity. No other disk can take this slot.",
+      "mountFailedNote": "{{device}} is present but could not be mounted — this is usually a blank replacement disk. Replacing it here checks it is genuinely blank before rebuilding it from parity. No other disk can take this slot.",
       "deviceLabel": "Replacement device",
       "devicePlaceholder": "Select a disk",
       "filesystemLabel": "Filesystem",

@@ -15,8 +15,11 @@ package job
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -112,14 +115,59 @@ func loopStillBacksImage(t *testing.T, dev, img string) bool {
 	return gotImg == wantImg
 }
 
-func blkidType(ctx context.Context, r disk.Runner, dev string) string {
-	out, _ := r.Run(ctx, "blkid", "-s", "TYPE", "-o", "value", dev)
+// blkidType reads dev's filesystem type by direct probe (`blkid -p`)
+// rather than trusting libblkid's cache. This lab container has no udev
+// (doc 06 §3), so nothing invalidates that cache when a loop device is
+// detached and a different, freshly created image is immediately
+// attached to the same, just-freed minor number — a plain `blkid` on
+// that reused minor can report the *previous* occupant's filesystem for
+// a device this test has confirmed, by reading its raw bytes directly,
+// is genuinely something else (#399). blkid -p exits 2 both for "no
+// signature found" (the genuine blank-device case) and for a device it
+// could not even open (confirmed against real blkid, util-linux 2.41.5,
+// in this lab: a nonexistent path, an unreadable one and a truly blank
+// device all exit 2 alike), so exit code alone cannot tell a blank
+// device from a wrong path; blkidProbe below opens dev and reads its
+// first byte before ever invoking blkid, and still fails on any non-exit-2 blkid result
+// (blkid missing, killed, or another genuine error), so a refused
+// format/replace's blank-device assertion cannot pass vacuously (#400).
+func blkidType(t testing.TB, ctx context.Context, r disk.Runner, dev string) string {
+	t.Helper()
+	return blkidProbe(t, ctx, r, "TYPE", dev)
+}
+
+// blkidUUID reads dev's filesystem UUID by direct probe (`blkid -p`) for
+// the same reason blkidType does (#399), with the same existence check
+// and exit-2-only distinction blkidType applies (#400).
+func blkidUUID(t testing.TB, ctx context.Context, r disk.Runner, dev string) string {
+	t.Helper()
+	return blkidProbe(t, ctx, r, "UUID", dev)
+}
+
+func blkidProbe(t testing.TB, ctx context.Context, r disk.Runner, tag, dev string) string {
+	t.Helper()
+	if err := readFirstByte(dev); err != nil {
+		t.Fatalf("blkid -p -s %s -o value %s: device not readable: %v", tag, dev, err)
+	}
+	out, err := r.Run(ctx, "blkid", "-p", "-s", tag, "-o", "value", dev)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			return ""
+		}
+		t.Fatalf("blkid -p -s %s -o value %s: %v (output %q)", tag, dev, err, out)
+	}
 	return strings.TrimSpace(string(out))
 }
 
-func blkidUUID(ctx context.Context, r disk.Runner, dev string) string {
-	out, _ := r.Run(ctx, "blkid", "-s", "UUID", "-o", "value", dev)
-	return strings.TrimSpace(string(out))
+func readFirstByte(dev string) error {
+	f, err := os.Open(dev)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = f.Read(make([]byte, 1))
+	return err
 }
 
 func findmntUUID(ctx context.Context, r disk.Runner, where string) string {
@@ -221,16 +269,16 @@ func TestLabCreateArray_RunFuncFormatsOnlyAssignedLoops(t *testing.T) {
 	if finished.Status != StatusSucceeded {
 		t.Fatalf("assigned loops: status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
 	}
-	if got := blkidType(ctx, exec, parity); got != "xfs" {
+	if got := blkidType(t, ctx, exec, parity); got != "xfs" {
 		t.Fatalf("parity %s: blkid TYPE = %q, want xfs", parity, got)
 	}
-	if got := blkidType(ctx, exec, data); got != "xfs" {
+	if got := blkidType(t, ctx, exec, data); got != "xfs" {
 		t.Fatalf("data %s: blkid TYPE = %q, want xfs", data, got)
 	}
-	if got := blkidType(ctx, exec, cache); got != "xfs" {
+	if got := blkidType(t, ctx, exec, cache); got != "xfs" {
 		t.Fatalf("cache %s: blkid TYPE = %q, want xfs", cache, got)
 	}
-	if got := blkidType(ctx, exec, spare); got != "" {
+	if got := blkidType(t, ctx, exec, spare); got != "" {
 		t.Fatalf("spare %s gained a filesystem (%q)", spare, got)
 	}
 
@@ -254,7 +302,7 @@ func TestLabCreateArray_RunFuncFormatsOnlyAssignedLoops(t *testing.T) {
 	if !strings.Contains(finished.ErrorMessage, "not a loop device") && !strings.Contains(finished.ErrorMessage, "unmanaged") {
 		t.Fatalf("non-loop path ErrorMessage = %q, want unmanaged-device refusal", finished.ErrorMessage)
 	}
-	if got := blkidType(ctx, exec, spare); got != "" {
+	if got := blkidType(t, ctx, exec, spare); got != "" {
 		t.Fatalf("spare %s was formatted (%q) when the plan named /dev/sda1", spare, got)
 	}
 	exists, err := st2.Exists(ctx)
@@ -389,9 +437,9 @@ func TestLabCreateArray_PersistsTopologyAndMountsByUUID(t *testing.T) {
 		t.Fatalf("len(disks) = %d, want 3: %+v", len(disks), disks)
 	}
 
-	parityUUID := blkidUUID(ctx, exec, parity)
-	dataUUID := blkidUUID(ctx, exec, data)
-	cacheUUID := blkidUUID(ctx, exec, cache)
+	parityUUID := blkidUUID(t, ctx, exec, parity)
+	dataUUID := blkidUUID(t, ctx, exec, data)
+	cacheUUID := blkidUUID(t, ctx, exec, cache)
 	if parityUUID == "" || dataUUID == "" || cacheUUID == "" {
 		t.Fatalf("missing filesystem UUID: parity=%q data=%q cache=%q", parityUUID, dataUUID, cacheUUID)
 	}
@@ -498,9 +546,9 @@ func TestLabCreateArray_RetryAfterApplyFailureDoesNotReformat(t *testing.T) {
 	if firstMkfs != 3 {
 		t.Fatalf("first job mkfs count = %d, want 3 assigned loops", firstMkfs)
 	}
-	parityUUID := blkidUUID(ctx, exec, parity)
-	dataUUID := blkidUUID(ctx, exec, data)
-	cacheUUID := blkidUUID(ctx, exec, cache)
+	parityUUID := blkidUUID(t, ctx, exec, parity)
+	dataUUID := blkidUUID(t, ctx, exec, data)
+	cacheUUID := blkidUUID(t, ctx, exec, cache)
 	if parityUUID == "" || dataUUID == "" || cacheUUID == "" {
 		t.Fatalf("missing filesystem UUID after first format: parity=%q data=%q cache=%q", parityUUID, dataUUID, cacheUUID)
 	}
@@ -516,16 +564,16 @@ func TestLabCreateArray_RetryAfterApplyFailureDoesNotReformat(t *testing.T) {
 	if exec.mkfs != firstMkfs {
 		t.Fatalf("retry formatted assigned loops again: mkfs count = %d, want %d", exec.mkfs, firstMkfs)
 	}
-	if got := blkidUUID(ctx, exec, parity); got != parityUUID {
+	if got := blkidUUID(t, ctx, exec, parity); got != parityUUID {
 		t.Fatalf("parity UUID changed on retry: %q -> %q (second format)", parityUUID, got)
 	}
-	if got := blkidUUID(ctx, exec, data); got != dataUUID {
+	if got := blkidUUID(t, ctx, exec, data); got != dataUUID {
 		t.Fatalf("data UUID changed on retry: %q -> %q (second format)", dataUUID, got)
 	}
-	if got := blkidUUID(ctx, exec, cache); got != cacheUUID {
+	if got := blkidUUID(t, ctx, exec, cache); got != cacheUUID {
 		t.Fatalf("cache UUID changed on retry: %q -> %q (second format)", cacheUUID, got)
 	}
-	if got := blkidType(ctx, exec, spare); got != "" {
+	if got := blkidType(t, ctx, exec, spare); got != "" {
 		t.Fatalf("unassigned %s gained a filesystem (%q)", spare, got)
 	}
 
@@ -662,5 +710,85 @@ func TestLabCreateLoopImage_CleanupSkipsDetachOfReusedDevice(t *testing.T) {
 		if c.Name == "losetup" && len(c.Args) > 0 && c.Args[0] == "-d" {
 			t.Fatalf("cleanup ran losetup -d %v against a device now backed by another lab's image", c.Args)
 		}
+	}
+}
+
+// recordingTB is a minimal testing.TB whose Fatalf records a failure
+// instead of stopping this test binary's own run, so blkidType's and
+// blkidUUID's fatal path (#400) can be observed as a value rather than
+// only by process exit. Embedding the nil testing.TB satisfies the
+// interface's unexported method without implementing every method:
+// blkidType and blkidUUID (via blkidProbe) call only Helper and Fatalf,
+// so every other method staying nil is unreachable here.
+type recordingTB struct {
+	testing.TB
+	failed  bool
+	message string
+}
+
+func (r *recordingTB) Helper() {}
+
+func (r *recordingTB) Fatalf(format string, args ...any) {
+	r.failed = true
+	r.message = fmt.Sprintf(format, args...)
+	runtime.Goexit()
+}
+
+// TestLabBlkidHelpers_FailOnNonExitTwoError is this issue's own proving
+// test (#400): blkid -p exits 2 only for "no signature found" (a
+// genuinely blank device); any other failure — a wrong device path, a
+// missing binary, a permission error — must fail the caller rather than
+// read back "" the same way, or a refused format/replace's own
+// blank-device assertion would pass vacuously. Run against real blkid
+// in this lab container: a nonexistent path and an existing but
+// unreadable one must both fail the caller, and a real blank loop
+// device's own exit-2 result must still read back as "".
+func TestLabBlkidHelpers_FailOnNonExitTwoError(t *testing.T) {
+	lab := labDir(t)
+	ctx := context.Background()
+	exec := disk.CommandRunner{}
+	// A directory exists but cannot be read as a device even by root (this
+	// lab's tests run as root, so a mode-000 file would still be readable):
+	// it stands in for a device path that exists yet blkid cannot open,
+	// which exits 2 exactly like a blank device.
+	unreadable := filepath.Join(lab, "unreadable-device-403")
+	if err := os.Mkdir(unreadable, 0o700); err != nil {
+		t.Fatalf("creating unreadable stand-in: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(unreadable) })
+
+	for _, dev := range []struct{ name, path string }{
+		{"nonexistent", filepath.Join(lab, "no-such-device-400")},
+		{"unreadable", unreadable},
+	} {
+		for _, probe := range []struct {
+			name string
+			fn   func(testing.TB, context.Context, disk.Runner, string) string
+		}{
+			{"blkidType", blkidType},
+			{"blkidUUID", blkidUUID},
+		} {
+			t.Run(probe.name+"/"+dev.name, func(t *testing.T) {
+				rec := &recordingTB{}
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					probe.fn(rec, ctx, exec, dev.path)
+				}()
+				<-done
+				if !rec.failed {
+					t.Fatalf("%s(%s path) returned instead of failing — a swallowed error would pass a blank-device assertion vacuously", probe.name, dev.name)
+				}
+				t.Logf("%s correctly failed: %s", probe.name, rec.message)
+			})
+		}
+	}
+
+	blank := createLoopImage(ctx, t, exec, lab, "p400-blank", "320M")
+	if got := blkidType(t, ctx, exec, blank); got != "" {
+		t.Fatalf("blkidType(blank loop device) = %q, want \"\" (exit 2, no signature found)", got)
+	}
+	if got := blkidUUID(t, ctx, exec, blank); got != "" {
+		t.Fatalf("blkidUUID(blank loop device) = %q, want \"\" (exit 2, no signature found)", got)
 	}
 }

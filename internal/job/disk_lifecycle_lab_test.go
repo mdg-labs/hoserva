@@ -163,23 +163,6 @@ func resetBootContentDir(t *testing.T) {
 	}
 }
 
-// blkidTypeProbe reads dev's filesystem type by direct probe (`blkid -p`),
-// bypassing whatever cached scan result blkidType's own plain `blkid`
-// invocation would otherwise return. This lab container has no udev
-// (doc 06 §3), so nothing invalidates blkid's cache when a loop device is
-// detached and a different, freshly created image is immediately attached
-// to the same, just-freed minor number (createLoopImage's own
-// disk_run_lab_test.go cleanup runs `losetup -d` at the end of every
-// test) — a plain `blkid` on that reused minor can report the *previous*
-// occupant's filesystem for a device this test has confirmed, by reading
-// its raw bytes directly, is genuinely still all zero. A refusal test's
-// own "nothing was formatted" assertion needs the direct read, not the
-// stale scan.
-func blkidTypeProbe(ctx context.Context, r disk.Runner, dev string) string {
-	out, _ := r.Run(ctx, "blkid", "-p", "-s", "TYPE", "-o", "value", dev)
-	return strings.TrimSpace(string(out))
-}
-
 // assertOwnLoopDevice confirms dev is genuinely the loop device backing
 // img — CLAUDE.md's own safety check before detaching anything, never
 // losetup -D.
@@ -254,10 +237,10 @@ func TestLabDiskAdd_JobWiringFormatsMountsAndRegeneratesConfig(t *testing.T) {
 		t.Fatalf("disk_add status = %s (%s), want succeeded", finished.Status, finished.ErrorMessage)
 	}
 
-	if got := blkidType(ctx, execRunner, newDev); got != "xfs" {
+	if got := blkidType(t, ctx, execRunner, newDev); got != "xfs" {
 		t.Fatalf("new disk %s: blkid TYPE = %q, want xfs", newDev, got)
 	}
-	if got := blkidType(ctx, execRunner, spareDev); got != "" {
+	if got := blkidType(t, ctx, execRunner, spareDev); got != "" {
 		t.Fatalf("unrelated spare %s gained a filesystem (%q) — disk_add touched a disk it was never given", spareDev, got)
 	}
 
@@ -276,7 +259,7 @@ func TestLabDiskAdd_JobWiringFormatsMountsAndRegeneratesConfig(t *testing.T) {
 		t.Fatalf("added disk device = %q, want %q", added.Device, newDev)
 	}
 
-	newUUID := blkidUUID(ctx, execRunner, newDev)
+	newUUID := blkidUUID(t, ctx, execRunner, newDev)
 	if got := findmntUUID(ctx, execRunner, "/mnt/disk2"); got != newUUID {
 		t.Fatalf("/mnt/disk2 UUID = %q, want %q (the new disk)", got, newUUID)
 	}
@@ -374,7 +357,7 @@ func TestLabDiskReplace_RefusesWhileSlotDiskStillMounted(t *testing.T) {
 		t.Fatalf("ErrorMessage = %q, want a still-mounted refusal", finished.ErrorMessage)
 	}
 
-	if got := blkidTypeProbe(ctx, execRunner, replacementDev); got != "" {
+	if got := blkidType(t, ctx, execRunner, replacementDev); got != "" {
 		t.Fatalf("replacement %s gained a filesystem (%q) — a refused replace must format nothing", replacementDev, got)
 	}
 
@@ -531,10 +514,10 @@ func TestLabDiskReplace_CancelledMidFixRecoversViaOrdinaryFix(t *testing.T) {
 		t.Fatalf("disk_replace status = %s (%s), want cancelled — the mid-fix cancellation should have landed inside a still-running fix", cancelled.Status, cancelled.ErrorMessage)
 	}
 
-	if got := blkidType(ctx, execRunner, replacementDev); got != "xfs" {
+	if got := blkidType(t, ctx, execRunner, replacementDev); got != "xfs" {
 		t.Fatalf("replacement %s: blkid TYPE = %q, want xfs — the topology switch step should have completed before cancellation", replacementDev, got)
 	}
-	if got := blkidType(ctx, execRunner, spareDev); got != "" {
+	if got := blkidType(t, ctx, execRunner, spareDev); got != "" {
 		t.Fatalf("unrelated spare %s gained a filesystem (%q) — disk_replace touched a disk it was never given", spareDev, got)
 	}
 	switched, err := st.GetDataDiskByMountpoint(ctx, "/mnt/disk1")
@@ -565,7 +548,7 @@ func TestLabDiskReplace_CancelledMidFixRecoversViaOrdinaryFix(t *testing.T) {
 	if got := sha256HexOfFile(t, keptOnDisk2); got != disk2HashBefore {
 		t.Fatalf("disk2's own file changed across the replace/fix cycle: got %s, want %s", got, disk2HashBefore)
 	}
-	if got := blkidType(ctx, execRunner, spareDev); got != "" {
+	if got := blkidType(t, ctx, execRunner, spareDev); got != "" {
 		t.Fatalf("unrelated spare %s gained a filesystem (%q) after recovery", spareDev, got)
 	}
 }

@@ -4,9 +4,9 @@
 -- below: sqlc v1.31.1's SQLite engine mis-slices the raw source once any
 -- extra comment line appears between two queries, silently truncating the
 -- generated SQL text of every query that follows (confirmed while writing
--- this file). ListJobs, ListActiveJobs and InterruptActiveJobs carry doc
--- comments on their Go methods instead, in jobs.go, immediately above
--- each hand-written wrapper that calls them.
+-- this file). ListJobs, ListActiveJobs, InterruptActiveJobs and
+-- InterruptJobsByID carry doc comments on their Go methods instead, in
+-- store.go, immediately above each hand-written wrapper that calls them.
 
 -- name: CreateJob :exec
 INSERT INTO jobs (
@@ -59,6 +59,10 @@ UPDATE jobs SET checkpoint = ? WHERE id = ?;
 -- name: InterruptActiveJobs :exec
 UPDATE jobs SET "status" = 'interrupted', finished_at = ?
 WHERE "status" IN ('queued', 'running');
+
+-- name: InterruptJobsByID :exec
+UPDATE jobs SET "status" = 'interrupted', finished_at = ?
+WHERE id IN (sqlc.slice('ids')) AND "status" IN ('queued', 'running');
 
 -- name: ListPendingJobsOfType :many
 SELECT

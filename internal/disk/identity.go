@@ -31,6 +31,17 @@ type Identity struct {
 	Serial       string
 	WeakIdentity bool
 	ByIDName     string
+	// FSUUID is the filesystem UUID belonging to this identity's own disk
+	// (#388) — never set by ResolveIdentity, since a disk's physical
+	// identity is independent of what it is formatted with. A caller
+	// building disk.ExpectedDisk sets it to the filesystem SQLite records
+	// for the slot; a caller building the "present" identity passed to
+	// StorageGate.Evaluate sets it to what disk.Disk.FSUUID currently
+	// reads off that disk. Left empty by a caller that predates this
+	// field, or a slot that has never been formatted: evaluate only
+	// compares it when both sides have one, so an empty value on either
+	// side is never reported as a mismatch.
+	FSUUID string
 }
 
 // IdentityPath returns the /dev/disk/by-id path i's ByIDName names, or ""
@@ -110,6 +121,23 @@ func (i Identity) Matches(other Identity) bool {
 		return i.Serial == other.Serial
 	}
 	return false
+}
+
+// FSUUIDMismatch reports whether want and got were both positively read
+// and differ (#388) — the one shared definition of "wrong filesystem"
+// disk.StorageGate.evaluate, GetPool's own per-slot state
+// (internal/api/phase1_handler.go's wrongFilesystem) and
+// ConfirmReplacementTargetAbsent's own relaxation (internal/job) all call,
+// rather than each keeping its own copy of the rule. It is deliberately
+// fail-closed: an empty want (a slot never formatted) or an empty got (a
+// present disk this build could not read a filesystem UUID for — udev's
+// own cache not yet settled for an otherwise perfectly healthy disk is a
+// real, ordinary case, not just a hypothetical one) is never a mismatch,
+// since neither side is a positive read to compare — a caller that reads
+// this as "safe to treat as gone" must have first confirmed both sides
+// are genuinely known.
+func FSUUIDMismatch(want, got string) bool {
+	return want != "" && got != "" && want != got
 }
 
 // lastSegment returns the token after a by-id link name's final

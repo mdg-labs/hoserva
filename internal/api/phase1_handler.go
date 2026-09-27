@@ -3,7 +3,9 @@ package api
 import (
 	"archive/tar"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +29,15 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 	entries := []apiv1.PoolDiskEntry{}
 	matched := make([]bool, len(arrayDisks))
 	presentDevices := map[string]bool{}
+	// mountFailed is cmd/hoservad's own live record of the storage-target
+	// gate's last bounded mount attempt (#398) — never a device probe on
+	// this poll path (Q13): h.MountFailedSlots reads state storageTargetSync
+	// already recorded when it happened. nil (no hook wired) reports no
+	// slot needing attention from this signal.
+	mountFailed := map[string]bool{}
+	if h.MountFailedSlots != nil {
+		mountFailed = h.MountFailedSlots()
+	}
 	if h.Disks != nil {
 		disks, err := h.Disks.List(ctx)
 		if err != nil {
@@ -68,6 +79,12 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 				entry.MountPoint = arrayDisks[idx].Mountpoint
 				entry.RemovalState = removalStateToAPI(arrayDisks[idx].RemovalState)
 				entry.FinishConfirmation = finishConfirmationForState(arrayDisks[idx].Mountpoint, arrayDisks[idx].RemovalState)
+				switch {
+				case wrongFilesystem(arrayDisks[idx], d):
+					entry.State = apiv1.DiskStateWrongFilesystem
+				case mountFailed[arrayDisks[idx].Mountpoint]:
+					entry.State = apiv1.DiskStateMountFailed
+				}
 			}
 			entries = append(entries, entry)
 		}
@@ -130,6 +147,20 @@ func matchArrayDisk(d disk.Disk, arrayDisks []store.ArrayDisk) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// wrongFilesystem reports whether a present disk matched to ad by identity
+// (Q21) carries a filesystem UUID different from what SQLite recorded for
+// that slot (#388) — a replacement disk that kept the original disk's
+// serial/WWN (a cloned or reused drive, or one from the same enclosure)
+// but was formatted differently, or not at all. disk.FSUUIDMismatch is the
+// one shared definition of this rule (also used by
+// disk.StorageGate.evaluate and job.ConfirmReplacementTargetAbsent's own
+// relaxation) — either side empty is not a mismatch there either: a slot
+// never formatted, or a present disk this build could not read a
+// filesystem UUID for, has nothing to compare.
+func wrongFilesystem(ad store.ArrayDisk, d disk.Disk) bool {
+	return disk.FSUUIDMismatch(ad.FSUUID, d.FSUUID)
 }
 
 // arrayTopology returns the persisted array settings and every assigned
@@ -424,13 +455,26 @@ func (e *exportReadCloser) Close() error {
 
 const maxConfigArchiveBytes = 512 << 20
 
+// errImportJobInProgress refuses an import while a job is running or
+// queued (doc 01 §4): restoring the database would rewrite the jobs
+// table and the relocation/mover state underneath it.
+var errImportJobInProgress = &apiError{code: "job_in_progress", statusCode: 409, message: "a job is running or queued — import would rewrite the jobs table underneath it"}
+
+// ImportConfig restores the database step of doc 10 §1's in-place
+// restore (#269): checksum and integrity verification, then a schema-
+// version match, then a pre-import safety backup, then
+// backup.RestoreDatabase — SQLite's own online backup API, never a file-
+// level copy or rename over the live database's path (see
+// RestoreDatabase's own doc comment for why that corrupted it). Restoring
+// generated config files, stacks, templates and secrets.age is #62.
 func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) error {
 	if !req.Confirm {
 		return errConfirmRequired
 	}
-	if h.Backup == nil {
+	if h.Backup == nil || h.Backup.DB == nil || h.Scheduler == nil {
 		return &apiError{code: "not_configured", statusCode: 501, message: "config import is not configured on this daemon"}
 	}
+
 	tmp, err := os.CreateTemp("", "hoserva-config-import-*.tar.zst")
 	if err != nil {
 		return err
@@ -455,7 +499,10 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := backup.VerifyArchive(tmpPath, ""); err != nil {
+	// Structural verification only (checksums, PRAGMA integrity_check):
+	// secrets.age, if present, is neither required nor decrypted here —
+	// this restores the database only (#62 restores the rest).
+	if err := backup.VerifyArchiveForImport(tmpPath); err != nil {
 		return &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
 	}
 	staging, err := os.MkdirTemp("", "hoserva-import-staging-*")
@@ -470,14 +517,134 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if _, err := os.Stat(stateDB); err != nil {
 		return &apiError{code: "invalid_archive", statusCode: 400, message: "archive is missing state.db"}
 	}
-	dest := h.Backup.Paths.DBPath
-	if dest == "" {
-		return &apiError{code: "not_configured", statusCode: 501, message: "no database path configured for import"}
+
+	archiveVersion, err := readSchemaVersion(ctx, "file:"+stateDB+"?mode=ro")
+	if err != nil {
+		return &apiError{code: "invalid_archive", statusCode: 400, message: fmt.Sprintf("reading archive schema version: %v", err)}
 	}
-	if err := copyFileAtomic(stateDB, dest); err != nil {
+	liveVersion, err := (&store.Runner{DB: h.Backup.DB}).CurrentVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("reading live database schema version: %w", err)
+	}
+	if archiveVersion != liveVersion {
+		return &apiError{
+			code:       "incompatible_archive",
+			statusCode: 400,
+			message:    fmt.Sprintf("archive schema version %s does not match the running database's %s", archiveVersion, liveVersion),
+		}
+	}
+
+	// The archive's own queued/running job ids, read from the staged copy
+	// before anything overwrites it (#402): the only ids the post-restore
+	// interrupt step below is ever allowed to touch. A job inserted into
+	// the live database around the restore, but not part of the archive,
+	// must never be relabelled just because its own status happens to be
+	// queued or running.
+	restoredActiveIDs, err := readActiveJobIDs(ctx, "file:"+stateDB+"?mode=ro")
+	if err != nil {
+		return fmt.Errorf("reading the archive's active job ids: %w", err)
+	}
+
+	// The same config backup the pre-update chain runs (doc 10 §1) — if
+	// it fails, the import is refused and the live database is untouched.
+	if err := h.Backup.Run(ctx); err != nil {
+		return fmt.Errorf("backing up before import: %w", err)
+	}
+
+	// Acquired here, immediately before the restore, rather than at the
+	// top of this method: a job submitted during the upload, the two
+	// verification passes or the backup above must still be refused, not
+	// silently orphaned by RestoreDatabase overwriting the jobs table
+	// underneath it. BeginDatabaseRestore checks the store under the
+	// scheduler's own lock and, from here on, refuses every Submit, Resume
+	// and Cancel until release runs — on every path below, including
+	// panic. Only the hold's own refusals (another restore already held,
+	// or a job active or being aborted) are reported as the ordinary
+	// "a job is running" 409 below — a failure while taking the hold
+	// (e.g. the store read it does) is returned as an error with its own
+	// detail, never misreported as a running job.
+	release, err := h.Scheduler.BeginDatabaseRestore(ctx)
+	if err != nil {
+		if errors.Is(err, job.ErrJobsActiveForRestore) || errors.Is(err, job.ErrDatabaseRestoreInProgress) {
+			return errImportJobInProgress
+		}
+		return fmt.Errorf("beginning database restore: %w", err)
+	}
+	defer release()
+
+	if err := backup.RestoreDatabase(ctx, h.Backup.DB, stateDB); err != nil {
 		return fmt.Errorf("restoring database: %w", err)
 	}
+
+	if importPostRestoreHookForTest != nil {
+		importPostRestoreHookForTest()
+	}
+
+	// The archive's jobs table is restored as-is, including any row that
+	// was queued or running when it was exported — nothing on this
+	// daemon is actually running it. Mark exactly those rows interrupted
+	// the same way RecoverFromRestart does at boot (doc 01 §4), so a
+	// stale "running" row does not refuse the next import with
+	// job_in_progress forever — never a blanket sweep over whatever the
+	// now-restored table holds, which would also catch a job inserted
+	// into the live database in the narrow window around this restore
+	// but never part of the archive at all (#402).
+	if h.Store != nil {
+		if err := h.Store.InterruptByID(ctx, restoredActiveIDs, time.Now().UTC()); err != nil {
+			return fmt.Errorf("interrupting jobs restored from the archive: %w", err)
+		}
+	}
 	return nil
+}
+
+// importPostRestoreHookForTest, when non-nil, is called by ImportConfig
+// synchronously right after backup.RestoreDatabase has returned and
+// before the targeted post-restore interrupt step runs — so a test can
+// land a write to the live database deterministically inside that exact
+// window (#402), instead of racing the real clock. Never set outside a
+// test.
+var importPostRestoreHookForTest func()
+
+// readActiveJobIDs opens dsn read-only and returns the ids of every job
+// whose status is queued or running, without mutating the file it points
+// at — used against the staged, not-yet-trusted archive copy of state.db,
+// so ImportConfig knows exactly which ids its own restore is allowed to
+// mark interrupted afterward (#402).
+func readActiveJobIDs(ctx context.Context, dsn string) ([]string, error) {
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = db.Close() }()
+	rows, err := db.QueryContext(ctx, `SELECT id FROM jobs WHERE "status" IN ('queued', 'running')`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// readSchemaVersion opens dsn read-only and reads its store bookkeeping
+// version, without mutating the file it points at — used against the
+// staged, not-yet-trusted archive copy of state.db.
+func readSchemaVersion(ctx context.Context, dsn string) (string, error) {
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = db.Close() }()
+	return (&store.Runner{DB: db}).CurrentVersion(ctx)
 }
 
 func packTarZst(dir, dest string) error {
@@ -611,27 +778,4 @@ func unpackTarZst(archivePath, dest string) error {
 		}
 	}
 	return nil
-}
-
-func copyFileAtomic(src, dest string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
-	tmp := dest + ".importing"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, dest)
 }

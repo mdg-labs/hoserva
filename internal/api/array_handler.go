@@ -472,13 +472,17 @@ func (h *Handler) AddDisk(ctx context.Context, req *apiv1.AddDiskRequest) (*apiv
 // and refused (slot_disk_present) unless the slot's own recorded disk is
 // genuinely gone (job.ConfirmReplacementTargetAbsent, doc 02 §4 steps
 // 1-2) — a disk that has not actually failed or been removed goes through
-// the upgrade flow instead (#289), never replace. A disk still evacuating
-// or already unlisted is refused (disk_leaving_array, #366); evacuated
-// and unpooled are not, on the removal state alone
-// (job.ReplaceEligibleDuringRemoval, doc 09 §4 "Other operations…",
-// #384) — ConfirmReplacementTargetAbsent below is what still refuses one
-// whose old disk is not genuinely missing. Read-only — nothing is
-// formatted or persisted.
+// the upgrade flow instead (#289), never replace. req.Device is passed
+// through as the replace target: a disk matched by identity is not
+// refused when it is exactly that device and its filesystem was
+// positively read to differ from the slot's own recorded one (#388) — the
+// same disk GetPool and disk.StorageGate already report as
+// wrong_filesystem, never active. A disk still evacuating or already
+// unlisted is refused (disk_leaving_array, #366); evacuated and unpooled
+// are not, on the removal state alone (job.ReplaceEligibleDuringRemoval,
+// doc 09 §4 "Other operations…", #384) — ConfirmReplacementTargetAbsent
+// below is what still refuses one whose old disk is not genuinely
+// missing. Read-only — nothing is formatted or persisted.
 func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPlanRequest) (*apiv1.ReplaceDiskPlan, error) {
 	if h.Disks == nil || h.ArrayStore == nil {
 		return nil, errArrayDisksNotConfigured()
@@ -497,7 +501,7 @@ func (h *Handler) PlanDiskReplace(ctx context.Context, req *apiv1.ReplaceDiskPla
 	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
-	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, listed); err != nil {
+	if err := job.ConfirmReplacementTargetAbsent(ctx, req.Mountpoint, existing, listed, req.Device, h.BlankProbe); err != nil {
 		return nil, errSlotDiskPresent(err)
 	}
 	assigned, err := resolveAssignedDisk(req.Device, req.Filesystem, req.Adopt, listed)
@@ -557,7 +561,7 @@ func (h *Handler) ReplaceDisk(ctx context.Context, req *apiv1.ReplaceDiskRequest
 	if existing.LeavingArray() && !job.ReplaceEligibleDuringRemoval(existing.RemovalState) {
 		return nil, errDiskLeavingArray(req.Mountpoint, existing.RemovalState)
 	}
-	if err := job.ConfirmReplacementTargetAbsent(req.Mountpoint, existing, listed); err != nil {
+	if err := job.ConfirmReplacementTargetAbsent(ctx, req.Mountpoint, existing, listed, req.Device, h.BlankProbe); err != nil {
 		return nil, errSlotDiskPresent(err)
 	}
 	assigned, err := resolveAssignedDisk(req.Device, req.Filesystem, req.Adopt, listed)

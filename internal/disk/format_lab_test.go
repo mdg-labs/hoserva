@@ -15,8 +15,12 @@ package disk
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -73,9 +77,99 @@ func createLoopImage(ctx context.Context, t *testing.T, r Runner, lab, name stri
 	return dev
 }
 
-func blkidType(ctx context.Context, r Runner, dev string) string {
-	out, _ := r.Run(ctx, "blkid", "-s", "TYPE", "-o", "value", dev)
+// blkidType reads dev's filesystem type by direct probe (`blkid -p`),
+// bypassing libblkid's own cache: a loop device just detached by an
+// earlier test in this lab run can be reattached under the same minor
+// number within this suite's own runtime (the host's udev holds a
+// detach open briefly, confirmed in this lab), and a plain `blkid`
+// without `-p` returns that stale cache entry rather than reprobing the
+// device now in front of it (finding 1, #398). blkid -p exits 2 both for
+// "no signature found" (the genuine blank-device case) and for a device
+// it could not even open (confirmed against real blkid, util-linux
+// 2.41.5, in this lab: a nonexistent path, an unreadable one and a truly
+// blank device all exit 2 alike), so exit code alone cannot tell a blank
+// device from a wrong path; this opens dev and reads its first byte
+// before ever invoking blkid, and still fails on any non-exit-2 blkid
+// result, so a refused format's blank-device assertion cannot pass
+// vacuously (#400).
+func blkidType(t testing.TB, ctx context.Context, r Runner, dev string) string {
+	t.Helper()
+	if err := readFirstByte(dev); err != nil {
+		t.Fatalf("blkid -p -s TYPE -o value %s: device not readable: %v", dev, err)
+	}
+	out, err := r.Run(ctx, "blkid", "-p", "-s", "TYPE", "-o", "value", dev)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			return ""
+		}
+		t.Fatalf("blkid -p -s TYPE -o value %s: %v (output %q)", dev, err, out)
+	}
 	return strings.TrimSpace(string(out))
+}
+
+func readFirstByte(dev string) error {
+	f, err := os.Open(dev)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = f.Read(make([]byte, 1))
+	return err
+}
+
+// assertBlkidProbeFails runs probe against a nonexistent path and an
+// existing but unreadable one and requires both to fail the caller. The
+// unreadable stand-in is a directory: this lab's tests run as root, so a
+// mode-000 file would still be readable, and blkid exits 2 for it exactly
+// as for a blank device.
+func assertBlkidProbeFails(t *testing.T, lab, name string, probe func(testing.TB, context.Context, Runner, string) string) {
+	t.Helper()
+	unreadable := filepath.Join(lab, "unreadable-device-403-"+name)
+	if err := os.Mkdir(unreadable, 0o700); err != nil {
+		t.Fatalf("creating unreadable stand-in: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(unreadable) })
+
+	for _, dev := range []struct{ kind, path string }{
+		{"nonexistent", filepath.Join(lab, "no-such-device-400")},
+		{"unreadable", unreadable},
+	} {
+		t.Run(dev.kind, func(t *testing.T) {
+			rec := &recordingTB{}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				probe(rec, context.Background(), CommandRunner{}, dev.path)
+			}()
+			<-done
+			if !rec.failed {
+				t.Fatalf("%s(%s path) returned instead of failing — a swallowed error would pass a blank-device assertion vacuously", name, dev.kind)
+			}
+			t.Logf("%s correctly failed: %s", name, rec.message)
+		})
+	}
+}
+
+// recordingTB is a minimal testing.TB whose Fatalf records a failure
+// instead of stopping this test binary's own run, so blkidType's and
+// blkidUUID's fatal path (#400) can be observed as a value rather than
+// only by process exit. Embedding the nil testing.TB satisfies the
+// interface's unexported method without implementing every method:
+// blkidType and blkidUUID call only Helper and Fatalf, so every other
+// method staying nil is unreachable here.
+type recordingTB struct {
+	testing.TB
+	failed  bool
+	message string
+}
+
+func (r *recordingTB) Helper() {}
+
+func (r *recordingTB) Fatalf(format string, args ...any) {
+	r.failed = true
+	r.message = fmt.Sprintf(format, args...)
+	runtime.Goexit()
 }
 
 // TestLabFormat_RefusesUnassignedDevicesThenFormatsTheAssignedOne is
@@ -100,7 +194,7 @@ func TestLabFormat_RefusesUnassignedDevicesThenFormatsTheAssignedOne(t *testing.
 	if err := FormatAssigned(ctx, provider, plan, spare, XFS); err == nil {
 		t.Fatal("FormatAssigned(spare, real but unassigned): got nil error")
 	}
-	if got := blkidType(ctx, r, spare); got != "" {
+	if got := blkidType(t, ctx, r, spare); got != "" {
 		t.Fatalf("spare device %s already has a filesystem (%q) before any assigned format ran", spare, got)
 	}
 
@@ -111,10 +205,22 @@ func TestLabFormat_RefusesUnassignedDevicesThenFormatsTheAssignedOne(t *testing.
 	if err := FormatAssigned(ctx, provider, plan, assigned, XFS); err != nil {
 		t.Fatalf("FormatAssigned(assigned): %v", err)
 	}
-	if got := blkidType(ctx, r, assigned); got != "xfs" {
+	if got := blkidType(t, ctx, r, assigned); got != "xfs" {
 		t.Fatalf("assigned device %s: blkid TYPE = %q, want xfs", assigned, got)
 	}
-	if got := blkidType(ctx, r, spare); got != "" {
+	if got := blkidType(t, ctx, r, spare); got != "" {
 		t.Fatalf("spare device %s gained a filesystem (%q) after the assigned-only format ran", spare, got)
 	}
+}
+
+// TestLabBlkidType_FailsOnNonExitTwoError is this issue's own proving
+// test (#400): blkid -p exits 2 only for "no signature found", the
+// genuine blank-device case; any other failure — a wrong device path, a
+// missing binary, a permission error — must fail the caller rather than
+// read back "" the same way, or a refused format's own blank-device
+// assertion would pass vacuously. Run against real blkid in this lab
+// container: a nonexistent path and an existing but unreadable one must
+// both fail the caller.
+func TestLabBlkidType_FailsOnNonExitTwoError(t *testing.T) {
+	assertBlkidProbeFails(t, labDir(t), "blkidType", blkidType)
 }

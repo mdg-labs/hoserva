@@ -716,6 +716,32 @@ func TestHandler_GetStatus_ArrayDegradedClearsOnceTheDiskReturns(t *testing.T) {
 	}
 }
 
+// TestHandler_GetStatus_ArrayDegradedForWrongFilesystem is #388's own
+// regression test: a disk matched by identity but carrying the wrong
+// filesystem must report the array degraded exactly like a missing one —
+// GetStatus.ArrayDegraded must not read only StorageGate.Missing() and
+// silently miss this case.
+func TestHandler_GetStatus_ArrayDegradedForWrongFilesystem(t *testing.T) {
+	ctx := context.Background()
+	h, s, _ := newTestHandler(t)
+
+	identity := disk.Identity{Serial: "DATA1", FSUUID: "original-uuid"}
+	gate := disk.NewStorageGate([]disk.ExpectedDisk{{Identity: identity, Role: "data", MountAt: "/mnt/disk1"}})
+	gate.Evaluate([]disk.Identity{{Serial: "DATA1", FSUUID: "blank-replacement-uuid"}})
+	attachDegradedArraySequence(h, s, gate, job.ArraySequence{})
+
+	status, err := h.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if !status.ArrayDegraded.Or(false) {
+		t.Fatal("GetStatus.ArrayDegraded = false with a same-serial, wrong-filesystem disk")
+	}
+	if status.ArrayDegradedAcknowledged.Or(true) {
+		t.Fatal("GetStatus.ArrayDegradedAcknowledged = true before any acknowledgement")
+	}
+}
+
 // TestHandler_ArrayStartAndStop_RefusedWhileDiskUpgradeDataIsPending:
 // doc 02 §4 E6 and E7 through the handler — while a data-disk upgrade is
 // pending, StartArray and StopArray are refused with disk_upgrade_pending

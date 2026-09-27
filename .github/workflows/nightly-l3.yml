@@ -25,11 +25,34 @@ name: Nightly L3
 # schedule runs it nightly against main. Never runs on `pull_request` —
 # this is exactly the privileged, slow, resource-heavy job class Q42
 # keeps off of untrusted PR code.
+#
+# workflow_dispatch's own l3_steps input (issue #391) runs only the named
+# steps of scripts/vm/run-l3-suite.sh, after its always-run setup — doc 06
+# §4 lists the ids. Left empty (the default), every step runs, exactly
+# like a full nightly. The schedule trigger has no such input at all, so
+# it always runs the full suite regardless of what l3_steps was last set
+# to on a manual run.
+#
+# The l3 job runs as a matrix (issue #392), computed by l3-matrix below
+# (scripts/vm/l3-build-matrix.sh): an explicit l3_steps selection runs as
+# a single "selected" job, unsplit; no selection (a schedule run, or a
+# manual run left at its default) splits into two parallel jobs, each
+# with its own runner, VM, HOSERVA_LAB_ID, setup and teardown — one for
+# the spindown step's own ~34.5-minute observation window, one for every
+# other step — so wall time tracks whichever group takes longer rather
+# than their sum. scripts/vm/l3-group-coverage-check.sh fails l3-matrix
+# before either group's VM is created if a step in run-l3-suite.sh's own
+# L3_STEP_ORDER is missing from both groups, or listed in both.
 
 on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      l3_steps:
+        description: "Comma-separated L3 step ids to run (doc 06 §4); empty runs every step"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -37,9 +60,9 @@ permissions:
 jobs:
   # Every //go:build lab Go test (issue #328, doc 06 §3): compile on the
   # host with -tags lab, run each binary inside a loop-device lab. Separate
-  # from the L3 VM job — no KVM needed, and a lab-test regression turns
-  # the nightly red without waiting on the 105-minute VM suite. The
-  # merge-gate lab job in ci.yml also reaches these via `make
+  # from the L3 VM jobs below — no KVM needed, and a lab-test regression
+  # turns the nightly red without waiting on either of them (issue #392).
+  # The merge-gate lab job in ci.yml also reaches these via `make
   # test-integration`; this job is the nightly signal the issue asked for.
   lab-go:
     name: Lab Go tests (-tags lab)
@@ -76,18 +99,44 @@ jobs:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
         run: make lab-destroy
 
-  l3:
-    name: L3 VM suite
+  # Computes the l3 job's own matrix (issue #392) and fails fast — before
+  # either group's VM is created — if run-l3-suite.sh's own step registry
+  # and this workflow's two groups have drifted apart. No KVM, no VM,
+  # done in well under a minute.
+  l3-matrix:
+    name: L3 matrix (groups)
     if: github.repository == 'mdg-labs/hoserva'
     runs-on: ubuntu-24.04
-    # 60 minutes covered install/onboarding/reboot/Playwright alone; the
-    # spindown steps (scripts/vm/spindown-check.sh, issue #33) add a
-    # 30-minute measurement window (Q31's own "30+ minutes" bar) plus a
-    # settle gate on top of that; the array stop/start sequence step
-    # (scripts/vm/array-sequence-check.sh, issue #146) adds a further
-    # clean shutdown, a persistent disk detach, and a full reboot on top
-    # of its own two scenarios, so the budget grows again with it.
-    timeout-minutes: 105
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check every L3 step is in exactly one nightly-l3.yml group
+        run: scripts/vm/l3-group-coverage-check.sh
+
+      - name: Check a malformed l3_steps selection is refused
+        run: scripts/vm/l3-step-selection-check.sh
+
+      - name: Build this run's matrix
+        id: matrix
+        env:
+          L3_STEPS_INPUT: ${{ github.event.inputs.l3_steps }}
+        run: scripts/vm/l3-build-matrix.sh >> "$GITHUB_OUTPUT"
+
+  l3:
+    name: L3 VM suite (${{ matrix.group }})
+    needs: l3-matrix
+    if: github.repository == 'mdg-labs/hoserva'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.l3-matrix.outputs.matrix) }}
+    # Per-entry backstop (l3-build-matrix.sh's job_timeout field): the
+    # vm-suite step's own group-sized bound plus this job's setup and
+    # teardown, so the job never cancels a step still within that bound.
+    timeout-minutes: ${{ matrix.job_timeout }}
     steps:
       # fetch-depth: 0 — the default (1) skips tags entirely (fetch-tags
       # defaults to false), which would make the vm-suite step's own
@@ -98,9 +147,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Distinct per matrix entry (doc 06 §7): two groups running at once
+      # must never share a domain name, disk image or forwarded port.
       - name: Derive this run's lab id
         id: lab
-        run: echo "id=nightly-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+        run: echo "id=nightly-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.group }}" >> "$GITHUB_OUTPUT"
 
       # The same rule s9-hosted-probe.yml's kvm job validated (issue #10,
       # doc 08 §9) — written before triggering, per the community caveat
@@ -164,6 +215,13 @@ jobs:
       - name: vm-suite
         env:
           HOSERVA_LAB_ID: ${{ steps.lab.outputs.id }}
+          L3_STEPS: ${{ matrix.l3_steps }}
+        # timeout-minutes here, not only the job's own backstop above,
+        # is what actually gives each group its own group-sized
+        # bound (l3-build-matrix.sh's own timeout field): 75 for the
+        # spindown group, 60 for the rest group, 105 for an explicit
+        # workflow_dispatch selection.
+        timeout-minutes: ${{ matrix.timeout }}
         # deploy.sh (rightly) refuses to build against a hand-maintained
         # version string — it wants the latest released 'v*' tag, or an
         # explicit TAG=. Pre-1.0, no tag exists yet, so every nightly run
@@ -181,7 +239,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.group }}
           path: web/playwright-report/
           if-no-files-found: ignore
           retention-days: 14
@@ -201,7 +259,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: hoservad-diagnostics
+          name: hoservad-diagnostics-${{ matrix.group }}
           path: .vm-diagnostics/
           if-no-files-found: ignore
           retention-days: 14

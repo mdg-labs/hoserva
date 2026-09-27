@@ -121,6 +121,225 @@ describe("PoolOverviewPage load failures", () => {
   });
 });
 
+// poolWithWrongFilesystemDisk is #388's own GetPool shape: a disk matched
+// to a slot by identity but carrying a different filesystem than SQLite
+// recorded for it — genuinely present (a real device path), unlike the
+// "missing" shape above.
+function poolWithWrongFilesystemDisk() {
+  return {
+    mounted: true,
+    disks: [
+      {
+        device: "/dev/sdb",
+        mountPoint: "/mnt/disk1",
+        role: "data",
+        state: "active",
+        sizeBytes: 4_000_000_000_000,
+        usedBytes: 2_000_000_000_000,
+      },
+      {
+        device: "/dev/sdc",
+        mountPoint: "/mnt/disk2",
+        role: "data",
+        state: "wrong_filesystem",
+        sizeBytes: 4_000_000_000_000,
+      },
+    ],
+  };
+}
+
+// poolWithWrongFilesystemDiskAndUnassigned is poolWithWrongFilesystemDisk
+// plus one genuinely unassigned disk (/dev/sdd) — the shape needed to
+// prove the Replace dialog's own device list for a wrong-filesystem slot
+// offers only that slot's own device, never any other disk that happens
+// to be unassigned (finding 1 of #388's fix round: ConfirmReplacement-
+// TargetAbsent accepts no other target for this slot).
+function poolWithWrongFilesystemDiskAndUnassigned() {
+  const pool = poolWithWrongFilesystemDisk();
+  return {
+    ...pool,
+    disks: [
+      ...pool.disks,
+      {
+        device: "/dev/sdd",
+        mountPoint: "",
+        role: "unassigned",
+        state: "active",
+        sizeBytes: 4_000_000_000_000,
+        usedBytes: 0,
+      },
+    ],
+  };
+}
+
+describe("PoolOverviewPage same-serial wrong-filesystem disk (#388)", () => {
+  beforeEach(() => {
+    cleanup();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockMatchMedia();
+    mockStatusAndJobs(mockGet, poolWithWrongFilesystemDisk());
+  });
+
+  it("renders the wrong-filesystem disk with a plain-language status badge, offers it in Replace disk, and excludes it from Upgrade disk", async () => {
+    renderPool();
+
+    await waitFor(() => expect(screen.getByText("/dev/sdb")).toBeInTheDocument());
+
+    // Never the raw enum value — a plain-language label instead.
+    expect(screen.queryByText("wrong_filesystem")).not.toBeInTheDocument();
+    expect(screen.getByText("Wrong filesystem — needs replacing")).toBeInTheDocument();
+
+    // Replace disk's own slot list still offers it — it is a real,
+    // present device, so it is labelled the ordinary way.
+    fireEvent.click(await screen.findByRole("button", { name: "Replace disk" }));
+    const replaceDialog = await screen.findByRole("dialog");
+    fireEvent.click(within(replaceDialog).getByRole("combobox", { name: "Disk to replace" }));
+    expect(await screen.findByRole("option", { name: "/mnt/disk2 (/dev/sdc)" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // Upgrade disk's own slot list must not offer it — an upgrade copies
+    // from the array's own disk, and this is not it (#388).
+    fireEvent.click(await screen.findByRole("button", { name: "Upgrade disk" }));
+    const upgradeDialog = await screen.findByRole("dialog");
+    fireEvent.click(within(upgradeDialog).getByRole("combobox", { name: "Disk to upgrade" }));
+    expect(await screen.findByRole("option", { name: "/mnt/disk1 (data, /dev/sdb)" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "/mnt/disk2 (data, /dev/sdc)" })).not.toBeInTheDocument();
+  });
+
+  it("offers only the wrong-filesystem slot's own device as its replacement, and previews against it (finding 1)", async () => {
+    mockStatusAndJobs(mockGet, poolWithWrongFilesystemDiskAndUnassigned());
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/disks/array/replace/plan") {
+        return Promise.resolve({
+          data: {
+            mountpoint: "/mnt/disk2",
+            previousDevice: "/dev/sdc",
+            replacementDevice: "/dev/sdc",
+            filesystem: "xfs",
+            adopt: false,
+            rebuild: "snapraid fix -d d2",
+            confirmation: "ERASE /dev/sdc",
+          },
+          response: { ok: true },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderPool();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Replace disk" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Disk to replace" }));
+    // Base UI's SelectItem commits on the pointer sequence, not on a bare
+    // click (see cache.test.tsx's own selection of a mode option).
+    const slotOption = await screen.findByRole("option", { name: "/mnt/disk2 (/dev/sdc)" });
+    fireEvent.pointerDown(slotOption, { pointerType: "mouse" });
+    fireEvent.pointerUp(slotOption, { pointerType: "mouse" });
+    fireEvent.click(slotOption);
+
+    // Plain-language warning that this exact disk is about to be erased
+    // and rebuilt — never silently offered alongside other unassigned
+    // disks as an ordinary choice.
+    expect(await within(dialog).findByText(/dev\/sdc carries a different filesystem/)).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Replacement device" }));
+    const deviceOption = await screen.findByRole("option", { name: "/dev/sdc" });
+    // /dev/sdd is a genuinely unassigned disk elsewhere in inventory — it
+    // must never appear as a choice for this slot (finding 1): the only
+    // target ConfirmReplacementTargetAbsent accepts here is the slot's
+    // own device.
+    expect(screen.queryByRole("option", { name: "/dev/sdd" })).not.toBeInTheDocument();
+    fireEvent.pointerDown(deviceOption, { pointerType: "mouse" });
+    fireEvent.pointerUp(deviceOption, { pointerType: "mouse" });
+    fireEvent.click(deviceOption);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Preview" }));
+
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith(
+        "/disks/array/replace/plan",
+        expect.objectContaining({
+          body: { mountpoint: "/mnt/disk2", device: "/dev/sdc", filesystem: "xfs", adopt: false },
+        }),
+      ),
+    );
+  });
+});
+
+// poolWithMountFailedDisk is #398's own GetPool shape: a disk matched to
+// a slot by identity whose own gate mount attempt failed — present (a
+// real device path), its own filesystem never positively read either
+// way, unlike wrong_filesystem's positively-different one.
+function poolWithMountFailedDisk() {
+  return {
+    mounted: true,
+    disks: [
+      {
+        device: "/dev/sdb",
+        mountPoint: "/mnt/disk1",
+        role: "data",
+        state: "active",
+        sizeBytes: 4_000_000_000_000,
+        usedBytes: 2_000_000_000_000,
+      },
+      {
+        device: "/dev/sdc",
+        mountPoint: "/mnt/disk2",
+        role: "data",
+        state: "mount_failed",
+        sizeBytes: 4_000_000_000_000,
+      },
+    ],
+  };
+}
+
+describe("PoolOverviewPage same-serial disk that could not be mounted (#398)", () => {
+  beforeEach(() => {
+    cleanup();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockMatchMedia();
+    mockStatusAndJobs(mockGet, poolWithMountFailedDisk());
+  });
+
+  it("renders the mount-failed disk with a plain-language status badge, offers only its own device in Replace disk, and excludes it from Upgrade disk", async () => {
+    renderPool();
+
+    await waitFor(() => expect(screen.getByText("/dev/sdb")).toBeInTheDocument());
+
+    // Never the raw enum value — a plain-language label instead.
+    expect(screen.queryByText("mount_failed")).not.toBeInTheDocument();
+    expect(screen.getByText("Needs attention — could not be mounted")).toBeInTheDocument();
+
+    // Replace disk offers this slot, and pre-fills its own device — the
+    // only target ConfirmReplacementTargetAbsent's own probe exception
+    // (#398) can allow here.
+    fireEvent.click(await screen.findByRole("button", { name: "Replace disk" }));
+    const replaceDialog = await screen.findByRole("dialog");
+    fireEvent.click(within(replaceDialog).getByRole("combobox", { name: "Disk to replace" }));
+    const slotOption = await screen.findByRole("option", { name: "/mnt/disk2 (/dev/sdc)" });
+    fireEvent.pointerDown(slotOption, { pointerType: "mouse" });
+    fireEvent.pointerUp(slotOption, { pointerType: "mouse" });
+    fireEvent.click(slotOption);
+    expect(await within(replaceDialog).findByText(/dev\/sdc is present but could not be mounted/)).toBeInTheDocument();
+    fireEvent.click(within(replaceDialog).getByRole("combobox", { name: "Replacement device" }));
+    expect(await screen.findByRole("option", { name: "/dev/sdc" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // Upgrade disk's own slot list must not offer it — an upgrade copies
+    // from the array's own disk, and this one is not confirmed to be it.
+    fireEvent.click(await screen.findByRole("button", { name: "Upgrade disk" }));
+    const upgradeDialog = await screen.findByRole("dialog");
+    fireEvent.click(within(upgradeDialog).getByRole("combobox", { name: "Disk to upgrade" }));
+    expect(await screen.findByRole("option", { name: "/mnt/disk1 (data, /dev/sdb)" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "/mnt/disk2 (data, /dev/sdc)" })).not.toBeInTheDocument();
+  });
+});
+
 describe("PoolOverviewPage missing disk", () => {
   beforeEach(() => {
     cleanup();

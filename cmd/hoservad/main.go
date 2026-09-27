@@ -480,6 +480,12 @@ func run(cfg config) error {
 	handler.Schedules = scheduleService
 	handler.UPS = api.NewUPSService(upsStore, machineKey, generator, newNUTReloader(linuxDisks.Exec), upsSocketPermissions{path: upsControlSocketPath(cfg.socketPath)})
 	handler.Disks = disks
+	// BlankProbe is the one-off, bounded replace-path probe (#398) — never
+	// called from disks.List() (Q13), only from PlanDiskReplace/ReplaceDisk
+	// through job.ConfirmReplacementTargetAbsent, against the one device a
+	// replace request actually names.
+	handler.BlankProbe = disk.LinuxBlankProber{Exec: linuxDisks.Exec}
+	handler.MountFailedSlots = storageTarget.MountFailedMountpoints
 	handler.Metrics = metricsStore
 	handler.History = history
 	handler.Updates = updateEngine
@@ -498,6 +504,7 @@ func run(cfg config) error {
 	handler.ACME = acmeService
 	handler.Shares = shareService
 	handler.MoverResults = moverResults
+	wireBackup(handler, backupService)
 
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
 		Provider:   disks,
@@ -528,6 +535,7 @@ func run(cfg config) error {
 	registry.Register(job.TypeDiskReplace, true, job.RunDiskReplace(job.DiskReplaceDeps{
 		Provider:   disks,
 		Runner:     linuxDisks.Exec,
+		Probe:      handler.BlankProbe,
 		Store:      arrayStore,
 		Generator:  generator,
 		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},

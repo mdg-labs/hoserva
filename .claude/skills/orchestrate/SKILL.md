@@ -428,6 +428,15 @@ git -C <workspace> push <real repo's origin URL> HEAD:refs/heads/ci/<unit-id>
 gh workflow run <workflow file> --repo mdg-labs/hoserva --ref ci/<unit-id>
 gh run list --repo mdg-labs/hoserva --branch ci/<unit-id> --limit 1 --json databaseId,url
 ```
+For `nightly-l3.yml` specifically (issue #391), pass only the step ids the
+unit's own diff touches as its `l3_steps` input — doc 06 §4 lists them —
+e.g. `gh workflow run nightly-l3.yml --repo mdg-labs/hoserva --ref
+ci/<unit-id> -f l3_steps=storage-target,disk-yank`, which turns the ~56-
+minute full suite into roughly what those steps plus the always-run setup
+take. Run the full suite instead — no `l3_steps`, or `-f l3_steps=` left
+empty — once before landing a change to `scripts/vm/run-l3-suite.sh`
+itself or to `.github/workflows/nightly-l3.yml`: a partial selection
+cannot prove such a change left every *other* step working.
 `ci.yml`, `nightly-l3.yml`, `pages.yml` and `s9-hosted-probe.yml` accept
 `workflow_dispatch` (a dispatch needs the trigger on `main`, so a workflow
 newly given one only works after the next promotion). Put the run's URL

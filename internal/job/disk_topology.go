@@ -212,13 +212,57 @@ func ReplaceEligibleDuringRemoval(state string) bool {
 // commonly the path not existing) is treated as "not mounted" rather than
 // propagated, the same fail-open reading applyArrayFromStore's own
 // alreadyMounted already relies on for this exact check.
-func ConfirmReplacementTargetAbsent(mountpoint string, old store.ArrayDisk, listed []disk.Disk) error {
+//
+// One exception (#388): a disk matched by strong identity (WWN/serial) is
+// not refused when it is exactly targetDevice — the disk this replace is
+// about to format — and disk.FSUUIDMismatch positively confirms its
+// filesystem differs from old's own recorded one. That is the "wrong
+// filesystem" scenario replace exists to recover from
+// (disk.StorageGate.WrongFilesystem and GetPool's own per-slot state
+// report the identical disk as wrong_filesystem, never active), not old's
+// own disk continuing to serve. This is deliberately narrow and fails
+// closed on both axes: disk.FSUUIDMismatch itself never reports a
+// mismatch when either side's filesystem UUID is empty or unread, so a
+// disk whose filesystem could not be positively confirmed different still
+// refuses — and the exception never applies to any *other* disk in listed
+// that happens to carry old's identity: a second, untouched physical unit
+// elsewhere still refuses unconditionally, mismatched filesystem or not,
+// since its presence means old's own data is not confirmed gone, whatever
+// device the caller is actually about to format. The weak-identity
+// fallback below can never hit this exception either — it only matches
+// when both filesystem UUIDs are already equal, never different.
+//
+// A second, narrower exception (#398) covers the case #388 deliberately
+// left refusing: targetDevice matches old's own identity, was not
+// positively read to differ (inv.FSUUID is empty — unread, or genuinely
+// blank), and old itself carries a recorded filesystem UUID (a slot that
+// was actually formatted, never one still awaiting its first setup). Only
+// then, and only once, probe.ProbeBlank is called against targetDevice —
+// the one device the caller actually asked to replace, never any other
+// disk in listed, and never from any path but this one (job.disk_topology
+// is reached only from planDiskReplace, replaceDisk and RunDiskReplace,
+// never List() or a poll). A (true, nil) result — blkid -p's own
+// positive "no signature at all", covering a bare disk and refusing a
+// partition table equally — is the only outcome that allows the
+// exception; probe == nil, a (false, ...) result, or a non-nil error
+// refuses exactly as before.
+func ConfirmReplacementTargetAbsent(ctx context.Context, mountpoint string, old store.ArrayDisk, listed []disk.Disk, targetDevice string, probe disk.BlankProber) error {
 	if mounted, err := disk.IsMountpoint(mountpoint); err == nil && mounted {
 		return fmt.Errorf("%w: %s is still mounted", ErrReplacementSlotDiskPresent, mountpoint)
 	}
 	oldIdentity := disk.Identity{WWN: old.WWN, Serial: old.Serial}
 	for _, inv := range listed {
 		if oldIdentity.Matches(disk.Identity{WWN: inv.WWN, Serial: inv.Serial}) {
+			if inv.Device == targetDevice {
+				if disk.FSUUIDMismatch(old.FSUUID, inv.FSUUID) {
+					continue
+				}
+				if inv.FSUUID == "" && old.FSUUID != "" && probe != nil {
+					if blank, err := probe.ProbeBlank(ctx, targetDevice); err == nil && blank {
+						continue
+					}
+				}
+			}
 			return fmt.Errorf("%w: %s", ErrReplacementSlotDiskPresent, inv.Device)
 		}
 		if old.WeakIdentity && inv.WeakIdentity && old.FSUUID != "" && old.FSUUID == inv.FSUUID {

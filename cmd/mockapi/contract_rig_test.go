@@ -19,6 +19,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/acme"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
+	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
@@ -499,6 +500,21 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	// disk that is not "format before mounting".
 	extRunner.Script("blkid", []string{"-s", "UUID", "-o", "value", "/dev/sdf"}, []byte("ext-fixture-uuid\n"), nil)
 
+	// Registered last, so t.Cleanup's LIFO order runs this before every
+	// other cleanup above — the db.Close, the netSvc.Close, the mount.Close
+	// and every t.TempDir() removal registered while building this handler.
+	// A contractCase (e.g. StartMover/valid) can submit a real job and
+	// return before it finishes; without this, the job's own goroutine can
+	// still be writing to jobStore (through db) or to logs' t.TempDir()
+	// when those get closed or removed out from under it (#397).
+	t.Cleanup(func() {
+		drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := scheduler.Drain(drainCtx); err != nil {
+			t.Errorf("draining contract rig jobs before cleanup: %v", err)
+		}
+	})
+
 	return &api.Handler{
 		Scheduler:  scheduler,
 		Store:      jobStore,
@@ -563,6 +579,14 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		Docker:      config.MemoryDocker{},
 		DiskMounter: extMounter,
 		DiskRunner:  extRunner,
+		// Backup (#269) is a minimal, real backup.Service against this
+		// rig's own migrated db/dbPath — enough for ImportConfig's own
+		// checksum/integrity/schema-version validation to run and for its
+		// pre-restore h.Backup.Run(ctx) to succeed (Destinations is empty,
+		// so nothing here is written to any real path). ExportConfig
+		// stays out of contractCases (contractSkip's own entry) since the
+		// mock's own stub bytes give it no failure path to compare.
+		Backup: &backup.Service{DB: db, Paths: backup.Paths{DBPath: dbPath}},
 	}
 }
 

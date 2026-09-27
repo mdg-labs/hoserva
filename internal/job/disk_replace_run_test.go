@@ -35,11 +35,20 @@ func scriptMountedUUID(r *disk.FakeRunner, mountpoint, uuid string) {
 	r.Script("findmnt", []string{"-n", "-o", "UUID", mountpoint}, []byte(uuid+"\n"), nil)
 }
 
-func registerDiskReplace(t *testing.T, s *Scheduler, p disk.Provider, r disk.Runner, st *store.ArrayStore, genRoot string, mounter disk.UnitMounter, eng parity.Engine) {
+// probe is variadic so every existing call site — which has no reason to
+// care about the blank-disk probe at all — is unaffected; a test that
+// does (the same-serial-blank scenario, #398) passes its own scripted
+// disk.BlankProber as the one extra argument.
+func registerDiskReplace(t *testing.T, s *Scheduler, p disk.Provider, r disk.Runner, st *store.ArrayStore, genRoot string, mounter disk.UnitMounter, eng parity.Engine, probe ...disk.BlankProber) {
 	t.Helper()
+	var bp disk.BlankProber
+	if len(probe) > 0 {
+		bp = probe[0]
+	}
 	s.registry.Register(TypeDiskReplace, false, RunDiskReplace(DiskReplaceDeps{
 		Provider:  p,
 		Runner:    r,
+		Probe:     bp,
 		Store:     st,
 		Generator: config.NewGenerator(genRoot),
 		Mounter:   mounter,
@@ -400,6 +409,84 @@ func TestRunDiskReplace_RefusesWhenSlotDiskStillPresentByIdentity(t *testing.T) 
 	}
 	if got.Device != "/dev/sdb" {
 		t.Fatalf("disk1 device = %q after a refused replace, want unchanged /dev/sdb", got.Device)
+	}
+}
+
+// TestRunDiskReplace_SameSerialBlankDiskAllowedAsExactTarget is the
+// literal #388/#398 scenario at RunDiskReplace's own re-check: the
+// slot's own disk (WWN wwn-d1) was replaced by a genuinely blank disk
+// that carries the same WWN — present by identity, its own filesystem
+// UUID unread — at the exact device the caller is replacing. Without a
+// positively blank probe result this refuses exactly like
+// TestRunDiskReplace_RefusesWhenSlotDiskStillPresentByIdentity above;
+// scripting the probe blank for this one device is what allows it.
+func TestRunDiskReplace_SameSerialBlankDiskAllowedAsExactTarget(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	st := store.NewArrayStore(newTestDB(t))
+	genRoot := t.TempDir()
+	mounter := disk.NewFakeMounter()
+
+	p := disk.NewFakeProvider()
+	p.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB})
+	// /dev/sdb is present, carries disk1's own WWN, but no filesystem UUID
+	// at all — the shape a genuinely blank same-serial replacement has.
+	p.AddDisk("/dev/sdb", disk.Disk{Size: 4 * disk.TB, WWN: "wwn-d1"})
+	p.AddDisk("/dev/sdc", disk.Disk{Size: 4 * disk.TB})
+	r := disk.NewFakeRunner()
+	scriptFilesystemUUID(r, "/dev/sdb", "uuid-new")
+	scriptMountedUUID(r, "/mnt/disk1", "uuid-new")
+
+	// A second data disk (disk2), the same shape seedTwoDataDiskArray uses:
+	// Q18's own content-file placement check needs at least 3 distinct
+	// physical devices to place its required copies, which a lone parity
+	// plus a single data disk cannot satisfy.
+	if err := st.PutArray(ctx, store.ArraySettings{
+		CreatePolicy: "mfs", MinFreeSpace: "20G", CreatedAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC),
+	}, []store.ArrayDisk{
+		{Role: store.ArrayRoleParity, RoleIndex: 1, Device: "/dev/sda", Filesystem: "xfs", FSUUID: "uuid-p", Mountpoint: "/mnt/parity1"},
+		{Role: store.ArrayRoleData, RoleIndex: 1, Device: "/dev/sdb", Filesystem: "xfs", FSUUID: "uuid-d1", WWN: "wwn-d1", Mountpoint: "/mnt/disk1"},
+		{Role: store.ArrayRoleData, RoleIndex: 2, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-d2", Mountpoint: "/mnt/disk2"},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+
+	probe := disk.NewFakeBlankProber()
+	probe.ScriptBlank("/dev/sdb")
+
+	eng := newRecordingEngine()
+	eng.SetStatus(parity.ParityStatus{DataMounts: map[string]string{"d1": "/mnt/disk1", "d2": "/mnt/disk2"}})
+	eng.ScriptFix([]parity.Progress{{}}, nil)
+	registerDiskReplace(t, s, p, r, st, genRoot, mounter, eng, probe)
+
+	replacement := disk.AssignedDisk{Device: "/dev/sdb", Filesystem: disk.XFS, WWN: "wwn-d1"}
+	params := DiskReplaceParams{
+		Confirmation: SingleDiskConfirmation(replacement),
+		Mountpoint:   "/mnt/disk1",
+		Disk:         replacement,
+		Sizes:        map[string]int64{"/dev/sda": 8 * disk.TB, "/dev/sdb": 4 * disk.TB, "/dev/sdc": 4 * disk.TB},
+	}
+	j, err := s.Submit(ctx, TypeDiskReplace, nil, mustJSON(t, params))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	finished := await(t, s, j.ID)
+	if finished.Status != StatusSucceeded {
+		t.Fatalf("status = %s (%s), want succeeded — the probe positively confirmed no signature at all", finished.Status, finished.ErrorMessage)
+	}
+	if _, ok := p.FormattedAs("/dev/sdb"); !ok {
+		t.Fatal("the positively-blank exact target was not formatted")
+	}
+	got, err := st.GetDataDiskByMountpoint(ctx, "/mnt/disk1")
+	if err != nil {
+		t.Fatalf("GetDataDiskByMountpoint: %v", err)
+	}
+	if got.FSUUID != "uuid-new" {
+		t.Fatalf("disk1 FSUUID = %q after replace, want uuid-new", got.FSUUID)
+	}
+	probed := probe.Probed()
+	if len(probed) != 1 || probed[0] != "/dev/sdb" {
+		t.Fatalf("probe.Probed() = %v, want exactly one call against /dev/sdb", probed)
 	}
 }
 

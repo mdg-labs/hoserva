@@ -12,8 +12,25 @@ import (
 // VerifyArchive checks doc 10 §1's post-write requirements: the archive
 // unpacks, manifest checksums match, state.db opens and passes
 // PRAGMA integrity_check, and secrets.age decrypts when a passphrase is
-// given.
+// given. Used by the nightly backup chain, which always has the
+// passphrase (or no secrets.age to check) since it just built the
+// archive itself.
 func VerifyArchive(archivePath, passphrase string) error {
+	return verifyArchive(archivePath, passphrase, true)
+}
+
+// VerifyArchiveForImport runs the same checksum and PRAGMA integrity_check
+// validation as VerifyArchive, but never requires a passphrase or
+// decrypts secrets.age: config import (doc 10 §1, #269) restores the
+// database only — #62 restores the rest, including secrets — so a
+// caller importing an archive it did not just build, and may have no
+// passphrase for yet, must still be able to validate the part it is
+// about to restore from.
+func VerifyArchiveForImport(archivePath string) error {
+	return verifyArchive(archivePath, "", false)
+}
+
+func verifyArchive(archivePath, passphrase string, requireSecretsPassphrase bool) error {
 	dir, err := os.MkdirTemp("", "hoserva-backup-verify-*")
 	if err != nil {
 		return fmt.Errorf("creating verify temp dir: %w", err)
@@ -56,6 +73,9 @@ func VerifyArchive(archivePath, passphrase string) error {
 		return fmt.Errorf("integrity_check failed: %s", result)
 	}
 
+	if !requireSecretsPassphrase {
+		return nil
+	}
 	secretsPath := filepath.Join(dir, "secrets.age")
 	if _, err := os.Stat(secretsPath); err == nil {
 		if passphrase == "" {

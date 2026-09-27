@@ -137,3 +137,42 @@ func TestParseRunSummary_TruncatedStillFails(t *testing.T) {
 		t.Fatalf("error = %v, want it to wrap ErrRunParse", err)
 	}
 }
+
+// corruptedContentSyncLog is a real, unedited `-l` log's own tail,
+// captured running `snapraid sync` in the loop-device lab (#390) against
+// a content file truncated to simulate what an unclean shutdown can leave
+// behind: a real snapraid 12.4-1 binary exits non-zero in well under a
+// second, prints these two msg:fatal lines, and never reaches — let alone
+// writes — a summary tag of any kind.
+const corruptedContentSyncLog = `msg:progress: Loading state from /lab/390-a1/mnt/parity1/snapraid.content...
+msg:fatal: Unexpected end of content file '/lab/390-a1/mnt/parity1/snapraid.content' at offset 2000
+msg:fatal: This content file is truncated. Please use an alternate copy.
+`
+
+// TestFatalMessages_ExtractsSnapraidsOwnDiagnostic is #390's own coverage
+// for the helper runFailedBeforeSummaryErr relies on: a run that never
+// wrote a summary section still has SnapRAID's own fatal text sitting
+// right there in the log, and it must come back in order, not be lost the
+// way the plain ErrRunParse case discarded it.
+func TestFatalMessages_ExtractsSnapraidsOwnDiagnostic(t *testing.T) {
+	got := fatalMessages([]byte(corruptedContentSyncLog))
+	want := []string{
+		"Unexpected end of content file '/lab/390-a1/mnt/parity1/snapraid.content' at offset 2000",
+		"This content file is truncated. Please use an alternate copy.",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("fatalMessages = %#v, want %#v", got, want)
+	}
+}
+
+// TestFatalMessages_NoneFoundReturnsNil covers the plain truncated-mid-run
+// case (TestParseRunSummary_TruncatedStillFails's own fixture): a process
+// SIGKILLed before it ever got the chance to print anything fatal has no
+// msg:fatal lines to find, and fatalMessages must say so by returning
+// nothing rather than inventing one.
+func TestFatalMessages_NoneFoundReturnsNil(t *testing.T) {
+	got := fatalMessages(readCorpus(t, "snapraid_sync_truncated_no_summary.log"))
+	if got != nil {
+		t.Fatalf("fatalMessages = %#v, want nil", got)
+	}
+}
