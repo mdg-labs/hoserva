@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/google/uuid"
 	"github.com/ogen-go/ogen/http"
@@ -415,9 +417,10 @@ func diskExternalCmd() *cobra.Command {
 	return cmd
 }
 
-// appCmd is `hoserva app` (doc 01 §3): list is this part's own operation —
-// install, lifecycle actions and Compose stack management are #68, #277
-// and #278's own subcommands.
+// appCmd is `hoserva app` (doc 01 §3): the list, the lifecycle actions on
+// a container by its Engine ID or name — managed and unmanaged alike (doc 04
+// §2) — its logs and its stats. Install and Compose stack management are
+// #68 and #278's own subcommands.
 func appCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "app", Short: "App and container commands"}
 	cmd.AddCommand(&cobra.Command{
@@ -425,7 +428,121 @@ func appCmd() *cobra.Command {
 		Short: "List containers, managed and unmanaged alike (doc 04 §2)",
 		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.ListApps(apiCtx()) }),
 	})
+	cmd.AddCommand(
+		appActionCmd("start ID", "Start a container and print its state", func(c *apiv1.Client, id string) (any, error) {
+			return c.StartApp(apiCtx(), apiv1.StartAppParams{ID: id})
+		}),
+		appActionCmd("stop ID", "Stop a container and print its state", func(c *apiv1.Client, id string) (any, error) {
+			return c.StopApp(apiCtx(), apiv1.StopAppParams{ID: id})
+		}),
+		appActionCmd("restart ID", "Restart a container and print its state", func(c *apiv1.Client, id string) (any, error) {
+			return c.RestartApp(apiCtx(), apiv1.RestartAppParams{ID: id})
+		}),
+		appActionCmd("recreate ID", "Pull the image again and replace the container, keeping its configuration; prints the job", func(c *apiv1.Client, id string) (any, error) {
+			return c.RecreateApp(apiCtx(), apiv1.RecreateAppParams{ID: id})
+		}),
+		appActionCmd("stats ID", "Show a running container's CPU, memory, network and block I/O use", func(c *apiv1.Client, id string) (any, error) {
+			return c.GetAppStats(apiCtx(), apiv1.GetAppStatsParams{ID: id})
+		}),
+		appRemoveCmd(),
+		appLogsCmd(),
+	)
 	return cmd
+}
+
+func appActionCmd(use, short string, call func(*apiv1.Client, string) (any, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAPI(func(c *apiv1.Client) (any, error) { return call(c, args[0]) })(cmd, args)
+		},
+	}
+}
+
+func appRemoveCmd() *cobra.Command {
+	var deleteAppdata bool
+	cmd := &cobra.Command{
+		Use:   "remove ID",
+		Short: "Remove a container; its appdata is kept unless --delete-appdata is given",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params := apiv1.RemoveAppParams{ID: args[0]}
+			if deleteAppdata {
+				params.DeleteAppdata = apiv1.NewOptBool(true)
+			}
+			return runAPI(func(c *apiv1.Client) (any, error) { return c.RemoveApp(apiCtx(), params) })(cmd, args)
+		},
+	}
+	cmd.Flags().BoolVar(&deleteAppdata, "delete-appdata", false, "Also delete the container's appdata directories")
+	return cmd
+}
+
+func appLogsCmd() *cobra.Command {
+	var tail int32
+	var follow bool
+	cmd := &cobra.Command{
+		Use:   "logs ID",
+		Short: "Print a container's logs",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			params := apiv1.GetAppLogsParams{ID: args[0]}
+			if cmd.Flags().Changed("tail") {
+				if tail < 0 || tail > 10000 {
+					return fmt.Errorf("--tail must be between 0 and 10000")
+				}
+				params.Tail = apiv1.NewOptInt32(tail)
+			}
+			if follow {
+				if jsonOutput {
+					return fmt.Errorf("--follow streams plain text and cannot be combined with --json")
+				}
+				params.Follow = apiv1.NewOptBool(true)
+				return followAppLogs(params)
+			}
+			c, err := newAPIClient()
+			if err != nil {
+				return err
+			}
+			logs, err := c.GetAppLogs(apiCtx(), params)
+			if err != nil {
+				return mapAPIErr(err)
+			}
+			if jsonOutput {
+				body, err := io.ReadAll(logs.Data)
+				if err != nil {
+					return err
+				}
+				emit(string(body))
+				return nil
+			}
+			_, err = io.Copy(os.Stdout, logs.Data)
+			return err
+		},
+	}
+	cmd.Flags().Int32Var(&tail, "tail", 200, "How many trailing lines to start from (0-10000)")
+	cmd.Flags().BoolVar(&follow, "follow", false, "Keep streaming new lines until interrupted or the container exits")
+	return cmd
+}
+
+// followAppLogs streams to stdout until the server ends the stream (nil) or
+// the user interrupts (nil too — that is how --follow is meant to end). A
+// stream that breaks any other way is an error.
+func followAppLogs(params apiv1.GetAppLogsParams) error {
+	c, err := newStreamingAPIClient(os.Stdout)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(apiCtx(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if _, err := c.GetAppLogs(ctx, params); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return mapAPIErr(err)
+	}
+	return nil
 }
 
 func shareCmd() *cobra.Command {
