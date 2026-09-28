@@ -201,12 +201,13 @@ issue. Read **only the verdicts**:
   re-read the issue (step 1's two calls) and continue with it.
 - `split-proposed` — `AskUserQuestion` with the one-line-per-part
   proposal. On approval, apply `OUT_DIR/<n>.md` to the original issue with
-  `scripts/gh-rest.sh issue-edit <n> --body-file` (it keeps its number as
+  `scripts/gh-rest.sh issue-edit <n> --body-file OUT_DIR/<n>.md` (it keeps its number as
   part A) and create each `OUT_DIR/<n>-NEW-*.md` as a new issue with
   `scripts/gh-rest.sh issue-create`, with the labels and relationships the
   verdict lists (same epic and milestone), replace every `<NEW-…>`
   placeholder in the bodies with the real number
-  (`scripts/gh-rest.sh issue-edit --body-file`), set each to `ready`, and
+  (`scripts/gh-rest.sh issue-edit <m> --body-file <file>` for each part
+  `<m>` whose body file `<file>` held a placeholder), set each to `ready`, and
   put all parts in T. The refiner already wrote the bodies — don't rewrite
   them.
 - `already-done` / `obsolete` — `AskUserQuestion` with the evidence; drop

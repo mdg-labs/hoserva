@@ -196,7 +196,7 @@ GitHub's native fields. **Never** as body prose ("Part of #N", "Depends on
    - **Seeding a phase** ("seed Phase 5"): create the epic first, then each sub-issue with the phase's milestone, then wire parent and blocked-by natively — the same shape as the existing phase epics. The mass-creation guard below applies.
    - **Mass-creation guard:** if this would create more than ~12 issues, state the count and list the titles, and confirm via `AskUserQuestion` before creating anything.
 3. `scripts/gh-rest.sh issue-create --title "..." --body-file <tmpfile> --label ...` — epic first, then each sub-issue, so every number a relationship needs exists.
-4. Wire relationships with `scripts/gh-rest.sh add-sub-issue`/`add-blocked-by`. If a body referenced another issue's number before it existed, patch it in with `scripts/gh-rest.sh issue-edit --body-file` now — no placeholders left behind.
+4. Wire relationships with `scripts/gh-rest.sh add-sub-issue`/`add-blocked-by`. If a body referenced another issue's number before it existed, patch it in with `scripts/gh-rest.sh issue-edit <n> --body-file <tmpfile>` now — no placeholders left behind.
 5. `scripts/issue-status.sh <number> ready` for every issue created. The `issue-status` workflow stamps new issues `status:new`; one this skill created was enriched at birth.
 6. Report every new issue's URL.
 
