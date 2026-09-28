@@ -140,6 +140,13 @@ jobs:
       # Migration checksums, schema drift and the data-safety scan (D16,
       # Q60) — a plain Go check, no lab or Node needed.
       - run: make db-check
+      # The agent workflow's move off GraphQL onto repository-scoped REST
+      # (issue #410): fails on a GraphQL-backed `gh` subcommand or
+      # `--paginate` reappearing under .claude/ or scripts/, then the
+      # helper's own contract tests against a fake `gh` — never the live
+      # API.
+      - run: make lint-gh
+      - run: make test-gh
 
   api:
     name: API contract (D18, Q63)

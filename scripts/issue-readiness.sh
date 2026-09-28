@@ -15,14 +15,14 @@
 # Exit: 0 ready, 1 not ready, 2 usage or gh failure.
 set -euo pipefail
 
-REPO=${GH_REPO:-mdg-labs/hoserva}
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 die() { printf '%s\n' "$*" >&2; exit 2; }
 
 [[ $# -eq 1 && $1 =~ ^[0-9]+$ ]] || die "usage: $0 <issue-number>"
 n=$1
 
-json=$(gh issue view "$n" --repo "$REPO" --json body,labels,state) || die "issue-readiness: gh issue view $n failed"
+json=$("$HERE/gh-rest.sh" issue-view "$n") || die "issue-readiness: could not read #$n"
 body=$(jq -r '.body // ""' <<<"$json")
 labels=$(jq -r '[.labels[].name] | join(" ")' <<<"$json")
 

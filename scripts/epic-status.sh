@@ -20,7 +20,6 @@
 # those, when the epic's own last trailer closes it.
 set -euo pipefail
 
-REPO=${GH_REPO:-mdg-labs/hoserva}
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 die() { printf '%s\n' "$*" >&2; exit 1; }
@@ -29,12 +28,12 @@ die() { printf '%s\n' "$*" >&2; exit 1; }
 epic=$1
 [[ $epic =~ ^[0-9]+$ ]] || die "epic must be a number, got '$epic'"
 
-# "<state> <status label or ->" per sub-issue. State is downcased because this
-# REST endpoint spells it "open"/"closed" while `gh issue view --json state`
-# spells the same thing "OPEN"/"CLOSED" — a comparison written against the
-# wrong one of those matches nothing and fails silently.
+# "<state> <status label or ->" per sub-issue. REST already spells state
+# lowercase ("open"/"closed"); ascii_downcase here is defensive, not a fixup
+# for an inconsistency — scripts/gh-rest.sh reads everything over REST, so
+# there is no GraphQL-flavoured "OPEN"/"CLOSED" left anywhere in this script.
 mapfile -t subs < <(
-  gh api "repos/$REPO/issues/$epic/sub_issues" --paginate \
+  "$HERE/gh-rest.sh" sub-issues "$epic" \
     --jq '.[] | "\(.state | ascii_downcase) \([.labels[].name | select(startswith("status:"))] | first // "-")"'
 )
 

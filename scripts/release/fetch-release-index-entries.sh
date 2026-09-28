@@ -8,6 +8,12 @@
 # push. Releases that predate this asset, or whose tag is not a
 # recognised channel tag, are skipped; any other gh failure stops the
 # fetch so we never publish a silently truncated index.
+#
+# `gh release list` is GraphQL-backed under the hood; a Claude Code cloud
+# session's egress proxy refuses GraphQL outright (issue #410), so the tag
+# list here comes from `gh api repos/.../releases` instead, paged with
+# `?per_page=100&page=N` rather than `--paginate` — the proxy also refuses
+# the numeric-id `repositories/{id}/...` links `--paginate` would follow.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,14 +31,18 @@ repo="${GITHUB_REPOSITORY:-mdg-labs/hoserva}"
 
 mkdir -p "$out_dir"
 
-mapfile -t tags < <(
-  gh release list \
-    --repo "$repo" \
-    --limit 10000 \
-    --exclude-drafts \
-    --json tagName \
-    --jq '.[].tagName'
-)
+# Pages `repos/$repo/releases` itself with `?per_page=100&page=N` — see the
+# header comment — stopping at the first page with fewer than 100 releases.
+page=1
+tags=()
+while :; do
+  page_json="$(gh api "repos/$repo/releases?per_page=100&page=$page")"
+  mapfile -t page_tags < <(printf '%s' "$page_json" | jq -r '.[] | select(.draft | not) | .tag_name')
+  tags+=(${page_tags[@]+"${page_tags[@]}"})
+  count="$(printf '%s' "$page_json" | jq 'length')"
+  [ "$count" -lt 100 ] && break
+  page=$((page + 1))
+done
 
 if [ "${#tags[@]}" -eq 0 ]; then
   exit 0

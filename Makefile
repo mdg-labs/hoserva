@@ -317,7 +317,7 @@ web-test:
 	@echo "web test"
 	cd web && $(NPM) run test
 
-test: test-unit packaging-test
+test: test-unit packaging-test test-gh
 
 # Go's own "./..." wildcard skips "vendor", "testdata" and dot/underscore
 # directories, but not "node_modules" (`go help packages`) — once web/'s
@@ -354,6 +354,15 @@ packaging-test:
 	packaging/test-postinst-hoserva-apps.sh
 	packaging/test-udev-storage-rule-ordering.sh
 
+# The agent workflow's GitHub client (issue #410): scripts/gh-rest.sh's own
+# contract tests against a fake `gh`, plus the fake-gh tests for the
+# scripts that read GitHub through it — never the live API.
+test-gh:
+	scripts/test-gh-rest.sh
+	scripts/test-issue-status.sh
+	scripts/test-issue-readiness.sh
+	scripts/test-check-gh-rest.sh
+
 # Go-only lint: CI's lint-and-unit job calls this so it does not also
 # run the web job's lint/typecheck. Local `make lint` still includes
 # web-lint and web-typecheck (doc 06 §10). In CI, missing golangci-lint
@@ -378,7 +387,16 @@ lint-go:
 		echo "golangci-lint not installed, skipping (gofmt and go vet above still ran)"; \
 	fi
 
-lint: lint-go
+# Guards the agent workflow's move off GraphQL onto repository-scoped REST
+# (issue #410): fails on a GraphQL-backed `gh` subcommand or `--paginate`
+# anywhere under .claude/ or scripts/ — either one works on the
+# maintainer's own machine and then breaks silently in a Claude Code cloud
+# session, whose egress proxy refuses both. CI's lint-and-unit job calls
+# this directly.
+lint-gh:
+	scripts/check-gh-rest.sh
+
+lint: lint-go lint-gh
 	$(MAKE) web-lint
 	$(MAKE) web-typecheck
 

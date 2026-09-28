@@ -96,28 +96,28 @@ previous run is reported to the user, not removed by you.
 ## 0. Resolve the target
 
 ```
-gh issue view <N> --repo mdg-labs/hoserva --json number,title,body,labels,state
+scripts/gh-rest.sh issue-view <N> --jq '{number,title,body,labels,state}'
 ```
 
 - **Not labelled `epic`:** the target set is just this one issue.
 - **Labelled `epic`:**
   ```
-  gh api repos/mdg-labs/hoserva/issues/<N>/sub_issues --paginate --jq '.[] | {number,title,state,labels:[.labels[].name]}'
+  scripts/gh-rest.sh sub-issues <N> --jq '.[] | {number,title,state,labels:[.labels[].name]}'
   ```
-  Drop any sub-issue already closed. This endpoint spells state
-  **lowercase** (`"open"`), unlike `gh issue view --json state` (`"OPEN"`);
-  filter with `(.state | ascii_downcase) == "open"`.
-- If the issue doesn't exist or `gh` fails, stop and say so — don't guess a number.
+  Drop any sub-issue already closed — REST spells state lowercase
+  (`"open"`), so filter with `.state == "open"`.
+- If the issue doesn't exist or the call fails, stop and say so — don't guess a number.
 
 Call the resulting set of open issue numbers **T**.
 
 ## 1. Pull each issue's full body, comments, and relationships
 
-For every issue in T — genuinely two calls, `gh` rejects `--comments` with `--json`:
+For every issue in T — the body and its comments are two different REST
+endpoints, so this is always two calls:
 
 ```
-gh issue view <n> --repo mdg-labs/hoserva --json number,title,body,labels
-gh issue view <n> --repo mdg-labs/hoserva --comments
+scripts/gh-rest.sh issue-view <n>
+scripts/gh-rest.sh issue-comments <n>
 ```
 
 **Comments are authoritative over the body where they disagree** — scope
@@ -129,7 +129,10 @@ dispatch; never assume the agent will rediscover it.
 Then the native relationships:
 
 ```
-gh issue view <n> --repo mdg-labs/hoserva --json blockedBy,blocking,parent,subIssues
+scripts/gh-rest.sh blocked-by <n>
+scripts/gh-rest.sh blocking <n>
+scripts/gh-rest.sh parent <n>
+scripts/gh-rest.sh sub-issues <n>
 ```
 
 For each `d` in `blockedBy`, check its **labels**, not its open/closed
@@ -197,12 +200,15 @@ issue. Read **only the verdicts**:
   relationships it lists natively, run `scripts/issue-status.sh <n> ready`,
   re-read the issue (step 1's two calls) and continue with it.
 - `split-proposed` — `AskUserQuestion` with the one-line-per-part
-  proposal. On approval, apply `OUT_DIR/<n>.md` to the original issue (it
-  keeps its number as part A) and create each `OUT_DIR/<n>-NEW-*.md` as a
-  new issue with the labels and relationships the verdict lists (same epic
-  and milestone), replace every `<NEW-…>` placeholder in the bodies with the
-  real number (`gh issue edit --body-file`), set each to `ready`, and put
-  all parts in T. The refiner already wrote the bodies — don't rewrite them.
+  proposal. On approval, apply `OUT_DIR/<n>.md` to the original issue with
+  `scripts/gh-rest.sh issue-edit <n> --body-file` (it keeps its number as
+  part A) and create each `OUT_DIR/<n>-NEW-*.md` as a new issue with
+  `scripts/gh-rest.sh issue-create`, with the labels and relationships the
+  verdict lists (same epic and milestone), replace every `<NEW-…>`
+  placeholder in the bodies with the real number
+  (`scripts/gh-rest.sh issue-edit --body-file`), set each to `ready`, and
+  put all parts in T. The refiner already wrote the bodies — don't rewrite
+  them.
 - `already-done` / `obsolete` — `AskUserQuestion` with the evidence; drop
   the issue from T. Never cancel or close it yourself.
 - `needs-decision` — `AskUserQuestion` with the refiner's question and
@@ -486,14 +492,16 @@ git cherry-pick -n FETCH_HEAD
   after a sub-issue's fix has actually landed (Q46: `main` only moves via
   promotion), so ask the label, not the open/closed state:
   ```
-  gh api repos/mdg-labs/hoserva/issues/<epic>/sub_issues --paginate \
-    --jq '[.[] | select((.state | ascii_downcase) == "open") | select(all(.labels[]; .name != "status:implemented" and .name != "status:closed")) | .number]'
+  scripts/gh-rest.sh sub-issues <epic> \
+    --jq '[.[] | select(.state == "open") | select(all(.labels[]; .name != "status:implemented" and .name != "status:closed")) | .number]'
   ```
   This lists open sub-issues that are genuinely still unfinished. The
   verifier already set this issue's own `status:implemented` before you got
   here, so it never appears in that list — the epic's last sub-issue is the
-  one where this list comes back **empty**. Keep `ascii_downcase`: without
-  it the filter matches nothing and every landing would close the epic.
+  one where this list comes back **empty**. `scripts/gh-rest.sh` reads state
+  over REST, which spells it lowercase (`"open"`) — the filter above must
+  compare against that, not `"OPEN"`, or it matches nothing and every
+  landing would close the epic.
 
   Commit with the executor's message, adding `Fixes #<epic>` only if it is
   really the last. This runs in the real repo, so it needs `make

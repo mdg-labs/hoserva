@@ -13,13 +13,8 @@ allowed-tools:
   - AskUserQuestion
   - Bash(git *)
   - Bash(make *)
-  - Bash(gh pr view *)
-  - Bash(gh pr list *)
-  - Bash(gh pr comment *)
+  - Bash(scripts/gh-rest.sh *)
   - Bash(gh api *)
-  - Bash(gh issue view *)
-  - Bash(gh issue list *)
-  - Bash(gh repo view *)
 ---
 
 # coderabbit-review
@@ -39,8 +34,9 @@ confirming it in the code and design docs first.
 This skill covers only the internal `dev → main` promotion PR that
 `open-pr` opens — its head is always the repo's own `dev` branch, never
 a fork. `$ARGUMENTS` is the PR number. If missing, ask once. Confirm
-it's the expected shape with `gh pr view <n> --repo mdg-labs/hoserva
---json number,title,baseRefName,headRefName,state` — this skill assumes
+it's the expected shape with `scripts/gh-rest.sh pr-view <n>
+--jq '{number,title,base:.base.ref,head:.head.ref,state}'` (repository-scoped
+REST, never a GraphQL-backed `gh pr view`) — this skill assumes
 `head` is `dev`; if it isn't (for example, a contributor PR from a fork
 branch targeting `dev`), stop and ask rather than proceeding, since
 fixes below land on `dev` directly and no fix-and-push workflow is
@@ -61,12 +57,15 @@ CodeRabbit posts in three shapes — collect all of them, filtering to its
 bot account (`coderabbitai[bot]` or `coderabbitai`, whichever `gh` reports):
 
 1. **Inline diff comments** (the individual findings):
-   `gh api repos/mdg-labs/hoserva/pulls/<n>/comments --paginate`.
-   Each has an `id` (needed to reply in-thread), `path`, `line`, `body`.
+   `scripts/gh-rest.sh paged "pulls/<n>/comments"`. Each has an `id` (needed
+   to reply in-thread), `path`, `line`, `body`. This pages itself with
+   `?per_page=100&page=N`, never `--paginate` — the cloud proxy refuses the
+   numeric-id `repositories/{id}/...` links `--paginate` would follow.
 2. **Review submissions** (walkthroughs / summary reviews):
-   `gh api repos/mdg-labs/hoserva/pulls/<n>/reviews --paginate`.
-3. **Top-level PR conversation comments**:
-   `gh pr view <n> --repo mdg-labs/hoserva --json comments`.
+   `scripts/gh-rest.sh paged "pulls/<n>/reviews"`.
+3. **Top-level PR conversation comments** (a PR's top-level comments are
+   issue comments — same numbering, same endpoint):
+   `scripts/gh-rest.sh issue-comments <n>`.
 
 Parse CodeRabbit's own severity markers (potential issue / security /
 refactor suggestion / nitpick) and **order work critical and security
@@ -139,8 +138,9 @@ No CodeRabbit comment is left unanswered. For each:
 
 - **Fixed** → reply with what changed and the commit, e.g. via
   `gh api repos/mdg-labs/hoserva/pulls/<n>/comments/<comment_id>/replies -f body="Fixed in <sha>: <one-line summary>."`
-  for inline comments (this replies in-thread), or `gh pr comment <n> --body "..."`
-  quoting which point it answers for top-level/review comments.
+  for inline comments (this replies in-thread — already repository-scoped
+  REST), or `scripts/gh-rest.sh pr-comment <n> --body-file <file>` quoting
+  which point it answers for top-level/review comments.
 - **False positive** → reply with the concrete reason (cite the code/doc
   that shows the concern doesn't apply).
 - **Deferred / out of scope for this PR** → reply with the issue number
@@ -149,7 +149,7 @@ No CodeRabbit comment is left unanswered. For each:
 ## Findings outside this PR's scope
 
 Before filing anything, check for an existing open issue that already
-covers it: `gh issue list --repo mdg-labs/hoserva --search "..."`. If one
+covers it: `scripts/gh-rest.sh issue-search "..." --state open`. If one
 exists, say so in the reply and stop there — don't duplicate. If none
 exists, invoke the `github-triage` skill with the finding as a raw report
 (file + line + CodeRabbit's point + your own read of it) to create one,
