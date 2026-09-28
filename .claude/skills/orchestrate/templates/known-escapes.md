@@ -39,6 +39,8 @@ existing line by adding its PR number.
 - **atomicity** — check-then-act on a path (validate, then re-resolve by name) — PR 228, 236
 - **atomicity** — a conditional clear keyed only on the row, not on the state and holder the caller checked, so a transition that lands between read and write is wiped — PR 382
 - **atomicity** — a maintenance check that returns before the mutation, so array stop can unmount while the mutation is still writing under the mountpoint — PR 344
+- **atomicity** — a cancel or stop flag read in one lock hold and the start done in a later one, so a request that lands in the gap is accepted and then ignored — PR 412
+- **ordering** — a side effect that takes a bounded resource (a pre-change archive's retention slot) runs before the admission check that can refuse the operation, so refused retries use up what real changes rely on — PR 412
 - **atomicity** — two paths that each rebuild and publish the same live object (degraded acknowledge vs. array-sequence rebuild) under no shared lock, so one publishes state computed before the other's change landed and silently undoes it — PR 394
 
 ## Fail-open and error handling
@@ -78,6 +80,7 @@ existing line by adding its PR number.
 - **mock-drift** — `cmd/mockapi` accepts what the production handler rejects, or defaults differently — PR 166, 182, 213, 228, 382
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
 - **doc-drift** — a design doc names a state or identifier the code never persists — PR 370
+- **doc-drift** — a command example in a skill or prompt drops a required operand (`issue-edit --body-file` with no issue number or file), so an agent following it literally fails — PR 412
 - **doc-drift** — a code comment still describes behaviour a later fix removed, inviting the next change to put it back — PR 394
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
 - **validation** — mode selected by a flag's non-empty value rather than its presence, so an empty value falls through to the default path (`-ups-notify ""` starting a second daemon) — PR 337
