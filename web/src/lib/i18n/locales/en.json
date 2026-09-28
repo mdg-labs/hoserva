@@ -639,6 +639,14 @@
     "copied": "Copied",
     "failed": "Could not copy to the clipboard."
   },
+  "doctorChecks": {
+    "status": {
+      "pass": "Pass",
+      "warn": "Warning",
+      "fail": "Failed",
+      "unknown": "Unknown"
+    }
+  },
   "secretInput": {
     "show": "Show secret",
     "hide": "Hide secret",

@@ -14,7 +14,7 @@ import { CopyValue } from "@/components/patterns/copy-value";
 import { Banner } from "@/components/patterns/banner";
 import { ChoiceCards } from "@/components/patterns/choice-cards";
 import { SecretInput } from "@/components/patterns/secret-input";
-import { doctorBlocksProgress, doctorStatusTone } from "@/components/patterns/doctor-checks";
+import { doctorBlocksProgress, doctorStatusLabel, doctorStatusTone } from "@/components/patterns/doctor-checks";
 import { StackedChecks } from "@/components/patterns/stacked-checks";
 import { StatusBadge } from "@/components/patterns/status-badge";
 import { TimezoneSelect } from "@/components/patterns/timezone";
@@ -514,7 +514,9 @@ export function WelcomePage(): React.ReactElement {
                       <CardHeader>
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <CardTitle>{t(labelKey)}</CardTitle>
-                          <StatusBadge tone={doctorStatusTone(check.status)}>{check.status}</StatusBadge>
+                          <StatusBadge tone={doctorStatusTone(check.status)}>
+                            {doctorStatusLabel(check.status, t)}
+                          </StatusBadge>
                         </div>
                         <CardDescription>{check.message}</CardDescription>
                       </CardHeader>

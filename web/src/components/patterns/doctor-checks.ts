@@ -1,3 +1,5 @@
+import type { useTranslation } from "react-i18next";
+
 import type { StatusTone } from "@/components/patterns/status-badge";
 import type { components } from "@/lib/api/client";
 
@@ -13,6 +15,22 @@ export function doctorStatusTone(status: DoctorCheck["status"]): StatusTone {
       return "error";
     default:
       return "outline";
+  }
+}
+
+export function doctorStatusLabel(
+  status: DoctorCheck["status"],
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
+  switch (status) {
+    case "pass":
+      return t("doctorChecks.status.pass");
+    case "warn":
+      return t("doctorChecks.status.warn");
+    case "fail":
+      return t("doctorChecks.status.fail");
+    default:
+      return t("doctorChecks.status.unknown");
   }
 }
 
