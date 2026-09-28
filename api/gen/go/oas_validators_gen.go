@@ -156,6 +156,17 @@ func (s *App) Validate() error {
 
 	var failures []validate.FieldError
 	if err := func() error {
+		if err := s.Health.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "health",
+			Error: err,
+		})
+	}
+	if err := func() error {
 		if err := s.State.Validate(); err != nil {
 			return err
 		}
@@ -209,6 +220,21 @@ func (s *App) Validate() error {
 		return &validate.Error{Fields: failures}
 	}
 	return nil
+}
+
+func (s AppHealth) Validate() error {
+	switch s {
+	case "none":
+		return nil
+	case "starting":
+		return nil
+	case "healthy":
+		return nil
+	case "unhealthy":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
 }
 
 func (s *AppImage) Validate() error {
@@ -289,6 +315,29 @@ func (s AppState) Validate() error {
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
+}
+
+func (s *AppStats) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := (validate.Float{}).Validate(float64(s.CpuPercent)); err != nil {
+			return errors.Wrap(err, "float")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "cpuPercent",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
 }
 
 func (s *ApplyHostConfigRequest) Validate() error {
@@ -1816,6 +1865,8 @@ func (s JobType) Validate() error {
 	case "appdata_backup":
 		return nil
 	case "container_update":
+		return nil
+	case "container_recreate":
 		return nil
 	case "acme_issue":
 		return nil
@@ -3855,6 +3906,29 @@ func (s *RegisterExternalDiskRequest) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "label",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *RemoveAppResult) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if s.DeletedPaths == nil {
+			return errors.New("nil is invalid value")
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "deletedPaths",
 			Error: err,
 		})
 	}

@@ -456,11 +456,31 @@ func (UnimplementedHandler) FormatExternalDisk(ctx context.Context, req *FormatE
 
 // GetApp implements getApp operation.
 //
-// One container's current state, image, tag, ports and mounts (doc 04 §3) — stats and health are
-// #277's own operations.
+// One container's current state, health, image, tag, ports and mounts (doc 04 §3).
 //
 // GET /apps/{id}
 func (UnimplementedHandler) GetApp(ctx context.Context, params GetAppParams) (r *App, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetAppLogs implements getAppLogs operation.
+//
+// The container's stdout and stderr as plain text: the last `tail` lines, then, with `follow` true,
+// every new line as it is written until the client disconnects or the container exits (each line is
+// flushed as it arrives).
+//
+// GET /apps/{id}/logs
+func (UnimplementedHandler) GetAppLogs(ctx context.Context, params GetAppLogsParams) (r GetAppLogsOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetAppStats implements getAppStats operation.
+//
+// CPU, memory, network and block I/O for a running container (`app_not_running`, 409, for one that is
+// not running — a stopped container is never reported as using nothing).
+//
+// GET /apps/{id}/stats
+func (UnimplementedHandler) GetAppStats(ctx context.Context, params GetAppStatsParams) (r *AppStats, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -714,9 +734,8 @@ func (UnimplementedHandler) ListAppImages(ctx context.Context) (r *ListAppImages
 // ListApps implements listApps operation.
 //
 // Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose
-// stack installs, lifecycle actions and the managed/unmanaged distinction against an installed stack
-// are later issues (#277, #278). available is false, with no error, whenever Docker itself is not
-// reachable (doc 04 §3).
+// stack installs and the managed/unmanaged distinction against an installed stack are a later issue
+// (#278). available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
 //
 // GET /apps
 func (UnimplementedHandler) ListApps(ctx context.Context) (r *ListAppsOK, _ error) {
@@ -977,6 +996,20 @@ func (UnimplementedHandler) RebootHost(ctx context.Context, req *ConfirmUpdateRe
 	return r, ht.ErrNotImplemented
 }
 
+// RecreateApp implements recreateApp operation.
+//
+// Queues a `container_recreate` job (service class): it pulls the container's image again and replaces
+// the container with one built from the same configuration, volumes and networks. If the pull or the
+// creation of the replacement fails, or the replacement does not start, the original container is left
+// as it was — same name and volumes, running again if it was running. A container started with
+// `--rm` cannot be recreated: the Engine deletes it the moment it stops, so the job fails before
+// changing anything.
+//
+// POST /apps/{id}/recreate
+func (UnimplementedHandler) RecreateApp(ctx context.Context, params RecreateAppParams) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // RegenerateTLSCertificate implements regenerateTLSCertificate operation.
 //
 // Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
@@ -996,6 +1029,22 @@ func (UnimplementedHandler) RegenerateTLSCertificate(ctx context.Context) (r *Ne
 //
 // POST /disks/external
 func (UnimplementedHandler) RegisterExternalDisk(ctx context.Context, req *RegisterExternalDiskRequest) (r *ExternalDisk, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// RemoveApp implements removeApp operation.
+//
+// Removes a stopped container (`app_running`, 409, for one that is not stopped). The container's
+// appdata is kept unless `deleteAppdata` is explicitly true: then the bind-mount directories strictly
+// inside the appdata location (the cache disk's `appdata` directory) are deleted, together with the
+// container's anonymous volumes. Anything outside that location, the location itself, and any
+// directory another container mounts, or that lies inside a directory of appdata another container
+// mounts, is never deleted — a request that would delete one is refused (`appdata_shared`, 409) and
+// removes nothing. `deleteAppdata` with no appdata location is refused (`appdata_unavailable`, 409).
+// Every refusal happens before the container is removed.
+//
+// DELETE /apps/{id}
+func (UnimplementedHandler) RemoveApp(ctx context.Context, params RemoveAppParams) (r *RemoveAppResult, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1027,6 +1076,15 @@ func (UnimplementedHandler) ReplaceDisk(ctx context.Context, req *ReplaceDiskReq
 // POST /users/{username}/reset-password
 func (UnimplementedHandler) ResetUserPassword(ctx context.Context, req *ResetUserPasswordRequest, params ResetUserPasswordParams) error {
 	return ht.ErrNotImplemented
+}
+
+// RestartApp implements restartApp operation.
+//
+// Restarts the container and returns its state afterwards, and publishes a `container_state` event.
+//
+// POST /apps/{id}/restart
+func (UnimplementedHandler) RestartApp(ctx context.Context, params RestartAppParams) (r *App, _ error) {
+	return r, ht.ErrNotImplemented
 }
 
 // ResumeJob implements resumeJob operation.
@@ -1132,6 +1190,16 @@ func (UnimplementedHandler) SetUserPassword(ctx context.Context, req *SetUserPas
 	return ht.ErrNotImplemented
 }
 
+// StartApp implements startApp operation.
+//
+// Starts the container and returns its state afterwards, and publishes a `container_state` event.
+// Managed and unmanaged containers alike.
+//
+// POST /apps/{id}/start
+func (UnimplementedHandler) StartApp(ctx context.Context, params StartAppParams) (r *App, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // StartArray implements startArray operation.
 //
 // Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
@@ -1217,6 +1285,16 @@ func (UnimplementedHandler) StartShareRelocation(ctx context.Context, req *Start
 //
 // POST /parity/sync
 func (UnimplementedHandler) StartSync(ctx context.Context, req *StartSyncRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// StopApp implements stopApp operation.
+//
+// Stops the container (the Engine's own grace period, then a kill) and returns its state afterwards,
+// and publishes a `container_state` event.
+//
+// POST /apps/{id}/stop
+func (UnimplementedHandler) StopApp(ctx context.Context, params StopAppParams) (r *App, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

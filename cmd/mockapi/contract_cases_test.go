@@ -350,6 +350,178 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// --- Apps lifecycle (#277) ---
+	{
+		op:   "StartApp",
+		name: "valid_by_name",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartApp(ctx, apiv1.StartAppParams{ID: "portainer"})
+			return err
+		},
+	},
+	{
+		op:   "StartApp",
+		name: "unknown_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartApp(ctx, apiv1.StartAppParams{ID: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:   "StopApp",
+		name: "valid_by_name",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StopApp(ctx, apiv1.StopAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "StopApp",
+		name: "unknown_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StopApp(ctx, apiv1.StopAppParams{ID: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:   "RestartApp",
+		name: "valid_by_name",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RestartApp(ctx, apiv1.RestartAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "RestartApp",
+		name: "unknown_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RestartApp(ctx, apiv1.RestartAppParams{ID: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:   "RecreateApp",
+		name: "valid_queues_a_job",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RecreateApp(ctx, apiv1.RecreateAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "RecreateApp",
+		name: "unknown_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RecreateApp(ctx, apiv1.RecreateAppParams{ID: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:   "RecreateApp",
+		name: "refused_during_maintenance_mode",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.RecreateApp(ctx, apiv1.RecreateAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "RemoveApp",
+		name: "valid_stopped_container",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "portainer"})
+			return err
+		},
+	},
+	{
+		// Production refuses appdata deletion with appdata_unavailable/409
+		// when the array has no cache disk to hold appdata, and no mock
+		// scenario has one — so the mock's appdata_shared refusal and
+		// successful appdata deletion are reached only by the unit tests
+		// in apps_test.go, which call removeApp directly, not by this rig.
+		op:   "RemoveApp",
+		name: "delete_appdata_without_a_cache_disk_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "portainer", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		// Same refusal for a container whose appdata is shared: with no
+		// cache disk, appdata_unavailable comes before appdata_shared.
+		op:   "RemoveApp",
+		name: "delete_appdata_of_a_shared_mount_without_a_cache_disk_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "transcoder", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:       "RemoveApp",
+		name:     "delete_appdata_without_an_array_is_refused",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "portainer", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "RemoveApp",
+		name: "running_container_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "jellyfin", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "RemoveApp",
+		name: "unknown_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:   "GetAppLogs",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetAppLogs(ctx, apiv1.GetAppLogsParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "GetAppLogs",
+		name: "unknown_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetAppLogs(ctx, apiv1.GetAppLogsParams{ID: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:   "GetAppStats",
+		name: "valid_running_container",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetAppStats(ctx, apiv1.GetAppStatsParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "GetAppStats",
+		name: "stopped_container_is_refused",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetAppStats(ctx, apiv1.GetAppStatsParams{ID: "portainer"})
+			return err
+		},
+	},
+	{
+		op:   "GetAppStats",
+		name: "unknown_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetAppStats(ctx, apiv1.GetAppStatsParams{ID: "no-such-container"})
+			return err
+		},
+	},
 	{
 		op:   "GetPool",
 		name: "valid",

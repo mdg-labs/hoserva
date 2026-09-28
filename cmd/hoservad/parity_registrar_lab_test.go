@@ -227,7 +227,7 @@ func TestLabParityRegistrar_LiveArrayCreationReachesRealSyncAndMaintenanceChain(
 	// builds topologyChanged from, not a narrower stand-in for it.
 	shareService := newShareService(shares, arrays, generator, nil, nil)
 	rebuildArraySequence := func(ctx context.Context) error {
-		seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, exec)
+		seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, exec, nil)
 		if err != nil {
 			return err
 		}

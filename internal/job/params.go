@@ -197,6 +197,9 @@ func ValidateParams(t Type, params []byte) error {
 		if t == TypeDiskRemove {
 			return fmt.Errorf("job: disk_remove params require a mountpoint and confirmation")
 		}
+		if t == TypeContainerRecreate {
+			return fmt.Errorf("job: container_recreate params require a container id")
+		}
 		return nil
 	}
 	switch t {
@@ -238,6 +241,9 @@ func ValidateParams(t Type, params []byte) error {
 		return err
 	case TypeACMEIssue:
 		_, err := decodeACMEIssueParams(params)
+		return err
+	case TypeContainerRecreate:
+		_, err := decodeContainerRecreateParams(params)
 		return err
 	default:
 		return fmt.Errorf("job: type %s does not take params", t)

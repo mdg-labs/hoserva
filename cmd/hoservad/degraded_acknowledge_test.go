@@ -327,7 +327,7 @@ func TestAcknowledgeDegraded_SurvivesEveryRebuild(t *testing.T) {
 	provider.AddDisk(disks[0].Device, disk.Disk{WWN: disks[0].WWN, Serial: disks[0].Serial, ByIDName: disks[0].ByIDName})
 	scheduler := h.Scheduler
 
-	seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, runner)
+	seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, runner, nil)
 	if err != nil {
 		t.Fatalf("newArraySequence: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestAcknowledgeDegraded_SurvivesEveryRebuild(t *testing.T) {
 	// A share create, a disk-topology change or a SIGHUP all funnel
 	// through this exact function (never a hand-copied rebuild) to
 	// re-evaluate disk.StorageGate with DATA1 still the only disk absent.
-	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack)
+	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil)
 	if err := rebuild(ctx); err != nil {
 		t.Fatalf("rebuildArraySequence: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestAcknowledgeDegraded_SurvivesEveryRebuild_WrongFilesystem(t *testing.T) 
 	provider.AddDisk(disks[1].Device, disk.Disk{WWN: disks[1].WWN, Serial: disks[1].Serial, ByIDName: disks[1].ByIDName, FSUUID: "uuid-d-replaced"})
 	scheduler := h.Scheduler
 
-	seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, runner)
+	seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, runner, nil)
 	if err != nil {
 		t.Fatalf("newArraySequence: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestAcknowledgeDegraded_SurvivesEveryRebuild_WrongFilesystem(t *testing.T) 
 	// A share create, a disk-topology change or a SIGHUP all funnel through
 	// this exact function to re-evaluate disk.StorageGate with DATA1 still
 	// the only wrong-filesystem slot.
-	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack)
+	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil)
 	if err := rebuild(ctx); err != nil {
 		t.Fatalf("rebuildArraySequence: %v", err)
 	}
@@ -651,7 +651,7 @@ func TestAcknowledgeDegraded_WaitsForAnInFlightRebuild(t *testing.T) {
 		t.Fatalf("EnterMaintenance: %v", err)
 	}
 
-	seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, runner)
+	seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, runner, nil)
 	if err != nil {
 		t.Fatalf("newArraySequence: %v", err)
 	}
@@ -660,7 +660,7 @@ func TestAcknowledgeDegraded_WaitsForAnInFlightRebuild(t *testing.T) {
 	s := newTestStorageTargetSync(t)
 	ack := &acknowledgedDegraded{}
 	wireAcknowledgeDegraded(h, s, ack)
-	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack)
+	rebuild := newRebuildArraySequence(scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil)
 
 	provider.armed.Store(true)
 	rebuildErr := make(chan error, 1)
@@ -731,7 +731,7 @@ func TestNoBlankProbeOnStartupUpdateOrSighupRebuild(t *testing.T) {
 	provider.AddDisk(disks[0].Device, disk.Disk{WWN: disks[0].WWN, Serial: disks[0].Serial, ByIDName: disks[0].ByIDName, FSUUID: disks[0].FSUUID})
 	provider.AddDisk(disks[1].Device, disk.Disk{WWN: disks[1].WWN, Serial: disks[1].Serial, ByIDName: disks[1].ByIDName, FSUUID: disks[1].FSUUID})
 
-	seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, provider, runner)
+	seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, provider, runner, nil)
 	if err != nil {
 		t.Fatalf("newArraySequence: %v", err)
 	}
@@ -759,7 +759,7 @@ func TestNoBlankProbeOnStartupUpdateOrSighupRebuild(t *testing.T) {
 	}
 
 	ack := &acknowledgedDegraded{}
-	rebuild := newRebuildArraySequence(h.Scheduler, arrays, shares, provider, runner, s, nil, h, ack)
+	rebuild := newRebuildArraySequence(h.Scheduler, arrays, shares, provider, runner, s, nil, h, ack, nil)
 	if err := rebuild(ctx); err != nil {
 		t.Fatalf("rebuild (the SIGHUP path): %v", err)
 	}

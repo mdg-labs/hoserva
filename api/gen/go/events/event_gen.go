@@ -14,40 +14,38 @@ import (
 	"github.com/ogen-go/ogen/validate"
 )
 
-// Ref: #/components/schemas/ContainerState
-type ContainerState string
+// The container's HEALTHCHECK result, in the Engine's own vocabulary; `none` when the container
+// defines no health check.
+// Ref: #/components/schemas/AppHealth
+type AppHealth string
 
 const (
-	ContainerStateRunning    ContainerState = "running"
-	ContainerStateStopped    ContainerState = "stopped"
-	ContainerStateRestarting ContainerState = "restarting"
-	ContainerStateExited     ContainerState = "exited"
-	ContainerStatePaused     ContainerState = "paused"
+	AppHealthNone      AppHealth = "none"
+	AppHealthStarting  AppHealth = "starting"
+	AppHealthHealthy   AppHealth = "healthy"
+	AppHealthUnhealthy AppHealth = "unhealthy"
 )
 
-// AllValues returns all ContainerState values.
-func (ContainerState) AllValues() []ContainerState {
-	return []ContainerState{
-		ContainerStateRunning,
-		ContainerStateStopped,
-		ContainerStateRestarting,
-		ContainerStateExited,
-		ContainerStatePaused,
+// AllValues returns all AppHealth values.
+func (AppHealth) AllValues() []AppHealth {
+	return []AppHealth{
+		AppHealthNone,
+		AppHealthStarting,
+		AppHealthHealthy,
+		AppHealthUnhealthy,
 	}
 }
 
 // MarshalText implements encoding.TextMarshaler.
-func (s ContainerState) MarshalText() ([]byte, error) {
+func (s AppHealth) MarshalText() ([]byte, error) {
 	switch s {
-	case ContainerStateRunning:
+	case AppHealthNone:
 		return []byte(s), nil
-	case ContainerStateStopped:
+	case AppHealthStarting:
 		return []byte(s), nil
-	case ContainerStateRestarting:
+	case AppHealthHealthy:
 		return []byte(s), nil
-	case ContainerStateExited:
-		return []byte(s), nil
-	case ContainerStatePaused:
+	case AppHealthUnhealthy:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -55,28 +53,108 @@ func (s ContainerState) MarshalText() ([]byte, error) {
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler.
-func (s *ContainerState) UnmarshalText(data []byte) error {
-	switch ContainerState(data) {
-	case ContainerStateRunning:
-		*s = ContainerStateRunning
+func (s *AppHealth) UnmarshalText(data []byte) error {
+	switch AppHealth(data) {
+	case AppHealthNone:
+		*s = AppHealthNone
 		return nil
-	case ContainerStateStopped:
-		*s = ContainerStateStopped
+	case AppHealthStarting:
+		*s = AppHealthStarting
 		return nil
-	case ContainerStateRestarting:
-		*s = ContainerStateRestarting
+	case AppHealthHealthy:
+		*s = AppHealthHealthy
 		return nil
-	case ContainerStateExited:
-		*s = ContainerStateExited
-		return nil
-	case ContainerStatePaused:
-		*s = ContainerStatePaused
+	case AppHealthUnhealthy:
+		*s = AppHealthUnhealthy
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
 }
 
+// The Docker Engine's own container state vocabulary.
+// Ref: #/components/schemas/AppState
+type AppState string
+
+const (
+	AppStateCreated    AppState = "created"
+	AppStateRunning    AppState = "running"
+	AppStatePaused     AppState = "paused"
+	AppStateRestarting AppState = "restarting"
+	AppStateRemoving   AppState = "removing"
+	AppStateExited     AppState = "exited"
+	AppStateDead       AppState = "dead"
+)
+
+// AllValues returns all AppState values.
+func (AppState) AllValues() []AppState {
+	return []AppState{
+		AppStateCreated,
+		AppStateRunning,
+		AppStatePaused,
+		AppStateRestarting,
+		AppStateRemoving,
+		AppStateExited,
+		AppStateDead,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s AppState) MarshalText() ([]byte, error) {
+	switch s {
+	case AppStateCreated:
+		return []byte(s), nil
+	case AppStateRunning:
+		return []byte(s), nil
+	case AppStatePaused:
+		return []byte(s), nil
+	case AppStateRestarting:
+		return []byte(s), nil
+	case AppStateRemoving:
+		return []byte(s), nil
+	case AppStateExited:
+		return []byte(s), nil
+	case AppStateDead:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *AppState) UnmarshalText(data []byte) error {
+	switch AppState(data) {
+	case AppStateCreated:
+		*s = AppStateCreated
+		return nil
+	case AppStateRunning:
+		*s = AppStateRunning
+		return nil
+	case AppStatePaused:
+		*s = AppStatePaused
+		return nil
+	case AppStateRestarting:
+		*s = AppStateRestarting
+		return nil
+	case AppStateRemoving:
+		*s = AppStateRemoving
+		return nil
+	case AppStateExited:
+		*s = AppStateExited
+		return nil
+	case AppStateDead:
+		*s = AppStateDead
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// A container's state or health changed — sent when the Engine reports it (a start, die, pause,
+// unpause or health check result, including a container killed from outside Hoserva) and when a start,
+// stop, restart or recreate through the API finishes. `state` is the Engine's own vocabulary. `health`
+// is present only when the event carries a health check result (or the container's health after an API
+// action); a start, stop or die resets the check and the Engine's event omits it.
 // Ref: #/components/schemas/ContainerStateEvent
 type ContainerStateEvent struct {
 	Event string                  `json:"event"`
@@ -104,10 +182,11 @@ func (s *ContainerStateEvent) SetData(val ContainerStateEventData) {
 }
 
 type ContainerStateEventData struct {
-	ContainerId string         `json:"containerId"`
-	Name        string         `json:"name"`
-	State       ContainerState `json:"state"`
-	At          time.Time      `json:"at"`
+	ContainerId string       `json:"containerId"`
+	Name        string       `json:"name"`
+	State       AppState     `json:"state"`
+	Health      OptAppHealth `json:"health"`
+	At          time.Time    `json:"at"`
 }
 
 // GetContainerId returns the value of ContainerId.
@@ -121,8 +200,13 @@ func (s *ContainerStateEventData) GetName() string {
 }
 
 // GetState returns the value of State.
-func (s *ContainerStateEventData) GetState() ContainerState {
+func (s *ContainerStateEventData) GetState() AppState {
 	return s.State
+}
+
+// GetHealth returns the value of Health.
+func (s *ContainerStateEventData) GetHealth() OptAppHealth {
+	return s.Health
 }
 
 // GetAt returns the value of At.
@@ -141,8 +225,13 @@ func (s *ContainerStateEventData) SetName(val string) {
 }
 
 // SetState sets the value of State.
-func (s *ContainerStateEventData) SetState(val ContainerState) {
+func (s *ContainerStateEventData) SetState(val AppState) {
 	s.State = val
+}
+
+// SetHealth sets the value of Health.
+func (s *ContainerStateEventData) SetHealth(val OptAppHealth) {
+	s.Health = val
 }
 
 // SetAt sets the value of At.
@@ -828,6 +917,7 @@ const (
 	JobTypePoolRemount       JobType = "pool_remount"
 	JobTypeAppdataBackup     JobType = "appdata_backup"
 	JobTypeContainerUpdate   JobType = "container_update"
+	JobTypeContainerRecreate JobType = "container_recreate"
 	JobTypeAcmeIssue         JobType = "acme_issue"
 	JobTypeVMStart           JobType = "vm_start"
 	JobTypeVMStop            JobType = "vm_stop"
@@ -859,6 +949,7 @@ func (JobType) AllValues() []JobType {
 		JobTypePoolRemount,
 		JobTypeAppdataBackup,
 		JobTypeContainerUpdate,
+		JobTypeContainerRecreate,
 		JobTypeAcmeIssue,
 		JobTypeVMStart,
 		JobTypeVMStop,
@@ -908,6 +999,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeAppdataBackup:
 		return []byte(s), nil
 	case JobTypeContainerUpdate:
+		return []byte(s), nil
+	case JobTypeContainerRecreate:
 		return []byte(s), nil
 	case JobTypeAcmeIssue:
 		return []byte(s), nil
@@ -986,6 +1079,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
+		return nil
+	case JobTypeContainerRecreate:
+		*s = JobTypeContainerRecreate
 		return nil
 	case JobTypeAcmeIssue:
 		*s = JobTypeAcmeIssue
@@ -1394,6 +1490,52 @@ func (s *NotificationLevel) UnmarshalText(data []byte) error {
 	}
 }
 
+// NewOptAppHealth returns new OptAppHealth with value set to v.
+func NewOptAppHealth(v AppHealth) OptAppHealth {
+	return OptAppHealth{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptAppHealth is optional AppHealth.
+type OptAppHealth struct {
+	Value AppHealth
+	Set   bool
+}
+
+// IsSet returns true if OptAppHealth was set.
+func (o OptAppHealth) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptAppHealth) Reset() {
+	var v AppHealth
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptAppHealth) SetTo(v AppHealth) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptAppHealth) Get() (v AppHealth, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptAppHealth) Or(d AppHealth) AppHealth {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptErrorDetails returns new OptErrorDetails with value set to v.
 func NewOptErrorDetails(v ErrorDetails) OptErrorDetails {
 	return OptErrorDetails{
@@ -1644,48 +1786,96 @@ func (o OptNilInt32) Or(d int32) int32 {
 	return d
 }
 
-// Encode encodes ContainerState as json.
-func (s ContainerState) Encode(e *jx.Encoder) {
+// Encode encodes AppHealth as json.
+func (s AppHealth) Encode(e *jx.Encoder) {
 	e.Str(string(s))
 }
 
-// Decode decodes ContainerState from json.
-func (s *ContainerState) Decode(d *jx.Decoder) error {
+// Decode decodes AppHealth from json.
+func (s *AppHealth) Decode(d *jx.Decoder) error {
 	if s == nil {
-		return errors.New("invalid: unable to decode ContainerState to nil")
+		return errors.New("invalid: unable to decode AppHealth to nil")
 	}
 	v, err := d.StrBytes()
 	if err != nil {
 		return err
 	}
 	// Try to use constant string.
-	switch ContainerState(v) {
-	case ContainerStateRunning:
-		*s = ContainerStateRunning
-	case ContainerStateStopped:
-		*s = ContainerStateStopped
-	case ContainerStateRestarting:
-		*s = ContainerStateRestarting
-	case ContainerStateExited:
-		*s = ContainerStateExited
-	case ContainerStatePaused:
-		*s = ContainerStatePaused
+	switch AppHealth(v) {
+	case AppHealthNone:
+		*s = AppHealthNone
+	case AppHealthStarting:
+		*s = AppHealthStarting
+	case AppHealthHealthy:
+		*s = AppHealthHealthy
+	case AppHealthUnhealthy:
+		*s = AppHealthUnhealthy
 	default:
-		*s = ContainerState(v)
+		*s = AppHealth(v)
 	}
 
 	return nil
 }
 
 // MarshalJSON implements stdjson.Marshaler.
-func (s ContainerState) MarshalJSON() ([]byte, error) {
+func (s AppHealth) MarshalJSON() ([]byte, error) {
 	e := jx.Encoder{}
 	s.Encode(&e)
 	return e.Bytes(), nil
 }
 
 // UnmarshalJSON implements stdjson.Unmarshaler.
-func (s *ContainerState) UnmarshalJSON(data []byte) error {
+func (s *AppHealth) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
+// Encode encodes AppState as json.
+func (s AppState) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes AppState from json.
+func (s *AppState) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode AppState to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch AppState(v) {
+	case AppStateCreated:
+		*s = AppStateCreated
+	case AppStateRunning:
+		*s = AppStateRunning
+	case AppStatePaused:
+		*s = AppStatePaused
+	case AppStateRestarting:
+		*s = AppStateRestarting
+	case AppStateRemoving:
+		*s = AppStateRemoving
+	case AppStateExited:
+		*s = AppStateExited
+	case AppStateDead:
+		*s = AppStateDead
+	default:
+		*s = AppState(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s AppState) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *AppState) UnmarshalJSON(data []byte) error {
 	d := jx.DecodeBytes(data)
 	return s.Decode(d)
 }
@@ -1823,16 +2013,23 @@ func (s *ContainerStateEventData) encodeFields(e *jx.Encoder) {
 		s.State.Encode(e)
 	}
 	{
+		if s.Health.Set {
+			e.FieldStart("health")
+			s.Health.Encode(e)
+		}
+	}
+	{
 		e.FieldStart("at")
 		json.EncodeDateTime(e, s.At)
 	}
 }
 
-var jsonFieldsNameOfContainerStateEventData = [4]string{
+var jsonFieldsNameOfContainerStateEventData = [5]string{
 	0: "containerId",
 	1: "name",
 	2: "state",
-	3: "at",
+	3: "health",
+	4: "at",
 }
 
 // Decode decodes ContainerStateEventData from json.
@@ -1878,8 +2075,18 @@ func (s *ContainerStateEventData) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"state\"")
 			}
+		case "health":
+			if err := func() error {
+				s.Health.Reset()
+				if err := s.Health.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"health\"")
+			}
 		case "at":
-			requiredBitSet[0] |= 1 << 3
+			requiredBitSet[0] |= 1 << 4
 			if err := func() error {
 				v, err := json.DecodeDateTime(d)
 				s.At = v
@@ -1900,7 +2107,7 @@ func (s *ContainerStateEventData) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00001111,
+		0b00010111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.
@@ -3094,6 +3301,8 @@ func (s *JobType) Decode(d *jx.Decoder) error {
 		*s = JobTypeAppdataBackup
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
+	case JobTypeContainerRecreate:
+		*s = JobTypeContainerRecreate
 	case JobTypeAcmeIssue:
 		*s = JobTypeAcmeIssue
 	case JobTypeVMStart:
@@ -3554,6 +3763,39 @@ func (s *NotificationLevel) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes AppHealth as json.
+func (o OptAppHealth) Encode(e *jx.Encoder) {
+	if !o.Set {
+		return
+	}
+	e.Str(string(o.Value))
+}
+
+// Decode decodes AppHealth from json.
+func (o *OptAppHealth) Decode(d *jx.Decoder) error {
+	if o == nil {
+		return errors.New("invalid: unable to decode OptAppHealth to nil")
+	}
+	o.Set = true
+	if err := o.Value.Decode(d); err != nil {
+		return err
+	}
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s OptAppHealth) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *OptAppHealth) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode encodes ErrorDetails as json.
 func (o OptErrorDetails) Encode(e *jx.Encoder) {
 	if !o.Set {
@@ -3739,17 +3981,36 @@ func (s *OptNilInt32) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
-func (s ContainerState) Validate() error {
+func (s AppHealth) Validate() error {
 	switch s {
+	case "none":
+		return nil
+	case "starting":
+		return nil
+	case "healthy":
+		return nil
+	case "unhealthy":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s AppState) Validate() error {
+	switch s {
+	case "created":
+		return nil
 	case "running":
 		return nil
-	case "stopped":
+	case "paused":
 		return nil
 	case "restarting":
 		return nil
+	case "removing":
+		return nil
 	case "exited":
 		return nil
-	case "paused":
+	case "dead":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
@@ -3793,6 +4054,24 @@ func (s *ContainerStateEventData) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "state",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if value, ok := s.Health.Get(); ok {
+			if err := func() error {
+				if err := value.Validate(); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "health",
 			Error: err,
 		})
 	}
@@ -4065,6 +4344,8 @@ func (s JobType) Validate() error {
 	case "appdata_backup":
 		return nil
 	case "container_update":
+		return nil
+	case "container_recreate":
 		return nil
 	case "acme_issue":
 		return nil

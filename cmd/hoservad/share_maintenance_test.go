@@ -62,7 +62,7 @@ func TestShares_RefusedInMaintenanceModeAfterStopArray(t *testing.T) {
 	// ownerRecordingFS does.
 	shareService.FS = noopChownFS{}
 	shareService.PostCommit = func(ctx context.Context) error {
-		seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, disks, runner)
+		seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, disks, runner, nil)
 		if err != nil {
 			return err
 		}

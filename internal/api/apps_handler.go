@@ -111,9 +111,19 @@ func containerToAPI(c container.Container) apiv1.App {
 		Tag:    c.Tag,
 		State:  apiv1.AppState(c.State),
 		Status: c.Status,
+		Health: appHealth(c.Health),
 		Ports:  ports,
 		Mounts: mounts,
 	}
+}
+
+// appHealth reports a container with no health information as "none",
+// the Engine's own word for it.
+func appHealth(h string) apiv1.AppHealth {
+	if h == "" {
+		return apiv1.AppHealthNone
+	}
+	return apiv1.AppHealth(h)
 }
 
 func imageToAPI(img container.Image) apiv1.AppImage {

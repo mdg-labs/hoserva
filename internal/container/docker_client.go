@@ -3,13 +3,18 @@ package container
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/distribution/reference"
+	dockertypes "github.com/docker/docker/api/types"
 	dockercontainer "github.com/docker/docker/api/types/container"
+	dockerevents "github.com/docker/docker/api/types/events"
 	dockerimage "github.com/docker/docker/api/types/image"
+	dockernetwork "github.com/docker/docker/api/types/network"
 	dockerclient "github.com/docker/docker/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // engineTimeout bounds every Engine API call this package makes, so a
@@ -25,8 +30,30 @@ const engineTimeout = 8 * time.Second
 // Docker's absence surface as ErrUnavailable from the first real call
 // (doc 04 §3: "hoservad starts regardless").
 type EngineClient struct {
-	cli *dockerclient.Client
+	cli engineAPI
 }
+
+// engineAPI is the part of the Docker SDK client EngineClient calls, so
+// the multi-step Recreate can be tested against a scripted Engine.
+type engineAPI interface {
+	ServerVersion(ctx context.Context) (dockertypes.Version, error)
+	ClientVersion() string
+	ContainerList(ctx context.Context, options dockercontainer.ListOptions) ([]dockercontainer.Summary, error)
+	ContainerInspect(ctx context.Context, containerID string) (dockercontainer.InspectResponse, error)
+	ContainerCreate(ctx context.Context, config *dockercontainer.Config, hostConfig *dockercontainer.HostConfig, networkingConfig *dockernetwork.NetworkingConfig, platform *ocispec.Platform, containerName string) (dockercontainer.CreateResponse, error)
+	ContainerStart(ctx context.Context, containerID string, options dockercontainer.StartOptions) error
+	ContainerStop(ctx context.Context, containerID string, options dockercontainer.StopOptions) error
+	ContainerRestart(ctx context.Context, containerID string, options dockercontainer.StopOptions) error
+	ContainerRemove(ctx context.Context, containerID string, options dockercontainer.RemoveOptions) error
+	ContainerRename(ctx context.Context, containerID, newContainerName string) error
+	ContainerLogs(ctx context.Context, containerID string, options dockercontainer.LogsOptions) (io.ReadCloser, error)
+	ContainerStats(ctx context.Context, containerID string, stream bool) (dockercontainer.StatsResponseReader, error)
+	ImageList(ctx context.Context, options dockerimage.ListOptions) ([]dockerimage.Summary, error)
+	ImagePull(ctx context.Context, refStr string, options dockerimage.PullOptions) (io.ReadCloser, error)
+	Events(ctx context.Context, options dockerevents.ListOptions) (<-chan dockerevents.Message, <-chan error)
+}
+
+var _ engineAPI = (*dockerclient.Client)(nil)
 
 // NewEngineClient returns an EngineClient talking to DOCKER_HOST, or the
 // Engine's own default Unix socket when it is unset.
@@ -150,6 +177,7 @@ func containerFromSummary(s dockercontainer.Summary) Container {
 		Tag:    tag,
 		State:  string(s.State),
 		Status: s.Status,
+		Health: healthFromStatus(s.Status),
 		Ports:  ports,
 		Mounts: mounts,
 	}

@@ -234,6 +234,13 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.RegenerateTLSCertificateOperation,
 		apiv1.ConfigureLetsEncryptOperation,
 		apiv1.DisableLetsEncryptOperation,
+		apiv1.StartAppOperation,
+		apiv1.StopAppOperation,
+		apiv1.RestartAppOperation,
+		apiv1.RecreateAppOperation,
+		apiv1.RemoveAppOperation,
+		apiv1.GetAppLogsOperation,
+		apiv1.GetAppStatsOperation,
 	}
 	sort.Slice(generated, func(i, j int) bool { return generated[i] < generated[j] })
 

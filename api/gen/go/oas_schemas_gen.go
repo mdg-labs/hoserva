@@ -449,8 +449,9 @@ func (s *ApiTokenSummary) SetCreatedAt(val time.Time) {
 
 // Ref: #/components/schemas/App
 type App struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID     string    `json:"id"`
+	Name   string    `json:"name"`
+	Health AppHealth `json:"health"`
 	// The image repository, without its tag.
 	Image string   `json:"image"`
 	Tag   string   `json:"tag"`
@@ -469,6 +470,11 @@ func (s *App) GetID() string {
 // GetName returns the value of Name.
 func (s *App) GetName() string {
 	return s.Name
+}
+
+// GetHealth returns the value of Health.
+func (s *App) GetHealth() AppHealth {
+	return s.Health
 }
 
 // GetImage returns the value of Image.
@@ -511,6 +517,11 @@ func (s *App) SetName(val string) {
 	s.Name = val
 }
 
+// SetHealth sets the value of Health.
+func (s *App) SetHealth(val AppHealth) {
+	s.Health = val
+}
+
 // SetImage sets the value of Image.
 func (s *App) SetImage(val string) {
 	s.Image = val
@@ -539,6 +550,64 @@ func (s *App) SetPorts(val []AppPort) {
 // SetMounts sets the value of Mounts.
 func (s *App) SetMounts(val []AppMount) {
 	s.Mounts = val
+}
+
+// The container's HEALTHCHECK result, in the Engine's own vocabulary; `none` when the container
+// defines no health check.
+// Ref: #/components/schemas/AppHealth
+type AppHealth string
+
+const (
+	AppHealthNone      AppHealth = "none"
+	AppHealthStarting  AppHealth = "starting"
+	AppHealthHealthy   AppHealth = "healthy"
+	AppHealthUnhealthy AppHealth = "unhealthy"
+)
+
+// AllValues returns all AppHealth values.
+func (AppHealth) AllValues() []AppHealth {
+	return []AppHealth{
+		AppHealthNone,
+		AppHealthStarting,
+		AppHealthHealthy,
+		AppHealthUnhealthy,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s AppHealth) MarshalText() ([]byte, error) {
+	switch s {
+	case AppHealthNone:
+		return []byte(s), nil
+	case AppHealthStarting:
+		return []byte(s), nil
+	case AppHealthHealthy:
+		return []byte(s), nil
+	case AppHealthUnhealthy:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *AppHealth) UnmarshalText(data []byte) error {
+	switch AppHealth(data) {
+	case AppHealthNone:
+		*s = AppHealthNone
+		return nil
+	case AppHealthStarting:
+		*s = AppHealthStarting
+		return nil
+	case AppHealthHealthy:
+		*s = AppHealthHealthy
+		return nil
+	case AppHealthUnhealthy:
+		*s = AppHealthUnhealthy
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/AppImage
@@ -810,6 +879,101 @@ func (s *AppState) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/AppStats
+type AppStats struct {
+	At time.Time `json:"at"`
+	// Share of the host's CPU time the container used since the previous sample, times the CPUs online
+	// (100 is one full core).
+	CpuPercent float64 `json:"cpuPercent"`
+	// Memory in use, without reclaimable page cache.
+	MemoryBytes      int64 `json:"memoryBytes"`
+	MemoryLimitBytes int64 `json:"memoryLimitBytes"`
+	NetworkRxBytes   int64 `json:"networkRxBytes"`
+	NetworkTxBytes   int64 `json:"networkTxBytes"`
+	BlockReadBytes   int64 `json:"blockReadBytes"`
+	BlockWriteBytes  int64 `json:"blockWriteBytes"`
+}
+
+// GetAt returns the value of At.
+func (s *AppStats) GetAt() time.Time {
+	return s.At
+}
+
+// GetCpuPercent returns the value of CpuPercent.
+func (s *AppStats) GetCpuPercent() float64 {
+	return s.CpuPercent
+}
+
+// GetMemoryBytes returns the value of MemoryBytes.
+func (s *AppStats) GetMemoryBytes() int64 {
+	return s.MemoryBytes
+}
+
+// GetMemoryLimitBytes returns the value of MemoryLimitBytes.
+func (s *AppStats) GetMemoryLimitBytes() int64 {
+	return s.MemoryLimitBytes
+}
+
+// GetNetworkRxBytes returns the value of NetworkRxBytes.
+func (s *AppStats) GetNetworkRxBytes() int64 {
+	return s.NetworkRxBytes
+}
+
+// GetNetworkTxBytes returns the value of NetworkTxBytes.
+func (s *AppStats) GetNetworkTxBytes() int64 {
+	return s.NetworkTxBytes
+}
+
+// GetBlockReadBytes returns the value of BlockReadBytes.
+func (s *AppStats) GetBlockReadBytes() int64 {
+	return s.BlockReadBytes
+}
+
+// GetBlockWriteBytes returns the value of BlockWriteBytes.
+func (s *AppStats) GetBlockWriteBytes() int64 {
+	return s.BlockWriteBytes
+}
+
+// SetAt sets the value of At.
+func (s *AppStats) SetAt(val time.Time) {
+	s.At = val
+}
+
+// SetCpuPercent sets the value of CpuPercent.
+func (s *AppStats) SetCpuPercent(val float64) {
+	s.CpuPercent = val
+}
+
+// SetMemoryBytes sets the value of MemoryBytes.
+func (s *AppStats) SetMemoryBytes(val int64) {
+	s.MemoryBytes = val
+}
+
+// SetMemoryLimitBytes sets the value of MemoryLimitBytes.
+func (s *AppStats) SetMemoryLimitBytes(val int64) {
+	s.MemoryLimitBytes = val
+}
+
+// SetNetworkRxBytes sets the value of NetworkRxBytes.
+func (s *AppStats) SetNetworkRxBytes(val int64) {
+	s.NetworkRxBytes = val
+}
+
+// SetNetworkTxBytes sets the value of NetworkTxBytes.
+func (s *AppStats) SetNetworkTxBytes(val int64) {
+	s.NetworkTxBytes = val
+}
+
+// SetBlockReadBytes sets the value of BlockReadBytes.
+func (s *AppStats) SetBlockReadBytes(val int64) {
+	s.BlockReadBytes = val
+}
+
+// SetBlockWriteBytes sets the value of BlockWriteBytes.
+func (s *AppStats) SetBlockWriteBytes(val int64) {
+	s.BlockWriteBytes = val
 }
 
 // Ref: #/components/schemas/ApplyHostConfigRequest
@@ -3155,6 +3319,20 @@ func (s *GeneralSettings) SetBackupPassphraseSet(val bool) {
 	s.BackupPassphraseSet = val
 }
 
+type GetAppLogsOK struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetAppLogsOK) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
 type GetJobLogOK struct {
 	Data io.Reader
 }
@@ -3670,6 +3848,7 @@ const (
 	JobTypePoolRemount       JobType = "pool_remount"
 	JobTypeAppdataBackup     JobType = "appdata_backup"
 	JobTypeContainerUpdate   JobType = "container_update"
+	JobTypeContainerRecreate JobType = "container_recreate"
 	JobTypeAcmeIssue         JobType = "acme_issue"
 	JobTypeVMStart           JobType = "vm_start"
 	JobTypeVMStop            JobType = "vm_stop"
@@ -3701,6 +3880,7 @@ func (JobType) AllValues() []JobType {
 		JobTypePoolRemount,
 		JobTypeAppdataBackup,
 		JobTypeContainerUpdate,
+		JobTypeContainerRecreate,
 		JobTypeAcmeIssue,
 		JobTypeVMStart,
 		JobTypeVMStop,
@@ -3750,6 +3930,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeAppdataBackup:
 		return []byte(s), nil
 	case JobTypeContainerUpdate:
+		return []byte(s), nil
+	case JobTypeContainerRecreate:
 		return []byte(s), nil
 	case JobTypeAcmeIssue:
 		return []byte(s), nil
@@ -3828,6 +4010,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
+		return nil
+	case JobTypeContainerRecreate:
+		*s = JobTypeContainerRecreate
 		return nil
 	case JobTypeAcmeIssue:
 		*s = JobTypeAcmeIssue
@@ -8782,6 +8967,23 @@ func (s *RegisterExternalDiskRequest) SetLabel(val ExternalDiskLabel) {
 // SetBackupDestination sets the value of BackupDestination.
 func (s *RegisterExternalDiskRequest) SetBackupDestination(val OptBool) {
 	s.BackupDestination = val
+}
+
+// Ref: #/components/schemas/RemoveAppResult
+type RemoveAppResult struct {
+	// The appdata directories deleted. Empty unless `deleteAppdata` was requested — and possibly empty
+	// then too, when none of the container's mounts lay inside the appdata location.
+	DeletedPaths []string `json:"deletedPaths"`
+}
+
+// GetDeletedPaths returns the value of DeletedPaths.
+func (s *RemoveAppResult) GetDeletedPaths() []string {
+	return s.DeletedPaths
+}
+
+// SetDeletedPaths sets the value of DeletedPaths.
+func (s *RemoveAppResult) SetDeletedPaths(val []string) {
+	s.DeletedPaths = val
 }
 
 // Ref: #/components/schemas/ReplaceDiskPlan
