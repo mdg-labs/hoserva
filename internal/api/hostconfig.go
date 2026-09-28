@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/config"
@@ -14,6 +16,19 @@ import (
 
 func errInvalidHostConfig(msg string) error {
 	return &apiError{code: "invalid_host_config", statusCode: 400, message: msg}
+}
+
+// mapDockerDataRootErr maps a Q76 data-root refusal to the same 409
+// unmanaged_config other host-config handlers already use for
+// config.ErrUnmanaged/config.ErrExistingHostFile (share_handler.go,
+// network_handler.go, ups_handler.go) — an existing, unmanaged
+// /etc/docker/daemon.json must be reported, never turned into an opaque
+// 500 by the generic error path.
+func mapDockerDataRootErr(err error) error {
+	if errors.Is(err, config.ErrUnmanaged) || errors.Is(err, config.ErrExistingHostFile) {
+		return &apiError{code: "unmanaged_config", statusCode: 409, message: err.Error()}
+	}
+	return err
 }
 
 func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfigRequest) (*apiv1.ApplyHostConfigResult, error) {
@@ -91,6 +106,38 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 		applied = append(applied, p.choice)
 	}
 
+	// The data-root move's own preflight runs before anything else in this
+	// request is committed (finding: an existing, unmanaged
+	// /etc/docker/daemon.json must never be discovered only after the
+	// Samba import, host-file decisions and host-config rows below are
+	// already durably persisted — every retry would hit the same refusal
+	// with those already applied). acceptedMove/dataRoot are pure — no I/O
+	// beyond the read-only hasCacheDisk lookup — so computing them this
+	// early costs nothing even when the request carries no Docker choices.
+	acceptedMove := importDocker[config.KindDockerContainers] && importDocker[config.KindDockerImages]
+	dataRoot := config.DockerDataRoot(inv, acceptedMove, h.hasCacheDisk(ctx))
+
+	// A prior call may have stopped Docker for this exact move and never
+	// confirmed a successful Start (Generator.ApplyDockerDataRoot's own
+	// finding). Docker being down for that reason is itself what makes
+	// the inventory probe above fail and DockerDataRoot fail closed to
+	// DockerDataRootDefault (Q76) — so a naive retry would report the
+	// wrong dataRoot in its response and never even ask
+	// ApplyDockerDataRoot to finish the restart it already committed to.
+	// The move itself was already validated and written before Stop was
+	// ever issued; only the restart is owed, and it only ever targets the
+	// one fixed cache path.
+	restartPending, err := h.Generator.DockerRestartPending()
+	if err != nil {
+		return nil, fmt.Errorf("checking docker restart marker: %w", err)
+	}
+	if restartPending {
+		dataRoot = config.DockerDataRootCache
+	}
+	if err := h.Generator.CanApplyDockerDataRoot(ctx, dataRoot); err != nil {
+		return nil, mapDockerDataRootErr(fmt.Errorf("checking docker data-root move: %w", err))
+	}
+
 	var insertedShares []string
 	if importSamba || importNFS {
 		if h.Shares == nil {
@@ -142,8 +189,18 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 		return nil, fmt.Errorf("persisting host-config: %w", err)
 	}
 
-	acceptedMove := importDocker[config.KindDockerContainers] && importDocker[config.KindDockerImages]
-	dataRoot := config.DockerDataRoot(inv, acceptedMove, h.hasCacheDisk(ctx))
+	// ApplyDockerDataRoot performs the move the preflight above already
+	// cleared (Q62, Q76): the host-config rows are already durably
+	// persisted by this point, so a failure here is reported rather than
+	// swallowed — dockerDataRoot in the response must reflect what was
+	// actually written, never the decision alone, and the caller can
+	// safely retry (Write is idempotent per path). Mapped through the same
+	// 409 as the preflight for defense in depth against a daemon.json that
+	// appeared in the window between the two calls; the preflight above is
+	// what keeps that window from mattering in the common case.
+	if err := h.Generator.ApplyDockerDataRoot(ctx, dataRoot, h.DockerDirs, h.DockerRestart, 1, time.Now()); err != nil {
+		return nil, mapDockerDataRootErr(fmt.Errorf("applying docker data-root: %w", err))
+	}
 	return &apiv1.ApplyHostConfigResult{Files: applied, DockerDataRoot: dataRoot}, nil
 }
 
@@ -199,7 +256,30 @@ func hostConfigChecks(inv *config.HostInventory) []apiv1.DoctorCheck {
 	if inv.Found(config.KindDockerImages) {
 		checks = append(checks, dockerInventoryCheck("host_docker_images", "Docker images", "image", inv.DockerImages, inv.DockerErr))
 	}
+	// host_docker_volumes, host_docker_networks and host_docker_plugins have
+	// no import/leave decision — there is no host file for any of them to
+	// manage — so unlike containers/images above they are reported only
+	// when there is something to say: a listing failure (fails closed, same
+	// as dockerInventoryCheck) or an actual entry that blocks the cache
+	// data-root move (Q76, #413, #416). An empty, successfully-listed
+	// category is omitted entirely rather than reported as "0 found" next
+	// to a reason text that would not be true. They share the
+	// container/image checks' "docker is available" gate rather than
+	// config.KindFromCheckID/Found, since none of them is ever a
+	// submittable HostConfigID.
+	if !inv.DockerUnavailable {
+		checks = appendDockerInfoCheck(checks, "host_docker_volumes", "Docker volumes", "volume", inv.DockerVolumes, inv.DockerErr)
+		checks = appendDockerInfoCheck(checks, "host_docker_networks", "Docker networks", "network", inv.DockerNetworks, inv.DockerErr)
+		checks = appendDockerInfoCheck(checks, "host_docker_plugins", "Docker plugins", "plugin", inv.DockerPlugins, inv.DockerErr)
+	}
 	return checks
+}
+
+func appendDockerInfoCheck(checks []apiv1.DoctorCheck, id, name, unit string, refs []config.DockerRef, probeErr error) []apiv1.DoctorCheck {
+	if probeErr == nil && len(refs) == 0 {
+		return checks
+	}
+	return append(checks, dockerInventoryCheck(id, name, unit, refs, probeErr))
 }
 
 func appendFileCheck(checks []apiv1.DoctorCheck, id, name, unit string, file config.HostFile) []apiv1.DoctorCheck {

@@ -415,6 +415,19 @@ func diskExternalCmd() *cobra.Command {
 	return cmd
 }
 
+// appCmd is `hoserva app` (doc 01 §3): list is this part's own operation —
+// install, lifecycle actions and Compose stack management are #68, #277
+// and #278's own subcommands.
+func appCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "app", Short: "App and container commands"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List containers, managed and unmanaged alike (doc 04 §2)",
+		RunE:  runAPI(func(c *apiv1.Client) (any, error) { return c.ListApps(apiCtx()) }),
+	})
+	return cmd
+}
+
 func shareCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "share", Short: "Share commands"}
 	cmd.AddCommand(&cobra.Command{

@@ -447,6 +447,371 @@ func (s *ApiTokenSummary) SetCreatedAt(val time.Time) {
 	s.CreatedAt = val
 }
 
+// Ref: #/components/schemas/App
+type App struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// The image repository, without its tag.
+	Image string   `json:"image"`
+	Tag   string   `json:"tag"`
+	State AppState `json:"state"`
+	// Human-readable Engine status, e.g. "Up 3 hours".
+	Status string     `json:"status"`
+	Ports  []AppPort  `json:"ports"`
+	Mounts []AppMount `json:"mounts"`
+}
+
+// GetID returns the value of ID.
+func (s *App) GetID() string {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *App) GetName() string {
+	return s.Name
+}
+
+// GetImage returns the value of Image.
+func (s *App) GetImage() string {
+	return s.Image
+}
+
+// GetTag returns the value of Tag.
+func (s *App) GetTag() string {
+	return s.Tag
+}
+
+// GetState returns the value of State.
+func (s *App) GetState() AppState {
+	return s.State
+}
+
+// GetStatus returns the value of Status.
+func (s *App) GetStatus() string {
+	return s.Status
+}
+
+// GetPorts returns the value of Ports.
+func (s *App) GetPorts() []AppPort {
+	return s.Ports
+}
+
+// GetMounts returns the value of Mounts.
+func (s *App) GetMounts() []AppMount {
+	return s.Mounts
+}
+
+// SetID sets the value of ID.
+func (s *App) SetID(val string) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *App) SetName(val string) {
+	s.Name = val
+}
+
+// SetImage sets the value of Image.
+func (s *App) SetImage(val string) {
+	s.Image = val
+}
+
+// SetTag sets the value of Tag.
+func (s *App) SetTag(val string) {
+	s.Tag = val
+}
+
+// SetState sets the value of State.
+func (s *App) SetState(val AppState) {
+	s.State = val
+}
+
+// SetStatus sets the value of Status.
+func (s *App) SetStatus(val string) {
+	s.Status = val
+}
+
+// SetPorts sets the value of Ports.
+func (s *App) SetPorts(val []AppPort) {
+	s.Ports = val
+}
+
+// SetMounts sets the value of Mounts.
+func (s *App) SetMounts(val []AppMount) {
+	s.Mounts = val
+}
+
+// Ref: #/components/schemas/AppImage
+type AppImage struct {
+	ID        string      `json:"id"`
+	RepoTags  []string    `json:"repoTags"`
+	SizeBytes int64       `json:"sizeBytes"`
+	CreatedAt OptDateTime `json:"createdAt"`
+}
+
+// GetID returns the value of ID.
+func (s *AppImage) GetID() string {
+	return s.ID
+}
+
+// GetRepoTags returns the value of RepoTags.
+func (s *AppImage) GetRepoTags() []string {
+	return s.RepoTags
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *AppImage) GetSizeBytes() int64 {
+	return s.SizeBytes
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *AppImage) GetCreatedAt() OptDateTime {
+	return s.CreatedAt
+}
+
+// SetID sets the value of ID.
+func (s *AppImage) SetID(val string) {
+	s.ID = val
+}
+
+// SetRepoTags sets the value of RepoTags.
+func (s *AppImage) SetRepoTags(val []string) {
+	s.RepoTags = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *AppImage) SetSizeBytes(val int64) {
+	s.SizeBytes = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *AppImage) SetCreatedAt(val OptDateTime) {
+	s.CreatedAt = val
+}
+
+// Ref: #/components/schemas/AppMount
+type AppMount struct {
+	Source      OptString `json:"source"`
+	Destination string    `json:"destination"`
+	Mode        OptString `json:"mode"`
+	ReadWrite   bool      `json:"readWrite"`
+}
+
+// GetSource returns the value of Source.
+func (s *AppMount) GetSource() OptString {
+	return s.Source
+}
+
+// GetDestination returns the value of Destination.
+func (s *AppMount) GetDestination() string {
+	return s.Destination
+}
+
+// GetMode returns the value of Mode.
+func (s *AppMount) GetMode() OptString {
+	return s.Mode
+}
+
+// GetReadWrite returns the value of ReadWrite.
+func (s *AppMount) GetReadWrite() bool {
+	return s.ReadWrite
+}
+
+// SetSource sets the value of Source.
+func (s *AppMount) SetSource(val OptString) {
+	s.Source = val
+}
+
+// SetDestination sets the value of Destination.
+func (s *AppMount) SetDestination(val string) {
+	s.Destination = val
+}
+
+// SetMode sets the value of Mode.
+func (s *AppMount) SetMode(val OptString) {
+	s.Mode = val
+}
+
+// SetReadWrite sets the value of ReadWrite.
+func (s *AppMount) SetReadWrite(val bool) {
+	s.ReadWrite = val
+}
+
+// Ref: #/components/schemas/AppPort
+type AppPort struct {
+	HostIP OptString `json:"hostIP"`
+	// Absent when this container port is not published to the host.
+	HostPort      OptInt          `json:"hostPort"`
+	ContainerPort int             `json:"containerPort"`
+	Protocol      AppPortProtocol `json:"protocol"`
+}
+
+// GetHostIP returns the value of HostIP.
+func (s *AppPort) GetHostIP() OptString {
+	return s.HostIP
+}
+
+// GetHostPort returns the value of HostPort.
+func (s *AppPort) GetHostPort() OptInt {
+	return s.HostPort
+}
+
+// GetContainerPort returns the value of ContainerPort.
+func (s *AppPort) GetContainerPort() int {
+	return s.ContainerPort
+}
+
+// GetProtocol returns the value of Protocol.
+func (s *AppPort) GetProtocol() AppPortProtocol {
+	return s.Protocol
+}
+
+// SetHostIP sets the value of HostIP.
+func (s *AppPort) SetHostIP(val OptString) {
+	s.HostIP = val
+}
+
+// SetHostPort sets the value of HostPort.
+func (s *AppPort) SetHostPort(val OptInt) {
+	s.HostPort = val
+}
+
+// SetContainerPort sets the value of ContainerPort.
+func (s *AppPort) SetContainerPort(val int) {
+	s.ContainerPort = val
+}
+
+// SetProtocol sets the value of Protocol.
+func (s *AppPort) SetProtocol(val AppPortProtocol) {
+	s.Protocol = val
+}
+
+type AppPortProtocol string
+
+const (
+	AppPortProtocolTCP  AppPortProtocol = "tcp"
+	AppPortProtocolUDP  AppPortProtocol = "udp"
+	AppPortProtocolSctp AppPortProtocol = "sctp"
+)
+
+// AllValues returns all AppPortProtocol values.
+func (AppPortProtocol) AllValues() []AppPortProtocol {
+	return []AppPortProtocol{
+		AppPortProtocolTCP,
+		AppPortProtocolUDP,
+		AppPortProtocolSctp,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s AppPortProtocol) MarshalText() ([]byte, error) {
+	switch s {
+	case AppPortProtocolTCP:
+		return []byte(s), nil
+	case AppPortProtocolUDP:
+		return []byte(s), nil
+	case AppPortProtocolSctp:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *AppPortProtocol) UnmarshalText(data []byte) error {
+	switch AppPortProtocol(data) {
+	case AppPortProtocolTCP:
+		*s = AppPortProtocolTCP
+		return nil
+	case AppPortProtocolUDP:
+		*s = AppPortProtocolUDP
+		return nil
+	case AppPortProtocolSctp:
+		*s = AppPortProtocolSctp
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// The Docker Engine's own container state vocabulary.
+// Ref: #/components/schemas/AppState
+type AppState string
+
+const (
+	AppStateCreated    AppState = "created"
+	AppStateRunning    AppState = "running"
+	AppStatePaused     AppState = "paused"
+	AppStateRestarting AppState = "restarting"
+	AppStateRemoving   AppState = "removing"
+	AppStateExited     AppState = "exited"
+	AppStateDead       AppState = "dead"
+)
+
+// AllValues returns all AppState values.
+func (AppState) AllValues() []AppState {
+	return []AppState{
+		AppStateCreated,
+		AppStateRunning,
+		AppStatePaused,
+		AppStateRestarting,
+		AppStateRemoving,
+		AppStateExited,
+		AppStateDead,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s AppState) MarshalText() ([]byte, error) {
+	switch s {
+	case AppStateCreated:
+		return []byte(s), nil
+	case AppStateRunning:
+		return []byte(s), nil
+	case AppStatePaused:
+		return []byte(s), nil
+	case AppStateRestarting:
+		return []byte(s), nil
+	case AppStateRemoving:
+		return []byte(s), nil
+	case AppStateExited:
+		return []byte(s), nil
+	case AppStateDead:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *AppState) UnmarshalText(data []byte) error {
+	switch AppState(data) {
+	case AppStateCreated:
+		*s = AppStateCreated
+		return nil
+	case AppStateRunning:
+		*s = AppStateRunning
+		return nil
+	case AppStatePaused:
+		*s = AppStatePaused
+		return nil
+	case AppStateRestarting:
+		*s = AppStateRestarting
+		return nil
+	case AppStateRemoving:
+		*s = AppStateRemoving
+		return nil
+	case AppStateExited:
+		*s = AppStateExited
+		return nil
+	case AppStateDead:
+		*s = AppStateDead
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/ApplyHostConfigRequest
 type ApplyHostConfigRequest struct {
 	Files []HostConfigChoice `json:"files"`
@@ -465,8 +830,8 @@ func (s *ApplyHostConfigRequest) SetFiles(val []HostConfigChoice) {
 // Ref: #/components/schemas/ApplyHostConfigResult
 type ApplyHostConfigResult struct {
 	Files []HostConfigChoice `json:"files"`
-	// Docker's data-root after this apply (Q62, Q76). Always `/var/lib/docker` when containers or images
-	// exist, when there is no cache disk, or when the caller did not accept a move.
+	// Docker's data-root after this apply (Q62, Q76). Always `/var/lib/docker` when containers, images or
+	// named volumes exist, when there is no cache disk, or when the caller did not accept a move.
 	DockerDataRoot string `json:"dockerDataRoot"`
 }
 
@@ -3580,6 +3945,84 @@ func (s *ListApiTokensOK) GetTokens() []ApiTokenSummary {
 // SetTokens sets the value of Tokens.
 func (s *ListApiTokensOK) SetTokens(val []ApiTokenSummary) {
 	s.Tokens = val
+}
+
+// Ref: #/components/schemas/ListAppImagesOK
+type ListAppImagesOK struct {
+	// False when the Docker Engine is not reachable (doc 04 §3).
+	Available bool `json:"available"`
+	// Set alongside available=false with the reason and a remediation.
+	Message OptString  `json:"message"`
+	Images  []AppImage `json:"images"`
+}
+
+// GetAvailable returns the value of Available.
+func (s *ListAppImagesOK) GetAvailable() bool {
+	return s.Available
+}
+
+// GetMessage returns the value of Message.
+func (s *ListAppImagesOK) GetMessage() OptString {
+	return s.Message
+}
+
+// GetImages returns the value of Images.
+func (s *ListAppImagesOK) GetImages() []AppImage {
+	return s.Images
+}
+
+// SetAvailable sets the value of Available.
+func (s *ListAppImagesOK) SetAvailable(val bool) {
+	s.Available = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ListAppImagesOK) SetMessage(val OptString) {
+	s.Message = val
+}
+
+// SetImages sets the value of Images.
+func (s *ListAppImagesOK) SetImages(val []AppImage) {
+	s.Images = val
+}
+
+// Ref: #/components/schemas/ListAppsOK
+type ListAppsOK struct {
+	// False when the Docker Engine is not reachable (doc 04 §3).
+	Available bool `json:"available"`
+	// Set alongside available=false with the reason and a remediation.
+	Message OptString `json:"message"`
+	Apps    []App     `json:"apps"`
+}
+
+// GetAvailable returns the value of Available.
+func (s *ListAppsOK) GetAvailable() bool {
+	return s.Available
+}
+
+// GetMessage returns the value of Message.
+func (s *ListAppsOK) GetMessage() OptString {
+	return s.Message
+}
+
+// GetApps returns the value of Apps.
+func (s *ListAppsOK) GetApps() []App {
+	return s.Apps
+}
+
+// SetAvailable sets the value of Available.
+func (s *ListAppsOK) SetAvailable(val bool) {
+	s.Available = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ListAppsOK) SetMessage(val OptString) {
+	s.Message = val
+}
+
+// SetApps sets the value of Apps.
+func (s *ListAppsOK) SetApps(val []App) {
+	s.Apps = val
 }
 
 type ListDisksOK struct {

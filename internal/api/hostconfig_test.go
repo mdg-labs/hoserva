@@ -64,6 +64,11 @@ func hostConfigTestEnv(t *testing.T) (*api.Handler, *config.Generator, *sql.DB) 
 			Containers: []config.DockerRef{{ID: "c1", Name: "jellyfin"}},
 			Images:     []config.DockerRef{{ID: "i1", Name: "nginx:latest"}},
 		},
+		// DockerDirs is always a fake here: ApplyDockerDataRoot's move
+		// targets an absolute cache path outside Generator's own temp-dir
+		// Root, so nothing in this file may ever fall through to the real
+		// OSDirMaker (CLAUDE.md: no real host path in a test).
+		DockerDirs: &config.FakeDirMaker{},
 	}
 	return h, g, db
 }
@@ -109,6 +114,75 @@ func TestRunDoctor_ReportsHostConfigFromTempRoot(t *testing.T) {
 	}
 	if findCheck(report, "host_docker_images").ID != "host_docker_images" {
 		t.Fatal("missing host_docker_images")
+	}
+}
+
+// TestRunDoctor_OmitsEmptyDockerInfoChecks is #416's fix for the false
+// "stays because ..." card: hostConfigTestEnv's fixture has no volumes, no
+// networks and no plugins, and the listing succeeded (no DockerErr), so
+// none of host_docker_volumes/networks/plugins has anything to report and
+// none may appear — reporting one with "0 found" would still drive an
+// onboarding card claiming a reason that does not exist.
+func TestRunDoctor_OmitsEmptyDockerInfoChecks(t *testing.T) {
+	h, _ := hostConfigTestHandler(t)
+	report, err := h.RunDoctor(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"host_docker_volumes", "host_docker_networks", "host_docker_plugins"} {
+		if got := findCheck(report, id).ID; got == id {
+			t.Fatalf("%s present with an empty, successfully-listed category", id)
+		}
+	}
+}
+
+// TestRunDoctor_ReportsDockerInfoChecksWhenNonEmpty is the other half of
+// TestRunDoctor_OmitsEmptyDockerInfoChecks: once a category actually holds
+// something, it must be visible so the onboarding page can explain why the
+// Q76 cache move was not offered.
+func TestRunDoctor_ReportsDockerInfoChecksWhenNonEmpty(t *testing.T) {
+	h, _ := hostConfigTestHandler(t)
+	h.Docker = config.MemoryDocker{
+		Volumes:  []config.DockerRef{{ID: "v1", Name: "jellyfin_config"}},
+		Networks: []config.DockerRef{{ID: "n1", Name: "media-net"}},
+		Plugins:  []config.DockerRef{{ID: "p1", Name: "vieux/sshfs:latest"}},
+	}
+	report, err := h.RunDoctor(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"host_docker_volumes", "host_docker_networks", "host_docker_plugins"} {
+		check := findCheck(report, id)
+		if check.ID != id {
+			t.Fatalf("%s missing while its category has an entry", id)
+		}
+		if check.Status != apiv1.DoctorCheckStatusPass {
+			t.Fatalf("%s status = %q, want pass", id, check.Status)
+		}
+	}
+}
+
+// TestRunDoctor_ReportsFailedDockerInfoListingAsWarn is #416's fail-closed
+// counterpart: a listing error must still surface as an honest warning,
+// never silently omitted the way an empty-but-successful listing is.
+func TestRunDoctor_ReportsFailedDockerInfoListingAsWarn(t *testing.T) {
+	h, _ := hostConfigTestHandler(t)
+	h.Docker = config.MemoryDocker{Err: errors.New("docker volume ls: timed out")}
+	report, err := h.RunDoctor(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"host_docker_volumes", "host_docker_networks", "host_docker_plugins"} {
+		check := findCheck(report, id)
+		if check.ID != id {
+			t.Fatalf("%s missing after a listing failure — a failed probe must fail closed, not omit itself", id)
+		}
+		if check.Status != apiv1.DoctorCheckStatusWarn {
+			t.Fatalf("%s status = %q, want warn on a listing failure", id, check.Status)
+		}
+		if !strings.Contains(check.Message, "Could not list") {
+			t.Fatalf("%s message = %q, want an honest failure message", id, check.Message)
+		}
 	}
 }
 
@@ -445,7 +519,7 @@ func TestApplyHostConfig_GeneratorFailureDoesNotPersistPrefix(t *testing.T) {
 }
 
 func TestApplyHostConfig_EmptyDockerCanAcceptCacheMove(t *testing.T) {
-	h, _, db := hostConfigTestEnv(t)
+	h, g, db := hostConfigTestEnv(t)
 	h.Docker = config.MemoryDocker{}
 	h.ArrayStore = store.NewArrayStore(db)
 	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
@@ -468,6 +542,300 @@ func TestApplyHostConfig_EmptyDockerCanAcceptCacheMove(t *testing.T) {
 	}
 	if got.DockerDataRoot != "/mnt/cache/docker" {
 		t.Fatalf("dockerDataRoot = %q, want /mnt/cache/docker", got.DockerDataRoot)
+	}
+
+	// ApplyDockerDataRoot must have actually run, not just DockerDataRoot's
+	// own decision: the directory was created and daemon.json was written
+	// through Generator (never overwriting anything, since none existed).
+	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
+	created := fakeDirs.Created()
+	if len(created) != 1 || created[0] != "/mnt/cache/docker" {
+		t.Fatalf("DockerDirs.Created() = %v, want exactly [/mnt/cache/docker]", created)
+	}
+	daemonJSON, err := os.ReadFile(filepath.Join(g.Root, "docker", "daemon.json"))
+	if err != nil {
+		t.Fatalf("reading generated daemon.json: %v", err)
+	}
+	if !strings.Contains(string(daemonJSON), `"data-root": "/mnt/cache/docker"`) {
+		t.Fatalf("daemon.json = %s, want a data-root of /mnt/cache/docker", daemonJSON)
+	}
+	if strings.Contains(string(daemonJSON), "Hoserva") {
+		t.Fatalf("daemon.json = %s, want no #-comment header — Docker's own daemon.json must be valid JSON", daemonJSON)
+	}
+}
+
+// TestApplyHostConfig_RecoversFromFailedRestartWhenRetryInventoryProbeFails
+// is the CodeRabbit PR 421 finding this closes: exercised through
+// ApplyHostConfig exactly as a retried onboarding request reaches it, not
+// by calling Generator.ApplyDockerDataRoot directly. The first call stops
+// Docker for the move and fails to start it back up. On retry, Docker
+// being down is itself what makes h.Docker.List (the real ExecDocker's
+// `docker ps` etc. would behave identically once its daemon is
+// unreachable) return an error, which Detect turns into inv.DockerErr —
+// and DockerDataRoot's own Q76 fail-closed rule then recomputes
+// DockerDataRootDefault on this exact retry. Without the
+// DockerRestartPending check in ApplyHostConfig, that would report the
+// wrong dockerDataRoot and never even ask ApplyDockerDataRoot to finish
+// the restart it already committed to.
+func TestApplyHostConfig_RecoversFromFailedRestartWhenRetryInventoryProbeFails(t *testing.T) {
+	h, _, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	firstAttempt := &config.FakeServiceRestarter{}
+	firstAttempt.SetActive(true)
+	firstAttempt.SetStartErr(errors.New("simulated start failure"))
+	h.DockerRestart = firstAttempt
+
+	req := &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}}
+	if _, err := h.ApplyHostConfig(context.Background(), req); err == nil {
+		t.Fatal("ApplyHostConfig() = nil error, want the simulated start failure surfaced")
+	}
+	if !firstAttempt.Stopped() {
+		t.Fatal("Stop was not called on the first attempt")
+	}
+
+	// Retry: Docker is down because of the first attempt's Stop, so a
+	// live inventory probe against it fails exactly like ExecDocker's
+	// `docker ps` would against an unreachable daemon — never
+	// errDockerUnavailable (the docker CLI itself is still installed),
+	// so Detect sets inv.DockerErr and DockerDataRoot fails closed.
+	h.Docker = config.MemoryDocker{Err: errors.New("cannot connect to the docker daemon")}
+	retry := &config.FakeServiceRestarter{}
+	retry.SetActive(false)
+	h.DockerRestart = retry
+
+	got, err := h.ApplyHostConfig(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ApplyHostConfig() retry: %v", err)
+	}
+	if retry.Stopped() {
+		t.Fatal("Stop was called on the retry — Docker was already down, nothing to stop")
+	}
+	if !retry.Started() {
+		t.Fatal("Start was not called on the retry — the pending restart from the first attempt must be finished, not silently dropped because this call's own inventory probe failed")
+	}
+	if got.DockerDataRoot != config.DockerDataRootCache {
+		t.Fatalf("dockerDataRoot = %q, want %s — the response must reflect the move already written, not the retry's fail-closed default", got.DockerDataRoot, config.DockerDataRootCache)
+	}
+}
+
+// TestApplyHostConfig_DockerDataRootStaysWithExistingVolumes is #413's
+// data-loss regression, exercised through ApplyHostConfig exactly as
+// hoservad's onboarding flow reaches it: a host with no containers and no
+// images, but one named volume, a cache disk, and the move accepted must
+// still keep the data-root at /var/lib/docker and must never write
+// docker/daemon.json — otherwise the volume's data is stranded under the
+// old root the moment Docker restarts against the new one.
+func TestApplyHostConfig_DockerDataRootStaysWithExistingVolumes(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{
+		Volumes: []config.DockerRef{{ID: "jellyfin_config", Name: "jellyfin_config"}},
+	}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DockerDataRoot != config.DockerDataRootDefault {
+		t.Fatalf("dockerDataRoot = %q, want %s when a named volume exists", got.DockerDataRoot, config.DockerDataRootDefault)
+	}
+
+	if _, err := os.Stat(filepath.Join(g.Root, "docker", "daemon.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("daemon.json stat = %v, want it never written when a named volume exists", err)
+	}
+	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
+	if created := fakeDirs.Created(); len(created) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want none — the cache data-root must never be created when a named volume exists", created)
+	}
+}
+
+// TestApplyHostConfig_DockerDataRootStaysWithExistingNetworks is #416's
+// data-loss regression, exercised through ApplyHostConfig exactly as
+// hoservad's onboarding flow reaches it: a host with no containers and no
+// images, but one user-defined network, a cache disk, and the move accepted
+// must still keep the data-root at /var/lib/docker and must never write
+// docker/daemon.json — otherwise the network's configuration is stranded
+// under the old root the moment Docker restarts against the new one.
+func TestApplyHostConfig_DockerDataRootStaysWithExistingNetworks(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{
+		Networks: []config.DockerRef{{ID: "net1", Name: "media-net"}},
+	}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DockerDataRoot != config.DockerDataRootDefault {
+		t.Fatalf("dockerDataRoot = %q, want %s when a user-defined network exists", got.DockerDataRoot, config.DockerDataRootDefault)
+	}
+
+	if _, err := os.Stat(filepath.Join(g.Root, "docker", "daemon.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("daemon.json stat = %v, want it never written when a user-defined network exists", err)
+	}
+	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
+	if created := fakeDirs.Created(); len(created) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want none — the cache data-root must never be created when a user-defined network exists", created)
+	}
+}
+
+// TestApplyHostConfig_DockerDataRootStaysWithExistingPlugins is #416's
+// data-loss regression for an installed plugin, the same hazard as
+// TestApplyHostConfig_DockerDataRootStaysWithExistingNetworks and
+// TestApplyHostConfig_DockerDataRootStaysWithExistingVolumes.
+func TestApplyHostConfig_DockerDataRootStaysWithExistingPlugins(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{
+		Plugins: []config.DockerRef{{ID: "plug1", Name: "vieux/sshfs:latest"}},
+	}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DockerDataRoot != config.DockerDataRootDefault {
+		t.Fatalf("dockerDataRoot = %q, want %s when an installed plugin exists", got.DockerDataRoot, config.DockerDataRootDefault)
+	}
+
+	if _, err := os.Stat(filepath.Join(g.Root, "docker", "daemon.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("daemon.json stat = %v, want it never written when an installed plugin exists", err)
+	}
+	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
+	if created := fakeDirs.Created(); len(created) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want none — the cache data-root must never be created when an installed plugin exists", created)
+	}
+}
+
+// TestApplyHostConfig_ExistingDaemonJSONRefusesBeforePersistingAnything is
+// the finding this closes: an unmanaged, hand-written
+// /etc/docker/daemon.json must be caught before the Samba import,
+// host-file decisions and host-config rows in the same request are
+// persisted, mapped to the same 409 unmanaged_config every other
+// unmanaged-host-file conflict already uses — never a 500, and never a
+// half-applied request a retry keeps failing the same way against.
+func TestApplyHostConfig_ExistingDaemonJSONRefusesBeforePersistingAnything(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	daemonJSONPath := filepath.Join(g.Root, "docker", "daemon.json")
+	if err := os.MkdirAll(filepath.Dir(daemonJSONPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(daemonJSONPath, []byte(`{"log-driver":"journald"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	beforeSamba, err := os.ReadFile(filepath.Join(g.Root, config.PathSamba))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	_, err = h.ApplyHostConfig(ctx, &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostSamba, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "unmanaged_config" {
+		t.Fatalf("error = %+v, want 409 unmanaged_config", status)
+	}
+
+	// Nothing else in the request may have been committed: the existing
+	// daemon.json itself, the Samba import's shares, and the host-config
+	// rows all still reflect a request that never happened.
+	daemonJSON, err := os.ReadFile(daemonJSONPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(daemonJSON) != `{"log-driver":"journald"}` {
+		t.Fatalf("daemon.json was modified: %s", daemonJSON)
+	}
+	afterSamba, err := os.ReadFile(filepath.Join(g.Root, config.PathSamba))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterSamba) != string(beforeSamba) {
+		t.Fatal("smb.conf was modified despite the request being refused")
+	}
+	shareStore := store.NewShareStore(db)
+	if _, getErr := shareStore.Get(ctx, "media"); !errors.Is(getErr, store.ErrShareNotFound) {
+		t.Fatalf("media share persisted after a refused request: %v", getErr)
+	}
+	if _, getErr := h.HostConfig.Get(ctx, config.KindSamba); !errors.Is(getErr, sql.ErrNoRows) {
+		t.Fatalf("samba host-config persisted after a refused request: %v", getErr)
+	}
+	if _, getErr := h.HostConfig.Get(ctx, config.KindDockerContainers); !errors.Is(getErr, sql.ErrNoRows) {
+		t.Fatalf("docker-containers host-config persisted after a refused request: %v", getErr)
+	}
+	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
+	if len(fakeDirs.Created()) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want nothing created for a refused request", fakeDirs.Created())
 	}
 }
 

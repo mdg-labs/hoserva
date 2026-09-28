@@ -60,9 +60,14 @@ func (r *recordingParity) snapshot() (parity.SyncOpts, bool, int, parity.FixOpts
 	return r.lastSync, r.wroteParity, r.lastScrub, r.lastFix
 }
 
+// awaitJob's own deadline has to clear the test database's own
+// busy_timeout(5000) (handler_test.go's newTestHandler, store.DSN) with
+// real headroom, not race it — a 2s budget could lose to a store write
+// that legitimately retries for up to 5s under load, matching dcb18bf's
+// own 10s Drain budget for the same store.
 func awaitJob(t *testing.T, s *job.Scheduler, id string) *job.Job {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	j, err := s.Await(ctx, id)
 	if err != nil {

@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { Banner } from "@/components/patterns/banner";
 import { JobProgress } from "@/components/patterns/job-progress";
+import { jobStatusLabel, jobStatusTone } from "@/components/patterns/job-status";
 import { LoadingBlock } from "@/components/patterns/loading";
 import { LogView } from "@/components/patterns/log-view";
 import { StatusBadge } from "@/components/patterns/status-badge";
@@ -75,7 +76,7 @@ export function JobDetailPage(): React.ReactElement {
           <p>{t("jobs.detail.class", { value: job.class })}</p>
           <p>
             {t("jobs.detail.status")}{" "}
-            <StatusBadge tone={job.status === "failed" ? "error" : "info"}>{job.status}</StatusBadge>
+            <StatusBadge tone={jobStatusTone(job.status)}>{jobStatusLabel(job.status, t)}</StatusBadge>
           </p>
           <p>{t("jobs.detail.created", { value: new Date(job.createdAt).toLocaleString() })}</p>
         </CardPanel>

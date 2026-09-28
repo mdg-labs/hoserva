@@ -6,6 +6,7 @@ import { Banner } from "@/components/patterns/banner";
 import { DataTable, type DataTableColumn } from "@/components/patterns/data-table";
 import { FormOverlay } from "@/components/patterns/form-overlay";
 import { InlineNote } from "@/components/patterns/inline-note";
+import { jobStatusLabel, jobStatusTone } from "@/components/patterns/job-status";
 import { LoadingBlock } from "@/components/patterns/loading";
 import { MetricTile } from "@/components/patterns/metric-tile";
 import { StatusBadge } from "@/components/patterns/status-badge";
@@ -24,7 +25,6 @@ import { formatBytes } from "@/routes/storage-setup/config-preview";
 
 type Share = components["schemas"]["Share"];
 type ShareCacheMode = components["schemas"]["ShareCacheMode"];
-type Job = components["schemas"]["Job"];
 
 const CACHE_MODES: ShareCacheMode[] = ["cache-then-move", "cache-only", "array-only"];
 const SETTINGS_BACKUP_ROUTE = "/settings/backup";
@@ -54,21 +54,6 @@ function formatJobTiming(
       ? t("cache.lastRun.durationMinutes", { minutes, seconds: remainder })
       : t("cache.lastRun.durationSeconds", { seconds });
   return t("cache.lastRun.startedWithDuration", { start, duration });
-}
-
-function jobStatusTone(status: Job["status"]): "success" | "error" | "info" | "outline" {
-  switch (status) {
-    case "failed":
-      return "error";
-    case "succeeded":
-      return "success";
-    case "running":
-    case "queued":
-    case "interrupted":
-      return "info";
-    default:
-      return "outline";
-  }
 }
 
 export function CachePage(): React.ReactElement {
@@ -380,7 +365,7 @@ export function CachePage(): React.ReactElement {
                   {t("jobs.types.mover")}
                 </Link>
                 <StatusBadge tone={jobStatusTone(lastMoverJob.status)}>
-                  {t(`jobs.status.${lastMoverJob.status}`)}
+                  {jobStatusLabel(lastMoverJob.status, t)}
                 </StatusBadge>
               </div>
               <p className="text-muted-foreground">

@@ -309,6 +309,59 @@ describe("dashboard, parity, wake-events and jobs pages", () => {
     expect(JOB_STATUS_FILTER_VALUES).toContain("interrupted");
   });
 
+  it("includes cancelled in the job status filter values", () => {
+    expect(JOB_STATUS_FILTER_VALUES).toContain("cancelled");
+  });
+
+  it("filters the jobs list down to cancelled jobs via the status filter", async () => {
+    const runningJob = {
+      id: "job-1",
+      type: "sync",
+      class: "parity",
+      status: "running",
+      progress: 10,
+      resumable: false,
+      cancellable: true,
+      createdAt: "2026-01-01T00:00:00Z",
+    };
+    const cancelledJob = {
+      id: "job-2",
+      type: "scrub",
+      class: "parity",
+      status: "cancelled",
+      progress: null,
+      resumable: false,
+      cancellable: false,
+      createdAt: "2026-01-02T00:00:00Z",
+    };
+    mockGet.mockImplementation((path: string, options?: { params?: { query?: { status?: string } } }) => {
+      if (path === "/jobs") {
+        const jobs = options?.params?.query?.status === "cancelled" ? [cancelledJob] : [runningJob, cancelledJob];
+        return Promise.resolve({ data: { jobs }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    render(
+      <MemoryRouter>
+        <JobsPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole("link", { name: "sync" });
+    expect(screen.getByRole("link", { name: "scrub" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Status" }));
+    const option = await screen.findByRole("option", { name: "Cancelled" });
+    fireEvent.pointerDown(option);
+    fireEvent.click(option);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("link", { name: "sync" })).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("link", { name: "scrub" })).toBeInTheDocument();
+  });
+
   it("does not show a drift banner for a passing drift check", async () => {
     mockGet.mockImplementation((path: string) => {
       if (path === "/status") {

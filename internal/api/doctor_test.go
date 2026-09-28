@@ -8,6 +8,7 @@ import (
 	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/parity"
 )
@@ -24,7 +25,7 @@ func findDoctorCheck(report *apiv1.DoctorReport, id string) apiv1.DoctorCheck {
 func TestMountStateCheck_Mounted(t *testing.T) {
 	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) {
 		return true, nil
-	}, nil)
+	}, nil, nil, nil)
 	check := findDoctorCheck(report, "mount_state")
 	if check.Status != apiv1.DoctorCheckStatusPass {
 		t.Fatalf("mount_state status = %q, want pass", check.Status)
@@ -37,7 +38,7 @@ func TestMountStateCheck_Mounted(t *testing.T) {
 func TestMountStateCheck_NotMounted(t *testing.T) {
 	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) {
 		return false, nil
-	}, nil)
+	}, nil, nil, nil)
 	check := findDoctorCheck(report, "mount_state")
 	if check.Status != apiv1.DoctorCheckStatusWarn {
 		t.Fatalf("mount_state status = %q, want warn", check.Status)
@@ -51,7 +52,7 @@ func TestParityFreshnessCheck_Green(t *testing.T) {
 		Freshness:  parity.FreshnessGreen,
 		LastSyncAt: lastSync,
 	})
-	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil)
+	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil, nil, nil)
 	check := findDoctorCheck(report, "parity_freshness")
 	if check.Status != apiv1.DoctorCheckStatusPass {
 		t.Fatalf("parity_freshness status = %q, want pass", check.Status)
@@ -64,7 +65,7 @@ func TestParityFreshnessCheck_Amber(t *testing.T) {
 		Freshness:        parity.FreshnessAmber,
 		ChangedSinceSync: 12,
 	})
-	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil)
+	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil, nil, nil)
 	check := findDoctorCheck(report, "parity_freshness")
 	if check.Status != apiv1.DoctorCheckStatusWarn {
 		t.Fatalf("parity_freshness status = %q, want warn", check.Status)
@@ -74,7 +75,7 @@ func TestParityFreshnessCheck_Amber(t *testing.T) {
 func TestParityFreshnessCheck_Red(t *testing.T) {
 	eng := parity.NewFakeEngine()
 	eng.SetStatus(parity.ParityStatus{Freshness: parity.FreshnessRed})
-	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil)
+	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil, nil, nil)
 	check := findDoctorCheck(report, "parity_freshness")
 	if check.Status != apiv1.DoctorCheckStatusFail {
 		t.Fatalf("parity_freshness status = %q, want fail", check.Status)
@@ -84,7 +85,7 @@ func TestParityFreshnessCheck_Red(t *testing.T) {
 func TestParityFreshnessCheck_Error(t *testing.T) {
 	eng := parity.NewFakeEngine()
 	eng.FailStatus(errors.New("snapraid unavailable"))
-	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil)
+	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil, nil, nil)
 	check := findDoctorCheck(report, "parity_freshness")
 	if check.Status != apiv1.DoctorCheckStatusWarn {
 		t.Fatalf("parity_freshness status = %q, want warn on error", check.Status)
@@ -99,7 +100,7 @@ func TestParityFreshnessCheck_Error(t *testing.T) {
 // for every client, including `hoserva doctor apply-host-config`.
 func TestParityFreshnessCheck_NilConcreteEngine(t *testing.T) {
 	var eng parity.Engine = (*parity.FakeEngine)(nil)
-	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil)
+	report := runDoctorChecks(context.Background(), nil, eng, func(string) (bool, error) { return false, nil }, nil, nil, nil)
 	check := findDoctorCheck(report, "parity_freshness")
 	if check.Status != apiv1.DoctorCheckStatusWarn {
 		t.Fatalf("parity_freshness status = %q, want warn for a nil concrete engine", check.Status)
@@ -111,7 +112,7 @@ func TestSmartCheck_Healthy(t *testing.T) {
 	f.AddDisk("/dev/sdb", disk.Disk{Device: "/dev/sdb", Size: disk.TB})
 	f.SetSMART("/dev/sdb", disk.SMARTReport{SpinState: disk.Active})
 
-	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil)
+	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil, nil, nil)
 	check := findDoctorCheck(report, "smart")
 	if check.Status != apiv1.DoctorCheckStatusPass {
 		t.Fatalf("smart status = %q, want pass; message=%q", check.Status, check.Message)
@@ -127,7 +128,7 @@ func TestSmartCheck_ReallocatedWarns(t *testing.T) {
 	f.AddDisk("/dev/sdb", disk.Disk{Device: "/dev/sdb", Size: disk.TB})
 	f.SetSMART("/dev/sdb", disk.SMARTReport{ReallocatedSectors: 4, SpinState: disk.Active})
 
-	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil)
+	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil, nil, nil)
 	check := findDoctorCheck(report, "smart")
 	if check.Status != apiv1.DoctorCheckStatusWarn {
 		t.Fatalf("smart status = %q, want warn; message=%q", check.Status, check.Message)
@@ -139,7 +140,7 @@ func TestSmartCheck_SelfTestFailedFails(t *testing.T) {
 	f.AddDisk("/dev/sdb", disk.Disk{Device: "/dev/sdb", Size: disk.TB})
 	f.SetSMART("/dev/sdb", disk.SMARTReport{SelfTestFailed: true, SpinState: disk.Active})
 
-	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil)
+	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil, nil, nil)
 	check := findDoctorCheck(report, "smart")
 	if check.Status != apiv1.DoctorCheckStatusFail {
 		t.Fatalf("smart status = %q, want fail; message=%q", check.Status, check.Message)
@@ -151,7 +152,7 @@ func TestSmartCheck_StandbySkipped(t *testing.T) {
 	f.AddDisk("/dev/sdb", disk.Disk{Device: "/dev/sdb", Size: disk.TB})
 	f.SetSpinState("/dev/sdb", disk.Standby)
 
-	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil)
+	report := runDoctorChecks(context.Background(), f, nil, func(string) (bool, error) { return false, nil }, nil, nil, nil)
 	check := findDoctorCheck(report, "smart")
 	if check.Status != apiv1.DoctorCheckStatusPass {
 		t.Fatalf("smart status = %q, want pass for standby skip; message=%q", check.Status, check.Message)
@@ -173,5 +174,162 @@ func TestVersionBelow_NumericAndEpoch(t *testing.T) {
 	}
 	if !versionBelow("12.4", "12.4.1") {
 		t.Fatal("12.4 should be below 12.4.1")
+	}
+}
+
+// TestDockerEngineChecks_Unreachable proves a Docker Engine the fake
+// reports as unreachable is warned about, not silently skipped or read
+// as "no containers" — the doc 04 §3 acceptance test's first half.
+func TestDockerEngineChecks_Unreachable(t *testing.T) {
+	f := container.NewFakeProvider()
+	f.SetUnavailable(nil)
+
+	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) { return false, nil }, nil, f, nil)
+	check := findDoctorCheck(report, "docker")
+	if check.Status != apiv1.DoctorCheckStatusWarn {
+		t.Fatalf("docker status = %q, want warn for an unreachable Engine", check.Status)
+	}
+	if !check.Remediation.Set {
+		t.Fatal("docker check carries no remediation for an unreachable Engine")
+	}
+}
+
+// TestDockerEngineChecks_OldVersionWarns proves version negotiation
+// against an old Engine produces the doc 04 §3 warning — the acceptance
+// test's second half, scripted entirely through FakeProvider, never a
+// real daemon.
+func TestDockerEngineChecks_OldVersionWarns(t *testing.T) {
+	f := container.NewFakeProvider()
+	f.SetVersion(container.EngineVersion{Version: "18.09.0", APIVersion: "1.39", MinAPIVersion: "1.12"})
+
+	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) { return false, nil }, nil, f, nil)
+	check := findDoctorCheck(report, "docker")
+	if check.Status != apiv1.DoctorCheckStatusWarn {
+		t.Fatalf("docker status = %q, want warn for Engine 18.09.0 (below the tested floor)", check.Status)
+	}
+	if !strings.Contains(check.Message, "18.09.0") {
+		t.Fatalf("docker message = %q, want the installed version named", check.Message)
+	}
+}
+
+// TestDockerEngineChecks_RecentVersionPasses is OldVersionWarns' control:
+// a recent Engine must not trip the same warning.
+func TestDockerEngineChecks_RecentVersionPasses(t *testing.T) {
+	f := container.NewFakeProvider()
+	f.SetVersion(container.EngineVersion{Version: "27.3.1", APIVersion: "1.47", MinAPIVersion: "1.24"})
+
+	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) { return false, nil }, nil, f, nil)
+	check := findDoctorCheck(report, "docker")
+	if check.Status != apiv1.DoctorCheckStatusPass {
+		t.Fatalf("docker status = %q, want pass for a recent Engine; message=%q", check.Status, check.Message)
+	}
+}
+
+// TestComposeCheck_MissingPluginReported proves a missing Compose v2
+// plugin is reported as its own warning, never silently skipped — the
+// doc 04 §3 acceptance test's compose half. The fixture is verbatim
+// stderr from a current Docker CLI ("Docker version 29.8.1, build
+// 4a63305d74"), captured via `DOCKER_HOST=unix:///nonexistent.sock docker
+// nosuchplugin version` and substituting "compose" for the probed name
+// (see internal/container/compose.go's composeMissingPluginPatterns):
+// a v20.10-era CLI's "is not a docker command" would pass this same
+// check, but would not have caught the doctor check failing open against
+// what a current install actually prints.
+func TestComposeCheck_MissingPluginReported(t *testing.T) {
+	f := container.NewFakeProvider()
+	runner := container.NewFakeRunner()
+	runner.Script("docker", []string{"compose", "version"}, nil,
+		errors.New("docker: unknown command: docker compose\n\nRun 'docker --help' for more information"))
+
+	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) { return false, nil }, nil, f, runner)
+	check := findDoctorCheck(report, "docker_compose")
+	if check.Status != apiv1.DoctorCheckStatusWarn {
+		t.Fatalf("docker_compose status = %q, want warn for a missing plugin", check.Status)
+	}
+	if !check.Remediation.Set {
+		t.Fatal("docker_compose check carries no remediation for a missing plugin")
+	}
+}
+
+func TestComposeCheck_PresentPasses(t *testing.T) {
+	f := container.NewFakeProvider()
+	runner := container.NewFakeRunner()
+	runner.Script("docker", []string{"compose", "version"}, []byte("Docker Compose version 2.29.7\n"), nil)
+
+	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) { return false, nil }, nil, f, runner)
+	check := findDoctorCheck(report, "docker_compose")
+	if check.Status != apiv1.DoctorCheckStatusPass {
+		t.Fatalf("docker_compose status = %q, want pass; message=%q", check.Status, check.Message)
+	}
+	if !strings.Contains(check.Message, "2.29.7") {
+		t.Fatalf("docker_compose message = %q, want the version named", check.Message)
+	}
+}
+
+// TestDockerUnavailableCheck_NotInstalled proves a host with no docker
+// binary at all is told to install it, with the exact apt commands from
+// Docker's own repository (D8) — not a bare URL.
+func TestDockerUnavailableCheck_NotInstalled(t *testing.T) {
+	check := dockerUnavailableCheckFor(func() bool { return false })
+	if check.Status != apiv1.DoctorCheckStatusWarn {
+		t.Fatalf("status = %q, want warn", check.Status)
+	}
+	if !strings.Contains(check.Message, "not installed") {
+		t.Fatalf("message = %q, want it to say Docker is not installed", check.Message)
+	}
+	if !check.Remediation.Set || !strings.Contains(check.Remediation.Value, "apt-get install -y docker-ce") {
+		t.Fatalf("remediation = %+v, want the exact docker-ce apt-get install command", check.Remediation)
+	}
+}
+
+// TestDockerUnavailableCheck_InstalledButNotReachable is the finding this
+// closes: a host where Docker is present but its socket cannot be reached
+// (the concrete case is docker.service still blocked on
+// BindsTo=hoserva-storage.target during a degraded, unacknowledged boot,
+// Q69) must never be told to install Docker — it is already there.
+func TestDockerUnavailableCheck_InstalledButNotReachable(t *testing.T) {
+	check := dockerUnavailableCheckFor(func() bool { return true })
+	if check.Status != apiv1.DoctorCheckStatusWarn {
+		t.Fatalf("status = %q, want warn", check.Status)
+	}
+	if !strings.Contains(check.Message, "not reachable") {
+		t.Fatalf("message = %q, want it to say Docker is not reachable", check.Message)
+	}
+	if strings.Contains(check.Message, "not installed") {
+		t.Fatalf("message = %q, must not say Docker is not installed when it is", check.Message)
+	}
+	if !check.Remediation.Set || strings.Contains(check.Remediation.Value, "apt-get install -y docker-ce") {
+		t.Fatalf("remediation = %+v, must not tell an already-installed host to install Docker", check.Remediation)
+	}
+}
+
+// TestComposeCheck_OtherFailureNotReportedAsMissing proves a timeout (or
+// any failure besides the Compose plugin being absent) is reported as
+// itself, never misreported as "the plugin is missing" — ComposeVersion's
+// ErrComposeUnavailable distinguishes the two, so the doctor check must
+// use that distinction rather than treating every failure the same way.
+func TestComposeCheck_OtherFailureNotReportedAsMissing(t *testing.T) {
+	f := container.NewFakeProvider()
+	runner := container.NewFakeRunner()
+	runner.Script("docker", []string{"compose", "version"}, nil, errors.New("context deadline exceeded"))
+
+	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) { return false, nil }, nil, f, runner)
+	check := findDoctorCheck(report, "docker_compose")
+	if check.Status != apiv1.DoctorCheckStatusWarn {
+		t.Fatalf("docker_compose status = %q, want warn", check.Status)
+	}
+	if strings.Contains(check.Message, "missing") {
+		t.Fatalf("docker_compose message = %q, must not report a timeout as a missing plugin", check.Message)
+	}
+	if check.Remediation.Set {
+		t.Fatalf("docker_compose remediation = %+v, want none for a failure that isn't a missing plugin", check.Remediation)
+	}
+}
+
+func TestDockerEngineChecks_NilProviderNotConfigured(t *testing.T) {
+	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) { return false, nil }, nil, nil, nil)
+	check := findDoctorCheck(report, "docker")
+	if check.Status != apiv1.DoctorCheckStatusWarn {
+		t.Fatalf("docker status = %q, want warn when no Provider is wired", check.Status)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
@@ -150,6 +151,26 @@ type Handler struct {
 	// Docker lists Engine containers and images for Q76. Nil means Docker
 	// is treated as not installed for host-config checks.
 	Docker config.DockerInventory
+	// Container is the Docker Engine API client for Apps (doc 04 §2, §3):
+	// GET /apps, /apps/{id}, /apps/images and the doctor Engine/version
+	// checks. Nil reports Docker as not configured on this build, distinct
+	// from Docker being absent from the host (container.ErrUnavailable).
+	Container container.Provider
+	// ComposeRunner execs `docker compose version` for the doctor Compose
+	// v2 check. Nil uses the real container.CommandRunner.
+	ComposeRunner container.Runner
+	// DockerRestart restarts Docker after ApplyHostConfig moves its
+	// data-root to cache (Q62, Q76) — through whatever systemd abstraction
+	// main.go wires in, never a raw shell command. Nil skips the restart
+	// (the config and directory are still written; Docker picks them up
+	// the next time it starts).
+	DockerRestart config.ServiceRestarter
+	// DockerDirs creates the cache-side docker data-root directory for
+	// ApplyHostConfig (Q62, Q76). Nil uses config.OSDirMaker — every test
+	// that can reach an accepted cache move must set this to a fake
+	// (CLAUDE.md: real disks and real host paths are off-limits), never
+	// leave it nil and let a real os.MkdirAll(/mnt/cache/docker) run.
+	DockerDirs config.DirMaker
 	// ArrayStore is create-array topology, used to decide whether a Docker
 	// data-root move to cache is even possible (Q62). Nil means no cache.
 	ArrayStore *store.ArrayStore

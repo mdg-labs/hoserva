@@ -95,6 +95,14 @@ tags:
       03 §7) is stored here too, editable from either the share or the
       user/group; enforcing it in generated Samba/mergerfs config is a
       later issue.
+  - name: apps
+    description: >-
+      Docker Engine containers and images (`hoserva app list`, doc 04 §2,
+      §3): every container the Engine reports, managed and unmanaged
+      alike, read-only in this part — start/stop/lifecycle actions and
+      the Compose stack model are later issues. `available` is false, with
+      no error, whenever Docker itself is not reachable: a missing
+      prerequisite is Apps' normal state, not a failed request.
 
 # Two transports (doc 01 §5): a Unix socket for the local root/`hoserva`-group
 # CLI, and TLS-only TCP for the web UI and remote/scripted use. Same handlers,
@@ -2753,6 +2761,71 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /apps:
+    get:
+      operationId: listApps
+      summary: List containers
+      description: >-
+        Every container the Docker Engine reports, managed and unmanaged
+        alike (doc 04 §2) — Compose stack installs, lifecycle actions and
+        the managed/unmanaged distinction against an installed stack are
+        later issues (#277, #278). available is false, with no error,
+        whenever Docker itself is not reachable (doc 04 §3).
+      tags: [apps]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Container inventory.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAppsOK'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/images:
+    get:
+      operationId: listAppImages
+      summary: List images
+      description: Every image the Docker Engine holds locally.
+      tags: [apps]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Image inventory.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAppImagesOK'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The container's Engine ID or name.
+    get:
+      operationId: getApp
+      summary: Inspect a container
+      description: >-
+        One container's current state, image, tag, ports and mounts
+        (doc 04 §3) — stats and health are #277's own operations.
+      tags: [apps]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The container.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/App'
+        default:
+          $ref: '#/components/responses/Error'
+
   /users:
     get:
       operationId: listUsers
@@ -4727,9 +4800,116 @@ components:
           type: string
           description: >-
             Docker's data-root after this apply (Q62, Q76). Always
-            `/var/lib/docker` when containers or images exist, when
-            there is no cache disk, or when the caller did not accept
-            a move.
+            `/var/lib/docker` when containers, images or named volumes
+            exist, when there is no cache disk, or when the caller did
+            not accept a move.
+
+    AppState:
+      type: string
+      enum: [created, running, paused, restarting, removing, exited, dead]
+      description: The Docker Engine's own container state vocabulary.
+
+    AppPort:
+      type: object
+      required: [containerPort, protocol]
+      properties:
+        hostIP:
+          type: string
+        hostPort:
+          type: integer
+          description: Absent when this container port is not published to the host.
+        containerPort:
+          type: integer
+        protocol:
+          type: string
+          enum: [tcp, udp, sctp]
+
+    AppMount:
+      type: object
+      required: [destination, readWrite]
+      properties:
+        source:
+          type: string
+        destination:
+          type: string
+        mode:
+          type: string
+        readWrite:
+          type: boolean
+
+    App:
+      type: object
+      required: [id, name, image, tag, state, status, ports, mounts]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        image:
+          type: string
+          description: The image repository, without its tag.
+        tag:
+          type: string
+        state:
+          $ref: '#/components/schemas/AppState'
+        status:
+          type: string
+          description: Human-readable Engine status, e.g. "Up 3 hours".
+        ports:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppPort'
+        mounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppMount'
+
+    ListAppsOK:
+      type: object
+      required: [available, apps]
+      properties:
+        available:
+          type: boolean
+          description: False when the Docker Engine is not reachable (doc 04 §3).
+        message:
+          type: string
+          description: Set alongside available=false with the reason and a remediation.
+        apps:
+          type: array
+          items:
+            $ref: '#/components/schemas/App'
+
+    AppImage:
+      type: object
+      required: [id, repoTags, sizeBytes]
+      properties:
+        id:
+          type: string
+        repoTags:
+          type: array
+          items:
+            type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+
+    ListAppImagesOK:
+      type: object
+      required: [available, images]
+      properties:
+        available:
+          type: boolean
+          description: False when the Docker Engine is not reachable (doc 04 §3).
+        message:
+          type: string
+          description: Set alongside available=false with the reason and a remediation.
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppImage'
 
     MetricResolution:
       type: string

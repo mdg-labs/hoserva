@@ -454,6 +454,16 @@ func (UnimplementedHandler) FormatExternalDisk(ctx context.Context, req *FormatE
 	return r, ht.ErrNotImplemented
 }
 
+// GetApp implements getApp operation.
+//
+// One container's current state, image, tag, ports and mounts (doc 04 §3) — stats and health are
+// #277's own operations.
+//
+// GET /apps/{id}
+func (UnimplementedHandler) GetApp(ctx context.Context, params GetAppParams) (r *App, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetCacheUsage implements getCacheUsage operation.
 //
 // Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
@@ -689,6 +699,27 @@ func (UnimplementedHandler) ImportConfig(ctx context.Context, req *ImportConfigR
 //
 // GET /api-tokens
 func (UnimplementedHandler) ListApiTokens(ctx context.Context) (r *ListApiTokensOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListAppImages implements listAppImages operation.
+//
+// Every image the Docker Engine holds locally.
+//
+// GET /apps/images
+func (UnimplementedHandler) ListAppImages(ctx context.Context) (r *ListAppImagesOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListApps implements listApps operation.
+//
+// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose
+// stack installs, lifecycle actions and the managed/unmanaged distinction against an installed stack
+// are later issues (#277, #278). available is false, with no error, whenever Docker itself is not
+// reachable (doc 04 §3).
+//
+// GET /apps
+func (UnimplementedHandler) ListApps(ctx context.Context) (r *ListAppsOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

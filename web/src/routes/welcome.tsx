@@ -14,8 +14,9 @@ import { CopyValue } from "@/components/patterns/copy-value";
 import { Banner } from "@/components/patterns/banner";
 import { ChoiceCards } from "@/components/patterns/choice-cards";
 import { SecretInput } from "@/components/patterns/secret-input";
-import { doctorBlocksProgress } from "@/components/patterns/doctor-checks";
+import { doctorBlocksProgress, doctorStatusLabel, doctorStatusTone } from "@/components/patterns/doctor-checks";
 import { StackedChecks } from "@/components/patterns/stacked-checks";
+import { StatusBadge } from "@/components/patterns/status-badge";
 import { TimezoneSelect } from "@/components/patterns/timezone";
 import { TotpInput } from "@/components/patterns/totp";
 import { Wizard } from "@/components/patterns/wizard";
@@ -68,6 +69,15 @@ const Q76_CATEGORIES = [
   { id: "host_fstab", labelKey: "welcome.q76.fstab" },
   { id: "host_docker_containers", labelKey: "welcome.q76.dockerContainers" },
   { id: "host_docker_images", labelKey: "welcome.q76.dockerImages" },
+] as const;
+
+// Informational only: none of these has a host file to import or leave
+// unmanaged, so none is ever part of Q76_CATEGORIES or enters the
+// submitted host-config choices (#413, #415, #416).
+const Q76_INFO_CATEGORIES = [
+  { id: "host_docker_volumes", labelKey: "welcome.q76.dockerVolumes", infoKey: "welcome.q76.dockerVolumesInfo" },
+  { id: "host_docker_networks", labelKey: "welcome.q76.dockerNetworks", infoKey: "welcome.q76.dockerNetworksInfo" },
+  { id: "host_docker_plugins", labelKey: "welcome.q76.dockerPlugins", infoKey: "welcome.q76.dockerPluginsInfo" },
 ] as const;
 
 const CHANNEL_ICONS: Record<NotificationChannelType, typeof Mail> = {
@@ -174,6 +184,14 @@ export function WelcomePage(): React.ReactElement {
   const q76Panels = useMemo(
     () =>
       Q76_CATEGORIES.map((category) => ({
+        ...category,
+        check: doctorChecks ? findQ76Check(doctorChecks, category.id) : undefined,
+      })),
+    [doctorChecks],
+  );
+  const q76InfoPanels = useMemo(
+    () =>
+      Q76_INFO_CATEGORIES.map((category) => ({
         ...category,
         check: doctorChecks ? findQ76Check(doctorChecks, category.id) : undefined,
       })),
@@ -490,6 +508,31 @@ export function WelcomePage(): React.ReactElement {
                     ) : null}
                   </Card>
                 ))}
+                {q76InfoPanels.map(({ id, labelKey, infoKey, check }) =>
+                  check ? (
+                    <Card key={id}>
+                      <CardHeader>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <CardTitle>{t(labelKey)}</CardTitle>
+                          <StatusBadge tone={doctorStatusTone(check.status)}>
+                            {doctorStatusLabel(check.status, t)}
+                          </StatusBadge>
+                        </div>
+                        <CardDescription>{check.message}</CardDescription>
+                      </CardHeader>
+                      <CardPanel>
+                        <p className="text-muted-foreground text-sm">
+                          {/* Reported only when the category actually blocks the
+                              move or couldn't be checked (#416) — the backend
+                              never sends this check for an empty, successfully
+                              listed category, so "warn" here is always a failed
+                              listing, never an empty one. */}
+                          {check.status === "warn" ? t("welcome.q76.dockerInfoCheckFailed") : t(infoKey)}
+                        </p>
+                      </CardPanel>
+                    </Card>
+                  ) : null,
+                )}
               </div>
             </>
           ) : null}

@@ -350,6 +350,13 @@ type Handler interface {
 	//
 	// POST /disks/external/{label}/format
 	FormatExternalDisk(ctx context.Context, req *FormatExternalDiskRequest, params FormatExternalDiskParams) (*ExternalDisk, error)
+	// GetApp implements getApp operation.
+	//
+	// One container's current state, image, tag, ports and mounts (doc 04 §3) — stats and health are
+	// #277's own operations.
+	//
+	// GET /apps/{id}
+	GetApp(ctx context.Context, params GetAppParams) (*App, error)
 	// GetCacheUsage implements getCacheUsage operation.
 	//
 	// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
@@ -519,6 +526,21 @@ type Handler interface {
 	//
 	// GET /api-tokens
 	ListApiTokens(ctx context.Context) (*ListApiTokensOK, error)
+	// ListAppImages implements listAppImages operation.
+	//
+	// Every image the Docker Engine holds locally.
+	//
+	// GET /apps/images
+	ListAppImages(ctx context.Context) (*ListAppImagesOK, error)
+	// ListApps implements listApps operation.
+	//
+	// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose
+	// stack installs, lifecycle actions and the managed/unmanaged distinction against an installed stack
+	// are later issues (#277, #278). available is false, with no error, whenever Docker itself is not
+	// reachable (doc 04 §3).
+	//
+	// GET /apps
+	ListApps(ctx context.Context) (*ListAppsOK, error)
 	// ListDisks implements listDisks operation.
 	//
 	// Every block device Hoserva knows about (doc 02 §4).
