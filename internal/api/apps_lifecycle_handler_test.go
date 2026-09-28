@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,12 +21,15 @@ import (
 )
 
 type appsFixture struct {
-	h      *api.Handler
-	fake   *container.FakeProvider
-	hub    *container.Hub
-	sched  *job.Scheduler
-	root   string
-	cfgDir string
+	h     *api.Handler
+	fake  *container.FakeProvider
+	hub   *container.Hub
+	sched *job.Scheduler
+	// stopped and storageDown are the array state Lifecycle reads.
+	stopped     atomic.Bool
+	storageDown atomic.Bool
+	root        string
+	cfgDir      string
 }
 
 func newAppsFixture(t *testing.T) *appsFixture {
@@ -53,6 +57,8 @@ func newAppsFixture(t *testing.T) *appsFixture {
 	life := &container.Lifecycle{
 		Provider:     f.fake,
 		Hub:          f.hub,
+		Halted:       f.stopped.Load,
+		StorageReady: func() bool { return !f.storageDown.Load() },
 		AppdataRoots: func(context.Context) ([]string, error) { return []string{f.root}, nil },
 	}
 	h.Container = f.fake
@@ -376,4 +382,68 @@ func TestEventsHandler_StreamsContainerStateFromTheEngine(t *testing.T) {
 		}
 	}
 	t.Fatal("no container_state event for a killed container")
+}
+
+// The data-loss scenario at the API boundary: with the array stopped, or
+// its storage not ready, start, restart and recreate are refused with a
+// 409 and never reach the Engine, and no recreate job is queued.
+func TestHandler_StartRestartRecreate_RefusedWhileTheArrayIsStopped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		down func(*appsFixture)
+	}{
+		{"maintenance mode", func(f *appsFixture) { f.stopped.Store(true) }},
+		{"storage not ready", func(f *appsFixture) { f.storageDown.Store(true) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAppsFixture(t)
+			ctx := context.Background()
+			tc.down(f)
+
+			_, err := f.h.StartApp(ctx, apiv1.StartAppParams{ID: "jellyfin"})
+			if st, code := statusOf(f.h, err); st != 409 || code != "array_stopped" {
+				t.Fatalf("StartApp = %d %s, want 409 array_stopped", st, code)
+			}
+			_, err = f.h.RestartApp(ctx, apiv1.RestartAppParams{ID: "jellyfin"})
+			if st, code := statusOf(f.h, err); st != 409 || code != "array_stopped" {
+				t.Fatalf("RestartApp = %d %s, want 409 array_stopped", st, code)
+			}
+			_, err = f.h.RecreateApp(ctx, apiv1.RecreateAppParams{ID: "jellyfin"})
+			if st, code := statusOf(f.h, err); st != 409 || code != "array_stopped" {
+				t.Fatalf("RecreateApp = %d %s, want 409 array_stopped", st, code)
+			}
+			if calls := f.fake.Calls(); len(calls) != 0 {
+				t.Fatalf("the Engine saw %v although the array is stopped", calls)
+			}
+			jobs, err := f.h.Store.List(ctx, job.ListFilter{})
+			if err != nil {
+				t.Fatalf("listing jobs: %v", err)
+			}
+			if len(jobs) != 0 {
+				t.Fatalf("a refused recreate still queued %d job(s)", len(jobs))
+			}
+
+			if _, err := f.h.StopApp(ctx, apiv1.StopAppParams{ID: "jellyfin"}); err != nil {
+				t.Fatalf("StopApp on a stopped array: %v", err)
+			}
+			if _, err := f.h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "jellyfin"}); err != nil {
+				t.Fatalf("RemoveApp without appdata deletion on a stopped array: %v", err)
+			}
+		})
+	}
+}
+
+// An array state Lifecycle cannot read refuses too, as a 503 rather than a
+// start on a guess.
+func TestHandler_Start_RefusedWhenTheArrayStateCannotBeRead(t *testing.T) {
+	f := newAppsFixture(t)
+	f.h.Lifecycle.Halted = nil
+
+	_, err := f.h.StartApp(context.Background(), apiv1.StartAppParams{ID: "jellyfin"})
+	if st, code := statusOf(f.h, err); st != 503 || code != "array_state_unknown" {
+		t.Fatalf("StartApp = %d %s, want 503 array_state_unknown", st, code)
+	}
+	if calls := f.fake.Calls(); len(calls) != 0 {
+		t.Fatalf("the Engine saw %v", calls)
+	}
 }

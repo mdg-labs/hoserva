@@ -30,6 +30,10 @@ func mapContainerError(id string, err error, verb string) error {
 		return errAppNotFound(id)
 	case errors.Is(err, container.ErrUnavailable):
 		return &apiError{code: "docker_unavailable", statusCode: 503, message: fmt.Sprintf("Docker is not installed or not reachable: %v", err)}
+	case errors.Is(err, container.ErrArrayStopped):
+		return &apiError{code: "array_stopped", statusCode: 409, message: fmt.Sprintf("%v — container %q was left as it was", err, id)}
+	case errors.Is(err, container.ErrArrayStateUnknown):
+		return &apiError{code: "array_state_unknown", statusCode: 503, message: fmt.Sprintf("%v — container %q was left as it was", err, id)}
 	case errors.Is(err, container.ErrRunning):
 		return &apiError{code: "app_running", statusCode: 409, message: fmt.Sprintf("container %q is not stopped — stop it first", id)}
 	case errors.Is(err, container.ErrNotRunning):
@@ -75,6 +79,11 @@ func (h *Handler) RecreateApp(ctx context.Context, params apiv1.RecreateAppParam
 	}
 	if h.Scheduler == nil {
 		return nil, fmt.Errorf("job scheduler not configured")
+	}
+	// Recreate re-checks when the job runs; this refuses up front instead
+	// of queueing a job that can only fail.
+	if err := h.Lifecycle.RequireArrayRunning(); err != nil {
+		return nil, mapContainerError(params.ID, err, "recreating")
 	}
 	c, err := h.Lifecycle.Provider.Inspect(ctx, params.ID)
 	if err != nil {

@@ -52,6 +52,79 @@ func newAppdataFixture(t *testing.T) *appdataFixture {
 	return f
 }
 
+// arrayUp gives l the array-state signals of a running array with ready
+// storage, the only state in which Start, Restart and Recreate proceed.
+func arrayUp(l *Lifecycle) *Lifecycle {
+	l.Halted = func() bool { return false }
+	l.StorageReady = func() bool { return true }
+	return l
+}
+
+// The data-loss scenario (doc 02 §1): dockerd is reachable while the array
+// is stopped, so a started container would bind empty directories on the
+// boot device and write there. Every way the array can be unusable —
+// maintenance mode, storage not ready, or no way to read either — refuses
+// Start, Restart and Recreate before the Engine is called at all, and the
+// same Lifecycle with a running array proceeds.
+func TestStartRestartRecreate_RefusedUnlessTheArrayIsRunning(t *testing.T) {
+	tests := []struct {
+		name    string
+		halted  func() bool
+		ready   func() bool
+		wantErr error
+	}{
+		{"maintenance mode", func() bool { return true }, func() bool { return true }, ErrArrayStopped},
+		{"storage not ready", func() bool { return false }, func() bool { return false }, ErrArrayStopped},
+		{"maintenance mode and storage not ready", func() bool { return true }, func() bool { return false }, ErrArrayStopped},
+		{"no maintenance signal", nil, func() bool { return true }, ErrArrayStateUnknown},
+		{"no storage signal", func() bool { return false }, nil, ErrArrayStateUnknown},
+		{"no signals", nil, nil, ErrArrayStateUnknown},
+	}
+	for _, tc := range tests {
+		for _, action := range []string{"start", "restart", "recreate"} {
+			t.Run(tc.name+"/"+action, func(t *testing.T) {
+				fake := NewFakeProvider()
+				fake.AddContainer(Container{ID: "c1", Name: "jellyfin", State: "exited"})
+				l := &Lifecycle{Provider: fake, Hub: NewHub(), Halted: tc.halted, StorageReady: tc.ready}
+				do := map[string]func(context.Context, string) (Container, error){
+					"start": l.Start, "restart": l.Restart, "recreate": l.Recreate,
+				}[action]
+
+				_, err := do(context.Background(), "jellyfin")
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("%s error = %v, want %v", action, err, tc.wantErr)
+				}
+				if calls := fake.Calls(); len(calls) != 0 {
+					t.Fatalf("the Engine saw %v although the %s was refused", calls, action)
+				}
+				if c, _ := fake.Inspect(context.Background(), "jellyfin"); c.State != "exited" {
+					t.Fatalf("container is %s after a refused %s, want exited", c.State, action)
+				}
+			})
+		}
+	}
+}
+
+// Stop and a plain remove are how a container is taken out of a stopped
+// array, so they never need it running.
+func TestStopAndRemove_AllowedWhileTheArrayIsStopped(t *testing.T) {
+	fake := NewFakeProvider()
+	fake.AddContainer(Container{ID: "c1", Name: "jellyfin", State: "running"})
+	fake.AddContainer(Container{ID: "c2", Name: "portainer", State: "exited"})
+	l := &Lifecycle{Provider: fake, Hub: NewHub(), Halted: func() bool { return true }, StorageReady: func() bool { return false }}
+	ctx := context.Background()
+
+	if _, err := l.Stop(ctx, "jellyfin"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if _, err := l.Remove(ctx, "portainer", false); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := l.Logs(ctx, "jellyfin", LogOptions{}); err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+}
+
 func exists(t *testing.T, path string) bool {
 	t.Helper()
 	_, err := os.Lstat(path)
@@ -342,7 +415,7 @@ func TestStartStopRestart_PublishTheStateAfterTheAction(t *testing.T) {
 	fake := NewFakeProvider()
 	fake.AddContainer(Container{ID: "c1", Name: "jellyfin", State: "exited", Health: HealthNone})
 	hub := NewHub()
-	l := &Lifecycle{Provider: fake, Hub: hub}
+	l := arrayUp(&Lifecycle{Provider: fake, Hub: hub})
 	ch, unsub := hub.Subscribe()
 	defer unsub()
 
@@ -378,7 +451,7 @@ func TestStart_FailurePublishesNothing(t *testing.T) {
 	fake.AddContainer(Container{ID: "c1", Name: "jellyfin", State: "exited"})
 	fake.FailOn("start", "c1", errors.New("port already allocated"))
 	hub := NewHub()
-	l := &Lifecycle{Provider: fake, Hub: hub}
+	l := arrayUp(&Lifecycle{Provider: fake, Hub: hub})
 	ch, unsub := hub.Subscribe()
 	defer unsub()
 
@@ -395,7 +468,7 @@ func TestStart_FailurePublishesNothing(t *testing.T) {
 func TestLifecycle_UnavailableEngineIsReported(t *testing.T) {
 	fake := NewFakeProvider()
 	fake.SetUnavailable(nil)
-	l := &Lifecycle{Provider: fake}
+	l := arrayUp(&Lifecycle{Provider: fake})
 	if _, err := l.Start(context.Background(), "x"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("Start error = %v, want ErrUnavailable", err)
 	}
@@ -409,7 +482,7 @@ func TestLifecycle_UnavailableEngineIsReported(t *testing.T) {
 func TestUnmanagedContainerIsFullyControllable(t *testing.T) {
 	fake := NewFakeProvider()
 	fake.AddContainer(Container{ID: "u1", Name: "portainer", State: "exited"})
-	l := &Lifecycle{Provider: fake, Hub: NewHub()}
+	l := arrayUp(&Lifecycle{Provider: fake, Hub: NewHub()})
 	ctx := context.Background()
 
 	if _, err := l.Start(ctx, "portainer"); err != nil {

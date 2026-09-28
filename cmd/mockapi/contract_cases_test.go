@@ -426,6 +426,83 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// #424: start, restart and recreate are refused with 409 array_stopped
+	// while the array is stopped, no array is configured, or (degraded
+	// scenario) its storage is not released; stop and a plain remove are not.
+	{
+		op:   "StartApp",
+		name: "refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.StartApp(ctx, apiv1.StartAppParams{ID: "portainer"})
+			return err
+		},
+	},
+	{
+		op:   "RestartApp",
+		name: "refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.RestartApp(ctx, apiv1.RestartAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "StartApp",
+		name: "refused_before_the_container_is_looked_up",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.StartApp(ctx, apiv1.StartAppParams{ID: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:       "StartApp",
+		name:     "refused_while_storage_is_not_ready",
+		scenario: "degraded",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartApp(ctx, apiv1.StartAppParams{ID: "portainer"})
+			return err
+		},
+	},
+	{
+		op:       "StartApp",
+		name:     "refused_with_no_array_configured",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartApp(ctx, apiv1.StartAppParams{ID: "portainer"})
+			return err
+		},
+	},
+	{
+		op:       "StartApp",
+		name:     "valid_once_the_degraded_array_is_acknowledged",
+		scenario: "degraded",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.AcknowledgeDegradedArray(ctx); err != nil {
+				return err
+			}
+			_, err := h.StartApp(ctx, apiv1.StartAppParams{ID: "portainer"})
+			return err
+		},
+	},
+	{
+		op:   "StopApp",
+		name: "allowed_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.StopApp(ctx, apiv1.StopAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
 	{
 		op:   "RemoveApp",
 		name: "valid_stopped_container",

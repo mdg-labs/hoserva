@@ -17450,7 +17450,10 @@ func (s *Server) handleRebootHostRequest(args [0]string, argsEscaped bool, w htt
 // creation of the replacement fails, or the replacement does not start, the original container is left
 // as it was — same name and volumes, running again if it was running. A container started with
 // `--rm` cannot be recreated: the Engine deletes it the moment it stops, so the job fails before
-// changing anything.
+// changing anything. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or
+// its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no
+// job is queued. The job checks again when it runs and fails, changing nothing, if the array has
+// stopped since.
 //
 // POST /apps/{id}/recreate
 func (s *Server) handleRecreateAppRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -18792,6 +18795,9 @@ func (s *Server) handleResetUserPasswordRequest(args [1]string, argsEscaped bool
 // handleRestartAppRequest handles restartApp operation.
 //
 // Restarts the container and returns its state afterwards, and publishes a `container_state` event.
+// Refused with 409 `array_stopped`, before the Engine is called, while the array is stopped
+// (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's
+// state cannot be read — the same refusal as `startApp`.
 //
 // POST /apps/{id}/restart
 func (s *Server) handleRestartAppRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -21004,7 +21010,10 @@ func (s *Server) handleSetUserPasswordRequest(args [1]string, argsEscaped bool, 
 // handleStartAppRequest handles startApp operation.
 //
 // Starts the container and returns its state afterwards, and publishes a `container_state` event.
-// Managed and unmanaged containers alike.
+// Managed and unmanaged containers alike. Refused with 409 `array_stopped`, before the Engine is
+// called, while the array is stopped (maintenance mode) or its storage is not ready: a container
+// started then would write onto the boot device under `/mnt/user` and `/mnt/cache`. If the array's
+// state cannot be read the start is refused too, with 503 `array_state_unknown`.
 //
 // POST /apps/{id}/start
 func (s *Server) handleStartAppRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

@@ -153,7 +153,29 @@ func (h *handler) setAppState(id string, state apiv1.AppState, status string) (*
 	return &app, nil
 }
 
+// requireArrayRunning mirrors container.Lifecycle.RequireArrayRunning as
+// hoservad wires it: Start, Restart and Recreate are refused, before
+// anything else is looked at, while the array is in maintenance mode or the
+// storage target has not been reached. In hoservad the storage target is
+// never reached with no array configured, and with a degraded array only
+// once it is acknowledged; the mock stands that in with the scenario's own
+// array layout and its degraded acknowledgement.
+func (h *handler) requireArrayRunning() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.maintenance {
+		return &mockError{code: "array_stopped", statusCode: 409, message: "container: the array is stopped: it is in maintenance mode — start the array first"}
+	}
+	if mockArrayDisks(h.scenario) == nil || (h.scenario == "degraded" && !h.degradedAcknowledged) {
+		return &mockError{code: "array_stopped", statusCode: 409, message: "container: the array is stopped: its storage is not ready — wait for the array to come up"}
+	}
+	return nil
+}
+
 func (h *handler) StartApp(ctx context.Context, params apiv1.StartAppParams) (*apiv1.App, error) {
+	if err := h.requireArrayRunning(); err != nil {
+		return nil, err
+	}
 	return h.setAppState(params.ID, apiv1.AppStateRunning, "Up 1 second")
 }
 
@@ -162,13 +184,21 @@ func (h *handler) StopApp(ctx context.Context, params apiv1.StopAppParams) (*api
 }
 
 func (h *handler) RestartApp(ctx context.Context, params apiv1.RestartAppParams) (*apiv1.App, error) {
+	if err := h.requireArrayRunning(); err != nil {
+		return nil, err
+	}
 	return h.setAppState(params.ID, apiv1.AppStateRunning, "Up 1 second")
 }
 
 // RecreateApp records the queued job like every other mock job
-// submission: this mock has no scheduler, and production's
-// Scheduler.Submit refuses new jobs during maintenance mode (Q70).
+// submission: this mock has no scheduler. Like production, it refuses an
+// array that is not running with array_stopped before it looks for the
+// container; production's Scheduler.Submit would refuse new jobs during
+// maintenance mode (Q70) only after that.
 func (h *handler) RecreateApp(ctx context.Context, params apiv1.RecreateAppParams) (*apiv1.Job, error) {
+	if err := h.requireArrayRunning(); err != nil {
+		return nil, err
+	}
 	h.appsMu.Lock()
 	_, err := h.findApp(params.ID)
 	h.appsMu.Unlock()

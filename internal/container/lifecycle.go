@@ -2,10 +2,23 @@ package container
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
 )
+
+// ErrArrayStopped is returned by Start, Restart and Recreate while the
+// array is stopped (maintenance mode) or its storage is not ready: a
+// container started then binds /mnt/user and /mnt/cache paths that are
+// empty directories on the boot device, writes into them, and the data
+// disappears under the pool when it mounts (doc 02 §1).
+var ErrArrayStopped = errors.New("container: the array is stopped")
+
+// ErrArrayStateUnknown is returned by the same three actions when the
+// Lifecycle has no way to read the array's state, so the refusal fails
+// closed instead of starting on a guess.
+var ErrArrayStateUnknown = errors.New("container: the array state cannot be read")
 
 // Lifecycle is the business logic behind the /apps lifecycle operations
 // (doc 04 §1): start, stop, restart, recreate, remove, logs and stats for
@@ -21,6 +34,32 @@ type Lifecycle struct {
 	// AppdataRoots returns the host directories Remove may delete under
 	// when the caller asks for appdata deletion. Nil means there are none.
 	AppdataRoots func(ctx context.Context) ([]string, error)
+	// Halted reports whether the array is stopped (maintenance mode) and
+	// StorageReady whether the storage target is ready — the same two
+	// signals ArrayService's boot restore reads. Start, Restart and
+	// Recreate need both: a nil func is an unreadable array state, and
+	// refuses.
+	Halted       func() bool
+	StorageReady func() bool
+}
+
+// RequireArrayRunning returns nil only when the array is running and its
+// storage ready — the one condition under which a container may be
+// started. Start, Restart and Recreate call it before any Engine call, so
+// a container's bind mounts are never resolved against an unmounted pool
+// even when dockerd is reachable; the API also calls it, to refuse a
+// recreate before queueing a job that would fail.
+func (l *Lifecycle) RequireArrayRunning() error {
+	if l.Halted == nil || l.StorageReady == nil {
+		return ErrArrayStateUnknown
+	}
+	if l.Halted() {
+		return fmt.Errorf("%w: it is in maintenance mode — start the array first", ErrArrayStopped)
+	}
+	if !l.StorageReady() {
+		return fmt.Errorf("%w: its storage is not ready — wait for the array to come up", ErrArrayStopped)
+	}
+	return nil
 }
 
 // RemoveResult reports what Remove deleted besides the container.
@@ -32,6 +71,9 @@ type RemoveResult struct {
 
 // Start starts the container and returns its state afterwards.
 func (l *Lifecycle) Start(ctx context.Context, id string) (Container, error) {
+	if err := l.RequireArrayRunning(); err != nil {
+		return Container{}, err
+	}
 	return l.act(ctx, id, "starting", l.Provider.Start)
 }
 
@@ -42,12 +84,20 @@ func (l *Lifecycle) Stop(ctx context.Context, id string) (Container, error) {
 
 // Restart restarts the container and returns its state afterwards.
 func (l *Lifecycle) Restart(ctx context.Context, id string) (Container, error) {
+	if err := l.RequireArrayRunning(); err != nil {
+		return Container{}, err
+	}
 	return l.act(ctx, id, "restarting", l.Provider.Restart)
 }
 
 // Recreate replaces the container with a freshly pulled, identically
 // configured one (Provider.Recreate) and returns the replacement's state.
+// It checks the array again itself, not only when the job was queued: the
+// job runs later, and a replacement of a running container is started.
 func (l *Lifecycle) Recreate(ctx context.Context, id string) (Container, error) {
+	if err := l.RequireArrayRunning(); err != nil {
+		return Container{}, err
+	}
 	c, err := l.Provider.Inspect(ctx, id)
 	if err != nil {
 		return Container{}, err

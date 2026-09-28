@@ -582,6 +582,16 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		// deletion itself — only the appdata_unavailable refusal.
 		Lifecycle: &container.Lifecycle{
 			Provider: containers,
+			// The array state hoservad wires (cmd/hoservad/containers.go):
+			// the scheduler's maintenance mode and, standing in for the
+			// storage target this rig does not have, the storage gate —
+			// which, like hoservad with no array configured
+			// (newArraySequence returns nil), is never ready when the
+			// scenario has no array.
+			Halted: scheduler.InMaintenance,
+			StorageReady: func() bool {
+				return len(expected) > 0 && degradedGate.Ready()
+			},
 			AppdataRoots: func(ctx context.Context) ([]string, error) {
 				_, disks, err := arrayStore.GetArray(ctx)
 				if err != nil {

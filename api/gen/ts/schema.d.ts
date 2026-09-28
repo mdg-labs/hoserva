@@ -1760,7 +1760,7 @@ export interface paths {
         put?: never;
         /**
          * Start a container
-         * @description Starts the container and returns its state afterwards, and publishes a `container_state` event. Managed and unmanaged containers alike.
+         * @description Starts the container and returns its state afterwards, and publishes a `container_state` event. Managed and unmanaged containers alike. Refused with 409 `array_stopped`, before the Engine is called, while the array is stopped (maintenance mode) or its storage is not ready: a container started then would write onto the boot device under `/mnt/user` and `/mnt/cache`. If the array's state cannot be read the start is refused too, with 503 `array_state_unknown`.
          */
         post: operations["startApp"];
         delete?: never;
@@ -1806,7 +1806,7 @@ export interface paths {
         put?: never;
         /**
          * Restart a container
-         * @description Restarts the container and returns its state afterwards, and publishes a `container_state` event.
+         * @description Restarts the container and returns its state afterwards, and publishes a `container_state` event. Refused with 409 `array_stopped`, before the Engine is called, while the array is stopped (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read — the same refusal as `startApp`.
          */
         post: operations["restartApp"];
         delete?: never;
@@ -1829,7 +1829,7 @@ export interface paths {
         put?: never;
         /**
          * Recreate a container
-         * @description Queues a `container_recreate` job (service class): it pulls the container's image again and replaces the container with one built from the same configuration, volumes and networks. If the pull or the creation of the replacement fails, or the replacement does not start, the original container is left as it was — same name and volumes, running again if it was running. A container started with `--rm` cannot be recreated: the Engine deletes it the moment it stops, so the job fails before changing anything.
+         * @description Queues a `container_recreate` job (service class): it pulls the container's image again and replaces the container with one built from the same configuration, volumes and networks. If the pull or the creation of the replacement fails, or the replacement does not start, the original container is left as it was — same name and volumes, running again if it was running. A container started with `--rm` cannot be recreated: the Engine deletes it the moment it stops, so the job fails before changing anything. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again when it runs and fails, changing nothing, if the array has stopped since.
          */
         post: operations["recreateApp"];
         delete?: never;

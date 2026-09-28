@@ -755,7 +755,10 @@ type Handler interface {
 	// creation of the replacement fails, or the replacement does not start, the original container is left
 	// as it was — same name and volumes, running again if it was running. A container started with
 	// `--rm` cannot be recreated: the Engine deletes it the moment it stops, so the job fails before
-	// changing anything.
+	// changing anything. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or
+	// its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no
+	// job is queued. The job checks again when it runs and fails, changing nothing, if the array has
+	// stopped since.
 	//
 	// POST /apps/{id}/recreate
 	RecreateApp(ctx context.Context, params RecreateAppParams) (*Job, error)
@@ -815,6 +818,9 @@ type Handler interface {
 	// RestartApp implements restartApp operation.
 	//
 	// Restarts the container and returns its state afterwards, and publishes a `container_state` event.
+	// Refused with 409 `array_stopped`, before the Engine is called, while the array is stopped
+	// (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's
+	// state cannot be read — the same refusal as `startApp`.
 	//
 	// POST /apps/{id}/restart
 	RestartApp(ctx context.Context, params RestartAppParams) (*App, error)
@@ -897,7 +903,10 @@ type Handler interface {
 	// StartApp implements startApp operation.
 	//
 	// Starts the container and returns its state afterwards, and publishes a `container_state` event.
-	// Managed and unmanaged containers alike.
+	// Managed and unmanaged containers alike. Refused with 409 `array_stopped`, before the Engine is
+	// called, while the array is stopped (maintenance mode) or its storage is not ready: a container
+	// started then would write onto the boot device under `/mnt/user` and `/mnt/cache`. If the array's
+	// state cannot be read the start is refused too, with 503 `array_state_unknown`.
 	//
 	// POST /apps/{id}/start
 	StartApp(ctx context.Context, params StartAppParams) (*App, error)

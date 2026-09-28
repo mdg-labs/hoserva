@@ -119,10 +119,16 @@ func restoreContainersAfterShutdown(ctx context.Context, c *appServices, halted,
 // wireContainers is what main.go calls to make container lifecycle
 // reachable: the /apps operations (Handler.Lifecycle) and the recreate
 // job. A test calls it too, rather than repeating the assignments.
-func wireContainers(handler *api.Handler, registry *job.Registry, c *appServices) {
+// halted and storageReady are the same two signals the boot restore reads:
+// with them Lifecycle refuses start, restart and recreate while the array
+// is stopped or its storage is not ready, and with either nil it refuses
+// always (fail closed).
+func wireContainers(handler *api.Handler, registry *job.Registry, c *appServices, halted, storageReady func() bool) {
 	if c == nil {
 		return
 	}
+	c.Lifecycle.Halted = halted
+	c.Lifecycle.StorageReady = storageReady
 	handler.Lifecycle = c.Lifecycle
 	// Recreate replaces the container only after everything that can fail
 	// has succeeded, and puts the original back if a later step fails, so

@@ -12,9 +12,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/api/gen/go/events"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
@@ -160,8 +162,11 @@ func TestRebuildArraySequence_KeepsTheContainerService(t *testing.T) {
 type containersWiringHarness struct {
 	client    *http.Client
 	fake      *container.FakeProvider
-	appdata   string
-	stopWatch context.CancelFunc
+	scheduler *job.Scheduler
+	// storageReady is the storage-target readiness the daemon wiring reads.
+	storageReady *atomic.Bool
+	appdata      string
+	stopWatch    context.CancelFunc
 }
 
 func newContainersWiringHarness(t *testing.T) *containersWiringHarness {
@@ -226,7 +231,9 @@ func newContainersWiringHarness(t *testing.T) *containersWiringHarness {
 
 	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, Container: fake}
 	apps := newContainers(fake, root, arrayStore, nil)
-	wireContainers(handler, registry, apps)
+	storageReady := &atomic.Bool{}
+	storageReady.Store(true)
+	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageReady.Load)
 	wctx, stopWatch := context.WithCancel(ctx)
 	t.Cleanup(stopWatch)
 	go apps.Watcher.Run(wctx)
@@ -250,9 +257,11 @@ func newContainersWiringHarness(t *testing.T) *containersWiringHarness {
 				return d.DialContext(ctx, "unix", sockPath)
 			},
 		}},
-		fake:      fake,
-		appdata:   appdata,
-		stopWatch: stopWatch,
+		fake:         fake,
+		scheduler:    scheduler,
+		storageReady: storageReady,
+		appdata:      appdata,
+		stopWatch:    stopWatch,
 	}
 }
 
@@ -300,6 +309,117 @@ func TestContainersWiring_LifecycleOperationsAreReachableOverHTTP(t *testing.T) 
 	status, body = w.do(t, http.MethodGet, "/apps/jellyfin/stats")
 	if status != http.StatusConflict {
 		t.Fatalf("GET stats of a stopped container = %d %s, want 409", status, body)
+	}
+}
+
+// The data-loss scenario: dockerd is reachable again while the array is
+// stopped (docker.socket activation, a manual systemctl start docker), so
+// a started container's bind mounts under /mnt/user would resolve to empty
+// directories on the boot device. With the array in maintenance mode the
+// real daemon server refuses start, restart and recreate, and the Engine
+// sees no such call; stop, logs, stats and a plain remove stay allowed.
+func TestContainersWiring_StartRestartRecreateRefusedWhileTheArrayIsStopped(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	if err := w.scheduler.EnterMaintenance(context.Background()); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+
+	for _, action := range []string{"start", "restart", "recreate"} {
+		status, body := w.do(t, http.MethodPost, "/apps/jellyfin/"+action)
+		if status != http.StatusConflict || !bytes.Contains(body, []byte(`"array_stopped"`)) {
+			t.Fatalf("POST /apps/jellyfin/%s on a stopped array = %d %s, want 409 array_stopped", action, status, body)
+		}
+	}
+	for _, c := range w.fake.Calls() {
+		if c.Op == "start" || c.Op == "restart" || c.Op == "recreate" {
+			t.Fatalf("the Engine saw %+v although the array is stopped; calls = %v", c, w.fake.Calls())
+		}
+	}
+	if s := containerState(t, w.fake, "jellyfin"); s != "exited" {
+		t.Fatalf("jellyfin is %s after refused starts, want exited", s)
+	}
+
+	if status, body := w.do(t, http.MethodGet, "/apps/jellyfin/logs?tail=5"); status != http.StatusOK {
+		t.Fatalf("GET logs on a stopped array = %d %s, want 200", status, body)
+	}
+	if status, body := w.do(t, http.MethodPost, "/apps/jellyfin/stop"); status != http.StatusOK {
+		t.Fatalf("POST stop on a stopped array = %d %s, want 200", status, body)
+	}
+	if status, body := w.do(t, http.MethodDelete, "/apps/jellyfin"); status != http.StatusOK {
+		t.Fatalf("DELETE without appdata on a stopped array = %d %s, want 200", status, body)
+	}
+}
+
+// Maintenance mode is not the only way the array is unusable: storage that
+// is not ready (no array, a degraded array not yet acknowledged, a pool
+// that has not mounted) leaves /mnt/user just as empty.
+func TestContainersWiring_StartRefusedWhileStorageIsNotReady(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	w.storageReady.Store(false)
+
+	for _, action := range []string{"start", "restart", "recreate"} {
+		status, body := w.do(t, http.MethodPost, "/apps/jellyfin/"+action)
+		if status != http.StatusConflict || !bytes.Contains(body, []byte(`"array_stopped"`)) {
+			t.Fatalf("POST %s with storage not ready = %d %s, want 409 array_stopped", action, status, body)
+		}
+	}
+	if calls := w.fake.Calls(); len(calls) != 0 {
+		t.Fatalf("the Engine saw %v although storage is not ready", calls)
+	}
+
+	w.storageReady.Store(true)
+	if status, body := w.do(t, http.MethodPost, "/apps/jellyfin/start"); status != http.StatusOK {
+		t.Fatalf("POST start once storage is ready = %d %s, want 200", status, body)
+	}
+}
+
+// A recreate job can be queued before an array stop and run after it, or
+// be submitted by something other than the API: the job's own runner
+// re-checks, so the Engine still sees no recreate.
+func TestContainersWiring_RecreateJobRefusesAtRunTimeWhileTheArrayIsStopped(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	w.storageReady.Store(false)
+
+	j, err := w.scheduler.Submit(context.Background(), job.TypeContainerRecreate, []string{"container:jellyfin"}, []byte(`{"id":"jellyfin"}`))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		_, body := w.do(t, http.MethodGet, "/jobs/"+j.ID)
+		if bytes.Contains(body, []byte(`"failed"`)) {
+			break
+		}
+		if bytes.Contains(body, []byte(`"succeeded"`)) || time.Now().After(deadline) {
+			t.Fatalf("the recreate job should fail on a stopped array: %s", body)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for _, c := range w.fake.Calls() {
+		if c.Op == "recreate" {
+			t.Fatalf("the recreate job reached the Engine on a stopped array: %v", w.fake.Calls())
+		}
+	}
+}
+
+// The daemon wiring fails closed: without the array-state signals nothing
+// is started, rather than starting on a guess.
+func TestWireContainers_WithoutArrayStateRefusesEveryStart(t *testing.T) {
+	fake := container.NewFakeProvider()
+	fake.AddContainer(container.Container{ID: "a", Name: "jellyfin", State: "exited"})
+	apps := newContainers(fake, t.TempDir(), nil, nil)
+	handler := &api.Handler{}
+	wireContainers(handler, job.NewRegistry(), apps, nil, nil)
+
+	_, err := handler.StartApp(context.Background(), apiv1.StartAppParams{ID: "jellyfin"})
+	if err == nil {
+		t.Fatal("StartApp succeeded although the array state is unknown")
+	}
+	if e := handler.NewError(context.Background(), err); e.StatusCode != http.StatusServiceUnavailable || e.Response.Code != "array_state_unknown" {
+		t.Fatalf("StartApp error = %d %s, want 503 array_state_unknown", e.StatusCode, e.Response.Code)
+	}
+	if calls := fake.Calls(); len(calls) != 0 {
+		t.Fatalf("the Engine saw %v", calls)
 	}
 }
 
