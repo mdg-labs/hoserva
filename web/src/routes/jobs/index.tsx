@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import {
   JOB_FILTER_ALL,
   JOB_STATUS_FILTER_VALUES,
+  JOB_TYPE_FILTER_CLASS,
   JOB_TYPE_FILTER_VALUES,
 } from "@/hooks/job-filter-options";
 import { jobDetailPath } from "@/hooks/paths";
@@ -24,6 +25,11 @@ import { useApiQuery } from "@/lib/api/use-api-query";
 import type { components } from "@/lib/api/client";
 
 type Job = components["schemas"]["Job"];
+type JobStatus = components["schemas"]["JobStatus"];
+
+function isJobTypeFilterValue(value: string): value is (typeof JOB_TYPE_FILTER_VALUES)[number] {
+  return (JOB_TYPE_FILTER_VALUES as readonly string[]).includes(value);
+}
 
 export function JobsPage(): React.ReactElement {
   const { t } = useTranslation();
@@ -31,8 +37,15 @@ export function JobsPage(): React.ReactElement {
   const [typeFilter, setTypeFilter] = useState(JOB_FILTER_ALL);
 
   const jobsQuery = useApiQuery<{ jobs: Job[] }>({
-    queryKey: "jobs-list",
-    queryFn: (signal) => getJobs(undefined, signal),
+    queryKey: ["jobs-list", statusFilter, typeFilter],
+    queryFn: (signal) =>
+      getJobs(
+        {
+          status: statusFilter !== JOB_FILTER_ALL ? (statusFilter as JobStatus) : undefined,
+          class: isJobTypeFilterValue(typeFilter) ? JOB_TYPE_FILTER_CLASS[typeFilter] : undefined,
+        },
+        signal,
+      ),
     pollIntervalMs: 15_000,
   });
   const cancelMutation = useApiMutation({
@@ -44,12 +57,9 @@ export function JobsPage(): React.ReactElement {
 
   const rows = useMemo(() => {
     if (!jobs) return [];
-    return jobs.filter((job) => {
-      if (statusFilter !== JOB_FILTER_ALL && job.status !== statusFilter) return false;
-      if (typeFilter !== JOB_FILTER_ALL && job.type !== typeFilter) return false;
-      return true;
-    });
-  }, [jobs, statusFilter, typeFilter]);
+    if (typeFilter === JOB_FILTER_ALL) return jobs;
+    return jobs.filter((job) => job.type === typeFilter);
+  }, [jobs, typeFilter]);
 
   const handleCancel = async (jobId: string): Promise<void> => {
     const result = await cancelMutation.mutate(jobId);

@@ -25,7 +25,13 @@ export function getPool(signal?: AbortSignal) {
   return hoservaClient.GET("/pool", { signal });
 }
 
-export function getJobs(query?: { limit?: number }, signal?: AbortSignal) {
+type JobClass = components["schemas"]["JobClass"];
+type JobStatus = components["schemas"]["JobStatus"];
+
+export function getJobs(
+  query?: { class?: JobClass; status?: JobStatus; limit?: number },
+  signal?: AbortSignal,
+) {
   return hoservaClient.GET("/jobs", { params: { query }, signal });
 }
 
