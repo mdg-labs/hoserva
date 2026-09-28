@@ -5,6 +5,7 @@ import { Banner } from "@/components/patterns/banner";
 import { ConfirmDialog } from "@/components/patterns/confirm";
 import { GroupedResults } from "@/components/patterns/grouped-results";
 import { InlineNote } from "@/components/patterns/inline-note";
+import { jobStatusLabel, jobStatusTone } from "@/components/patterns/job-status";
 import { LoadingBlock } from "@/components/patterns/loading";
 import {
   parityDiffGroupsFromAPI,
@@ -221,9 +222,7 @@ export function ParityPage(): React.ReactElement {
             parityJobs.map((job) => (
               <div key={job.id} data-job-id={job.id} className="flex items-center justify-between gap-2">
                 <span>{job.type}</span>
-                <StatusBadge tone={job.status === "failed" ? "error" : job.status === "succeeded" ? "success" : "info"}>
-                  {job.status}
-                </StatusBadge>
+                <StatusBadge tone={jobStatusTone(job.status)}>{jobStatusLabel(job.status, t)}</StatusBadge>
               </div>
             ))
           )}

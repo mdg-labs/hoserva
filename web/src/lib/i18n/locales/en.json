@@ -593,7 +593,9 @@
       "queued": "Queued",
       "interrupted": "Interrupted",
       "failed": "Failed",
-      "succeeded": "Succeeded"
+      "succeeded": "Succeeded",
+      "cancelled": "Cancelled",
+      "unknown": "Unknown"
     },
     "types": {
       "sync": "sync",

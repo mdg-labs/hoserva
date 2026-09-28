@@ -7,6 +7,7 @@ import { Banner } from "@/components/patterns/banner";
 import { DataTable, type DataTableColumn } from "@/components/patterns/data-table";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { JobProgress } from "@/components/patterns/job-progress";
+import { jobStatusLabel, jobStatusTone } from "@/components/patterns/job-status";
 import { LoadingBlock } from "@/components/patterns/loading";
 import { StatusBadge } from "@/components/patterns/status-badge";
 import { SelectFilter, TableFilters } from "@/components/patterns/table-filters";
@@ -68,19 +69,7 @@ export function JobsPage(): React.ReactElement {
       id: "status",
       header: t("jobs.columns.status"),
       cell: (job) => (
-        <StatusBadge
-          tone={
-            job.status === "failed"
-              ? "error"
-              : job.status === "running"
-                ? "info"
-                : job.status === "succeeded"
-                  ? "success"
-                  : "outline"
-          }
-        >
-          {job.status}
-        </StatusBadge>
+        <StatusBadge tone={jobStatusTone(job.status)}>{jobStatusLabel(job.status, t)}</StatusBadge>
       ),
     },
     {
