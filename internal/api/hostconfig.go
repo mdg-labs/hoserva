@@ -116,6 +116,24 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 	// early costs nothing even when the request carries no Docker choices.
 	acceptedMove := importDocker[config.KindDockerContainers] && importDocker[config.KindDockerImages]
 	dataRoot := config.DockerDataRoot(inv, acceptedMove, h.hasCacheDisk(ctx))
+
+	// A prior call may have stopped Docker for this exact move and never
+	// confirmed a successful Start (Generator.ApplyDockerDataRoot's own
+	// finding). Docker being down for that reason is itself what makes
+	// the inventory probe above fail and DockerDataRoot fail closed to
+	// DockerDataRootDefault (Q76) — so a naive retry would report the
+	// wrong dataRoot in its response and never even ask
+	// ApplyDockerDataRoot to finish the restart it already committed to.
+	// The move itself was already validated and written before Stop was
+	// ever issued; only the restart is owed, and it only ever targets the
+	// one fixed cache path.
+	restartPending, err := h.Generator.DockerRestartPending()
+	if err != nil {
+		return nil, fmt.Errorf("checking docker restart marker: %w", err)
+	}
+	if restartPending {
+		dataRoot = config.DockerDataRootCache
+	}
 	if err := h.Generator.CanApplyDockerDataRoot(ctx, dataRoot); err != nil {
 		return nil, mapDockerDataRootErr(fmt.Errorf("checking docker data-root move: %w", err))
 	}

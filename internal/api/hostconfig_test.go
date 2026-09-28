@@ -564,6 +564,75 @@ func TestApplyHostConfig_EmptyDockerCanAcceptCacheMove(t *testing.T) {
 	}
 }
 
+// TestApplyHostConfig_RecoversFromFailedRestartWhenRetryInventoryProbeFails
+// is the CodeRabbit PR 421 finding this closes: exercised through
+// ApplyHostConfig exactly as a retried onboarding request reaches it, not
+// by calling Generator.ApplyDockerDataRoot directly. The first call stops
+// Docker for the move and fails to start it back up. On retry, Docker
+// being down is itself what makes h.Docker.List (the real ExecDocker's
+// `docker ps` etc. would behave identically once its daemon is
+// unreachable) return an error, which Detect turns into inv.DockerErr —
+// and DockerDataRoot's own Q76 fail-closed rule then recomputes
+// DockerDataRootDefault on this exact retry. Without the
+// DockerRestartPending check in ApplyHostConfig, that would report the
+// wrong dockerDataRoot and never even ask ApplyDockerDataRoot to finish
+// the restart it already committed to.
+func TestApplyHostConfig_RecoversFromFailedRestartWhenRetryInventoryProbeFails(t *testing.T) {
+	h, _, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	firstAttempt := &config.FakeServiceRestarter{}
+	firstAttempt.SetActive(true)
+	firstAttempt.SetStartErr(errors.New("simulated start failure"))
+	h.DockerRestart = firstAttempt
+
+	req := &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}}
+	if _, err := h.ApplyHostConfig(context.Background(), req); err == nil {
+		t.Fatal("ApplyHostConfig() = nil error, want the simulated start failure surfaced")
+	}
+	if !firstAttempt.Stopped() {
+		t.Fatal("Stop was not called on the first attempt")
+	}
+
+	// Retry: Docker is down because of the first attempt's Stop, so a
+	// live inventory probe against it fails exactly like ExecDocker's
+	// `docker ps` would against an unreachable daemon — never
+	// errDockerUnavailable (the docker CLI itself is still installed),
+	// so Detect sets inv.DockerErr and DockerDataRoot fails closed.
+	h.Docker = config.MemoryDocker{Err: errors.New("cannot connect to the docker daemon")}
+	retry := &config.FakeServiceRestarter{}
+	retry.SetActive(false)
+	h.DockerRestart = retry
+
+	got, err := h.ApplyHostConfig(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ApplyHostConfig() retry: %v", err)
+	}
+	if retry.Stopped() {
+		t.Fatal("Stop was called on the retry — Docker was already down, nothing to stop")
+	}
+	if !retry.Started() {
+		t.Fatal("Start was not called on the retry — the pending restart from the first attempt must be finished, not silently dropped because this call's own inventory probe failed")
+	}
+	if got.DockerDataRoot != config.DockerDataRootCache {
+		t.Fatalf("dockerDataRoot = %q, want %s — the response must reflect the move already written, not the retry's fail-closed default", got.DockerDataRoot, config.DockerDataRootCache)
+	}
+}
+
 // TestApplyHostConfig_DockerDataRootStaysWithExistingVolumes is #413's
 // data-loss regression, exercised through ApplyHostConfig exactly as
 // hoservad's onboarding flow reaches it: a host with no containers and no

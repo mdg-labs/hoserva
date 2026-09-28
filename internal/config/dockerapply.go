@@ -104,9 +104,15 @@ type dockerDaemonConfig struct {
 	StorageDriver string `json:"storage-driver"`
 }
 
-// dockerRestartPending reports whether an earlier ApplyDockerDataRoot call
-// issued Stop without a confirmed, matching Start.
-func (g *Generator) dockerRestartPending() (bool, error) {
+// DockerRestartPending reports whether an earlier ApplyDockerDataRoot call
+// issued Stop without a confirmed, matching Start — so a caller (Handler.
+// ApplyHostConfig) can recognize a recovery is owed even when its own
+// fresh inventory probe fails closed to DockerDataRootDefault precisely
+// because Docker is down from that same earlier Stop (Q76's DockerErr
+// fail-closed rule), which would otherwise make ApplyDockerDataRoot's own
+// pending check unreachable: it never runs past DockerDataRootDefault's
+// immediate no-op.
+func (g *Generator) DockerRestartPending() (bool, error) {
 	full, _, err := g.resolvePath(dockerRestartPendingPath)
 	if err != nil {
 		return false, err
@@ -166,27 +172,48 @@ func (g *Generator) CanApplyDockerDataRoot(ctx context.Context, dataRoot string)
 // ApplyDockerDataRoot performs the move DockerDataRoot only decides:
 // writes /etc/docker/daemon.json, creates dataRoot, and restarts Docker if
 // it is already running, so it picks up the new location. It is a no-op
-// whenever dataRoot is DockerDataRootDefault — nothing to move, matching
-// DockerDataRoot's own refusal to move without an accepted decision, a
-// cache disk and an empty Engine (Q76). An existing, unmanaged
-// /etc/docker/daemon.json — Docker already configured by hand before
-// Hoserva was installed — refuses via ErrExistingHostFile exactly like
-// Generator's other managed host files (D4, Q76): this call never
-// overwrites configuration it did not write. dirs and restart may be nil;
-// dirs defaults to OSDirMaker, and a nil restart only skips the restart
-// step (the config and directory are still written). A retry that finds
-// dockerRestartPendingPath still marked treats that as its own earlier
-// Stop having outlived a failed Start, and finishes the restart directly —
-// never issuing a second Stop — rather than skipping it as "was never
+// whenever dataRoot is DockerDataRootDefault and no restart is owed —
+// nothing to move, matching DockerDataRoot's own refusal to move without
+// an accepted decision, a cache disk and an empty Engine (Q76). An
+// existing, unmanaged /etc/docker/daemon.json — Docker already configured
+// by hand before Hoserva was installed — refuses via ErrExistingHostFile
+// exactly like Generator's other managed host files (D4, Q76): this call
+// never overwrites configuration it did not write. dirs and restart may
+// be nil; dirs defaults to OSDirMaker, and a nil restart only skips the
+// restart step (the config and directory are still written).
+//
+// The pending-restart check runs before the DockerDataRootDefault no-op,
+// not after: a caller's own fresh inventory probe can itself fail
+// precisely because Docker is down from an earlier call's Stop, and Q76's
+// DockerErr fail-closed rule then makes that caller recompute
+// DockerDataRootDefault on this very retry (Handler.ApplyHostConfig
+// guards against this too, via DockerRestartPending, but this function
+// must not depend on getting a correct dataRoot to finish its own
+// half-done work). A pending restart always finishes directly with Start
+// — never a second Stop — rather than being skipped as "was never
 // running" (which Docker's live Active() state alone cannot rule out: a
 // fresh install with Docker genuinely not started yet looks identical to
 // that from Active() and daemon.json content both).
 func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, dirs DirMaker, restart ServiceRestarter, revision int, now time.Time) error {
-	if dataRoot == DockerDataRootDefault {
-		return nil
-	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+
+	if restart != nil {
+		pending, err := g.DockerRestartPending()
+		if err != nil {
+			return err
+		}
+		if pending {
+			if err := restart.Start(ctx); err != nil {
+				return fmt.Errorf("config: starting docker after its data-root move: %w", err)
+			}
+			return g.clearDockerRestartPending()
+		}
+	}
+
+	if dataRoot == DockerDataRootDefault {
+		return nil
 	}
 	if dirs == nil {
 		dirs = OSDirMaker{}
@@ -205,17 +232,6 @@ func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, di
 
 	if restart == nil {
 		return nil
-	}
-
-	pending, err := g.dockerRestartPending()
-	if err != nil {
-		return err
-	}
-	if pending {
-		if err := restart.Start(ctx); err != nil {
-			return fmt.Errorf("config: starting docker after its data-root move: %w", err)
-		}
-		return g.clearDockerRestartPending()
 	}
 
 	active, err := restart.Active(ctx)

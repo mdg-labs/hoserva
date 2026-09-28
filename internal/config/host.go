@@ -26,6 +26,12 @@ const (
 // unless the user accepted a cache move AND Docker holds none (Q62, Q76).
 const DockerDataRootDefault = "/var/lib/docker"
 
+// DockerDataRootCache is the one cache-side data-root DockerDataRoot ever
+// moves Docker to (Q62): a single, fixed path, never derived per host or
+// per call, so a caller finishing an interrupted move already knows this
+// is the only target it could have been.
+const DockerDataRootCache = "/mnt/cache/docker"
+
 const (
 	KindSamba            = "samba"
 	KindNFS              = "nfs"
@@ -530,7 +536,7 @@ func DockerDataRoot(inv HostInventory, acceptedMove, hasCache bool) string {
 		len(inv.DockerNetworks) > 0 || len(inv.DockerPlugins) > 0 || inv.DockerErr != nil {
 		return DockerDataRootDefault
 	}
-	return "/mnt/cache/docker"
+	return DockerDataRootCache
 }
 
 // KindFromCheckID maps a DoctorCheck.id (host_samba, or host_samba_*) to
