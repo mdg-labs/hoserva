@@ -314,35 +314,30 @@ describe("dashboard, parity, wake-events and jobs pages", () => {
   });
 
   it("filters the jobs list down to cancelled jobs via the status filter", async () => {
-    mockGet.mockImplementation((path: string) => {
+    const runningJob = {
+      id: "job-1",
+      type: "sync",
+      class: "parity",
+      status: "running",
+      progress: 10,
+      resumable: false,
+      cancellable: true,
+      createdAt: "2026-01-01T00:00:00Z",
+    };
+    const cancelledJob = {
+      id: "job-2",
+      type: "scrub",
+      class: "parity",
+      status: "cancelled",
+      progress: null,
+      resumable: false,
+      cancellable: false,
+      createdAt: "2026-01-02T00:00:00Z",
+    };
+    mockGet.mockImplementation((path: string, options?: { params?: { query?: { status?: string } } }) => {
       if (path === "/jobs") {
-        return Promise.resolve({
-          data: {
-            jobs: [
-              {
-                id: "job-1",
-                type: "sync",
-                class: "parity",
-                status: "running",
-                progress: 10,
-                resumable: false,
-                cancellable: true,
-                createdAt: "2026-01-01T00:00:00Z",
-              },
-              {
-                id: "job-2",
-                type: "scrub",
-                class: "parity",
-                status: "cancelled",
-                progress: null,
-                resumable: false,
-                cancellable: false,
-                createdAt: "2026-01-02T00:00:00Z",
-              },
-            ],
-          },
-          response: { ok: true },
-        });
+        const jobs = options?.params?.query?.status === "cancelled" ? [cancelledJob] : [runningJob, cancelledJob];
+        return Promise.resolve({ data: { jobs }, response: { ok: true } });
       }
       return Promise.resolve({ data: null, response: { ok: false } });
     });
