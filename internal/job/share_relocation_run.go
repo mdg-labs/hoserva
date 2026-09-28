@@ -36,6 +36,11 @@ type ShareRelocationDeps struct {
 	// write-amplification bound without touching internal/parity's own
 	// algorithms; *parity.RelocationManifestStore satisfies it unchanged.
 	Manifest relocationManifestReplacer
+	// Open is the open-file checker both directions consult before and
+	// after each copy. Production leaves it nil, which cache.Deps resolves
+	// to the real /proc-scanning ProcOpenChecker; a unit test injects a
+	// fake so it never walks the host's /proc.
+	Open cache.OpenChecker
 }
 
 // relocationManifestReplacer is the subset of *parity.RelocationManifestStore
@@ -79,9 +84,9 @@ func RunShareRelocation(d ShareRelocationDeps) RunFunc {
 
 		var report cache.Report
 		if p.To == shareRelocationToArray {
-			report, err = cache.RelocateToArray(ctx, share, d.Config, cache.Deps{}, hooks, rc.InitialCheckpoint())
+			report, err = cache.RelocateToArray(ctx, share, d.Config, cache.Deps{Open: d.Open}, hooks, rc.InitialCheckpoint())
 		} else {
-			report, err = cache.RelocateToCache(ctx, share, d.Config, cache.Deps{Sync: d.Sync}, hooks, rc.InitialCheckpoint())
+			report, err = cache.RelocateToCache(ctx, share, d.Config, cache.Deps{Sync: d.Sync, Open: d.Open}, hooks, rc.InitialCheckpoint())
 		}
 		if !report.StartedAt.IsZero() {
 			_, _ = fmt.Fprintln(rc.Output(), report.Summary())

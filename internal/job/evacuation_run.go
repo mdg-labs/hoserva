@@ -62,6 +62,11 @@ type EvacuationDeps struct {
 	// failure before the first copy fails the job before anything is
 	// copied (doc 09 §4 step 2). Required.
 	ArrayReady func(ctx context.Context) error
+	// Open is the open-file checker cache.RunRebalance consults before and
+	// after each copy. Production leaves it nil, which cache.Deps resolves
+	// to the real /proc-scanning ProcOpenChecker; a unit test injects a
+	// fake so it never walks the host's /proc.
+	Open cache.OpenChecker
 	// beforeManifestClearReturnHook, when non-nil, is called synchronously
 	// by d.run's own post-copy manifest/exemption clear, once that clear
 	// has already failed and its combined error is already built, right
@@ -217,7 +222,7 @@ func (d EvacuationDeps) run(ctx context.Context, rc *RunContext, p EvacuationPar
 			_, _ = fmt.Fprintf(rc.Output(), format+"\n", args...)
 		},
 	}
-	report, err := cache.RunRebalance(ctx, p.Plan, d.Config, cache.Deps{Sync: sync, TrackedFileCount: d.TrackedFileCount}, hooks, rc.InitialCheckpoint())
+	report, err := cache.RunRebalance(ctx, p.Plan, d.Config, cache.Deps{Sync: sync, TrackedFileCount: d.TrackedFileCount, Open: d.Open}, hooks, rc.InitialCheckpoint())
 	if !report.StartedAt.IsZero() {
 		_, _ = fmt.Fprintln(rc.Output(), report.Summary())
 	}

@@ -50,6 +50,7 @@ func TestRunRebalance_MovesThroughScheduler(t *testing.T) {
 	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
 
 	s.registry.Register(TypeRebalance, true, RunRebalance(RebalanceDeps{
+		Open:             fakeOpen(),
 		Sync:             syncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Store:            newRebalanceTestArray(t, filepath.Join(base, "disk1"), filepath.Join(base, "disk2")),
@@ -93,6 +94,7 @@ func TestRunRebalance_GuardBlocked_LeavesSourceUntouched(t *testing.T) {
 	eng.ScriptGuardBlock(trippedGuard())
 
 	s.registry.Register(TypeRebalance, true, RunRebalance(RebalanceDeps{
+		Open:             fakeOpen(),
 		Sync:             syncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Store:            newRebalanceTestArray(t, filepath.Join(base, "disk1"), filepath.Join(base, "disk2")),
@@ -164,6 +166,7 @@ func TestRunRebalance_RefusesAPlanTouchingALeavingDisk(t *testing.T) {
 			eng := newRecordingEngine()
 			eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
 			s.registry.Register(TypeRebalance, true, RunRebalance(RebalanceDeps{
+				Open:             fakeOpen(),
 				Sync:             syncFuncFromEngine(eng),
 				TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 				Store:            arrays,
@@ -210,6 +213,7 @@ func TestRunRebalance_ResumeFromAMidPlanCheckpoint_RefusesAPlanTouchingALeavingD
 	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
 
 	fn := RunRebalance(RebalanceDeps{
+		Open:             fakeOpen(),
 		Sync:             syncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Store:            arrays,

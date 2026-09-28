@@ -136,6 +136,7 @@ func TestHandler_StartShareRelocation_ToCache_GuardBlocked_LeavesArrayUntouched(
 	eng.Sleep = func(time.Duration) {}
 	eng.ScriptGuardBlock(parity.GuardResult{Blocked: true, Triggers: []parity.GuardTrigger{parity.TriggerRemovedCount}})
 	r.Register(job.TypeShareRelocation, true, job.RunShareRelocation(job.ShareRelocationDeps{
+		Open:  cache.NewFakeOpenChecker(),
 		Share: func(context.Context, string) (cache.Share, error) { return relocShare, nil },
 		Sync:  syncFuncFromEngine(eng),
 	}))
@@ -193,6 +194,7 @@ func TestHandler_StartShareRelocation_ToArray_SubmitsAndRuns(t *testing.T) {
 	}
 
 	r.Register(job.TypeShareRelocation, true, job.RunShareRelocation(job.ShareRelocationDeps{
+		Open:  cache.NewFakeOpenChecker(),
 		Share: func(context.Context, string) (cache.Share, error) { return relocShare, nil },
 	}))
 
