@@ -411,11 +411,14 @@ func (s *Scheduler) finishSubmitLocked(ctx context.Context, t Type, class Class,
 // itself. params is the JSON request payload for types that have one
 // (validated here against t); nil or empty for types that have none.
 //
-// A ClassTopology job that does not conflict with anything currently
-// running is, on that basis alone, about to start immediately — so its
-// start-time backup (doc 10 §1, #406, #408) runs here, before any of
-// admitLocked's own admission checks and before anything is persisted:
-// exactly #406's own behaviour, undisturbed by this issue's fix. A
+// A ClassTopology job that admitLocked admits and that does not conflict
+// with anything currently running is about to start immediately — so its
+// start-time backup (doc 10 §1, #406, #408) runs here, before anything is
+// persisted. A submission admission refuses gets no backup: each archive
+// takes one of the pre-change retention slots (internal/backup), and a
+// refused change must not push out a real pre-import or pre-update one.
+// admitLocked runs again after the backup, in the lock hold that creates
+// the job, since state can change while the backup runs. A
 // ClassTopology job that does conflict gets no backup here at all — one
 // taken now would describe the configuration from before whatever is
 // currently running finishes, not from just before this job's own change
@@ -446,6 +449,10 @@ func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, pa
 	backupRan := false
 	if class == ClassTopology {
 		s.mu.Lock()
+		if err := s.admitLocked(ctx, t); err != nil {
+			s.mu.Unlock()
+			return nil, err
+		}
 		willQueue := s.hasConflictWithRunningLocked(class, resourceIDs)
 		s.mu.Unlock()
 		if !willQueue {
@@ -1697,13 +1704,13 @@ func (s *Scheduler) recordTerminalOutcomeWithRetry(j Job) {
 // s.queue of everything it could reach.
 func (s *Scheduler) startQueuedTopologyJob(q *queuedJob) {
 	backupErr := s.runTopologyBackup(context.Background())
-
-	s.mu.Lock()
-	cancelRequested := q.cancelRequested
-	s.mu.Unlock()
 	abort, hasAbort := s.registry.lookupAbort(q.job.Type)
 
-	if cancelRequested {
+	// The cancel check and the start below are one lock hold: a Cancel
+	// landing between them would return success for a job that then starts.
+	s.mu.Lock()
+	if q.cancelRequested {
+		s.mu.Unlock()
 		if hasAbort {
 			if code, message, ok := s.runQueuedTopologyAbort(q, abort); !ok {
 				s.finishQueuedTopologyJobInterrupted(q, code, message)
@@ -1715,6 +1722,7 @@ func (s *Scheduler) startQueuedTopologyJob(q *queuedJob) {
 	}
 
 	if backupErr != nil {
+		s.mu.Unlock()
 		if !q.cancellable && q.job.Type == TypeDiskUpgradeData {
 			s.finishQueuedTopologyJobInterrupted(q, "pre_topology_backup_failed", backupErr.Error())
 			return
@@ -1729,7 +1737,6 @@ func (s *Scheduler) startQueuedTopologyJob(q *queuedJob) {
 		return
 	}
 
-	s.mu.Lock()
 	delete(s.dispatching, q.job.ID)
 
 	if s.maintenance && q.job.Type != TypeDiskUpgradeData {

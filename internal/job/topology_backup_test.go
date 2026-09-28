@@ -144,6 +144,15 @@ func TestSubmit_EveryTopologyJobTypeRunsPreTopologyBackupNonTopologyNever(t *tes
 			backup := &fakeBackup{}
 			s.SetTopologyBackup(backup)
 
+			// A refused submission writes no backup, so a data-disk upgrade
+			// needs the one state UR3 admits it in.
+			if tc.typ == TypeDiskUpgradeData {
+				if err := s.EnterMaintenance(ctx); err != nil {
+					t.Fatalf("EnterMaintenance: %v", err)
+				}
+				s.MarkArrayStopped()
+			}
+
 			submitted, _ := s.Submit(ctx, tc.typ, nil, tc.params)
 			if submitted != nil {
 				await(t, s, submitted.ID)
@@ -987,5 +996,113 @@ func TestDispatch_DispatchingDiskUpgradeDataAtReleasingBackupFailureEndsInterrup
 	succeeded := await(t, s, upgrade.ID)
 	if succeeded.Status != StatusSucceeded {
 		t.Fatalf("disk_upgrade_data status after resuming past the failed backup = %s, want %s", succeeded.Status, StatusSucceeded)
+	}
+}
+
+// TestSubmit_RefusedTopologyJobWritesNoPreTopologyBackup: a topology
+// submission that admission refuses must never write a pre-topology
+// archive. Each one would take one of internal/backup's
+// preChangeKeepCount retention slots, so a few refused retries — a disk
+// add clicked during maintenance mode — could push a real pre-import or
+// pre-update archive (#401) back into the ordinary daily tier. Fails
+// against afc999c: Submit ran the backup before admitLocked, so both
+// refusals below each wrote one.
+func TestSubmit_RefusedTopologyJobWritesNoPreTopologyBackup(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+	noopRun(s, TypeDiskAdd, false)
+	noopRun(s, TypeDiskUpgradeData, true)
+
+	backup := &fakeBackup{}
+	s.SetTopologyBackup(backup)
+
+	if _, err := s.Submit(ctx, TypeDiskUpgradeData, nil, mustJSON(t, diskUpgradeDataParams())); !errors.Is(err, ErrArrayNotStopped) {
+		t.Fatalf("Submit(disk_upgrade_data) with the array running: err = %v, want %v", err, ErrArrayNotStopped)
+	}
+
+	if err := s.EnterMaintenance(ctx); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	if _, err := s.Submit(ctx, TypeDiskAdd, nil, mustJSON(t, DiskAddParams{
+		Confirmation: "confirm",
+		Disk:         disk.AssignedDisk{Device: "/dev/sdz"},
+	})); !errors.Is(err, ErrMaintenanceMode) {
+		t.Fatalf("Submit(disk_add) in maintenance mode: err = %v, want %v", err, ErrMaintenanceMode)
+	}
+
+	backup.mu.Lock()
+	runs := backup.runs
+	backup.mu.Unlock()
+	if runs != 0 {
+		t.Fatalf("pre-topology backup ran %d times for refused submissions, want 0", runs)
+	}
+}
+
+// TestCancel_HonouredWhenItLandsAfterTheStartTimeBackupReturns covers the
+// tail of the #408 window: the queued job is still in s.dispatching once
+// its start-time backup has returned, so a Cancel landing then is accepted
+// (it returns no error) and must be honoured — the job must not start.
+// Holding the registry's lock parks startQueuedTopologyJob in its
+// lookupAbort call. Fails against afc999c: that call came after the
+// cancel check, in a separate lock hold from the start, so disk_replace's
+// RunFunc ran despite the accepted Cancel.
+func TestCancel_HonouredWhenItLandsAfterTheStartTimeBackupReturns(t *testing.T) {
+	ctx := context.Background()
+	s := newTestScheduler(t)
+
+	startedAdd, releaseAdd := registerBlocking(s, TypeDiskAdd, false)
+	startedReplace, releaseReplace := registerBlocking(s, TypeDiskReplace, false)
+	t.Cleanup(func() {
+		select {
+		case <-releaseReplace:
+		default:
+			close(releaseReplace)
+		}
+	})
+
+	gate := make(chan struct{})
+	backup := &gatedBackup{gates: []chan struct{}{nil, gate}}
+	s.SetTopologyBackup(backup)
+
+	add, err := s.Submit(ctx, TypeDiskAdd, nil, mustJSON(t, DiskAddParams{
+		Confirmation: "confirm",
+		Disk:         disk.AssignedDisk{Device: "/dev/sdz"},
+	}))
+	if err != nil {
+		t.Fatalf("Submit(disk_add): %v", err)
+	}
+	<-startedAdd
+
+	replace, err := s.Submit(ctx, TypeDiskReplace, nil, mustJSON(t, diskReplaceParams()))
+	if err != nil {
+		t.Fatalf("Submit(disk_replace): %v", err)
+	}
+
+	close(releaseAdd)
+	waitSucceeded(t, s, add.ID)
+	waitFor(t, time.Second, func() bool { return backup.count() == 2 })
+
+	s.registry.mu.Lock()
+	close(gate)
+	time.Sleep(50 * time.Millisecond)
+
+	cancelled, err := s.Cancel(ctx, replace.ID)
+	s.registry.mu.Unlock()
+	if err != nil {
+		t.Fatalf("Cancel after disk_replace's start-time backup returned: %v", err)
+	}
+	if cancelled == nil {
+		t.Fatal("Cancel returned no job")
+	}
+
+	select {
+	case <-startedReplace:
+		t.Fatal("disk_replace's RunFunc ran despite a Cancel that returned success")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	final := await(t, s, replace.ID)
+	if final.Status != StatusCancelled {
+		t.Fatalf("disk_replace status = %s, want %s", final.Status, StatusCancelled)
 	}
 }
