@@ -28,19 +28,31 @@ die() { printf '%s\n' "$*" >&2; exit 1; }
 epic=$1
 [[ $epic =~ ^[0-9]+$ ]] || die "epic must be a number, got '$epic'"
 
-# "<state> <status label or ->" per sub-issue. REST already spells state
-# lowercase ("open"/"closed"); ascii_downcase here is defensive, not a fixup
-# for an inconsistency — scripts/gh-rest.sh reads everything over REST, so
-# there is no GraphQL-flavoured "OPEN"/"CLOSED" left anywhere in this script.
-mapfile -t subs < <(
+# "<state> <status label or ->" per sub-issue, one per line. REST already
+# spells state lowercase ("open"/"closed"); ascii_downcase here is
+# defensive, not a fixup for an inconsistency — scripts/gh-rest.sh reads
+# everything over REST, so there is no GraphQL-flavoured "OPEN"/"CLOSED"
+# left anywhere in this script.
+#
+# Read into a checked assignment rather than `mapfile < <(...)`: a process
+# substitution's exit status is not propagated and `set -e` cannot see it,
+# so a failed read (a transient 5xx, a failure on a later page) used to
+# yield an empty `subs` — indistinguishable from an epic with no
+# sub-issues — and the script reported "nothing to roll up" and exited 0
+# without ever having read the epic's real state.
+subs_raw=$(
   "$HERE/gh-rest.sh" sub-issues "$epic" \
     --jq '.[] | "\(.state | ascii_downcase) \([.labels[].name | select(startswith("status:"))] | first // "-")"'
-)
+) || die "could not read #$epic's sub-issues — refusing to roll up its status"
 
-if [[ ${#subs[@]} -eq 0 ]]; then
+if [[ -z $subs_raw ]]; then
   echo "#$epic has no sub-issues — nothing to roll up"
   exit 0
 fi
+
+# `mapfile <<< ""` yields one empty element, not none — already ruled out
+# above by the `-z` check.
+mapfile -t subs <<<"$subs_raw"
 
 done_count=0
 active=0

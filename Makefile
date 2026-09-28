@@ -360,6 +360,7 @@ packaging-test:
 test-gh:
 	scripts/test-gh-rest.sh
 	scripts/test-issue-status.sh
+	scripts/test-epic-status.sh
 	scripts/test-issue-readiness.sh
 	scripts/test-check-gh-rest.sh
 
