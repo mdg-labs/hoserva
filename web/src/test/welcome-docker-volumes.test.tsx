@@ -108,6 +108,9 @@ describe("welcome onboarding — host_docker_volumes (#415)", () => {
     );
   });
 
+  // The backend omits host_docker_volumes entirely once Docker holds no
+  // volumes (#416) — this also covers the empty-category case, not just a
+  // doctor response that predates the check.
   it("renders no docker-volumes card when the doctor response omits the check", async () => {
     mockGet.mockImplementation((path: string) => {
       if (path === "/doctor") {
@@ -123,6 +126,41 @@ describe("welcome onboarding — host_docker_volumes (#415)", () => {
 
     await screen.findByText("1 share: media");
     expect(screen.queryByText("Docker volumes")).not.toBeInTheDocument();
+  });
+
+  // #416: a failed listing must never be shown with the same "because named
+  // volumes are in use" text a successful, non-empty listing gets — that
+  // would claim a reason the check could not actually confirm.
+  it("shows an honest failure message instead of the volumes-in-use reason when the listing failed", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/doctor") {
+        return Promise.resolve({
+          data: {
+            checks: [
+              { id: "host_samba", name: "Samba shares", status: "pass", message: "1 share: media" },
+              {
+                id: "host_docker_volumes",
+                name: "Docker volumes",
+                status: "warn",
+                message: "Could not list Docker volumes: docker volume ls: timed out",
+              },
+            ],
+          },
+          response: { ok: true },
+        });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+
+    renderOnStep1();
+
+    expect(await screen.findByText("Could not list Docker volumes: docker volume ls: timed out")).toBeInTheDocument();
+    expect(screen.getByText("Docker's storage stays at /var/lib/docker until this can be checked.")).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Docker's storage stays at /var/lib/docker because named volumes are in use. There is nothing to import or leave unmanaged here.",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it("does not render a docker-volumes card when the doctor request fails", async () => {

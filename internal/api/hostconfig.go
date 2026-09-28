@@ -238,17 +238,30 @@ func hostConfigChecks(inv *config.HostInventory) []apiv1.DoctorCheck {
 	if inv.Found(config.KindDockerImages) {
 		checks = append(checks, dockerInventoryCheck("host_docker_images", "Docker images", "image", inv.DockerImages, inv.DockerErr))
 	}
-	// host_docker_volumes has no import/leave decision — there is no host
-	// file for it to manage — but it must still be visible next to
-	// containers and images (#413) so a user sees why the cache data-root
-	// move (Q76) was not offered when a volume is the only thing Docker
-	// holds. It shares the container/image checks' "docker is available"
-	// gate rather than config.KindFromCheckID/Found, since it is never a
+	// host_docker_volumes, host_docker_networks and host_docker_plugins have
+	// no import/leave decision — there is no host file for any of them to
+	// manage — so unlike containers/images above they are reported only
+	// when there is something to say: a listing failure (fails closed, same
+	// as dockerInventoryCheck) or an actual entry that blocks the cache
+	// data-root move (Q76, #413, #416). An empty, successfully-listed
+	// category is omitted entirely rather than reported as "0 found" next
+	// to a reason text that would not be true. They share the
+	// container/image checks' "docker is available" gate rather than
+	// config.KindFromCheckID/Found, since none of them is ever a
 	// submittable HostConfigID.
 	if !inv.DockerUnavailable {
-		checks = append(checks, dockerInventoryCheck("host_docker_volumes", "Docker volumes", "volume", inv.DockerVolumes, inv.DockerErr))
+		checks = appendDockerInfoCheck(checks, "host_docker_volumes", "Docker volumes", "volume", inv.DockerVolumes, inv.DockerErr)
+		checks = appendDockerInfoCheck(checks, "host_docker_networks", "Docker networks", "network", inv.DockerNetworks, inv.DockerErr)
+		checks = appendDockerInfoCheck(checks, "host_docker_plugins", "Docker plugins", "plugin", inv.DockerPlugins, inv.DockerErr)
 	}
 	return checks
+}
+
+func appendDockerInfoCheck(checks []apiv1.DoctorCheck, id, name, unit string, refs []config.DockerRef, probeErr error) []apiv1.DoctorCheck {
+	if probeErr == nil && len(refs) == 0 {
+		return checks
+	}
+	return append(checks, dockerInventoryCheck(id, name, unit, refs, probeErr))
 }
 
 func appendFileCheck(checks []apiv1.DoctorCheck, id, name, unit string, file config.HostFile) []apiv1.DoctorCheck {

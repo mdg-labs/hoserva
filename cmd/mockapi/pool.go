@@ -226,7 +226,11 @@ func mockDoctorReport(scenario string) *apiv1.DoctorReport {
 			pass("host_fstab", "fstab mounts", "1 mount: /mnt/media"),
 			pass("host_docker_containers", "Docker containers", "1 container: jellyfin"),
 			pass("host_docker_images", "Docker images", "1 image: linuxserver/jellyfin:latest"),
-			pass("host_docker_volumes", "Docker volumes", "0 volumes"),
+			// host_docker_volumes/networks/plugins are omitted here, mirroring
+			// production's hostConfigChecks (#416): this scenario's Docker
+			// holds none of the three, and reporting an empty category would
+			// make onboarding's "stays because ..." card claim a reason that
+			// does not exist.
 		)
 	case "degraded":
 		checks = append(checks,
@@ -411,10 +415,11 @@ func errInvalidHostConfig(msg string) error {
 
 // mockHostConfigKinds mirrors internal/config's own KindFromCheckID
 // whitelist (host.go) closely enough for this mock's own fixed check ids
-// (pool.go's mockDoctorReport). host_docker_volumes is deliberately
-// absent: like production's KindFromCheckID, it has no import/leave
-// decision — there is no host file it manages — it only gates the
-// cache data-root move (#413).
+// (pool.go's mockDoctorReport). host_docker_volumes, host_docker_networks
+// and host_docker_plugins are deliberately absent: like production's
+// KindFromCheckID, none of them has an import/leave decision — there is
+// no host file any of them manages — they only gate the cache data-root
+// move (#413, #416).
 var mockHostConfigKinds = map[string]bool{
 	"host_samba":             true,
 	"host_nfs":               true,

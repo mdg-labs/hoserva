@@ -79,15 +79,19 @@ type HostInventory struct {
 	DockerContainers  []DockerRef
 	DockerImages      []DockerRef
 	DockerVolumes     []DockerRef
+	DockerNetworks    []DockerRef
+	DockerPlugins     []DockerRef
 	DockerErr         error
 	DockerUnavailable bool
 }
 
-// DockerInventory lists Engine containers, images and named volumes.
-// Tests inject a fake; production uses ExecDocker. A nil inventory is
-// treated as Docker not installed — no host_docker_* doctor checks.
+// DockerInventory lists Engine containers, images, named volumes,
+// user-defined networks (excluding the built-in bridge/host/none) and
+// installed plugins. Tests inject a fake; production uses ExecDocker. A
+// nil inventory is treated as Docker not installed — no host_docker_*
+// doctor checks.
 type DockerInventory interface {
-	List(ctx context.Context) (containers, images, volumes []DockerRef, err error)
+	List(ctx context.Context) (containers, images, volumes, networks, plugins []DockerRef, err error)
 }
 
 // MemoryDocker is a scriptable fake for tests — it never talks to a
@@ -96,14 +100,16 @@ type MemoryDocker struct {
 	Containers []DockerRef
 	Images     []DockerRef
 	Volumes    []DockerRef
+	Networks   []DockerRef
+	Plugins    []DockerRef
 	Err        error
 }
 
-func (m MemoryDocker) List(context.Context) ([]DockerRef, []DockerRef, []DockerRef, error) {
+func (m MemoryDocker) List(context.Context) ([]DockerRef, []DockerRef, []DockerRef, []DockerRef, []DockerRef, error) {
 	if m.Err != nil {
-		return nil, nil, nil, m.Err
+		return nil, nil, nil, nil, nil, m.Err
 	}
-	return m.Containers, m.Images, m.Volumes, nil
+	return m.Containers, m.Images, m.Volumes, m.Networks, m.Plugins, nil
 }
 
 // ExecDocker runs `docker ps` / `docker images` with a structured argv
@@ -116,28 +122,39 @@ type ExecDocker struct{}
 // bound (internal/api.doctorProbeTimeout).
 const dockerInventoryTimeout = 8 * time.Second
 
-func (ExecDocker) List(ctx context.Context) ([]DockerRef, []DockerRef, []DockerRef, error) {
+func (ExecDocker) List(ctx context.Context) ([]DockerRef, []DockerRef, []DockerRef, []DockerRef, []DockerRef, error) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		return nil, nil, nil, errDockerUnavailable
+		return nil, nil, nil, nil, nil, errDockerUnavailable
 	}
 	ctx, cancel := context.WithTimeout(ctx, dockerInventoryTimeout)
 	defer cancel()
 	containers, err := dockerList(ctx, []string{"ps", "-a", "--format", "{{.ID}} {{.Names}}"})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	images, err := dockerList(ctx, []string{"images", "--format", "{{.ID}} {{.Repository}}:{{.Tag}}"})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	// Named volumes have no separate ID (their name is the identifier),
 	// so dockerList's "no space" fallback sets DockerRef.ID = Name — the
 	// same shape ps/images give a container or image (Q76).
 	volumes, err := dockerList(ctx, []string{"volume", "ls", "--format", "{{.Name}}"})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
-	return containers, images, volumes, nil
+	// type=custom excludes the built-in bridge/host/none networks Docker
+	// always creates, so anything this returns is the user's own
+	// configuration (#416).
+	networks, err := dockerList(ctx, []string{"network", "ls", "--filter", "type=custom", "--format", "{{.ID}} {{.Name}}"})
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	plugins, err := dockerList(ctx, []string{"plugin", "ls", "--format", "{{.ID}} {{.Name}}"})
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	return containers, images, volumes, networks, plugins, nil
 }
 
 var errDockerUnavailable = errors.New("config: docker is not installed")
@@ -179,7 +196,7 @@ func Detect(ctx context.Context, root string, docker DockerInventory) (HostInven
 		inv.DockerUnavailable = true
 		return inv, nil
 	}
-	containers, images, volumes, err := docker.List(ctx)
+	containers, images, volumes, networks, plugins, err := docker.List(ctx)
 	if err != nil {
 		if errors.Is(err, errDockerUnavailable) {
 			inv.DockerUnavailable = true
@@ -191,6 +208,8 @@ func Detect(ctx context.Context, root string, docker DockerInventory) (HostInven
 	inv.DockerContainers = containers
 	inv.DockerImages = images
 	inv.DockerVolumes = volumes
+	inv.DockerNetworks = networks
+	inv.DockerPlugins = plugins
 	return inv, nil
 }
 
@@ -497,14 +516,18 @@ func FactsJSON(inv HostInventory, kind string) ([]byte, error) {
 // DockerDataRoot reports where Docker's data-root stays after a Q76
 // apply: the cache path is allowed only when the user accepted a move
 // (import on both docker categories), Docker holds no containers,
-// images or named volumes, and a cache disk exists. A named volume
-// blocks the move even though there is nothing to "import" for it —
-// #413: moving the data-root without the volume moving too strands its
-// data under the old root, invisible to Docker from then on. A failed
-// inventory listing (DockerErr) fails closed the same way, never as
-// "Docker holds nothing". This function never moves data.
+// images, named volumes, user-defined networks or plugins, and a cache
+// disk exists. A named volume, network or plugin blocks the move even
+// though there is nothing to "import" for it — #413/#416: moving the
+// data-root without that state moving too strands it under the old
+// root, invisible to Docker from then on (swarm state is not counted —
+// Hoserva does not support swarm, D6). A failed inventory listing
+// (DockerErr) fails closed the same way, never as "Docker holds
+// nothing". This function never moves data.
 func DockerDataRoot(inv HostInventory, acceptedMove, hasCache bool) string {
-	if !acceptedMove || !hasCache || len(inv.DockerContainers) > 0 || len(inv.DockerImages) > 0 || len(inv.DockerVolumes) > 0 || inv.DockerErr != nil {
+	if !acceptedMove || !hasCache ||
+		len(inv.DockerContainers) > 0 || len(inv.DockerImages) > 0 || len(inv.DockerVolumes) > 0 ||
+		len(inv.DockerNetworks) > 0 || len(inv.DockerPlugins) > 0 || inv.DockerErr != nil {
 		return DockerDataRootDefault
 	}
 	return "/mnt/cache/docker"

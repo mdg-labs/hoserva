@@ -71,10 +71,14 @@ const Q76_CATEGORIES = [
   { id: "host_docker_images", labelKey: "welcome.q76.dockerImages" },
 ] as const;
 
-// Informational only: it has no host file to import or leave unmanaged, so
-// it is never part of Q76_CATEGORIES and never enters the submitted
-// host-config choices (#413, #415).
-const Q76_DOCKER_VOLUMES_ID = "host_docker_volumes";
+// Informational only: none of these has a host file to import or leave
+// unmanaged, so none is ever part of Q76_CATEGORIES or enters the
+// submitted host-config choices (#413, #415, #416).
+const Q76_INFO_CATEGORIES = [
+  { id: "host_docker_volumes", labelKey: "welcome.q76.dockerVolumes", infoKey: "welcome.q76.dockerVolumesInfo" },
+  { id: "host_docker_networks", labelKey: "welcome.q76.dockerNetworks", infoKey: "welcome.q76.dockerNetworksInfo" },
+  { id: "host_docker_plugins", labelKey: "welcome.q76.dockerPlugins", infoKey: "welcome.q76.dockerPluginsInfo" },
+] as const;
 
 const CHANNEL_ICONS: Record<NotificationChannelType, typeof Mail> = {
   discord: MessageSquare,
@@ -185,8 +189,12 @@ export function WelcomePage(): React.ReactElement {
       })),
     [doctorChecks],
   );
-  const dockerVolumesCheck = useMemo(
-    () => (doctorChecks ? findQ76Check(doctorChecks, Q76_DOCKER_VOLUMES_ID) : undefined),
+  const q76InfoPanels = useMemo(
+    () =>
+      Q76_INFO_CATEGORIES.map((category) => ({
+        ...category,
+        check: doctorChecks ? findQ76Check(doctorChecks, category.id) : undefined,
+      })),
     [doctorChecks],
   );
 
@@ -500,24 +508,29 @@ export function WelcomePage(): React.ReactElement {
                     ) : null}
                   </Card>
                 ))}
-                {dockerVolumesCheck ? (
-                  <Card>
-                    <CardHeader>
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <CardTitle>{t("welcome.q76.dockerVolumes")}</CardTitle>
-                        <StatusBadge tone={doctorStatusTone(dockerVolumesCheck.status)}>
-                          {dockerVolumesCheck.status}
-                        </StatusBadge>
-                      </div>
-                      <CardDescription>{dockerVolumesCheck.message}</CardDescription>
-                    </CardHeader>
-                    <CardPanel>
-                      <p className="text-muted-foreground text-sm">
-                        {t("welcome.q76.dockerVolumesInfo")}
-                      </p>
-                    </CardPanel>
-                  </Card>
-                ) : null}
+                {q76InfoPanels.map(({ id, labelKey, infoKey, check }) =>
+                  check ? (
+                    <Card key={id}>
+                      <CardHeader>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <CardTitle>{t(labelKey)}</CardTitle>
+                          <StatusBadge tone={doctorStatusTone(check.status)}>{check.status}</StatusBadge>
+                        </div>
+                        <CardDescription>{check.message}</CardDescription>
+                      </CardHeader>
+                      <CardPanel>
+                        <p className="text-muted-foreground text-sm">
+                          {/* Reported only when the category actually blocks the
+                              move or couldn't be checked (#416) — the backend
+                              never sends this check for an empty, successfully
+                              listed category, so "warn" here is always a failed
+                              listing, never an empty one. */}
+                          {check.status === "warn" ? t("welcome.q76.dockerInfoCheckFailed") : t(infoKey)}
+                        </p>
+                      </CardPanel>
+                    </Card>
+                  ) : null,
+                )}
               </div>
             </>
           ) : null}

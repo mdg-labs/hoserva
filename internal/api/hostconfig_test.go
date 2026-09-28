@@ -115,8 +115,74 @@ func TestRunDoctor_ReportsHostConfigFromTempRoot(t *testing.T) {
 	if findCheck(report, "host_docker_images").ID != "host_docker_images" {
 		t.Fatal("missing host_docker_images")
 	}
-	if findCheck(report, "host_docker_volumes").ID != "host_docker_volumes" {
-		t.Fatal("missing host_docker_volumes")
+}
+
+// TestRunDoctor_OmitsEmptyDockerInfoChecks is #416's fix for the false
+// "stays because ..." card: hostConfigTestEnv's fixture has no volumes, no
+// networks and no plugins, and the listing succeeded (no DockerErr), so
+// none of host_docker_volumes/networks/plugins has anything to report and
+// none may appear — reporting one with "0 found" would still drive an
+// onboarding card claiming a reason that does not exist.
+func TestRunDoctor_OmitsEmptyDockerInfoChecks(t *testing.T) {
+	h, _ := hostConfigTestHandler(t)
+	report, err := h.RunDoctor(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"host_docker_volumes", "host_docker_networks", "host_docker_plugins"} {
+		if got := findCheck(report, id).ID; got == id {
+			t.Fatalf("%s present with an empty, successfully-listed category", id)
+		}
+	}
+}
+
+// TestRunDoctor_ReportsDockerInfoChecksWhenNonEmpty is the other half of
+// TestRunDoctor_OmitsEmptyDockerInfoChecks: once a category actually holds
+// something, it must be visible so the onboarding page can explain why the
+// Q76 cache move was not offered.
+func TestRunDoctor_ReportsDockerInfoChecksWhenNonEmpty(t *testing.T) {
+	h, _ := hostConfigTestHandler(t)
+	h.Docker = config.MemoryDocker{
+		Volumes:  []config.DockerRef{{ID: "v1", Name: "jellyfin_config"}},
+		Networks: []config.DockerRef{{ID: "n1", Name: "media-net"}},
+		Plugins:  []config.DockerRef{{ID: "p1", Name: "vieux/sshfs:latest"}},
+	}
+	report, err := h.RunDoctor(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"host_docker_volumes", "host_docker_networks", "host_docker_plugins"} {
+		check := findCheck(report, id)
+		if check.ID != id {
+			t.Fatalf("%s missing while its category has an entry", id)
+		}
+		if check.Status != apiv1.DoctorCheckStatusPass {
+			t.Fatalf("%s status = %q, want pass", id, check.Status)
+		}
+	}
+}
+
+// TestRunDoctor_ReportsFailedDockerInfoListingAsWarn is #416's fail-closed
+// counterpart: a listing error must still surface as an honest warning,
+// never silently omitted the way an empty-but-successful listing is.
+func TestRunDoctor_ReportsFailedDockerInfoListingAsWarn(t *testing.T) {
+	h, _ := hostConfigTestHandler(t)
+	h.Docker = config.MemoryDocker{Err: errors.New("docker volume ls: timed out")}
+	report, err := h.RunDoctor(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"host_docker_volumes", "host_docker_networks", "host_docker_plugins"} {
+		check := findCheck(report, id)
+		if check.ID != id {
+			t.Fatalf("%s missing after a listing failure — a failed probe must fail closed, not omit itself", id)
+		}
+		if check.Status != apiv1.DoctorCheckStatusWarn {
+			t.Fatalf("%s status = %q, want warn on a listing failure", id, check.Status)
+		}
+		if !strings.Contains(check.Message, "Could not list") {
+			t.Fatalf("%s message = %q, want an honest failure message", id, check.Message)
+		}
 	}
 }
 
@@ -539,6 +605,91 @@ func TestApplyHostConfig_DockerDataRootStaysWithExistingVolumes(t *testing.T) {
 	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
 	if created := fakeDirs.Created(); len(created) != 0 {
 		t.Fatalf("DockerDirs.Created() = %v, want none — the cache data-root must never be created when a named volume exists", created)
+	}
+}
+
+// TestApplyHostConfig_DockerDataRootStaysWithExistingNetworks is #416's
+// data-loss regression, exercised through ApplyHostConfig exactly as
+// hoservad's onboarding flow reaches it: a host with no containers and no
+// images, but one user-defined network, a cache disk, and the move accepted
+// must still keep the data-root at /var/lib/docker and must never write
+// docker/daemon.json — otherwise the network's configuration is stranded
+// under the old root the moment Docker restarts against the new one.
+func TestApplyHostConfig_DockerDataRootStaysWithExistingNetworks(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{
+		Networks: []config.DockerRef{{ID: "net1", Name: "media-net"}},
+	}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DockerDataRoot != config.DockerDataRootDefault {
+		t.Fatalf("dockerDataRoot = %q, want %s when a user-defined network exists", got.DockerDataRoot, config.DockerDataRootDefault)
+	}
+
+	if _, err := os.Stat(filepath.Join(g.Root, "docker", "daemon.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("daemon.json stat = %v, want it never written when a user-defined network exists", err)
+	}
+	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
+	if created := fakeDirs.Created(); len(created) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want none — the cache data-root must never be created when a user-defined network exists", created)
+	}
+}
+
+// TestApplyHostConfig_DockerDataRootStaysWithExistingPlugins is #416's
+// data-loss regression for an installed plugin, the same hazard as
+// TestApplyHostConfig_DockerDataRootStaysWithExistingNetworks and
+// TestApplyHostConfig_DockerDataRootStaysWithExistingVolumes.
+func TestApplyHostConfig_DockerDataRootStaysWithExistingPlugins(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{
+		Plugins: []config.DockerRef{{ID: "plug1", Name: "vieux/sshfs:latest"}},
+	}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DockerDataRoot != config.DockerDataRootDefault {
+		t.Fatalf("dockerDataRoot = %q, want %s when an installed plugin exists", got.DockerDataRoot, config.DockerDataRootDefault)
+	}
+
+	if _, err := os.Stat(filepath.Join(g.Root, "docker", "daemon.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("daemon.json stat = %v, want it never written when an installed plugin exists", err)
+	}
+	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
+	if created := fakeDirs.Created(); len(created) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want none — the cache data-root must never be created when an installed plugin exists", created)
 	}
 }
 

@@ -729,6 +729,11 @@
       "dockerImages": "Docker images",
       "dockerVolumes": "Docker volumes",
       "dockerVolumesInfo": "Docker's storage stays at /var/lib/docker because named volumes are in use. There is nothing to import or leave unmanaged here.",
+      "dockerNetworks": "Docker networks",
+      "dockerNetworksInfo": "Docker's storage stays at /var/lib/docker because custom networks are in use. There is nothing to import or leave unmanaged here.",
+      "dockerPlugins": "Docker plugins",
+      "dockerPluginsInfo": "Docker's storage stays at /var/lib/docker because plugins are installed. There is nothing to import or leave unmanaged here.",
+      "dockerInfoCheckFailed": "Docker's storage stays at /var/lib/docker until this can be checked.",
       "noneFound": "None detected on this host.",
       "import": "Import into Hoserva",
       "leaveUnmanaged": "Leave unmanaged"
