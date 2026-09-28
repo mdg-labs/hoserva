@@ -64,6 +64,11 @@ func hostConfigTestEnv(t *testing.T) (*api.Handler, *config.Generator, *sql.DB) 
 			Containers: []config.DockerRef{{ID: "c1", Name: "jellyfin"}},
 			Images:     []config.DockerRef{{ID: "i1", Name: "nginx:latest"}},
 		},
+		// DockerDirs is always a fake here: ApplyDockerDataRoot's move
+		// targets an absolute cache path outside Generator's own temp-dir
+		// Root, so nothing in this file may ever fall through to the real
+		// OSDirMaker (CLAUDE.md: no real host path in a test).
+		DockerDirs: &config.FakeDirMaker{},
 	}
 	return h, g, db
 }
@@ -445,7 +450,7 @@ func TestApplyHostConfig_GeneratorFailureDoesNotPersistPrefix(t *testing.T) {
 }
 
 func TestApplyHostConfig_EmptyDockerCanAcceptCacheMove(t *testing.T) {
-	h, _, db := hostConfigTestEnv(t)
+	h, g, db := hostConfigTestEnv(t)
 	h.Docker = config.MemoryDocker{}
 	h.ArrayStore = store.NewArrayStore(db)
 	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
@@ -468,6 +473,102 @@ func TestApplyHostConfig_EmptyDockerCanAcceptCacheMove(t *testing.T) {
 	}
 	if got.DockerDataRoot != "/mnt/cache/docker" {
 		t.Fatalf("dockerDataRoot = %q, want /mnt/cache/docker", got.DockerDataRoot)
+	}
+
+	// ApplyDockerDataRoot must have actually run, not just DockerDataRoot's
+	// own decision: the directory was created and daemon.json was written
+	// through Generator (never overwriting anything, since none existed).
+	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
+	created := fakeDirs.Created()
+	if len(created) != 1 || created[0] != "/mnt/cache/docker" {
+		t.Fatalf("DockerDirs.Created() = %v, want exactly [/mnt/cache/docker]", created)
+	}
+	daemonJSON, err := os.ReadFile(filepath.Join(g.Root, "docker", "daemon.json"))
+	if err != nil {
+		t.Fatalf("reading generated daemon.json: %v", err)
+	}
+	if !strings.Contains(string(daemonJSON), `"data-root": "/mnt/cache/docker"`) {
+		t.Fatalf("daemon.json = %s, want a data-root of /mnt/cache/docker", daemonJSON)
+	}
+	if strings.Contains(string(daemonJSON), "Hoserva") {
+		t.Fatalf("daemon.json = %s, want no #-comment header — Docker's own daemon.json must be valid JSON", daemonJSON)
+	}
+}
+
+// TestApplyHostConfig_ExistingDaemonJSONRefusesBeforePersistingAnything is
+// the finding this closes: an unmanaged, hand-written
+// /etc/docker/daemon.json must be caught before the Samba import,
+// host-file decisions and host-config rows in the same request are
+// persisted, mapped to the same 409 unmanaged_config every other
+// unmanaged-host-file conflict already uses — never a 500, and never a
+// half-applied request a retry keeps failing the same way against.
+func TestApplyHostConfig_ExistingDaemonJSONRefusesBeforePersistingAnything(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	daemonJSONPath := filepath.Join(g.Root, "docker", "daemon.json")
+	if err := os.MkdirAll(filepath.Dir(daemonJSONPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(daemonJSONPath, []byte(`{"log-driver":"journald"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	beforeSamba, err := os.ReadFile(filepath.Join(g.Root, config.PathSamba))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	_, err = h.ApplyHostConfig(ctx, &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostSamba, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	status := apiError(t, h, err)
+	if status.StatusCode != 409 || status.Response.Code != "unmanaged_config" {
+		t.Fatalf("error = %+v, want 409 unmanaged_config", status)
+	}
+
+	// Nothing else in the request may have been committed: the existing
+	// daemon.json itself, the Samba import's shares, and the host-config
+	// rows all still reflect a request that never happened.
+	daemonJSON, err := os.ReadFile(daemonJSONPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(daemonJSON) != `{"log-driver":"journald"}` {
+		t.Fatalf("daemon.json was modified: %s", daemonJSON)
+	}
+	afterSamba, err := os.ReadFile(filepath.Join(g.Root, config.PathSamba))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterSamba) != string(beforeSamba) {
+		t.Fatal("smb.conf was modified despite the request being refused")
+	}
+	shareStore := store.NewShareStore(db)
+	if _, getErr := shareStore.Get(ctx, "media"); !errors.Is(getErr, store.ErrShareNotFound) {
+		t.Fatalf("media share persisted after a refused request: %v", getErr)
+	}
+	if _, getErr := h.HostConfig.Get(ctx, config.KindSamba); !errors.Is(getErr, sql.ErrNoRows) {
+		t.Fatalf("samba host-config persisted after a refused request: %v", getErr)
+	}
+	if _, getErr := h.HostConfig.Get(ctx, config.KindDockerContainers); !errors.Is(getErr, sql.ErrNoRows) {
+		t.Fatalf("docker-containers host-config persisted after a refused request: %v", getErr)
+	}
+	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
+	if len(fakeDirs.Created()) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want nothing created for a refused request", fakeDirs.Created())
 	}
 }
 

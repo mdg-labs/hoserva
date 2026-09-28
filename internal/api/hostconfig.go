@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/config"
@@ -14,6 +16,19 @@ import (
 
 func errInvalidHostConfig(msg string) error {
 	return &apiError{code: "invalid_host_config", statusCode: 400, message: msg}
+}
+
+// mapDockerDataRootErr maps a Q76 data-root refusal to the same 409
+// unmanaged_config other host-config handlers already use for
+// config.ErrUnmanaged/config.ErrExistingHostFile (share_handler.go,
+// network_handler.go, ups_handler.go) — an existing, unmanaged
+// /etc/docker/daemon.json must be reported, never turned into an opaque
+// 500 by the generic error path.
+func mapDockerDataRootErr(err error) error {
+	if errors.Is(err, config.ErrUnmanaged) || errors.Is(err, config.ErrExistingHostFile) {
+		return &apiError{code: "unmanaged_config", statusCode: 409, message: err.Error()}
+	}
+	return err
 }
 
 func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfigRequest) (*apiv1.ApplyHostConfigResult, error) {
@@ -91,6 +106,20 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 		applied = append(applied, p.choice)
 	}
 
+	// The data-root move's own preflight runs before anything else in this
+	// request is committed (finding: an existing, unmanaged
+	// /etc/docker/daemon.json must never be discovered only after the
+	// Samba import, host-file decisions and host-config rows below are
+	// already durably persisted — every retry would hit the same refusal
+	// with those already applied). acceptedMove/dataRoot are pure — no I/O
+	// beyond the read-only hasCacheDisk lookup — so computing them this
+	// early costs nothing even when the request carries no Docker choices.
+	acceptedMove := importDocker[config.KindDockerContainers] && importDocker[config.KindDockerImages]
+	dataRoot := config.DockerDataRoot(inv, acceptedMove, h.hasCacheDisk(ctx))
+	if err := h.Generator.CanApplyDockerDataRoot(ctx, dataRoot); err != nil {
+		return nil, mapDockerDataRootErr(fmt.Errorf("checking docker data-root move: %w", err))
+	}
+
 	var insertedShares []string
 	if importSamba || importNFS {
 		if h.Shares == nil {
@@ -142,8 +171,18 @@ func (h *Handler) ApplyHostConfig(ctx context.Context, req *apiv1.ApplyHostConfi
 		return nil, fmt.Errorf("persisting host-config: %w", err)
 	}
 
-	acceptedMove := importDocker[config.KindDockerContainers] && importDocker[config.KindDockerImages]
-	dataRoot := config.DockerDataRoot(inv, acceptedMove, h.hasCacheDisk(ctx))
+	// ApplyDockerDataRoot performs the move the preflight above already
+	// cleared (Q62, Q76): the host-config rows are already durably
+	// persisted by this point, so a failure here is reported rather than
+	// swallowed — dockerDataRoot in the response must reflect what was
+	// actually written, never the decision alone, and the caller can
+	// safely retry (Write is idempotent per path). Mapped through the same
+	// 409 as the preflight for defense in depth against a daemon.json that
+	// appeared in the window between the two calls; the preflight above is
+	// what keeps that window from mattering in the common case.
+	if err := h.Generator.ApplyDockerDataRoot(ctx, dataRoot, h.DockerDirs, h.DockerRestart, 1, time.Now()); err != nil {
+		return nil, mapDockerDataRootErr(fmt.Errorf("applying docker data-root: %w", err))
+	}
 	return &apiv1.ApplyHostConfigResult{Files: applied, DockerDataRoot: dataRoot}, nil
 }
 

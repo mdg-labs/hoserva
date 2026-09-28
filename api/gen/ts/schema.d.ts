@@ -1679,6 +1679,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List containers
+         * @description Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose stack installs, lifecycle actions and the managed/unmanaged distinction against an installed stack are later issues (#277, #278). available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
+         */
+        get: operations["listApps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List images
+         * @description Every image the Docker Engine holds locally.
+         */
+        get: operations["listAppImages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Inspect a container
+         * @description One container's current state, image, tag, ports and mounts (doc 04 §3) — stats and health are #277's own operations.
+         */
+        get: operations["getApp"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users": {
         parameters: {
             query?: never;
@@ -2678,6 +2741,59 @@ export interface components {
             files: components["schemas"]["HostConfigChoice"][];
             /** @description Docker's data-root after this apply (Q62, Q76). Always `/var/lib/docker` when containers or images exist, when there is no cache disk, or when the caller did not accept a move. */
             dockerDataRoot: string;
+        };
+        /**
+         * @description The Docker Engine's own container state vocabulary.
+         * @enum {string}
+         */
+        AppState: "created" | "running" | "paused" | "restarting" | "removing" | "exited" | "dead";
+        AppPort: {
+            hostIP?: string;
+            /** @description Absent when this container port is not published to the host. */
+            hostPort?: number;
+            containerPort: number;
+            /** @enum {string} */
+            protocol: "tcp" | "udp" | "sctp";
+        };
+        AppMount: {
+            source?: string;
+            destination: string;
+            mode?: string;
+            readWrite: boolean;
+        };
+        App: {
+            id: string;
+            name: string;
+            /** @description The image repository, without its tag. */
+            image: string;
+            tag: string;
+            state: components["schemas"]["AppState"];
+            /** @description Human-readable Engine status, e.g. "Up 3 hours". */
+            status: string;
+            ports: components["schemas"]["AppPort"][];
+            mounts: components["schemas"]["AppMount"][];
+        };
+        ListAppsOK: {
+            /** @description False when the Docker Engine is not reachable (doc 04 §3). */
+            available: boolean;
+            /** @description Set alongside available=false with the reason and a remediation. */
+            message?: string;
+            apps: components["schemas"]["App"][];
+        };
+        AppImage: {
+            id: string;
+            repoTags: string[];
+            /** Format: int64 */
+            sizeBytes: number;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        ListAppImagesOK: {
+            /** @description False when the Docker Engine is not reachable (doc 04 §3). */
+            available: boolean;
+            /** @description Set alongside available=false with the reason and a remediation. */
+            message?: string;
+            images: components["schemas"]["AppImage"][];
         };
         /**
          * @description Q74 retention tier used for this response.
@@ -5697,6 +5813,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplyHostConfigResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listApps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Container inventory. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAppsOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAppImages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Image inventory. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAppImagesOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The container. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["App"];
                 };
             };
             default: components["responses"]["Error"];

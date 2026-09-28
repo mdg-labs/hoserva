@@ -73,6 +73,11 @@ type File struct {
 	Body    []byte
 	Mode    os.FileMode
 	Group   string
+	// RawBody writes Body verbatim, with no doc 01 §2 `#`-comment header
+	// prepended — for a format that cannot carry one, such as JSON
+	// (Docker's own daemon.json, ApplyDockerDataRoot). Every other caller
+	// leaves this false and gets the usual header.
+	RawBody bool
 }
 
 // Generator writes managed files under Root and records each one's hash
@@ -189,7 +194,10 @@ func (g *Generator) Write(ctx context.Context, file File, revision int, now time
 			return err
 		}
 	}
-	content := Header(file.Command, revision, now) + string(file.Body)
+	content := string(file.Body)
+	if !file.RawBody {
+		content = Header(file.Command, revision, now) + content
+	}
 	if err := atomicWrite(full, []byte(content), mode, gid, untracked); err != nil {
 		if untracked && errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("%w: %s", ErrExistingHostFile, key)

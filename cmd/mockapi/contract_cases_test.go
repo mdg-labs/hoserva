@@ -317,6 +317,39 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// --- Apps (#67: Docker Engine client and Compose stacks, part A) ---
+	{
+		op:   "ListApps",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListApps(ctx)
+			return err
+		},
+	},
+	{
+		op:   "GetApp",
+		name: "valid_by_name",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetApp(ctx, apiv1.GetAppParams{ID: "jellyfin"})
+			return err
+		},
+	},
+	{
+		op:   "GetApp",
+		name: "unknown_id_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetApp(ctx, apiv1.GetAppParams{ID: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:   "ListAppImages",
+		name: "valid_request",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListAppImages(ctx)
+			return err
+		},
+	},
 	{
 		op:   "GetPool",
 		name: "valid",

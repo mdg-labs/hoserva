@@ -22,6 +22,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/cache"
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
@@ -291,6 +292,24 @@ func newContractUpdateEngine(t *testing.T, dbPath string) contractUpdateFixture 
 // array topology, matching the mock's own fresh-install fixture — every
 // other scenario seeds a single canned admin, matching mockAdminID
 // (auth.go).
+// contractContainerProvider seeds a container.FakeProvider with the same
+// container mockApps() (apps.go) reports, by ID and name, so a
+// GetApp("jellyfin") contract case gets the identical 200/404 outcome on
+// both handlers — this rig mounts nothing for real, so it is the only
+// state either side has for Apps.
+func contractContainerProvider() *container.FakeProvider {
+	f := container.NewFakeProvider()
+	f.AddContainer(container.Container{
+		ID:     "3f2a9c1e4b5d",
+		Name:   "jellyfin",
+		Image:  "lscr.io/linuxserver/jellyfin",
+		Tag:    "10.9.7",
+		State:  "running",
+		Status: "Up 3 hours",
+	})
+	return f
+}
+
 func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	t.Helper()
 	ctx := context.Background()
@@ -520,6 +539,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		Store:      jobStore,
 		Logs:       logs,
 		Disks:      provider,
+		Container:  contractContainerProvider(),
 		ArrayStore: arrayStore,
 		// ArrayReady: CancelDiskRemoval (#361) is the only handler method
 		// that calls it directly rather than through a job — this rig

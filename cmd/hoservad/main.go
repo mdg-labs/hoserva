@@ -29,6 +29,7 @@ import (
 	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/cache"
 	cfggen "github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
@@ -522,6 +523,19 @@ func run(cfg config) error {
 	handler.Generator = generator
 	handler.HostConfig = store.NewHostConfigStore(db)
 	handler.Docker = cfggen.ExecDocker{}
+	// handler.Container is wired unconditionally: construction only
+	// resolves DOCKER_HOST (or the default socket) and never dials the
+	// Engine (doc 04 §3, "hoservad starts regardless"), so a host with no
+	// Docker installed still starts normally and every Apps/doctor call
+	// reports container.ErrUnavailable instead of 501ing.
+	dockerClient, err := container.NewEngineClient()
+	if err != nil {
+		log.Printf("hoservad: building the docker client: %v — Apps and doctor's Docker checks will report it unavailable", err)
+	} else {
+		handler.Container = dockerClient
+	}
+	handler.ComposeRunner = container.CommandRunner{}
+	handler.DockerRestart = cfggen.SystemdServiceRestarter{Unit: "docker.service", Runner: linuxDisks.Exec}
 	handler.ArrayStore = arrayStore
 	// CancelDiskRemoval (#361) is the one handler method that calls
 	// ArrayReady directly, outside any job — parityReg.callArrayReady is

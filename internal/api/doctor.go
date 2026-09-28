@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/config"
+	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/parity"
@@ -20,10 +22,31 @@ import (
 )
 
 const (
-	mergerfsMinVersion = "2.40.2"
-	snapraidMinVersion = "12.4"
-	doctorProbeTimeout = 8 * time.Second
+	mergerfsMinVersion            = "2.40.2"
+	snapraidMinVersion            = "12.4"
+	dockerEngineMinVersion        = "24.0.0"
+	nvidiaContainerToolkitPackage = "nvidia-container-toolkit"
+	doctorProbeTimeout            = 8 * time.Second
 )
+
+// dockerInstallRemediation is D8/doc 04 §3's exact install path: Docker's
+// own apt repository, never the Debian archive's docker.io (which lags
+// upstream releases and is what Q38's negotiated-version policy is meant
+// to tolerate, not lean on). Copied from
+// https://docs.docker.com/engine/install/debian/ so a user can paste it
+// as-is.
+const dockerInstallRemediation = "Install Docker Engine from Docker's own apt repository (D8):\n" +
+	"apt-get update && apt-get install -y ca-certificates curl\n" +
+	"install -m 0755 -d /etc/apt/keyrings\n" +
+	"curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc\n" +
+	"chmod a+r /etc/apt/keyrings/docker.asc\n" +
+	"echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo \\\"$VERSION_CODENAME\\\") stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null\n" +
+	"apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+
+// dockerComposeInstallRemediation is the exact command for a host that
+// already has Docker's own apt repository configured (the Engine check
+// above already passed) but never installed the Compose v2 plugin.
+const dockerComposeInstallRemediation = "apt-get install docker-compose-plugin"
 
 // DiskLister enumerates block devices for doctor and disk list handlers.
 type DiskLister interface {
@@ -32,18 +55,21 @@ type DiskLister interface {
 
 type mountProbe func(path string) (bool, error)
 
-func runDoctorChecks(ctx context.Context, disks disk.Provider, parityEng parity.Engine, probe mountProbe, host *config.HostInventory) *apiv1.DoctorReport {
+func runDoctorChecks(ctx context.Context, disks disk.Provider, parityEng parity.Engine, probe mountProbe, host *config.HostInventory, containers container.Provider, composeRunner container.Runner) *apiv1.DoctorReport {
 	if probe == nil {
 		probe = pathIsMountpoint
 	}
 	checks := []apiv1.DoctorCheck{
 		packageVersionCheck(ctx, "mergerfs", mergerfsMinVersion),
 		packageVersionCheck(ctx, "snapraid", snapraidMinVersion),
-		dockerCheck(ctx),
+	}
+	checks = append(checks, dockerEngineChecks(ctx, containers, composeRunner)...)
+	checks = append(checks,
+		gpuNvidiaCheck(ctx),
 		bootSpaceCheck(),
 		mountStateCheck(probe, pool.CatchAllPath),
 		parityFreshnessCheck(ctx, parityEng),
-	}
+	)
 	if disks != nil {
 		checks = append(checks, diskInventoryCheck(ctx, disks))
 		checks = append(checks, smartCheck(ctx, disks))
@@ -88,32 +114,163 @@ func packageVersionCheck(ctx context.Context, pkg, minVersion string) apiv1.Doct
 	}
 }
 
-func dockerCheck(ctx context.Context) apiv1.DoctorCheck {
-	if _, err := exec.LookPath("docker"); err != nil {
+// dockerEngineChecks reports the Docker Engine's own reachability and
+// version (Q38, doc 04 §3) plus the Compose v2 plugin, through
+// container.Provider/Runner rather than the ad hoc `docker`/`docker
+// compose` exec pair the previous single dockerCheck ran — the same
+// negotiated-version client hoservad wires into Handler.Container and
+// `GET /apps` (doc 06 §2's fake-provider pattern lets this run against a
+// scripted Engine in tests, never a real daemon). A nil containers (an
+// older daemon build, or a caller's own test predating it) reports Docker
+// as not configured on this build, distinct from Docker being absent from
+// the host.
+func dockerEngineChecks(ctx context.Context, containers container.Provider, composeRunner container.Runner) []apiv1.DoctorCheck {
+	if containers == nil {
+		return []apiv1.DoctorCheck{{
+			ID:      "docker",
+			Name:    "Docker Engine",
+			Status:  apiv1.DoctorCheckStatusWarn,
+			Message: "Docker is not configured on this daemon",
+		}}
+	}
+	v, err := containers.Version(ctx)
+	if err != nil {
+		if errors.Is(err, container.ErrUnavailable) {
+			return []apiv1.DoctorCheck{dockerUnavailableCheck()}
+		}
+		return []apiv1.DoctorCheck{{
+			ID:      "docker",
+			Name:    "Docker Engine",
+			Status:  apiv1.DoctorCheckStatusWarn,
+			Message: fmt.Sprintf("Could not reach the Docker Engine: %v", err),
+		}}
+	}
+	return []apiv1.DoctorCheck{dockerEngineVersionCheck(v), composeCheck(ctx, composeRunner)}
+}
+
+// dockerUnavailableCheck distinguishes Docker never having been installed
+// from Docker being installed but not currently reachable — the finding
+// this closes: on a degraded, unacknowledged boot, docker.service carries
+// a BindsTo=hoserva-storage.target (Q69) and will not start until the
+// array is acknowledged, so the Engine socket is unreachable even though
+// Docker itself is present. Telling that host to "install Docker" would be
+// wrong.
+func dockerUnavailableCheck() apiv1.DoctorCheck {
+	return dockerUnavailableCheckFor(dockerBinaryInstalled)
+}
+
+// dockerBinaryInstalled is the same presence check gpuNvidiaCheck already
+// uses for an optional host tool (exec.LookPath), factored out so
+// dockerUnavailableCheckFor's branch is testable without a real PATH.
+func dockerBinaryInstalled() bool {
+	_, err := exec.LookPath("docker")
+	return err == nil
+}
+
+func dockerUnavailableCheckFor(installed func() bool) apiv1.DoctorCheck {
+	if !installed() {
 		return apiv1.DoctorCheck{
 			ID:          "docker",
 			Name:        "Docker Engine",
 			Status:      apiv1.DoctorCheckStatusWarn,
 			Message:     "Docker is not installed — Apps will not be available",
-			Remediation: apiv1.NewOptNilString("Install Docker Engine and the Compose v2 plugin"),
-		}
-	}
-	out, err := doctorCommandOutput(ctx, "docker", "compose", "version", "--short")
-	if err != nil {
-		return apiv1.DoctorCheck{
-			ID:          "docker_compose",
-			Name:        "Docker Compose plugin",
-			Status:      apiv1.DoctorCheckStatusWarn,
-			Message:     "The Compose v2 plugin is missing",
-			Remediation: apiv1.NewOptNilString("Install docker-compose-plugin"),
+			Remediation: apiv1.NewOptNilString(dockerInstallRemediation),
 		}
 	}
 	return apiv1.DoctorCheck{
-		ID:      "docker",
-		Name:    "Docker",
-		Status:  apiv1.DoctorCheckStatusPass,
-		Message: fmt.Sprintf("Docker is present (compose %s)", strings.TrimSpace(string(out))),
+		ID:          "docker",
+		Name:        "Docker Engine",
+		Status:      apiv1.DoctorCheckStatusWarn,
+		Message:     "Docker is installed but not reachable — Apps will not be available",
+		Remediation: apiv1.NewOptNilString("Check the service: systemctl status docker.service — if it is waiting on hoserva-storage.target, start or acknowledge the storage array first (Q69)"),
 	}
+}
+
+// dockerEngineVersionCheck warns when the reachable Engine is older than
+// dockerEngineMinVersion (doc 04 §3: "warns when the installed Engine is a
+// release upstream no longer supports") — a tested floor bumped over time
+// exactly like mergerfsMinVersion/snapraidMinVersion above, never a hard
+// requirement: the API version itself is negotiated at runtime (Q38), not
+// pinned.
+func dockerEngineVersionCheck(v container.EngineVersion) apiv1.DoctorCheck {
+	msg := fmt.Sprintf("Docker Engine %s is reachable (API %s)", v.Version, v.APIVersion)
+	if versionBelow(v.Version, dockerEngineMinVersion) {
+		return apiv1.DoctorCheck{
+			ID:          "docker",
+			Name:        "Docker Engine",
+			Status:      apiv1.DoctorCheckStatusWarn,
+			Message:     fmt.Sprintf("Docker Engine %s is a release upstream no longer supports", v.Version),
+			Remediation: apiv1.NewOptNilString("Upgrade Docker Engine: https://docs.docker.com/engine/install/debian/"),
+		}
+	}
+	return apiv1.DoctorCheck{ID: "docker", Name: "Docker Engine", Status: apiv1.DoctorCheckStatusPass, Message: msg}
+}
+
+// composeCheck reports the Compose v2 plugin (doc 04 §3): a missing
+// plugin is reported, never silently skipped. A nil composeRunner (an
+// older daemon build, or a caller's own test) uses the real
+// container.CommandRunner.
+func composeCheck(ctx context.Context, run container.Runner) apiv1.DoctorCheck {
+	if run == nil {
+		run = container.CommandRunner{}
+	}
+	ctx, cancel := context.WithTimeout(ctx, doctorProbeTimeout)
+	defer cancel()
+	ver, err := container.ComposeVersion(ctx, run)
+	if err != nil {
+		if errors.Is(err, container.ErrComposeUnavailable) {
+			return apiv1.DoctorCheck{
+				ID:          "docker_compose",
+				Name:        "Docker Compose plugin",
+				Status:      apiv1.DoctorCheckStatusWarn,
+				Message:     "The Compose v2 plugin is missing",
+				Remediation: apiv1.NewOptNilString(dockerComposeInstallRemediation),
+			}
+		}
+		return apiv1.DoctorCheck{
+			ID:      "docker_compose",
+			Name:    "Docker Compose plugin",
+			Status:  apiv1.DoctorCheckStatusWarn,
+			Message: fmt.Sprintf("Could not run docker compose: %v", err),
+		}
+	}
+	return apiv1.DoctorCheck{
+		ID:      "docker_compose",
+		Name:    "Docker Compose plugin",
+		Status:  apiv1.DoctorCheckStatusPass,
+		Message: fmt.Sprintf("Compose %s is installed", ver),
+	}
+}
+
+// gpuNvidiaCheck reports whether an NVIDIA driver and the NVIDIA Container
+// Toolkit are present and working (Q82): no `nvidia-smi` at all is a
+// normal, common home-server state (no NVIDIA GPU installed), reported as
+// Pass rather than a warning about hardware that was never expected to be
+// there. GPU device mapping into a template is #280's job, not this part's.
+func gpuNvidiaCheck(ctx context.Context) apiv1.DoctorCheck {
+	const id = "gpu_nvidia"
+	if _, err := exec.LookPath("nvidia-smi"); err != nil {
+		return apiv1.DoctorCheck{ID: id, Name: "NVIDIA GPU", Status: apiv1.DoctorCheckStatusPass, Message: "No NVIDIA GPU driver detected"}
+	}
+	if _, err := doctorCommandOutput(ctx, "nvidia-smi", "-L"); err != nil {
+		return apiv1.DoctorCheck{
+			ID:          id,
+			Name:        "NVIDIA GPU",
+			Status:      apiv1.DoctorCheckStatusWarn,
+			Message:     fmt.Sprintf("The NVIDIA driver is installed but not working: %v", err),
+			Remediation: apiv1.NewOptNilString("Check `nvidia-smi` output and the kernel driver installation"),
+		}
+	}
+	if _, err := doctorCommandOutput(ctx, "dpkg-query", "-W", "-f=${Version}", nvidiaContainerToolkitPackage); err != nil {
+		return apiv1.DoctorCheck{
+			ID:          id,
+			Name:        "NVIDIA GPU",
+			Status:      apiv1.DoctorCheckStatusWarn,
+			Message:     "The NVIDIA driver is working, but the NVIDIA Container Toolkit is not installed",
+			Remediation: apiv1.NewOptNilString("Install the NVIDIA Container Toolkit (Q82): https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html"),
+		}
+	}
+	return apiv1.DoctorCheck{ID: id, Name: "NVIDIA GPU", Status: apiv1.DoctorCheckStatusPass, Message: "NVIDIA driver and Container Toolkit are present and working"}
 }
 
 func bootSpaceCheck() apiv1.DoctorCheck {
@@ -453,12 +610,12 @@ func (h *Handler) detectHost(ctx context.Context) *config.HostInventory {
 
 func (h *Handler) RunDoctor(ctx context.Context) (*apiv1.DoctorReport, error) {
 	engine, _, _, _ := h.CurrentParity()
-	return runDoctorChecks(ctx, h.Disks, engine, nil, h.detectHost(ctx)), nil
+	return runDoctorChecks(ctx, h.Disks, engine, nil, h.detectHost(ctx), h.Container, h.ComposeRunner), nil
 }
 
 func (h *Handler) GetStatus(ctx context.Context) (*apiv1.SystemStatus, error) {
 	engine, _, _, _ := h.CurrentParity()
-	report := runDoctorChecks(ctx, h.Disks, engine, nil, h.detectHost(ctx))
+	report := runDoctorChecks(ctx, h.Disks, engine, nil, h.detectHost(ctx), h.Container, h.ComposeRunner)
 	healthy := report.Overall != apiv1.DoctorCheckStatusFail
 	summary := "All checks passed"
 	if !healthy {
