@@ -226,6 +226,7 @@ func mockDoctorReport(scenario string) *apiv1.DoctorReport {
 			pass("host_fstab", "fstab mounts", "1 mount: /mnt/media"),
 			pass("host_docker_containers", "Docker containers", "1 container: jellyfin"),
 			pass("host_docker_images", "Docker images", "1 image: linuxserver/jellyfin:latest"),
+			pass("host_docker_volumes", "Docker volumes", "0 volumes"),
 		)
 	case "degraded":
 		checks = append(checks,
@@ -410,7 +411,10 @@ func errInvalidHostConfig(msg string) error {
 
 // mockHostConfigKinds mirrors internal/config's own KindFromCheckID
 // whitelist (host.go) closely enough for this mock's own fixed check ids
-// (pool.go's mockDoctorReport): every id RunDoctor ever reports here.
+// (pool.go's mockDoctorReport). host_docker_volumes is deliberately
+// absent: like production's KindFromCheckID, it has no import/leave
+// decision — there is no host file it manages — it only gates the
+// cache data-root move (#413).
 var mockHostConfigKinds = map[string]bool{
 	"host_samba":             true,
 	"host_nfs":               true,

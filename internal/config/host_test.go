@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -138,6 +139,7 @@ func TestDetectReadsFixturesUnderTempRoot(t *testing.T) {
 	docker := MemoryDocker{
 		Containers: []DockerRef{{ID: "abc", Name: "jellyfin"}},
 		Images:     []DockerRef{{ID: "def", Name: "library/nginx:latest"}},
+		Volumes:    []DockerRef{{ID: "jellyfin_config", Name: "jellyfin_config"}},
 	}
 	inv, err := Detect(context.Background(), root, docker)
 	if err != nil {
@@ -157,6 +159,9 @@ func TestDetectReadsFixturesUnderTempRoot(t *testing.T) {
 	}
 	if !inv.Found(KindDockerImages) || inv.DockerImages[0].Name != "library/nginx:latest" {
 		t.Fatalf("images = %+v", inv.DockerImages)
+	}
+	if len(inv.DockerVolumes) != 1 || inv.DockerVolumes[0].Name != "jellyfin_config" {
+		t.Fatalf("volumes = %+v", inv.DockerVolumes)
 	}
 }
 
@@ -199,6 +204,29 @@ func TestFoundReportsEmptyDockerInventory(t *testing.T) {
 
 func TestDockerDataRootStaysWhenContainersExist(t *testing.T) {
 	inv := HostInventory{DockerContainers: []DockerRef{{ID: "a", Name: "x"}}}
+	if got := DockerDataRoot(inv, true, true); got != DockerDataRootDefault {
+		t.Fatalf("data-root = %q, want %s", got, DockerDataRootDefault)
+	}
+}
+
+// TestDockerDataRootStaysWhenVolumesExist is #413's data-loss regression:
+// a host after `docker compose down` (volumes kept) plus an image prune
+// has no containers and no images, but its named-volume data would be
+// stranded under /var/lib/docker/volumes, invisible to Docker, the moment
+// the data-root moved to cache without it.
+func TestDockerDataRootStaysWhenVolumesExist(t *testing.T) {
+	inv := HostInventory{DockerVolumes: []DockerRef{{ID: "jellyfin_config", Name: "jellyfin_config"}}}
+	if got := DockerDataRoot(inv, true, true); got != DockerDataRootDefault {
+		t.Fatalf("data-root = %q, want %s", got, DockerDataRootDefault)
+	}
+}
+
+// TestDockerDataRootFailsClosedOnInventoryError covers #413's fail-open
+// hazard directly: a volume-listing error must read as "Docker holds
+// data", the same as the existing containers/images error path, never as
+// "empty" just because the slices it could not populate are nil.
+func TestDockerDataRootFailsClosedOnInventoryError(t *testing.T) {
+	inv := HostInventory{DockerErr: errors.New("docker volume ls: timed out")}
 	if got := DockerDataRoot(inv, true, true); got != DockerDataRootDefault {
 		t.Fatalf("data-root = %q, want %s", got, DockerDataRootDefault)
 	}

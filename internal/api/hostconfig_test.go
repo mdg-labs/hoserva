@@ -115,6 +115,9 @@ func TestRunDoctor_ReportsHostConfigFromTempRoot(t *testing.T) {
 	if findCheck(report, "host_docker_images").ID != "host_docker_images" {
 		t.Fatal("missing host_docker_images")
 	}
+	if findCheck(report, "host_docker_volumes").ID != "host_docker_volumes" {
+		t.Fatal("missing host_docker_volumes")
+	}
 }
 
 func TestApplyHostConfig_LeaveDoesNotOverwrite(t *testing.T) {
@@ -492,6 +495,50 @@ func TestApplyHostConfig_EmptyDockerCanAcceptCacheMove(t *testing.T) {
 	}
 	if strings.Contains(string(daemonJSON), "Hoserva") {
 		t.Fatalf("daemon.json = %s, want no #-comment header — Docker's own daemon.json must be valid JSON", daemonJSON)
+	}
+}
+
+// TestApplyHostConfig_DockerDataRootStaysWithExistingVolumes is #413's
+// data-loss regression, exercised through ApplyHostConfig exactly as
+// hoservad's onboarding flow reaches it: a host with no containers and no
+// images, but one named volume, a cache disk, and the move accepted must
+// still keep the data-root at /var/lib/docker and must never write
+// docker/daemon.json — otherwise the volume's data is stranded under the
+// old root the moment Docker restarts against the new one.
+func TestApplyHostConfig_DockerDataRootStaysWithExistingVolumes(t *testing.T) {
+	h, g, db := hostConfigTestEnv(t)
+	h.Docker = config.MemoryDocker{
+		Volumes: []config.DockerRef{{ID: "jellyfin_config", Name: "jellyfin_config"}},
+	}
+	h.ArrayStore = store.NewArrayStore(db)
+	if err := h.ArrayStore.PutArray(context.Background(), store.ArraySettings{
+		CreatePolicy: "mfs",
+		MinFreeSpace: "20G",
+		CreatedAt:    time.Now().UTC(),
+	}, []store.ArrayDisk{{
+		Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc",
+		Filesystem: "ext4", FSUUID: "uuid-c", Mountpoint: "/mnt/cache",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.ApplyHostConfig(context.Background(), &apiv1.ApplyHostConfigRequest{Files: []apiv1.HostConfigChoice{
+		{ID: apiv1.HostConfigIDHostDockerContainers, Decision: apiv1.HostConfigDecisionImport},
+		{ID: apiv1.HostConfigIDHostDockerImages, Decision: apiv1.HostConfigDecisionImport},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DockerDataRoot != config.DockerDataRootDefault {
+		t.Fatalf("dockerDataRoot = %q, want %s when a named volume exists", got.DockerDataRoot, config.DockerDataRootDefault)
+	}
+
+	if _, err := os.Stat(filepath.Join(g.Root, "docker", "daemon.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("daemon.json stat = %v, want it never written when a named volume exists", err)
+	}
+	fakeDirs := h.DockerDirs.(*config.FakeDirMaker)
+	if created := fakeDirs.Created(); len(created) != 0 {
+		t.Fatalf("DockerDirs.Created() = %v, want none — the cache data-root must never be created when a named volume exists", created)
 	}
 }
 

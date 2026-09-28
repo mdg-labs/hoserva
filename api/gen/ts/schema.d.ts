@@ -2739,7 +2739,7 @@ export interface components {
         };
         ApplyHostConfigResult: {
             files: components["schemas"]["HostConfigChoice"][];
-            /** @description Docker's data-root after this apply (Q62, Q76). Always `/var/lib/docker` when containers or images exist, when there is no cache disk, or when the caller did not accept a move. */
+            /** @description Docker's data-root after this apply (Q62, Q76). Always `/var/lib/docker` when containers, images or named volumes exist, when there is no cache disk, or when the caller did not accept a move. */
             dockerDataRoot: string;
         };
         /**

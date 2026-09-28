@@ -238,6 +238,16 @@ func hostConfigChecks(inv *config.HostInventory) []apiv1.DoctorCheck {
 	if inv.Found(config.KindDockerImages) {
 		checks = append(checks, dockerInventoryCheck("host_docker_images", "Docker images", "image", inv.DockerImages, inv.DockerErr))
 	}
+	// host_docker_volumes has no import/leave decision — there is no host
+	// file for it to manage — but it must still be visible next to
+	// containers and images (#413) so a user sees why the cache data-root
+	// move (Q76) was not offered when a volume is the only thing Docker
+	// holds. It shares the container/image checks' "docker is available"
+	// gate rather than config.KindFromCheckID/Found, since it is never a
+	// submittable HostConfigID.
+	if !inv.DockerUnavailable {
+		checks = append(checks, dockerInventoryCheck("host_docker_volumes", "Docker volumes", "volume", inv.DockerVolumes, inv.DockerErr))
+	}
 	return checks
 }
 
