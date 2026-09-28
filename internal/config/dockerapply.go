@@ -116,7 +116,10 @@ func (g *Generator) CanApplyDockerDataRoot(ctx context.Context, dataRoot string)
 // Generator's other managed host files (D4, Q76): this call never
 // overwrites configuration it did not write. dirs and restart may be nil;
 // dirs defaults to OSDirMaker, and a nil restart only skips the restart
-// step (the config and directory are still written).
+// step (the config and directory are still written). A retry that finds
+// daemon.json already at dataRoot but Docker inactive treats that as its
+// own earlier Stop having outlived a failed Start, and finishes the
+// restart rather than skipping it as "was never running."
 func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, dirs DirMaker, restart ServiceRestarter, revision int, now time.Time) error {
 	if dataRoot == DockerDataRootDefault {
 		return nil
@@ -135,6 +138,25 @@ func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, di
 	if err != nil {
 		return fmt.Errorf("config: encoding docker daemon.json: %w", err)
 	}
+
+	// Read what's on disk before Write replaces it (finding: a retry after
+	// Stop succeeded but Start failed must not silently skip recovering
+	// that). Write is idempotent per path, so an already-identical
+	// daemon.json means an earlier call already applied this exact move —
+	// if Docker is inactive now, that earlier call is what stopped it, and
+	// this one must finish starting it back up rather than treating
+	// "currently inactive" as "was never running."
+	full, _, err := g.resolvePath(dockerDaemonConfigPath)
+	if err != nil {
+		return err
+	}
+	alreadyApplied := false
+	if existing, readErr := os.ReadFile(full); readErr == nil {
+		alreadyApplied = string(existing) == string(body)
+	} else if !os.IsNotExist(readErr) {
+		return fmt.Errorf("config: checking docker daemon.json: %w", readErr)
+	}
+
 	if err := g.Write(ctx, File{Path: dockerDaemonConfigPath, Body: body, RawBody: true}, revision, now); err != nil {
 		return fmt.Errorf("config: writing docker daemon.json: %w", err)
 	}
@@ -147,6 +169,12 @@ func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, di
 		return fmt.Errorf("config: checking whether docker is running: %w", err)
 	}
 	if !active {
+		if !alreadyApplied {
+			return nil
+		}
+		if err := restart.Start(ctx); err != nil {
+			return fmt.Errorf("config: starting docker after its data-root move: %w", err)
+		}
 		return nil
 	}
 	if err := restart.Stop(ctx); err != nil {

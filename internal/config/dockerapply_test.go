@@ -84,6 +84,42 @@ func TestApplyDockerDataRoot_RestartsAnAlreadyRunningDocker(t *testing.T) {
 	}
 }
 
+func TestApplyDockerDataRoot_RecoversRestartAfterPriorStopWithoutStart(t *testing.T) {
+	root := t.TempDir()
+	g := NewGenerator(root)
+	dirs := &FakeDirMaker{}
+
+	// First call: Docker is running, Stop succeeds, Start fails — leaving
+	// daemon.json already written at dataRoot and Docker stopped.
+	firstAttempt := &FakeServiceRestarter{}
+	firstAttempt.SetActive(true)
+	firstAttempt.SetStartErr(errors.New("simulated start failure"))
+	err := g.ApplyDockerDataRoot(context.Background(), "/mnt/cache/docker", dirs, firstAttempt, 1, time.Now())
+	if err == nil {
+		t.Fatal("ApplyDockerDataRoot() = nil, want the simulated start failure surfaced")
+	}
+	if !firstAttempt.Stopped() {
+		t.Fatal("Stop was not called on the first attempt")
+	}
+
+	// Retry with a fresh restarter: daemon.json is unchanged (already at
+	// dataRoot) and Docker is inactive because the first attempt's Stop
+	// was never followed by a successful Start. This must recover by
+	// starting Docker again, not silently treat "inactive" as "nothing to
+	// do."
+	retry := &FakeServiceRestarter{}
+	retry.SetActive(false)
+	if err := g.ApplyDockerDataRoot(context.Background(), "/mnt/cache/docker", dirs, retry, 1, time.Now()); err != nil {
+		t.Fatalf("ApplyDockerDataRoot() retry: %v", err)
+	}
+	if retry.Stopped() {
+		t.Fatal("Stop was called on the retry — Docker was already inactive, nothing to stop")
+	}
+	if !retry.Started() {
+		t.Fatal("Start was not called on the retry — a prior Stop without a successful Start must be recovered, not silently skipped")
+	}
+}
+
 func TestApplyDockerDataRoot_ExistingUnmanagedDaemonJSONRefuses(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "docker"), 0o755); err != nil {
