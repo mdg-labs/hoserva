@@ -136,8 +136,10 @@ func (p preTopologyBackup) Run(ctx context.Context) error {
 }
 
 // wireTopologyBackup connects backupService to scheduler through
-// job.Scheduler.SetTopologyBackup, so Submit runs the pre-topology backup
-// before any ClassTopology job (#406). Kept as its own function, following
+// job.Scheduler.SetTopologyBackup, so a ClassTopology job runs the
+// pre-topology backup the moment it actually starts — in Submit for one
+// starting immediately, in dispatch() for one that waited its turn in the
+// queue first (#406, #408). Kept as its own function, following
 // wireBackup's own pattern above, so a test can call exactly what main.go
 // calls rather than a hand copy of the assignment.
 func wireTopologyBackup(scheduler *job.Scheduler, backupService *backup.Service) {

@@ -435,11 +435,13 @@ func run(cfg config) error {
 			return append(acmeSecrets, upsSecrets...), nil
 		},
 	}
-	// wireTopologyBackup (#406, doc 10 §1) must run before any of the
-	// registry.Register(job.TypeDiskFormat/DiskAdd/... calls below could
-	// admit a Submit for one of them: Scheduler.Submit reads
-	// TopologyBackup on every call, so wiring it any later would leave a
-	// window where a disk-topology job started with no pre-change backup.
+	// wireTopologyBackup (#406, #408, doc 10 §1) must run before any of
+	// the registry.Register(job.TypeDiskFormat/DiskAdd/... calls below
+	// could admit a Submit for one of them: both Scheduler.Submit, for one
+	// starting immediately, and Scheduler.dispatch(), for one that waited
+	// its turn in the queue first, read TopologyBackup on every call, so
+	// wiring it any later would leave a window where a disk-topology job
+	// started with no pre-change backup.
 	wireTopologyBackup(scheduler, backupService)
 	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, handler.CurrentArray, notifyService, linuxDisks.Exec, backupService)
 	networkSvc := &cfggen.NetworkService{

@@ -162,6 +162,13 @@ type queuedJob struct {
 	job         *Job
 	run         RunFunc
 	cancellable bool
+	// cancelRequested is set by Cancel, under s.mu, for a ClassTopology
+	// job dispatch() has already moved into s.dispatching (#408): the
+	// backup running for it outside s.mu cannot be interrupted, but
+	// startQueuedTopologyJob checks this once it returns and ends the job
+	// cancelled instead of starting it, whatever the backup itself
+	// decided.
+	cancelRequested bool
 }
 
 // Scheduler is the job system's own scheduler (doc 01 §4): it enforces the
@@ -235,13 +242,25 @@ type Scheduler struct {
 	// deterministically inside that exact window instead of racing the
 	// real clock. Never set outside a test.
 	beforeFinishedHook func(jobID string)
-	// topologyBackup, when set, is run by Submit before it creates any
-	// job whose class is ClassTopology (doc 10 §1, #406): a disk add,
-	// remove, replace, data or parity upgrade, format, or pool remount is
-	// never entered without a config snapshot from just before it. Set
-	// through SetTopologyBackup, never directly — every other Scheduler
-	// hook that isn't a test-only field is reached the same way.
+	// topologyBackup, when set, is run once a job whose class is
+	// ClassTopology actually starts (doc 10 §1, #406, #408) — in Submit
+	// when it starts immediately, or in dispatch() when a queued one's
+	// turn comes: a disk add, remove, replace, data or parity upgrade,
+	// format, or pool remount is never entered without a config snapshot
+	// from just before it, including one that waited behind another
+	// topology job in the queue first. Set through SetTopologyBackup,
+	// never directly — every other Scheduler hook that isn't a test-only
+	// field is reached the same way.
 	topologyBackup ConfigBackup
+	// dispatching holds, for the window between dispatch() removing a
+	// queued ClassTopology job from s.queue and its outcome being decided
+	// — its start-time backup, and, if it was cancelled or that backup
+	// failed and its type registered an AbortFunc, that abort too (#408,
+	// doc 02 §4 invariant 3) — the queuedJob dispatch() is running that
+	// work for. It is outside s.mu the whole time, so it is in neither
+	// s.queue nor s.running, and Cancel needs its own way to recognize it
+	// instead of mis-reporting why it refuses.
+	dispatching map[string]*queuedJob
 }
 
 // NewScheduler wires a Scheduler to its persistence, log capture, event
@@ -270,23 +289,26 @@ func (s *Scheduler) RecoverFromRestart(ctx context.Context) error {
 }
 
 // SetTopologyBackup wires the pre-topology config backup doc 10 §1
-// promises (#406): from this point on, Submit runs it before creating any
-// job whose class is ClassTopology (disk add/remove/replace/upgrade,
-// format, or pool remount). cmd/hoservad's main.go calls this once,
-// right after building the daemon's backup.Service. Unset (the zero
-// value, nil), Submit runs no such backup — the same "not configured, skip"
-// behaviour update.Engine.backup uses when its own Backup field is nil.
+// promises (#406, #408): from this point on, a job whose class is
+// ClassTopology (disk add/remove/replace/upgrade, format, or pool
+// remount) runs it the moment it actually starts — in Submit for one
+// starting immediately, in dispatch() for one that waited its turn in the
+// queue first. cmd/hoservad's main.go calls this once, right after
+// building the daemon's backup.Service. Unset (the zero value, nil), no
+// such backup ever runs — the same "not configured, skip" behaviour
+// update.Engine.backup uses when its own Backup field is nil.
 func (s *Scheduler) SetTopologyBackup(b ConfigBackup) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.topologyBackup = b
 }
 
-// runTopologyBackup runs the pre-topology config backup (doc 10 §1, #406),
-// if one is wired, before Submit takes s.mu or persists anything for a
-// ClassTopology job: a slow backup never holds the lock every other Submit
-// and Cancel needs, and a failure here creates no job row at all — the
-// job never starts, and Submit's caller sees exactly why.
+// runTopologyBackup runs the pre-topology config backup (doc 10 §1, #406,
+// #408), if one is wired, at the moment a ClassTopology job actually
+// starts — called by Submit for one starting immediately, and by
+// dispatch() for a queued one whose turn has come — always outside s.mu,
+// so a slow backup never holds the lock every other Submit and Cancel
+// needs.
 func (s *Scheduler) runTopologyBackup(ctx context.Context) error {
 	s.mu.Lock()
 	backup := s.topologyBackup
@@ -300,6 +322,88 @@ func (s *Scheduler) runTopologyBackup(ctx context.Context) error {
 	return nil
 }
 
+// admitLocked runs every admission check Submit performs before creating
+// a job of type t — the database-restore hold, the data-disk-upgrade or
+// maintenance-mode check, the on-battery hold, and evacuation admission.
+// It reports no conflict-queueing decision at all: doc 01 §4's
+// class-conflict check is Submit's own hasConflictWithRunningLocked call,
+// kept separate so it can be evaluated on its own, before these checks,
+// to decide whether a ClassTopology job's start-time backup is needed
+// (#408). Callers must hold s.mu.
+func (s *Scheduler) admitLocked(ctx context.Context, t Type) error {
+	if s.databaseRestore {
+		return ErrDatabaseRestoreInProgress
+	}
+	if t == TypeDiskUpgradeData {
+		if err := s.admitDiskUpgradeDataLocked(ctx); err != nil {
+			return err
+		}
+	} else if s.maintenance {
+		return ErrMaintenanceMode
+	}
+	if s.batteryHold && isBatteryHeldType(t) {
+		return ErrOnBattery
+	}
+	if t == TypeEvacuation {
+		if err := s.admitEvacuationLocked(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// finishSubmitLocked builds, persists and queues-or-starts a new job of
+// type t/class/resourceIDs/params, queued rather than started immediately
+// exactly when it conflicts with a job already running (doc 01 §4).
+// backupRan reports whether Submit already ran this ClassTopology job's
+// start-time backup before taking s.mu here — decided by a check that
+// released s.mu in between (#408), so this function's own conflict check,
+// taken under one unbroken lock hold with the job's creation, is the only
+// one authoritative for whether it may actually start immediately. If
+// Submit's own earlier check found a conflict and skipped the backup on
+// that basis, but whatever it conflicted with has since finished, this
+// function queues the job anyway instead of starting it with no backup at
+// all — exactly as if it still conflicted — and reports that back to
+// Submit (its second return value) so Submit can call dispatch() itself
+// right away rather than leaving the job stuck until some unrelated job's
+// completion happens to trigger one. Callers must hold s.mu.
+func (s *Scheduler) finishSubmitLocked(ctx context.Context, t Type, class Class, resourceIDs []string, params []byte, entry registryEntry, backupRan bool) (*Job, bool, error) {
+	now := time.Now().UTC()
+	j := &Job{
+		ID:          uuid.NewString(),
+		Type:        t,
+		Class:       class,
+		Resumable:   Resumable(t),
+		Cancellable: entry.cancellable,
+		ResourceIDs: resourceIDs,
+		Params:      bytes.Clone(params),
+		CreatedAt:   now,
+	}
+
+	deferredForBackup := false
+	switch {
+	case s.hasConflictWithRunningLocked(class, resourceIDs):
+		j.Status = StatusQueued
+	case class == ClassTopology && !backupRan:
+		j.Status = StatusQueued
+		deferredForBackup = true
+	default:
+		j.Status = StatusRunning
+		j.StartedAt = &now
+	}
+
+	if err := s.store.Create(ctx, j); err != nil {
+		return nil, false, fmt.Errorf("job: persisting new job: %w", err)
+	}
+
+	if j.Status == StatusQueued {
+		s.queue = append(s.queue, &queuedJob{job: j, run: entry.run, cancellable: entry.cancellable})
+	} else {
+		s.startJobLocked(j, entry.run, entry.cancellable)
+	}
+	return j, deferredForBackup, nil
+}
+
 // Submit persists a new job of type t and starts it immediately unless its
 // class conflicts with a job already running (doc 01 §4), in which case it
 // is queued until dispatch() finds it a slot. t must have a RunFunc bound
@@ -307,12 +411,25 @@ func (s *Scheduler) runTopologyBackup(ctx context.Context) error {
 // itself. params is the JSON request payload for types that have one
 // (validated here against t); nil or empty for types that have none.
 //
-// A ClassTopology job runs its pre-topology backup (doc 10 §1, #406) here,
-// ahead of everything below — including the class-conflict and
-// maintenance-mode admission checks — so a slow or failing backup never
-// holds s.mu, and a failing one refuses the submission outright before any
-// of those checks even run: no job row is created, and nothing about the
-// job system's own state changes.
+// A ClassTopology job that does not conflict with anything currently
+// running is, on that basis alone, about to start immediately — so its
+// start-time backup (doc 10 §1, #406, #408) runs here, before any of
+// admitLocked's own admission checks and before anything is persisted:
+// exactly #406's own behaviour, undisturbed by this issue's fix. A
+// ClassTopology job that does conflict gets no backup here at all — one
+// taken now would describe the configuration from before whatever is
+// currently running finishes, not from just before this job's own change
+// — dispatch() gives it one instead, at the moment it actually starts
+// (#408). The conflict is re-checked once more, in one unbroken lock hold
+// with the job's own creation, by finishSubmitLocked — it was released
+// for the backup call itself, so that second check, never this one, is
+// authoritative for whether the job may actually start. If it now finds
+// no conflict despite this check having found one moments earlier (#408:
+// whatever it conflicted with finished in between), finishSubmitLocked
+// queues the job rather than starting it with no backup at all, and
+// reports that back here so dispatch() — called directly below, before
+// this function returns — gives it a start-time backup right away rather
+// than leaving it stuck behind whatever else happens to finish next.
 func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, params []byte) (*Job, error) {
 	if err := ValidateType(t); err != nil {
 		return nil, err
@@ -326,68 +443,34 @@ func (s *Scheduler) Submit(ctx context.Context, t Type, resourceIDs []string, pa
 	}
 	class, _ := ClassOf(t)
 
+	backupRan := false
 	if class == ClassTopology {
-		if err := s.runTopologyBackup(ctx); err != nil {
-			return nil, err
+		s.mu.Lock()
+		willQueue := s.hasConflictWithRunningLocked(class, resourceIDs)
+		s.mu.Unlock()
+		if !willQueue {
+			if err := s.runTopologyBackup(ctx); err != nil {
+				return nil, err
+			}
+			backupRan = true
 		}
 	}
 
 	s.mu.Lock()
-	if s.databaseRestore {
+	if err := s.admitLocked(ctx, t); err != nil {
 		s.mu.Unlock()
-		return nil, ErrDatabaseRestoreInProgress
+		return nil, err
 	}
-	if t == TypeDiskUpgradeData {
-		if err := s.admitDiskUpgradeDataLocked(ctx); err != nil {
-			s.mu.Unlock()
-			return nil, err
-		}
-	} else if s.maintenance {
-		s.mu.Unlock()
-		return nil, ErrMaintenanceMode
-	}
-	if s.batteryHold && isBatteryHeldType(t) {
-		s.mu.Unlock()
-		return nil, ErrOnBattery
-	}
-	if t == TypeEvacuation {
-		if err := s.admitEvacuationLocked(ctx); err != nil {
-			s.mu.Unlock()
-			return nil, err
-		}
-	}
-
-	now := time.Now().UTC()
-	j := &Job{
-		ID:          uuid.NewString(),
-		Type:        t,
-		Class:       class,
-		Resumable:   Resumable(t),
-		Cancellable: entry.cancellable,
-		ResourceIDs: resourceIDs,
-		Params:      bytes.Clone(params),
-		CreatedAt:   now,
-	}
-	if s.hasConflictWithRunningLocked(class, resourceIDs) {
-		j.Status = StatusQueued
-	} else {
-		j.Status = StatusRunning
-		j.StartedAt = &now
-	}
-
-	if err := s.store.Create(ctx, j); err != nil {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("job: persisting new job: %w", err)
-	}
-
-	if j.Status == StatusQueued {
-		s.queue = append(s.queue, &queuedJob{job: j, run: entry.run, cancellable: entry.cancellable})
-	} else {
-		s.startJobLocked(j, entry.run, entry.cancellable)
-	}
+	j, deferredForBackup, err := s.finishSubmitLocked(ctx, t, class, resourceIDs, params, entry, backupRan)
 	s.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 
 	s.hub.Publish(j)
+	if deferredForBackup {
+		s.dispatch()
+	}
 	return j, nil
 }
 
@@ -455,11 +538,37 @@ func (s *Scheduler) admitEvacuationLocked(ctx context.Context) error {
 // BeginDatabaseRestore itself refuses to start while an abort is already
 // running, so once the hold is granted no abort can be in flight for it
 // to race in the first place.
+//
+// A queued ClassTopology job whose turn dispatch() has just taken is in
+// neither s.queue nor s.running while its start-time backup (#408) runs
+// outside s.mu — dispatch() has already removed it from the former and its
+// own RunFunc has not started to put it in the latter. Cancel cannot
+// interrupt that backup, and its outcome is not decided yet either, so
+// Cancel only records the request (queuedJob.cancelRequested) and returns
+// the job's current snapshot without error, the same way cancelling an
+// ordinary queued job that has no AbortFunc does. startQueuedTopologyJob
+// checks the request once the backup returns: if the job's type registered
+// an AbortFunc (TypeDiskUpgradeData's own Unwind), that runs next, and the
+// job ends cancelled only once it succeeds — interrupted, with the abort's
+// own error, if it does not (doc 02 §4 invariant 3) — the same outcome a
+// plainly queued job's own failed-abort Cancel already records below. A
+// type with no AbortFunc ends cancelled directly, whatever the backup
+// itself decided. Either way RunFunc is never called.
 func (s *Scheduler) Cancel(ctx context.Context, id string) (*Job, error) {
 	s.mu.Lock()
 	if s.databaseRestore {
 		s.mu.Unlock()
 		return nil, ErrDatabaseRestoreInProgress
+	}
+	if q, ok := s.dispatching[id]; ok {
+		if !q.cancellable && q.job.Type == TypeDiskUpgradeData {
+			s.mu.Unlock()
+			return nil, ErrDiskUpgradePastRelease
+		}
+		q.cancelRequested = true
+		snapshot := *q.job
+		s.mu.Unlock()
+		return &snapshot, nil
 	}
 	if rj, ok := s.running[id]; ok {
 		rj.mu.Lock()
@@ -1151,8 +1260,11 @@ func (s *Scheduler) OnBattery() bool {
 }
 
 // BlockingStorageJob returns a currently running Parity, Array-write or
-// Topology job, if any. Self-update and rollback refuse while one is
-// running and name it (Q67); reboot waits for it instead (Q68).
+// Topology job, if any — including a queued Topology job whose start-time
+// backup dispatch() is already running outside s.mu (s.dispatching, #408):
+// it is committed to starting and is every bit as blocking as one already
+// in s.running. Self-update and rollback refuse while one is running and
+// name it (Q67); reboot waits for it instead (Q68).
 func (s *Scheduler) BlockingStorageJob() *Job {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1162,25 +1274,52 @@ func (s *Scheduler) BlockingStorageJob() *Job {
 			return &cp
 		}
 	}
+	for _, q := range s.dispatching {
+		if IsStorageClass(q.job.Class) {
+			cp := *q.job
+			return &cp
+		}
+	}
 	return nil
 }
 
 // WaitForStorageJobs blocks until no Parity, Array-write or Topology job
-// is running, or ctx is done. Reboot uses this before the Q70 sequence
-// (Q68) — it waits rather than refusing.
+// is running or dispatching (s.dispatching, #408), or ctx is done. Reboot
+// uses this before the Q70 sequence (Q68) — it waits rather than refusing.
+// A dispatching job has no done channel of its own to wait on — its
+// start-time backup runs outside s.mu, and dispatch() only tracks it in a
+// plain map — so this polls at the same interval Await falls back to
+// rather than blocking on a channel for that case.
 func (s *Scheduler) WaitForStorageJobs(ctx context.Context) error {
 	for {
 		s.mu.Lock()
 		var done <-chan struct{}
+		dispatching := false
 		for _, rj := range s.running {
 			if IsStorageClass(rj.job.Class) {
 				done = rj.done
 				break
 			}
 		}
-		s.mu.Unlock()
 		if done == nil {
+			for _, q := range s.dispatching {
+				if IsStorageClass(q.job.Class) {
+					dispatching = true
+					break
+				}
+			}
+		}
+		s.mu.Unlock()
+		if done == nil && !dispatching {
 			return nil
+		}
+		if done == nil {
+			select {
+			case <-time.After(awaitPollInterval):
+			case <-ctx.Done():
+				return fmt.Errorf("job: waiting for storage jobs: %w", ctx.Err())
+			}
+			continue
 		}
 		select {
 		case <-done:
@@ -1364,11 +1503,22 @@ func (s *Scheduler) forgetTerminalSnapshot(id string) {
 }
 
 // hasConflictWithRunningLocked reports whether a job of class/resourceIDs
-// conflicts with any currently running job (doc 01 §4). Callers must hold
-// s.mu.
+// conflicts with any currently running job (doc 01 §4), or with a queued
+// ClassTopology job dispatch() has already committed to starting but whose
+// start-time backup is still running outside s.mu (s.dispatching, #408):
+// that job is no longer in s.queue and has not yet been added to
+// s.running, but it is not idle either — mutual exclusion must hold for it
+// exactly as if it were already running, or a second Submit, Resume, or
+// dispatch() pass landing in that window could start something doc 01 §4
+// says must never run alongside it. Callers must hold s.mu.
 func (s *Scheduler) hasConflictWithRunningLocked(class Class, resourceIDs []string) bool {
 	for _, rj := range s.running {
 		if conflicts(class, rj.job.Class, resourceIDs, rj.job.ResourceIDs) {
+			return true
+		}
+	}
+	for _, q := range s.dispatching {
+		if conflicts(class, q.job.Class, resourceIDs, q.job.ResourceIDs) {
 			return true
 		}
 	}
@@ -1396,12 +1546,26 @@ func (s *Scheduler) startJobLocked(j *Job, run RunFunc, cancellable bool) {
 // blocking on) a queued job that still conflicts so an unrelated class
 // isn't held up behind it. In maintenance mode only a data-disk upgrade,
 // the one type it admits, is started (doc 02 §4 E1 Queued).
+//
+// A queued ClassTopology job's turn is decided under s.mu exactly like any
+// other job's, but starting it is not: its start-time pre-topology backup
+// (doc 10 §1, #406, #408), and, if it is cancelled or that backup fails,
+// its type's own AbortFunc (doc 02 §4 invariant 3), all have to run first,
+// and never under this lock — neither a slow backup nor a slow abort may
+// ever hold up an unrelated Submit or Cancel. This function only decides,
+// under s.mu, that such a job is otherwise eligible to start, removes it
+// from s.queue, and records it in s.dispatching so Cancel recognizes it;
+// startQueuedTopologyJob (called below, after this function has released
+// s.mu) is what actually runs that work and starts the job, or records its
+// outcome. doc 01 §4's own conflict rule (Topology excludes every
+// storage-class job globally) means at most one queued topology job is
+// ever deferred to it in a single dispatch() pass.
 func (s *Scheduler) dispatch() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	var remaining []*queuedJob
-	started := make([]*Job, 0, len(s.queue))
+	decided := make([]*Job, 0, len(s.queue))
+	var toStart []*queuedJob
 	for _, q := range s.queue {
 		if s.maintenance && q.job.Type != TypeDiskUpgradeData {
 			remaining = append(remaining, q)
@@ -1413,7 +1577,7 @@ func (s *Scheduler) dispatch() {
 		}
 		conflict := s.hasConflictWithRunningLocked(q.job.Class, q.job.ResourceIDs)
 		if !conflict {
-			for _, sj := range started {
+			for _, sj := range decided {
 				if conflicts(q.job.Class, sj.Class, q.job.ResourceIDs, sj.ResourceIDs) {
 					conflict = true
 					break
@@ -1422,6 +1586,16 @@ func (s *Scheduler) dispatch() {
 		}
 		if conflict {
 			remaining = append(remaining, q)
+			continue
+		}
+
+		if q.job.Class == ClassTopology {
+			if s.dispatching == nil {
+				s.dispatching = make(map[string]*queuedJob)
+			}
+			s.dispatching[q.job.ID] = q
+			toStart = append(toStart, q)
+			decided = append(decided, q.job)
 			continue
 		}
 
@@ -1434,10 +1608,250 @@ func (s *Scheduler) dispatch() {
 			continue
 		}
 		s.startJobLocked(q.job, q.run, q.cancellable)
-		started = append(started, q.job)
+		decided = append(decided, q.job)
 		s.hub.Publish(q.job)
 	}
 	s.queue = remaining
+	s.mu.Unlock()
+
+	for _, q := range toStart {
+		s.startQueuedTopologyJob(q)
+	}
+}
+
+// recordTerminalOutcomeWithRetry persists j's already-decided terminal
+// status — set on j by the caller before calling this — the same way
+// runJob's own final-status write does: up to finalStatusWriteRetries
+// attempts, and a terminal snapshot remembered (rememberTerminalSnapshot)
+// if every attempt still fails, so Await can still resolve j correctly
+// from memory even though the store row is left non-terminal (#408: a
+// queued topology job failed or interrupted by startQueuedTopologyJob has
+// no RunFunc goroutine of its own behind it to retry this write the way
+// runJob's did already). Called without s.mu held.
+func (s *Scheduler) recordTerminalOutcomeWithRetry(j Job) {
+	storeErr := s.store.UpdateStatus(context.Background(), j.ID, j.Status, j.Progress, j.ErrorCode, j.ErrorMessage, j.StartedAt, j.FinishedAt)
+	for attempt := 1; storeErr != nil && attempt < finalStatusWriteRetries; attempt++ {
+		time.Sleep(finalStatusWriteRetryDelay)
+		storeErr = s.store.UpdateStatus(context.Background(), j.ID, j.Status, j.Progress, j.ErrorCode, j.ErrorMessage, j.StartedAt, j.FinishedAt)
+	}
+	if storeErr != nil {
+		log.Printf("job: recording job %s as %s: %v", j.ID, j.Status, storeErr)
+		s.rememberTerminalSnapshot(j)
+	}
+}
+
+// startQueuedTopologyJob runs a queued ClassTopology job's start-time
+// pre-topology backup (doc 10 §1, #406, #408), always called without s.mu
+// held — dispatch() has already removed q from s.queue and recorded it in
+// s.dispatching before calling this, and it stays there — still excluding
+// every other storage-class job exactly as if it were running
+// (hasConflictWithRunningLocked, BlockingStorageJob, WaitForStorageJobs) —
+// until this function records its outcome, below.
+//
+// If Cancel recorded a request for q while the backup ran
+// (queuedJob.cancelRequested, #408), or the backup itself failed, and q's
+// type registered an AbortFunc (TypeDiskUpgradeData's own Unwind), that
+// abort runs next — also outside s.mu, while s.aborting[q.job.ID] is held
+// the same way a plainly queued or interrupted job's own Cancel already
+// holds it around abortAndCancel. doc 02 §4 invariant 3 means cancelled
+// and failed both promise the type's own abort already succeeded, so a
+// type with one never reaches either status without it having run and
+// succeeded first: a failed abort leaves q interrupted instead, with the
+// abort's own error recorded — the same outcome abortAndCancel's own
+// failed-abort branch already records for a plainly queued job — so the
+// upgrade stays pending, reachable by the user's next Cancel or Resume,
+// rather than being reported settled over a checkpoint nothing actually
+// unwound. A type with no AbortFunc skips straight to the outcome its
+// trigger already decided, exactly as before this fix.
+//
+// A cancel request takes precedence over a failed backup when both are
+// true. Cancel could not interrupt the backup itself, but it never has to
+// start what it was asked to cancel. dispatch() runs again immediately
+// after every terminal outcome below (cancelled, failed or interrupted),
+// since a job dispatch() skipped only because it conflicted with q while
+// q's own turn was still being decided deserves its own chance now rather
+// than waiting for some unrelated job to finish and trigger it.
+//
+// A data-disk upgrade resumed at releasing never reaches the cancel or
+// AbortFunc branches above at all: Cancel already refuses it there with
+// ErrDiskUpgradePastRelease (q.cancellable is false), and doc 02 §4
+// invariant 4 makes succeeded the only outcome past that decision — there
+// is nothing for Unwind to undo. So a failed backup for one of these skips
+// the AbortFunc entirely and ends the job interrupted, at its unchanged
+// checkpoint, with the backup's own error: still resumable, never failed,
+// since failed would claim the release already committed over a
+// configuration this backup never actually captured.
+//
+// If the backup succeeds and no cancel was requested, q starts exactly as
+// dispatch() itself already starts any other queued job — unless
+// EnterMaintenance ran while the backup was in flight: it already
+// interrupted every job still in s.queue at that moment, but q had
+// already been removed from it, so q gets the same outcome now instead of
+// starting a Topology job during maintenance mode (the one class it never
+// admits except a data-disk upgrade, which never reaches this branch
+// through a cancel request or a failed backup — TypeDiskUpgradeData is the
+// only ClassTopology type with an AbortFunc, and dispatch() only ever
+// defers one to this path while maintenance mode is already active) or
+// being left stuck queued with nothing left to dispatch it. This branch
+// does not call dispatch() itself: EnterMaintenance already emptied
+// s.queue of everything it could reach.
+func (s *Scheduler) startQueuedTopologyJob(q *queuedJob) {
+	backupErr := s.runTopologyBackup(context.Background())
+
+	s.mu.Lock()
+	cancelRequested := q.cancelRequested
+	s.mu.Unlock()
+	abort, hasAbort := s.registry.lookupAbort(q.job.Type)
+
+	if cancelRequested {
+		if hasAbort {
+			if code, message, ok := s.runQueuedTopologyAbort(q, abort); !ok {
+				s.finishQueuedTopologyJobInterrupted(q, code, message)
+				return
+			}
+		}
+		s.finishQueuedTopologyJobCancelled(q)
+		return
+	}
+
+	if backupErr != nil {
+		if !q.cancellable && q.job.Type == TypeDiskUpgradeData {
+			s.finishQueuedTopologyJobInterrupted(q, "pre_topology_backup_failed", backupErr.Error())
+			return
+		}
+		if hasAbort {
+			if code, message, ok := s.runQueuedTopologyAbort(q, abort); !ok {
+				s.finishQueuedTopologyJobInterrupted(q, code, message)
+				return
+			}
+		}
+		s.finishQueuedTopologyJobFailed(q, backupErr)
+		return
+	}
+
+	s.mu.Lock()
+	delete(s.dispatching, q.job.ID)
+
+	if s.maintenance && q.job.Type != TypeDiskUpgradeData {
+		now := time.Now().UTC()
+		q.job.Status = StatusInterrupted
+		q.job.FinishedAt = &now
+		snapshot := *q.job
+		s.mu.Unlock()
+
+		s.recordTerminalOutcomeWithRetry(snapshot)
+		s.hub.Publish(&snapshot)
+		return
+	}
+
+	now := time.Now().UTC()
+	if err := s.store.UpdateStatus(context.Background(), q.job.ID, StatusRunning, q.job.Progress, "", "", &now, nil); err != nil {
+		log.Printf("job: starting queued job %s after its pre-topology backup: %v", q.job.ID, err)
+		s.queue = append(s.queue, q)
+		s.mu.Unlock()
+		return
+	}
+	q.job.Status = StatusRunning
+	q.job.StartedAt = &now
+	s.startJobLocked(q.job, q.run, q.cancellable)
+	s.mu.Unlock()
+	s.hub.Publish(q.job)
+}
+
+// runQueuedTopologyAbort runs abort for a dispatching queued topology job
+// whose cancel request or failed start-time backup means its type's own
+// cleanup must run before any terminal outcome is recorded (doc 02 §4
+// invariant 3), holding s.aborting[q.job.ID] the whole time — the same
+// guard a plainly queued or interrupted job's own Cancel already holds
+// around abortAndCancel — so no Resume or second Cancel of the same id can
+// run while it is in flight; both already refuse outright with
+// ErrJobAbortInProgress while their own such check finds this held. On
+// success it reports ok true. On failure it reports the error code and
+// message abortAndCancel itself would record — an *OutcomeError's Code, or
+// job_abort_failed — and ok false, for the caller to record the job
+// interrupted with instead of the outcome it was about to record.
+func (s *Scheduler) runQueuedTopologyAbort(q *queuedJob, abort AbortFunc) (code, message string, ok bool) {
+	s.mu.Lock()
+	s.aborting[q.job.ID] = true
+	s.mu.Unlock()
+	defer s.releaseAbort(q.job.ID)
+
+	if err := abort(context.Background(), q.job.ID, q.job.Params); err != nil {
+		code = "job_abort_failed"
+		var oe *OutcomeError
+		if errors.As(err, &oe) && oe.Code != "" {
+			code = oe.Code
+		}
+		return code, err.Error(), false
+	}
+	return "", "", true
+}
+
+// finishQueuedTopologyJobCancelled records q cancelled and removes it from
+// s.dispatching — reached only once its type's AbortFunc, if any, has
+// already succeeded (doc 02 §4 invariant 3).
+func (s *Scheduler) finishQueuedTopologyJobCancelled(q *queuedJob) {
+	now := time.Now().UTC()
+	s.mu.Lock()
+	delete(s.dispatching, q.job.ID)
+	q.job.Status = StatusCancelled
+	q.job.ErrorCode = ""
+	q.job.ErrorMessage = ""
+	q.job.FinishedAt = &now
+	snapshot := *q.job
+	s.mu.Unlock()
+
+	s.recordTerminalOutcomeWithRetry(snapshot)
+	s.hub.Publish(&snapshot)
+	s.dispatch()
+}
+
+// finishQueuedTopologyJobFailed records q failed with backupErr and
+// removes it from s.dispatching — reached only once its type's AbortFunc,
+// if any, has already succeeded (doc 02 §4 invariant 3).
+func (s *Scheduler) finishQueuedTopologyJobFailed(q *queuedJob, backupErr error) {
+	now := time.Now().UTC()
+	s.mu.Lock()
+	delete(s.dispatching, q.job.ID)
+	q.job.Status = StatusFailed
+	q.job.ErrorCode = "pre_topology_backup_failed"
+	q.job.ErrorMessage = backupErr.Error()
+	q.job.FinishedAt = &now
+	snapshot := *q.job
+	s.mu.Unlock()
+
+	s.recordTerminalOutcomeWithRetry(snapshot)
+	s.hub.Publish(&snapshot)
+	s.dispatch()
+}
+
+// finishQueuedTopologyJobInterrupted records q interrupted with code/
+// message and removes it from s.dispatching. Called either with its own
+// type's AbortFunc having just failed — neither cancelled nor failed would
+// be true then (doc 02 §4 invariant 3): nothing confirms the type's own
+// cleanup, Unwind for a data-disk upgrade, actually succeeded, so the job
+// stays pending instead, reachable by the user's next Cancel or Resume,
+// exactly as abortAndCancel's own failed-abort branch already leaves a
+// plainly queued or interrupted job — or with a data-disk upgrade's own
+// start-time backup having failed past its release decision, where no
+// AbortFunc ever runs at all (doc 02 §4 invariant 4: nothing for Unwind to
+// undo once the release has committed) and q's checkpoint is left exactly
+// as it was, so the same resume completes the release once the backup
+// destination is fixed.
+func (s *Scheduler) finishQueuedTopologyJobInterrupted(q *queuedJob, code, message string) {
+	now := time.Now().UTC()
+	s.mu.Lock()
+	delete(s.dispatching, q.job.ID)
+	q.job.Status = StatusInterrupted
+	q.job.ErrorCode = code
+	q.job.ErrorMessage = message
+	q.job.FinishedAt = &now
+	snapshot := *q.job
+	s.mu.Unlock()
+
+	s.recordTerminalOutcomeWithRetry(snapshot)
+	s.hub.Publish(&snapshot)
+	s.dispatch()
 }
 
 // isCancellationDerived reports whether err is itself a RunFunc's own
