@@ -1,24 +1,12 @@
 import type { ReactNode } from "react";
 
 import { CopyValue } from "@/components/patterns/copy-value";
-import { StatusBadge, type StatusTone } from "@/components/patterns/status-badge";
+import { doctorStatusTone } from "@/components/patterns/doctor-checks";
+import { StatusBadge } from "@/components/patterns/status-badge";
 import { Frame, FramePanel } from "@/components/ui/frame";
 import type { components } from "@/lib/api/client";
 
 type DoctorCheck = components["schemas"]["DoctorCheck"];
-
-function doctorStatusTone(status: DoctorCheck["status"]): StatusTone {
-  switch (status) {
-    case "pass":
-      return "success";
-    case "warn":
-      return "warning";
-    case "fail":
-      return "error";
-    default:
-      return "outline";
-  }
-}
 
 export function StackedChecks({
   checks,

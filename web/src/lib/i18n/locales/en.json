@@ -727,6 +727,8 @@
       "fstab": "fstab mounts",
       "dockerContainers": "Docker containers",
       "dockerImages": "Docker images",
+      "dockerVolumes": "Docker volumes",
+      "dockerVolumesInfo": "Docker's storage stays at /var/lib/docker because named volumes are in use. There is nothing to import or leave unmanaged here.",
       "noneFound": "None detected on this host.",
       "import": "Import into Hoserva",
       "leaveUnmanaged": "Leave unmanaged"

@@ -14,8 +14,9 @@ import { CopyValue } from "@/components/patterns/copy-value";
 import { Banner } from "@/components/patterns/banner";
 import { ChoiceCards } from "@/components/patterns/choice-cards";
 import { SecretInput } from "@/components/patterns/secret-input";
-import { doctorBlocksProgress } from "@/components/patterns/doctor-checks";
+import { doctorBlocksProgress, doctorStatusTone } from "@/components/patterns/doctor-checks";
 import { StackedChecks } from "@/components/patterns/stacked-checks";
+import { StatusBadge } from "@/components/patterns/status-badge";
 import { TimezoneSelect } from "@/components/patterns/timezone";
 import { TotpInput } from "@/components/patterns/totp";
 import { Wizard } from "@/components/patterns/wizard";
@@ -69,6 +70,11 @@ const Q76_CATEGORIES = [
   { id: "host_docker_containers", labelKey: "welcome.q76.dockerContainers" },
   { id: "host_docker_images", labelKey: "welcome.q76.dockerImages" },
 ] as const;
+
+// Informational only: it has no host file to import or leave unmanaged, so
+// it is never part of Q76_CATEGORIES and never enters the submitted
+// host-config choices (#413, #415).
+const Q76_DOCKER_VOLUMES_ID = "host_docker_volumes";
 
 const CHANNEL_ICONS: Record<NotificationChannelType, typeof Mail> = {
   discord: MessageSquare,
@@ -177,6 +183,10 @@ export function WelcomePage(): React.ReactElement {
         ...category,
         check: doctorChecks ? findQ76Check(doctorChecks, category.id) : undefined,
       })),
+    [doctorChecks],
+  );
+  const dockerVolumesCheck = useMemo(
+    () => (doctorChecks ? findQ76Check(doctorChecks, Q76_DOCKER_VOLUMES_ID) : undefined),
     [doctorChecks],
   );
 
@@ -490,6 +500,24 @@ export function WelcomePage(): React.ReactElement {
                     ) : null}
                   </Card>
                 ))}
+                {dockerVolumesCheck ? (
+                  <Card>
+                    <CardHeader>
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <CardTitle>{t("welcome.q76.dockerVolumes")}</CardTitle>
+                        <StatusBadge tone={doctorStatusTone(dockerVolumesCheck.status)}>
+                          {dockerVolumesCheck.status}
+                        </StatusBadge>
+                      </div>
+                      <CardDescription>{dockerVolumesCheck.message}</CardDescription>
+                    </CardHeader>
+                    <CardPanel>
+                      <p className="text-muted-foreground text-sm">
+                        {t("welcome.q76.dockerVolumesInfo")}
+                      </p>
+                    </CardPanel>
+                  </Card>
+                ) : null}
               </div>
             </>
           ) : null}
