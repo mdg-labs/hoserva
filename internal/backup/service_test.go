@@ -153,6 +153,402 @@ func TestService_RunCreatesVerifiedArchive(t *testing.T) {
 	}
 }
 
+// TestService_RunSkipsUnmountedPoolDestinationAndWritesBoot reproduces
+// #409's data-loss scenario: with the array stopped, CatchAllPath is a
+// bare, empty directory on the root filesystem — before this fix,
+// writeArchive had no mount check at all, so RunReason would create the
+// pool destination's directory right there and write the archive into it,
+// reporting success, and that archive would be hidden the moment the pool
+// mounted back over it. With PoolMounted reporting the pool unmounted, the
+// pool destination must receive nothing at all, while the boot destination
+// — unaffected by the array's own mount state — is written normally.
+func TestService_RunSkipsUnmountedPoolDestinationAndWritesBoot(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+
+	poolRoot := filepath.Join(root, "mnt", "user")
+	poolDest := filepath.Join(poolRoot, "hoserva-backups")
+	bootDest := filepath.Join(root, "boot-backups")
+
+	now := time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
+	svc := &Service{
+		DB:    db,
+		Paths: paths,
+		Secrets: &FakeSecretSource{
+			Passphrase: "backup-pass",
+			HasPass:    true,
+		},
+		Cipher: FakeSecretCipher{},
+		Destinations: []Destination{
+			{ID: "boot", Path: bootDest, Enabled: true, Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6}},
+			{ID: "pool", Path: poolDest, Enabled: true, Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6}},
+		},
+		Hostname:    "test-host",
+		Version:     "0.0.0-test",
+		Now:         func() time.Time { return now },
+		PoolRoot:    poolRoot,
+		PoolMounted: func(string) (bool, error) { return false, nil },
+	}
+
+	if err := svc.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	name := archiveName(now, ReasonNone, 0)
+	if _, err := os.Stat(filepath.Join(bootDest, name)); err != nil {
+		t.Fatalf("boot archive missing: %v", err)
+	}
+	if _, err := os.Stat(poolDest); !os.IsNotExist(err) {
+		t.Fatalf("pool destination %q must not exist — the pool was reported unmounted (#409): stat error = %v", poolDest, err)
+	}
+	if _, err := os.Stat(poolRoot); !os.IsNotExist(err) {
+		t.Fatalf("pool root %q must not have been created on the root filesystem while unmounted (#409): stat error = %v", poolRoot, err)
+	}
+}
+
+// TestService_RunWritesPoolDestinationWhenMounted proves the mount check
+// added for #409 does not disturb the ordinary case: with PoolMounted
+// reporting the pool mounted, a destination under it is written exactly as
+// before.
+func TestService_RunWritesPoolDestinationWhenMounted(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+
+	poolRoot := filepath.Join(root, "mnt", "user")
+	poolDest := filepath.Join(poolRoot, "hoserva-backups")
+
+	now := time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
+	svc := &Service{
+		DB:    db,
+		Paths: paths,
+		Secrets: &FakeSecretSource{
+			Passphrase: "backup-pass",
+			HasPass:    true,
+		},
+		Cipher: FakeSecretCipher{},
+		Destinations: []Destination{
+			{ID: "pool", Path: poolDest, Enabled: true, Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6}},
+		},
+		Hostname:    "test-host",
+		Version:     "0.0.0-test",
+		Now:         func() time.Time { return now },
+		PoolRoot:    poolRoot,
+		PoolMounted: func(string) (bool, error) { return true, nil },
+	}
+
+	if err := svc.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	name := archiveName(now, ReasonNone, 0)
+	if _, err := os.Stat(filepath.Join(poolDest, name)); err != nil {
+		t.Fatalf("pool archive missing despite the pool being reported mounted: %v", err)
+	}
+}
+
+// TestService_RunReasonFailsWhenEveryDestinationIsUnavailable is #409's
+// second acceptance criterion: with its only destination under an
+// unmounted pool, RunReason must fail rather than report success over an
+// archive written nowhere — a pre-topology backup with only this
+// destination configured must refuse the topology job it guards rather
+// than let it proceed with no snapshot actually taken.
+func TestService_RunReasonFailsWhenEveryDestinationIsUnavailable(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+
+	poolRoot := filepath.Join(root, "mnt", "user")
+	poolDest := filepath.Join(poolRoot, "hoserva-backups")
+
+	svc := &Service{
+		DB:    db,
+		Paths: paths,
+		Secrets: &FakeSecretSource{
+			Passphrase: "backup-pass",
+			HasPass:    true,
+		},
+		Cipher: FakeSecretCipher{},
+		Destinations: []Destination{
+			{ID: "pool", Path: poolDest, Enabled: true, Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6}},
+		},
+		Hostname:    "test-host",
+		Version:     "0.0.0-test",
+		Now:         func() time.Time { return time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC) },
+		PoolRoot:    poolRoot,
+		PoolMounted: func(string) (bool, error) { return false, nil },
+	}
+
+	if err := svc.RunReason(ctx, ReasonPreTopology); err == nil {
+		t.Fatal("expected RunReason to fail when its only destination is unavailable")
+	}
+	if _, err := os.Stat(poolDest); !os.IsNotExist(err) {
+		t.Fatalf("pool destination %q must not exist: stat error = %v", poolDest, err)
+	}
+}
+
+// TestService_RunTreatsUnconfirmableMountStateAsUnavailable proves a
+// PoolMounted error — pool.IsMountedConfirmed's own tri-state case, a dead
+// FUSE endpoint whose mount point cannot be confirmed live or gone — is
+// treated as "not safe to write", never as "mounted": the destination is
+// skipped exactly like a confirmed-unmounted one, not written to on the
+// strength of an error that could not confirm either state.
+func TestService_RunTreatsUnconfirmableMountStateAsUnavailable(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+
+	poolRoot := filepath.Join(root, "mnt", "user")
+	poolDest := filepath.Join(poolRoot, "hoserva-backups")
+
+	svc := &Service{
+		DB:    db,
+		Paths: paths,
+		Secrets: &FakeSecretSource{
+			Passphrase: "backup-pass",
+			HasPass:    true,
+		},
+		Cipher: FakeSecretCipher{},
+		Destinations: []Destination{
+			{ID: "pool", Path: poolDest, Enabled: true, Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6}},
+		},
+		Hostname: "test-host",
+		Version:  "0.0.0-test",
+		Now:      func() time.Time { return time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC) },
+		PoolRoot: poolRoot,
+		PoolMounted: func(string) (bool, error) {
+			return false, fmt.Errorf("stat /mnt/user: transport endpoint is not connected")
+		},
+	}
+
+	if err := svc.Run(ctx); err == nil {
+		t.Fatal("expected Run to fail when the pool's mount state cannot be confirmed and no other destination is configured")
+	}
+	if _, err := os.Stat(poolDest); !os.IsNotExist(err) {
+		t.Fatalf("pool destination %q must not exist when its mount state could not be confirmed: stat error = %v", poolDest, err)
+	}
+}
+
+// TestUnderPoolRoot proves the comparison is by path component, not string
+// prefix (#409): "/mnt/username" shares "/mnt/user" as a string prefix but
+// is a sibling directory, never a destination actually under the pool.
+func TestUnderPoolRoot(t *testing.T) {
+	cases := []struct {
+		path string
+		root string
+		want bool
+	}{
+		{"/mnt/user", "/mnt/user", true},
+		{"/mnt/user/hoserva-backups", "/mnt/user", true},
+		{"/mnt/user/", "/mnt/user", true},
+		{"/mnt/username", "/mnt/user", false},
+		{"/mnt/username/hoserva-backups", "/mnt/user", false},
+		{"/var/lib/hoserva/backups", "/mnt/user", false},
+	}
+	for _, tc := range cases {
+		if got := underPoolRoot(tc.path, tc.root); got != tc.want {
+			t.Errorf("underPoolRoot(%q, %q) = %v, want %v", tc.path, tc.root, got, tc.want)
+		}
+	}
+}
+
+// TestService_RunReasonSkipsPoolDestinationOnceGateIsClosed is #409's own
+// proof that PoolWriteGate, not just the mount check, guards every
+// RunReason caller — pre-import, pre-update and pre-topology alike, all of
+// which call RunReason directly rather than through job.Scheduler. With
+// Close already called (as job.ArraySequence.Stop calls it before it
+// unmounts the pool) a write refused here never races that unmount: the
+// pool destination is skipped and recorded exactly like an unmounted pool,
+// while the boot destination — a separate failure domain — is written.
+func TestService_RunReasonSkipsPoolDestinationOnceGateIsClosed(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+
+	poolRoot := filepath.Join(root, "mnt", "user")
+	poolDest := filepath.Join(poolRoot, "hoserva-backups")
+	bootDest := filepath.Join(root, "boot-backups")
+
+	gate := &PoolWriteGate{}
+	if err := gate.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	now := time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
+	svc := &Service{
+		DB:    db,
+		Paths: paths,
+		Secrets: &FakeSecretSource{
+			Passphrase: "backup-pass",
+			HasPass:    true,
+		},
+		Cipher: FakeSecretCipher{},
+		Destinations: []Destination{
+			{ID: "boot", Path: bootDest, Enabled: true, Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6}},
+			{ID: "pool", Path: poolDest, Enabled: true, Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6}},
+		},
+		Hostname: "test-host",
+		Version:  "0.0.0-test",
+		Now:      func() time.Time { return now },
+		PoolRoot: poolRoot,
+		// A gate that refuses admission must never even reach the mount
+		// check — a mounted pool would otherwise still be written to.
+		PoolMounted:   func(string) (bool, error) { return true, nil },
+		PoolWriteGate: gate,
+	}
+
+	if err := svc.RunReason(ctx, ReasonPreImport); err != nil {
+		t.Fatalf("RunReason: %v", err)
+	}
+
+	name := archiveName(now, ReasonPreImport, 0)
+	if _, err := os.Stat(filepath.Join(bootDest, name)); err != nil {
+		t.Fatalf("boot archive missing: %v", err)
+	}
+	if _, err := os.Stat(poolDest); !os.IsNotExist(err) {
+		t.Fatalf("pool destination %q must not exist — PoolWriteGate is closed (#409): stat error = %v", poolDest, err)
+	}
+}
+
+// TestService_RunWritesPoolDestinationAfterGateReopens proves Open, called
+// by job.ArraySequence.Start once the pool is actually mounted again
+// (#409), lets a pool-destination write proceed exactly as it would if no
+// gate were wired at all.
+func TestService_RunWritesPoolDestinationAfterGateReopens(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+
+	poolRoot := filepath.Join(root, "mnt", "user")
+	poolDest := filepath.Join(poolRoot, "hoserva-backups")
+
+	gate := &PoolWriteGate{}
+	if err := gate.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	gate.Open()
+
+	now := time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
+	svc := &Service{
+		DB:    db,
+		Paths: paths,
+		Secrets: &FakeSecretSource{
+			Passphrase: "backup-pass",
+			HasPass:    true,
+		},
+		Cipher: FakeSecretCipher{},
+		Destinations: []Destination{
+			{ID: "pool", Path: poolDest, Enabled: true, Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6}},
+		},
+		Hostname:      "test-host",
+		Version:       "0.0.0-test",
+		Now:           func() time.Time { return now },
+		PoolRoot:      poolRoot,
+		PoolMounted:   func(string) (bool, error) { return true, nil },
+		PoolWriteGate: gate,
+	}
+
+	if err := svc.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	name := archiveName(now, ReasonNone, 0)
+	if _, err := os.Stat(filepath.Join(poolDest, name)); err != nil {
+		t.Fatalf("pool archive missing despite the gate having reopened: %v", err)
+	}
+}
+
+// TestService_PoolWriteGateBlocksCloseUntilAnInFlightWriteFinishes proves
+// backup.Service and job.ArraySequence's own PoolWriteGate integrate the
+// way #409 requires: a write already admitted by begin — here, one
+// deliberately held inside the mount check, standing in for "the mount
+// check has passed and the write itself is under way" — holds Close open
+// until it actually finishes, the same guarantee job.ArraySequence.Stop
+// relies on before it ever unmounts the pool.
+func TestService_PoolWriteGateBlocksCloseUntilAnInFlightWriteFinishes(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	paths, root := testLayout(t)
+
+	poolRoot := filepath.Join(root, "mnt", "user")
+	poolDest := filepath.Join(poolRoot, "hoserva-backups")
+
+	gate := &PoolWriteGate{}
+	mountCheckEntered := make(chan struct{})
+	releaseMountCheck := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseMountCheck) }) }
+	// If an assertion below fails first, this still unblocks Run's own
+	// goroutine instead of leaking it into later tests in this package.
+	defer release()
+
+	svc := &Service{
+		DB:    db,
+		Paths: paths,
+		Secrets: &FakeSecretSource{
+			Passphrase: "backup-pass",
+			HasPass:    true,
+		},
+		Cipher: FakeSecretCipher{},
+		Destinations: []Destination{
+			{ID: "pool", Path: poolDest, Enabled: true, Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6}},
+		},
+		Hostname: "test-host",
+		Version:  "0.0.0-test",
+		Now:      func() time.Time { return time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC) },
+		PoolRoot: poolRoot,
+		PoolMounted: func(string) (bool, error) {
+			close(mountCheckEntered)
+			<-releaseMountCheck
+			return true, nil
+		},
+		PoolWriteGate: gate,
+	}
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- svc.Run(ctx) }()
+
+	// BuildArchive/VerifyArchive run a real passphrase-based key
+	// derivation before the destination loop is ever reached — several
+	// seconds even on this package's own other tests (TestService_
+	// RunCreatesVerifiedArchive and its siblings routinely take 5-14s) —
+	// so this must give Run far longer than an in-memory handshake would
+	// otherwise need.
+	select {
+	case <-mountCheckEntered:
+	case <-time.After(20 * time.Second):
+		t.Fatal("Run never reached the pool mount check")
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- gate.Close(context.Background()) }()
+
+	select {
+	case <-closeDone:
+		t.Fatal("Close returned while Run's own pool-destination write was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	release()
+
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not finish after the mount check unblocked")
+	}
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close did not return after Run finished")
+	}
+}
+
 func TestService_RunEncryptsArchiveForEncryptDestination(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

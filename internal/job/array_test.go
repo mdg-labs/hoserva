@@ -70,6 +70,41 @@ func (f *fakeArrayMount) Unmount(ctx context.Context) error {
 	return f.unmountErr
 }
 
+// fakePoolWriteGate is ArraySequence's PoolWriteGate fake (#409): Close
+// blocks until release is closed, or ctx is done, and — like
+// fakeArrayMount — records into log so a test can assert it ran before any
+// unmount; a nil release makes Close return immediately. entered, when
+// set, is closed the instant Close is called, before it appends to log or
+// blocks on release — a test waiting on it (rather than a fixed sleep)
+// establishes a happens-before edge with that append, so reading log
+// afterward is race-free. Open just records that it ran.
+type fakePoolWriteGate struct {
+	release  chan struct{}
+	entered  chan struct{}
+	closeErr error
+	log      *[]string
+}
+
+func (g *fakePoolWriteGate) Close(ctx context.Context) error {
+	*g.log = append(*g.log, "poolgate:close")
+	if g.entered != nil {
+		close(g.entered)
+	}
+	if g.release == nil {
+		return g.closeErr
+	}
+	select {
+	case <-g.release:
+		return g.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (g *fakePoolWriteGate) Open() {
+	*g.log = append(*g.log, "poolgate:open")
+}
+
 // fakeStorageTarget is ArraySequence's StorageTarget fake (#372): it
 // records when ConfirmReady ran (relative to whatever else writes
 // into the same log) and can be scripted to fail, so a test can assert
@@ -281,6 +316,72 @@ func TestArraySequence_Stop_WaitsForARunningJobToFinishBeforeStoppingServices(t 
 	sliceEqual(t, log, []string{"stop:container"})
 }
 
+// TestArraySequence_Stop_ClosesPoolWriteGateBeforeUnmounting reproduces
+// #409's own data-loss scenario: a config backup's write to the pool
+// destination is not a job and not a share mutation, so before this fix
+// nothing in Stop waited for one that was still writing when the array
+// began stopping — the catch-all could unmount while that write was still
+// under way. PoolWriteGate.Close must run, and be allowed to finish,
+// before any unmount runs.
+func TestArraySequence_Stop_ClosesPoolWriteGateBeforeUnmounting(t *testing.T) {
+	var log []string
+	s := newTestScheduler(t)
+
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	gate := &fakePoolWriteGate{release: release, entered: entered, log: &log}
+	catchAll := &fakeArrayMount{where: "/mnt/user", log: &log}
+	seq := ArraySequence{Scheduler: s, CatchAll: catchAll, PoolWriteGate: gate}
+
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- seq.Stop(context.Background()) }()
+
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("Stop never reached PoolWriteGate.Close")
+	}
+	select {
+	case <-stopDone:
+		t.Fatal("Stop returned while PoolWriteGate.Close was still blocked — it must wait for Close to finish first (#409)")
+	case <-time.After(50 * time.Millisecond):
+	}
+	sliceEqual(t, log, []string{"poolgate:close"})
+
+	close(release)
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not return after PoolWriteGate.Close finished")
+	}
+	sliceEqual(t, log, []string{"poolgate:close", "unmount:/mnt/user"})
+}
+
+// TestArraySequence_Stop_PoolWriteGateRespectsContextDeadline confirms
+// Stop's own wait on PoolWriteGate.Close is bounded by the caller's
+// context too (#409), the same way
+// TestArraySequence_Stop_DrainRespectsContextDeadline already proves for a
+// running job.
+func TestArraySequence_Stop_PoolWriteGateRespectsContextDeadline(t *testing.T) {
+	var log []string
+	s := newTestScheduler(t)
+
+	gate := &fakePoolWriteGate{release: make(chan struct{}), log: &log}
+	seq := ArraySequence{Scheduler: s, PoolWriteGate: gate}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	if err := seq.Stop(ctx); err == nil {
+		t.Fatal("Stop: got nil error, want the context deadline to propagate while PoolWriteGate.Close is still blocked")
+	}
+	if !s.InMaintenance() {
+		t.Fatal("Stop: maintenance mode must stay active when the pool-write-gate close times out")
+	}
+}
+
 // TestArraySequence_Stop_DrainRespectsContextDeadline confirms Stop does
 // not hang forever behind a job that never honors maintenance mode's
 // signal — the caller's ctx still bounds the wait, and maintenance mode
@@ -420,6 +521,46 @@ func TestArraySequence_Start_ReversesStopOrderAndExitsMaintenance(t *testing.T) 
 
 	if s.InMaintenance() {
 		t.Fatal("Start: maintenance mode must be exited once every step succeeds")
+	}
+}
+
+// TestArraySequence_Start_OpensPoolWriteGateOnceCatchAllMounted proves
+// Start re-allows config backup writes to the pool destination only once
+// the pool is actually mounted (#409) — not any earlier, since a write
+// admitted before that could race a catch-all mount that goes on to fail.
+func TestArraySequence_Start_OpensPoolWriteGateOnceCatchAllMounted(t *testing.T) {
+	var log []string
+	s := newTestScheduler(t)
+
+	catchAll := &fakeArrayMount{where: "/mnt/user", log: &log}
+	gate := &fakePoolWriteGate{log: &log}
+	seq := ArraySequence{Scheduler: s, CatchAll: catchAll, PoolWriteGate: gate}
+
+	if err := seq.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	sliceEqual(t, log, []string{"mount:/mnt/user", "poolgate:open"})
+}
+
+// TestArraySequence_Start_CatchAllMountFailureLeavesPoolWriteGateClosed
+// proves Start never opens PoolWriteGate when the catch-all itself never
+// actually mounted (#409): opening it here would re-allow a config backup
+// write against a pool that is not there.
+func TestArraySequence_Start_CatchAllMountFailureLeavesPoolWriteGateClosed(t *testing.T) {
+	var log []string
+	s := newTestScheduler(t)
+
+	catchAll := &fakeArrayMount{where: "/mnt/user", mountErr: errors.New("mergerfs: no such device"), log: &log}
+	gate := &fakePoolWriteGate{log: &log}
+	seq := ArraySequence{Scheduler: s, CatchAll: catchAll, PoolWriteGate: gate}
+
+	if err := seq.Start(context.Background()); err == nil {
+		t.Fatal("Start: got nil error, want the catch-all mount failure to propagate")
+	}
+	for _, m := range log {
+		if m == "poolgate:open" {
+			t.Fatalf("Start opened PoolWriteGate after a failed catch-all mount; full log: %v", log)
+		}
 	}
 }
 
