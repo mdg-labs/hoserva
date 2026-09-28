@@ -84,6 +84,31 @@ func TestApplyDockerDataRoot_RestartsAnAlreadyRunningDocker(t *testing.T) {
 	}
 }
 
+func TestApplyDockerDataRoot_NeverStartsDockerAcrossRepeatedInactiveCalls(t *testing.T) {
+	// A fresh install: Docker hasn't been started yet (hoserva-storage.target's
+	// own drop-in is what starts it the first time, Q69) and ApplyHostConfig
+	// is called more than once — e.g. a replayed or duplicate request — before
+	// that happens. Every call sees daemon.json already at dataRoot (from the
+	// previous call) and Docker inactive: identical, from Active() and
+	// daemon.json content alone, to a prior attempt's Stop having outlived a
+	// failed Start. Only the restart marker tells them apart, and no call
+	// ever issued Stop here, so none of them may start Docker.
+	root := t.TempDir()
+	g := NewGenerator(root)
+	dirs := &FakeDirMaker{}
+
+	for i := 0; i < 2; i++ {
+		restart := &FakeServiceRestarter{}
+		restart.SetActive(false)
+		if err := g.ApplyDockerDataRoot(context.Background(), "/mnt/cache/docker", dirs, restart, 1, time.Now()); err != nil {
+			t.Fatalf("ApplyDockerDataRoot() call %d: %v", i, err)
+		}
+		if restart.Stopped() || restart.Started() {
+			t.Fatalf("call %d: Stop/Start called on a Docker that was never running — must not start ahead of hoserva-storage.target", i)
+		}
+	}
+}
+
 func TestApplyDockerDataRoot_RecoversRestartAfterPriorStopWithoutStart(t *testing.T) {
 	root := t.TempDir()
 	g := NewGenerator(root)

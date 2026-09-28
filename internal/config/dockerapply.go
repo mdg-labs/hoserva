@@ -15,6 +15,20 @@ import (
 // relative to Generator.Root (production: /etc/docker/daemon.json).
 const dockerDaemonConfigPath = "docker/daemon.json"
 
+// dockerRestartPendingPath marks that ApplyDockerDataRoot has issued Stop
+// for this move and does not yet have confirmation that Start succeeded.
+// It exists purely as Hoserva's own bookkeeping — never a host file, never
+// routed through Generator's manifest/Q76 unmanaged-file machinery — so a
+// later call can tell "Docker was stopped by an earlier attempt of this
+// exact move and needs finishing" apart from "Docker simply hasn't been
+// started yet" (e.g. a fresh install, still waiting on
+// hoserva-storage.target's own drop-in to start it for the first time):
+// both look identical from daemon.json content and Docker's current
+// Active() state alone, so neither can be inferred — only this file
+// (written before Stop, removed only once Start is confirmed) tells them
+// apart.
+const dockerRestartPendingPath = "docker/.restart-pending"
+
 // dockerDataRootDirMode is the permission ApplyDockerDataRoot creates the
 // cache-side data-root directory with — root-only, matching Docker's own
 // default ownership of /var/lib/docker.
@@ -90,6 +104,50 @@ type dockerDaemonConfig struct {
 	StorageDriver string `json:"storage-driver"`
 }
 
+// dockerRestartPending reports whether an earlier ApplyDockerDataRoot call
+// issued Stop without a confirmed, matching Start.
+func (g *Generator) dockerRestartPending() (bool, error) {
+	full, _, err := g.resolvePath(dockerRestartPendingPath)
+	if err != nil {
+		return false, err
+	}
+	if _, statErr := os.Stat(full); statErr == nil {
+		return true, nil
+	} else if !os.IsNotExist(statErr) {
+		return false, fmt.Errorf("config: checking docker restart marker: %w", statErr)
+	}
+	return false, nil
+}
+
+// markDockerRestartPending records that Stop is about to be issued, before
+// it runs — so a crash or failure anywhere after this point (including
+// Stop itself never actually reaching Docker) leaves the marker for a
+// later call to resolve, rather than losing track of an in-flight stop.
+func (g *Generator) markDockerRestartPending() error {
+	full, _, err := g.resolvePath(dockerRestartPendingPath)
+	if err != nil {
+		return err
+	}
+	if err := atomicWrite(full, []byte("pending\n"), 0o600, -1, false); err != nil {
+		return fmt.Errorf("config: recording docker restart marker: %w", err)
+	}
+	return nil
+}
+
+// clearDockerRestartPending removes the marker once Start is confirmed (or
+// once it's established Docker was never actually stopped, so there is
+// nothing to finish).
+func (g *Generator) clearDockerRestartPending() error {
+	full, _, err := g.resolvePath(dockerRestartPendingPath)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("config: clearing docker restart marker: %w", err)
+	}
+	return nil
+}
+
 // CanApplyDockerDataRoot reports whether ApplyDockerDataRoot would refuse
 // dataRoot's move with ErrExistingHostFile, without writing anything — so
 // a caller batching several durable writes in one request (ApplyHostConfig:
@@ -117,9 +175,12 @@ func (g *Generator) CanApplyDockerDataRoot(ctx context.Context, dataRoot string)
 // overwrites configuration it did not write. dirs and restart may be nil;
 // dirs defaults to OSDirMaker, and a nil restart only skips the restart
 // step (the config and directory are still written). A retry that finds
-// daemon.json already at dataRoot but Docker inactive treats that as its
-// own earlier Stop having outlived a failed Start, and finishes the
-// restart rather than skipping it as "was never running."
+// dockerRestartPendingPath still marked treats that as its own earlier
+// Stop having outlived a failed Start, and finishes the restart directly —
+// never issuing a second Stop — rather than skipping it as "was never
+// running" (which Docker's live Active() state alone cannot rule out: a
+// fresh install with Docker genuinely not started yet looks identical to
+// that from Active() and daemon.json content both).
 func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, dirs DirMaker, restart ServiceRestarter, revision int, now time.Time) error {
 	if dataRoot == DockerDataRootDefault {
 		return nil
@@ -138,25 +199,6 @@ func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, di
 	if err != nil {
 		return fmt.Errorf("config: encoding docker daemon.json: %w", err)
 	}
-
-	// Read what's on disk before Write replaces it (finding: a retry after
-	// Stop succeeded but Start failed must not silently skip recovering
-	// that). Write is idempotent per path, so an already-identical
-	// daemon.json means an earlier call already applied this exact move —
-	// if Docker is inactive now, that earlier call is what stopped it, and
-	// this one must finish starting it back up rather than treating
-	// "currently inactive" as "was never running."
-	full, _, err := g.resolvePath(dockerDaemonConfigPath)
-	if err != nil {
-		return err
-	}
-	alreadyApplied := false
-	if existing, readErr := os.ReadFile(full); readErr == nil {
-		alreadyApplied = string(existing) == string(body)
-	} else if !os.IsNotExist(readErr) {
-		return fmt.Errorf("config: checking docker daemon.json: %w", readErr)
-	}
-
 	if err := g.Write(ctx, File{Path: dockerDaemonConfigPath, Body: body, RawBody: true}, revision, now); err != nil {
 		return fmt.Errorf("config: writing docker daemon.json: %w", err)
 	}
@@ -164,24 +206,38 @@ func (g *Generator) ApplyDockerDataRoot(ctx context.Context, dataRoot string, di
 	if restart == nil {
 		return nil
 	}
+
+	pending, err := g.dockerRestartPending()
+	if err != nil {
+		return err
+	}
+	if pending {
+		if err := restart.Start(ctx); err != nil {
+			return fmt.Errorf("config: starting docker after its data-root move: %w", err)
+		}
+		return g.clearDockerRestartPending()
+	}
+
 	active, err := restart.Active(ctx)
 	if err != nil {
 		return fmt.Errorf("config: checking whether docker is running: %w", err)
 	}
 	if !active {
-		if !alreadyApplied {
-			return nil
-		}
-		if err := restart.Start(ctx); err != nil {
-			return fmt.Errorf("config: starting docker after its data-root move: %w", err)
-		}
 		return nil
 	}
+	if err := g.markDockerRestartPending(); err != nil {
+		return err
+	}
 	if err := restart.Stop(ctx); err != nil {
+		// Docker was never actually stopped — nothing to finish later.
+		if clearErr := g.clearDockerRestartPending(); clearErr != nil {
+			return fmt.Errorf("config: stopping docker before its data-root move: %w (clearing restart marker: %v)", err, clearErr)
+		}
 		return fmt.Errorf("config: stopping docker before its data-root move: %w", err)
 	}
 	if err := restart.Start(ctx); err != nil {
+		// Marker stays: the next call must finish this, never re-stop.
 		return fmt.Errorf("config: starting docker after its data-root move: %w", err)
 	}
-	return nil
+	return g.clearDockerRestartPending()
 }
