@@ -106,6 +106,21 @@ func newRebalanceTestHandler(t *testing.T) (h *api.Handler, scheduler *job.Sched
 		ArrayReady: func(context.Context) error { return nil },
 	}))
 
+	// Registered last, so t.Cleanup's LIFO order runs this before the
+	// db.Close and t.TempDir() cleanups registered above. StartRebalance
+	// and EvacuateDisk both return as soon as their job is admitted, but
+	// the job keeps running in a goroutine, writing to jobStore (through
+	// db) and to logs' t.TempDir(); without this, that goroutine can
+	// still be writing when either is closed or removed out from under
+	// it (dcb18bf, #397).
+	t.Cleanup(func() {
+		drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := scheduler.Drain(drainCtx); err != nil {
+			t.Errorf("draining jobs before cleanup: %v", err)
+		}
+	})
+
 	h = &api.Handler{
 		Scheduler:       scheduler,
 		Store:           jobStore,

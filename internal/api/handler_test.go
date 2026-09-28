@@ -69,10 +69,14 @@ func blockingRunFunc(started chan<- struct{}, release <-chan struct{}) job.RunFu
 
 // waitForStatus polls until jobID reaches status, so a test doesn't
 // return (and let its Cleanup close the database) before the job
-// goroutine it woke up has finished persisting its own outcome.
+// goroutine it woke up has finished persisting its own outcome. The
+// deadline has to clear the test database's own busy_timeout(5000) (this
+// file's newTestHandler) with real headroom, not race it — a 1s budget
+// could lose to a store write that legitimately retries for up to 5s
+// under load, matching dcb18bf's own 10s Drain budget for the same store.
 func waitForStatus(t *testing.T, store *job.Store, jobID string, status job.Status) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		got, err := store.Get(context.Background(), jobID)
 		if err == nil && got.Status == status {
