@@ -1,20 +1,13 @@
 ---
 name: github-triage
-description: Enrich an existing GitHub issue or draft new ones from a raw report (including seeding a phase as an epic with sub-issues), using `gh` CLI only. Use when the user gives an issue number to clean up/enrich, or a raw bug/feature/spike report to turn into a well-structured issue. Never edits local files — read-only against the repo, all writes go through `gh issue edit`/`gh issue create`/`scripts/issue-status.sh`.
+description: Enrich an existing GitHub issue or draft new ones from a raw report (including seeding a phase as an epic with sub-issues), using `scripts/gh-rest.sh` (repository-scoped REST, never GraphQL) for every GitHub-side effect. Use when the user gives an issue number to clean up/enrich, or a raw bug/feature/spike report to turn into a well-structured issue. Never edits local files — read-only against the repo, all writes go through `scripts/gh-rest.sh issue-edit`/`issue-create`/`add-sub-issue`/`add-blocked-by`/`scripts/issue-status.sh`.
 argument-hint: <issue-number> | <free-form report text>
 allowed-tools:
   - Read
   - Grep
   - Glob
   - AskUserQuestion
-  - Bash(gh issue view *)
-  - Bash(gh issue list *)
-  - Bash(gh issue edit *)
-  - Bash(gh issue create *)
-  - Bash(gh pr view *)
-  - Bash(gh pr list *)
-  - Bash(gh repo view *)
-  - Bash(gh label list *)
+  - Bash(scripts/gh-rest.sh *)
   - Bash(gh api *)
   - Bash(git log *)
   - Bash(git show *)
@@ -30,7 +23,10 @@ allowed-tools:
 
 Turns a rough issue into a well-structured one — either by enriching an
 existing GitHub issue on `mdg-labs/hoserva` or drafting new ones from a raw
-report — using the `gh` CLI for every GitHub-side effect.
+report — using `scripts/gh-rest.sh` (repository-scoped REST, never a
+GraphQL-backed `gh` subcommand for issues, PRs, the repo or labels — the
+environment this skill runs in may be a Claude Code cloud session, whose
+egress proxy refuses GraphQL outright) for every GitHub-side effect.
 
 **Hard constraint: this skill is read-only against the local repository.**
 It never uses `Edit`, `Write`, or `NotebookEdit`, and never runs a `git`
@@ -55,13 +51,13 @@ Look at `$ARGUMENTS` (or the user's message):
 Hoserva is design-first: for most of its early life the design docs *are*
 the codebase. Ground every issue in them.
 
-1. `gh repo view mdg-labs/hoserva --json nameWithOwner,defaultBranchRef` to confirm the target.
+1. `scripts/gh-rest.sh repo-view --jq '{name: .full_name, default_branch}'` to confirm the target.
 2. **Read the design docs the report touches** — `CLAUDE.md`'s documentation map says which. Note the exact sections (`doc 02 §2`) the issue implements or changes.
 3. **Check the decision log and the open questions.**
    - Conflicts with a decision (`D1`–`D20`, doc 00 §5)? Say so in `## Constraints`; the issue does not quietly reopen it. A genuine new reason to reopen one becomes its own `docs` issue.
    - Touches an open question (`Qn`, doc 13)? The issue follows the recommended default and names it. If investigation shows the default is wrong, the issue proposes the change *and* its acceptance criteria include updating the doc 13 entry.
 4. Grep/Read any code, scripts or workflows the report mentions; `git log`/`git blame`/`git show` for recent history on them.
-5. `gh issue list --repo mdg-labs/hoserva --state all --search ...` for related or duplicate issues.
+5. `scripts/gh-rest.sh issue-search "..." --state all` for related or duplicate issues — it pages every issue at that state and matches every whitespace-separated term case-insensitively against title or body, ordered by most recently updated rather than GitHub's relevance ranking (`search/issues` is refused in a cloud session).
 
 Keep this proportional — a typo needs none of it; a vague storage bug needs all of it.
 
@@ -158,8 +154,8 @@ There is no hardware label. Acceptance that seems to need real disks gets an
 agent-runnable lab or VM test instead, with the residual real-hardware risk
 stated (doc 06 §6); nothing is ever routed to the maintainer to test.
 
-`gh label list --repo mdg-labs/hoserva` shows what exists. Never apply a
-`status:*` label directly — see below.
+`scripts/gh-rest.sh label-list --jq '.[].name'` shows what exists. Never
+apply a `status:*` label directly — see below.
 
 ## Issue body shape
 
@@ -178,19 +174,18 @@ issue that depends on another tracked issue — wire the relationship through
 GitHub's native fields. **Never** as body prose ("Part of #N", "Depends on
 #N"): that is a second, driftable copy of a fact GitHub already tracks.
 
-- **Epic → sub-issue:** `gh issue edit <epic> --repo mdg-labs/hoserva --add-sub-issue <n>` (or `--parent <epic>` on the child). Verify with `gh issue view <epic> --json subIssuesSummary`.
-- **Blocking dependency:** `gh issue edit <n> --repo mdg-labs/hoserva --add-blocked-by <dep>`. Verify with `gh issue view <n> --json blockedBy,blocking`.
-- Needs `gh` ≥ 2.100.
+- **Epic → sub-issue:** `scripts/gh-rest.sh add-sub-issue <epic> <n>`. Verify with `scripts/gh-rest.sh sub-issues <epic>`.
+- **Blocking dependency:** `scripts/gh-rest.sh add-blocked-by <n> <dep>`. Verify with `scripts/gh-rest.sh blocked-by <n>` and `scripts/gh-rest.sh blocking <dep>`.
 - The body may *explain* why an ordering exists; it is never the only record that it does.
 - These calls happen **after** every issue in the relationship exists — create first, link second.
 
 ## Mode 1 — Enrich an existing issue
 
-1. `gh issue view <n> --repo mdg-labs/hoserva --json number,title,body,labels,comments,url,state,assignees` and `gh issue view <n> --repo mdg-labs/hoserva --comments`.
+1. `scripts/gh-rest.sh issue-view <n>` and `scripts/gh-rest.sh issue-comments <n>`.
 2. Investigate as above, starting from the body and comments (comments override the body where they disagree).
 3. Rewrite title and body in the shape above. If this is really an epic, or depends on / blocks another issue, decide that now; wire it in 4a.
-4. `gh issue edit <n> --repo mdg-labs/hoserva --title "..." --body-file <tmpfile>`, plus `--add-label`/`--remove-label` for type, area and extras (never `status:*`).
-   - **4a.** Wire any epic/sub-issue or blocking relationship via the native flags, once every issue involved exists.
+4. `scripts/gh-rest.sh issue-edit <n> --title "..." --body-file <tmpfile>`, plus `--add-label`/`--remove-label` for type, area and extras (never `status:*`) and `--milestone <title>` for the epic's milestone (see "Every non-epic issue has a home").
+   - **4a.** Wire any epic/sub-issue relationship with `scripts/gh-rest.sh add-sub-issue`, and any blocking relationship with `scripts/gh-rest.sh add-blocked-by`, once every issue involved exists.
 5. `scripts/issue-status.sh <n> ready` — an enriched issue can be picked up. Skip for a closed issue.
 6. Report the issue URL and a short summary of what was added, including any doc 13 defaults applied or challenged.
 
@@ -200,8 +195,8 @@ GitHub's native fields. **Never** as body prose ("Part of #N", "Depends on
 2. Draft title + body in the shape above. If the report is more than one piece of work, decide the epic/sub-issue split here.
    - **Seeding a phase** ("seed Phase 5"): create the epic first, then each sub-issue with the phase's milestone, then wire parent and blocked-by natively — the same shape as the existing phase epics. The mass-creation guard below applies.
    - **Mass-creation guard:** if this would create more than ~12 issues, state the count and list the titles, and confirm via `AskUserQuestion` before creating anything.
-3. `gh issue create --repo mdg-labs/hoserva --title "..." --body-file <tmpfile> --label ...` — epic first, then each sub-issue, so every number a relationship needs exists.
-4. Wire relationships via the native flags. If a body referenced another issue's number before it existed, patch it in with `gh issue edit --body-file` now — no placeholders left behind.
+3. `scripts/gh-rest.sh issue-create --title "..." --body-file <tmpfile> --label ...` — epic first, then each sub-issue, so every number a relationship needs exists.
+4. Wire relationships with `scripts/gh-rest.sh add-sub-issue`/`add-blocked-by`. If a body referenced another issue's number before it existed, patch it in with `scripts/gh-rest.sh issue-edit <n> --body-file <tmpfile>` now — no placeholders left behind.
 5. `scripts/issue-status.sh <number> ready` for every issue created. The `issue-status` workflow stamps new issues `status:new`; one this skill created was enriched at birth.
 6. Report every new issue's URL.
 
@@ -210,7 +205,7 @@ GitHub's native fields. **Never** as body prose ("Part of #N", "Depends on
 - Original report text is never paraphrased away — it is preserved verbatim in its own section.
 - No local file in this repo is created, modified, or deleted. Temp files go in the scratchpad directory.
 - No git commits, branches, stashes, or pushes.
-- Every GitHub-side write goes through `gh issue edit`, `gh issue create`, or `scripts/issue-status.sh`, always with `--repo mdg-labs/hoserva` where `gh` takes it.
+- Every GitHub-side write goes through `scripts/gh-rest.sh issue-edit`, `issue-create`, `add-sub-issue`, `add-blocked-by`, or `scripts/issue-status.sh` — repository-scoped REST, never a GraphQL-backed `gh` subcommand.
 - **Exactly one `status:*` label per issue, always**, set only by `scripts/issue-status.sh`.
 - **Epic/sub-issue and blocking relationships are native GitHub fields, never body prose.**
 - **Every open question lands on a recommended default**, citing doc 13 where an entry exists.

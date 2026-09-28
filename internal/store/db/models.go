@@ -67,6 +67,14 @@ type AuditLog struct {
 	At     string         `json:"at"`
 }
 
+type BackupRecipient struct {
+	ID              int64  `json:"id"`
+	PublicRecipient string `json:"public_recipient"`
+	WrappedIdentity []byte `json:"wrapped_identity"`
+	CheckValue      []byte `json:"check_value"`
+	CreatedAt       string `json:"created_at"`
+}
+
 type CacheUsageBreakdown struct {
 	ID                int64  `json:"id"`
 	AppdataBytes      int64  `json:"appdata_bytes"`

@@ -1186,7 +1186,7 @@ config_backup_restore() {
   local export_remote="/tmp/hoserva-l3-config-export.tar.zst" export_status
   export_status="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -o $export_remote -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/export" 2>/dev/null)"
   if [[ "$export_status" == "501" ]]; then
-    # internal/api/phase1_handler.go's ExportConfig/ImportConfig 501 with
+    # internal/api/pool_handler.go's ExportConfig/ImportConfig 501 with
     # "not_configured" whenever api.Handler.Backup is nil — and
     # cmd/hoservad/main.go builds a real *backup.Service (backupService,
     # already wired into the nightly maintenance chain and the
@@ -1197,7 +1197,7 @@ config_backup_restore() {
     # (cmd/hoservad/, not scripts/vm/) — this is CONFIG_NOT_YET, not a
     # FAIL, because no test setup on this side of the API can make it
     # succeed; it needs the one-line wiring fix in cmd/hoservad/main.go.
-    CONFIG_REASON="POST /config/export returned 501 not_configured — api.Handler.Backup (internal/api/handler.go) is never assigned in cmd/hoservad/main.go, even though backupService is built there and used by the nightly chain and pre-update backup; exportConfig/importConfig (internal/api/phase1_handler.go) 501 unconditionally until that one wiring line is added"
+    CONFIG_REASON="POST /config/export returned 501 not_configured — api.Handler.Backup (internal/api/handler.go) is never assigned in cmd/hoservad/main.go, even though backupService is built there and used by the nightly chain and pre-update backup; exportConfig/importConfig (internal/api/pool_handler.go) 501 unconditionally until that one wiring line is added"
     CONFIG_NOT_YET=1
     return 1
   fi

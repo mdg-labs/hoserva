@@ -1329,6 +1329,98 @@ func TestStorageTargetSync_Update_ReconcilesAMountpointThatIsNowMounted(t *testi
 	}
 }
 
+// TestStorageTargetSync_Startup_ReconcilesAMountpointWhoseOwnUUIDIsMounted
+// is the positive half of #404: with s.ArrayStore set (seedTestArray's own
+// /mnt/disk1, filesystem UUID uuid-d1), a mountpoint recorded failed still
+// clears once the mount table (findmnt, through the real
+// disk.ConfirmMountedUUID default — never overridden here) confirms that
+// exact filesystem, not merely that something is mounted there.
+func TestStorageTargetSync_Startup_ReconcilesAMountpointWhoseOwnUUIDIsMounted(t *testing.T) {
+	ctx := context.Background()
+	arrayStore, shareStore := newTestArrayAndShareStore(t)
+	seedTestArray(t, ctx, arrayStore)
+
+	s := newTestStorageTargetSync(t)
+	s.ArrayStore = arrayStore
+	s.ShareStore = shareStore
+	s.mountFailedMountpoints = map[string]bool{"/mnt/disk1": true}
+	s.PoolMounted = func(path string) (bool, error) { return path == "/mnt/disk1", nil }
+	runner := s.Runner.(*disk.FakeRunner)
+	runner.Script("findmnt", []string{"-n", "-o", "UUID", "/mnt/disk1"}, []byte("uuid-d1\n"), nil)
+	disk1 := storageTargetTestMount{where: "/mnt/disk1"}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	if err := s.Startup(ctx, seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+
+	if failed := s.MountFailedMountpoints(); len(failed) != 0 {
+		t.Fatalf("MountFailedMountpoints() = %v, want empty — /mnt/disk1 is genuinely mounted with its own filesystem UUID", failed)
+	}
+}
+
+// TestStorageTargetSync_Startup_DoesNotReconcileAMountpointWithADifferentFilesystemMounted
+// is #404's own regression: CodeRabbit's PR 403 nitpick found that
+// reconcileMountFailures used to confirm only that something was mounted
+// at a slot's own mountpoint, never that it was the slot's own disk — so a
+// manual mount or a leftover unit of a different filesystem at the same
+// path cleared the recorded failure and GetPool reported the slot active
+// even though its own disk had never mounted. With s.ArrayStore set
+// (seedTestArray's own /mnt/disk1, filesystem UUID uuid-d1) and the mount
+// table (findmnt, through the real disk.ConfirmMountedUUID default)
+// reporting a different UUID mounted there, the recorded failure must
+// stay in place.
+func TestStorageTargetSync_Startup_DoesNotReconcileAMountpointWithADifferentFilesystemMounted(t *testing.T) {
+	ctx := context.Background()
+	arrayStore, shareStore := newTestArrayAndShareStore(t)
+	seedTestArray(t, ctx, arrayStore)
+
+	s := newTestStorageTargetSync(t)
+	s.ArrayStore = arrayStore
+	s.ShareStore = shareStore
+	s.mountFailedMountpoints = map[string]bool{"/mnt/disk1": true}
+	s.PoolMounted = func(path string) (bool, error) { return path == "/mnt/disk1", nil }
+	runner := s.Runner.(*disk.FakeRunner)
+	runner.Script("findmnt", []string{"-n", "-o", "UUID", "/mnt/disk1"}, []byte("uuid-someone-elses-filesystem\n"), nil)
+	disk1 := storageTargetTestMount{where: "/mnt/disk1"}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	if err := s.Startup(ctx, seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+
+	failed := s.MountFailedMountpoints()
+	if !failed["/mnt/disk1"] {
+		t.Fatalf("MountFailedMountpoints() = %v, want /mnt/disk1 still recorded — the mounted filesystem is not the slot's own (uuid-d1)", failed)
+	}
+}
+
+// TestStorageTargetSync_Update_DoesNotReconcileAMountpointWithADifferentFilesystemMounted
+// is the same #404 regression on the rebuild path updateTransition runs
+// from a live SIGHUP arrival, never only at boot.
+func TestStorageTargetSync_Update_DoesNotReconcileAMountpointWithADifferentFilesystemMounted(t *testing.T) {
+	ctx := context.Background()
+	arrayStore, shareStore := newTestArrayAndShareStore(t)
+	seedTestArray(t, ctx, arrayStore)
+
+	s := newTestStorageTargetSync(t)
+	s.ArrayStore = arrayStore
+	s.ShareStore = shareStore
+	s.mountFailedMountpoints = map[string]bool{"/mnt/disk1": true}
+	s.PoolMounted = func(path string) (bool, error) { return path == "/mnt/disk1", nil }
+	runner := s.Runner.(*disk.FakeRunner)
+	runner.Script("findmnt", []string{"-n", "-o", "UUID", "/mnt/disk1"}, []byte("uuid-someone-elses-filesystem\n"), nil)
+	disk1 := storageTargetTestMount{where: "/mnt/disk1"}
+	seq := &job.ArraySequence{Gate: storageTargetTestGate{ready: true}, Disks: []job.ArrayMount{disk1}}
+
+	s.Update(ctx, seq)
+
+	failed := s.MountFailedMountpoints()
+	if !failed["/mnt/disk1"] {
+		t.Fatalf("MountFailedMountpoints() = %v, want /mnt/disk1 still recorded — the mounted filesystem is not the slot's own (uuid-d1)", failed)
+	}
+}
+
 // TestStorageTargetSync_Update_RecordsAFailedDiskMount is finding 4's own
 // regression: a same-serial disk that arrives while hoservad is already
 // running (the SIGHUP path, never a restart) must still have its own

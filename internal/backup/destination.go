@@ -9,17 +9,27 @@ import (
 	"time"
 )
 
-// archiveNamePattern matches doc 10 §1's archive filenames:
-// hoserva-config-2026-09-14T03-00.tar.zst
-var archiveNamePattern = regexp.MustCompile(`^hoserva-config-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2})\.tar\.zst$`)
+// archiveNamePattern matches doc 10 §1's archive filenames. The timestamp
+// group accepts both the original minute resolution
+// (hoserva-config-2026-09-14T03-00.tar.zst, still on disk from before
+// #401) and the current second resolution
+// (hoserva-config-2026-09-14T03-00-05.tar.zst) that fix added, an optional
+// "-<n>" collision counter (#401), an optional ".<reason>" pre-change
+// marker (#401), and the same name with a trailing ".age" when the archive
+// written to a destination was age-encrypted (Q80).
+var archiveNamePattern = regexp.MustCompile(`^hoserva-config-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}(?:-\d{2})?)(?:-\d+)?(?:\.(pre-import|pre-update|pre-topology))?\.tar\.zst(\.age)?$`)
 
 // Destination is one local backup target (doc 10 §1, Q40). Remote and
 // rclone-backed destinations are issue #60's scope — this issue is local
-// paths only.
+// paths only. Encrypt requests age encryption of the archive written here
+// (Q80): local destinations may opt in; #60's remote destinations set it
+// unconditionally, after ValidateRemoteDestination has already refused
+// one with no backup passphrase configured.
 type Destination struct {
 	ID        string
 	Path      string
 	Enabled   bool
+	Encrypt   bool
 	Retention Retention
 }
 
@@ -34,6 +44,7 @@ type archiveEntry struct {
 	name    string
 	path    string
 	modTime time.Time
+	reason  Reason
 }
 
 // writeArchive copies archivePath into dest.Path under its basename, after
@@ -90,7 +101,11 @@ func writeArchive(dest Destination, archivePath string) error {
 }
 
 // pruneDestination enforces dest's retention on archives it owns — only
-// filenames matching archiveNamePattern are candidates.
+// filenames matching archiveNamePattern are candidates. An encrypted
+// archive's identity sidecar (identitySidecarSuffix) is never itself a
+// candidate — it never matches archiveNamePattern — but is removed
+// alongside its own archive so pruning an old encrypted archive never
+// leaves its sidecar behind as an orphan.
 func pruneDestination(dest Destination, now time.Time, justWritten string) error {
 	entries, err := listArchives(dest.Path)
 	if err != nil {
@@ -100,6 +115,9 @@ func pruneDestination(dest Destination, now time.Time, justWritten string) error
 	for _, e := range entries {
 		if keep[e.name] {
 			continue
+		}
+		if err := os.Remove(e.path + identitySidecarSuffix); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("pruning identity sidecar for %q: %w", e.path, err)
 		}
 		if err := os.Remove(e.path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("pruning archive %q: %w", e.path, err)
@@ -121,7 +139,8 @@ func listArchives(dir string) ([]archiveEntry, error) {
 		if e.IsDir() {
 			continue
 		}
-		if archiveNamePattern.FindStringSubmatch(e.Name()) == nil {
+		m := archiveNamePattern.FindStringSubmatch(e.Name())
+		if m == nil {
 			continue
 		}
 		info, err := e.Info()
@@ -132,6 +151,7 @@ func listArchives(dir string) ([]archiveEntry, error) {
 			name:    e.Name(),
 			path:    filepath.Join(dir, e.Name()),
 			modTime: info.ModTime(),
+			reason:  Reason(m[2]),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -140,10 +160,34 @@ func listArchives(dir string) ([]archiveEntry, error) {
 	return out, nil
 }
 
+// preChangeKeepCount bounds how many pre-change archives (#401) survive
+// per destination on top of the daily/weekly/monthly tiers below — doc 10
+// §1's recommended default, covering a burst of imports or updates on one
+// day without growing retention unbounded.
+const preChangeKeepCount = 5
+
 func retentionKeepers(entries []archiveEntry, ret Retention, now time.Time, justWritten string) map[string]bool {
 	keep := map[string]bool{justWritten: true}
 	if len(entries) == 0 {
 		return keep
+	}
+
+	// entries is sorted newest-first (listArchives), so the first
+	// preChangeKeepCount pre-change archives encountered are the most
+	// recent ones — exactly the ones #401 requires to survive an ordinary
+	// same-day backup's daily-tier pruning. Any pre-change archive beyond
+	// the bound falls back to the same daily/weekly/monthly tiers as an
+	// ordinary archive.
+	preChangeKept := 0
+	for _, e := range entries {
+		if e.reason == ReasonNone {
+			continue
+		}
+		if preChangeKept >= preChangeKeepCount {
+			break
+		}
+		keep[e.name] = true
+		preChangeKept++
 	}
 
 	byDay := map[string]archiveEntry{}

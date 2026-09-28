@@ -39,6 +39,24 @@ type ArrayMount interface {
 	Unmount(ctx context.Context) error
 }
 
+// PoolWriteGate coordinates a config backup's write to the pool
+// destination with the array's own mount lifecycle (#409): a config
+// backup is not a job and not a share mutation, so neither Drain nor
+// DrainShareMutations waits for one that is still writing an archive
+// into the pool destination when maintenance mode takes effect —
+// unmounting first would hide that archive on the root filesystem
+// exactly like an in-flight share mutation would. backup.PoolWriteGate
+// satisfies this without this package importing internal/backup.
+type PoolWriteGate interface {
+	// Close refuses every new pool-destination write from this call
+	// onward and waits for any already in flight to finish, honoring ctx.
+	// stopSequence calls this before it unmounts anything.
+	Close(ctx context.Context) error
+	// Open re-allows pool-destination writes. Start calls this once the
+	// pool is actually mounted.
+	Open()
+}
+
 // ReadinessGate is the boot-time readiness check (doc 02 §1, Q69) Start
 // consults before mounting anything: disk.StorageGate satisfies this
 // shape without this package importing internal/disk.
@@ -248,6 +266,11 @@ type ArraySequence struct {
 	// is every existing caller in this package's own tests and the lab,
 	// which have no such gate to satisfy.
 	StorageTarget StorageTarget
+	// PoolWriteGate, when set, is closed before any unmount below runs
+	// (#409) and opened once CatchAll is mounted again. Nil skips both
+	// calls — every existing caller in this package's own tests predates
+	// the gate and has no config backup to coordinate with.
+	PoolWriteGate PoolWriteGate
 }
 
 // Stop runs doc 02 §4's sequence for a user-requested `array stop`: it
@@ -355,6 +378,18 @@ func (s ArraySequence) stopSequence(ctx context.Context, from int, persist bool)
 	if s.StorageTarget != nil {
 		if err := s.StorageTarget.Close(ctx, persist); err != nil {
 			return fmt.Errorf("job: closing the storage-target gate: %w", err)
+		}
+	}
+	// PoolWriteGate closes here, after Services and the storage-target
+	// gate but before any unmount below (#409): a config backup is not a
+	// job and not a share mutation, so neither Drain nor
+	// DrainShareMutations in stop() waits for one that is still writing
+	// into the pool destination. This runs on every path that reaches an
+	// unmount — stop() itself and rollbackToStopped's own undo of a
+	// failed Start — rather than being duplicated in each of them.
+	if s.PoolWriteGate != nil {
+		if err := s.PoolWriteGate.Close(ctx); err != nil {
+			return fmt.Errorf("job: closing the pool destination to config backups: %w", err)
 		}
 	}
 	for _, m := range s.ShareMounts {
@@ -585,6 +620,16 @@ func (s ArraySequence) Start(ctx context.Context) error {
 	if s.CatchAll != nil {
 		if err := s.CatchAll.Mount(ctx); err != nil {
 			return errors.Join(fmt.Errorf("job: mounting %s: %w", s.CatchAll.Where(), err), s.recloseAfterFailedStart(ctx))
+		}
+		// PoolWriteGate re-opens the moment the pool is actually mounted
+		// (#409), not at the top of Start with StorageTarget: a config
+		// backup that reached the mount check before this point would
+		// still find it unmounted and skip on its own, but re-allowing
+		// writes any earlier would let one begin against a mount that
+		// might yet fail to come up — recloseAfterFailedStart below never
+		// undoes an admitted write, only stopSequence's own Close does.
+		if s.PoolWriteGate != nil {
+			s.PoolWriteGate.Open()
 		}
 	}
 	for _, m := range s.ShareMounts {

@@ -12,12 +12,7 @@ allowed-tools:
   - Bash(git diff *)
   - Bash(git rev-list *)
   - Bash(git rev-parse *)
-  - Bash(gh pr list *)
-  - Bash(gh pr view *)
-  - Bash(gh pr create *)
-  - Bash(gh pr edit *)
-  - Bash(gh issue view *)
-  - Bash(gh repo view *)
+  - Bash(scripts/gh-rest.sh *)
   - Bash(gh run list *)
   - AskUserQuestion
 ---
@@ -53,14 +48,15 @@ checks and is the maintainer's call.
    `dev` is 0 commits ahead, there is nothing to promote. Report that and
    stop.
 4. Check for an existing open promotion PR:
-   `gh pr list --repo mdg-labs/hoserva --base main --head dev --state open --json number,url,title`.
-   If one exists, skip to step 7 and **update** it (`gh pr edit`) instead of
-   creating a duplicate.
+   `scripts/gh-rest.sh pr-list --base main --head dev --state open`.
+   If one exists, skip to step 7 and **update** it
+   (`scripts/gh-rest.sh pr-edit`) instead of creating a duplicate.
 5. Gather the promotion's contents:
    - `git log --oneline origin/main..origin/dev` for the commit list.
    - `git log origin/main..origin/dev --format=%B` to pull every
-     `Fixes #n` trailer, then `gh issue view <n> --json title,labels` for
-     each to get titles and check for `safety-critical`.
+     `Fixes #n` trailer, then `scripts/gh-rest.sh issue-view <n>
+     --jq '{title,labels}'` for each to get titles and check for
+     `safety-critical`.
    - `git diff --stat origin/main...origin/dev` for files/areas touched.
    - Cross-check touched issues/paths against CLAUDE.md's area→paths table
      and its `safety-critical` label — call out any safety-critical content
@@ -89,8 +85,8 @@ checks and is the maintainer's call.
      - `## Changes by area` — bulleted, grouped by CLAUDE.md's area→paths table.
      - `## Safety-critical` — only if applicable; name the issue(s) and what makes them so.
      - `## CI status` — the latest `dev` run's result from step 5.
-7. `gh pr create --repo mdg-labs/hoserva --base main --head dev --title "..." --body-file <tmp>`
-   (or `gh pr edit <n> --title "..." --body-file <tmp>` if updating an
-   existing one).
+7. `scripts/gh-rest.sh pr-create --base main --head dev --title "..." --body-file <tmp>`
+   (or `scripts/gh-rest.sh pr-edit <n> --title "..." --body-file <tmp>` if
+   updating an existing one).
 8. Report the PR URL, the closed-issue list, and the CI status. Stop there
    — no merge, no review request, no further action.

@@ -417,7 +417,7 @@ func (h *Handler) ExportConfig(ctx context.Context) (apiv1.ExportConfigOK, error
 		now = h.Backup.Now().UTC()
 	}
 	if _, err := backup.BuildArchive(ctx, h.Backup.DB, h.Backup.Paths, h.Backup.Secrets, h.Backup.Cipher,
-		h.Backup.Hostname, h.Backup.Version, now, staging); err != nil {
+		h.Backup.Hostname, h.Backup.Version, now, staging, backup.WithRecipient(h.Backup.Recipient)); err != nil {
 		return apiv1.ExportConfigOK{}, err
 	}
 
@@ -545,9 +545,12 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		return fmt.Errorf("reading the archive's active job ids: %w", err)
 	}
 
-	// The same config backup the pre-update chain runs (doc 10 §1) — if
-	// it fails, the import is refused and the live database is untouched.
-	if err := h.Backup.Run(ctx); err != nil {
+	// The same config backup the pre-update chain runs (doc 10 §1),
+	// marked pre-import so retention keeps it even if a later same-day
+	// backup would otherwise take today's daily-tier slot and prune it
+	// (#401) — if it fails, the import is refused and the live database
+	// is untouched.
+	if err := h.Backup.RunReason(ctx, backup.ReasonPreImport); err != nil {
 		return fmt.Errorf("backing up before import: %w", err)
 	}
 

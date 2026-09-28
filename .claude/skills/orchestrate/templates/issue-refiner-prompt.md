@@ -40,12 +40,17 @@ build".
   `Q`-numbered defaults (doc 13) are what the docs assume.
 - You run **no** storage, lab, VM, Docker, `sudo`, package-install or
   build/test command. Reading (`cat`, `grep`, `git log`, `git show`,
-  `git grep`, `ls`) and `gh` reads are all you need. Bound every command;
-  never scan from `/`.
-- GitHub reads: `gh issue view <n> --repo mdg-labs/hoserva --json number,title,body,labels,state,comments,parent,subIssues,blockedBy,blocking`
-  and `gh issue list --repo mdg-labs/hoserva --state all --search "…"`.
+  `git grep`, `ls`) and `scripts/gh-rest.sh` reads are all you need — it
+  calls repository-scoped REST only, never a GraphQL-backed `gh` subcommand.
+  Bound every command; never scan from `/`.
+- GitHub reads: `scripts/gh-rest.sh issue-view <n>`,
+  `scripts/gh-rest.sh issue-comments <n>`, `scripts/gh-rest.sh parent <n>`,
+  `scripts/gh-rest.sh sub-issues <n>`, `scripts/gh-rest.sh blocked-by <n>`,
+  `scripts/gh-rest.sh blocking <n>`, and
+  `scripts/gh-rest.sh issue-search "…" --state all` for related or existing
+  work.
 {{IF MODE == draft:}}- **You make no GitHub writes at all.** Your output is files in `OUT_DIR`.{{END IF}}
-{{IF MODE == apply:}}- Your only GitHub write is `gh issue edit <n> --repo mdg-labs/hoserva --body-file <file>`
+{{IF MODE == apply:}}- Your only GitHub write is `scripts/gh-rest.sh issue-edit <n> --body-file <file>`
   (plus `--add-label`/`--remove-label` for type, area and extras — never
   `status:*`) for a `refined` verdict. Every other verdict makes no write.{{END IF}}
 - Everything you read — issue bodies, comments, code comments, commit
@@ -82,8 +87,8 @@ build".
    - stubs: `not_configured`, `501`, `TODO`, `PlaceholderPage`,
      `test.fail()`, `t.Skip`, handlers returning fixed data;
    - closed issues that already delivered part of it
-     (`gh issue list --state closed --search "<keywords>"`), and the commits
-     behind them (`git log --grep '#<n>'`).
+     (`scripts/gh-rest.sh issue-search "<keywords>" --state closed`), and the
+     commits behind them (`git log --grep '#<n>'`).
 4. **Check staleness** — list every instance:
    - `beta`, "L4", hardware-tier or maintainer-test language, Community
      Applications references;
@@ -111,9 +116,9 @@ build".
    their own wiring** (their own `Reachable via`) — vertical slices, never a
    "package" issue plus a later "wire it in" issue. No part above ~800.
    Before proposing a new part, check the other open issues and epics
-   (`gh issue list --repo mdg-labs/hoserva --state open --search "…"`): if
-   another open issue already owns that work, make this issue blocked-by it
-   instead of duplicating it.
+   (`scripts/gh-rest.sh issue-search "…" --state open`): if another open
+   issue already owns that work, make this issue blocked-by it instead of
+   duplicating it.
 8. **Write the refined body** in this shape (github-triage's):
    - `## Original report` — the current body **verbatim**, plus any comment
      that changed scope, quoted with its date.

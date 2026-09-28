@@ -238,6 +238,12 @@ func run(cfg config) error {
 	settingsStore := api.NewSettingsStore(db)
 	settingsService := api.NewSettingsService(settingsStore, machineKey)
 	scheduleService := api.NewScheduleService(api.NewScheduleStore(db), settingsStore)
+
+	backupRecipientStore := api.NewBackupRecipientStore(db)
+	backupRecipient, err := backup.LoadOrGenerateRecipient(ctx, machineKey, backupRecipientStore, time.Now)
+	if err != nil {
+		return fmt.Errorf("loading onboarding backup recipient: %w", err)
+	}
 	upsStore := api.NewUPSStore(db)
 
 	logsDir := filepath.Join(cfg.stateDir, "jobs")
@@ -325,6 +331,16 @@ func run(cfg config) error {
 	if err != nil {
 		return fmt.Errorf("building array stop/start sequence: %w", err)
 	}
+	// poolWriteGate coordinates a config backup's write to a destination
+	// under the pool's own mount root with the array's own mount lifecycle
+	// (#409): it is arraySeq's own PoolWriteGate below, and backupService's
+	// (assigned once backupService exists, further down) — the same shared
+	// instance, so ArraySequence.Stop's Close and Start's Open actually
+	// gate the writes backupService.RunReason makes. The zero value is
+	// open, matching a Service or ArraySequence that predates this wiring;
+	// the mount check backupService already applies to a pool destination
+	// guards an unmounted pool regardless.
+	poolWriteGate := &backup.PoolWriteGate{}
 	// storageTarget is shared with rebuildArraySequence below (and the
 	// SIGHUP handler installed once it exists) so every later call can
 	// tell an unchanged rebuild from a real readiness or topology
@@ -342,6 +358,7 @@ func run(cfg config) error {
 	}
 	if arraySeq != nil {
 		arraySeq.StorageTarget = storageTarget
+		arraySeq.PoolWriteGate = poolWriteGate
 	}
 	// Startup brings the pool up itself on an ordinary boot (see its own
 	// doc comment), and never issues a systemctl start/restart of a unit
@@ -407,7 +424,12 @@ func run(cfg config) error {
 	if parityEngine != nil {
 		parityReg.register(parityEngine)
 	}
-	backupService := newBackupService(ctx, cfg, db, machineKey, settingsService, linuxDisks.Exec)
+	backupService := newBackupService(ctx, cfg, db, machineKey, backupRecipient, settingsService, linuxDisks.Exec)
+	// The same instance arraySeq's own PoolWriteGate holds above (#409):
+	// ArraySequence.Stop's Close call and Start's Open call actually gate
+	// backupService.RunReason's own write to a destination under the
+	// pool's mount root only if both sides share this one gate.
+	backupService.PoolWriteGate = poolWriteGate
 	acmeStore := acme.NewStore(db)
 	acmeService := &acme.Service{
 		Store:     acmeStore,
@@ -429,6 +451,14 @@ func run(cfg config) error {
 			return append(acmeSecrets, upsSecrets...), nil
 		},
 	}
+	// wireTopologyBackup (#406, #408, doc 10 §1) must run before any of
+	// the registry.Register(job.TypeDiskFormat/DiskAdd/... calls below
+	// could admit a Submit for one of them: both Scheduler.Submit, for one
+	// starting immediately, and Scheduler.dispatch(), for one that waited
+	// its turn in the queue first, read TopologyBackup on every call, so
+	// wiring it any later would leave a window where a disk-topology job
+	// started with no pre-change backup.
+	wireTopologyBackup(scheduler, backupService)
 	updateEngine := newUpdateEngine(ctx, cfg, db, machineKey, settingsService, scheduler, handler.CurrentArray, notifyService, linuxDisks.Exec, backupService)
 	networkSvc := &cfggen.NetworkService{
 		Generator: generator,
@@ -454,7 +484,7 @@ func run(cfg config) error {
 	// (cmd/hoservad/array.go) also re-applies ackHolder to the fresh gate
 	// it builds, so an earlier acknowledgement of a still-missing disk
 	// survives this rebuild instead of being undone by it (#385).
-	rebuildArraySequence := newRebuildArraySequence(scheduler, arrayStore, shareStore, disks, linuxDisks.Exec, storageTarget, handler, ackHolder)
+	rebuildArraySequence := newRebuildArraySequence(scheduler, arrayStore, shareStore, disks, linuxDisks.Exec, storageTarget, poolWriteGate, handler, ackHolder)
 	// installReloadHandler (cmd/hoservad/reload.go) re-runs
 	// rebuildArraySequence on SIGHUP — packaging/debian/hoserva-storage.rules's own
 	// trigger for a disk arriving or leaving while hoservad is already

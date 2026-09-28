@@ -30,7 +30,8 @@ The dispatch prompt (built from
 `.claude/skills/orchestrate/templates/verifier-prompt.md`) is complete and
 self-contained. Follow it exactly, including its seven-layer check list, its
 blocking-versus-notes verdict rule, and — this is not optional — **posting your verdict as an
-issue comment via `gh issue comment` before you hand off**, using the
+issue comment via `scripts/gh-rest.sh issue-comment` (repository-scoped
+REST, never a GraphQL-backed `gh issue comment`) before you hand off**, using the
 `verification-comment.md` template filled in completely, then moving the
 issue's `status:*` label via `scripts/issue-status.sh` (`implemented` on a
 PASS, `in-progress` on a FAIL) and rolling that up with

@@ -40,7 +40,7 @@ func packageVersion(ctx context.Context, runner disk.Runner, name string) string
 	return v
 }
 
-func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, settings *api.SettingsService, runner disk.Runner) *backup.Service {
+func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, recipient *backup.Recipient, settings *api.SettingsService, runner disk.Runner) *backup.Service {
 	configRoot := cfg.configRoot
 	if configRoot == "" {
 		configRoot = "/etc"
@@ -58,9 +58,10 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 				Monthly: backup.DefaultRetentionMonthly,
 			},
 		}},
-		Secrets: &backup.ServiceSecretSource{BackupPassphraseFn: settings.BackupPassphrase},
-		Cipher:  machineKey,
-		Version: packageVersion(ctx, runner, "hoserva"),
+		Secrets:   &backup.ServiceSecretSource{BackupPassphraseFn: settings.BackupPassphrase},
+		Cipher:    machineKey,
+		Recipient: recipient,
+		Version:   packageVersion(ctx, runner, "hoserva"),
 	}
 }
 
@@ -105,6 +106,46 @@ func (u updateShutdownLookup) Stop(ctx context.Context) error {
 	return seq.StopForShutdown(ctx)
 }
 
+// preUpdateBackup adapts *backup.Service to update.ConfigBackup, marking
+// the pre-update archive with backup.ReasonPreUpdate (doc 10 §1, #401) so
+// retention keeps it even if a later same-day backup — another update, or
+// a config import — would otherwise take today's daily-tier slot and prune
+// it. update.Engine's own ConfigBackup field only ever calls Run(ctx)
+// error, so this is the narrowest way to pass the reason through without
+// changing that interface.
+type preUpdateBackup struct {
+	svc *backup.Service
+}
+
+func (p preUpdateBackup) Run(ctx context.Context) error {
+	return p.svc.RunReason(ctx, backup.ReasonPreUpdate)
+}
+
+// preTopologyBackup adapts *backup.Service to job.ConfigBackup, marking the
+// archive with backup.ReasonPreTopology (doc 10 §1, #406) so retention
+// keeps it the same way a pre-update or pre-import archive is kept. It is
+// the type wireTopologyBackup wires into Scheduler.SetTopologyBackup, the
+// one place a disk add/remove/replace/upgrade, format, or pool remount
+// reaches this backup — none of them call backup.Service directly.
+type preTopologyBackup struct {
+	svc *backup.Service
+}
+
+func (p preTopologyBackup) Run(ctx context.Context) error {
+	return p.svc.RunReason(ctx, backup.ReasonPreTopology)
+}
+
+// wireTopologyBackup connects backupService to scheduler through
+// job.Scheduler.SetTopologyBackup, so a ClassTopology job runs the
+// pre-topology backup the moment it actually starts — in Submit for one
+// starting immediately, in dispatch() for one that waited its turn in the
+// queue first (#406, #408). Kept as its own function, following
+// wireBackup's own pattern above, so a test can call exactly what main.go
+// calls rather than a hand copy of the assignment.
+func wireTopologyBackup(scheduler *job.Scheduler, backupService *backup.Service) {
+	scheduler.SetTopologyBackup(preTopologyBackup{svc: backupService})
+}
+
 func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, settings *api.SettingsService, scheduler *job.Scheduler, currentArray func() *job.ArraySequence, notifyService *notify.Service, runner disk.Runner, backupSvc *backup.Service) *update.Engine {
 	exe, err := os.Executable()
 	if err != nil {
@@ -125,7 +166,7 @@ func newUpdateEngine(ctx context.Context, cfg config, db *sql.DB, machineKey *au
 		Host:     update.DebianHost{Runner: runner},
 		Jobs:     scheduler,
 		Shutdown: updateShutdownLookup{currentArray: currentArray},
-		Backup:   backupSvc,
+		Backup:   preUpdateBackup{svc: backupSvc},
 		Notify:   notifyService,
 		Settings: api.NewUpdateSettings(settings),
 	}

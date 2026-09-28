@@ -410,7 +410,7 @@ func errInvalidHostConfig(msg string) error {
 
 // mockHostConfigKinds mirrors internal/config's own KindFromCheckID
 // whitelist (host.go) closely enough for this mock's own fixed check ids
-// (phase1.go's mockDoctorReport): every id RunDoctor ever reports here.
+// (pool.go's mockDoctorReport): every id RunDoctor ever reports here.
 var mockHostConfigKinds = map[string]bool{
 	"host_samba":             true,
 	"host_nfs":               true,

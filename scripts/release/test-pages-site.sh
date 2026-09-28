@@ -170,8 +170,11 @@ write_entry "$work/gh-assets/v0.1.0/release-index-entry.json" "v0.1.0" "0.1.0" "
 cat >"$mock_bin/gh" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-# Fixture gh: only the three invocations fetch-release-index-entries.sh
-# makes. Tag names and paths are argv, never interpolated into sh -c.
+# Fixture gh: only the invocations fetch-release-index-entries.sh makes.
+# Tag names and paths are argv, never interpolated into sh -c. The release
+# list is `gh api repos/.../releases`, paged with `?per_page=100&page=N`
+# (never `--paginate`, issue #410) — page 1 carries every fixture tag, page
+# 2 is empty so the script's paging loop stops after one page.
 cmd="${1:-}"
 sub="${2:-}"
 shift 2 || true
@@ -179,17 +182,27 @@ tag=""
 dir=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo|--limit|--json|--jq|--pattern) shift 2 ;;
-    --exclude-drafts) shift ;;
+    --repo|--json|--jq|--pattern) shift 2 ;;
     --dir) dir="$2"; shift 2 ;;
     --*) shift ;;
     *) tag="$1"; shift ;;
   esac
 done
 assets_root="${HOSERVA_TEST_GH_ASSETS:?}"
-if [ "$cmd" = "release" ] && [ "$sub" = "list" ]; then
-  printf '%s\n' "v0.1.0" "nightly" "v0.2.0-beta.1"
-  exit 0
+if [ "$cmd" = "api" ]; then
+  case "$sub" in
+    */releases\?per_page=100\&page=1)
+      printf '%s\n' \
+        '[{"tag_name":"v0.1.0","draft":false},{"tag_name":"nightly","draft":false},{"tag_name":"v0.2.0-beta.1","draft":false},{"tag_name":"v0.0.0-old","draft":true}]'
+      exit 0
+      ;;
+    */releases\?per_page=100\&page=2)
+      printf '%s\n' '[]'
+      exit 0
+      ;;
+  esac
+  echo "gh mock: unexpected api invocation $sub" >&2
+  exit 1
 fi
 if [ "$cmd" = "release" ] && [ "$sub" = "view" ]; then
   if [ -f "$assets_root/$tag/release-index-entry.json" ]; then

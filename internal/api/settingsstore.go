@@ -3,7 +3,11 @@ package api
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
+	"time"
 
+	"github.com/mdg-labs/hoserva/internal/backup"
 	storedb "github.com/mdg-labs/hoserva/internal/store/db"
 )
 
@@ -90,4 +94,45 @@ func (s *SettingsStore) UpdatePreviousVersion(ctx context.Context, version strin
 		v = sql.NullString{String: version, Valid: true}
 	}
 	return s.q.UpdatePreviousVersion(ctx, v)
+}
+
+// BackupRecipientStore persists the onboarding backup recipient's
+// singleton row (#275, Q80) through the sqlc-generated
+// internal/store/db package. It implements backup.RecipientStore so
+// backup.LoadOrGenerateRecipient reads and writes it the same way
+// AuthStore backs auth.MachineKeyStore for the machine key itself.
+type BackupRecipientStore struct {
+	q *storedb.Queries
+}
+
+// NewBackupRecipientStore wraps db for backup-recipient persistence.
+func NewBackupRecipientStore(db storedb.DBTX) *BackupRecipientStore {
+	return &BackupRecipientStore{q: storedb.New(db)}
+}
+
+var _ backup.RecipientStore = (*BackupRecipientStore)(nil)
+
+// GetRecipient implements backup.RecipientStore.
+func (s *BackupRecipientStore) GetRecipient(ctx context.Context) (string, []byte, []byte, bool, error) {
+	row, err := s.q.GetBackupRecipient(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil, nil, false, nil
+		}
+		return "", nil, nil, false, err
+	}
+	return row.PublicRecipient, row.WrappedIdentity, row.CheckValue, true, nil
+}
+
+// SetRecipient implements backup.RecipientStore.
+func (s *BackupRecipientStore) SetRecipient(ctx context.Context, publicRecipient string, wrappedIdentity, checkValue []byte, createdAt time.Time) error {
+	if err := s.q.SetBackupRecipient(ctx, storedb.SetBackupRecipientParams{
+		PublicRecipient: publicRecipient,
+		WrappedIdentity: wrappedIdentity,
+		CheckValue:      checkValue,
+		CreatedAt:       createdAt.UTC().Format(timeFormat),
+	}); err != nil {
+		return fmt.Errorf("persisting onboarding backup recipient: %w", err)
+	}
+	return nil
 }

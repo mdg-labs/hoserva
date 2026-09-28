@@ -22,9 +22,35 @@ type Paths struct {
 	SnapraidContentPath string
 }
 
+// ArchiveOption configures an optional part of BuildArchive's output.
+// A variadic trailing parameter, rather than growing BuildArchive's fixed
+// argument list, so every existing caller keeps compiling unchanged. Both
+// production callers — Service.Run (the nightly config-backup chain) and
+// internal/api/pool_handler.go's on-demand ExportConfig — pass
+// WithRecipient, so every archive carries identity.age (criterion 3)
+// whether it is written to a destination or downloaded directly.
+type ArchiveOption func(*archiveOptions)
+
+type archiveOptions struct {
+	recipient *Recipient
+}
+
+// WithRecipient attaches the onboarding recipient (Q80) so BuildArchive
+// wraps its private identity into identity.age. Omitted (or recipient
+// nil), an archive simply carries no identity.age — the same
+// "restores everything except this" fallback secrets.age already uses
+// when no passphrase is configured.
+func WithRecipient(recipient *Recipient) ArchiveOption {
+	return func(o *archiveOptions) { o.recipient = recipient }
+}
+
 // BuildArchive assembles doc 10 §1's layout in stagingDir and returns the
 // manifest checksum map. stagingDir must already exist.
-func BuildArchive(ctx context.Context, db *sql.DB, paths Paths, src SecretSource, cipher SecretCipher, host, version string, now time.Time, stagingDir string) (Manifest, error) {
+func BuildArchive(ctx context.Context, db *sql.DB, paths Paths, src SecretSource, cipher SecretCipher, host, version string, now time.Time, stagingDir string, opts ...ArchiveOption) (Manifest, error) {
+	var cfg archiveOptions
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	if err := ctx.Err(); err != nil {
 		return Manifest{}, err
 	}
@@ -49,6 +75,16 @@ func BuildArchive(ctx context.Context, db *sql.DB, paths Paths, src SecretSource
 	if len(secrets) > 0 {
 		if err := os.WriteFile(filepath.Join(stagingDir, "secrets.age"), secrets, 0o600); err != nil {
 			return Manifest{}, fmt.Errorf("writing secrets.age: %w", err)
+		}
+	}
+
+	identity, err := buildIdentityAge(ctx, src, cfg.recipient)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if len(identity) > 0 {
+		if err := os.WriteFile(filepath.Join(stagingDir, "identity.age"), identity, 0o600); err != nil {
+			return Manifest{}, fmt.Errorf("writing identity.age: %w", err)
 		}
 	}
 

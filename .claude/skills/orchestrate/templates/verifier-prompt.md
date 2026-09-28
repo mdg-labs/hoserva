@@ -296,8 +296,10 @@ issue." Never summarize it away.}}
    (every `{{…}}` token; omit each findings section that is empty) into a
    temp file. One comment per issue.
 2. Post it:
-   `gh issue comment {{ISSUE_NUMBER}} --repo mdg-labs/hoserva --body-file <that file>`
-   — `--repo` is required; your workspace's origin is a local path.
+   `{{WORKSPACE_PATH}}/scripts/gh-rest.sh issue-comment {{ISSUE_NUMBER}} --body-file <that file>`
+   — repository-scoped REST, never a GraphQL-backed `gh issue comment`; your
+   workspace's origin is a local path anyway, so `GH_REPO` (default
+   `mdg-labs/hoserva`) is what points it at the real repo.
 3. Move this issue's label:
 
    ```
