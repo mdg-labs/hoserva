@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -402,17 +404,59 @@ func TestArraySequence_Stop_DrainRespectsContextDeadline(t *testing.T) {
 		await(t, s, j.ID)
 	})
 
+	// The deadline must be able to expire only inside Drain: a real
+	// time.WithTimeout would also bound the SQLite write that enters
+	// maintenance mode, and on a loaded runner that write can outlast it.
+	ctx := newTrippableDeadlineContext()
 	seq := ArraySequence{Scheduler: s}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- seq.Stop(ctx) }()
 
-	if err := seq.Stop(ctx); err == nil {
-		t.Fatal("Stop: got nil error, want the context deadline to propagate while the job is still running")
+	waitFor(t, 10*time.Second, s.InMaintenance)
+	ctx.trip()
+
+	var stopErr error
+	select {
+	case stopErr = <-stopDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop did not return after the context deadline expired while the job was still running")
+	}
+	if !errors.Is(stopErr, context.DeadlineExceeded) {
+		t.Fatalf("Stop: got %v, want an error wrapping context.DeadlineExceeded", stopErr)
+	}
+	if !strings.Contains(stopErr.Error(), "waiting for running jobs to stop") {
+		t.Fatalf("Stop: got %v, want the drain wait's own error", stopErr)
 	}
 	if !s.InMaintenance() {
 		t.Fatal("Stop: maintenance mode must stay active when the drain wait times out")
 	}
 }
+
+// trippableDeadlineContext behaves like a context whose deadline passes at
+// a moment the test chooses: Done is open and Err is nil until trip, after
+// which Err reports context.DeadlineExceeded.
+type trippableDeadlineContext struct {
+	context.Context
+	done chan struct{}
+	once sync.Once
+}
+
+func newTrippableDeadlineContext() *trippableDeadlineContext {
+	return &trippableDeadlineContext{Context: context.Background(), done: make(chan struct{})}
+}
+
+func (c *trippableDeadlineContext) Done() <-chan struct{} { return c.done }
+
+func (c *trippableDeadlineContext) Err() error {
+	select {
+	case <-c.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (c *trippableDeadlineContext) trip() { c.once.Do(func() { close(c.done) }) }
 
 func TestArraySequence_Stop_EntersMaintenanceBeforeStoppingAnyService(t *testing.T) {
 	var log []string
