@@ -1639,6 +1639,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/backup/destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List backup destinations
+         * @description Every place a config backup is written, with its last successful backup and whether it is stale (doc 10 §1). Credentials are never returned — `hasSecrets` is the only trace of them (Q28).
+         */
+        get: operations["listBackupDestinations"];
+        put?: never;
+        /**
+         * Add a backup destination
+         * @description A remote destination (`smb`, `s3`, `sftp`, `webdav`, `rclone`) is written through rclone and is always encrypted (Q80). It is refused with 400 `backup_passphrase_required` while no backup passphrase is set, and with 424 `rclone_missing` — whose `message` carries the install command (Q41) — when rclone is not installed. Credentials in `secrets` are sealed under the machine key before they reach the database. Local destinations work without rclone.
+         */
+        post: operations["createBackupDestination"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backup/destinations/{destinationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                destinationId: components["parameters"]["DestinationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a backup destination
+         * @description Removes the destination's configuration. Archives already written to it are left where they are.
+         */
+        delete: operations["deleteBackupDestination"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backup/destinations/{destinationId}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                destinationId: components["parameters"]["DestinationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test a backup destination
+         * @description Writes a small file to the destination, reads it back and deletes it (doc 10 §1: an untested backup destination is decoration). A destination that cannot be reached is a `200` with `success` false and the reason; a missing rclone is a `424` `rclone_missing`.
+         */
+        post: operations["testBackupDestination"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/doctor": {
         parameters: {
             query?: never;
@@ -3724,6 +3792,69 @@ export interface components {
             /** @description The raw bearer value — shown once, on creation, and never retrievable again (doc 01 §7). */
             token: string;
         };
+        /**
+         * @description `local` is a directory — the boot device, the pool, or an external disk's mount (Q72). Every other type is written through rclone: `smb`, `s3` (any S3-compatible store), `sftp`, `webdav`, or `rclone` for a remote already set up in rclone's own config. An NFS share is a local destination at the path the host has mounted it.
+         * @enum {string}
+         */
+        BackupDestinationType: "local" | "smb" | "s3" | "sftp" | "webdav" | "rclone";
+        BackupRetention: {
+            /** Format: int32 */
+            daily: number;
+            /** Format: int32 */
+            weekly: number;
+            /** Format: int32 */
+            monthly: number;
+        };
+        BackupDestination: {
+            id: string;
+            name: string;
+            type: components["schemas"]["BackupDestinationType"];
+            /** @description The directory for a local destination; for a remote one, the path within it (bucket and prefix, share and folder). */
+            path: string;
+            /** @description The non-secret rclone settings of a remote destination. */
+            options?: {
+                [key: string]: string;
+            };
+            enabled: boolean;
+            /** @description Always true for a remote destination (Q80). */
+            encrypt: boolean;
+            retention: components["schemas"]["BackupRetention"];
+            /** @description Whether credentials are stored for this destination. */
+            hasSecrets: boolean;
+            /**
+             * Format: date-time
+             * @description Absent until a backup has been written here.
+             */
+            lastSuccessfulBackupAt?: string;
+            /** @description An enabled destination that has gone two days without a successful backup, counted from its creation until its first. */
+            stale: boolean;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        CreateBackupDestinationRequest: {
+            name: string;
+            type: components["schemas"]["BackupDestinationType"];
+            /** @description An absolute directory for `local`. For a remote type, the path within it: `smb` needs the share name first, `s3` the bucket. */
+            path: string;
+            /** @description rclone's own option names. `smb`: `host`, `user`, `port`, `domain`. `s3`: `access_key_id`, `provider`, `endpoint`, `region`. `sftp`: `host`, `user`, `port`, `key_file`, `known_hosts_file` (without it rclone does not verify the host key). `webdav`: `url`, `user`, `vendor`. `rclone`: `remote`, the name of a configured rclone remote. Any other key is refused. */
+            options?: {
+                [key: string]: string;
+            };
+            /** @description `smb`, `webdav` and `sftp`: `pass`. `s3`: `secret_access_key`. Write-only. */
+            secrets?: {
+                [key: string]: string;
+            };
+            /** @description Defaults to true. */
+            enabled?: boolean;
+            /** @description Opt-in for a local destination. A remote destination is always encrypted; sending false is refused. */
+            encrypt?: boolean;
+            retention?: components["schemas"]["BackupRetention"];
+        };
+        BackupDestinationTestResult: {
+            success: boolean;
+            /** @description Why the test failed, present only when success is false. */
+            error?: string | null;
+        };
     };
     responses: {
         /** @description An error response (doc 01 §5). */
@@ -3739,6 +3870,7 @@ export interface components {
     parameters: {
         JobId: string;
         ChannelId: string;
+        DestinationId: string;
         EventType: components["schemas"]["NotificationEventType"];
         Username: string;
         UserId: string;
@@ -5944,6 +6076,98 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listBackupDestinations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every destination. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        destinations: components["schemas"]["BackupDestination"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createBackupDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBackupDestinationRequest"];
+            };
+        };
+        responses: {
+            /** @description The new destination. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupDestination"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteBackupDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                destinationId: components["parameters"]["DestinationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    testBackupDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                destinationId: components["parameters"]["DestinationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether the write, read-back and delete all worked. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupDestinationTestResult"];
+                };
             };
             default: components["responses"]["Error"];
         };

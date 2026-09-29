@@ -2,6 +2,20 @@ package backup
 
 import "path/filepath"
 
+// DefaultBootID and DefaultPoolID are the ids of Q40's two seeded
+// destinations.
+const (
+	DefaultBootID = "boot"
+	DefaultPoolID = "pool"
+)
+
+// isDefaultDestination reports whether d is one of the seeded defaults —
+// local directories on this installation's own boot device and pool that
+// no earlier release wrote to from anywhere else.
+func isDefaultDestination(d Destination) bool {
+	return !d.isRemote() && (d.ID == DefaultBootID || d.ID == DefaultPoolID)
+}
+
 // DefaultBootDestination is Q40's boot-device backup path.
 const DefaultBootDestination = "/var/lib/hoserva/backups"
 
@@ -26,7 +40,9 @@ const ArchiveVersion = 1
 func DefaultDestinations() []Destination {
 	return []Destination{
 		{
-			ID:      "boot",
+			ID:      DefaultBootID,
+			Name:    "Boot device",
+			Type:    TypeLocal,
 			Path:    DefaultBootDestination,
 			Enabled: true,
 			Retention: Retention{
@@ -36,7 +52,9 @@ func DefaultDestinations() []Destination {
 			},
 		},
 		{
-			ID:      "pool",
+			ID:      DefaultPoolID,
+			Name:    "Pool",
+			Type:    TypeLocal,
 			Path:    DefaultPoolDestination,
 			Enabled: true,
 			Retention: Retention{

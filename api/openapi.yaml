@@ -54,6 +54,11 @@ tags:
       never continuous.
   - name: config
     description: Config archive export and import (doc 10 §1).
+  - name: backup
+    description: >-
+      Where config backups are written (doc 10 §1) — local paths, an
+      external disk, and remote destinations through rclone — and whether
+      each one is reachable.
   - name: doctor
     description: Prerequisite and sanity checks (`hoserva doctor`, doc 01 §3).
   - name: users
@@ -2712,6 +2717,100 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /backup/destinations:
+    get:
+      operationId: listBackupDestinations
+      summary: List backup destinations
+      description: >-
+        Every place a config backup is written, with its last successful
+        backup and whether it is stale (doc 10 §1). Credentials are never
+        returned — `hasSecrets` is the only trace of them (Q28).
+      tags: [backup]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: Every destination.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [destinations]
+                properties:
+                  destinations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BackupDestination'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createBackupDestination
+      summary: Add a backup destination
+      description: >-
+        A remote destination (`smb`, `s3`, `sftp`, `webdav`, `rclone`) is
+        written through rclone and is always encrypted (Q80). It is refused
+        with 400 `backup_passphrase_required` while no backup passphrase is
+        set, and with 424 `rclone_missing` — whose `message` carries the
+        install command (Q41) — when rclone is not installed. Credentials in
+        `secrets` are sealed under the machine key before they reach the
+        database. Local destinations work without rclone.
+      tags: [backup]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBackupDestinationRequest'
+      responses:
+        "201":
+          description: The new destination.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupDestination'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /backup/destinations/{destinationId}:
+    parameters:
+      - $ref: '#/components/parameters/DestinationId'
+    delete:
+      operationId: deleteBackupDestination
+      summary: Remove a backup destination
+      description: >-
+        Removes the destination's configuration. Archives already written
+        to it are left where they are.
+      tags: [backup]
+      x-hoserva-role: admin
+      responses:
+        "204":
+          description: Removed.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /backup/destinations/{destinationId}/test:
+    parameters:
+      - $ref: '#/components/parameters/DestinationId'
+    post:
+      operationId: testBackupDestination
+      summary: Test a backup destination
+      description: >-
+        Writes a small file to the destination, reads it back and deletes
+        it (doc 10 §1: an untested backup destination is decoration). A
+        destination that cannot be reached is a `200` with `success` false
+        and the reason; a missing rclone is a `424` `rclone_missing`.
+      tags: [backup]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: Whether the write, read-back and delete all worked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupDestinationTestResult'
+        default:
+          $ref: '#/components/responses/Error'
+
   /doctor:
     get:
       operationId: runDoctor
@@ -3508,6 +3607,16 @@ components:
       schema:
         type: string
         format: uuid
+
+    DestinationId:
+      name: destinationId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+        pattern: '^[A-Za-z0-9][A-Za-z0-9:_-]*$'
 
     EventType:
       name: eventType
@@ -6772,3 +6881,132 @@ components:
           description: >-
             The raw bearer value — shown once, on creation, and never
             retrievable again (doc 01 §7).
+
+    BackupDestinationType:
+      type: string
+      enum: [local, smb, s3, sftp, webdav, rclone]
+      description: >-
+        `local` is a directory — the boot device, the pool, or an external
+        disk's mount (Q72). Every other type is written through rclone:
+        `smb`, `s3` (any S3-compatible store), `sftp`, `webdav`, or
+        `rclone` for a remote already set up in rclone's own config. An NFS
+        share is a local destination at the path the host has mounted it.
+
+    BackupRetention:
+      type: object
+      required: [daily, weekly, monthly]
+      properties:
+        daily:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 1000
+        weekly:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 1000
+        monthly:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 1000
+
+    BackupDestination:
+      type: object
+      required: [id, name, type, path, enabled, encrypt, retention, hasSecrets, stale, createdAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/BackupDestinationType'
+        path:
+          type: string
+          description: >-
+            The directory for a local destination; for a remote one, the
+            path within it (bucket and prefix, share and folder).
+        options:
+          type: object
+          additionalProperties:
+            type: string
+          description: The non-secret rclone settings of a remote destination.
+        enabled:
+          type: boolean
+        encrypt:
+          type: boolean
+          description: Always true for a remote destination (Q80).
+        retention:
+          $ref: '#/components/schemas/BackupRetention'
+        hasSecrets:
+          type: boolean
+          description: Whether credentials are stored for this destination.
+        lastSuccessfulBackupAt:
+          type: string
+          format: date-time
+          description: Absent until a backup has been written here.
+        stale:
+          type: boolean
+          description: >-
+            An enabled destination that has gone two days without a
+            successful backup, counted from its creation until its first.
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateBackupDestinationRequest:
+      type: object
+      required: [name, type, path]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        type:
+          $ref: '#/components/schemas/BackupDestinationType'
+        path:
+          type: string
+          description: >-
+            An absolute directory for `local`. For a remote type, the path
+            within it: `smb` needs the share name first, `s3` the bucket.
+        options:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            rclone's own option names. `smb`: `host`, `user`, `port`,
+            `domain`. `s3`: `access_key_id`, `provider`, `endpoint`,
+            `region`. `sftp`: `host`, `user`, `port`, `key_file`, `known_hosts_file`
+            (without it rclone does not verify the host key). `webdav`:
+            `url`, `user`, `vendor`. `rclone`: `remote`, the name of a
+            configured rclone remote. Any other key is refused.
+        secrets:
+          type: object
+          additionalProperties:
+            type: string
+          description: >-
+            `smb`, `webdav` and `sftp`: `pass`. `s3`: `secret_access_key`.
+            Write-only.
+        enabled:
+          type: boolean
+          description: Defaults to true.
+        encrypt:
+          type: boolean
+          description: >-
+            Opt-in for a local destination. A remote destination is always
+            encrypted; sending false is refused.
+        retention:
+          $ref: '#/components/schemas/BackupRetention'
+
+    BackupDestinationTestResult:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+        error:
+          type:
+            - string
+            - "null"
+          description: Why the test failed, present only when success is false.

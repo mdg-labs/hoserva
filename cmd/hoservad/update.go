@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -40,29 +41,32 @@ func packageVersion(ctx context.Context, runner disk.Runner, name string) string
 	return v
 }
 
-func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, recipient *backup.Recipient, settings *api.SettingsService, runner disk.Runner) *backup.Service {
+// newBackupService builds the config-backup service the way run() does
+// and seeds Q40's two default local destinations — the boot device and the
+// pool path — into the destination store when it holds none. Destinations
+// are read from the store on every run (D4), so one added through the API
+// is written to by the next backup.
+func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *auth.MachineKey, recipient *backup.Recipient, settings *api.SettingsService, runner disk.Runner, destinations *api.BackupDestinationStore) (*backup.Service, error) {
 	configRoot := cfg.configRoot
 	if configRoot == "" {
 		configRoot = "/etc"
 	}
-	return &backup.Service{
-		DB:    db,
-		Paths: backup.DefaultPaths(cfg.stateDir, filepath.Join(configRoot, "hoserva")),
-		Destinations: []backup.Destination{{
-			ID:      "boot",
-			Path:    filepath.Join(cfg.stateDir, "backups"),
-			Enabled: true,
-			Retention: backup.Retention{
-				Daily:   backup.DefaultRetentionDaily,
-				Weekly:  backup.DefaultRetentionWeekly,
-				Monthly: backup.DefaultRetentionMonthly,
-			},
-		}},
-		Secrets:   &backup.ServiceSecretSource{BackupPassphraseFn: settings.BackupPassphrase},
-		Cipher:    machineKey,
-		Recipient: recipient,
-		Version:   packageVersion(ctx, runner, "hoserva"),
+	svc := &backup.Service{
+		DB:                db,
+		Paths:             backup.DefaultPaths(cfg.stateDir, filepath.Join(configRoot, "hoserva")),
+		Store:             destinations,
+		Secrets:           &backup.ServiceSecretSource{BackupPassphraseFn: settings.BackupPassphrase},
+		Cipher:            machineKey,
+		DestinationCipher: machineKey,
+		Recipient:         recipient,
+		Version:           packageVersion(ctx, runner, "hoserva"),
 	}
+	defaults := backup.DefaultDestinations()
+	defaults[0].Path = filepath.Join(cfg.stateDir, "backups")
+	if err := svc.SeedDestinations(ctx, defaults); err != nil {
+		return nil, fmt.Errorf("seeding default backup destinations: %w", err)
+	}
+	return svc, nil
 }
 
 // wireBackup connects backupService — built once in run() the same way

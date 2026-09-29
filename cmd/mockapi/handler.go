@@ -16,6 +16,7 @@ import (
 	"github.com/ogen-go/ogen/ogenerrors"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/web/fixtures"
 )
 
@@ -71,6 +72,11 @@ type handler struct {
 	degradedAcknowledged bool
 
 	shares map[string]apiv1.Share
+
+	// backupMu guards backupDestinations (#60): config-backup destinations,
+	// seeded with a fresh install's two local ones (Q40).
+	backupMu           sync.Mutex
+	backupDestinations []backup.Destination
 
 	// appsMu guards apps, the containers this mock instance lists: the
 	// lifecycle operations change them, so a following ListApps shows the
@@ -136,7 +142,9 @@ func newHandler(scenario string) (*handler, error) {
 		network:      defaultMockNetwork(),
 		shares:       make(map[string]apiv1.Share),
 		apps:         mockApps(),
-		external:     make(map[string]apiv1.ExternalDisk),
+
+		backupDestinations: mockBackupDestinations(),
+		external:           make(map[string]apiv1.ExternalDisk),
 
 		users:                map[uuid.UUID]apiv1.UserSummary{mockAdminID: mockUserSummary()},
 		userGroups:           make(map[uuid.UUID]apiv1.UserGroup),

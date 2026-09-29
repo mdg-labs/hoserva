@@ -2287,4 +2287,119 @@ var contractCases = []contractCase{
 			})
 		},
 	},
+
+	// --- Backup destinations (#60): both sides run backup.PrepareDestination,
+	// so these pin the status and error code each returns for the same
+	// request, not the shared validation itself ---
+	{
+		op:   "ListBackupDestinations",
+		name: "valid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListBackupDestinations(ctx)
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "valid_local",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "External disk", Type: apiv1.BackupDestinationTypeLocal, Path: "/mnt/disks/backup",
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "relative_path",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "Relative", Type: apiv1.BackupDestinationTypeLocal, Path: "backups",
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "system_path",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "System", Type: apiv1.BackupDestinationTypeLocal, Path: "/etc",
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "state_dir_path",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "State", Type: apiv1.BackupDestinationTypeLocal, Path: "/var/lib/hoserva/stacks",
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "duplicate_name",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "Boot device", Type: apiv1.BackupDestinationTypeLocal, Path: "/mnt/disks/other",
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "remote_without_passphrase",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "Bucket", Type: apiv1.BackupDestinationTypeS3, Path: "bucket/hoserva",
+				Options: apiv1.OptCreateBackupDestinationRequestOptions{Set: true, Value: apiv1.CreateBackupDestinationRequestOptions{"access_key_id": "AKIA"}},
+				Secrets: apiv1.OptCreateBackupDestinationRequestSecrets{Set: true, Value: apiv1.CreateBackupDestinationRequestSecrets{"secret_access_key": "s3cr3t"}},
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "remote_unencrypted",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "Bucket", Type: apiv1.BackupDestinationTypeS3, Path: "bucket/hoserva",
+				Encrypt: apiv1.NewOptBool(false),
+			})
+			return err
+		},
+	},
+	{
+		op:   "DeleteBackupDestination",
+		name: "valid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.DeleteBackupDestination(ctx, apiv1.DeleteBackupDestinationParams{DestinationId: "boot"})
+		},
+	},
+	{
+		op:   "DeleteBackupDestination",
+		name: "unknown_id",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.DeleteBackupDestination(ctx, apiv1.DeleteBackupDestinationParams{DestinationId: "nope"})
+		},
+	},
+	{
+		op:   "TestBackupDestination",
+		name: "valid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.TestBackupDestination(ctx, apiv1.TestBackupDestinationParams{DestinationId: "boot"})
+			return err
+		},
+	},
+	{
+		op:   "TestBackupDestination",
+		name: "unknown_id",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.TestBackupDestination(ctx, apiv1.TestBackupDestinationParams{DestinationId: "nope"})
+			return err
+		},
+	},
 }

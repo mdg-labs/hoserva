@@ -117,7 +117,7 @@ func TestService_RunCreatesVerifiedArchive(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	name := archiveName(now, ReasonNone, 0)
+	name := archiveName(svc.installationID(), now, ReasonNone, 0)
 	archivePath := filepath.Join(destDir, name)
 	if _, err := os.Stat(archivePath); err != nil {
 		t.Fatalf("archive missing: %v", err)
@@ -195,7 +195,7 @@ func TestService_RunSkipsUnmountedPoolDestinationAndWritesBoot(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	name := archiveName(now, ReasonNone, 0)
+	name := archiveName(svc.installationID(), now, ReasonNone, 0)
 	if _, err := os.Stat(filepath.Join(bootDest, name)); err != nil {
 		t.Fatalf("boot archive missing: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestService_RunWritesPoolDestinationWhenMounted(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	name := archiveName(now, ReasonNone, 0)
+	name := archiveName(svc.installationID(), now, ReasonNone, 0)
 	if _, err := os.Stat(filepath.Join(poolDest, name)); err != nil {
 		t.Fatalf("pool archive missing despite the pool being reported mounted: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestService_RunReasonSkipsPoolDestinationOnceGateIsClosed(t *testing.T) {
 		t.Fatalf("RunReason: %v", err)
 	}
 
-	name := archiveName(now, ReasonPreImport, 0)
+	name := archiveName(svc.installationID(), now, ReasonPreImport, 0)
 	if _, err := os.Stat(filepath.Join(bootDest, name)); err != nil {
 		t.Fatalf("boot archive missing: %v", err)
 	}
@@ -452,7 +452,7 @@ func TestService_RunWritesPoolDestinationAfterGateReopens(t *testing.T) {
 	if err := svc.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	name := archiveName(now, ReasonNone, 0)
+	name := archiveName(svc.installationID(), now, ReasonNone, 0)
 	if _, err := os.Stat(filepath.Join(poolDest, name)); err != nil {
 		t.Fatalf("pool archive missing despite the gate having reopened: %v", err)
 	}
@@ -590,7 +590,7 @@ func TestService_RunEncryptsArchiveForEncryptDestination(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	name := archiveName(now, ReasonNone, 0)
+	name := archiveName(svc.installationID(), now, ReasonNone, 0)
 	plainPath := filepath.Join(destDir, name)
 	if _, err := os.Stat(plainPath); err == nil {
 		t.Fatalf("an Encrypt destination must never receive the plaintext archive %q", plainPath)
@@ -677,7 +677,7 @@ func TestService_RunEmbedsIdentityAgeInArchiveWrittenToDestination(t *testing.T)
 		t.Fatalf("Run: %v", err)
 	}
 
-	archivePath := filepath.Join(destDir, archiveName(now, ReasonNone, 0))
+	archivePath := filepath.Join(destDir, archiveName(svc.installationID(), now, ReasonNone, 0))
 	verifyDir := t.TempDir()
 	if err := unpackArchive(archivePath, verifyDir); err != nil {
 		t.Fatalf("unpackArchive: %v", err)
@@ -850,8 +850,8 @@ func TestService_RunConcurrentRunsDoNotShareArchivePath(t *testing.T) {
 		}
 	}
 
-	for _, r := range plan {
-		archivePath := filepath.Join(r.destDir, archiveName(now, ReasonNone, 0))
+	for i, r := range plan {
+		archivePath := filepath.Join(r.destDir, archiveName(svcs[i].installationID(), now, ReasonNone, 0))
 		if err := unpackArchive(archivePath, r.verifyDir); err != nil {
 			t.Fatalf("unpackArchive for %q: %v", r.host, err)
 		}
@@ -942,8 +942,8 @@ func TestService_RunConcurrentEncryptRunsDoNotShareArchivePath(t *testing.T) {
 		}
 	}
 
-	for _, r := range plan {
-		encPath := filepath.Join(r.destDir, archiveName(now, ReasonNone, 0)+".age")
+	for i, r := range plan {
+		encPath := filepath.Join(r.destDir, archiveName(svcs[i].installationID(), now, ReasonNone, 0)+".age")
 		sidecarPath := encPath + identitySidecarSuffix
 		got, err := decryptArchiveWithPassphrase(encPath, sidecarPath, "backup-pass")
 		if err != nil {
@@ -1026,7 +1026,7 @@ func TestRetentionPrune(t *testing.T) {
 		},
 	}
 	justWritten := names[0]
-	if err := pruneDestination(dest, now, justWritten); err != nil {
+	if err := pruneDestination(dest, archiveOwner{legacy: true}, now, justWritten); err != nil {
 		t.Fatalf("pruneDestination: %v", err)
 	}
 
@@ -1064,7 +1064,7 @@ func TestRetentionPrune_RemovesOrphanedIdentitySidecar(t *testing.T) {
 	}
 
 	dest := Destination{Path: dir, Retention: Retention{Daily: 1, Weekly: 1, Monthly: 1}}
-	if err := pruneDestination(dest, now, kept); err != nil {
+	if err := pruneDestination(dest, archiveOwner{legacy: true}, now, kept); err != nil {
 		t.Fatalf("pruneDestination: %v", err)
 	}
 
@@ -1082,10 +1082,12 @@ func TestRetentionPrune_RemovesOrphanedIdentitySidecar(t *testing.T) {
 	}
 }
 
+const testInstallation = "0123456789ab"
+
 func TestArchiveName_MatchesRetentionPattern(t *testing.T) {
 	now := time.Date(2026, 9, 14, 15, 42, 7, 0, time.UTC)
-	name := archiveName(now, ReasonNone, 0)
-	want := "hoserva-config-2026-09-14T15-42-07.tar.zst"
+	name := archiveName(testInstallation, now, ReasonNone, 0)
+	want := "hoserva-config-0123456789ab-2026-09-14T15-42-07.tar.zst"
 	if name != want {
 		t.Fatalf("archiveName = %q, want %q", name, want)
 	}
@@ -1104,8 +1106,8 @@ func TestArchiveName_LegacyMinuteResolutionStillMatches(t *testing.T) {
 	if m == nil {
 		t.Fatalf("%q does not match archiveNamePattern", name)
 	}
-	if m[2] != "" {
-		t.Fatalf("legacy archive %q parsed reason %q, want none", name, m[2])
+	if m[1] != "" || m[3] != "" {
+		t.Fatalf("legacy archive %q parsed installation %q and reason %q, want none of either", name, m[1], m[3])
 	}
 }
 
@@ -1114,8 +1116,8 @@ func TestArchiveName_LegacyMinuteResolutionStillMatches(t *testing.T) {
 // collision suffix parsed correctly alongside it (#401).
 func TestArchiveName_MarksPreChangeReason(t *testing.T) {
 	now := time.Date(2026, 9, 14, 15, 42, 7, 0, time.UTC)
-	name := archiveName(now, ReasonPreImport, 2)
-	want := "hoserva-config-2026-09-14T15-42-07-2.pre-import.tar.zst"
+	name := archiveName(testInstallation, now, ReasonPreImport, 2)
+	want := "hoserva-config-0123456789ab-2026-09-14T15-42-07-2.pre-import.tar.zst"
 	if name != want {
 		t.Fatalf("archiveName = %q, want %q", name, want)
 	}
@@ -1123,8 +1125,8 @@ func TestArchiveName_MarksPreChangeReason(t *testing.T) {
 	if m == nil {
 		t.Fatalf("%q does not match archiveNamePattern", name)
 	}
-	if m[2] != "pre-import" {
-		t.Fatalf("archiveNamePattern parsed reason %q, want pre-import", m[2])
+	if m[1] != testInstallation || m[3] != "pre-import" {
+		t.Fatalf("archiveNamePattern parsed installation %q and reason %q, want %q and pre-import", m[1], m[3], testInstallation)
 	}
 }
 
@@ -1133,7 +1135,7 @@ func TestArchiveName_MarksPreChangeReason(t *testing.T) {
 // produce a genuine archive rather than reusing state across runs — the
 // way two separate ImportConfig requests on the same day each build their
 // own.
-func newSameDestinationService(t *testing.T, destDir, hostname string, now time.Time) *Service {
+func newSameDestinationService(t *testing.T, recipient *Recipient, destDir, hostname string, now time.Time) *Service {
 	t.Helper()
 	db := openTestDB(t)
 	paths, _ := testLayout(t)
@@ -1155,10 +1157,20 @@ func newSameDestinationService(t *testing.T, destDir, hostname string, now time.
 				Monthly: 6,
 			},
 		}},
-		Hostname: hostname,
-		Version:  "0.0.0-test",
-		Now:      func() time.Time { return now },
+		Recipient: recipient,
+		Hostname:  hostname,
+		Version:   "0.0.0-test",
+		Now:       func() time.Time { return now },
 	}
+}
+
+func newTestRecipient(t *testing.T) *Recipient {
+	t.Helper()
+	recipient, err := LoadOrGenerateRecipient(context.Background(), FakeSecretCipher{}, &FakeRecipientStore{}, nil)
+	if err != nil {
+		t.Fatalf("LoadOrGenerateRecipient: %v", err)
+	}
+	return recipient
 }
 
 // TestService_RunReasonSurvivesSameDayOrdinaryBackup reproduces #401: a
@@ -1173,20 +1185,21 @@ func newSameDestinationService(t *testing.T, destDir, hostname string, now time.
 func TestService_RunReasonSurvivesSameDayOrdinaryBackup(t *testing.T) {
 	ctx := context.Background()
 	destDir := t.TempDir()
+	recipient := newTestRecipient(t)
 
 	firstRun := time.Date(2026, 9, 14, 15, 4, 0, 0, time.UTC)
-	first := newSameDestinationService(t, destDir, "host-a", firstRun)
+	first := newSameDestinationService(t, recipient, destDir, "host-a", firstRun)
 	if err := first.RunReason(ctx, ReasonPreImport); err != nil {
 		t.Fatalf("first RunReason: %v", err)
 	}
-	firstName := archiveName(firstRun, ReasonPreImport, 0)
+	firstName := archiveName(first.installationID(), firstRun, ReasonPreImport, 0)
 	firstPath := filepath.Join(destDir, firstName)
 	if _, err := os.Stat(firstPath); err != nil {
 		t.Fatalf("first pre-import archive missing right after it was written: %v", err)
 	}
 
 	secondRun := firstRun.Add(6 * time.Minute)
-	second := newSameDestinationService(t, destDir, "host-b", secondRun)
+	second := newSameDestinationService(t, recipient, destDir, "host-b", secondRun)
 	if err := second.RunReason(ctx, ReasonPreImport); err != nil {
 		t.Fatalf("second RunReason: %v", err)
 	}
@@ -1212,13 +1225,14 @@ func TestService_RunReasonSurvivesSameDayOrdinaryBackup(t *testing.T) {
 func TestService_RunTwiceInSameMinuteProducesDistinctArchives(t *testing.T) {
 	ctx := context.Background()
 	destDir := t.TempDir()
+	recipient := newTestRecipient(t)
 
 	now := time.Date(2026, 9, 14, 3, 0, 30, 0, time.UTC)
-	first := newSameDestinationService(t, destDir, "host-a", now)
+	first := newSameDestinationService(t, recipient, destDir, "host-a", now)
 	if err := first.RunReason(ctx, ReasonPreImport); err != nil {
 		t.Fatalf("first RunReason: %v", err)
 	}
-	second := newSameDestinationService(t, destDir, "host-b", now)
+	second := newSameDestinationService(t, recipient, destDir, "host-b", now)
 	if err := second.RunReason(ctx, ReasonPreImport); err != nil {
 		t.Fatalf("second RunReason: %v", err)
 	}
@@ -1235,7 +1249,7 @@ func TestService_RunTwiceInSameMinuteProducesDistinctArchives(t *testing.T) {
 		t.Fatalf("expected 2 distinct archives, got %d: %v", len(entries), names)
 	}
 
-	firstName := archiveName(now, ReasonPreImport, 0)
+	firstName := archiveName(first.installationID(), now, ReasonPreImport, 0)
 	firstPath := filepath.Join(destDir, firstName)
 	verifyDir := t.TempDir()
 	if err := unpackArchive(firstPath, verifyDir); err != nil {
@@ -1263,7 +1277,7 @@ func TestRetentionPrune_BoundsPreChangeArchives(t *testing.T) {
 	var names []string
 	for i := 0; i < 6; i++ {
 		day := now.AddDate(0, 0, -i)
-		name := archiveName(day, ReasonPreImport, 0)
+		name := archiveName(testInstallation, day, ReasonPreImport, 0)
 		names = append(names, name)
 		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, []byte(name), 0o600); err != nil {
@@ -1275,7 +1289,7 @@ func TestRetentionPrune_BoundsPreChangeArchives(t *testing.T) {
 	}
 
 	dest := Destination{Path: dir, Retention: Retention{Daily: 0, Weekly: 0, Monthly: 0}}
-	if err := pruneDestination(dest, now, names[0]); err != nil {
+	if err := pruneDestination(dest, archiveOwner{installation: testInstallation}, now, names[0]); err != nil {
 		t.Fatalf("pruneDestination: %v", err)
 	}
 

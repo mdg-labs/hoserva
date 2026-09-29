@@ -1329,6 +1329,300 @@ func (s *ArrayDiskRole) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/BackupDestination
+type BackupDestination struct {
+	ID   string                `json:"id"`
+	Name string                `json:"name"`
+	Type BackupDestinationType `json:"type"`
+	// The directory for a local destination; for a remote one, the path within it (bucket and prefix,
+	// share and folder).
+	Path string `json:"path"`
+	// The non-secret rclone settings of a remote destination.
+	Options OptBackupDestinationOptions `json:"options"`
+	Enabled bool                        `json:"enabled"`
+	// Always true for a remote destination (Q80).
+	Encrypt   bool            `json:"encrypt"`
+	Retention BackupRetention `json:"retention"`
+	// Whether credentials are stored for this destination.
+	HasSecrets bool `json:"hasSecrets"`
+	// Absent until a backup has been written here.
+	LastSuccessfulBackupAt OptDateTime `json:"lastSuccessfulBackupAt"`
+	// An enabled destination that has gone two days without a successful backup, counted from its creation
+	// until its first.
+	Stale     bool      `json:"stale"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// GetID returns the value of ID.
+func (s *BackupDestination) GetID() string {
+	return s.ID
+}
+
+// GetName returns the value of Name.
+func (s *BackupDestination) GetName() string {
+	return s.Name
+}
+
+// GetType returns the value of Type.
+func (s *BackupDestination) GetType() BackupDestinationType {
+	return s.Type
+}
+
+// GetPath returns the value of Path.
+func (s *BackupDestination) GetPath() string {
+	return s.Path
+}
+
+// GetOptions returns the value of Options.
+func (s *BackupDestination) GetOptions() OptBackupDestinationOptions {
+	return s.Options
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *BackupDestination) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetEncrypt returns the value of Encrypt.
+func (s *BackupDestination) GetEncrypt() bool {
+	return s.Encrypt
+}
+
+// GetRetention returns the value of Retention.
+func (s *BackupDestination) GetRetention() BackupRetention {
+	return s.Retention
+}
+
+// GetHasSecrets returns the value of HasSecrets.
+func (s *BackupDestination) GetHasSecrets() bool {
+	return s.HasSecrets
+}
+
+// GetLastSuccessfulBackupAt returns the value of LastSuccessfulBackupAt.
+func (s *BackupDestination) GetLastSuccessfulBackupAt() OptDateTime {
+	return s.LastSuccessfulBackupAt
+}
+
+// GetStale returns the value of Stale.
+func (s *BackupDestination) GetStale() bool {
+	return s.Stale
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *BackupDestination) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// SetID sets the value of ID.
+func (s *BackupDestination) SetID(val string) {
+	s.ID = val
+}
+
+// SetName sets the value of Name.
+func (s *BackupDestination) SetName(val string) {
+	s.Name = val
+}
+
+// SetType sets the value of Type.
+func (s *BackupDestination) SetType(val BackupDestinationType) {
+	s.Type = val
+}
+
+// SetPath sets the value of Path.
+func (s *BackupDestination) SetPath(val string) {
+	s.Path = val
+}
+
+// SetOptions sets the value of Options.
+func (s *BackupDestination) SetOptions(val OptBackupDestinationOptions) {
+	s.Options = val
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *BackupDestination) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetEncrypt sets the value of Encrypt.
+func (s *BackupDestination) SetEncrypt(val bool) {
+	s.Encrypt = val
+}
+
+// SetRetention sets the value of Retention.
+func (s *BackupDestination) SetRetention(val BackupRetention) {
+	s.Retention = val
+}
+
+// SetHasSecrets sets the value of HasSecrets.
+func (s *BackupDestination) SetHasSecrets(val bool) {
+	s.HasSecrets = val
+}
+
+// SetLastSuccessfulBackupAt sets the value of LastSuccessfulBackupAt.
+func (s *BackupDestination) SetLastSuccessfulBackupAt(val OptDateTime) {
+	s.LastSuccessfulBackupAt = val
+}
+
+// SetStale sets the value of Stale.
+func (s *BackupDestination) SetStale(val bool) {
+	s.Stale = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *BackupDestination) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// The non-secret rclone settings of a remote destination.
+type BackupDestinationOptions map[string]string
+
+func (s *BackupDestinationOptions) init() BackupDestinationOptions {
+	m := *s
+	if m == nil {
+		m = map[string]string{}
+		*s = m
+	}
+	return m
+}
+
+// Ref: #/components/schemas/BackupDestinationTestResult
+type BackupDestinationTestResult struct {
+	Success bool `json:"success"`
+	// Why the test failed, present only when success is false.
+	Error OptNilString `json:"error"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *BackupDestinationTestResult) GetSuccess() bool {
+	return s.Success
+}
+
+// GetError returns the value of Error.
+func (s *BackupDestinationTestResult) GetError() OptNilString {
+	return s.Error
+}
+
+// SetSuccess sets the value of Success.
+func (s *BackupDestinationTestResult) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetError sets the value of Error.
+func (s *BackupDestinationTestResult) SetError(val OptNilString) {
+	s.Error = val
+}
+
+// `local` is a directory — the boot device, the pool, or an external disk's mount (Q72). Every other
+// type is written through rclone: `smb`, `s3` (any S3-compatible store), `sftp`, `webdav`, or `rclone`
+// for a remote already set up in rclone's own config. An NFS share is a local destination at the path
+// the host has mounted it.
+// Ref: #/components/schemas/BackupDestinationType
+type BackupDestinationType string
+
+const (
+	BackupDestinationTypeLocal  BackupDestinationType = "local"
+	BackupDestinationTypeSmb    BackupDestinationType = "smb"
+	BackupDestinationTypeS3     BackupDestinationType = "s3"
+	BackupDestinationTypeSftp   BackupDestinationType = "sftp"
+	BackupDestinationTypeWebdav BackupDestinationType = "webdav"
+	BackupDestinationTypeRclone BackupDestinationType = "rclone"
+)
+
+// AllValues returns all BackupDestinationType values.
+func (BackupDestinationType) AllValues() []BackupDestinationType {
+	return []BackupDestinationType{
+		BackupDestinationTypeLocal,
+		BackupDestinationTypeSmb,
+		BackupDestinationTypeS3,
+		BackupDestinationTypeSftp,
+		BackupDestinationTypeWebdav,
+		BackupDestinationTypeRclone,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s BackupDestinationType) MarshalText() ([]byte, error) {
+	switch s {
+	case BackupDestinationTypeLocal:
+		return []byte(s), nil
+	case BackupDestinationTypeSmb:
+		return []byte(s), nil
+	case BackupDestinationTypeS3:
+		return []byte(s), nil
+	case BackupDestinationTypeSftp:
+		return []byte(s), nil
+	case BackupDestinationTypeWebdav:
+		return []byte(s), nil
+	case BackupDestinationTypeRclone:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *BackupDestinationType) UnmarshalText(data []byte) error {
+	switch BackupDestinationType(data) {
+	case BackupDestinationTypeLocal:
+		*s = BackupDestinationTypeLocal
+		return nil
+	case BackupDestinationTypeSmb:
+		*s = BackupDestinationTypeSmb
+		return nil
+	case BackupDestinationTypeS3:
+		*s = BackupDestinationTypeS3
+		return nil
+	case BackupDestinationTypeSftp:
+		*s = BackupDestinationTypeSftp
+		return nil
+	case BackupDestinationTypeWebdav:
+		*s = BackupDestinationTypeWebdav
+		return nil
+	case BackupDestinationTypeRclone:
+		*s = BackupDestinationTypeRclone
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/BackupRetention
+type BackupRetention struct {
+	Daily   int32 `json:"daily"`
+	Weekly  int32 `json:"weekly"`
+	Monthly int32 `json:"monthly"`
+}
+
+// GetDaily returns the value of Daily.
+func (s *BackupRetention) GetDaily() int32 {
+	return s.Daily
+}
+
+// GetWeekly returns the value of Weekly.
+func (s *BackupRetention) GetWeekly() int32 {
+	return s.Weekly
+}
+
+// GetMonthly returns the value of Monthly.
+func (s *BackupRetention) GetMonthly() int32 {
+	return s.Monthly
+}
+
+// SetDaily sets the value of Daily.
+func (s *BackupRetention) SetDaily(val int32) {
+	s.Daily = val
+}
+
+// SetWeekly sets the value of Weekly.
+func (s *BackupRetention) SetWeekly(val int32) {
+	s.Weekly = val
+}
+
+// SetMonthly sets the value of Monthly.
+func (s *BackupRetention) SetMonthly(val int32) {
+	s.Monthly = val
+}
+
 // Ref: #/components/schemas/BlockingJob
 type BlockingJob struct {
 	ID    uuid.UUID `json:"id"`
@@ -1640,6 +1934,134 @@ func (s *CreateArrayRequest) SetMinFreeSpace(val OptString) {
 // SetConfirmation sets the value of Confirmation.
 func (s *CreateArrayRequest) SetConfirmation(val string) {
 	s.Confirmation = val
+}
+
+// Ref: #/components/schemas/CreateBackupDestinationRequest
+type CreateBackupDestinationRequest struct {
+	Name string                `json:"name"`
+	Type BackupDestinationType `json:"type"`
+	// An absolute directory for `local`. For a remote type, the path within it: `smb` needs the share name
+	// first, `s3` the bucket.
+	Path string `json:"path"`
+	// Rclone's own option names. `smb`: `host`, `user`, `port`, `domain`. `s3`: `access_key_id`,
+	// `provider`, `endpoint`, `region`. `sftp`: `host`, `user`, `port`, `key_file`, `known_hosts_file`
+	// (without it rclone does not verify the host key). `webdav`: `url`, `user`, `vendor`. `rclone`:
+	// `remote`, the name of a configured rclone remote. Any other key is refused.
+	Options OptCreateBackupDestinationRequestOptions `json:"options"`
+	// `smb`, `webdav` and `sftp`: `pass`. `s3`: `secret_access_key`. Write-only.
+	Secrets OptCreateBackupDestinationRequestSecrets `json:"secrets"`
+	// Defaults to true.
+	Enabled OptBool `json:"enabled"`
+	// Opt-in for a local destination. A remote destination is always encrypted; sending false is refused.
+	Encrypt   OptBool            `json:"encrypt"`
+	Retention OptBackupRetention `json:"retention"`
+}
+
+// GetName returns the value of Name.
+func (s *CreateBackupDestinationRequest) GetName() string {
+	return s.Name
+}
+
+// GetType returns the value of Type.
+func (s *CreateBackupDestinationRequest) GetType() BackupDestinationType {
+	return s.Type
+}
+
+// GetPath returns the value of Path.
+func (s *CreateBackupDestinationRequest) GetPath() string {
+	return s.Path
+}
+
+// GetOptions returns the value of Options.
+func (s *CreateBackupDestinationRequest) GetOptions() OptCreateBackupDestinationRequestOptions {
+	return s.Options
+}
+
+// GetSecrets returns the value of Secrets.
+func (s *CreateBackupDestinationRequest) GetSecrets() OptCreateBackupDestinationRequestSecrets {
+	return s.Secrets
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *CreateBackupDestinationRequest) GetEnabled() OptBool {
+	return s.Enabled
+}
+
+// GetEncrypt returns the value of Encrypt.
+func (s *CreateBackupDestinationRequest) GetEncrypt() OptBool {
+	return s.Encrypt
+}
+
+// GetRetention returns the value of Retention.
+func (s *CreateBackupDestinationRequest) GetRetention() OptBackupRetention {
+	return s.Retention
+}
+
+// SetName sets the value of Name.
+func (s *CreateBackupDestinationRequest) SetName(val string) {
+	s.Name = val
+}
+
+// SetType sets the value of Type.
+func (s *CreateBackupDestinationRequest) SetType(val BackupDestinationType) {
+	s.Type = val
+}
+
+// SetPath sets the value of Path.
+func (s *CreateBackupDestinationRequest) SetPath(val string) {
+	s.Path = val
+}
+
+// SetOptions sets the value of Options.
+func (s *CreateBackupDestinationRequest) SetOptions(val OptCreateBackupDestinationRequestOptions) {
+	s.Options = val
+}
+
+// SetSecrets sets the value of Secrets.
+func (s *CreateBackupDestinationRequest) SetSecrets(val OptCreateBackupDestinationRequestSecrets) {
+	s.Secrets = val
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *CreateBackupDestinationRequest) SetEnabled(val OptBool) {
+	s.Enabled = val
+}
+
+// SetEncrypt sets the value of Encrypt.
+func (s *CreateBackupDestinationRequest) SetEncrypt(val OptBool) {
+	s.Encrypt = val
+}
+
+// SetRetention sets the value of Retention.
+func (s *CreateBackupDestinationRequest) SetRetention(val OptBackupRetention) {
+	s.Retention = val
+}
+
+// Rclone's own option names. `smb`: `host`, `user`, `port`, `domain`. `s3`: `access_key_id`,
+// `provider`, `endpoint`, `region`. `sftp`: `host`, `user`, `port`, `key_file`, `known_hosts_file`
+// (without it rclone does not verify the host key). `webdav`: `url`, `user`, `vendor`. `rclone`:
+// `remote`, the name of a configured rclone remote. Any other key is refused.
+type CreateBackupDestinationRequestOptions map[string]string
+
+func (s *CreateBackupDestinationRequestOptions) init() CreateBackupDestinationRequestOptions {
+	m := *s
+	if m == nil {
+		m = map[string]string{}
+		*s = m
+	}
+	return m
+}
+
+// `smb`, `webdav` and `sftp`: `pass`. `s3`: `secret_access_key`. Write-only.
+type CreateBackupDestinationRequestSecrets map[string]string
+
+func (s *CreateBackupDestinationRequestSecrets) init() CreateBackupDestinationRequestSecrets {
+	m := *s
+	if m == nil {
+		m = map[string]string{}
+		*s = m
+	}
+	return m
 }
 
 // Ref: #/components/schemas/CreateFirstAdminRequest
@@ -2123,6 +2545,9 @@ func (s *DebianPackageUpdate) SetInstalledVersion(val string) {
 func (s *DebianPackageUpdate) SetCandidateVersion(val string) {
 	s.CandidateVersion = val
 }
+
+// DeleteBackupDestinationNoContent is response for DeleteBackupDestination operation.
+type DeleteBackupDestinationNoContent struct{}
 
 // DeleteNotificationChannelNoContent is response for DeleteNotificationChannel operation.
 type DeleteNotificationChannelNoContent struct{}
@@ -4208,6 +4633,20 @@ func (s *ListAppsOK) SetMessage(val OptString) {
 // SetApps sets the value of Apps.
 func (s *ListAppsOK) SetApps(val []App) {
 	s.Apps = val
+}
+
+type ListBackupDestinationsOK struct {
+	Destinations []BackupDestination `json:"destinations"`
+}
+
+// GetDestinations returns the value of Destinations.
+func (s *ListBackupDestinationsOK) GetDestinations() []BackupDestination {
+	return s.Destinations
+}
+
+// SetDestinations sets the value of Destinations.
+func (s *ListBackupDestinationsOK) SetDestinations(val []BackupDestination) {
+	s.Destinations = val
 }
 
 type ListDisksOK struct {
@@ -6412,6 +6851,98 @@ func (o OptArrayDiskFilesystem) Or(d ArrayDiskFilesystem) ArrayDiskFilesystem {
 	return d
 }
 
+// NewOptBackupDestinationOptions returns new OptBackupDestinationOptions with value set to v.
+func NewOptBackupDestinationOptions(v BackupDestinationOptions) OptBackupDestinationOptions {
+	return OptBackupDestinationOptions{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptBackupDestinationOptions is optional BackupDestinationOptions.
+type OptBackupDestinationOptions struct {
+	Value BackupDestinationOptions
+	Set   bool
+}
+
+// IsSet returns true if OptBackupDestinationOptions was set.
+func (o OptBackupDestinationOptions) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptBackupDestinationOptions) Reset() {
+	var v BackupDestinationOptions
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptBackupDestinationOptions) SetTo(v BackupDestinationOptions) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptBackupDestinationOptions) Get() (v BackupDestinationOptions, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptBackupDestinationOptions) Or(d BackupDestinationOptions) BackupDestinationOptions {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptBackupRetention returns new OptBackupRetention with value set to v.
+func NewOptBackupRetention(v BackupRetention) OptBackupRetention {
+	return OptBackupRetention{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptBackupRetention is optional BackupRetention.
+type OptBackupRetention struct {
+	Value BackupRetention
+	Set   bool
+}
+
+// IsSet returns true if OptBackupRetention was set.
+func (o OptBackupRetention) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptBackupRetention) Reset() {
+	var v BackupRetention
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptBackupRetention) SetTo(v BackupRetention) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptBackupRetention) Get() (v BackupRetention, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptBackupRetention) Or(d BackupRetention) BackupRetention {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptBlockingJob returns new OptBlockingJob with value set to v.
 func NewOptBlockingJob(v BlockingJob) OptBlockingJob {
 	return OptBlockingJob{
@@ -6498,6 +7029,98 @@ func (o OptBool) Get() (v bool, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptBool) Or(d bool) bool {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptCreateBackupDestinationRequestOptions returns new OptCreateBackupDestinationRequestOptions with value set to v.
+func NewOptCreateBackupDestinationRequestOptions(v CreateBackupDestinationRequestOptions) OptCreateBackupDestinationRequestOptions {
+	return OptCreateBackupDestinationRequestOptions{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCreateBackupDestinationRequestOptions is optional CreateBackupDestinationRequestOptions.
+type OptCreateBackupDestinationRequestOptions struct {
+	Value CreateBackupDestinationRequestOptions
+	Set   bool
+}
+
+// IsSet returns true if OptCreateBackupDestinationRequestOptions was set.
+func (o OptCreateBackupDestinationRequestOptions) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCreateBackupDestinationRequestOptions) Reset() {
+	var v CreateBackupDestinationRequestOptions
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCreateBackupDestinationRequestOptions) SetTo(v CreateBackupDestinationRequestOptions) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCreateBackupDestinationRequestOptions) Get() (v CreateBackupDestinationRequestOptions, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCreateBackupDestinationRequestOptions) Or(d CreateBackupDestinationRequestOptions) CreateBackupDestinationRequestOptions {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptCreateBackupDestinationRequestSecrets returns new OptCreateBackupDestinationRequestSecrets with value set to v.
+func NewOptCreateBackupDestinationRequestSecrets(v CreateBackupDestinationRequestSecrets) OptCreateBackupDestinationRequestSecrets {
+	return OptCreateBackupDestinationRequestSecrets{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptCreateBackupDestinationRequestSecrets is optional CreateBackupDestinationRequestSecrets.
+type OptCreateBackupDestinationRequestSecrets struct {
+	Value CreateBackupDestinationRequestSecrets
+	Set   bool
+}
+
+// IsSet returns true if OptCreateBackupDestinationRequestSecrets was set.
+func (o OptCreateBackupDestinationRequestSecrets) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptCreateBackupDestinationRequestSecrets) Reset() {
+	var v CreateBackupDestinationRequestSecrets
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptCreateBackupDestinationRequestSecrets) SetTo(v CreateBackupDestinationRequestSecrets) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptCreateBackupDestinationRequestSecrets) Get() (v CreateBackupDestinationRequestSecrets, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptCreateBackupDestinationRequestSecrets) Or(d CreateBackupDestinationRequestSecrets) CreateBackupDestinationRequestSecrets {
 	if v, ok := o.Get(); ok {
 		return v
 	}

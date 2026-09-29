@@ -304,6 +304,91 @@ func decodeCreateApiTokenParams(args [1]string, argsEscaped bool, r *http.Reques
 	return params, nil
 }
 
+// DeleteBackupDestinationParams is parameters of deleteBackupDestination operation.
+type DeleteBackupDestinationParams struct {
+	DestinationId string
+}
+
+func unpackDeleteBackupDestinationParams(packed middleware.Parameters) (params DeleteBackupDestinationParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "destinationId",
+			In:   "path",
+		}
+		params.DestinationId = packed[key].(string)
+	}
+	return params
+}
+
+func decodeDeleteBackupDestinationParams(args [1]string, argsEscaped bool, r *http.Request) (params DeleteBackupDestinationParams, _ error) {
+	// Decode path: destinationId.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "destinationId",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.DestinationId = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := (validate.String{
+					MinLength:     1,
+					MinLengthSet:  true,
+					MaxLength:     64,
+					MaxLengthSet:  true,
+					Email:         false,
+					Hostname:      false,
+					Regex:         regexMap["^[A-Za-z0-9][A-Za-z0-9:_-]*$"],
+					MinNumeric:    0,
+					MinNumericSet: false,
+					MaxNumeric:    0,
+					MaxNumericSet: false,
+				}).Validate(string(params.DestinationId)); err != nil {
+					return errors.Wrap(err, "string")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "destinationId",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // DeleteNotificationChannelParams is parameters of deleteNotificationChannel operation.
 type DeleteNotificationChannelParams struct {
 	ChannelId uuid.UUID
@@ -3271,6 +3356,91 @@ func decodeStopAppParams(args [1]string, argsEscaped bool, r *http.Request) (par
 	}(); err != nil {
 		return params, &ogenerrors.DecodeParamError{
 			Name: "id",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// TestBackupDestinationParams is parameters of testBackupDestination operation.
+type TestBackupDestinationParams struct {
+	DestinationId string
+}
+
+func unpackTestBackupDestinationParams(packed middleware.Parameters) (params TestBackupDestinationParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "destinationId",
+			In:   "path",
+		}
+		params.DestinationId = packed[key].(string)
+	}
+	return params
+}
+
+func decodeTestBackupDestinationParams(args [1]string, argsEscaped bool, r *http.Request) (params TestBackupDestinationParams, _ error) {
+	// Decode path: destinationId.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "destinationId",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.DestinationId = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := (validate.String{
+					MinLength:     1,
+					MinLengthSet:  true,
+					MaxLength:     64,
+					MaxLengthSet:  true,
+					Email:         false,
+					Hostname:      false,
+					Regex:         regexMap["^[A-Za-z0-9][A-Za-z0-9:_-]*$"],
+					MinNumeric:    0,
+					MinNumericSet: false,
+					MaxNumeric:    0,
+					MaxNumericSet: false,
+				}).Validate(string(params.DestinationId)); err != nil {
+					return errors.Wrap(err, "string")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "destinationId",
 			In:   "path",
 			Err:  err,
 		}

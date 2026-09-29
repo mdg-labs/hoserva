@@ -212,6 +212,19 @@ func (UnimplementedHandler) CreateArray(ctx context.Context, req *CreateArrayReq
 	return r, ht.ErrNotImplemented
 }
 
+// CreateBackupDestination implements createBackupDestination operation.
+//
+// A remote destination (`smb`, `s3`, `sftp`, `webdav`, `rclone`) is written through rclone and is
+// always encrypted (Q80). It is refused with 400 `backup_passphrase_required` while no backup
+// passphrase is set, and with 424 `rclone_missing` — whose `message` carries the install command
+// (Q41) — when rclone is not installed. Credentials in `secrets` are sealed under the machine key
+// before they reach the database. Local destinations work without rclone.
+//
+// POST /backup/destinations
+func (UnimplementedHandler) CreateBackupDestination(ctx context.Context, req *CreateBackupDestinationRequest) (r *BackupDestination, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // CreateFirstAdmin implements createFirstAdmin operation.
 //
 // Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
@@ -267,6 +280,15 @@ func (UnimplementedHandler) CreateUser(ctx context.Context, req *CreateUserReque
 // POST /user-groups
 func (UnimplementedHandler) CreateUserGroup(ctx context.Context, req *CreateUserGroupRequest) (r *UserGroup, _ error) {
 	return r, ht.ErrNotImplemented
+}
+
+// DeleteBackupDestination implements deleteBackupDestination operation.
+//
+// Removes the destination's configuration. Archives already written to it are left where they are.
+//
+// DELETE /backup/destinations/{destinationId}
+func (UnimplementedHandler) DeleteBackupDestination(ctx context.Context, params DeleteBackupDestinationParams) error {
+	return ht.ErrNotImplemented
 }
 
 // DeleteNotificationChannel implements deleteNotificationChannel operation.
@@ -739,6 +761,16 @@ func (UnimplementedHandler) ListAppImages(ctx context.Context) (r *ListAppImages
 //
 // GET /apps
 func (UnimplementedHandler) ListApps(ctx context.Context) (r *ListAppsOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListBackupDestinations implements listBackupDestinations operation.
+//
+// Every place a config backup is written, with its last successful backup and whether it is stale (doc
+// 10 §1). Credentials are never returned — `hasSecrets` is the only trace of them (Q28).
+//
+// GET /backup/destinations
+func (UnimplementedHandler) ListBackupDestinations(ctx context.Context) (r *ListBackupDestinationsOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1319,6 +1351,17 @@ func (UnimplementedHandler) StopApp(ctx context.Context, params StopAppParams) (
 //
 // POST /array/stop
 func (UnimplementedHandler) StopArray(ctx context.Context, req *StopArrayRequest) (r *SystemStatus, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// TestBackupDestination implements testBackupDestination operation.
+//
+// Writes a small file to the destination, reads it back and deletes it (doc 10 §1: an untested backup
+// destination is decoration). A destination that cannot be reached is a `200` with `success` false and
+// the reason; a missing rclone is a `424` `rclone_missing`.
+//
+// POST /backup/destinations/{destinationId}/test
+func (UnimplementedHandler) TestBackupDestination(ctx context.Context, params TestBackupDestinationParams) (r *BackupDestinationTestResult, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

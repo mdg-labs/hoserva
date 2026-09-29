@@ -74,19 +74,24 @@ func TestNewBackupService_EncryptsNightlyArchiveThroughRealWiring(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	backupService := newBackupService(ctx, cfg, db, machineKey, recipient, settingsService, disk.NewFakeRunner())
+	backupService, err := newBackupService(ctx, cfg, db, machineKey, recipient, settingsService, disk.NewFakeRunner(), api.NewBackupDestinationStore(db))
+	if err != nil {
+		t.Fatalf("newBackupService: %v", err)
+	}
+	// Only the encrypting destination is under test: the seeded boot and
+	// pool destinations are removed so this run writes to it alone.
+	for _, id := range []string{"boot", "pool"} {
+		if err := backupService.RemoveDestination(ctx, id); err != nil {
+			t.Fatalf("removing seeded destination %q: %v", id, err)
+		}
+	}
 	destDir := filepath.Join(dir, "remote-dest")
-	backupService.Destinations = []backup.Destination{{
-		ID:      "remote",
-		Path:    destDir,
-		Enabled: true,
-		Encrypt: true,
-		Retention: backup.Retention{
-			Daily:   backup.DefaultRetentionDaily,
-			Weekly:  backup.DefaultRetentionWeekly,
-			Monthly: backup.DefaultRetentionMonthly,
-		},
-	}}
+	encrypt := true
+	if _, err := backupService.AddDestination(ctx, backup.NewDestination{
+		Name: "encrypted", Type: backup.TypeLocal, Path: destDir, Encrypt: &encrypt,
+	}); err != nil {
+		t.Fatalf("AddDestination: %v", err)
+	}
 	// Pinned rather than the real clock: Service.Run stages its
 	// plaintext archive at a fixed, process-global os.TempDir() path
 	// keyed only by this timestamp truncated to the minute (archiveName),
