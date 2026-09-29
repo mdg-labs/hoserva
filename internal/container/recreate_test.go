@@ -30,6 +30,12 @@ type scriptedEngine struct {
 	pullMsg string
 	info    dockercontainer.InspectResponse
 	newID   string
+
+	// stopCtx is the context the original's stop ran under, and
+	// stopCtxDoneAtStart whether it had already ended when the
+	// replacement's start began.
+	stopCtx            context.Context
+	stopCtxDoneAtStart bool
 }
 
 const (
@@ -119,10 +125,16 @@ func (e *scriptedEngine) label(id string) string {
 }
 
 func (e *scriptedEngine) ContainerStop(ctx context.Context, id string, o dockercontainer.StopOptions) error {
+	e.mu.Lock()
+	e.stopCtx = ctx
+	e.mu.Unlock()
 	return e.step("stop", id)
 }
 
 func (e *scriptedEngine) ContainerStart(ctx context.Context, id string, o dockercontainer.StartOptions) error {
+	e.mu.Lock()
+	e.stopCtxDoneAtStart = e.stopCtx != nil && e.stopCtx.Err() != nil
+	e.mu.Unlock()
 	return e.step("start", id)
 }
 
@@ -170,6 +182,18 @@ func TestRecreate_Success(t *testing.T) {
 		"start new",
 		"remove old",
 	)
+}
+
+// A stop that uses most of its deadline must not shorten the start's: the
+// start would fail on a deadline and roll back a swap that was going fine.
+func TestRecreate_EachSwapStepHasItsOwnDeadline(t *testing.T) {
+	e := newScriptedEngine(true)
+	if err := recreate(t, e); err != nil {
+		t.Fatalf("Recreate: %v", err)
+	}
+	if !e.stopCtxDoneAtStart {
+		t.Fatal("the replacement started under the same deadline the original's stop used")
+	}
 }
 
 func TestRecreate_StoppedContainerStaysStopped(t *testing.T) {

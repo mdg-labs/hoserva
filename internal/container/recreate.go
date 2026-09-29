@@ -111,30 +111,46 @@ func (c *EngineClient) swap(ctx context.Context, old dockercontainer.InspectResp
 		return fmt.Errorf("the original container was restored: %w", errs[0])
 	}
 
-	stepCtx, cancel := context.WithTimeout(ctx, lifecycleTimeout)
-	defer cancel()
+	// Each step gets its own deadline: a slow stop can use most of
+	// lifecycleTimeout, and a start that inherited only the remainder
+	// would fail and roll back a swap that was going fine.
+	step := func(do func(context.Context) error) error {
+		stepCtx, cancel := context.WithTimeout(ctx, lifecycleTimeout)
+		defer cancel()
+		return do(stepCtx)
+	}
 
 	if wasRunning {
 		stoppedOld = true
-		if err := c.cli.ContainerStop(stepCtx, old.ID, dockercontainer.StopOptions{}); err != nil {
+		if err := step(func(ctx context.Context) error {
+			return c.cli.ContainerStop(ctx, old.ID, dockercontainer.StopOptions{})
+		}); err != nil {
 			return rollback("stopping the original container", err)
 		}
 	}
-	if err := c.cli.ContainerRename(stepCtx, old.ID, name+oldNameSuffix); err != nil {
+	if err := step(func(ctx context.Context) error {
+		return c.cli.ContainerRename(ctx, old.ID, name+oldNameSuffix)
+	}); err != nil {
 		return rollback("renaming the original container aside", err)
 	}
 	renamedOld = true
-	if err := c.cli.ContainerRename(stepCtx, newID, name); err != nil {
+	if err := step(func(ctx context.Context) error {
+		return c.cli.ContainerRename(ctx, newID, name)
+	}); err != nil {
 		return rollback("naming the replacement container", err)
 	}
 	renamedNew = true
 	if wasRunning {
 		startedNew = true
-		if err := c.cli.ContainerStart(stepCtx, newID, dockercontainer.StartOptions{}); err != nil {
+		if err := step(func(ctx context.Context) error {
+			return c.cli.ContainerStart(ctx, newID, dockercontainer.StartOptions{})
+		}); err != nil {
 			return rollback("starting the replacement container", err)
 		}
 	}
-	if err := c.cli.ContainerRemove(stepCtx, old.ID, dockercontainer.RemoveOptions{}); err != nil {
+	if err := step(func(ctx context.Context) error {
+		return c.cli.ContainerRemove(ctx, old.ID, dockercontainer.RemoveOptions{})
+	}); err != nil {
 		return fmt.Errorf("the container was replaced, but the original (%s) could not be removed: %w", name+oldNameSuffix, mapEngineErr(err))
 	}
 	return nil
