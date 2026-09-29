@@ -203,7 +203,7 @@ func defaultOtherJobRows(now string) []ScheduleJobRow {
 	return []ScheduleJobRow{
 		{JobID: "smart_self_test", Enabled: true, Frequency: "weekly", StartTime: "03:00", UpdatedAt: now},
 		{JobID: "appdata_backup", Enabled: true, Frequency: "weekly", StartTime: "04:00", UpdatedAt: now},
-		{JobID: "restore_drill", Enabled: false, Frequency: "monthly", StartTime: "05:00", UpdatedAt: now},
+		{JobID: "restore_drill", Enabled: true, Frequency: "monthly", StartTime: "05:00", UpdatedAt: now},
 		{JobID: "container_update_check", Enabled: true, Frequency: "daily", StartTime: "06:00", UpdatedAt: now},
 	}
 }

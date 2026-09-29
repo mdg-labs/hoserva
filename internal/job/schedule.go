@@ -63,7 +63,7 @@ var defaultChainEnabled = map[Step]bool{
 var defaultOtherJobs = []OtherJobSettings{
 	{ID: "smart_self_test", Enabled: true, Frequency: FrequencyWeekly, Time: "03:00"},
 	{ID: "appdata_backup", Enabled: true, Frequency: FrequencyWeekly, Time: "04:00"},
-	{ID: "restore_drill", Enabled: false, Frequency: FrequencyMonthly, Time: "05:00"},
+	{ID: "restore_drill", Enabled: true, Frequency: FrequencyMonthly, Time: "05:00"},
 	{ID: "container_update_check", Enabled: true, Frequency: FrequencyDaily, Time: "06:00"},
 }
 

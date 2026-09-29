@@ -28,6 +28,8 @@ type Service struct {
 	// it on every run, so an added or removed destination takes effect on
 	// the next backup without a restart.
 	Store DestinationStore
+	// Drills holds the last restore drill's result (RunDrill).
+	Drills DrillStore
 	// Rclone runs rclone for remote destinations. Nil uses ExecRclone.
 	Rclone RcloneRunner
 	// DestinationCipher seals a new remote destination's credentials under

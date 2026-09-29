@@ -28,6 +28,7 @@ const JOB_TYPE_MEMBERS: Record<JobType, true> = {
   appdata_backup: true,
   appdata_restore: true,
   appdata_restore_preview: true,
+  restore_drill: true,
   container_update: true,
   container_recreate: true,
   acme_issue: true,

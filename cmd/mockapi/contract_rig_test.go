@@ -160,6 +160,7 @@ var contractProductionRunFuncs = []job.Type{
 	job.TypeShareRelocation,
 	job.TypeACMEIssue,
 	job.TypeContainerRecreate,
+	job.TypeRestoreDrill,
 }
 
 // contractDiskFromInventory converts one of mockDiskInventory's own
@@ -738,6 +739,7 @@ func contractBackupService(t *testing.T, db *sql.DB, dbPath string) *backup.Serv
 		// destination admission; DBPath is what the service writes to.
 		Paths:             backup.Paths{DBPath: dbPath, StateDir: defaultPaths.StateDir, ConfigRoot: defaultPaths.ConfigRoot},
 		Store:             api.NewBackupDestinationStore(db),
+		Drills:            api.NewDrillStore(db),
 		Rclone:            &backup.FakeRclone{},
 		Cipher:            backup.FakeSecretCipher{},
 		DestinationCipher: backup.FakeSecretCipher{},

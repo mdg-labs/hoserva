@@ -4623,6 +4623,7 @@ const (
 	JobTypeAppdataBackup         JobType = "appdata_backup"
 	JobTypeAppdataRestore        JobType = "appdata_restore"
 	JobTypeAppdataRestorePreview JobType = "appdata_restore_preview"
+	JobTypeRestoreDrill          JobType = "restore_drill"
 	JobTypeContainerUpdate       JobType = "container_update"
 	JobTypeContainerRecreate     JobType = "container_recreate"
 	JobTypeAcmeIssue             JobType = "acme_issue"
@@ -4657,6 +4658,7 @@ func (JobType) AllValues() []JobType {
 		JobTypeAppdataBackup,
 		JobTypeAppdataRestore,
 		JobTypeAppdataRestorePreview,
+		JobTypeRestoreDrill,
 		JobTypeContainerUpdate,
 		JobTypeContainerRecreate,
 		JobTypeAcmeIssue,
@@ -4710,6 +4712,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeAppdataRestore:
 		return []byte(s), nil
 	case JobTypeAppdataRestorePreview:
+		return []byte(s), nil
+	case JobTypeRestoreDrill:
 		return []byte(s), nil
 	case JobTypeContainerUpdate:
 		return []byte(s), nil
@@ -4795,6 +4799,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeAppdataRestorePreview:
 		*s = JobTypeAppdataRestorePreview
+		return nil
+	case JobTypeRestoreDrill:
+		*s = JobTypeRestoreDrill
 		return nil
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
@@ -8640,6 +8647,52 @@ func (o OptParityGuardState) Or(d ParityGuardState) ParityGuardState {
 	return d
 }
 
+// NewOptRestoreDrillRun returns new OptRestoreDrillRun with value set to v.
+func NewOptRestoreDrillRun(v RestoreDrillRun) OptRestoreDrillRun {
+	return OptRestoreDrillRun{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptRestoreDrillRun is optional RestoreDrillRun.
+type OptRestoreDrillRun struct {
+	Value RestoreDrillRun
+	Set   bool
+}
+
+// IsSet returns true if OptRestoreDrillRun was set.
+func (o OptRestoreDrillRun) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptRestoreDrillRun) Reset() {
+	var v RestoreDrillRun
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptRestoreDrillRun) SetTo(v RestoreDrillRun) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptRestoreDrillRun) Get() (v RestoreDrillRun, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptRestoreDrillRun) Or(d RestoreDrillRun) RestoreDrillRun {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptScheduleFrequency returns new OptScheduleFrequency with value set to v.
 func NewOptScheduleFrequency(v ScheduleFrequency) OptScheduleFrequency {
 	return OptScheduleFrequency{
@@ -10429,6 +10482,134 @@ func (s *RestoreAppdataRequest) SetDestinationId(val string) {
 // SetConfirm sets the value of Confirm.
 func (s *RestoreAppdataRequest) SetConfirm(val bool) {
 	s.Confirm = val
+}
+
+// Ref: #/components/schemas/RestoreDrill
+type RestoreDrill struct {
+	LastRun OptRestoreDrillRun `json:"lastRun"`
+}
+
+// GetLastRun returns the value of LastRun.
+func (s *RestoreDrill) GetLastRun() OptRestoreDrillRun {
+	return s.LastRun
+}
+
+// SetLastRun sets the value of LastRun.
+func (s *RestoreDrill) SetLastRun(val OptRestoreDrillRun) {
+	s.LastRun = val
+}
+
+// Ref: #/components/schemas/RestoreDrillDestination
+type RestoreDrillDestination struct {
+	DestinationId   string `json:"destinationId"`
+	DestinationName string `json:"destinationName"`
+	Passed          bool   `json:"passed"`
+	// The archive that was fetched and verified. Absent when the destination held none.
+	Archive OptNilString `json:"archive"`
+	// Why the destination failed. Absent when it passed.
+	Error OptNilString `json:"error"`
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *RestoreDrillDestination) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// GetDestinationName returns the value of DestinationName.
+func (s *RestoreDrillDestination) GetDestinationName() string {
+	return s.DestinationName
+}
+
+// GetPassed returns the value of Passed.
+func (s *RestoreDrillDestination) GetPassed() bool {
+	return s.Passed
+}
+
+// GetArchive returns the value of Archive.
+func (s *RestoreDrillDestination) GetArchive() OptNilString {
+	return s.Archive
+}
+
+// GetError returns the value of Error.
+func (s *RestoreDrillDestination) GetError() OptNilString {
+	return s.Error
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *RestoreDrillDestination) SetDestinationId(val string) {
+	s.DestinationId = val
+}
+
+// SetDestinationName sets the value of DestinationName.
+func (s *RestoreDrillDestination) SetDestinationName(val string) {
+	s.DestinationName = val
+}
+
+// SetPassed sets the value of Passed.
+func (s *RestoreDrillDestination) SetPassed(val bool) {
+	s.Passed = val
+}
+
+// SetArchive sets the value of Archive.
+func (s *RestoreDrillDestination) SetArchive(val OptNilString) {
+	s.Archive = val
+}
+
+// SetError sets the value of Error.
+func (s *RestoreDrillDestination) SetError(val OptNilString) {
+	s.Error = val
+}
+
+// Ref: #/components/schemas/RestoreDrillRun
+type RestoreDrillRun struct {
+	RanAt time.Time `json:"ranAt"`
+	// True only when the newest archive on every enabled destination verified.
+	Passed bool `json:"passed"`
+	// Why the drill could not test any destination at all (none is enabled, the destinations could not be
+	// listed, or the drill could not be started). Absent when it tested them.
+	Error OptNilString `json:"error"`
+	// What the drill found on each destination it tested.
+	Destinations []RestoreDrillDestination `json:"destinations"`
+}
+
+// GetRanAt returns the value of RanAt.
+func (s *RestoreDrillRun) GetRanAt() time.Time {
+	return s.RanAt
+}
+
+// GetPassed returns the value of Passed.
+func (s *RestoreDrillRun) GetPassed() bool {
+	return s.Passed
+}
+
+// GetError returns the value of Error.
+func (s *RestoreDrillRun) GetError() OptNilString {
+	return s.Error
+}
+
+// GetDestinations returns the value of Destinations.
+func (s *RestoreDrillRun) GetDestinations() []RestoreDrillDestination {
+	return s.Destinations
+}
+
+// SetRanAt sets the value of RanAt.
+func (s *RestoreDrillRun) SetRanAt(val time.Time) {
+	s.RanAt = val
+}
+
+// SetPassed sets the value of Passed.
+func (s *RestoreDrillRun) SetPassed(val bool) {
+	s.Passed = val
+}
+
+// SetError sets the value of Error.
+func (s *RestoreDrillRun) SetError(val OptNilString) {
+	s.Error = val
+}
+
+// SetDestinations sets the value of Destinations.
+func (s *RestoreDrillRun) SetDestinations(val []RestoreDrillDestination) {
+	s.Destinations = val
 }
 
 // RevokeApiTokenNoContent is response for RevokeApiToken operation.

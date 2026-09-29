@@ -67,15 +67,51 @@ func TestClaimDueOtherJobs_OnlyClaimsJobsTheCallerCanRun(t *testing.T) {
 	if _, err := svc.ClaimDueOtherJobs(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
+	// Both the weekly appdata backup and the monthly restore drill have a
+	// window that has opened by now; only the one the caller names is
+	// claimed.
 	now = time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
-	if got, err := svc.ClaimDueOtherJobs(ctx, []string{"restore_drill"}); err != nil || len(got) != 0 {
-		t.Fatalf("restore_drill is disabled by default: claimed %v, err %v", got, err)
+	if got, err := svc.ClaimDueOtherJobs(ctx, []string{"appdata_backup"}); err != nil || len(got) != 1 || got[0] != "appdata_backup" {
+		t.Fatalf("claimed %v, err %v; want only appdata_backup", got, err)
 	}
 	rows, _ := store.ListJobs(ctx)
 	for _, r := range rows {
-		if r.LastRunAt != "" {
+		if r.JobID != "appdata_backup" && r.LastRunAt != "" {
 			t.Fatalf("%s has last_run_at %q although the caller could not run it", r.JobID, r.LastRunAt)
 		}
+	}
+}
+
+func TestClaimDueOtherJobs_RestoreDrillIsSeededMonthlyAndClaimedOncePerWindow(t *testing.T) {
+	ctx := context.Background()
+	// 2026-09-29: the next monthly window is 2026-10-01 05:00.
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	svc, store := newClaimService(t, &now)
+	ids := []string{"restore_drill"}
+
+	if got, err := svc.ClaimDueOtherJobs(ctx, ids); err != nil || len(got) != 0 {
+		t.Fatalf("on the day it was seeded: claimed %v, err %v; want nothing until the first window", got, err)
+	}
+	rows, _ := store.ListJobs(ctx)
+	for _, r := range rows {
+		if r.JobID == "restore_drill" && (!r.Enabled || r.Frequency != "monthly" || r.StartTime != "05:00") {
+			t.Fatalf("seeded restore_drill = %+v, want enabled, monthly at 05:00 (doc 10 §4)", r)
+		}
+	}
+	now = time.Date(2026, 10, 1, 5, 1, 0, 0, time.UTC)
+	if got, err := svc.ClaimDueOtherJobs(ctx, ids); err != nil || len(got) != 1 {
+		t.Fatalf("in the window: claimed %v, err %v; want restore_drill", got, err)
+	}
+	if got, _ := svc.ClaimDueOtherJobs(ctx, ids); len(got) != 0 {
+		t.Fatalf("the same window claimed twice: %v", got)
+	}
+	now = time.Date(2026, 10, 20, 5, 0, 0, 0, time.UTC)
+	if got, _ := svc.ClaimDueOtherJobs(ctx, ids); len(got) != 0 {
+		t.Fatalf("mid-month: claimed %v", got)
+	}
+	now = time.Date(2026, 11, 1, 5, 0, 0, 0, time.UTC)
+	if got, _ := svc.ClaimDueOtherJobs(ctx, ids); len(got) != 1 {
+		t.Fatalf("the next month: claimed %v, want one", got)
 	}
 }
 

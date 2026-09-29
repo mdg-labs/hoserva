@@ -337,3 +337,35 @@ func (f *FakeAppdataPolicyStore) SetAppdataPolicy(ctx context.Context, p Appdata
 	f.policies[p.Container] = p
 	return nil
 }
+
+// FakeDrillStore is an in-memory DrillStore for tests (CLAUDE.md).
+// RecordErr, when set, makes RecordDrill fail.
+type FakeDrillStore struct {
+	mu        sync.Mutex
+	last      *DrillResult
+	Recorded  int
+	RecordErr error
+}
+
+var _ DrillStore = (*FakeDrillStore)(nil)
+
+func (f *FakeDrillStore) RecordDrill(ctx context.Context, r DrillResult) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.RecordErr != nil {
+		return f.RecordErr
+	}
+	f.Recorded++
+	f.last = &r
+	return nil
+}
+
+func (f *FakeDrillStore) LastDrill(ctx context.Context) (*DrillResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.last == nil {
+		return nil, nil
+	}
+	r := *f.last
+	return &r, nil
+}

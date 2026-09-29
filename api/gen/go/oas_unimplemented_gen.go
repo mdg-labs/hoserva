@@ -668,6 +668,18 @@ func (UnimplementedHandler) GetQuietHours(ctx context.Context) (r *NotificationQ
 	return r, ht.ErrNotImplemented
 }
 
+// GetRestoreDrill implements getRestoreDrill operation.
+//
+// The result of the most recent restore drill (doc 10 §1): whether the newest config archive on each
+// enabled backup destination could be fetched, opened the way a restore opens it, and verified, and
+// when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup
+// service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
+//
+// GET /backup/drill
+func (UnimplementedHandler) GetRestoreDrill(ctx context.Context) (r *RestoreDrill, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetSchedules implements getSchedules operation.
 //
 // The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with
@@ -1404,6 +1416,22 @@ func (UnimplementedHandler) StartMover(ctx context.Context) (r *Job, _ error) {
 //
 // POST /pool/rebalance
 func (UnimplementedHandler) StartRebalance(ctx context.Context, req *StartRebalanceRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// StartRestoreDrill implements startRestoreDrill operation.
+//
+// Queues a `restore_drill` job (service class), the job the monthly schedule queues. It fetches the
+// newest config archive this installation wrote to each enabled destination, opens it the way a
+// restore would (an encrypted one through its identity sidecar and the backup passphrase alone),
+// checks its checksums and that `state.db` opens and passes `PRAGMA integrity_check`, and discards
+// everything it fetched. It never writes to a destination and never reads the live database. A
+// destination that cannot be read, or holds no archive written by this installation, fails the drill.
+// The result replaces the one `getRestoreDrill` returns, and a failed drill publishes a
+// `restore_drill_failed` notification. A drill behind another one queues rather than failing.
+//
+// POST /backup/drill
+func (UnimplementedHandler) StartRestoreDrill(ctx context.Context) (r *Job, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

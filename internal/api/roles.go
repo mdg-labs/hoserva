@@ -100,6 +100,8 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.CreateBackupDestinationOperation:        RoleAdmin,
 	apiv1.DeleteBackupDestinationOperation:        RoleAdmin,
 	apiv1.TestBackupDestinationOperation:          RoleAdmin,
+	apiv1.GetRestoreDrillOperation:                RoleViewer,
+	apiv1.StartRestoreDrillOperation:              RoleAdmin,
 	apiv1.GetAppdataBackupOperation:               RoleViewer,
 	apiv1.StartAppdataBackupOperation:             RoleAdmin,
 	apiv1.SetAppdataBackupContainerOperation:      RoleAdmin,

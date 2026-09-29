@@ -2449,6 +2449,36 @@ var contractCases = []contractCase{
 		},
 	},
 
+	// --- Restore drill (#63): the read of the last result and the
+	// submission; what a drill then does is production's own tests. ---
+	{
+		op:   "GetRestoreDrill",
+		name: "valid_reports_the_last_result",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetRestoreDrill(ctx)
+			return err
+		},
+	},
+	{
+		op:   "StartRestoreDrill",
+		name: "valid_queues_the_drill",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartRestoreDrill(ctx)
+			return err
+		},
+	},
+	{
+		op:   "StartRestoreDrill",
+		name: "refused_in_maintenance_mode",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.StartRestoreDrill(ctx)
+			return err
+		},
+	},
+
 	// --- Appdata backup (#61): the scope, the refusals and the job
 	// submission; what a job then does is production's own tests. ---
 	{

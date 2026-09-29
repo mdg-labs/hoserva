@@ -93,6 +93,11 @@ type handler struct {
 	// has no scheduler, so a preview job is recorded as already succeeded.
 	appdataPreviews map[uuid.UUID]apiv1.AppdataRestorePreview
 
+	// drillMu guards drillLast (#63): the last restore drill's result,
+	// seeded as a pass and replaced by each StartRestoreDrill.
+	drillMu   sync.Mutex
+	drillLast *apiv1.RestoreDrillRun
+
 	externalMu sync.Mutex
 	external   map[string]apiv1.ExternalDisk
 
@@ -154,6 +159,7 @@ func newHandler(scenario string) (*handler, error) {
 
 		backupDestinations: mockBackupDestinations(),
 		appdataPolicies:    make(map[string]backup.AppdataPolicy),
+		drillLast:          seededDrillRun(),
 		external:           make(map[string]apiv1.ExternalDisk),
 
 		users:                map[uuid.UUID]apiv1.UserSummary{mockAdminID: mockUserSummary()},

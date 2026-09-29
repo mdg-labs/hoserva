@@ -735,3 +735,15 @@ CREATE TABLE appdata_backup_containers (
     included INTEGER NOT NULL CHECK (included IN (0, 1)),
     updated_at TEXT NOT NULL
 ) STRICT;
+
+-- The last restore drill's result (#63, doc 10 §1): one row, replaced by
+-- each drill. destinations is a JSON array of what the drill found on each
+-- destination it tested; error is why it could not test any at all. Nothing
+-- reads a past result, so history is not kept.
+CREATE TABLE restore_drill_result (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    ran_at TEXT NOT NULL,
+    passed INTEGER NOT NULL CHECK (passed IN (0, 1)),
+    error TEXT,
+    destinations TEXT NOT NULL
+) STRICT;

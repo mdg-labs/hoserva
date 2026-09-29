@@ -231,6 +231,14 @@ type RelocationRemovingDisk struct {
 	Mountpoint string `json:"mountpoint"`
 }
 
+type RestoreDrillResult struct {
+	ID           int64          `json:"id"`
+	RanAt        string         `json:"ran_at"`
+	Passed       int64          `json:"passed"`
+	Error        sql.NullString `json:"error"`
+	Destinations string         `json:"destinations"`
+}
+
 type ScheduleChain struct {
 	ID                  int64          `json:"id"`
 	StartTime           string         `json:"start_time"`

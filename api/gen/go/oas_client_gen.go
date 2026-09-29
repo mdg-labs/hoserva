@@ -525,6 +525,15 @@ type Invoker interface {
 	//
 	// GET /notifications/quiet-hours
 	GetQuietHours(ctx context.Context) (*NotificationQuietHours, error)
+	// GetRestoreDrill invokes getRestoreDrill operation.
+	//
+	// The result of the most recent restore drill (doc 10 §1): whether the newest config archive on each
+	// enabled backup destination could be fetched, opened the way a restore opens it, and verified, and
+	// when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup
+	// service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
+	//
+	// GET /backup/drill
+	GetRestoreDrill(ctx context.Context) (*RestoreDrill, error)
 	// GetSchedules invokes getSchedules operation.
 	//
 	// The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with
@@ -1087,6 +1096,19 @@ type Invoker interface {
 	//
 	// POST /pool/rebalance
 	StartRebalance(ctx context.Context, request *StartRebalanceRequest) (*Job, error)
+	// StartRestoreDrill invokes startRestoreDrill operation.
+	//
+	// Queues a `restore_drill` job (service class), the job the monthly schedule queues. It fetches the
+	// newest config archive this installation wrote to each enabled destination, opens it the way a
+	// restore would (an encrypted one through its identity sidecar and the backup passphrase alone),
+	// checks its checksums and that `state.db` opens and passes `PRAGMA integrity_check`, and discards
+	// everything it fetched. It never writes to a destination and never reads the live database. A
+	// destination that cannot be read, or holds no archive written by this installation, fails the drill.
+	// The result replaces the one `getRestoreDrill` returns, and a failed drill publishes a
+	// `restore_drill_failed` notification. A drill behind another one queues rather than failing.
+	//
+	// POST /backup/drill
+	StartRestoreDrill(ctx context.Context) (*Job, error)
 	// StartScrub invokes startScrub operation.
 	//
 	// Queues a scrub job (`hoserva scrub`, doc 01 §3).
@@ -8656,6 +8678,134 @@ func (c *Client) sendGetQuietHours(ctx context.Context) (res *NotificationQuietH
 
 	stage = "DecodeResponse"
 	result, err := decodeGetQuietHoursResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetRestoreDrill invokes getRestoreDrill operation.
+//
+// The result of the most recent restore drill (doc 10 §1): whether the newest config archive on each
+// enabled backup destination could be fetched, opened the way a restore opens it, and verified, and
+// when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup
+// service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
+//
+// GET /backup/drill
+func (c *Client) GetRestoreDrill(ctx context.Context) (*RestoreDrill, error) {
+	res, err := c.sendGetRestoreDrill(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetRestoreDrill(ctx context.Context) (res *RestoreDrill, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getRestoreDrill"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/backup/drill"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetRestoreDrillOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/backup/drill"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetRestoreDrillOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetRestoreDrillOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetRestoreDrillResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -16614,6 +16764,138 @@ func (c *Client) sendStartRebalance(ctx context.Context, request *StartRebalance
 
 	stage = "DecodeResponse"
 	result, err := decodeStartRebalanceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// StartRestoreDrill invokes startRestoreDrill operation.
+//
+// Queues a `restore_drill` job (service class), the job the monthly schedule queues. It fetches the
+// newest config archive this installation wrote to each enabled destination, opens it the way a
+// restore would (an encrypted one through its identity sidecar and the backup passphrase alone),
+// checks its checksums and that `state.db` opens and passes `PRAGMA integrity_check`, and discards
+// everything it fetched. It never writes to a destination and never reads the live database. A
+// destination that cannot be read, or holds no archive written by this installation, fails the drill.
+// The result replaces the one `getRestoreDrill` returns, and a failed drill publishes a
+// `restore_drill_failed` notification. A drill behind another one queues rather than failing.
+//
+// POST /backup/drill
+func (c *Client) StartRestoreDrill(ctx context.Context) (*Job, error) {
+	res, err := c.sendStartRestoreDrill(ctx)
+	return res, err
+}
+
+func (c *Client) sendStartRestoreDrill(ctx context.Context) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startRestoreDrill"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/backup/drill"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartRestoreDrillOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/backup/drill"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartRestoreDrillOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartRestoreDrillOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartRestoreDrillResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

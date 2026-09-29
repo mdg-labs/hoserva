@@ -1707,6 +1707,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/backup/drill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Last restore drill
+         * @description The result of the most recent restore drill (doc 10 §1): whether the newest config archive on each enabled backup destination could be fetched, opened the way a restore opens it, and verified, and when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
+         */
+        get: operations["getRestoreDrill"];
+        put?: never;
+        /**
+         * Run a restore drill now
+         * @description Queues a `restore_drill` job (service class), the job the monthly schedule queues. It fetches the newest config archive this installation wrote to each enabled destination, opens it the way a restore would (an encrypted one through its identity sidecar and the backup passphrase alone), checks its checksums and that `state.db` opens and passes `PRAGMA integrity_check`, and discards everything it fetched. It never writes to a destination and never reads the live database. A destination that cannot be read, or holds no archive written by this installation, fails the drill. The result replaces the one `getRestoreDrill` returns, and a failed drill publishes a `restore_drill_failed` notification. A drill behind another one queues rather than failing.
+         */
+        post: operations["startRestoreDrill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/appdata/backup": {
         parameters: {
             query?: never;
@@ -2477,7 +2501,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -3982,6 +4006,28 @@ export interface components {
         BackupDestinationTestResult: {
             success: boolean;
             /** @description Why the test failed, present only when success is false. */
+            error?: string | null;
+        };
+        RestoreDrill: {
+            lastRun?: components["schemas"]["RestoreDrillRun"];
+        };
+        RestoreDrillRun: {
+            /** Format: date-time */
+            ranAt: string;
+            /** @description True only when the newest archive on every enabled destination verified. */
+            passed: boolean;
+            /** @description Why the drill could not test any destination at all (none is enabled, the destinations could not be listed, or the drill could not be started). Absent when it tested them. */
+            error?: string | null;
+            /** @description What the drill found on each destination it tested. */
+            destinations: components["schemas"]["RestoreDrillDestination"][];
+        };
+        RestoreDrillDestination: {
+            destinationId: string;
+            destinationName: string;
+            passed: boolean;
+            /** @description The archive that was fetched and verified. Absent when the destination held none. */
+            archive?: string | null;
+            /** @description Why the destination failed. Absent when it passed. */
             error?: string | null;
         };
         AppdataBackupContainer: {
@@ -6391,6 +6437,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BackupDestinationTestResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getRestoreDrill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The last drill's result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreDrill"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startRestoreDrill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued or running restore drill job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
             default: components["responses"]["Error"];

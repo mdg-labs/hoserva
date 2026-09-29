@@ -573,6 +573,7 @@ func run(cfg config) error {
 	wireBackup(handler, backupService)
 	appdataService := newAppdataService(apps, backupService, api.NewAppdataPolicyStore(db), arrayStore, absStateDir)
 	wireAppdata(handler, registry, appdataService, notifyService)
+	wireRestoreDrill(registry, backupService, api.NewDrillStore(db), notifyService)
 
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
 		Provider:   disks,
@@ -704,6 +705,7 @@ func run(cfg config) error {
 		Jobs:        jobStore,
 	}
 	wireAppdataSchedule(schedRunner, appdataService, scheduler, notifyService)
+	wireRestoreDrillSchedule(schedRunner, backupService, scheduler, notifyService)
 	go runScheduleLoop(ctx, schedRunner, scheduleTickInterval)
 
 	errCh := make(chan error, 2)
