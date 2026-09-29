@@ -162,9 +162,6 @@ func tableFixtures() []tableFixture {
 		{table: "array_settings", singleton: true, label: func(string) string { return "" }, row: func(_ string, v int) string {
 			return fmt.Sprintf(`INSERT INTO array_settings (id, create_policy, min_free_space, created_at) VALUES (1, '%s', '50G', '%s')`, pick(v, "mspmfs", "mfs"), ts)
 		}},
-		{table: "array_maintenance", kind: "array_state", singleton: true, label: func(string) string { return "" }, row: func(_ string, v int) string {
-			return fmt.Sprintf(`INSERT INTO array_maintenance (id, maintenance, array_stopped, updated_at) VALUES (1, %d, 0, '%s')`, v, ts)
-		}},
 		{table: "host_config", names: [4]string{"fstab", "samba", "nfs", "docker_images"}, label: plain, row: func(n string, v int) string {
 			return fmt.Sprintf(`INSERT INTO host_config (kind, decision, facts, applied_at) VALUES ('%s', '%s', '{}', '%s')`, n, pick(v, "import", "leave"), ts)
 		}},
@@ -524,7 +521,6 @@ func TestPreviewImport_IgnoresRuntimeColumns(t *testing.T) {
 		byName["backup_destinations"].insert(t, db, "boot", 0)
 		byName["host_config"].insert(t, db, "samba", 0)
 		byName["external_disks"].insert(t, db, "usb1", 0)
-		byName["array_maintenance"].insert(t, db, "", 0)
 		mustExec(t, db, `INSERT OR IGNORE INTO schema_info (id, installation_id, created_at) VALUES (1, 'inst', 't')`)
 	}
 	mustExec(t, live,
@@ -534,7 +530,6 @@ func TestPreviewImport_IgnoresRuntimeColumns(t *testing.T) {
 		`UPDATE backup_destinations SET last_successful_backup_at = '2026-09-01T00:00:00Z', stale_alerted_at = '2026-09-02T00:00:00Z'`,
 		`UPDATE host_config SET applied_at = '2026-09-01T00:00:00Z'`,
 		`UPDATE external_disks SET id = id + 100`,
-		`UPDATE array_maintenance SET updated_at = '2026-09-01T00:00:00Z'`,
 		`UPDATE schema_info SET created_at = 'later', previous_version = '0.1.0'`,
 	)
 	groups, err := diffConfig(ctx, live, arc)
@@ -672,7 +667,8 @@ func TestPreviewImport_ReportsTheArchiveAndItsBlockers(t *testing.T) {
 	if got := groupByCategory(t, p.Groups, CategoryShares).Added; !reflect.DeepEqual(got, changesOf("share", "photos")) {
 		t.Fatalf("a blocked archive still lists its changes: shares added = %v", got)
 	}
-	if len(p.Notes) != 1 || p.Notes[0].Code != NoteSessionsReplaced || !strings.Contains(p.Notes[0].Message, "signed out") {
+	if len(p.Notes) != 2 || p.Notes[0].Code != NoteSessionsReplaced || !strings.Contains(p.Notes[0].Message, "signed out") ||
+		p.Notes[1].Code != NoteArrayStateKept {
 		t.Fatalf("notes = %+v", p.Notes)
 	}
 }

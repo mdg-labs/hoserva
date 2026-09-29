@@ -1093,8 +1093,6 @@ func (s ConfigImportChangeKind) Validate() error {
 		return nil
 	case "array_settings":
 		return nil
-	case "array_state":
-		return nil
 	case "host_config":
 		return nil
 	case "external_disk":
@@ -1266,6 +1264,8 @@ func (s *ConfigImportNote) Validate() error {
 func (s ConfigImportNoteCode) Validate() error {
 	switch s {
 	case "sessions_replaced":
+		return nil
+	case "array_state_kept":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

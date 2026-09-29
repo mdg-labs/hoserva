@@ -549,8 +549,23 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		return err
 	}
 
-	if err := backup.RestoreDatabase(ctx, h.Backup.DB, stateDB); err != nil {
-		return fmt.Errorf("restoring database: %w", err)
+	// The array's stopped and maintenance state is the machine's physical
+	// state, not configuration: the live row is written into the staged
+	// database, so the one restore transaction leaves it as it is. Read and
+	// restored under the scheduler's state lock, so no `array stop` lands in
+	// between. A failure to keep it refuses the import before the live
+	// database is written.
+	err = h.Scheduler.WithArrayStateHeld(func() error {
+		if err := backup.KeepArrayState(ctx, h.Backup.DB, stateDB); err != nil {
+			return fmt.Errorf("keeping the array state across the restore: %w", err)
+		}
+		if err := backup.RestoreDatabase(ctx, h.Backup.DB, stateDB); err != nil {
+			return fmt.Errorf("restoring database: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	if importPostRestoreHookForTest != nil {

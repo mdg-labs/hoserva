@@ -5142,8 +5142,6 @@ func (s *ConfigImportChangeKind) Decode(d *jx.Decoder) error {
 		*s = ConfigImportChangeKindUps
 	case ConfigImportChangeKindArraySettings:
 		*s = ConfigImportChangeKindArraySettings
-	case ConfigImportChangeKindArrayState:
-		*s = ConfigImportChangeKindArrayState
 	case ConfigImportChangeKindHostConfig:
 		*s = ConfigImportChangeKindHostConfig
 	case ConfigImportChangeKindExternalDisk:
@@ -5530,6 +5528,8 @@ func (s *ConfigImportNoteCode) Decode(d *jx.Decoder) error {
 	switch ConfigImportNoteCode(v) {
 	case ConfigImportNoteCodeSessionsReplaced:
 		*s = ConfigImportNoteCodeSessionsReplaced
+	case ConfigImportNoteCodeArrayStateKept:
+		*s = ConfigImportNoteCodeArrayStateKept
 	default:
 		*s = ConfigImportNoteCode(v)
 	}

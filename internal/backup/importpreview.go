@@ -23,8 +23,9 @@ const (
 	CategorySystem        = "system"
 )
 
-// NoteSessionsReplaced is the code of the note every preview carries: the
-// restored database brings the archive's sessions table with it.
+// NoteSessionsReplaced is the code of a note every preview carries: the
+// restored database brings the archive's sessions table with it. The other,
+// NoteArrayStateKept, is in arraystate.go.
 const NoteSessionsReplaced = "sessions_replaced"
 
 // ImportChange is one item an in-place import would add, change or remove.
@@ -112,7 +113,6 @@ var configTables = []configTable{
 	{category: CategorySystem, kind: "acme", table: "acme_config", key: []string{"id"}, label: `''`, ignore: []string{"last_error", "updated_at"}},
 	{category: CategorySystem, kind: "ups", table: "ups_config", key: []string{"id"}, label: `''`, ignore: []string{"updated_at"}},
 	{category: CategorySystem, kind: "array_settings", table: "array_settings", key: []string{"id"}, label: `''`},
-	{category: CategorySystem, kind: "array_state", table: "array_maintenance", key: []string{"id"}, label: `''`, ignore: []string{"updated_at"}},
 	{category: CategorySystem, kind: "host_config", table: "host_config", key: []string{"kind"}, label: `t.kind`, ignore: []string{"applied_at"}},
 	{category: CategorySystem, kind: "external_disk", table: "external_disks", key: []string{"label"}, label: `t.label`, ignore: []string{"id"}},
 	{category: CategorySystem, kind: "hostname", table: "schema_info", key: []string{"id"}, label: `''`, only: []string{"hostname"}},
@@ -136,6 +136,7 @@ var uncomparedTables = map[string]string{
 	"cache_usage_breakdown":     "runtime: what the last mover run measured",
 	"restore_drill_result":      "runtime: the last restore drill's result",
 	"sessions":                  "replaced and reported by NoteSessionsReplaced",
+	"array_maintenance":         "kept: the import writes the live row into the restore (KeepArrayState) and reports NoteArrayStateKept",
 	"array_disks":               "refused by CheckImport when it differs: an archive of another array is never imported",
 	"relocation_manifest":       "refused by CheckImport when it differs: an archive of another array is never imported",
 	"relocation_removing_disks": "refused by CheckImport when it differs: an archive of another array is never imported",
@@ -191,10 +192,16 @@ func PreviewImport(ctx context.Context, live *sql.DB, stagingDir string) (Import
 		LiveSchemaVersion:    check.LiveSchemaVersion,
 		Blockers:             []ImportRefusal{},
 		Groups:               []ImportGroup{},
-		Notes: []ImportNote{{
-			Code:    NoteSessionsReplaced,
-			Message: "Active sign-in sessions are replaced by the archive's, so the current user is signed out.",
-		}},
+		Notes: []ImportNote{
+			{
+				Code:    NoteSessionsReplaced,
+				Message: "Active sign-in sessions are replaced by the archive's, so the current user is signed out.",
+			},
+			{
+				Code:    NoteArrayStateKept,
+				Message: "The array's current state, running, in maintenance mode or stopped, is kept: the import does not restore the archive's.",
+			},
+		},
 	}
 	if check.Refusal != nil {
 		p.Blockers = append(p.Blockers, *check.Refusal)

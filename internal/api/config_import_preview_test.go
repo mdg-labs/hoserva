@@ -158,8 +158,8 @@ func TestPreviewConfigImport_ReportsWhatAnImportWouldChange(t *testing.T) {
 			t.Fatalf("%s reports %+v, want no changes outside shares", g.Category, g)
 		}
 	}
-	if len(p.Notes) != 1 || p.Notes[0].Code != apiv1.ConfigImportNoteCodeSessionsReplaced {
-		t.Fatalf("notes = %+v, want the sessions note", p.Notes)
+	if len(p.Notes) != 2 || p.Notes[0].Code != apiv1.ConfigImportNoteCodeSessionsReplaced || p.Notes[1].Code != apiv1.ConfigImportNoteCodeArrayStateKept {
+		t.Fatalf("notes = %+v, want the sessions and array-state notes", p.Notes)
 	}
 }
 
@@ -179,7 +179,6 @@ func TestPreviewConfigImport_ListsSettingsAnImportWouldRevert(t *testing.T) {
 		`UPDATE schema_info SET hostname = 'nas-new', timezone = 'Europe/Vienna', backup_passphrase = x'bb', update_channel = 'beta', update_check_enabled = 0`,
 		`UPDATE host_config SET decision = 'leave'`,
 		`DELETE FROM external_disks`,
-		`INSERT INTO array_maintenance (id, maintenance, array_stopped, updated_at) VALUES (1, 1, 0, 't')`,
 	)
 
 	p, err := h.PreviewConfigImport(context.Background(), previewReq(archive))
@@ -199,8 +198,8 @@ func TestPreviewConfigImport_ListsSettingsAnImportWouldRevert(t *testing.T) {
 	if got := previewNames(system.Added); !slices.Equal(got, []string{"external_disk=usb-old"}) {
 		t.Fatalf("added = %v, want the external disk the import would bring back", got)
 	}
-	if got := previewNames(system.Removed); !slices.Equal(got, []string{"array_state="}) {
-		t.Fatalf("removed = %v, want the maintenance state the import would clear", got)
+	if got := previewNames(system.Removed); len(got) != 0 {
+		t.Fatalf("removed = %v, want nothing", got)
 	}
 }
 

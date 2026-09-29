@@ -657,10 +657,16 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 			group(apiv1.ConfigImportGroupCategoryBackup, empty, empty, empty),
 			group(apiv1.ConfigImportGroupCategorySystem, empty, empty, empty),
 		},
-		Notes: []apiv1.ConfigImportNote{{
-			Code:    apiv1.ConfigImportNoteCodeSessionsReplaced,
-			Message: "Active sign-in sessions are replaced by the archive's, so the current user is signed out.",
-		}},
+		Notes: []apiv1.ConfigImportNote{
+			{
+				Code:    apiv1.ConfigImportNoteCodeSessionsReplaced,
+				Message: "Active sign-in sessions are replaced by the archive's, so the current user is signed out.",
+			},
+			{
+				Code:    apiv1.ConfigImportNoteCodeArrayStateKept,
+				Message: "The array's current state, running, in maintenance mode or stopped, is kept: the import does not restore the archive's.",
+			},
+		},
 	}, nil
 }
 

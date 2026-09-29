@@ -2260,7 +2260,6 @@ const (
 	ConfigImportChangeKindAcme                   ConfigImportChangeKind = "acme"
 	ConfigImportChangeKindUps                    ConfigImportChangeKind = "ups"
 	ConfigImportChangeKindArraySettings          ConfigImportChangeKind = "array_settings"
-	ConfigImportChangeKindArrayState             ConfigImportChangeKind = "array_state"
 	ConfigImportChangeKindHostConfig             ConfigImportChangeKind = "host_config"
 	ConfigImportChangeKindExternalDisk           ConfigImportChangeKind = "external_disk"
 	ConfigImportChangeKindHostname               ConfigImportChangeKind = "hostname"
@@ -2292,7 +2291,6 @@ func (ConfigImportChangeKind) AllValues() []ConfigImportChangeKind {
 		ConfigImportChangeKindAcme,
 		ConfigImportChangeKindUps,
 		ConfigImportChangeKindArraySettings,
-		ConfigImportChangeKindArrayState,
 		ConfigImportChangeKindHostConfig,
 		ConfigImportChangeKindExternalDisk,
 		ConfigImportChangeKindHostname,
@@ -2343,8 +2341,6 @@ func (s ConfigImportChangeKind) MarshalText() ([]byte, error) {
 	case ConfigImportChangeKindUps:
 		return []byte(s), nil
 	case ConfigImportChangeKindArraySettings:
-		return []byte(s), nil
-	case ConfigImportChangeKindArrayState:
 		return []byte(s), nil
 	case ConfigImportChangeKindHostConfig:
 		return []byte(s), nil
@@ -2424,9 +2420,6 @@ func (s *ConfigImportChangeKind) UnmarshalText(data []byte) error {
 		return nil
 	case ConfigImportChangeKindArraySettings:
 		*s = ConfigImportChangeKindArraySettings
-		return nil
-	case ConfigImportChangeKindArrayState:
-		*s = ConfigImportChangeKindArrayState
 		return nil
 	case ConfigImportChangeKindHostConfig:
 		*s = ConfigImportChangeKindHostConfig
@@ -2605,12 +2598,14 @@ type ConfigImportNoteCode string
 
 const (
 	ConfigImportNoteCodeSessionsReplaced ConfigImportNoteCode = "sessions_replaced"
+	ConfigImportNoteCodeArrayStateKept   ConfigImportNoteCode = "array_state_kept"
 )
 
 // AllValues returns all ConfigImportNoteCode values.
 func (ConfigImportNoteCode) AllValues() []ConfigImportNoteCode {
 	return []ConfigImportNoteCode{
 		ConfigImportNoteCodeSessionsReplaced,
+		ConfigImportNoteCodeArrayStateKept,
 	}
 }
 
@@ -2618,6 +2613,8 @@ func (ConfigImportNoteCode) AllValues() []ConfigImportNoteCode {
 func (s ConfigImportNoteCode) MarshalText() ([]byte, error) {
 	switch s {
 	case ConfigImportNoteCodeSessionsReplaced:
+		return []byte(s), nil
+	case ConfigImportNoteCodeArrayStateKept:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -2629,6 +2626,9 @@ func (s *ConfigImportNoteCode) UnmarshalText(data []byte) error {
 	switch ConfigImportNoteCode(data) {
 	case ConfigImportNoteCodeSessionsReplaced:
 		*s = ConfigImportNoteCodeSessionsReplaced
+		return nil
+	case ConfigImportNoteCodeArrayStateKept:
+		*s = ConfigImportNoteCodeArrayStateKept
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

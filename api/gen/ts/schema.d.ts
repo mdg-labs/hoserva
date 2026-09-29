@@ -1630,7 +1630,7 @@ export interface paths {
         put?: never;
         /**
          * Import a config archive
-         * @description Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running configuration. Every refusal happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks one it lists, or holds a link, device, FIFO or duplicate entry), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this installation's or is missing; a different installation's archive is restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the live array; the message names each difference).
+         * @description Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running configuration. Every refusal happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks one it lists, or holds a link, device, FIFO or duplicate entry), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this installation's or is missing; a different installation's archive is restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the live array; the message names each difference). The array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a stopped array to normal operation.
          */
         post: operations["importConfig"];
         delete?: never;
@@ -4114,12 +4114,12 @@ export interface components {
         /** @description Something about an import that is true whatever the archive holds. */
         ConfigImportNote: {
             /** @enum {string} */
-            code: "sessions_replaced";
+            code: "sessions_replaced" | "array_state_kept";
             message: string;
         };
         ConfigImportChange: {
             /** @enum {string} */
-            kind: "share" | "share_user_permission" | "share_group_permission" | "user" | "user_group" | "user_group_member" | "api_token" | "schedule_chain" | "schedule_job" | "notification_channel" | "notification_route" | "notification_severity" | "notification_quiet_hours" | "backup_destination" | "appdata_backup_container" | "backup_recipient" | "acme" | "ups" | "array_settings" | "array_state" | "host_config" | "external_disk" | "hostname" | "timezone" | "backup_passphrase" | "update_channel" | "update_check";
+            kind: "share" | "share_user_permission" | "share_group_permission" | "user" | "user_group" | "user_group_member" | "api_token" | "schedule_chain" | "schedule_job" | "notification_channel" | "notification_route" | "notification_severity" | "notification_quiet_hours" | "backup_destination" | "appdata_backup_container" | "backup_recipient" | "acme" | "ups" | "array_settings" | "host_config" | "external_disk" | "hostname" | "timezone" | "backup_passphrase" | "update_channel" | "update_check";
             /** @description What a user calls it: a share name, a username, a schedule job, a destination name; `share / user` for a permission, `group / user` for a membership, `user / token name` for an API token, `event / channel` for a route, the label of an external disk, the kind of a host configuration decision. Empty for the settings that exist once. A secret or a passphrase is reported as changed, never by its value. */
             name: string;
         };

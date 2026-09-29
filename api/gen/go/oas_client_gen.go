@@ -604,7 +604,9 @@ type Invoker interface {
 	// (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key
 	// check value differs from this installation's or is missing; a different installation's archive is
 	// restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state
-	// or the relocation in flight differ from the live array; the message names each difference).
+	// or the relocation in flight differ from the live array; the message names each difference). The
+	// array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from
+	// the archive, so an import cannot return a stopped array to normal operation.
 	//
 	// POST /config/import
 	ImportConfig(ctx context.Context, request *ImportConfigReq) error
@@ -9872,7 +9874,9 @@ func (c *Client) sendGetUserSharePermissions(ctx context.Context, params GetUser
 // (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key
 // check value differs from this installation's or is missing; a different installation's archive is
 // restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state
-// or the relocation in flight differ from the live array; the message names each difference).
+// or the relocation in flight differ from the live array; the message names each difference). The
+// array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from
+// the archive, so an import cannot return a stopped array to normal operation.
 //
 // POST /config/import
 func (c *Client) ImportConfig(ctx context.Context, request *ImportConfigReq) error {
