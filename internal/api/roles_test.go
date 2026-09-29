@@ -173,6 +173,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.ListWakeEventsOperation,
 		apiv1.MountExternalDiskOperation,
 		apiv1.PlanDiskAddOperation,
+		apiv1.PreviewConfigImportOperation,
 		apiv1.PlanDiskEvacuationOperation,
 		apiv1.PlanDiskReplaceOperation,
 		apiv1.PlanDiskUpgradeOperation,
@@ -245,6 +246,15 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.CreateBackupDestinationOperation,
 		apiv1.DeleteBackupDestinationOperation,
 		apiv1.TestBackupDestinationOperation,
+		apiv1.GetRestoreDrillOperation,
+		apiv1.StartRestoreDrillOperation,
+		apiv1.GetAppdataBackupOperation,
+		apiv1.StartAppdataBackupOperation,
+		apiv1.SetAppdataBackupContainerOperation,
+		apiv1.ListAppdataArchivesOperation,
+		apiv1.RestoreAppdataOperation,
+		apiv1.PreviewAppdataRestoreOperation,
+		apiv1.GetAppdataRestorePreviewOperation,
 	}
 	sort.Slice(generated, func(i, j int) bool { return generated[i] < generated[j] })
 

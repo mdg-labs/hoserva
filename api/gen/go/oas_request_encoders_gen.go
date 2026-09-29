@@ -441,6 +441,41 @@ func encodePlanDiskUpgradeRequest(
 	return nil
 }
 
+func encodePreviewAppdataRestoreRequest(
+	req *PreviewAppdataRestoreRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodePreviewConfigImportRequest(
+	req *PreviewConfigImportReq,
+	r *http.Request,
+) error {
+	const contentType = "multipart/form-data"
+	request := req
+
+	q := uri.NewFormEncoder(map[string]string{})
+	body, boundary := ht.CreateMultipartBody(func(w *multipart.Writer) error {
+		if err := request.Archive.WriteMultipart("archive", w); err != nil {
+			return errors.Wrap(err, "write \"archive\"")
+		}
+		if err := q.WriteMultipart(w); err != nil {
+			return errors.Wrap(err, "write multipart")
+		}
+		return nil
+	})
+	ht.SetCloserBody(r, body, mime.FormatMediaType(contentType, map[string]string{"boundary": boundary}))
+	return nil
+}
+
 func encodeRebootHostRequest(
 	req *ConfirmUpdateRequest,
 	r *http.Request,
@@ -497,8 +532,36 @@ func encodeResetUserPasswordRequest(
 	return nil
 }
 
+func encodeRestoreAppdataRequest(
+	req *RestoreAppdataRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
 func encodeRollbackUpdateRequest(
 	req *ConfirmUpdateRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeSetAppdataBackupContainerRequest(
+	req *SetAppdataBackupContainerRequest,
 	r *http.Request,
 ) error {
 	const contentType = "application/json"
@@ -533,6 +596,26 @@ func encodeSetUserPasswordRequest(
 	e := new(jx.Encoder)
 	{
 		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeStartAppdataBackupRequest(
+	req OptStartAppdataBackupRequest,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	if !req.Set {
+		// Keep request with empty body if value is not set.
+		return nil
+	}
+	e := new(jx.Encoder)
+	{
+		if req.Set {
+			req.Encode(e)
+		}
 	}
 	encoded := e.Bytes()
 	ht.SetBody(r, bytes.NewReader(encoded), contentType)

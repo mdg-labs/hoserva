@@ -2694,7 +2694,20 @@ paths:
       summary: Import a config archive
       description: >-
         Restores from doc 10 §1's archive format. Requires `confirm: true`
-        — this replaces the running configuration.
+        — this replaces the running configuration. Every refusal happens
+        before anything is written, including the pre-import backup: 400
+        `invalid_archive` (it does not unpack or checksum, holds a file its
+        manifest does not list or lacks one it lists, or holds a link,
+        device, FIFO or duplicate entry), 400 `incompatible_archive` (another
+        schema version), 409 `job_in_progress`, 409
+        `archive_other_installation` (its machine key check value differs
+        from this installation's or is missing; a different installation's
+        archive is restored only onto a fresh install) and 409
+        `archive_array_mismatch` (its disks, their removal state or the
+        relocation in flight differ from the live array; the message names
+        each difference). The array's own state, running, in maintenance
+        mode or stopped, is kept as it is, never restored from the archive,
+        so an import cannot return a stopped array to normal operation.
       tags: [config]
       x-hoserva-role: admin
       requestBody:
@@ -2714,6 +2727,47 @@ paths:
       responses:
         "204":
           description: Import completed.
+        default:
+          $ref: '#/components/responses/Error'
+
+  /config/import/preview:
+    post:
+      operationId: previewConfigImport
+      summary: Preview a config import
+      description: >-
+        Reads the same archive upload as `importConfig` and reports what an
+        in-place import would change, without changing anything: it writes
+        no database row, no pre-import archive, takes no job hold, and
+        leaves no file behind. `blockers` lists the refusals `importConfig`
+        would return for this archive, with the same codes and messages
+        (400 `incompatible_archive`, 409 `archive_other_installation`, 409
+        `archive_array_mismatch`); `groups` compares the archive's database
+        with the live one per category and is empty when the archive's
+        schema version differs, since the two cannot be compared. An
+        archive that cannot be read is refused as `importConfig` refuses it
+        (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with
+        no config backup wired answers 501 `not_configured`. Nothing on a
+        data disk is read.
+      tags: [config]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [archive]
+              properties:
+                archive:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: What the import would change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigImportPreview'
         default:
           $ref: '#/components/responses/Error'
 
@@ -2808,6 +2862,291 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BackupDestinationTestResult'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /backup/drill:
+    get:
+      operationId: getRestoreDrill
+      summary: Last restore drill
+      description: >-
+        The result of the most recent restore drill (doc 10 §1): whether the
+        newest config archive on each enabled backup destination could be
+        fetched, opened the way a restore opens it, and verified, and when.
+        `lastRun` is absent until a drill has run. 501 `not_configured` when
+        this daemon has no backup service. When the next drill is due is in
+        `getSchedules`, under the `restore_drill` job.
+      tags: [backup]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The last drill's result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreDrill'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: startRestoreDrill
+      summary: Run a restore drill now
+      description: >-
+        Queues a `restore_drill` job (service class), the job the monthly
+        schedule queues. It fetches the newest config archive this
+        installation wrote to each enabled destination, opens it the way a
+        restore would (an encrypted one through its identity sidecar and the
+        backup passphrase alone), checks its checksums and that `state.db`
+        opens and passes `PRAGMA integrity_check`, and discards everything it
+        fetched. It never writes to a destination and never reads the live
+        database. A destination that cannot be read, or holds no archive
+        written by this installation, fails the drill. The result replaces
+        the one `getRestoreDrill` returns, and a failed drill publishes a
+        `restore_drill_failed` notification. A drill behind another one queues
+        rather than failing.
+      tags: [backup]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The queued or running restore drill job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /appdata/backup:
+    get:
+      operationId: getAppdataBackup
+      summary: Appdata backup policy
+      description: >-
+        Every container with a bind-mounted directory inside the appdata
+        location (the cache disk's `appdata` directory), each with whether
+        the backup stops it while its directory is copied and whether it is
+        in the backup at all (doc 10 §2). A container the operator has not
+        configured is stopped and included. A known database image that is
+        not stopped carries `warning`: copying a database's files while it
+        runs can produce an archive that does not restore. 501
+        `not_configured` when this daemon has no Docker Engine client, and
+        503 when the Engine is not reachable.
+      tags: [backup]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The containers in scope and their policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppdataBackupConfig'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: startAppdataBackup
+      summary: Start an appdata backup
+      description: >-
+        Queues an `appdata_backup` job (service class): every container that
+        is running and set to be stopped is stopped, each included
+        container's appdata directories are archived, one archive per
+        container, on the same device as the appdata location, the stopped
+        containers are started again in reverse order, and only then are the
+        archives verified and written to the enabled backup destinations
+        (never the boot device's default destination, which is too small for
+        appdata). `containers` limits the run to the named containers; omit
+        it for every included one. Refused with 409 `array_stopped` while the
+        array is stopped or its storage is not ready — with the cache disk
+        unmounted the appdata directories are empty — and 404
+        `container_not_found` for a name that is not in scope. A run that
+        fails publishes an `appdata_backup_failed` notification.
+      tags: [backup]
+      x-hoserva-role: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAppdataBackupRequest'
+      responses:
+        "200":
+          description: The queued or running appdata backup job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /appdata/backup/containers/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+        description: The container's name.
+    put:
+      operationId: setAppdataBackupContainer
+      summary: Set a container's appdata backup policy
+      description: >-
+        Replaces the container's policy. Opting a known database image out
+        of being stopped is allowed, and the response carries `warning`
+        saying why that is a bad idea. 404 `container_not_found` for a name
+        with no appdata directory in scope.
+      tags: [backup]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetAppdataBackupContainerRequest'
+      responses:
+        "200":
+          description: The container with its new policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppdataBackupContainer'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /appdata/backup/archives:
+    get:
+      operationId: listAppdataArchives
+      summary: List appdata archives
+      description: >-
+        The appdata archives this installation wrote to each enabled backup
+        destination, newest first, optionally for one container. It lists the
+        destinations when asked — a remote destination is reached through
+        rclone — and a destination that could not be listed is reported in
+        `unavailable` instead of being read as having no archives.
+      tags: [backup]
+      x-hoserva-role: admin
+      parameters:
+        - name: container
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+      responses:
+        "200":
+          description: The archives found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAppdataArchivesOK'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /appdata/backup/restore:
+    post:
+      operationId: restoreAppdata
+      summary: Restore one container's appdata
+      description: >-
+        Queues an `appdata_restore` job (service class). The archive is
+        fetched, decrypted and verified before anything is changed. Then the
+        container is stopped if it is running, a snapshot of its current
+        appdata is written to the enabled backup destinations, and only when
+        that snapshot is written is the appdata replaced by the archive's
+        content; if the snapshot cannot be written the live appdata is not
+        touched. The container is started again afterwards. Requires
+        `confirm: true`: the restore overwrites the container's appdata
+        (400 `confirmation_required` otherwise). 404 `archive_not_found` for
+        an archive the named destination does not hold, and 409
+        `array_stopped` while the array is stopped or its storage is not
+        ready.
+      tags: [backup]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreAppdataRequest'
+      responses:
+        "200":
+          description: The queued or running appdata restore job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /appdata/backup/restore/preview:
+    post:
+      operationId: previewAppdataRestore
+      summary: Preview restoring one container's appdata
+      description: >-
+        Queues an `appdata_restore_preview` job (service class, scoped to the
+        container) that reports what `restoreAppdata` would overwrite for the
+        same archive on the same destination, before anything is changed.
+        Read the result with `getAppdataRestorePreview` once the job has
+        succeeded. The job fetches, decrypts and verifies the archive
+        exactly as the restore does and fails with the restore's own error
+        when the archive is corrupt, is another container's, names a
+        directory outside the appdata location, or holds entries a restore
+        could not unpack. It
+        then compares each archived directory with the live one, walking the
+        live appdata only for this job: files present in both are
+        `replaced`, files only in the archive are `added`, and files only in
+        the live appdata are `removed`, because the restore replaces each
+        directory as a whole. It stops no container, writes nothing under the
+        appdata location and leaves no fetched archive on disk, on success or
+        failure. It queues behind a backup or restore of the same container
+        and runs beside those of others. Cancelling it stops the fetch, the
+        reading of the archive and the walk of the live directories; the
+        decryption and the verification read that follow the fetch run to
+        their end first. 404 `archive_not_found` for an archive the named
+        destination does not hold, 404 `backup_destination_not_found`, 400
+        `appdata_archive_invalid` for a request that names no archive of
+        this installation and container, and 409 `array_stopped` while the
+        array is stopped or its storage is not ready.
+      tags: [backup]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewAppdataRestoreRequest'
+      responses:
+        "200":
+          description: The queued or running preview job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /appdata/backup/restore/preview/{jobId}:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    get:
+      operationId: getAppdataRestorePreview
+      summary: Get a restore preview
+      description: >-
+        The result of the `appdata_restore_preview` job `previewAppdataRestore`
+        queued. The daemon holds the sixteen most recent results in memory, so
+        a result is gone after a restart and after sixteen newer previews:
+        preview again. 404 `job_not_found` for an id that is not a restore
+        preview job, 409 `appdata_preview_not_ready` while the job is queued
+        or running, 409 `appdata_preview_failed` when it failed, was
+        cancelled or was interrupted (the message says why; `getJob` and
+        `getJobLog` have the rest), and 404 `appdata_preview_gone` when the
+        job succeeded but its result is no longer held.
+      tags: [backup]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: What restoring the archive would overwrite.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppdataRestorePreview'
         default:
           $ref: '#/components/responses/Error'
 
@@ -3885,6 +4224,9 @@ components:
         - pool_remount
         # Service
         - appdata_backup
+        - appdata_restore
+        - appdata_restore_preview
+        - restore_drill
         - container_update
         - container_recreate
         - acme_issue
@@ -7015,3 +7357,407 @@ components:
             - string
             - "null"
           description: Why the test failed, present only when success is false.
+
+    RestoreDrill:
+      type: object
+      properties:
+        lastRun:
+          $ref: '#/components/schemas/RestoreDrillRun'
+
+    RestoreDrillRun:
+      type: object
+      required: [ranAt, passed, destinations]
+      properties:
+        ranAt:
+          type: string
+          format: date-time
+        passed:
+          type: boolean
+          description: >-
+            True only when the newest archive on every enabled destination
+            verified.
+        error:
+          type:
+            - string
+            - "null"
+          description: >-
+            Why the drill could not test any destination at all (none is
+            enabled, the destinations could not be listed, or the drill could
+            not be started). Absent when it tested them.
+        destinations:
+          type: array
+          description: What the drill found on each destination it tested.
+          items:
+            $ref: '#/components/schemas/RestoreDrillDestination'
+
+    RestoreDrillDestination:
+      type: object
+      required: [destinationId, destinationName, passed]
+      properties:
+        destinationId:
+          type: string
+        destinationName:
+          type: string
+        passed:
+          type: boolean
+        archive:
+          type:
+            - string
+            - "null"
+          description: >-
+            The archive that was fetched and verified. Absent when the
+            destination held none.
+        error:
+          type:
+            - string
+            - "null"
+          description: Why the destination failed. Absent when it passed.
+
+    AppdataBackupContainer:
+      type: object
+      required: [name, image, running, stop, included, databaseImage]
+      properties:
+        name:
+          type: string
+        image:
+          type: string
+          description: The container's image repository, without its tag.
+        running:
+          type: boolean
+        stop:
+          type: boolean
+          description: >-
+            Whether the backup stops the container while its appdata is
+            copied. Only a running container is stopped.
+        included:
+          type: boolean
+        databaseImage:
+          type: boolean
+          description: >-
+            Whether the image is a known database (Postgres, MariaDB, MySQL,
+            MongoDB, Redis and similar).
+        warning:
+          type:
+            - string
+            - "null"
+          description: >-
+            Present when a known database image is included but not stopped.
+
+    AppdataBackupConfig:
+      type: object
+      required: [containers]
+      properties:
+        containers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppdataBackupContainer'
+
+    SetAppdataBackupContainerRequest:
+      type: object
+      required: [stop, included]
+      properties:
+        stop:
+          type: boolean
+        included:
+          type: boolean
+
+    StartAppdataBackupRequest:
+      type: object
+      properties:
+        containers:
+          type: array
+          maxItems: 1000
+          items:
+            type: string
+            minLength: 1
+            maxLength: 255
+          description: Limits the run to these containers; omit for every included one.
+
+    AppdataArchive:
+      type: object
+      required: [name, container, destinationId, destinationName, createdAt, size, encrypted]
+      properties:
+        name:
+          type: string
+          description: The archive's file name on the destination.
+        container:
+          type: string
+        destinationId:
+          type: string
+        destinationName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+          description: The archive's modification time on the destination.
+        size:
+          type: integer
+          format: int64
+        encrypted:
+          type: boolean
+        reason:
+          type:
+            - string
+            - "null"
+          description: >-
+            `pre-restore` for the snapshot a restore took of the appdata it
+            replaced; absent for an ordinary backup.
+
+    ListAppdataArchivesOK:
+      type: object
+      required: [archives, unavailable]
+      properties:
+        archives:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppdataArchive'
+        unavailable:
+          type: array
+          description: Destinations that could not be listed, and why.
+          items:
+            type: object
+            required: [destinationId, message]
+            properties:
+              destinationId:
+                type: string
+              message:
+                type: string
+
+    PreviewAppdataRestoreRequest:
+      type: object
+      required: [container, archive, destinationId]
+      properties:
+        container:
+          type: string
+          minLength: 1
+          maxLength: 255
+        archive:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: An archive name from listAppdataArchives.
+        destinationId:
+          type: string
+          minLength: 1
+          maxLength: 64
+
+    ConfigImportBlocker:
+      type: object
+      required: [code, message]
+      description: >-
+        A refusal `importConfig` would return for this archive.
+      properties:
+        code:
+          type: string
+          enum: [incompatible_archive, archive_other_installation, archive_array_mismatch]
+        message:
+          type: string
+
+    ConfigImportNote:
+      type: object
+      required: [code, message]
+      description: Something about an import that is true whatever the archive holds.
+      properties:
+        code:
+          type: string
+          enum: [sessions_replaced, array_state_kept]
+        message:
+          type: string
+
+    ConfigImportChange:
+      type: object
+      required: [kind, name]
+      properties:
+        kind:
+          type: string
+          enum:
+            - share
+            - share_user_permission
+            - share_group_permission
+            - user
+            - user_group
+            - user_group_member
+            - api_token
+            - schedule_chain
+            - schedule_job
+            - notification_channel
+            - notification_route
+            - notification_severity
+            - notification_quiet_hours
+            - backup_destination
+            - appdata_backup_container
+            - backup_recipient
+            - acme
+            - ups
+            - array_settings
+            - host_config
+            - external_disk
+            - hostname
+            - timezone
+            - backup_passphrase
+            - update_channel
+            - update_check
+        name:
+          type: string
+          description: >-
+            What a user calls it: a share name, a username, a schedule job,
+            a destination name; `share / user` for a permission,
+            `group / user` for a membership, `user / token name` for an
+            API token, `event / channel` for a route, the label of an
+            external disk, the kind of a host configuration decision.
+            Empty for the settings that exist once. A secret or a
+            passphrase is reported as changed, never by its value.
+
+    ConfigImportGroup:
+      type: object
+      required: [category, added, changed, removed]
+      properties:
+        category:
+          type: string
+          enum: [shares, accounts, schedules, notifications, backup, system]
+        added:
+          type: array
+          description: In the archive, not in the live configuration.
+          items:
+            $ref: '#/components/schemas/ConfigImportChange'
+        changed:
+          type: array
+          description: In both, with different content.
+          items:
+            $ref: '#/components/schemas/ConfigImportChange'
+        removed:
+          type: array
+          description: In the live configuration, not in the archive.
+          items:
+            $ref: '#/components/schemas/ConfigImportChange'
+
+    ConfigImportArchive:
+      type: object
+      required: [timestamp, host, hoservaVersion, schemaVersion]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: When the archive was taken.
+        host:
+          type: string
+        hoservaVersion:
+          type: string
+        schemaVersion:
+          type: string
+          description: The database schema version of the archive.
+
+    ConfigImportPreview:
+      type: object
+      required: [archive, liveSchemaVersion, blockers, groups, notes]
+      properties:
+        archive:
+          $ref: '#/components/schemas/ConfigImportArchive'
+        liveSchemaVersion:
+          type: string
+        blockers:
+          type: array
+          description: >-
+            Refusals `importConfig` would return for this archive; empty
+            when it would go ahead (a running job, which is not a property
+            of the archive, refuses it too).
+          items:
+            $ref: '#/components/schemas/ConfigImportBlocker'
+        groups:
+          type: array
+          description: >-
+            One entry per category, in a fixed order, each listing what an
+            import would add, change or remove. History and runtime tables
+            (jobs, the audit log, spin events, notification deliveries and
+            alerts, usage, mover and cache results) are not listed. Empty
+            when the schema versions differ.
+          items:
+            $ref: '#/components/schemas/ConfigImportGroup'
+        notes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConfigImportNote'
+
+    AppdataRestorePreviewGroup:
+      type: object
+      required: [files, bytes, sample]
+      properties:
+        files:
+          type: integer
+          format: int64
+          description: >-
+            How many files are in this group. Symbolic links and other
+            non-directory entries count as files; directories do not.
+        bytes:
+          type: integer
+          format: int64
+          description: >-
+            Total size of those files: for `replaced` and `removed` the size
+            of the live files that would be lost, for `added` the size of
+            the archive's files.
+        sample:
+          type: array
+          description: >-
+            The first paths of the group in path order, relative to the
+            directory, at most 20. `files` is the full count.
+          maxItems: 20
+          items:
+            type: string
+
+    AppdataRestorePreviewDirectory:
+      type: object
+      required: [directory, replaced, added, removed]
+      properties:
+        directory:
+          type: string
+          description: >-
+            The archived directory, relative to the appdata location
+            (`jellyfin/config`).
+        replaced:
+          $ref: '#/components/schemas/AppdataRestorePreviewGroup'
+        added:
+          $ref: '#/components/schemas/AppdataRestorePreviewGroup'
+        removed:
+          $ref: '#/components/schemas/AppdataRestorePreviewGroup'
+
+    AppdataRestorePreview:
+      type: object
+      required: [container, archive, destinationId, createdAt, directories]
+      properties:
+        container:
+          type: string
+        archive:
+          type: string
+        destinationId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+          description: When the archive was taken.
+        directories:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppdataRestorePreviewDirectory'
+
+    RestoreAppdataRequest:
+      type: object
+      required: [container, archive, destinationId, confirm]
+      properties:
+        container:
+          type: string
+          minLength: 1
+          maxLength: 255
+        archive:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: An archive name from listAppdataArchives.
+        destinationId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        confirm:
+          type: boolean
+          description: >-
+            Must be true, because the restore overwrites the container's
+            appdata.

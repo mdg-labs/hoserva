@@ -1452,6 +1452,71 @@ func decodeGetAppStatsParams(args [1]string, argsEscaped bool, r *http.Request) 
 	return params, nil
 }
 
+// GetAppdataRestorePreviewParams is parameters of getAppdataRestorePreview operation.
+type GetAppdataRestorePreviewParams struct {
+	JobId uuid.UUID
+}
+
+func unpackGetAppdataRestorePreviewParams(packed middleware.Parameters) (params GetAppdataRestorePreviewParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "jobId",
+			In:   "path",
+		}
+		params.JobId = packed[key].(uuid.UUID)
+	}
+	return params
+}
+
+func decodeGetAppdataRestorePreviewParams(args [1]string, argsEscaped bool, r *http.Request) (params GetAppdataRestorePreviewParams, _ error) {
+	// Decode path: jobId.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "jobId",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToUUID(val)
+				if err != nil {
+					return err
+				}
+
+				params.JobId = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "jobId",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // GetJobParams is parameters of getJob operation.
 type GetJobParams struct {
 	JobId uuid.UUID
@@ -2068,6 +2133,97 @@ func decodeGetUserSharePermissionsParams(args [1]string, argsEscaped bool, r *ht
 		return params, &ogenerrors.DecodeParamError{
 			Name: "userId",
 			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// ListAppdataArchivesParams is parameters of listAppdataArchives operation.
+type ListAppdataArchivesParams struct {
+	Container OptString `json:",omitempty,omitzero"`
+}
+
+func unpackListAppdataArchivesParams(packed middleware.Parameters) (params ListAppdataArchivesParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "container",
+			In:   "query",
+		}
+		if v, ok := packed[key]; ok {
+			params.Container = v.(OptString)
+		}
+	}
+	return params
+}
+
+func decodeListAppdataArchivesParams(args [0]string, argsEscaped bool, r *http.Request) (params ListAppdataArchivesParams, _ error) {
+	q := uri.NewQueryDecoder(r.URL.Query())
+	// Decode query: container.
+	if err := func() error {
+		cfg := uri.QueryParameterDecodingConfig{
+			Name:    "container",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.HasParam(cfg); err == nil {
+			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+				var paramsDotContainerVal string
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToString(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotContainerVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.Container.SetTo(paramsDotContainerVal)
+				return nil
+			}); err != nil {
+				return err
+			}
+			if err := func() error {
+				if value, ok := params.Container.Get(); ok {
+					if err := func() error {
+						if err := (validate.String{
+							MinLength:     0,
+							MinLengthSet:  false,
+							MaxLength:     255,
+							MaxLengthSet:  true,
+							Email:         false,
+							Hostname:      false,
+							Regex:         nil,
+							MinNumeric:    0,
+							MinNumericSet: false,
+							MaxNumeric:    0,
+							MaxNumericSet: false,
+						}).Validate(string(value)); err != nil {
+							return errors.Wrap(err, "string")
+						}
+						return nil
+					}(); err != nil {
+						return err
+					}
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "container",
+			In:   "query",
 			Err:  err,
 		}
 	}
@@ -3014,6 +3170,92 @@ func decodeSendTestNotificationParams(args [1]string, argsEscaped bool, r *http.
 	}(); err != nil {
 		return params, &ogenerrors.DecodeParamError{
 			Name: "channelId",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
+// SetAppdataBackupContainerParams is parameters of setAppdataBackupContainer operation.
+type SetAppdataBackupContainerParams struct {
+	// The container's name.
+	Name string
+}
+
+func unpackSetAppdataBackupContainerParams(packed middleware.Parameters) (params SetAppdataBackupContainerParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "name",
+			In:   "path",
+		}
+		params.Name = packed[key].(string)
+	}
+	return params
+}
+
+func decodeSetAppdataBackupContainerParams(args [1]string, argsEscaped bool, r *http.Request) (params SetAppdataBackupContainerParams, _ error) {
+	// Decode path: name.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "name",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				val, err := d.DecodeValue()
+				if err != nil {
+					return err
+				}
+
+				c, err := conv.ToString(val)
+				if err != nil {
+					return err
+				}
+
+				params.Name = c
+				return nil
+			}(); err != nil {
+				return err
+			}
+			if err := func() error {
+				if err := (validate.String{
+					MinLength:     1,
+					MinLengthSet:  true,
+					MaxLength:     255,
+					MaxLengthSet:  true,
+					Email:         false,
+					Hostname:      false,
+					Regex:         regexMap["^[A-Za-z0-9][A-Za-z0-9_.-]*$"],
+					MinNumeric:    0,
+					MinNumericSet: false,
+					MaxNumeric:    0,
+					MaxNumericSet: false,
+				}).Validate(string(params.Name)); err != nil {
+					return errors.Wrap(err, "string")
+				}
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "name",
 			In:   "path",
 			Err:  err,
 		}

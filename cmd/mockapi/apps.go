@@ -53,6 +53,24 @@ func mockApps() []apiv1.App {
 			},
 		},
 		{
+			ID:     "7d3f1a9e5c20",
+			Name:   "postgres",
+			Image:  "postgres",
+			Tag:    "16.4",
+			State:  apiv1.AppStateRunning,
+			Status: "Up 3 hours",
+			Health: apiv1.AppHealthNone,
+			Ports:  []apiv1.AppPort{},
+			Mounts: []apiv1.AppMount{
+				{
+					Source:      apiv1.NewOptString("/mnt/cache/appdata/postgres"),
+					Destination: "/var/lib/postgresql/data",
+					Mode:        apiv1.NewOptString("rw"),
+					ReadWrite:   true,
+				},
+			},
+		},
+		{
 			ID:     "9b1d7e2f6a3c",
 			Name:   "portainer",
 			Image:  "portainer/portainer-ce",

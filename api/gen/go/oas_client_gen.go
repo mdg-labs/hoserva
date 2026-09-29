@@ -408,6 +408,28 @@ type Invoker interface {
 	//
 	// GET /apps/{id}/stats
 	GetAppStats(ctx context.Context, params GetAppStatsParams) (*AppStats, error)
+	// GetAppdataBackup invokes getAppdataBackup operation.
+	//
+	// Every container with a bind-mounted directory inside the appdata location (the cache disk's
+	// `appdata` directory), each with whether the backup stops it while its directory is copied and
+	// whether it is in the backup at all (doc 10 §2). A container the operator has not configured is
+	// stopped and included. A known database image that is not stopped carries `warning`: copying a
+	// database's files while it runs can produce an archive that does not restore. 501 `not_configured`
+	// when this daemon has no Docker Engine client, and 503 when the Engine is not reachable.
+	//
+	// GET /appdata/backup
+	GetAppdataBackup(ctx context.Context) (*AppdataBackupConfig, error)
+	// GetAppdataRestorePreview invokes getAppdataRestorePreview operation.
+	//
+	// The result of the `appdata_restore_preview` job `previewAppdataRestore` queued. The daemon holds the
+	// sixteen most recent results in memory, so a result is gone after a restart and after sixteen newer
+	// previews: preview again. 404 `job_not_found` for an id that is not a restore preview job, 409
+	// `appdata_preview_not_ready` while the job is queued or running, 409 `appdata_preview_failed` when it
+	// failed, was cancelled or was interrupted (the message says why; `getJob` and `getJobLog` have the
+	// rest), and 404 `appdata_preview_gone` when the job succeeded but its result is no longer held.
+	//
+	// GET /appdata/backup/restore/preview/{jobId}
+	GetAppdataRestorePreview(ctx context.Context, params GetAppdataRestorePreviewParams) (*AppdataRestorePreview, error)
 	// GetCacheUsage invokes getCacheUsage operation.
 	//
 	// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
@@ -503,6 +525,15 @@ type Invoker interface {
 	//
 	// GET /notifications/quiet-hours
 	GetQuietHours(ctx context.Context) (*NotificationQuietHours, error)
+	// GetRestoreDrill invokes getRestoreDrill operation.
+	//
+	// The result of the most recent restore drill (doc 10 §1): whether the newest config archive on each
+	// enabled backup destination could be fetched, opened the way a restore opens it, and verified, and
+	// when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup
+	// service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
+	//
+	// GET /backup/drill
+	GetRestoreDrill(ctx context.Context) (*RestoreDrill, error)
 	// GetSchedules invokes getSchedules operation.
 	//
 	// The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with
@@ -567,7 +598,15 @@ type Invoker interface {
 	// ImportConfig invokes importConfig operation.
 	//
 	// Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
-	// configuration.
+	// configuration. Every refusal happens before anything is written, including the pre-import backup:
+	// 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or
+	// lacks one it lists, or holds a link, device, FIFO or duplicate entry), 400 `incompatible_archive`
+	// (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key
+	// check value differs from this installation's or is missing; a different installation's archive is
+	// restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state
+	// or the relocation in flight differ from the live array; the message names each difference). The
+	// array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from
+	// the archive, so an import cannot return a stopped array to normal operation.
 	//
 	// POST /config/import
 	ImportConfig(ctx context.Context, request *ImportConfigReq) error
@@ -583,6 +622,15 @@ type Invoker interface {
 	//
 	// GET /apps/images
 	ListAppImages(ctx context.Context) (*ListAppImagesOK, error)
+	// ListAppdataArchives invokes listAppdataArchives operation.
+	//
+	// The appdata archives this installation wrote to each enabled backup destination, newest first,
+	// optionally for one container. It lists the destinations when asked — a remote destination is
+	// reached through rclone — and a destination that could not be listed is reported in `unavailable`
+	// instead of being read as having no archives.
+	//
+	// GET /appdata/backup/archives
+	ListAppdataArchives(ctx context.Context, params ListAppdataArchivesParams) (*ListAppdataArchivesOK, error)
 	// ListApps invokes listApps operation.
 	//
 	// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose
@@ -785,6 +833,41 @@ type Invoker interface {
 	//
 	// POST /pool/rebalance/plan
 	PlanRebalance(ctx context.Context) (*RebalancePlan, error)
+	// PreviewAppdataRestore invokes previewAppdataRestore operation.
+	//
+	// Queues an `appdata_restore_preview` job (service class, scoped to the container) that reports what
+	// `restoreAppdata` would overwrite for the same archive on the same destination, before anything is
+	// changed. Read the result with `getAppdataRestorePreview` once the job has succeeded. The job
+	// fetches, decrypts and verifies the archive exactly as the restore does and fails with the restore's
+	// own error when the archive is corrupt, is another container's, names a directory outside the appdata
+	// location, or holds entries a restore could not unpack. It then compares each archived directory with
+	// the live one, walking the live appdata only for this job: files present in both are `replaced`,
+	// files only in the archive are `added`, and files only in the live appdata are `removed`, because the
+	// restore replaces each directory as a whole. It stops no container, writes nothing under the appdata
+	// location and leaves no fetched archive on disk, on success or failure. It queues behind a backup or
+	// restore of the same container and runs beside those of others. Cancelling it stops the fetch, the
+	// reading of the archive and the walk of the live directories; the decryption and the verification
+	// read that follow the fetch run to their end first. 404 `archive_not_found` for an archive the named
+	// destination does not hold, 404 `backup_destination_not_found`, 400 `appdata_archive_invalid` for a
+	// request that names no archive of this installation and container, and 409 `array_stopped` while the
+	// array is stopped or its storage is not ready.
+	//
+	// POST /appdata/backup/restore/preview
+	PreviewAppdataRestore(ctx context.Context, request *PreviewAppdataRestoreRequest) (*Job, error)
+	// PreviewConfigImport invokes previewConfigImport operation.
+	//
+	// Reads the same archive upload as `importConfig` and reports what an in-place import would change,
+	// without changing anything: it writes no database row, no pre-import archive, takes no job hold, and
+	// leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive,
+	// with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409
+	// `archive_array_mismatch`); `groups` compares the archive's database with the live one per category
+	// and is empty when the archive's schema version differs, since the two cannot be compared. An archive
+	// that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
+	// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
+	// on a data disk is read.
+	//
+	// POST /config/import/preview
+	PreviewConfigImport(ctx context.Context, request *PreviewConfigImportReq) (*ConfigImportPreview, error)
 	// RebootHost invokes rebootHost operation.
 	//
 	// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -871,6 +954,19 @@ type Invoker interface {
 	//
 	// POST /apps/{id}/restart
 	RestartApp(ctx context.Context, params RestartAppParams) (*App, error)
+	// RestoreAppdata invokes restoreAppdata operation.
+	//
+	// Queues an `appdata_restore` job (service class). The archive is fetched, decrypted and verified
+	// before anything is changed. Then the container is stopped if it is running, a snapshot of its
+	// current appdata is written to the enabled backup destinations, and only when that snapshot is
+	// written is the appdata replaced by the archive's content; if the snapshot cannot be written the live
+	// appdata is not touched. The container is started again afterwards. Requires `confirm: true`: the
+	// restore overwrites the container's appdata (400 `confirmation_required` otherwise). 404
+	// `archive_not_found` for an archive the named destination does not hold, and 409 `array_stopped`
+	// while the array is stopped or its storage is not ready.
+	//
+	// POST /appdata/backup/restore
+	RestoreAppdata(ctx context.Context, request *RestoreAppdataRequest) (*Job, error)
 	// ResumeJob invokes resumeJob operation.
 	//
 	// Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk
@@ -931,6 +1027,14 @@ type Invoker interface {
 	//
 	// POST /notifications/channels/{channelId}/test
 	SendTestNotification(ctx context.Context, params SendTestNotificationParams) (*NotificationTestResult, error)
+	// SetAppdataBackupContainer invokes setAppdataBackupContainer operation.
+	//
+	// Replaces the container's policy. Opting a known database image out of being stopped is allowed, and
+	// the response carries `warning` saying why that is a bad idea. 404 `container_not_found` for a name
+	// with no appdata directory in scope.
+	//
+	// PUT /appdata/backup/containers/{name}
+	SetAppdataBackupContainer(ctx context.Context, request *SetAppdataBackupContainerRequest, params SetAppdataBackupContainerParams) (*AppdataBackupContainer, error)
 	// SetUserGroupMembers invokes setUserGroupMembers operation.
 	//
 	// A full replace of the group's member list.
@@ -957,6 +1061,20 @@ type Invoker interface {
 	//
 	// POST /apps/{id}/start
 	StartApp(ctx context.Context, params StartAppParams) (*App, error)
+	// StartAppdataBackup invokes startAppdataBackup operation.
+	//
+	// Queues an `appdata_backup` job (service class): every container that is running and set to be
+	// stopped is stopped, each included container's appdata directories are archived, one archive per
+	// container, on the same device as the appdata location, the stopped containers are started again in
+	// reverse order, and only then are the archives verified and written to the enabled backup
+	// destinations (never the boot device's default destination, which is too small for appdata).
+	// `containers` limits the run to the named containers; omit it for every included one. Refused with
+	// 409 `array_stopped` while the array is stopped or its storage is not ready — with the cache disk
+	// unmounted the appdata directories are empty — and 404 `container_not_found` for a name that is not
+	// in scope. A run that fails publishes an `appdata_backup_failed` notification.
+	//
+	// POST /appdata/backup
+	StartAppdataBackup(ctx context.Context, request OptStartAppdataBackupRequest) (*Job, error)
 	// StartArray invokes startArray operation.
 	//
 	// Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
@@ -1000,6 +1118,19 @@ type Invoker interface {
 	//
 	// POST /pool/rebalance
 	StartRebalance(ctx context.Context, request *StartRebalanceRequest) (*Job, error)
+	// StartRestoreDrill invokes startRestoreDrill operation.
+	//
+	// Queues a `restore_drill` job (service class), the job the monthly schedule queues. It fetches the
+	// newest config archive this installation wrote to each enabled destination, opens it the way a
+	// restore would (an encrypted one through its identity sidecar and the backup passphrase alone),
+	// checks its checksums and that `state.db` opens and passes `PRAGMA integrity_check`, and discards
+	// everything it fetched. It never writes to a destination and never reads the live database. A
+	// destination that cannot be read, or holds no archive written by this installation, fails the drill.
+	// The result replaces the one `getRestoreDrill` returns, and a failed drill publishes a
+	// `restore_drill_failed` notification. A drill behind another one queues rather than failing.
+	//
+	// POST /backup/drill
+	StartRestoreDrill(ctx context.Context) (*Job, error)
 	// StartScrub invokes startScrub operation.
 	//
 	// Queues a scrub job (`hoserva scrub`, doc 01 §3).
@@ -6538,6 +6669,284 @@ func (c *Client) sendGetAppStats(ctx context.Context, params GetAppStatsParams) 
 	return result, nil
 }
 
+// GetAppdataBackup invokes getAppdataBackup operation.
+//
+// Every container with a bind-mounted directory inside the appdata location (the cache disk's
+// `appdata` directory), each with whether the backup stops it while its directory is copied and
+// whether it is in the backup at all (doc 10 §2). A container the operator has not configured is
+// stopped and included. A known database image that is not stopped carries `warning`: copying a
+// database's files while it runs can produce an archive that does not restore. 501 `not_configured`
+// when this daemon has no Docker Engine client, and 503 when the Engine is not reachable.
+//
+// GET /appdata/backup
+func (c *Client) GetAppdataBackup(ctx context.Context) (*AppdataBackupConfig, error) {
+	res, err := c.sendGetAppdataBackup(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetAppdataBackup(ctx context.Context) (res *AppdataBackupConfig, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getAppdataBackup"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/appdata/backup"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetAppdataBackupOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/appdata/backup"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetAppdataBackupOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetAppdataBackupOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetAppdataBackupResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetAppdataRestorePreview invokes getAppdataRestorePreview operation.
+//
+// The result of the `appdata_restore_preview` job `previewAppdataRestore` queued. The daemon holds the
+// sixteen most recent results in memory, so a result is gone after a restart and after sixteen newer
+// previews: preview again. 404 `job_not_found` for an id that is not a restore preview job, 409
+// `appdata_preview_not_ready` while the job is queued or running, 409 `appdata_preview_failed` when it
+// failed, was cancelled or was interrupted (the message says why; `getJob` and `getJobLog` have the
+// rest), and 404 `appdata_preview_gone` when the job succeeded but its result is no longer held.
+//
+// GET /appdata/backup/restore/preview/{jobId}
+func (c *Client) GetAppdataRestorePreview(ctx context.Context, params GetAppdataRestorePreviewParams) (*AppdataRestorePreview, error) {
+	res, err := c.sendGetAppdataRestorePreview(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetAppdataRestorePreview(ctx context.Context, params GetAppdataRestorePreviewParams) (res *AppdataRestorePreview, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getAppdataRestorePreview"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/appdata/backup/restore/preview/{jobId}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetAppdataRestorePreviewOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/appdata/backup/restore/preview/"
+	{
+		// Encode "jobId" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "jobId",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.UUIDToString(params.JobId))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetAppdataRestorePreviewOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetAppdataRestorePreviewOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetAppdataRestorePreviewResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetCacheUsage invokes getCacheUsage operation.
 //
 // Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
@@ -8298,6 +8707,134 @@ func (c *Client) sendGetQuietHours(ctx context.Context) (res *NotificationQuietH
 	return result, nil
 }
 
+// GetRestoreDrill invokes getRestoreDrill operation.
+//
+// The result of the most recent restore drill (doc 10 §1): whether the newest config archive on each
+// enabled backup destination could be fetched, opened the way a restore opens it, and verified, and
+// when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup
+// service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
+//
+// GET /backup/drill
+func (c *Client) GetRestoreDrill(ctx context.Context) (*RestoreDrill, error) {
+	res, err := c.sendGetRestoreDrill(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetRestoreDrill(ctx context.Context) (res *RestoreDrill, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getRestoreDrill"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/backup/drill"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetRestoreDrillOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/backup/drill"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetRestoreDrillOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetRestoreDrillOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetRestoreDrillResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // GetSchedules invokes getSchedules operation.
 //
 // The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with
@@ -9331,7 +9868,15 @@ func (c *Client) sendGetUserSharePermissions(ctx context.Context, params GetUser
 // ImportConfig invokes importConfig operation.
 //
 // Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
-// configuration.
+// configuration. Every refusal happens before anything is written, including the pre-import backup:
+// 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or
+// lacks one it lists, or holds a link, device, FIFO or duplicate entry), 400 `incompatible_archive`
+// (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key
+// check value differs from this installation's or is missing; a different installation's archive is
+// restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state
+// or the relocation in flight differ from the live array; the message names each difference). The
+// array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from
+// the archive, so an import cannot return a stopped array to normal operation.
 //
 // POST /config/import
 func (c *Client) ImportConfig(ctx context.Context, request *ImportConfigReq) error {
@@ -9700,6 +10245,155 @@ func (c *Client) sendListAppImages(ctx context.Context) (res *ListAppImagesOK, e
 
 	stage = "DecodeResponse"
 	result, err := decodeListAppImagesResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListAppdataArchives invokes listAppdataArchives operation.
+//
+// The appdata archives this installation wrote to each enabled backup destination, newest first,
+// optionally for one container. It lists the destinations when asked — a remote destination is
+// reached through rclone — and a destination that could not be listed is reported in `unavailable`
+// instead of being read as having no archives.
+//
+// GET /appdata/backup/archives
+func (c *Client) ListAppdataArchives(ctx context.Context, params ListAppdataArchivesParams) (*ListAppdataArchivesOK, error) {
+	res, err := c.sendListAppdataArchives(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendListAppdataArchives(ctx context.Context, params ListAppdataArchivesParams) (res *ListAppdataArchivesOK, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listAppdataArchives"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/appdata/backup/archives"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListAppdataArchivesOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/appdata/backup/archives"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeQueryParams"
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "container" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "container",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Container.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListAppdataArchivesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListAppdataArchivesOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListAppdataArchivesResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -12458,6 +13152,285 @@ func (c *Client) sendPlanRebalance(ctx context.Context) (res *RebalancePlan, err
 	return result, nil
 }
 
+// PreviewAppdataRestore invokes previewAppdataRestore operation.
+//
+// Queues an `appdata_restore_preview` job (service class, scoped to the container) that reports what
+// `restoreAppdata` would overwrite for the same archive on the same destination, before anything is
+// changed. Read the result with `getAppdataRestorePreview` once the job has succeeded. The job
+// fetches, decrypts and verifies the archive exactly as the restore does and fails with the restore's
+// own error when the archive is corrupt, is another container's, names a directory outside the appdata
+// location, or holds entries a restore could not unpack. It then compares each archived directory with
+// the live one, walking the live appdata only for this job: files present in both are `replaced`,
+// files only in the archive are `added`, and files only in the live appdata are `removed`, because the
+// restore replaces each directory as a whole. It stops no container, writes nothing under the appdata
+// location and leaves no fetched archive on disk, on success or failure. It queues behind a backup or
+// restore of the same container and runs beside those of others. Cancelling it stops the fetch, the
+// reading of the archive and the walk of the live directories; the decryption and the verification
+// read that follow the fetch run to their end first. 404 `archive_not_found` for an archive the named
+// destination does not hold, 404 `backup_destination_not_found`, 400 `appdata_archive_invalid` for a
+// request that names no archive of this installation and container, and 409 `array_stopped` while the
+// array is stopped or its storage is not ready.
+//
+// POST /appdata/backup/restore/preview
+func (c *Client) PreviewAppdataRestore(ctx context.Context, request *PreviewAppdataRestoreRequest) (*Job, error) {
+	res, err := c.sendPreviewAppdataRestore(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendPreviewAppdataRestore(ctx context.Context, request *PreviewAppdataRestoreRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("previewAppdataRestore"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/appdata/backup/restore/preview"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PreviewAppdataRestoreOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/appdata/backup/restore/preview"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodePreviewAppdataRestoreRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, PreviewAppdataRestoreOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, PreviewAppdataRestoreOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodePreviewAppdataRestoreResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// PreviewConfigImport invokes previewConfigImport operation.
+//
+// Reads the same archive upload as `importConfig` and reports what an in-place import would change,
+// without changing anything: it writes no database row, no pre-import archive, takes no job hold, and
+// leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive,
+// with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409
+// `archive_array_mismatch`); `groups` compares the archive's database with the live one per category
+// and is empty when the archive's schema version differs, since the two cannot be compared. An archive
+// that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
+// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
+// on a data disk is read.
+//
+// POST /config/import/preview
+func (c *Client) PreviewConfigImport(ctx context.Context, request *PreviewConfigImportReq) (*ConfigImportPreview, error) {
+	res, err := c.sendPreviewConfigImport(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendPreviewConfigImport(ctx context.Context, request *PreviewConfigImportReq) (res *ConfigImportPreview, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("previewConfigImport"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/config/import/preview"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PreviewConfigImportOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/config/import/preview"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodePreviewConfigImportRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, PreviewConfigImportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, PreviewConfigImportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodePreviewConfigImportResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // RebootHost invokes rebootHost operation.
 //
 // Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -13604,6 +14577,141 @@ func (c *Client) sendRestartApp(ctx context.Context, params RestartAppParams) (r
 	return result, nil
 }
 
+// RestoreAppdata invokes restoreAppdata operation.
+//
+// Queues an `appdata_restore` job (service class). The archive is fetched, decrypted and verified
+// before anything is changed. Then the container is stopped if it is running, a snapshot of its
+// current appdata is written to the enabled backup destinations, and only when that snapshot is
+// written is the appdata replaced by the archive's content; if the snapshot cannot be written the live
+// appdata is not touched. The container is started again afterwards. Requires `confirm: true`: the
+// restore overwrites the container's appdata (400 `confirmation_required` otherwise). 404
+// `archive_not_found` for an archive the named destination does not hold, and 409 `array_stopped`
+// while the array is stopped or its storage is not ready.
+//
+// POST /appdata/backup/restore
+func (c *Client) RestoreAppdata(ctx context.Context, request *RestoreAppdataRequest) (*Job, error) {
+	res, err := c.sendRestoreAppdata(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendRestoreAppdata(ctx context.Context, request *RestoreAppdataRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("restoreAppdata"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/appdata/backup/restore"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RestoreAppdataOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/appdata/backup/restore"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeRestoreAppdataRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RestoreAppdataOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RestoreAppdataOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRestoreAppdataResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ResumeJob invokes resumeJob operation.
 //
 // Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk
@@ -14574,6 +15682,154 @@ func (c *Client) sendSendTestNotification(ctx context.Context, params SendTestNo
 	return result, nil
 }
 
+// SetAppdataBackupContainer invokes setAppdataBackupContainer operation.
+//
+// Replaces the container's policy. Opting a known database image out of being stopped is allowed, and
+// the response carries `warning` saying why that is a bad idea. 404 `container_not_found` for a name
+// with no appdata directory in scope.
+//
+// PUT /appdata/backup/containers/{name}
+func (c *Client) SetAppdataBackupContainer(ctx context.Context, request *SetAppdataBackupContainerRequest, params SetAppdataBackupContainerParams) (*AppdataBackupContainer, error) {
+	res, err := c.sendSetAppdataBackupContainer(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendSetAppdataBackupContainer(ctx context.Context, request *SetAppdataBackupContainerRequest, params SetAppdataBackupContainerParams) (res *AppdataBackupContainer, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("setAppdataBackupContainer"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/appdata/backup/containers/{name}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, SetAppdataBackupContainerOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/appdata/backup/containers/"
+	{
+		// Encode "name" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "name",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.Name))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeSetAppdataBackupContainerRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, SetAppdataBackupContainerOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, SetAppdataBackupContainerOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeSetAppdataBackupContainerResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // SetUserGroupMembers invokes setUserGroupMembers operation.
 //
 // A full replace of the group's member list.
@@ -15013,6 +16269,142 @@ func (c *Client) sendStartApp(ctx context.Context, params StartAppParams) (res *
 
 	stage = "DecodeResponse"
 	result, err := decodeStartAppResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// StartAppdataBackup invokes startAppdataBackup operation.
+//
+// Queues an `appdata_backup` job (service class): every container that is running and set to be
+// stopped is stopped, each included container's appdata directories are archived, one archive per
+// container, on the same device as the appdata location, the stopped containers are started again in
+// reverse order, and only then are the archives verified and written to the enabled backup
+// destinations (never the boot device's default destination, which is too small for appdata).
+// `containers` limits the run to the named containers; omit it for every included one. Refused with
+// 409 `array_stopped` while the array is stopped or its storage is not ready — with the cache disk
+// unmounted the appdata directories are empty — and 404 `container_not_found` for a name that is not
+// in scope. A run that fails publishes an `appdata_backup_failed` notification.
+//
+// POST /appdata/backup
+func (c *Client) StartAppdataBackup(ctx context.Context, request OptStartAppdataBackupRequest) (*Job, error) {
+	res, err := c.sendStartAppdataBackup(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendStartAppdataBackup(ctx context.Context, request OptStartAppdataBackupRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startAppdataBackup"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/appdata/backup"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartAppdataBackupOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/appdata/backup"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeStartAppdataBackupRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartAppdataBackupOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartAppdataBackupOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartAppdataBackupResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -15538,6 +16930,138 @@ func (c *Client) sendStartRebalance(ctx context.Context, request *StartRebalance
 
 	stage = "DecodeResponse"
 	result, err := decodeStartRebalanceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// StartRestoreDrill invokes startRestoreDrill operation.
+//
+// Queues a `restore_drill` job (service class), the job the monthly schedule queues. It fetches the
+// newest config archive this installation wrote to each enabled destination, opens it the way a
+// restore would (an encrypted one through its identity sidecar and the backup passphrase alone),
+// checks its checksums and that `state.db` opens and passes `PRAGMA integrity_check`, and discards
+// everything it fetched. It never writes to a destination and never reads the live database. A
+// destination that cannot be read, or holds no archive written by this installation, fails the drill.
+// The result replaces the one `getRestoreDrill` returns, and a failed drill publishes a
+// `restore_drill_failed` notification. A drill behind another one queues rather than failing.
+//
+// POST /backup/drill
+func (c *Client) StartRestoreDrill(ctx context.Context) (*Job, error) {
+	res, err := c.sendStartRestoreDrill(ctx)
+	return res, err
+}
+
+func (c *Client) sendStartRestoreDrill(ctx context.Context) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("startRestoreDrill"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/backup/drill"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, StartRestoreDrillOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/backup/drill"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, StartRestoreDrillOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, StartRestoreDrillOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeStartRestoreDrillResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

@@ -1,0 +1,1069 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/api"
+	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/container"
+	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/notify"
+	"github.com/mdg-labs/hoserva/internal/store"
+)
+
+type recordingPublisher struct {
+	mu       sync.Mutex
+	events   []notify.EventType
+	messages []string
+}
+
+func (p *recordingPublisher) Publish(_ context.Context, event notify.EventType, _, message string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.events = append(p.events, event)
+	p.messages = append(p.messages, message)
+	return nil
+}
+
+func (p *recordingPublisher) count(event notify.EventType) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, e := range p.events {
+		if e == event {
+			n++
+		}
+	}
+	return n
+}
+
+// appdataBackupService is the appdata service built the way main.go builds
+// it (newAppdataService over the container services and the array's cache
+// disk), with one backup destination on a directory of the test's own.
+func appdataBackupService(t *testing.T, apps *appServices, arrays *store.ArrayStore, db *sql.DB, stateDir, destDir string) *backup.AppdataService {
+	t.Helper()
+	dests := &backup.FakeDestinationStore{}
+	if err := dests.CreateDestination(context.Background(), backup.Destination{
+		ID: backup.DefaultPoolID, Name: "Pool", Type: backup.TypeLocal, Path: destDir, Enabled: true,
+		Retention: backup.Retention{Daily: 7, Weekly: 4, Monthly: 6},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := &backup.Service{Store: dests, Hostname: "test-host"}
+	return newAppdataService(apps, svc, api.NewAppdataPolicyStore(db), arrays, stateDir)
+}
+
+func (w *containersWiringHarness) doBody(t *testing.T, method, path, body string) (int, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(method, "http://unix"+apiPathPrefix+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := w.client.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(resp.Body)
+	return resp.StatusCode, buf.Bytes()
+}
+
+func (w *containersWiringHarness) awaitJobByID(t *testing.T, id string) *job.Job {
+	t.Helper()
+	return awaitTerminal(t, w.handler.Store, id)
+}
+
+func TestAppdataWiring_OperationsAnswer501WhenAppdataIsNotWired(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	if status, body := w.do(t, http.MethodGet, "/appdata/backup"); status != http.StatusNotImplemented {
+		t.Fatalf("GET /appdata/backup without wiring = %d %s, want 501", status, body)
+	}
+}
+
+// POST /appdata/backup reaches the appdata service through the real daemon
+// server and its job registry, and archives a container the way the
+// schedule would.
+func TestAppdataWiring_BackupIsReachableOverHTTP(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	wireAppdata(w.handler, w.registry, svc, &recordingPublisher{})
+
+	status, body := w.do(t, http.MethodGet, "/appdata/backup")
+	if status != http.StatusOK || !bytes.Contains(body, []byte(`"jellyfin"`)) {
+		t.Fatalf("GET /appdata/backup = %d %s, want the jellyfin container in scope", status, body)
+	}
+	status, body = w.doBody(t, http.MethodPut, "/appdata/backup/containers/jellyfin", `{"stop":false,"included":true}`)
+	if status != http.StatusOK || !bytes.Contains(body, []byte(`"stop":false`)) {
+		t.Fatalf("PUT policy = %d %s", status, body)
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup", ``)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup = %d %s, want 200 with the queued job", status, body)
+	}
+	var queued struct {
+		ID    string `json:"id"`
+		Type  string `json:"type"`
+		Class string `json:"class"`
+	}
+	if err := json.Unmarshal(body, &queued); err != nil || queued.Type != "appdata_backup" || queued.Class != "service" {
+		t.Fatalf("job = %s (%v), want an appdata_backup service job", body, err)
+	}
+	done := w.awaitJobByID(t, queued.ID)
+	if done.Status != job.StatusSucceeded {
+		t.Fatalf("job = %s %s", done.Status, done.ErrorMessage)
+	}
+	entries, err := os.ReadDir(dest)
+	if err != nil || len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "hoserva-appdata-") {
+		t.Fatalf("destination = %v, %v; want one appdata archive", entries, err)
+	}
+
+	status, body = w.do(t, http.MethodGet, "/appdata/backup/archives?container=jellyfin")
+	if status != http.StatusOK || !bytes.Contains(body, []byte(entries[0].Name())) {
+		t.Fatalf("GET archives = %d %s", status, body)
+	}
+}
+
+func TestAppdataWiring_RestoreIsReachableOverHTTP(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	wireAppdata(w.handler, w.registry, svc, &recordingPublisher{})
+
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup", `{"containers":["jellyfin"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup = %d %s", status, body)
+	}
+	var queued struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &queued)
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	entries, _ := os.ReadDir(dest)
+	if len(entries) != 1 {
+		t.Fatalf("archives = %v", entries)
+	}
+	live := filepath.Join(w.appdata, "library.db")
+	if err := os.WriteFile(live, []byte("corrupted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := `{"container":"jellyfin","archive":"` + entries[0].Name() + `","destinationId":"pool","confirm":`
+	if status, body = w.doBody(t, http.MethodPost, "/appdata/backup/restore", req+`false}`); status != http.StatusBadRequest {
+		t.Fatalf("restore without confirm = %d %s, want 400", status, body)
+	}
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup/restore", req+`true}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST restore = %d %s", status, body)
+	}
+	_ = json.Unmarshal(body, &queued)
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if got, _ := os.ReadFile(live); string(got) != "precious" {
+		t.Fatalf("library.db after the restore = %q, want the backed-up content", got)
+	}
+}
+
+func TestAppdataWiring_AFailedBackupPublishesTheFailureNotification(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	// A destination that is a file cannot take an archive.
+	blocked := filepath.Join(w.root, "not-a-directory")
+	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, blocked)
+	pub := &recordingPublisher{}
+	wireAppdata(w.handler, w.registry, svc, pub)
+
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup", ``)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup = %d %s", status, body)
+	}
+	var queued struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &queued)
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusFailed {
+		t.Fatalf("job = %s, want failed", done.Status)
+	}
+	if n := pub.count(notify.EventAppdataBackupFailed); n != 1 {
+		t.Fatalf("appdata_backup_failed published %d times, want once", n)
+	}
+}
+
+type scheduledAppdata struct {
+	h         *scheduleHarness
+	fake      *container.FakeProvider
+	svc       *backup.AppdataService
+	apps      *appServices
+	pub       *recordingPublisher
+	dest      string
+	halted    *atomic.Bool
+	clock     *time.Time
+	stateDir  string
+	appdataAt string
+}
+
+func newScheduledAppdata(t *testing.T) *scheduledAppdata {
+	t.Helper()
+	// 2026-09-29 is a Tuesday; the weekly window opens Sunday 2026-10-04 04:00.
+	clock := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	h := newScheduleHarness(t, func() time.Time { return clock }, nil)
+	root := t.TempDir()
+	arrays := store.NewArrayStore(h.db)
+	cache := filepath.Join(root, "cache")
+	if err := arrays.PutArray(context.Background(), store.ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "50G", CreatedAt: clock}, []store.ArrayDisk{
+		{Role: store.ArrayRoleCache, RoleIndex: 1, Device: "/dev/sdc", Filesystem: "xfs", FSUUID: "uuid-c", WWN: "wwn-c", Serial: "CACHE1", ByIDName: "wwn-wwn-c", Mountpoint: cache},
+	}); err != nil {
+		t.Fatalf("PutArray: %v", err)
+	}
+	dir := filepath.Join(cache, "appdata", "sonarr")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sonarr.db"), []byte("series"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := container.NewFakeProvider()
+	fake.AddContainer(container.Container{ID: "s", Name: "sonarr", Image: "sonarr", State: "running",
+		Mounts: []container.Mount{{Source: dir, Destination: "/config"}}})
+
+	apps := newContainers(fake, root, arrays, nil)
+	halted := &atomic.Bool{}
+	apps.Lifecycle.Halted = halted.Load
+	apps.Lifecycle.StorageReady = func() bool { return true }
+	dest := filepath.Join(root, "pool-backups")
+	svc := appdataBackupService(t, apps, arrays, h.db, root, dest)
+	pub := &recordingPublisher{}
+	wireAppdata(&api.Handler{}, h.registry, svc, pub)
+	wireAppdataSchedule(h.runner, svc, h.runner.Scheduler, pub)
+
+	t.Cleanup(func() {
+		dctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = h.runner.Scheduler.Drain(dctx)
+	})
+	return &scheduledAppdata{h: h, fake: fake, svc: svc, apps: apps, pub: pub, dest: dest, halted: halted, clock: &clock, stateDir: root, appdataAt: dir}
+}
+
+func (s *scheduledAppdata) appdataJobs(t *testing.T) []*job.Job {
+	t.Helper()
+	jobs, err := s.h.jobs.List(context.Background(), job.ListFilter{Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []*job.Job
+	for _, j := range jobs {
+		if j.Type == job.TypeAppdataBackup {
+			out = append(out, j)
+		}
+	}
+	return out
+}
+
+func awaitTerminal(t *testing.T, s *job.Store, id string) *job.Job {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if j, err := s.Get(context.Background(), id); err == nil && j.Status.Terminal() {
+			return j
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("job %s did not finish", id)
+	return nil
+}
+
+func TestScheduleTick_RunsTheWeeklyAppdataBackupOncePerWindow(t *testing.T) {
+	ctx := context.Background()
+	s := newScheduledAppdata(t)
+
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if jobs := s.appdataJobs(t); len(jobs) != 0 {
+		t.Fatalf("a backup started on the Tuesday the schedule was seeded: %v", jobs)
+	}
+
+	*s.clock = time.Date(2026, 10, 4, 4, 1, 0, 0, time.UTC)
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("tick in the window: %v", err)
+	}
+	jobs := s.appdataJobs(t)
+	if len(jobs) != 1 {
+		t.Fatalf("appdata jobs after the window opened = %v, want one", jobs)
+	}
+	done := awaitTerminal(t, s.h.jobs, jobs[0].ID)
+	if done.Status != job.StatusSucceeded {
+		t.Fatalf("scheduled backup = %s %s", done.Status, done.ErrorMessage)
+	}
+	entries, _ := os.ReadDir(s.dest)
+	if len(entries) != 1 {
+		t.Fatalf("archives after the scheduled backup = %v, want one", entries)
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := s.h.runner.tick(ctx); err != nil {
+			t.Fatalf("second tick: %v", err)
+		}
+	}
+	if got := len(s.appdataJobs(t)); got != 1 {
+		t.Fatalf("appdata jobs after more ticks in the same window = %d, want still one", got)
+	}
+
+	*s.clock = time.Date(2026, 10, 11, 4, 0, 0, 0, time.UTC)
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(s.appdataJobs(t)); got != 2 {
+		t.Fatalf("appdata jobs after the next Sunday = %d, want two", got)
+	}
+}
+
+func TestScheduleTick_ABackupThatCannotStartAlertsAndIsNotRetriedEveryMinute(t *testing.T) {
+	ctx := context.Background()
+	s := newScheduledAppdata(t)
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("seeding tick: %v", err)
+	}
+	*s.clock = time.Date(2026, 10, 4, 4, 1, 0, 0, time.UTC)
+	s.halted.Store(true)
+
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if n := s.pub.count(notify.EventAppdataBackupFailed); n != 1 {
+		t.Fatalf("appdata_backup_failed published %d times, want once for the backup that did not start", n)
+	}
+	if got := len(s.appdataJobs(t)); got != 0 {
+		t.Fatalf("a job was queued with the array stopped: %d", got)
+	}
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.pub.count(notify.EventAppdataBackupFailed); n != 1 {
+		t.Fatalf("the same window alerted %d times, want once", n)
+	}
+}
+
+func TestScheduleTick_StartsContainersAnInterruptedBackupLeftStopped(t *testing.T) {
+	ctx := context.Background()
+	s := newScheduledAppdata(t)
+	c, err := s.fake.Inspect(ctx, "sonarr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.fake.Stop(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	journal := filepath.Join(s.stateDir, appdataJournalName)
+	if err := os.WriteFile(journal, []byte(`{"containers":["sonarr"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if got := containerState(t, s.fake, "sonarr"); got != "running" {
+		t.Fatalf("sonarr = %s after the tick, want the interrupted backup's container started again", got)
+	}
+	if _, err := os.Stat(journal); !os.IsNotExist(err) {
+		t.Fatalf("journal survived: %v", err)
+	}
+}
+
+func TestWireAppdata_WithoutDockerRegistersNothing(t *testing.T) {
+	registry := job.NewRegistry()
+	handler := &api.Handler{}
+	wireAppdata(handler, registry, nil, &recordingPublisher{})
+	if handler.Appdata != nil {
+		t.Fatal("Handler.Appdata set without a service")
+	}
+	if newAppdataService(nil, nil, nil, nil, "") != nil {
+		t.Fatal("newAppdataService built a service with no Docker client")
+	}
+	runner := &scheduleRunner{}
+	wireAppdataSchedule(runner, nil, nil, nil)
+	if len(runner.OtherJobs) != 0 || runner.AppdataRecovery != nil {
+		t.Fatal("the schedule was wired to an absent service")
+	}
+}
+
+// backedUp runs a backup of one container through the daemon's handler.
+func backedUp(t *testing.T, w *containersWiringHarness, name string) {
+	t.Helper()
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup", `{"containers":["`+name+`"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup = %d %s", status, body)
+	}
+	var queued struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &queued)
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("backup: %s %s", done.Status, done.ErrorMessage)
+	}
+}
+
+func archiveNamed(t *testing.T, dest, container string) string {
+	t.Helper()
+	entries, _ := os.ReadDir(dest)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "-"+container+"-") {
+			return e.Name()
+		}
+	}
+	t.Fatalf("no archive of %s in %s", container, dest)
+	return ""
+}
+
+// POST /appdata/backup/restore/preview queues an appdata_restore_preview job
+// through the real daemon server and its job registry, and the preview it
+// reports is read back over HTTP without the appdata being changed.
+func TestAppdataWiring_RestorePreviewIsReachableOverHTTP(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	wireAppdata(w.handler, w.registry, svc, &recordingPublisher{})
+	backedUp(t, w, "jellyfin")
+	archive := archiveNamed(t, dest, "jellyfin")
+	live := filepath.Join(w.appdata, "library.db")
+	if err := os.WriteFile(live, []byte("corrupted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := `{"container":"jellyfin","archive":"` + archive + `","destinationId":"pool"}`
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup/restore/preview", req)
+	if status != http.StatusOK {
+		t.Fatalf("POST restore/preview = %d %s", status, body)
+	}
+	var queued struct {
+		ID    string `json:"id"`
+		Type  string `json:"type"`
+		Class string `json:"class"`
+	}
+	if err := json.Unmarshal(body, &queued); err != nil || queued.Type != "appdata_restore_preview" || queued.Class != "service" {
+		t.Fatalf("job = %s (%v), want an appdata_restore_preview service job", body, err)
+	}
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("preview job: %s %s", done.Status, done.ErrorMessage)
+	}
+
+	status, body = w.do(t, http.MethodGet, "/appdata/backup/restore/preview/"+queued.ID)
+	if status != http.StatusOK {
+		t.Fatalf("GET restore/preview/%s = %d %s", queued.ID, status, body)
+	}
+	var preview struct {
+		Directories []struct {
+			Replaced struct {
+				Files  int      `json:"files"`
+				Sample []string `json:"sample"`
+			} `json:"replaced"`
+		} `json:"directories"`
+	}
+	if err := json.Unmarshal(body, &preview); err != nil || len(preview.Directories) == 0 ||
+		preview.Directories[0].Replaced.Files != 1 || preview.Directories[0].Replaced.Sample[0] != "library.db" {
+		t.Fatalf("preview = %s (%v), want library.db replaced", body, err)
+	}
+	if got, _ := os.ReadFile(live); string(got) != "corrupted" {
+		t.Fatalf("library.db after the preview = %q, want it untouched", got)
+	}
+	if left, _ := os.ReadDir(filepath.Dir(filepath.Dir(w.appdata))); len(left) != 1 {
+		t.Fatalf("the preview left %v next to the appdata location, want only appdata", left)
+	}
+	if status, body = w.do(t, http.MethodGet, "/appdata/backup/restore/preview/00000000-0000-4000-8000-000000000000"); status != http.StatusNotFound {
+		t.Fatalf("GET of an unknown preview = %d %s, want 404", status, body)
+	}
+}
+
+// gatedContainers holds one RequireArrayRunning call until released, so a
+// test can keep a preview job running while it submits other jobs.
+type gatedContainers struct {
+	backup.AppdataContainers
+	mu      sync.Mutex
+	armed   bool
+	skip    int
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gatedContainers) arm(skip int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.armed, g.skip = true, skip
+}
+
+// rearm holds the next array check, with channels of its own, so a test can
+// hold a second job after the first hold was released.
+func (g *gatedContainers) rearm() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.armed, g.skip = true, 0
+	g.entered, g.release = make(chan struct{}), make(chan struct{})
+}
+
+func (g *gatedContainers) RequireArrayRunning() error {
+	g.mu.Lock()
+	hold := false
+	entered, release := g.entered, g.release
+	if g.armed {
+		if g.skip == 0 {
+			hold, g.armed = true, false
+		} else {
+			g.skip--
+		}
+	}
+	g.mu.Unlock()
+	if hold {
+		close(entered)
+		<-release
+	}
+	return g.AppdataContainers.RequireArrayRunning()
+}
+
+// A backup submitted while a preview job is running is never failed by it:
+// the same container's backup queues behind the preview, another
+// container's runs beside it, and neither raises the backup-failed alert.
+func TestAppdataWiring_ABackupNeverFailsBecauseAPreviewIsRunning(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	sonarrDir := filepath.Join(w.root, "cache", "appdata", "sonarr")
+	if err := os.MkdirAll(sonarrDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sonarrDir, "sonarr.db"), []byte("series"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.fake.AddContainer(container.Container{
+		ID: "b", Name: "sonarr", Image: "sonarr", Tag: "4", State: "exited",
+		Mounts: []container.Mount{{Source: sonarrDir, Destination: "/config", ReadWrite: true}},
+	})
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	gate := &gatedContainers{AppdataContainers: svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	svc.Containers = gate
+	pub := &recordingPublisher{}
+	wireAppdata(w.handler, w.registry, svc, pub)
+	backedUp(t, w, "jellyfin")
+	archive := archiveNamed(t, dest, "jellyfin")
+
+	// The handler's own array check is the first call, the job's is the
+	// second, which is the one held.
+	gate.arm(1)
+	req := `{"container":"jellyfin","archive":"` + archive + `","destinationId":"pool"}`
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup/restore/preview", req)
+	if status != http.StatusOK {
+		t.Fatalf("POST restore/preview = %d %s", status, body)
+	}
+	var preview struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &preview)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the preview job never started")
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup", `{"containers":["sonarr"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup for another container = %d %s", status, body)
+	}
+	var other struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &other)
+	if done := w.awaitJobByID(t, other.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("a backup of another container beside the preview: %s %s", done.Status, done.ErrorMessage)
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup", `{"containers":["jellyfin"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup for the previewed container = %d %s", status, body)
+	}
+	var same struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(body, &same)
+	if same.Status != "queued" {
+		t.Fatalf("a backup of the container being previewed is %q, want it queued behind the preview", same.Status)
+	}
+
+	close(gate.release)
+	if done := w.awaitJobByID(t, preview.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("preview: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := w.awaitJobByID(t, same.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the queued backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := pub.count(notify.EventAppdataBackupFailed); n != 0 {
+		t.Fatalf("appdata_backup_failed published %d times, want none", n)
+	}
+}
+
+// A backup submitted while a restore of another container is running is
+// queued behind it, not failed as busy: the two share the staging directory
+// and the stopped-container journal, so the scheduler runs one at a time,
+// and the backup-failed alert stays quiet.
+func TestAppdataWiring_ABackupQueuesBehindARestoreOfAnotherContainer(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	sonarrDir := filepath.Join(w.root, "cache", "appdata", "sonarr")
+	if err := os.MkdirAll(sonarrDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sonarrDir, "sonarr.db"), []byte("series"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.fake.AddContainer(container.Container{
+		ID: "b", Name: "sonarr", Image: "sonarr", Tag: "4", State: "exited",
+		Mounts: []container.Mount{{Source: sonarrDir, Destination: "/config", ReadWrite: true}},
+	})
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	gate := &gatedContainers{AppdataContainers: svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	svc.Containers = gate
+	pub := &recordingPublisher{}
+	wireAppdata(w.handler, w.registry, svc, pub)
+	backedUp(t, w, "jellyfin")
+	archive := archiveNamed(t, dest, "jellyfin")
+
+	// The handler's own array check is the first call, the restore's is the
+	// second, which is the one held.
+	gate.arm(1)
+	req := `{"container":"jellyfin","archive":"` + archive + `","destinationId":"pool","confirm":true}`
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup/restore", req)
+	if status != http.StatusOK {
+		t.Fatalf("POST restore = %d %s", status, body)
+	}
+	var restore struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &restore)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restore job never started")
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup", `{"containers":["sonarr"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup for another container = %d %s", status, body)
+	}
+	var queued struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(body, &queued)
+	if queued.Status != "queued" {
+		t.Fatalf("a backup beside a restore of another container is %q, want it queued behind the restore", queued.Status)
+	}
+
+	close(gate.release)
+	if done := w.awaitJobByID(t, restore.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the queued backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := pub.count(notify.EventAppdataBackupFailed); n != 0 {
+		t.Fatalf("appdata_backup_failed published %d times, want none", n)
+	}
+	_ = archiveNamed(t, dest, "sonarr")
+}
+
+// The weekly backup covers the included containers only, so a restore of a
+// container excluded from it has a scope of its own. When their windows
+// meet, the scheduled backup waits for the restore instead of failing busy
+// and losing its window.
+func TestScheduleTick_TheWeeklyBackupQueuesBehindARestoreOfAnExcludedContainer(t *testing.T) {
+	ctx := context.Background()
+	s := newScheduledAppdata(t)
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("seeding tick: %v", err)
+	}
+
+	plexDir := filepath.Join(filepath.Dir(s.appdataAt), "plex")
+	if err := os.MkdirAll(plexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plexDir, "plex.db"), []byte("library"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.fake.AddContainer(container.Container{ID: "p", Name: "plex", Image: "plex", State: "exited",
+		Mounts: []container.Mount{{Source: plexDir, Destination: "/config", ReadWrite: true}}})
+	if err := runAppdataNamed(ctx, s.svc, "plex"); err != nil {
+		t.Fatalf("backing up plex: %v", err)
+	}
+	archives, _, err := s.svc.ListArchives(ctx, "plex")
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("archives of plex = %v, %v", archives, err)
+	}
+	if _, err := s.svc.SetPolicy(ctx, "plex", true, false); err != nil {
+		t.Fatalf("excluding plex: %v", err)
+	}
+
+	gate := &gatedContainers{AppdataContainers: s.svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	s.svc.Containers = gate
+	handler := &api.Handler{Appdata: s.svc, Scheduler: s.h.runner.Scheduler}
+	gate.arm(1)
+	restore, err := handler.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{
+		Container: "plex", Archive: archives[0].Name, DestinationId: archives[0].DestinationID, Confirm: true,
+	})
+	if err != nil {
+		t.Fatalf("RestoreAppdata: %v", err)
+	}
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restore job never started")
+	}
+
+	*s.clock = time.Date(2026, 10, 4, 4, 1, 0, 0, time.UTC)
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("tick in the window: %v", err)
+	}
+	var backupJob *job.Job
+	for _, j := range s.appdataJobs(t) {
+		backupJob = j
+	}
+	if backupJob == nil {
+		t.Fatal("the window opened and no backup was queued")
+	}
+	if backupJob.Status != job.StatusQueued {
+		t.Fatalf("the scheduled backup beside a restore of an excluded container is %q, want it queued behind the restore", backupJob.Status)
+	}
+
+	close(gate.release)
+	if done := awaitTerminal(t, s.h.jobs, restore.ID.String()); done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := awaitTerminal(t, s.h.jobs, backupJob.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the scheduled backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := s.pub.count(notify.EventAppdataBackupFailed); n != 0 {
+		t.Fatalf("appdata_backup_failed published %d times, want none", n)
+	}
+}
+
+// addRunningAppdataContainer installs a running container whose config
+// directory is inside the appdata location, the way a user installing an app
+// after a backup was queued would.
+func addRunningAppdataContainer(t *testing.T, fake *container.FakeProvider, appdataRoot, name string) {
+	t.Helper()
+	dir := filepath.Join(appdataRoot, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".db"), []byte(name), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake.AddContainer(container.Container{
+		ID: "id-" + name, Name: name, Image: name, State: "running",
+		Mounts: []container.Mount{{Source: dir, Destination: "/config", ReadWrite: true}},
+	})
+}
+
+func stopsOf(fake *container.FakeProvider, name string) int {
+	n := 0
+	for _, c := range fake.Calls() {
+		if c.Op == "stop" && (c.ID == name || c.ID == "id-"+name) {
+			n++
+		}
+	}
+	return n
+}
+
+func recreatesOf(fake *container.FakeProvider, name string) int {
+	n := 0
+	for _, c := range fake.Calls() {
+		if c.Op == "recreate" && (c.ID == name || c.ID == "id-"+name) {
+			n++
+		}
+	}
+	return n
+}
+
+// runAppdataNamed is a backup of names run the way the appdata_backup job
+// runs it: on what a submit resolves them to.
+func runAppdataNamed(ctx context.Context, svc *backup.AppdataService, names ...string) error {
+	resolved, err := svc.ScopeNames(ctx, names)
+	if err != nil {
+		return err
+	}
+	return svc.Run(ctx, backup.AppdataRunRequest{Containers: names, Resolved: resolved}, &bytes.Buffer{})
+}
+
+func hasArchiveOf(dest, name string) bool {
+	entries, _ := os.ReadDir(dest)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "-"+name+"-") {
+			return true
+		}
+	}
+	return false
+}
+
+// A backup's scope is fixed when it is submitted. A container installed
+// while the backup waits behind a restore is in no part of that scope, so
+// the backup must leave it running and unarchived: a job that acts outside
+// its scope lets a recreate of that container run beside it.
+func TestAppdataWiring_AQueuedBackupLeavesAContainerAddedAfterItWasSubmitted(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	gate := &gatedContainers{AppdataContainers: svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	svc.Containers = gate
+	wireAppdata(w.handler, w.registry, svc, &recordingPublisher{})
+	backedUp(t, w, "jellyfin")
+	archive := archiveNamed(t, dest, "jellyfin")
+
+	gate.arm(1)
+	req := `{"container":"jellyfin","archive":"` + archive + `","destinationId":"pool","confirm":true}`
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup/restore", req)
+	if status != http.StatusOK {
+		t.Fatalf("POST restore = %d %s", status, body)
+	}
+	var restore struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &restore)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restore job never started")
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup", ``)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup = %d %s", status, body)
+	}
+	var queued struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(body, &queued)
+	if queued.Status != "queued" {
+		t.Fatalf("the backup beside a running restore is %q, want queued", queued.Status)
+	}
+
+	addRunningAppdataContainer(t, w.fake, filepath.Join(w.root, "cache", "appdata"), "radarr")
+
+	// Let the restore finish and hold the backup as it starts: it is
+	// running, has not yet looked at what is installed, and its scope does
+	// not name radarr, so a recreate of radarr runs beside it instead of
+	// waiting for it.
+	restoreRelease := gate.release
+	gate.rearm()
+	close(restoreRelease)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the queued backup never started")
+	}
+	w.startReconcile()
+	status, body = w.do(t, http.MethodPost, "/apps/radarr/recreate")
+	if status != http.StatusOK {
+		t.Fatalf("POST recreate of radarr = %d %s", status, body)
+	}
+	var recreate struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &recreate)
+	if done := w.awaitJobByID(t, recreate.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("recreate of radarr while the backup runs: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := recreatesOf(w.fake, "radarr"); n != 1 {
+		t.Fatalf("radarr recreated %d times while the backup ran, want once", n)
+	}
+	if j, err := w.handler.Store.Get(context.Background(), queued.ID); err != nil || j.Status != job.StatusRunning {
+		t.Fatalf("the backup = %+v, %v; want it still running while the recreate ran", j, err)
+	}
+
+	close(gate.release)
+	if done := w.awaitJobByID(t, restore.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the queued backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := stopsOf(w.fake, "radarr"); n != 0 {
+		t.Fatalf("radarr was stopped %d times by a backup whose scope did not name it", n)
+	}
+	if hasArchiveOf(dest, "radarr") {
+		t.Fatal("a backup archived a container that was not in its scope")
+	}
+	if got := containerState(t, w.fake, "radarr"); got != "running" {
+		t.Fatalf("radarr = %s, want it left running", got)
+	}
+}
+
+// A container excluded from the backup, or removed, between the submit and
+// the start is skipped, not stopped: the job archives the rest.
+func TestAppdataWiring_AQueuedBackupSkipsAContainerExcludedOrRemovedBeforeItStarts(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	appdataRoot := filepath.Join(w.root, "cache", "appdata")
+	addRunningAppdataContainer(t, w.fake, appdataRoot, "sonarr")
+	addRunningAppdataContainer(t, w.fake, appdataRoot, "lidarr")
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	gate := &gatedContainers{AppdataContainers: svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	svc.Containers = gate
+	wireAppdata(w.handler, w.registry, svc, &recordingPublisher{})
+	backedUp(t, w, "jellyfin")
+	archive := archiveNamed(t, dest, "jellyfin")
+
+	gate.arm(1)
+	req := `{"container":"jellyfin","archive":"` + archive + `","destinationId":"pool","confirm":true}`
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup/restore", req)
+	if status != http.StatusOK {
+		t.Fatalf("POST restore = %d %s", status, body)
+	}
+	var restore struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &restore)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restore job never started")
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup", ``)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup = %d %s", status, body)
+	}
+	var queued struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &queued)
+
+	ctx := context.Background()
+	if _, err := svc.SetPolicy(ctx, "sonarr", true, false); err != nil {
+		t.Fatalf("excluding sonarr: %v", err)
+	}
+	if err := w.fake.Stop(ctx, "id-lidarr"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.fake.Remove(ctx, "id-lidarr", container.RemoveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	stopsBefore := stopsOf(w.fake, "sonarr")
+
+	close(gate.release)
+	if done := w.awaitJobByID(t, restore.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the queued backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := stopsOf(w.fake, "sonarr") - stopsBefore; n != 0 {
+		t.Fatalf("sonarr was stopped %d times after it was excluded", n)
+	}
+	if hasArchiveOf(dest, "sonarr") || hasArchiveOf(dest, "lidarr") {
+		t.Fatal("the backup archived a container that was excluded or removed before it started")
+	}
+}
+
+// The weekly backup is the same job as POST /appdata/backup, so a container
+// added while it waits behind a restore is not part of it either.
+func TestScheduleTick_TheWeeklyBackupLeavesAContainerAddedWhileItWasQueued(t *testing.T) {
+	ctx := context.Background()
+	s := newScheduledAppdata(t)
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("seeding tick: %v", err)
+	}
+	if err := runAppdataNamed(ctx, s.svc, "sonarr"); err != nil {
+		t.Fatalf("backing up sonarr: %v", err)
+	}
+	archives, _, err := s.svc.ListArchives(ctx, "sonarr")
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("archives of sonarr = %v, %v", archives, err)
+	}
+
+	gate := &gatedContainers{AppdataContainers: s.svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	s.svc.Containers = gate
+	handler := &api.Handler{Appdata: s.svc, Scheduler: s.h.runner.Scheduler}
+	gate.arm(1)
+	restore, err := handler.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{
+		Container: "sonarr", Archive: archives[0].Name, DestinationId: archives[0].DestinationID, Confirm: true,
+	})
+	if err != nil {
+		t.Fatalf("RestoreAppdata: %v", err)
+	}
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restore job never started")
+	}
+
+	*s.clock = time.Date(2026, 10, 4, 4, 1, 0, 0, time.UTC)
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("tick in the window: %v", err)
+	}
+	var backupJob *job.Job
+	for _, j := range s.appdataJobs(t) {
+		backupJob = j
+	}
+	if backupJob == nil || backupJob.Status != job.StatusQueued {
+		t.Fatalf("the scheduled backup = %+v, want it queued behind the restore", backupJob)
+	}
+
+	addRunningAppdataContainer(t, s.fake, filepath.Dir(s.appdataAt), "radarr")
+
+	// Let the restore finish and hold the weekly backup as it starts. Its
+	// scope does not name radarr, so a recreate of radarr runs beside it.
+	restoreRelease := gate.release
+	gate.rearm()
+	close(restoreRelease)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the queued backup never started")
+	}
+	wireContainers(handler, s.h.registry, s.apps, s.halted.Load, func() bool { return true }, arrayActionAdmit(s.h.runner.Scheduler))
+	reconcileContainersAtStart(ctx, s.apps, s.halted.Load, func() bool { return true }, 10*time.Millisecond)
+	recreate, err := handler.RecreateApp(ctx, apiv1.RecreateAppParams{ID: "radarr"})
+	if err != nil {
+		t.Fatalf("RecreateApp: %v", err)
+	}
+	if done := awaitTerminal(t, s.h.jobs, recreate.ID.String()); done.Status != job.StatusSucceeded {
+		t.Fatalf("recreate of radarr while the backup runs: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := recreatesOf(s.fake, "radarr"); n != 1 {
+		t.Fatalf("radarr recreated %d times while the backup ran, want once", n)
+	}
+	if j, err := s.h.jobs.Get(ctx, backupJob.ID); err != nil || j.Status != job.StatusRunning {
+		t.Fatalf("the scheduled backup = %+v, %v; want it still running while the recreate ran", j, err)
+	}
+
+	close(gate.release)
+	if done := awaitTerminal(t, s.h.jobs, restore.ID.String()); done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := awaitTerminal(t, s.h.jobs, backupJob.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the scheduled backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := stopsOf(s.fake, "radarr"); n != 0 {
+		t.Fatalf("radarr was stopped %d times by a backup whose scope did not name it", n)
+	}
+	if hasArchiveOf(s.dest, "radarr") {
+		t.Fatal("the scheduled backup archived a container that was not in its scope")
+	}
+}

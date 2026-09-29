@@ -976,6 +976,355 @@ func (s *AppStats) SetBlockWriteBytes(val int64) {
 	s.BlockWriteBytes = val
 }
 
+// Ref: #/components/schemas/AppdataArchive
+type AppdataArchive struct {
+	// The archive's file name on the destination.
+	Name            string `json:"name"`
+	Container       string `json:"container"`
+	DestinationId   string `json:"destinationId"`
+	DestinationName string `json:"destinationName"`
+	// The archive's modification time on the destination.
+	CreatedAt time.Time `json:"createdAt"`
+	Size      int64     `json:"size"`
+	Encrypted bool      `json:"encrypted"`
+	// `pre-restore` for the snapshot a restore took of the appdata it replaced; absent for an ordinary
+	// backup.
+	Reason OptNilString `json:"reason"`
+}
+
+// GetName returns the value of Name.
+func (s *AppdataArchive) GetName() string {
+	return s.Name
+}
+
+// GetContainer returns the value of Container.
+func (s *AppdataArchive) GetContainer() string {
+	return s.Container
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *AppdataArchive) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// GetDestinationName returns the value of DestinationName.
+func (s *AppdataArchive) GetDestinationName() string {
+	return s.DestinationName
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *AppdataArchive) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// GetSize returns the value of Size.
+func (s *AppdataArchive) GetSize() int64 {
+	return s.Size
+}
+
+// GetEncrypted returns the value of Encrypted.
+func (s *AppdataArchive) GetEncrypted() bool {
+	return s.Encrypted
+}
+
+// GetReason returns the value of Reason.
+func (s *AppdataArchive) GetReason() OptNilString {
+	return s.Reason
+}
+
+// SetName sets the value of Name.
+func (s *AppdataArchive) SetName(val string) {
+	s.Name = val
+}
+
+// SetContainer sets the value of Container.
+func (s *AppdataArchive) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *AppdataArchive) SetDestinationId(val string) {
+	s.DestinationId = val
+}
+
+// SetDestinationName sets the value of DestinationName.
+func (s *AppdataArchive) SetDestinationName(val string) {
+	s.DestinationName = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *AppdataArchive) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// SetSize sets the value of Size.
+func (s *AppdataArchive) SetSize(val int64) {
+	s.Size = val
+}
+
+// SetEncrypted sets the value of Encrypted.
+func (s *AppdataArchive) SetEncrypted(val bool) {
+	s.Encrypted = val
+}
+
+// SetReason sets the value of Reason.
+func (s *AppdataArchive) SetReason(val OptNilString) {
+	s.Reason = val
+}
+
+// Ref: #/components/schemas/AppdataBackupConfig
+type AppdataBackupConfig struct {
+	Containers []AppdataBackupContainer `json:"containers"`
+}
+
+// GetContainers returns the value of Containers.
+func (s *AppdataBackupConfig) GetContainers() []AppdataBackupContainer {
+	return s.Containers
+}
+
+// SetContainers sets the value of Containers.
+func (s *AppdataBackupConfig) SetContainers(val []AppdataBackupContainer) {
+	s.Containers = val
+}
+
+// Ref: #/components/schemas/AppdataBackupContainer
+type AppdataBackupContainer struct {
+	Name string `json:"name"`
+	// The container's image repository, without its tag.
+	Image   string `json:"image"`
+	Running bool   `json:"running"`
+	// Whether the backup stops the container while its appdata is copied. Only a running container is
+	// stopped.
+	Stop     bool `json:"stop"`
+	Included bool `json:"included"`
+	// Whether the image is a known database (Postgres, MariaDB, MySQL, MongoDB, Redis and similar).
+	DatabaseImage bool `json:"databaseImage"`
+	// Present when a known database image is included but not stopped.
+	Warning OptNilString `json:"warning"`
+}
+
+// GetName returns the value of Name.
+func (s *AppdataBackupContainer) GetName() string {
+	return s.Name
+}
+
+// GetImage returns the value of Image.
+func (s *AppdataBackupContainer) GetImage() string {
+	return s.Image
+}
+
+// GetRunning returns the value of Running.
+func (s *AppdataBackupContainer) GetRunning() bool {
+	return s.Running
+}
+
+// GetStop returns the value of Stop.
+func (s *AppdataBackupContainer) GetStop() bool {
+	return s.Stop
+}
+
+// GetIncluded returns the value of Included.
+func (s *AppdataBackupContainer) GetIncluded() bool {
+	return s.Included
+}
+
+// GetDatabaseImage returns the value of DatabaseImage.
+func (s *AppdataBackupContainer) GetDatabaseImage() bool {
+	return s.DatabaseImage
+}
+
+// GetWarning returns the value of Warning.
+func (s *AppdataBackupContainer) GetWarning() OptNilString {
+	return s.Warning
+}
+
+// SetName sets the value of Name.
+func (s *AppdataBackupContainer) SetName(val string) {
+	s.Name = val
+}
+
+// SetImage sets the value of Image.
+func (s *AppdataBackupContainer) SetImage(val string) {
+	s.Image = val
+}
+
+// SetRunning sets the value of Running.
+func (s *AppdataBackupContainer) SetRunning(val bool) {
+	s.Running = val
+}
+
+// SetStop sets the value of Stop.
+func (s *AppdataBackupContainer) SetStop(val bool) {
+	s.Stop = val
+}
+
+// SetIncluded sets the value of Included.
+func (s *AppdataBackupContainer) SetIncluded(val bool) {
+	s.Included = val
+}
+
+// SetDatabaseImage sets the value of DatabaseImage.
+func (s *AppdataBackupContainer) SetDatabaseImage(val bool) {
+	s.DatabaseImage = val
+}
+
+// SetWarning sets the value of Warning.
+func (s *AppdataBackupContainer) SetWarning(val OptNilString) {
+	s.Warning = val
+}
+
+// Ref: #/components/schemas/AppdataRestorePreview
+type AppdataRestorePreview struct {
+	Container     string `json:"container"`
+	Archive       string `json:"archive"`
+	DestinationId string `json:"destinationId"`
+	// When the archive was taken.
+	CreatedAt   time.Time                        `json:"createdAt"`
+	Directories []AppdataRestorePreviewDirectory `json:"directories"`
+}
+
+// GetContainer returns the value of Container.
+func (s *AppdataRestorePreview) GetContainer() string {
+	return s.Container
+}
+
+// GetArchive returns the value of Archive.
+func (s *AppdataRestorePreview) GetArchive() string {
+	return s.Archive
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *AppdataRestorePreview) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *AppdataRestorePreview) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// GetDirectories returns the value of Directories.
+func (s *AppdataRestorePreview) GetDirectories() []AppdataRestorePreviewDirectory {
+	return s.Directories
+}
+
+// SetContainer sets the value of Container.
+func (s *AppdataRestorePreview) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetArchive sets the value of Archive.
+func (s *AppdataRestorePreview) SetArchive(val string) {
+	s.Archive = val
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *AppdataRestorePreview) SetDestinationId(val string) {
+	s.DestinationId = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *AppdataRestorePreview) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// SetDirectories sets the value of Directories.
+func (s *AppdataRestorePreview) SetDirectories(val []AppdataRestorePreviewDirectory) {
+	s.Directories = val
+}
+
+// Ref: #/components/schemas/AppdataRestorePreviewDirectory
+type AppdataRestorePreviewDirectory struct {
+	// The archived directory, relative to the appdata location (`jellyfin/config`).
+	Directory string                     `json:"directory"`
+	Replaced  AppdataRestorePreviewGroup `json:"replaced"`
+	Added     AppdataRestorePreviewGroup `json:"added"`
+	Removed   AppdataRestorePreviewGroup `json:"removed"`
+}
+
+// GetDirectory returns the value of Directory.
+func (s *AppdataRestorePreviewDirectory) GetDirectory() string {
+	return s.Directory
+}
+
+// GetReplaced returns the value of Replaced.
+func (s *AppdataRestorePreviewDirectory) GetReplaced() AppdataRestorePreviewGroup {
+	return s.Replaced
+}
+
+// GetAdded returns the value of Added.
+func (s *AppdataRestorePreviewDirectory) GetAdded() AppdataRestorePreviewGroup {
+	return s.Added
+}
+
+// GetRemoved returns the value of Removed.
+func (s *AppdataRestorePreviewDirectory) GetRemoved() AppdataRestorePreviewGroup {
+	return s.Removed
+}
+
+// SetDirectory sets the value of Directory.
+func (s *AppdataRestorePreviewDirectory) SetDirectory(val string) {
+	s.Directory = val
+}
+
+// SetReplaced sets the value of Replaced.
+func (s *AppdataRestorePreviewDirectory) SetReplaced(val AppdataRestorePreviewGroup) {
+	s.Replaced = val
+}
+
+// SetAdded sets the value of Added.
+func (s *AppdataRestorePreviewDirectory) SetAdded(val AppdataRestorePreviewGroup) {
+	s.Added = val
+}
+
+// SetRemoved sets the value of Removed.
+func (s *AppdataRestorePreviewDirectory) SetRemoved(val AppdataRestorePreviewGroup) {
+	s.Removed = val
+}
+
+// Ref: #/components/schemas/AppdataRestorePreviewGroup
+type AppdataRestorePreviewGroup struct {
+	// How many files are in this group. Symbolic links and other non-directory entries count as files;
+	// directories do not.
+	Files int64 `json:"files"`
+	// Total size of those files: for `replaced` and `removed` the size of the live files that would be
+	// lost, for `added` the size of the archive's files.
+	Bytes int64 `json:"bytes"`
+	// The first paths of the group in path order, relative to the directory, at most 20. `files` is the
+	// full count.
+	Sample []string `json:"sample"`
+}
+
+// GetFiles returns the value of Files.
+func (s *AppdataRestorePreviewGroup) GetFiles() int64 {
+	return s.Files
+}
+
+// GetBytes returns the value of Bytes.
+func (s *AppdataRestorePreviewGroup) GetBytes() int64 {
+	return s.Bytes
+}
+
+// GetSample returns the value of Sample.
+func (s *AppdataRestorePreviewGroup) GetSample() []string {
+	return s.Sample
+}
+
+// SetFiles sets the value of Files.
+func (s *AppdataRestorePreviewGroup) SetFiles(val int64) {
+	s.Files = val
+}
+
+// SetBytes sets the value of Bytes.
+func (s *AppdataRestorePreviewGroup) SetBytes(val int64) {
+	s.Bytes = val
+}
+
+// SetSample sets the value of Sample.
+func (s *AppdataRestorePreviewGroup) SetSample(val []string) {
+	s.Sample = val
+}
+
 // Ref: #/components/schemas/ApplyHostConfigRequest
 type ApplyHostConfigRequest struct {
 	Files []HostConfigChoice `json:"files"`
@@ -1731,6 +2080,623 @@ func (s *CancelDiskRemovalRequest) GetMountpoint() string {
 // SetMountpoint sets the value of Mountpoint.
 func (s *CancelDiskRemovalRequest) SetMountpoint(val string) {
 	s.Mountpoint = val
+}
+
+// Ref: #/components/schemas/ConfigImportArchive
+type ConfigImportArchive struct {
+	// When the archive was taken.
+	Timestamp      time.Time `json:"timestamp"`
+	Host           string    `json:"host"`
+	HoservaVersion string    `json:"hoservaVersion"`
+	// The database schema version of the archive.
+	SchemaVersion string `json:"schemaVersion"`
+}
+
+// GetTimestamp returns the value of Timestamp.
+func (s *ConfigImportArchive) GetTimestamp() time.Time {
+	return s.Timestamp
+}
+
+// GetHost returns the value of Host.
+func (s *ConfigImportArchive) GetHost() string {
+	return s.Host
+}
+
+// GetHoservaVersion returns the value of HoservaVersion.
+func (s *ConfigImportArchive) GetHoservaVersion() string {
+	return s.HoservaVersion
+}
+
+// GetSchemaVersion returns the value of SchemaVersion.
+func (s *ConfigImportArchive) GetSchemaVersion() string {
+	return s.SchemaVersion
+}
+
+// SetTimestamp sets the value of Timestamp.
+func (s *ConfigImportArchive) SetTimestamp(val time.Time) {
+	s.Timestamp = val
+}
+
+// SetHost sets the value of Host.
+func (s *ConfigImportArchive) SetHost(val string) {
+	s.Host = val
+}
+
+// SetHoservaVersion sets the value of HoservaVersion.
+func (s *ConfigImportArchive) SetHoservaVersion(val string) {
+	s.HoservaVersion = val
+}
+
+// SetSchemaVersion sets the value of SchemaVersion.
+func (s *ConfigImportArchive) SetSchemaVersion(val string) {
+	s.SchemaVersion = val
+}
+
+// A refusal `importConfig` would return for this archive.
+// Ref: #/components/schemas/ConfigImportBlocker
+type ConfigImportBlocker struct {
+	Code    ConfigImportBlockerCode `json:"code"`
+	Message string                  `json:"message"`
+}
+
+// GetCode returns the value of Code.
+func (s *ConfigImportBlocker) GetCode() ConfigImportBlockerCode {
+	return s.Code
+}
+
+// GetMessage returns the value of Message.
+func (s *ConfigImportBlocker) GetMessage() string {
+	return s.Message
+}
+
+// SetCode sets the value of Code.
+func (s *ConfigImportBlocker) SetCode(val ConfigImportBlockerCode) {
+	s.Code = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ConfigImportBlocker) SetMessage(val string) {
+	s.Message = val
+}
+
+type ConfigImportBlockerCode string
+
+const (
+	ConfigImportBlockerCodeIncompatibleArchive      ConfigImportBlockerCode = "incompatible_archive"
+	ConfigImportBlockerCodeArchiveOtherInstallation ConfigImportBlockerCode = "archive_other_installation"
+	ConfigImportBlockerCodeArchiveArrayMismatch     ConfigImportBlockerCode = "archive_array_mismatch"
+)
+
+// AllValues returns all ConfigImportBlockerCode values.
+func (ConfigImportBlockerCode) AllValues() []ConfigImportBlockerCode {
+	return []ConfigImportBlockerCode{
+		ConfigImportBlockerCodeIncompatibleArchive,
+		ConfigImportBlockerCodeArchiveOtherInstallation,
+		ConfigImportBlockerCodeArchiveArrayMismatch,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportBlockerCode) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportBlockerCodeIncompatibleArchive:
+		return []byte(s), nil
+	case ConfigImportBlockerCodeArchiveOtherInstallation:
+		return []byte(s), nil
+	case ConfigImportBlockerCodeArchiveArrayMismatch:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportBlockerCode) UnmarshalText(data []byte) error {
+	switch ConfigImportBlockerCode(data) {
+	case ConfigImportBlockerCodeIncompatibleArchive:
+		*s = ConfigImportBlockerCodeIncompatibleArchive
+		return nil
+	case ConfigImportBlockerCodeArchiveOtherInstallation:
+		*s = ConfigImportBlockerCodeArchiveOtherInstallation
+		return nil
+	case ConfigImportBlockerCodeArchiveArrayMismatch:
+		*s = ConfigImportBlockerCodeArchiveArrayMismatch
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ConfigImportChange
+type ConfigImportChange struct {
+	Kind ConfigImportChangeKind `json:"kind"`
+	// What a user calls it: a share name, a username, a schedule job, a destination name; `share / user`
+	// for a permission, `group / user` for a membership, `user / token name` for an API token,
+	// `event / channel` for a route, the label of an external disk, the kind of a host configuration
+	// decision. Empty for the settings that exist once. A secret or a passphrase is reported as changed,
+	// never by its value.
+	Name string `json:"name"`
+}
+
+// GetKind returns the value of Kind.
+func (s *ConfigImportChange) GetKind() ConfigImportChangeKind {
+	return s.Kind
+}
+
+// GetName returns the value of Name.
+func (s *ConfigImportChange) GetName() string {
+	return s.Name
+}
+
+// SetKind sets the value of Kind.
+func (s *ConfigImportChange) SetKind(val ConfigImportChangeKind) {
+	s.Kind = val
+}
+
+// SetName sets the value of Name.
+func (s *ConfigImportChange) SetName(val string) {
+	s.Name = val
+}
+
+type ConfigImportChangeKind string
+
+const (
+	ConfigImportChangeKindShare                  ConfigImportChangeKind = "share"
+	ConfigImportChangeKindShareUserPermission    ConfigImportChangeKind = "share_user_permission"
+	ConfigImportChangeKindShareGroupPermission   ConfigImportChangeKind = "share_group_permission"
+	ConfigImportChangeKindUser                   ConfigImportChangeKind = "user"
+	ConfigImportChangeKindUserGroup              ConfigImportChangeKind = "user_group"
+	ConfigImportChangeKindUserGroupMember        ConfigImportChangeKind = "user_group_member"
+	ConfigImportChangeKindAPIToken               ConfigImportChangeKind = "api_token"
+	ConfigImportChangeKindScheduleChain          ConfigImportChangeKind = "schedule_chain"
+	ConfigImportChangeKindScheduleJob            ConfigImportChangeKind = "schedule_job"
+	ConfigImportChangeKindNotificationChannel    ConfigImportChangeKind = "notification_channel"
+	ConfigImportChangeKindNotificationRoute      ConfigImportChangeKind = "notification_route"
+	ConfigImportChangeKindNotificationSeverity   ConfigImportChangeKind = "notification_severity"
+	ConfigImportChangeKindNotificationQuietHours ConfigImportChangeKind = "notification_quiet_hours"
+	ConfigImportChangeKindBackupDestination      ConfigImportChangeKind = "backup_destination"
+	ConfigImportChangeKindAppdataBackupContainer ConfigImportChangeKind = "appdata_backup_container"
+	ConfigImportChangeKindBackupRecipient        ConfigImportChangeKind = "backup_recipient"
+	ConfigImportChangeKindAcme                   ConfigImportChangeKind = "acme"
+	ConfigImportChangeKindUps                    ConfigImportChangeKind = "ups"
+	ConfigImportChangeKindArraySettings          ConfigImportChangeKind = "array_settings"
+	ConfigImportChangeKindHostConfig             ConfigImportChangeKind = "host_config"
+	ConfigImportChangeKindExternalDisk           ConfigImportChangeKind = "external_disk"
+	ConfigImportChangeKindHostname               ConfigImportChangeKind = "hostname"
+	ConfigImportChangeKindTimezone               ConfigImportChangeKind = "timezone"
+	ConfigImportChangeKindBackupPassphrase       ConfigImportChangeKind = "backup_passphrase"
+	ConfigImportChangeKindUpdateChannel          ConfigImportChangeKind = "update_channel"
+	ConfigImportChangeKindUpdateCheck            ConfigImportChangeKind = "update_check"
+)
+
+// AllValues returns all ConfigImportChangeKind values.
+func (ConfigImportChangeKind) AllValues() []ConfigImportChangeKind {
+	return []ConfigImportChangeKind{
+		ConfigImportChangeKindShare,
+		ConfigImportChangeKindShareUserPermission,
+		ConfigImportChangeKindShareGroupPermission,
+		ConfigImportChangeKindUser,
+		ConfigImportChangeKindUserGroup,
+		ConfigImportChangeKindUserGroupMember,
+		ConfigImportChangeKindAPIToken,
+		ConfigImportChangeKindScheduleChain,
+		ConfigImportChangeKindScheduleJob,
+		ConfigImportChangeKindNotificationChannel,
+		ConfigImportChangeKindNotificationRoute,
+		ConfigImportChangeKindNotificationSeverity,
+		ConfigImportChangeKindNotificationQuietHours,
+		ConfigImportChangeKindBackupDestination,
+		ConfigImportChangeKindAppdataBackupContainer,
+		ConfigImportChangeKindBackupRecipient,
+		ConfigImportChangeKindAcme,
+		ConfigImportChangeKindUps,
+		ConfigImportChangeKindArraySettings,
+		ConfigImportChangeKindHostConfig,
+		ConfigImportChangeKindExternalDisk,
+		ConfigImportChangeKindHostname,
+		ConfigImportChangeKindTimezone,
+		ConfigImportChangeKindBackupPassphrase,
+		ConfigImportChangeKindUpdateChannel,
+		ConfigImportChangeKindUpdateCheck,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportChangeKind) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportChangeKindShare:
+		return []byte(s), nil
+	case ConfigImportChangeKindShareUserPermission:
+		return []byte(s), nil
+	case ConfigImportChangeKindShareGroupPermission:
+		return []byte(s), nil
+	case ConfigImportChangeKindUser:
+		return []byte(s), nil
+	case ConfigImportChangeKindUserGroup:
+		return []byte(s), nil
+	case ConfigImportChangeKindUserGroupMember:
+		return []byte(s), nil
+	case ConfigImportChangeKindAPIToken:
+		return []byte(s), nil
+	case ConfigImportChangeKindScheduleChain:
+		return []byte(s), nil
+	case ConfigImportChangeKindScheduleJob:
+		return []byte(s), nil
+	case ConfigImportChangeKindNotificationChannel:
+		return []byte(s), nil
+	case ConfigImportChangeKindNotificationRoute:
+		return []byte(s), nil
+	case ConfigImportChangeKindNotificationSeverity:
+		return []byte(s), nil
+	case ConfigImportChangeKindNotificationQuietHours:
+		return []byte(s), nil
+	case ConfigImportChangeKindBackupDestination:
+		return []byte(s), nil
+	case ConfigImportChangeKindAppdataBackupContainer:
+		return []byte(s), nil
+	case ConfigImportChangeKindBackupRecipient:
+		return []byte(s), nil
+	case ConfigImportChangeKindAcme:
+		return []byte(s), nil
+	case ConfigImportChangeKindUps:
+		return []byte(s), nil
+	case ConfigImportChangeKindArraySettings:
+		return []byte(s), nil
+	case ConfigImportChangeKindHostConfig:
+		return []byte(s), nil
+	case ConfigImportChangeKindExternalDisk:
+		return []byte(s), nil
+	case ConfigImportChangeKindHostname:
+		return []byte(s), nil
+	case ConfigImportChangeKindTimezone:
+		return []byte(s), nil
+	case ConfigImportChangeKindBackupPassphrase:
+		return []byte(s), nil
+	case ConfigImportChangeKindUpdateChannel:
+		return []byte(s), nil
+	case ConfigImportChangeKindUpdateCheck:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportChangeKind) UnmarshalText(data []byte) error {
+	switch ConfigImportChangeKind(data) {
+	case ConfigImportChangeKindShare:
+		*s = ConfigImportChangeKindShare
+		return nil
+	case ConfigImportChangeKindShareUserPermission:
+		*s = ConfigImportChangeKindShareUserPermission
+		return nil
+	case ConfigImportChangeKindShareGroupPermission:
+		*s = ConfigImportChangeKindShareGroupPermission
+		return nil
+	case ConfigImportChangeKindUser:
+		*s = ConfigImportChangeKindUser
+		return nil
+	case ConfigImportChangeKindUserGroup:
+		*s = ConfigImportChangeKindUserGroup
+		return nil
+	case ConfigImportChangeKindUserGroupMember:
+		*s = ConfigImportChangeKindUserGroupMember
+		return nil
+	case ConfigImportChangeKindAPIToken:
+		*s = ConfigImportChangeKindAPIToken
+		return nil
+	case ConfigImportChangeKindScheduleChain:
+		*s = ConfigImportChangeKindScheduleChain
+		return nil
+	case ConfigImportChangeKindScheduleJob:
+		*s = ConfigImportChangeKindScheduleJob
+		return nil
+	case ConfigImportChangeKindNotificationChannel:
+		*s = ConfigImportChangeKindNotificationChannel
+		return nil
+	case ConfigImportChangeKindNotificationRoute:
+		*s = ConfigImportChangeKindNotificationRoute
+		return nil
+	case ConfigImportChangeKindNotificationSeverity:
+		*s = ConfigImportChangeKindNotificationSeverity
+		return nil
+	case ConfigImportChangeKindNotificationQuietHours:
+		*s = ConfigImportChangeKindNotificationQuietHours
+		return nil
+	case ConfigImportChangeKindBackupDestination:
+		*s = ConfigImportChangeKindBackupDestination
+		return nil
+	case ConfigImportChangeKindAppdataBackupContainer:
+		*s = ConfigImportChangeKindAppdataBackupContainer
+		return nil
+	case ConfigImportChangeKindBackupRecipient:
+		*s = ConfigImportChangeKindBackupRecipient
+		return nil
+	case ConfigImportChangeKindAcme:
+		*s = ConfigImportChangeKindAcme
+		return nil
+	case ConfigImportChangeKindUps:
+		*s = ConfigImportChangeKindUps
+		return nil
+	case ConfigImportChangeKindArraySettings:
+		*s = ConfigImportChangeKindArraySettings
+		return nil
+	case ConfigImportChangeKindHostConfig:
+		*s = ConfigImportChangeKindHostConfig
+		return nil
+	case ConfigImportChangeKindExternalDisk:
+		*s = ConfigImportChangeKindExternalDisk
+		return nil
+	case ConfigImportChangeKindHostname:
+		*s = ConfigImportChangeKindHostname
+		return nil
+	case ConfigImportChangeKindTimezone:
+		*s = ConfigImportChangeKindTimezone
+		return nil
+	case ConfigImportChangeKindBackupPassphrase:
+		*s = ConfigImportChangeKindBackupPassphrase
+		return nil
+	case ConfigImportChangeKindUpdateChannel:
+		*s = ConfigImportChangeKindUpdateChannel
+		return nil
+	case ConfigImportChangeKindUpdateCheck:
+		*s = ConfigImportChangeKindUpdateCheck
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ConfigImportGroup
+type ConfigImportGroup struct {
+	Category ConfigImportGroupCategory `json:"category"`
+	// In the archive, not in the live configuration.
+	Added []ConfigImportChange `json:"added"`
+	// In both, with different content.
+	Changed []ConfigImportChange `json:"changed"`
+	// In the live configuration, not in the archive.
+	Removed []ConfigImportChange `json:"removed"`
+}
+
+// GetCategory returns the value of Category.
+func (s *ConfigImportGroup) GetCategory() ConfigImportGroupCategory {
+	return s.Category
+}
+
+// GetAdded returns the value of Added.
+func (s *ConfigImportGroup) GetAdded() []ConfigImportChange {
+	return s.Added
+}
+
+// GetChanged returns the value of Changed.
+func (s *ConfigImportGroup) GetChanged() []ConfigImportChange {
+	return s.Changed
+}
+
+// GetRemoved returns the value of Removed.
+func (s *ConfigImportGroup) GetRemoved() []ConfigImportChange {
+	return s.Removed
+}
+
+// SetCategory sets the value of Category.
+func (s *ConfigImportGroup) SetCategory(val ConfigImportGroupCategory) {
+	s.Category = val
+}
+
+// SetAdded sets the value of Added.
+func (s *ConfigImportGroup) SetAdded(val []ConfigImportChange) {
+	s.Added = val
+}
+
+// SetChanged sets the value of Changed.
+func (s *ConfigImportGroup) SetChanged(val []ConfigImportChange) {
+	s.Changed = val
+}
+
+// SetRemoved sets the value of Removed.
+func (s *ConfigImportGroup) SetRemoved(val []ConfigImportChange) {
+	s.Removed = val
+}
+
+type ConfigImportGroupCategory string
+
+const (
+	ConfigImportGroupCategoryShares        ConfigImportGroupCategory = "shares"
+	ConfigImportGroupCategoryAccounts      ConfigImportGroupCategory = "accounts"
+	ConfigImportGroupCategorySchedules     ConfigImportGroupCategory = "schedules"
+	ConfigImportGroupCategoryNotifications ConfigImportGroupCategory = "notifications"
+	ConfigImportGroupCategoryBackup        ConfigImportGroupCategory = "backup"
+	ConfigImportGroupCategorySystem        ConfigImportGroupCategory = "system"
+)
+
+// AllValues returns all ConfigImportGroupCategory values.
+func (ConfigImportGroupCategory) AllValues() []ConfigImportGroupCategory {
+	return []ConfigImportGroupCategory{
+		ConfigImportGroupCategoryShares,
+		ConfigImportGroupCategoryAccounts,
+		ConfigImportGroupCategorySchedules,
+		ConfigImportGroupCategoryNotifications,
+		ConfigImportGroupCategoryBackup,
+		ConfigImportGroupCategorySystem,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportGroupCategory) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportGroupCategoryShares:
+		return []byte(s), nil
+	case ConfigImportGroupCategoryAccounts:
+		return []byte(s), nil
+	case ConfigImportGroupCategorySchedules:
+		return []byte(s), nil
+	case ConfigImportGroupCategoryNotifications:
+		return []byte(s), nil
+	case ConfigImportGroupCategoryBackup:
+		return []byte(s), nil
+	case ConfigImportGroupCategorySystem:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportGroupCategory) UnmarshalText(data []byte) error {
+	switch ConfigImportGroupCategory(data) {
+	case ConfigImportGroupCategoryShares:
+		*s = ConfigImportGroupCategoryShares
+		return nil
+	case ConfigImportGroupCategoryAccounts:
+		*s = ConfigImportGroupCategoryAccounts
+		return nil
+	case ConfigImportGroupCategorySchedules:
+		*s = ConfigImportGroupCategorySchedules
+		return nil
+	case ConfigImportGroupCategoryNotifications:
+		*s = ConfigImportGroupCategoryNotifications
+		return nil
+	case ConfigImportGroupCategoryBackup:
+		*s = ConfigImportGroupCategoryBackup
+		return nil
+	case ConfigImportGroupCategorySystem:
+		*s = ConfigImportGroupCategorySystem
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Something about an import that is true whatever the archive holds.
+// Ref: #/components/schemas/ConfigImportNote
+type ConfigImportNote struct {
+	Code    ConfigImportNoteCode `json:"code"`
+	Message string               `json:"message"`
+}
+
+// GetCode returns the value of Code.
+func (s *ConfigImportNote) GetCode() ConfigImportNoteCode {
+	return s.Code
+}
+
+// GetMessage returns the value of Message.
+func (s *ConfigImportNote) GetMessage() string {
+	return s.Message
+}
+
+// SetCode sets the value of Code.
+func (s *ConfigImportNote) SetCode(val ConfigImportNoteCode) {
+	s.Code = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ConfigImportNote) SetMessage(val string) {
+	s.Message = val
+}
+
+type ConfigImportNoteCode string
+
+const (
+	ConfigImportNoteCodeSessionsReplaced ConfigImportNoteCode = "sessions_replaced"
+	ConfigImportNoteCodeArrayStateKept   ConfigImportNoteCode = "array_state_kept"
+)
+
+// AllValues returns all ConfigImportNoteCode values.
+func (ConfigImportNoteCode) AllValues() []ConfigImportNoteCode {
+	return []ConfigImportNoteCode{
+		ConfigImportNoteCodeSessionsReplaced,
+		ConfigImportNoteCodeArrayStateKept,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportNoteCode) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportNoteCodeSessionsReplaced:
+		return []byte(s), nil
+	case ConfigImportNoteCodeArrayStateKept:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportNoteCode) UnmarshalText(data []byte) error {
+	switch ConfigImportNoteCode(data) {
+	case ConfigImportNoteCodeSessionsReplaced:
+		*s = ConfigImportNoteCodeSessionsReplaced
+		return nil
+	case ConfigImportNoteCodeArrayStateKept:
+		*s = ConfigImportNoteCodeArrayStateKept
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ConfigImportPreview
+type ConfigImportPreview struct {
+	Archive           ConfigImportArchive `json:"archive"`
+	LiveSchemaVersion string              `json:"liveSchemaVersion"`
+	// Refusals `importConfig` would return for this archive; empty when it would go ahead (a running job,
+	// which is not a property of the archive, refuses it too).
+	Blockers []ConfigImportBlocker `json:"blockers"`
+	// One entry per category, in a fixed order, each listing what an import would add, change or remove.
+	// History and runtime tables (jobs, the audit log, spin events, notification deliveries and alerts,
+	// usage, mover and cache results) are not listed. Empty when the schema versions differ.
+	Groups []ConfigImportGroup `json:"groups"`
+	Notes  []ConfigImportNote  `json:"notes"`
+}
+
+// GetArchive returns the value of Archive.
+func (s *ConfigImportPreview) GetArchive() ConfigImportArchive {
+	return s.Archive
+}
+
+// GetLiveSchemaVersion returns the value of LiveSchemaVersion.
+func (s *ConfigImportPreview) GetLiveSchemaVersion() string {
+	return s.LiveSchemaVersion
+}
+
+// GetBlockers returns the value of Blockers.
+func (s *ConfigImportPreview) GetBlockers() []ConfigImportBlocker {
+	return s.Blockers
+}
+
+// GetGroups returns the value of Groups.
+func (s *ConfigImportPreview) GetGroups() []ConfigImportGroup {
+	return s.Groups
+}
+
+// GetNotes returns the value of Notes.
+func (s *ConfigImportPreview) GetNotes() []ConfigImportNote {
+	return s.Notes
+}
+
+// SetArchive sets the value of Archive.
+func (s *ConfigImportPreview) SetArchive(val ConfigImportArchive) {
+	s.Archive = val
+}
+
+// SetLiveSchemaVersion sets the value of LiveSchemaVersion.
+func (s *ConfigImportPreview) SetLiveSchemaVersion(val string) {
+	s.LiveSchemaVersion = val
+}
+
+// SetBlockers sets the value of Blockers.
+func (s *ConfigImportPreview) SetBlockers(val []ConfigImportBlocker) {
+	s.Blockers = val
+}
+
+// SetGroups sets the value of Groups.
+func (s *ConfigImportPreview) SetGroups(val []ConfigImportGroup) {
+	s.Groups = val
+}
+
+// SetNotes sets the value of Notes.
+func (s *ConfigImportPreview) SetNotes(val []ConfigImportNote) {
+	s.Notes = val
 }
 
 // Ref: #/components/schemas/ConfigureLetsEncryptRequest
@@ -4255,33 +5221,36 @@ func (s *JobStatus) UnmarshalText(data []byte) error {
 type JobType string
 
 const (
-	JobTypeSync              JobType = "sync"
-	JobTypeScrub             JobType = "scrub"
-	JobTypeFix               JobType = "fix"
-	JobTypeCheck             JobType = "check"
-	JobTypeRebalance         JobType = "rebalance"
-	JobTypeEvacuation        JobType = "evacuation"
-	JobTypeShareRelocation   JobType = "share_relocation"
-	JobTypeMover             JobType = "mover"
-	JobTypeVMDiskRelocation  JobType = "vm_disk_relocation"
-	JobTypeDiskFormat        JobType = "disk_format"
-	JobTypeDiskAdd           JobType = "disk_add"
-	JobTypeDiskRemove        JobType = "disk_remove"
-	JobTypeDiskReplace       JobType = "disk_replace"
-	JobTypeDiskUpgradeData   JobType = "disk_upgrade_data"
-	JobTypeDiskUpgradeParity JobType = "disk_upgrade_parity"
-	JobTypePoolRemount       JobType = "pool_remount"
-	JobTypeAppdataBackup     JobType = "appdata_backup"
-	JobTypeContainerUpdate   JobType = "container_update"
-	JobTypeContainerRecreate JobType = "container_recreate"
-	JobTypeAcmeIssue         JobType = "acme_issue"
-	JobTypeVMStart           JobType = "vm_start"
-	JobTypeVMStop            JobType = "vm_stop"
-	JobTypeVMCreate          JobType = "vm_create"
-	JobTypeVMDelete          JobType = "vm_delete"
-	JobTypeVMSnapshot        JobType = "vm_snapshot"
-	JobTypeVMClone           JobType = "vm_clone"
-	JobTypeVMMigrationImport JobType = "vm_migration_import"
+	JobTypeSync                  JobType = "sync"
+	JobTypeScrub                 JobType = "scrub"
+	JobTypeFix                   JobType = "fix"
+	JobTypeCheck                 JobType = "check"
+	JobTypeRebalance             JobType = "rebalance"
+	JobTypeEvacuation            JobType = "evacuation"
+	JobTypeShareRelocation       JobType = "share_relocation"
+	JobTypeMover                 JobType = "mover"
+	JobTypeVMDiskRelocation      JobType = "vm_disk_relocation"
+	JobTypeDiskFormat            JobType = "disk_format"
+	JobTypeDiskAdd               JobType = "disk_add"
+	JobTypeDiskRemove            JobType = "disk_remove"
+	JobTypeDiskReplace           JobType = "disk_replace"
+	JobTypeDiskUpgradeData       JobType = "disk_upgrade_data"
+	JobTypeDiskUpgradeParity     JobType = "disk_upgrade_parity"
+	JobTypePoolRemount           JobType = "pool_remount"
+	JobTypeAppdataBackup         JobType = "appdata_backup"
+	JobTypeAppdataRestore        JobType = "appdata_restore"
+	JobTypeAppdataRestorePreview JobType = "appdata_restore_preview"
+	JobTypeRestoreDrill          JobType = "restore_drill"
+	JobTypeContainerUpdate       JobType = "container_update"
+	JobTypeContainerRecreate     JobType = "container_recreate"
+	JobTypeAcmeIssue             JobType = "acme_issue"
+	JobTypeVMStart               JobType = "vm_start"
+	JobTypeVMStop                JobType = "vm_stop"
+	JobTypeVMCreate              JobType = "vm_create"
+	JobTypeVMDelete              JobType = "vm_delete"
+	JobTypeVMSnapshot            JobType = "vm_snapshot"
+	JobTypeVMClone               JobType = "vm_clone"
+	JobTypeVMMigrationImport     JobType = "vm_migration_import"
 )
 
 // AllValues returns all JobType values.
@@ -4304,6 +5273,9 @@ func (JobType) AllValues() []JobType {
 		JobTypeDiskUpgradeParity,
 		JobTypePoolRemount,
 		JobTypeAppdataBackup,
+		JobTypeAppdataRestore,
+		JobTypeAppdataRestorePreview,
+		JobTypeRestoreDrill,
 		JobTypeContainerUpdate,
 		JobTypeContainerRecreate,
 		JobTypeAcmeIssue,
@@ -4353,6 +5325,12 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypePoolRemount:
 		return []byte(s), nil
 	case JobTypeAppdataBackup:
+		return []byte(s), nil
+	case JobTypeAppdataRestore:
+		return []byte(s), nil
+	case JobTypeAppdataRestorePreview:
+		return []byte(s), nil
+	case JobTypeRestoreDrill:
 		return []byte(s), nil
 	case JobTypeContainerUpdate:
 		return []byte(s), nil
@@ -4432,6 +5410,15 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeAppdataBackup:
 		*s = JobTypeAppdataBackup
+		return nil
+	case JobTypeAppdataRestore:
+		*s = JobTypeAppdataRestore
+		return nil
+	case JobTypeAppdataRestorePreview:
+		*s = JobTypeAppdataRestorePreview
+		return nil
+	case JobTypeRestoreDrill:
+		*s = JobTypeRestoreDrill
 		return nil
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
@@ -4594,6 +5581,58 @@ func (s *ListAppImagesOK) SetMessage(val OptString) {
 // SetImages sets the value of Images.
 func (s *ListAppImagesOK) SetImages(val []AppImage) {
 	s.Images = val
+}
+
+// Ref: #/components/schemas/ListAppdataArchivesOK
+type ListAppdataArchivesOK struct {
+	Archives []AppdataArchive `json:"archives"`
+	// Destinations that could not be listed, and why.
+	Unavailable []ListAppdataArchivesOKUnavailableItem `json:"unavailable"`
+}
+
+// GetArchives returns the value of Archives.
+func (s *ListAppdataArchivesOK) GetArchives() []AppdataArchive {
+	return s.Archives
+}
+
+// GetUnavailable returns the value of Unavailable.
+func (s *ListAppdataArchivesOK) GetUnavailable() []ListAppdataArchivesOKUnavailableItem {
+	return s.Unavailable
+}
+
+// SetArchives sets the value of Archives.
+func (s *ListAppdataArchivesOK) SetArchives(val []AppdataArchive) {
+	s.Archives = val
+}
+
+// SetUnavailable sets the value of Unavailable.
+func (s *ListAppdataArchivesOK) SetUnavailable(val []ListAppdataArchivesOKUnavailableItem) {
+	s.Unavailable = val
+}
+
+type ListAppdataArchivesOKUnavailableItem struct {
+	DestinationId string `json:"destinationId"`
+	Message       string `json:"message"`
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *ListAppdataArchivesOKUnavailableItem) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// GetMessage returns the value of Message.
+func (s *ListAppdataArchivesOKUnavailableItem) GetMessage() string {
+	return s.Message
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *ListAppdataArchivesOKUnavailableItem) SetDestinationId(val string) {
+	s.DestinationId = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ListAppdataArchivesOKUnavailableItem) SetMessage(val string) {
+	s.Message = val
 }
 
 // Ref: #/components/schemas/ListAppsOK
@@ -8225,6 +9264,52 @@ func (o OptParityGuardState) Or(d ParityGuardState) ParityGuardState {
 	return d
 }
 
+// NewOptRestoreDrillRun returns new OptRestoreDrillRun with value set to v.
+func NewOptRestoreDrillRun(v RestoreDrillRun) OptRestoreDrillRun {
+	return OptRestoreDrillRun{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptRestoreDrillRun is optional RestoreDrillRun.
+type OptRestoreDrillRun struct {
+	Value RestoreDrillRun
+	Set   bool
+}
+
+// IsSet returns true if OptRestoreDrillRun was set.
+func (o OptRestoreDrillRun) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptRestoreDrillRun) Reset() {
+	var v RestoreDrillRun
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptRestoreDrillRun) SetTo(v RestoreDrillRun) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptRestoreDrillRun) Get() (v RestoreDrillRun, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptRestoreDrillRun) Or(d RestoreDrillRun) RestoreDrillRun {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptScheduleFrequency returns new OptScheduleFrequency with value set to v.
 func NewOptScheduleFrequency(v ScheduleFrequency) OptScheduleFrequency {
 	return OptScheduleFrequency{
@@ -8403,6 +9488,52 @@ func (o OptShareSMB) Get() (v ShareSMB, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptShareSMB) Or(d ShareSMB) ShareSMB {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptStartAppdataBackupRequest returns new OptStartAppdataBackupRequest with value set to v.
+func NewOptStartAppdataBackupRequest(v StartAppdataBackupRequest) OptStartAppdataBackupRequest {
+	return OptStartAppdataBackupRequest{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptStartAppdataBackupRequest is optional StartAppdataBackupRequest.
+type OptStartAppdataBackupRequest struct {
+	Value StartAppdataBackupRequest
+	Set   bool
+}
+
+// IsSet returns true if OptStartAppdataBackupRequest was set.
+func (o OptStartAppdataBackupRequest) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptStartAppdataBackupRequest) Reset() {
+	var v StartAppdataBackupRequest
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptStartAppdataBackupRequest) SetTo(v StartAppdataBackupRequest) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptStartAppdataBackupRequest) Get() (v StartAppdataBackupRequest, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptStartAppdataBackupRequest) Or(d StartAppdataBackupRequest) StartAppdataBackupRequest {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -9427,6 +10558,58 @@ func (s *PoolStatus) SetLargestDiskPath(val OptNilString) {
 	s.LargestDiskPath = val
 }
 
+// Ref: #/components/schemas/PreviewAppdataRestoreRequest
+type PreviewAppdataRestoreRequest struct {
+	Container string `json:"container"`
+	// An archive name from listAppdataArchives.
+	Archive       string `json:"archive"`
+	DestinationId string `json:"destinationId"`
+}
+
+// GetContainer returns the value of Container.
+func (s *PreviewAppdataRestoreRequest) GetContainer() string {
+	return s.Container
+}
+
+// GetArchive returns the value of Archive.
+func (s *PreviewAppdataRestoreRequest) GetArchive() string {
+	return s.Archive
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *PreviewAppdataRestoreRequest) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// SetContainer sets the value of Container.
+func (s *PreviewAppdataRestoreRequest) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetArchive sets the value of Archive.
+func (s *PreviewAppdataRestoreRequest) SetArchive(val string) {
+	s.Archive = val
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *PreviewAppdataRestoreRequest) SetDestinationId(val string) {
+	s.DestinationId = val
+}
+
+type PreviewConfigImportReq struct {
+	Archive ht.MultipartFile `json:"archive"`
+}
+
+// GetArchive returns the value of Archive.
+func (s *PreviewConfigImportReq) GetArchive() ht.MultipartFile {
+	return s.Archive
+}
+
+// SetArchive sets the value of Archive.
+func (s *PreviewConfigImportReq) SetArchive(val ht.MultipartFile) {
+	s.Archive = val
+}
+
 // One file a rebalance or evacuation plan moves (doc 09 §3-4).
 // Ref: #/components/schemas/RebalanceMove
 type RebalanceMove struct {
@@ -9882,6 +11065,184 @@ func (s *ResetUserPasswordRequest) SetPassword(val string) {
 	s.Password = val
 }
 
+// Ref: #/components/schemas/RestoreAppdataRequest
+type RestoreAppdataRequest struct {
+	Container string `json:"container"`
+	// An archive name from listAppdataArchives.
+	Archive       string `json:"archive"`
+	DestinationId string `json:"destinationId"`
+	// Must be true, because the restore overwrites the container's appdata.
+	Confirm bool `json:"confirm"`
+}
+
+// GetContainer returns the value of Container.
+func (s *RestoreAppdataRequest) GetContainer() string {
+	return s.Container
+}
+
+// GetArchive returns the value of Archive.
+func (s *RestoreAppdataRequest) GetArchive() string {
+	return s.Archive
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *RestoreAppdataRequest) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// GetConfirm returns the value of Confirm.
+func (s *RestoreAppdataRequest) GetConfirm() bool {
+	return s.Confirm
+}
+
+// SetContainer sets the value of Container.
+func (s *RestoreAppdataRequest) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetArchive sets the value of Archive.
+func (s *RestoreAppdataRequest) SetArchive(val string) {
+	s.Archive = val
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *RestoreAppdataRequest) SetDestinationId(val string) {
+	s.DestinationId = val
+}
+
+// SetConfirm sets the value of Confirm.
+func (s *RestoreAppdataRequest) SetConfirm(val bool) {
+	s.Confirm = val
+}
+
+// Ref: #/components/schemas/RestoreDrill
+type RestoreDrill struct {
+	LastRun OptRestoreDrillRun `json:"lastRun"`
+}
+
+// GetLastRun returns the value of LastRun.
+func (s *RestoreDrill) GetLastRun() OptRestoreDrillRun {
+	return s.LastRun
+}
+
+// SetLastRun sets the value of LastRun.
+func (s *RestoreDrill) SetLastRun(val OptRestoreDrillRun) {
+	s.LastRun = val
+}
+
+// Ref: #/components/schemas/RestoreDrillDestination
+type RestoreDrillDestination struct {
+	DestinationId   string `json:"destinationId"`
+	DestinationName string `json:"destinationName"`
+	Passed          bool   `json:"passed"`
+	// The archive that was fetched and verified. Absent when the destination held none.
+	Archive OptNilString `json:"archive"`
+	// Why the destination failed. Absent when it passed.
+	Error OptNilString `json:"error"`
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *RestoreDrillDestination) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// GetDestinationName returns the value of DestinationName.
+func (s *RestoreDrillDestination) GetDestinationName() string {
+	return s.DestinationName
+}
+
+// GetPassed returns the value of Passed.
+func (s *RestoreDrillDestination) GetPassed() bool {
+	return s.Passed
+}
+
+// GetArchive returns the value of Archive.
+func (s *RestoreDrillDestination) GetArchive() OptNilString {
+	return s.Archive
+}
+
+// GetError returns the value of Error.
+func (s *RestoreDrillDestination) GetError() OptNilString {
+	return s.Error
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *RestoreDrillDestination) SetDestinationId(val string) {
+	s.DestinationId = val
+}
+
+// SetDestinationName sets the value of DestinationName.
+func (s *RestoreDrillDestination) SetDestinationName(val string) {
+	s.DestinationName = val
+}
+
+// SetPassed sets the value of Passed.
+func (s *RestoreDrillDestination) SetPassed(val bool) {
+	s.Passed = val
+}
+
+// SetArchive sets the value of Archive.
+func (s *RestoreDrillDestination) SetArchive(val OptNilString) {
+	s.Archive = val
+}
+
+// SetError sets the value of Error.
+func (s *RestoreDrillDestination) SetError(val OptNilString) {
+	s.Error = val
+}
+
+// Ref: #/components/schemas/RestoreDrillRun
+type RestoreDrillRun struct {
+	RanAt time.Time `json:"ranAt"`
+	// True only when the newest archive on every enabled destination verified.
+	Passed bool `json:"passed"`
+	// Why the drill could not test any destination at all (none is enabled, the destinations could not be
+	// listed, or the drill could not be started). Absent when it tested them.
+	Error OptNilString `json:"error"`
+	// What the drill found on each destination it tested.
+	Destinations []RestoreDrillDestination `json:"destinations"`
+}
+
+// GetRanAt returns the value of RanAt.
+func (s *RestoreDrillRun) GetRanAt() time.Time {
+	return s.RanAt
+}
+
+// GetPassed returns the value of Passed.
+func (s *RestoreDrillRun) GetPassed() bool {
+	return s.Passed
+}
+
+// GetError returns the value of Error.
+func (s *RestoreDrillRun) GetError() OptNilString {
+	return s.Error
+}
+
+// GetDestinations returns the value of Destinations.
+func (s *RestoreDrillRun) GetDestinations() []RestoreDrillDestination {
+	return s.Destinations
+}
+
+// SetRanAt sets the value of RanAt.
+func (s *RestoreDrillRun) SetRanAt(val time.Time) {
+	s.RanAt = val
+}
+
+// SetPassed sets the value of Passed.
+func (s *RestoreDrillRun) SetPassed(val bool) {
+	s.Passed = val
+}
+
+// SetError sets the value of Error.
+func (s *RestoreDrillRun) SetError(val OptNilString) {
+	s.Error = val
+}
+
+// SetDestinations sets the value of Destinations.
+func (s *RestoreDrillRun) SetDestinations(val []RestoreDrillDestination) {
+	s.Destinations = val
+}
+
 // RevokeApiTokenNoContent is response for RevokeApiToken operation.
 type RevokeApiTokenNoContent struct{}
 
@@ -10155,6 +11516,32 @@ func (s *SessionCookie) SetAPIKey(val string) {
 // SetRoles sets the value of Roles.
 func (s *SessionCookie) SetRoles(val []string) {
 	s.Roles = val
+}
+
+// Ref: #/components/schemas/SetAppdataBackupContainerRequest
+type SetAppdataBackupContainerRequest struct {
+	Stop     bool `json:"stop"`
+	Included bool `json:"included"`
+}
+
+// GetStop returns the value of Stop.
+func (s *SetAppdataBackupContainerRequest) GetStop() bool {
+	return s.Stop
+}
+
+// GetIncluded returns the value of Included.
+func (s *SetAppdataBackupContainerRequest) GetIncluded() bool {
+	return s.Included
+}
+
+// SetStop sets the value of Stop.
+func (s *SetAppdataBackupContainerRequest) SetStop(val bool) {
+	s.Stop = val
+}
+
+// SetIncluded sets the value of Included.
+func (s *SetAppdataBackupContainerRequest) SetIncluded(val bool) {
+	s.Included = val
 }
 
 // Ref: #/components/schemas/SetUserGroupMembersRequest
@@ -10956,6 +12343,22 @@ func (s *SpinTransitionToState) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/StartAppdataBackupRequest
+type StartAppdataBackupRequest struct {
+	// Limits the run to these containers; omit for every included one.
+	Containers []string `json:"containers"`
+}
+
+// GetContainers returns the value of Containers.
+func (s *StartAppdataBackupRequest) GetContainers() []string {
+	return s.Containers
+}
+
+// SetContainers sets the value of Containers.
+func (s *StartAppdataBackupRequest) SetContainers(val []string) {
+	s.Containers = val
 }
 
 // Ref: #/components/schemas/StartFixRequest

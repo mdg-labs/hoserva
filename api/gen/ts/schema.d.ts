@@ -1630,9 +1630,29 @@ export interface paths {
         put?: never;
         /**
          * Import a config archive
-         * @description Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running configuration.
+         * @description Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running configuration. Every refusal happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks one it lists, or holds a link, device, FIFO or duplicate entry), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this installation's or is missing; a different installation's archive is restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the live array; the message names each difference). The array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a stopped array to normal operation.
          */
         post: operations["importConfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/config/import/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview a config import
+         * @description Reads the same archive upload as `importConfig` and reports what an in-place import would change, without changing anything: it writes no database row, no pre-import archive, takes no job hold, and leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive, with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409 `archive_array_mismatch`); `groups` compares the archive's database with the live one per category and is empty when the archive's schema version differs, since the two cannot be compared. An archive that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is read.
+         */
+        post: operations["previewConfigImport"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1701,6 +1721,159 @@ export interface paths {
          * @description Writes a small file to the destination, reads it back and deletes it (doc 10 §1: an untested backup destination is decoration). A destination that cannot be reached is a `200` with `success` false and the reason; a missing rclone is a `424` `rclone_missing`.
          */
         post: operations["testBackupDestination"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backup/drill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Last restore drill
+         * @description The result of the most recent restore drill (doc 10 §1): whether the newest config archive on each enabled backup destination could be fetched, opened the way a restore opens it, and verified, and when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
+         */
+        get: operations["getRestoreDrill"];
+        put?: never;
+        /**
+         * Run a restore drill now
+         * @description Queues a `restore_drill` job (service class), the job the monthly schedule queues. It fetches the newest config archive this installation wrote to each enabled destination, opens it the way a restore would (an encrypted one through its identity sidecar and the backup passphrase alone), checks its checksums and that `state.db` opens and passes `PRAGMA integrity_check`, and discards everything it fetched. It never writes to a destination and never reads the live database. A destination that cannot be read, or holds no archive written by this installation, fails the drill. The result replaces the one `getRestoreDrill` returns, and a failed drill publishes a `restore_drill_failed` notification. A drill behind another one queues rather than failing.
+         */
+        post: operations["startRestoreDrill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/appdata/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Appdata backup policy
+         * @description Every container with a bind-mounted directory inside the appdata location (the cache disk's `appdata` directory), each with whether the backup stops it while its directory is copied and whether it is in the backup at all (doc 10 §2). A container the operator has not configured is stopped and included. A known database image that is not stopped carries `warning`: copying a database's files while it runs can produce an archive that does not restore. 501 `not_configured` when this daemon has no Docker Engine client, and 503 when the Engine is not reachable.
+         */
+        get: operations["getAppdataBackup"];
+        put?: never;
+        /**
+         * Start an appdata backup
+         * @description Queues an `appdata_backup` job (service class): every container that is running and set to be stopped is stopped, each included container's appdata directories are archived, one archive per container, on the same device as the appdata location, the stopped containers are started again in reverse order, and only then are the archives verified and written to the enabled backup destinations (never the boot device's default destination, which is too small for appdata). `containers` limits the run to the named containers; omit it for every included one. Refused with 409 `array_stopped` while the array is stopped or its storage is not ready — with the cache disk unmounted the appdata directories are empty — and 404 `container_not_found` for a name that is not in scope. A run that fails publishes an `appdata_backup_failed` notification.
+         */
+        post: operations["startAppdataBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/appdata/backup/containers/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a container's appdata backup policy
+         * @description Replaces the container's policy. Opting a known database image out of being stopped is allowed, and the response carries `warning` saying why that is a bad idea. 404 `container_not_found` for a name with no appdata directory in scope.
+         */
+        put: operations["setAppdataBackupContainer"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/appdata/backup/archives": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List appdata archives
+         * @description The appdata archives this installation wrote to each enabled backup destination, newest first, optionally for one container. It lists the destinations when asked — a remote destination is reached through rclone — and a destination that could not be listed is reported in `unavailable` instead of being read as having no archives.
+         */
+        get: operations["listAppdataArchives"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/appdata/backup/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore one container's appdata
+         * @description Queues an `appdata_restore` job (service class). The archive is fetched, decrypted and verified before anything is changed. Then the container is stopped if it is running, a snapshot of its current appdata is written to the enabled backup destinations, and only when that snapshot is written is the appdata replaced by the archive's content; if the snapshot cannot be written the live appdata is not touched. The container is started again afterwards. Requires `confirm: true`: the restore overwrites the container's appdata (400 `confirmation_required` otherwise). 404 `archive_not_found` for an archive the named destination does not hold, and 409 `array_stopped` while the array is stopped or its storage is not ready.
+         */
+        post: operations["restoreAppdata"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/appdata/backup/restore/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview restoring one container's appdata
+         * @description Queues an `appdata_restore_preview` job (service class, scoped to the container) that reports what `restoreAppdata` would overwrite for the same archive on the same destination, before anything is changed. Read the result with `getAppdataRestorePreview` once the job has succeeded. The job fetches, decrypts and verifies the archive exactly as the restore does and fails with the restore's own error when the archive is corrupt, is another container's, names a directory outside the appdata location, or holds entries a restore could not unpack. It then compares each archived directory with the live one, walking the live appdata only for this job: files present in both are `replaced`, files only in the archive are `added`, and files only in the live appdata are `removed`, because the restore replaces each directory as a whole. It stops no container, writes nothing under the appdata location and leaves no fetched archive on disk, on success or failure. It queues behind a backup or restore of the same container and runs beside those of others. Cancelling it stops the fetch, the reading of the archive and the walk of the live directories; the decryption and the verification read that follow the fetch run to their end first. 404 `archive_not_found` for an archive the named destination does not hold, 404 `backup_destination_not_found`, 400 `appdata_archive_invalid` for a request that names no archive of this installation and container, and 409 `array_stopped` while the array is stopped or its storage is not ready.
+         */
+        post: operations["previewAppdataRestore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/appdata/backup/restore/preview/{jobId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a restore preview
+         * @description The result of the `appdata_restore_preview` job `previewAppdataRestore` queued. The daemon holds the sixteen most recent results in memory, so a result is gone after a restart and after sixteen newer previews: preview again. 404 `job_not_found` for an id that is not a restore preview job, 409 `appdata_preview_not_ready` while the job is queued or running, 409 `appdata_preview_failed` when it failed, was cancelled or was interrupted (the message says why; `getJob` and `getJobLog` have the rest), and 404 `appdata_preview_gone` when the job succeeded but its result is no longer held.
+         */
+        get: operations["getAppdataRestorePreview"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2348,7 +2521,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -3854,6 +4027,171 @@ export interface components {
             success: boolean;
             /** @description Why the test failed, present only when success is false. */
             error?: string | null;
+        };
+        RestoreDrill: {
+            lastRun?: components["schemas"]["RestoreDrillRun"];
+        };
+        RestoreDrillRun: {
+            /** Format: date-time */
+            ranAt: string;
+            /** @description True only when the newest archive on every enabled destination verified. */
+            passed: boolean;
+            /** @description Why the drill could not test any destination at all (none is enabled, the destinations could not be listed, or the drill could not be started). Absent when it tested them. */
+            error?: string | null;
+            /** @description What the drill found on each destination it tested. */
+            destinations: components["schemas"]["RestoreDrillDestination"][];
+        };
+        RestoreDrillDestination: {
+            destinationId: string;
+            destinationName: string;
+            passed: boolean;
+            /** @description The archive that was fetched and verified. Absent when the destination held none. */
+            archive?: string | null;
+            /** @description Why the destination failed. Absent when it passed. */
+            error?: string | null;
+        };
+        AppdataBackupContainer: {
+            name: string;
+            /** @description The container's image repository, without its tag. */
+            image: string;
+            running: boolean;
+            /** @description Whether the backup stops the container while its appdata is copied. Only a running container is stopped. */
+            stop: boolean;
+            included: boolean;
+            /** @description Whether the image is a known database (Postgres, MariaDB, MySQL, MongoDB, Redis and similar). */
+            databaseImage: boolean;
+            /** @description Present when a known database image is included but not stopped. */
+            warning?: string | null;
+        };
+        AppdataBackupConfig: {
+            containers: components["schemas"]["AppdataBackupContainer"][];
+        };
+        SetAppdataBackupContainerRequest: {
+            stop: boolean;
+            included: boolean;
+        };
+        StartAppdataBackupRequest: {
+            /** @description Limits the run to these containers; omit for every included one. */
+            containers?: string[];
+        };
+        AppdataArchive: {
+            /** @description The archive's file name on the destination. */
+            name: string;
+            container: string;
+            destinationId: string;
+            destinationName: string;
+            /**
+             * Format: date-time
+             * @description The archive's modification time on the destination.
+             */
+            createdAt: string;
+            /** Format: int64 */
+            size: number;
+            encrypted: boolean;
+            /** @description `pre-restore` for the snapshot a restore took of the appdata it replaced; absent for an ordinary backup. */
+            reason?: string | null;
+        };
+        ListAppdataArchivesOK: {
+            archives: components["schemas"]["AppdataArchive"][];
+            /** @description Destinations that could not be listed, and why. */
+            unavailable: {
+                destinationId: string;
+                message: string;
+            }[];
+        };
+        PreviewAppdataRestoreRequest: {
+            container: string;
+            /** @description An archive name from listAppdataArchives. */
+            archive: string;
+            destinationId: string;
+        };
+        /** @description A refusal `importConfig` would return for this archive. */
+        ConfigImportBlocker: {
+            /** @enum {string} */
+            code: "incompatible_archive" | "archive_other_installation" | "archive_array_mismatch";
+            message: string;
+        };
+        /** @description Something about an import that is true whatever the archive holds. */
+        ConfigImportNote: {
+            /** @enum {string} */
+            code: "sessions_replaced" | "array_state_kept";
+            message: string;
+        };
+        ConfigImportChange: {
+            /** @enum {string} */
+            kind: "share" | "share_user_permission" | "share_group_permission" | "user" | "user_group" | "user_group_member" | "api_token" | "schedule_chain" | "schedule_job" | "notification_channel" | "notification_route" | "notification_severity" | "notification_quiet_hours" | "backup_destination" | "appdata_backup_container" | "backup_recipient" | "acme" | "ups" | "array_settings" | "host_config" | "external_disk" | "hostname" | "timezone" | "backup_passphrase" | "update_channel" | "update_check";
+            /** @description What a user calls it: a share name, a username, a schedule job, a destination name; `share / user` for a permission, `group / user` for a membership, `user / token name` for an API token, `event / channel` for a route, the label of an external disk, the kind of a host configuration decision. Empty for the settings that exist once. A secret or a passphrase is reported as changed, never by its value. */
+            name: string;
+        };
+        ConfigImportGroup: {
+            /** @enum {string} */
+            category: "shares" | "accounts" | "schedules" | "notifications" | "backup" | "system";
+            /** @description In the archive, not in the live configuration. */
+            added: components["schemas"]["ConfigImportChange"][];
+            /** @description In both, with different content. */
+            changed: components["schemas"]["ConfigImportChange"][];
+            /** @description In the live configuration, not in the archive. */
+            removed: components["schemas"]["ConfigImportChange"][];
+        };
+        ConfigImportArchive: {
+            /**
+             * Format: date-time
+             * @description When the archive was taken.
+             */
+            timestamp: string;
+            host: string;
+            hoservaVersion: string;
+            /** @description The database schema version of the archive. */
+            schemaVersion: string;
+        };
+        ConfigImportPreview: {
+            archive: components["schemas"]["ConfigImportArchive"];
+            liveSchemaVersion: string;
+            /** @description Refusals `importConfig` would return for this archive; empty when it would go ahead (a running job, which is not a property of the archive, refuses it too). */
+            blockers: components["schemas"]["ConfigImportBlocker"][];
+            /** @description One entry per category, in a fixed order, each listing what an import would add, change or remove. History and runtime tables (jobs, the audit log, spin events, notification deliveries and alerts, usage, mover and cache results) are not listed. Empty when the schema versions differ. */
+            groups: components["schemas"]["ConfigImportGroup"][];
+            notes: components["schemas"]["ConfigImportNote"][];
+        };
+        AppdataRestorePreviewGroup: {
+            /**
+             * Format: int64
+             * @description How many files are in this group. Symbolic links and other non-directory entries count as files; directories do not.
+             */
+            files: number;
+            /**
+             * Format: int64
+             * @description Total size of those files: for `replaced` and `removed` the size of the live files that would be lost, for `added` the size of the archive's files.
+             */
+            bytes: number;
+            /** @description The first paths of the group in path order, relative to the directory, at most 20. `files` is the full count. */
+            sample: string[];
+        };
+        AppdataRestorePreviewDirectory: {
+            /** @description The archived directory, relative to the appdata location (`jellyfin/config`). */
+            directory: string;
+            replaced: components["schemas"]["AppdataRestorePreviewGroup"];
+            added: components["schemas"]["AppdataRestorePreviewGroup"];
+            removed: components["schemas"]["AppdataRestorePreviewGroup"];
+        };
+        AppdataRestorePreview: {
+            container: string;
+            archive: string;
+            destinationId: string;
+            /**
+             * Format: date-time
+             * @description When the archive was taken.
+             */
+            createdAt: string;
+            directories: components["schemas"]["AppdataRestorePreviewDirectory"][];
+        };
+        RestoreAppdataRequest: {
+            container: string;
+            /** @description An archive name from listAppdataArchives. */
+            archive: string;
+            destinationId: string;
+            /** @description Must be true, because the restore overwrites the container's appdata. */
+            confirm: boolean;
         };
     };
     responses: {
@@ -6080,6 +6418,34 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    previewConfigImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    archive: string;
+                };
+            };
+        };
+        responses: {
+            /** @description What the import would change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigImportPreview"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listBackupDestinations: {
         parameters: {
             query?: never;
@@ -6167,6 +6533,218 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BackupDestinationTestResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getRestoreDrill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The last drill's result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreDrill"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startRestoreDrill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued or running restore drill job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAppdataBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The containers in scope and their policy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppdataBackupConfig"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startAppdataBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StartAppdataBackupRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued or running appdata backup job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setAppdataBackupContainer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetAppdataBackupContainerRequest"];
+            };
+        };
+        responses: {
+            /** @description The container with its new policy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppdataBackupContainer"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAppdataArchives: {
+        parameters: {
+            query?: {
+                container?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The archives found. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAppdataArchivesOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    restoreAppdata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreAppdataRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued or running appdata restore job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    previewAppdataRestore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewAppdataRestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued or running preview job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAppdataRestorePreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What restoring the archive would overwrite. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppdataRestorePreview"];
                 };
             };
             default: components["responses"]["Error"];

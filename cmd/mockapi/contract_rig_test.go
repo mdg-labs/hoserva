@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,6 +160,7 @@ var contractProductionRunFuncs = []job.Type{
 	job.TypeShareRelocation,
 	job.TypeACMEIssue,
 	job.TypeContainerRecreate,
+	job.TypeRestoreDrill,
 }
 
 // contractDiskFromInventory converts one of mockDiskInventory's own
@@ -329,6 +331,19 @@ func contractContainerProvider(t *testing.T, appdata string) *container.FakeProv
 		State:  "exited",
 		Status: "Exited (0) 5 hours ago",
 		Mounts: []container.Mount{{Source: transcodeDir, Destination: "/transcode", ReadWrite: true}},
+	})
+	postgresDir := filepath.Join(appdata, "postgres")
+	if err := os.MkdirAll(postgresDir, 0o755); err != nil {
+		t.Fatalf("creating contract appdata: %v", err)
+	}
+	f.AddContainer(container.Container{
+		ID:     "7d3f1a9e5c20",
+		Name:   "postgres",
+		Image:  "postgres",
+		Tag:    "16.4",
+		State:  "running",
+		Status: "Up 3 hours",
+		Mounts: []container.Mount{{Source: postgresDir, Destination: "/var/lib/postgresql/data", ReadWrite: true}},
 	})
 	f.AddContainer(container.Container{
 		ID:     "9b1d7e2f6a3c",
@@ -567,7 +582,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 
 	appdata := filepath.Join(t.TempDir(), "appdata")
 	containers := contractContainerProvider(t, appdata)
-	return &api.Handler{
+	h := &api.Handler{
 		Scheduler: scheduler,
 		Store:     jobStore,
 		Logs:      logs,
@@ -685,6 +700,34 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		// nothing is written to a real path, and a fake rclone.
 		Backup: contractBackupService(t, db, dbPath),
 	}
+	// Appdata backup (#61) is the real service over this rig's own
+	// Docker fake and backup destinations. This rig has no cache disk in any
+	// scenario, so its appdata location is the temporary directory the
+	// containers above already mount, standing for the mock's
+	// mockAppdataRoot; the scope, the refusals and the job submission are
+	// what is compared. The three job types run the real backup, restore and preview
+	// (not the no-op the other types get), so a case can restore an archive
+	// a backup it started has written.
+	appdataSvc := &backup.AppdataService{
+		Backup:      h.Backup,
+		Containers:  backup.LifecycleContainers{Lifecycle: h.Lifecycle},
+		Roots:       func(context.Context) ([]string, error) { return []string{appdata}, nil },
+		Policies:    api.NewAppdataPolicyStore(db),
+		JournalPath: filepath.Join(t.TempDir(), "appdata-stopped.json"),
+	}
+	h.Appdata = appdataSvc
+	registry.Register(job.TypeAppdataBackup, true, job.RunAppdataBackup(job.AppdataBackupDeps{
+		Backup: func(ctx context.Context, requested, resolved []string, out io.Writer) error {
+			return appdataSvc.Run(ctx, backup.AppdataRunRequest{Containers: requested, Resolved: resolved}, out)
+		},
+	}))
+	registry.Register(job.TypeAppdataRestore, false, job.RunAppdataRestore(func(ctx context.Context, p job.AppdataRestoreParams, out io.Writer) error {
+		return appdataSvc.Restore(ctx, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
+	}))
+	registry.Register(job.TypeAppdataRestorePreview, true, job.RunAppdataRestorePreview(func(ctx context.Context, id string, p job.AppdataRestoreParams, out io.Writer) error {
+		return appdataSvc.RunPreview(ctx, id, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
+	}))
+	return h
 }
 
 func contractBackupService(t *testing.T, db *sql.DB, dbPath string) *backup.Service {
@@ -696,6 +739,7 @@ func contractBackupService(t *testing.T, db *sql.DB, dbPath string) *backup.Serv
 		// destination admission; DBPath is what the service writes to.
 		Paths:             backup.Paths{DBPath: dbPath, StateDir: defaultPaths.StateDir, ConfigRoot: defaultPaths.ConfigRoot},
 		Store:             api.NewBackupDestinationStore(db),
+		Drills:            api.NewDrillStore(db),
 		Rclone:            &backup.FakeRclone{},
 		Cipher:            backup.FakeSecretCipher{},
 		DestinationCipher: backup.FakeSecretCipher{},

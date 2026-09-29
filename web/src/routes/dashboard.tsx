@@ -20,6 +20,7 @@ import { diskDetailPath, PATHS } from "@/hooks/paths";
 import { useSystemData } from "@/hooks/use-system-status";
 import { getMetrics } from "@/lib/api/operations";
 import { useApiQuery } from "@/lib/api/use-api-query";
+import { jobTypeLabel } from "@/lib/job-labels";
 import type { components } from "@/lib/api/client";
 import { formatBytes } from "@/routes/storage-setup/config-preview";
 
@@ -122,7 +123,7 @@ export function DashboardPage(): React.ReactElement {
       <Banner
         key={job.id}
         tone="error"
-        title={t("dashboard.attention.failedJob", { type: job.type })}
+        title={t("dashboard.attention.failedJob", { type: jobTypeLabel(job.type, t) })}
         description={job.error?.message}
       />,
     );

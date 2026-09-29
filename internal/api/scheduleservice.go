@@ -211,6 +211,71 @@ func (s *ScheduleService) ClaimDueChain(ctx context.Context) (*ClaimedChain, err
 	return &ClaimedChain{Settings: chain, Location: loc, At: now}, nil
 }
 
+// ClaimDueOtherJobs returns the ids, among ids, of the separately
+// scheduled jobs whose window has opened since they last ran or since
+// their schedule was last saved (job.OtherJobIsDue), and records the claim
+// before returning, so a restart in the same window cannot start the job
+// twice. Only the jobs the caller can run are considered: claiming one
+// nothing runs would use up its window for nothing.
+func (s *ScheduleService) ClaimDueOtherJobs(ctx context.Context, ids []string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	stamp := now.UTC().Format(timeFormat)
+	if err := s.Schedules.EnsureDefaults(ctx, stamp); err != nil {
+		return nil, err
+	}
+	rows, err := s.Schedules.ListJobs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("schedule: loading jobs: %w", err)
+	}
+	loc := s.timezone(ctx)
+	var claimed []string
+	var errs []error
+	for _, row := range rows {
+		if !contains(ids, row.JobID) {
+			continue
+		}
+		since, err := time.Parse(timeFormat, row.UpdatedAt)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("schedule: parsing %s updated_at: %w", row.JobID, err))
+			continue
+		}
+		if row.LastRunAt != "" {
+			last, err := time.Parse(timeFormat, row.LastRunAt)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("schedule: parsing %s last_run_at: %w", row.JobID, err))
+				continue
+			}
+			if last.After(since) {
+				since = last
+			}
+		}
+		settings := job.OtherJobSettings{ID: row.JobID, Enabled: row.Enabled, Frequency: job.Frequency(row.Frequency), Time: row.StartTime}
+		if !job.OtherJobIsDue(now, loc, settings, since) {
+			continue
+		}
+		ok, err := s.Schedules.ClaimJobRun(ctx, row.JobID, row.LastRunAt, stamp)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("schedule: claiming %s: %w", row.JobID, err))
+			continue
+		}
+		if ok {
+			claimed = append(claimed, row.JobID)
+		}
+	}
+	return claimed, errors.Join(errs...)
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *ScheduleService) loadChainWithLastRun(ctx context.Context) (job.ChainSettings, *time.Time, error) {
 	row, err := s.Schedules.GetChain(ctx)
 	if err != nil {

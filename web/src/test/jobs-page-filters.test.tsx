@@ -79,7 +79,7 @@ describe("Jobs page filters", () => {
         <JobsPage />
       </MemoryRouter>,
     );
-    await screen.findByRole("link", { name: "mover" });
+    await screen.findByRole("link", { name: "Mover" });
 
     const initialQuery = (mockGet.mock.calls[0]?.[1] as GetOptions).params?.query;
     expect(initialQuery?.status).toBeUndefined();
@@ -87,7 +87,7 @@ describe("Jobs page filters", () => {
 
     mockGet.mockClear();
     await selectOption("Status", "Failed");
-    await screen.findByRole("link", { name: "mover" });
+    await screen.findByRole("link", { name: "Mover" });
 
     const filteredQuery = (mockGet.mock.calls[0]?.[1] as GetOptions).params?.query;
     expect(filteredQuery?.status).toBe("failed");
@@ -113,12 +113,12 @@ describe("Jobs page filters", () => {
         <JobsPage />
       </MemoryRouter>,
     );
-    await screen.findByRole("link", { name: "mover" });
+    await screen.findByRole("link", { name: "Mover" });
 
     await selectOption("Status", "Failed");
 
-    await screen.findByRole("link", { name: "scrub" });
-    expect(screen.queryByRole("link", { name: "mover" })).not.toBeInTheDocument();
+    await screen.findByRole("link", { name: "Parity scrub" });
+    expect(screen.queryByRole("link", { name: "Mover" })).not.toBeInTheDocument();
   });
 
   it("keeps the error state instead of an empty list when a filtered re-fetch fails", async () => {
@@ -138,7 +138,7 @@ describe("Jobs page filters", () => {
         <JobsPage />
       </MemoryRouter>,
     );
-    await screen.findByRole("link", { name: "mover" });
+    await screen.findByRole("link", { name: "Mover" });
 
     await selectOption("Status", "Failed");
 

@@ -506,6 +506,34 @@ func (UnimplementedHandler) GetAppStats(ctx context.Context, params GetAppStatsP
 	return r, ht.ErrNotImplemented
 }
 
+// GetAppdataBackup implements getAppdataBackup operation.
+//
+// Every container with a bind-mounted directory inside the appdata location (the cache disk's
+// `appdata` directory), each with whether the backup stops it while its directory is copied and
+// whether it is in the backup at all (doc 10 §2). A container the operator has not configured is
+// stopped and included. A known database image that is not stopped carries `warning`: copying a
+// database's files while it runs can produce an archive that does not restore. 501 `not_configured`
+// when this daemon has no Docker Engine client, and 503 when the Engine is not reachable.
+//
+// GET /appdata/backup
+func (UnimplementedHandler) GetAppdataBackup(ctx context.Context) (r *AppdataBackupConfig, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// GetAppdataRestorePreview implements getAppdataRestorePreview operation.
+//
+// The result of the `appdata_restore_preview` job `previewAppdataRestore` queued. The daemon holds the
+// sixteen most recent results in memory, so a result is gone after a restart and after sixteen newer
+// previews: preview again. 404 `job_not_found` for an id that is not a restore preview job, 409
+// `appdata_preview_not_ready` while the job is queued or running, 409 `appdata_preview_failed` when it
+// failed, was cancelled or was interrupted (the message says why; `getJob` and `getJobLog` have the
+// rest), and 404 `appdata_preview_gone` when the job succeeded but its result is no longer held.
+//
+// GET /appdata/backup/restore/preview/{jobId}
+func (UnimplementedHandler) GetAppdataRestorePreview(ctx context.Context, params GetAppdataRestorePreviewParams) (r *AppdataRestorePreview, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetCacheUsage implements getCacheUsage operation.
 //
 // Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
@@ -640,6 +668,18 @@ func (UnimplementedHandler) GetQuietHours(ctx context.Context) (r *NotificationQ
 	return r, ht.ErrNotImplemented
 }
 
+// GetRestoreDrill implements getRestoreDrill operation.
+//
+// The result of the most recent restore drill (doc 10 §1): whether the newest config archive on each
+// enabled backup destination could be fetched, opened the way a restore opens it, and verified, and
+// when. `lastRun` is absent until a drill has run. 501 `not_configured` when this daemon has no backup
+// service. When the next drill is due is in `getSchedules`, under the `restore_drill` job.
+//
+// GET /backup/drill
+func (UnimplementedHandler) GetRestoreDrill(ctx context.Context) (r *RestoreDrill, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // GetSchedules implements getSchedules operation.
 //
 // The nightly maintenance chain (Q30, doc 03 §8.4) and every separately scheduled job, with
@@ -728,7 +768,15 @@ func (UnimplementedHandler) GetUserSharePermissions(ctx context.Context, params 
 // ImportConfig implements importConfig operation.
 //
 // Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
-// configuration.
+// configuration. Every refusal happens before anything is written, including the pre-import backup:
+// 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or
+// lacks one it lists, or holds a link, device, FIFO or duplicate entry), 400 `incompatible_archive`
+// (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key
+// check value differs from this installation's or is missing; a different installation's archive is
+// restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state
+// or the relocation in flight differ from the live array; the message names each difference). The
+// array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from
+// the archive, so an import cannot return a stopped array to normal operation.
 //
 // POST /config/import
 func (UnimplementedHandler) ImportConfig(ctx context.Context, req *ImportConfigReq) error {
@@ -750,6 +798,18 @@ func (UnimplementedHandler) ListApiTokens(ctx context.Context) (r *ListApiTokens
 //
 // GET /apps/images
 func (UnimplementedHandler) ListAppImages(ctx context.Context) (r *ListAppImagesOK, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// ListAppdataArchives implements listAppdataArchives operation.
+//
+// The appdata archives this installation wrote to each enabled backup destination, newest first,
+// optionally for one container. It lists the destinations when asked — a remote destination is
+// reached through rclone — and a destination that could not be listed is reported in `unavailable`
+// instead of being read as having no archives.
+//
+// GET /appdata/backup/archives
+func (UnimplementedHandler) ListAppdataArchives(ctx context.Context, params ListAppdataArchivesParams) (r *ListAppdataArchivesOK, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1018,6 +1078,47 @@ func (UnimplementedHandler) PlanRebalance(ctx context.Context) (r *RebalancePlan
 	return r, ht.ErrNotImplemented
 }
 
+// PreviewAppdataRestore implements previewAppdataRestore operation.
+//
+// Queues an `appdata_restore_preview` job (service class, scoped to the container) that reports what
+// `restoreAppdata` would overwrite for the same archive on the same destination, before anything is
+// changed. Read the result with `getAppdataRestorePreview` once the job has succeeded. The job
+// fetches, decrypts and verifies the archive exactly as the restore does and fails with the restore's
+// own error when the archive is corrupt, is another container's, names a directory outside the appdata
+// location, or holds entries a restore could not unpack. It then compares each archived directory with
+// the live one, walking the live appdata only for this job: files present in both are `replaced`,
+// files only in the archive are `added`, and files only in the live appdata are `removed`, because the
+// restore replaces each directory as a whole. It stops no container, writes nothing under the appdata
+// location and leaves no fetched archive on disk, on success or failure. It queues behind a backup or
+// restore of the same container and runs beside those of others. Cancelling it stops the fetch, the
+// reading of the archive and the walk of the live directories; the decryption and the verification
+// read that follow the fetch run to their end first. 404 `archive_not_found` for an archive the named
+// destination does not hold, 404 `backup_destination_not_found`, 400 `appdata_archive_invalid` for a
+// request that names no archive of this installation and container, and 409 `array_stopped` while the
+// array is stopped or its storage is not ready.
+//
+// POST /appdata/backup/restore/preview
+func (UnimplementedHandler) PreviewAppdataRestore(ctx context.Context, req *PreviewAppdataRestoreRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// PreviewConfigImport implements previewConfigImport operation.
+//
+// Reads the same archive upload as `importConfig` and reports what an in-place import would change,
+// without changing anything: it writes no database row, no pre-import archive, takes no job hold, and
+// leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive,
+// with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409
+// `archive_array_mismatch`); `groups` compares the archive's database with the live one per category
+// and is empty when the archive's schema version differs, since the two cannot be compared. An archive
+// that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
+// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
+// on a data disk is read.
+//
+// POST /config/import/preview
+func (UnimplementedHandler) PreviewConfigImport(ctx context.Context, req *PreviewConfigImportReq) (r *ConfigImportPreview, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // RebootHost implements rebootHost operation.
 //
 // Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -1128,6 +1229,22 @@ func (UnimplementedHandler) RestartApp(ctx context.Context, params RestartAppPar
 	return r, ht.ErrNotImplemented
 }
 
+// RestoreAppdata implements restoreAppdata operation.
+//
+// Queues an `appdata_restore` job (service class). The archive is fetched, decrypted and verified
+// before anything is changed. Then the container is stopped if it is running, a snapshot of its
+// current appdata is written to the enabled backup destinations, and only when that snapshot is
+// written is the appdata replaced by the archive's content; if the snapshot cannot be written the live
+// appdata is not touched. The container is started again afterwards. Requires `confirm: true`: the
+// restore overwrites the container's appdata (400 `confirmation_required` otherwise). 404
+// `archive_not_found` for an archive the named destination does not hold, and 409 `array_stopped`
+// while the array is stopped or its storage is not ready.
+//
+// POST /appdata/backup/restore
+func (UnimplementedHandler) RestoreAppdata(ctx context.Context, req *RestoreAppdataRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // ResumeJob implements resumeJob operation.
 //
 // Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk
@@ -1209,6 +1326,17 @@ func (UnimplementedHandler) SendTestNotification(ctx context.Context, params Sen
 	return r, ht.ErrNotImplemented
 }
 
+// SetAppdataBackupContainer implements setAppdataBackupContainer operation.
+//
+// Replaces the container's policy. Opting a known database image out of being stopped is allowed, and
+// the response carries `warning` saying why that is a bad idea. 404 `container_not_found` for a name
+// with no appdata directory in scope.
+//
+// PUT /appdata/backup/containers/{name}
+func (UnimplementedHandler) SetAppdataBackupContainer(ctx context.Context, req *SetAppdataBackupContainerRequest, params SetAppdataBackupContainerParams) (r *AppdataBackupContainer, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // SetUserGroupMembers implements setUserGroupMembers operation.
 //
 // A full replace of the group's member list.
@@ -1241,6 +1369,23 @@ func (UnimplementedHandler) SetUserPassword(ctx context.Context, req *SetUserPas
 //
 // POST /apps/{id}/start
 func (UnimplementedHandler) StartApp(ctx context.Context, params StartAppParams) (r *App, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// StartAppdataBackup implements startAppdataBackup operation.
+//
+// Queues an `appdata_backup` job (service class): every container that is running and set to be
+// stopped is stopped, each included container's appdata directories are archived, one archive per
+// container, on the same device as the appdata location, the stopped containers are started again in
+// reverse order, and only then are the archives verified and written to the enabled backup
+// destinations (never the boot device's default destination, which is too small for appdata).
+// `containers` limits the run to the named containers; omit it for every included one. Refused with
+// 409 `array_stopped` while the array is stopped or its storage is not ready — with the cache disk
+// unmounted the appdata directories are empty — and 404 `container_not_found` for a name that is not
+// in scope. A run that fails publishes an `appdata_backup_failed` notification.
+//
+// POST /appdata/backup
+func (UnimplementedHandler) StartAppdataBackup(ctx context.Context, req OptStartAppdataBackupRequest) (r *Job, _ error) {
 	return r, ht.ErrNotImplemented
 }
 
@@ -1296,6 +1441,22 @@ func (UnimplementedHandler) StartMover(ctx context.Context) (r *Job, _ error) {
 //
 // POST /pool/rebalance
 func (UnimplementedHandler) StartRebalance(ctx context.Context, req *StartRebalanceRequest) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
+// StartRestoreDrill implements startRestoreDrill operation.
+//
+// Queues a `restore_drill` job (service class), the job the monthly schedule queues. It fetches the
+// newest config archive this installation wrote to each enabled destination, opens it the way a
+// restore would (an encrypted one through its identity sidecar and the backup passphrase alone),
+// checks its checksums and that `state.db` opens and passes `PRAGMA integrity_check`, and discards
+// everything it fetched. It never writes to a destination and never reads the live database. A
+// destination that cannot be read, or holds no archive written by this installation, fails the drill.
+// The result replaces the one `getRestoreDrill` returns, and a failed drill publishes a
+// `restore_drill_failed` notification. A drill behind another one queues rather than failing.
+//
+// POST /backup/drill
+func (UnimplementedHandler) StartRestoreDrill(ctx context.Context) (r *Job, _ error) {
 	return r, ht.ErrNotImplemented
 }
 

@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -55,6 +58,17 @@ type scheduleRunner struct {
 	BackupStale interface {
 		CheckStale(ctx context.Context) error
 	}
+	// OtherJobs runs a separately scheduled job (doc 03 §8.4) when its
+	// window opens, keyed by its schedule id ("appdata_backup"). Only the
+	// jobs named here are ever claimed, so a schedule with nothing wired
+	// behind it keeps its window unclaimed. It is the one loop every such
+	// job goes through; a job adds an entry, never a second loop.
+	OtherJobs map[string]func(ctx context.Context) error
+	// AppdataRecovery starts the containers an interrupted appdata backup
+	// or restore left stopped. Nil skips the check.
+	AppdataRecovery interface {
+		RecoverStopped(ctx context.Context) error
+	}
 }
 
 func runScheduleLoop(ctx context.Context, r *scheduleRunner, interval time.Duration) {
@@ -80,10 +94,41 @@ func (r *scheduleRunner) tick(ctx context.Context) error {
 			log.Printf("hoservad: checking for stale backup destinations: %v", err)
 		}
 	}
+	if r != nil && r.AppdataRecovery != nil {
+		if err := r.AppdataRecovery.RecoverStopped(ctx); err != nil {
+			log.Printf("hoservad: starting the containers an interrupted appdata backup stopped: %v", err)
+		}
+	}
+	if err := r.tickOtherJobs(ctx); err != nil {
+		log.Printf("hoservad: running due scheduled jobs: %v", err)
+	}
 	if err := r.tickChain(ctx); err != nil {
 		return err
 	}
 	return r.tickACME(ctx)
+}
+
+// tickOtherJobs runs every wired separately scheduled job whose window has
+// opened. The window is claimed before the job is started, so a restart in
+// the same window does not start it twice; a job that then fails to start
+// is not retried until its next window.
+func (r *scheduleRunner) tickOtherJobs(ctx context.Context) error {
+	if r == nil || r.Schedules == nil || len(r.OtherJobs) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(r.OtherJobs))
+	for id := range r.OtherJobs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	claimed, err := r.Schedules.ClaimDueOtherJobs(ctx, ids)
+	errs := []error{err}
+	for _, id := range claimed {
+		if err := r.OtherJobs[id](ctx); err != nil {
+			errs = append(errs, fmt.Errorf("starting scheduled %s: %w", id, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (r *scheduleRunner) tickChain(ctx context.Context) error {

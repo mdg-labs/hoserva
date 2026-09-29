@@ -285,6 +285,12 @@ var contractNoValidCase = map[string]string{
 	// h.Backup is nil here.
 	"ImportConfig": "a real import needs a fully wired backup.Service (DB path, Paths, SecretSource, Cipher) this rig does not build — h.Backup is nil here, same as ExportConfig",
 
+	// PreviewConfigImport: its invalid_archive case compares status and
+	// code. A valid case needs a real archive both sides accept; a case
+	// carries no *testing.T to build one with, and the mock's own
+	// ExportConfig returns stub bytes that both sides refuse.
+	"PreviewConfigImport": "a valid archive both sides accept cannot be built inside a case, and the mock's ExportConfig returns stub bytes that both sides refuse — the invalid_archive case compares status and code",
+
 	// The three root-only recovery operations (doc 01 §7): cmd/mockapi's
 	// own recovery.go refuses ResetUserPassword/DisableUserTotp/
 	// UnlockUser unconditionally, by design — it carries no peer-

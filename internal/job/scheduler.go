@@ -1131,6 +1131,18 @@ func (s *Scheduler) BeginDatabaseRestore(ctx context.Context) (func(), error) {
 	return s.endDatabaseRestore, nil
 }
 
+// WithArrayStateHeld runs fn with the maintenance and array-stopped state
+// unable to change: every transition takes s.mu, which is held until fn
+// returns. ImportConfig reads the live array_maintenance row and restores the
+// database inside it, so a concurrent `array stop` cannot land between the
+// two and be overwritten by the archive's state. fn must not call back into
+// the Scheduler.
+func (s *Scheduler) WithArrayStateHeld(fn func() error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return fn()
+}
+
 func (s *Scheduler) endDatabaseRestore() {
 	s.mu.Lock()
 	s.databaseRestore = false

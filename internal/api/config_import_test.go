@@ -61,6 +61,7 @@ func newImportTestHandlerWithRegistry(t *testing.T) (*Handler, *job.Registry, *s
 	if _, _, err := runner.Apply(ctx); err != nil {
 		t.Fatalf("applying migrations: %v", err)
 	}
+	seedMachineKeyCheck(t, db, []byte("installation-a-check-value"))
 
 	jobStore := job.NewStore(db)
 	logs := job.NewLogStore(t.TempDir())
@@ -809,4 +810,445 @@ func tamperStateDB(t *testing.T, path string) error {
 	defer func() { _ = db.Close() }()
 	_, err = db.Exec("UPDATE schema_migrations SET slug = 'tampered' WHERE version = (SELECT MAX(version) FROM schema_migrations)")
 	return err
+}
+
+func seedMachineKeyCheck(t *testing.T, db *sql.DB, value []byte) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT OR REPLACE INTO machine_key_check (id, check_value, created_at) VALUES (1, ?, ?)`,
+		value, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("seeding machine_key_check: %v", err)
+	}
+}
+
+type seededDisk struct {
+	role    string
+	index   int
+	uuid    string
+	wwn     string
+	removal string
+}
+
+func seedDisk(t *testing.T, db *sql.DB, d seededDisk) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO array_disks
+		(role, role_index, device, filesystem, fs_uuid, wwn, serial, weak_identity, mountpoint, removal_state)
+		VALUES (?, ?, ?, 'xfs', ?, ?, ?, 0, ?, NULLIF(?, ''))`,
+		d.role, d.index, fmt.Sprintf("/dev/%s%d", d.role, d.index), d.uuid, d.wwn, "serial-"+d.uuid,
+		fmt.Sprintf("/mnt/%s%d", d.role, d.index), d.removal); err != nil {
+		t.Fatalf("seeding array_disks %s %d: %v", d.role, d.index, err)
+	}
+}
+
+func seedEvacuation(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, p := range []string{"movies/a.mkv", "movies/b.mkv"} {
+		if _, err := db.Exec(`INSERT INTO relocation_manifest (rel_path, size, mtime, source_disk, target_disk)
+			VALUES (?, 100, '2026-09-01T00:00:00Z', '/mnt/data2', '/mnt/data1')`, p); err != nil {
+			t.Fatalf("seeding relocation_manifest: %v", err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO relocation_removing_disks (mountpoint) VALUES ('/mnt/data2')`); err != nil {
+		t.Fatalf("seeding relocation_removing_disks: %v", err)
+	}
+}
+
+func seedArray(t *testing.T, db *sql.DB) {
+	t.Helper()
+	seedDisk(t, db, seededDisk{role: "parity", index: 1, uuid: "uuid-p1", wwn: "wwn-p1"})
+	seedDisk(t, db, seededDisk{role: "data", index: 1, uuid: "uuid-d1", wwn: "wwn-d1"})
+}
+
+func insertSentinelShare(t *testing.T, db *sql.DB, name string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := store.NewShareStore(db).Insert(context.Background(), store.Share{
+		Name: name, CacheMode: "array-only", CreatePolicy: "mfs",
+		SMBEnabled: true, SMBBrowseable: true, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("inserting share %q: %v", name, err)
+	}
+}
+
+// liveFingerprint reads everything an import must leave alone when it
+// refuses: the installation and array tables it compares, the jobs table
+// and the shares a restore would roll back.
+func liveFingerprint(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	var b strings.Builder
+	for _, q := range []string{
+		`SELECT check_value FROM machine_key_check`,
+		`SELECT role, role_index, device, fs_uuid, IFNULL(wwn, ''), IFNULL(removal_state, '') FROM array_disks ORDER BY role, role_index`,
+		`SELECT rel_path, size, mtime, source_disk, target_disk FROM relocation_manifest ORDER BY id`,
+		`SELECT mountpoint FROM relocation_removing_disks ORDER BY mountpoint`,
+		`SELECT name FROM shares ORDER BY name`,
+		`SELECT id, status FROM jobs ORDER BY id`,
+	} {
+		rows, err := db.Query(q)
+		if err != nil {
+			t.Fatalf("fingerprint query %q: %v", q, err)
+		}
+		cols, err := rows.Columns()
+		if err != nil {
+			t.Fatalf("fingerprint columns: %v", err)
+		}
+		for rows.Next() {
+			vals := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range vals {
+				ptrs[i] = &vals[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				t.Fatalf("fingerprint scan: %v", err)
+			}
+			fmt.Fprintf(&b, "%s: %v\n", q[:20], vals)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("fingerprint rows: %v", err)
+		}
+		_ = rows.Close()
+	}
+	return b.String()
+}
+
+func rewriteArchive(t *testing.T, archive []byte, edit func(staging string)) []byte {
+	t.Helper()
+	staging := t.TempDir()
+	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
+		t.Fatalf("unpacking archive: %v", err)
+	}
+	edit(staging)
+	return repackTarZst(t, staging)
+}
+
+func editArchiveDB(t *testing.T, archive []byte, edit func(db *sql.DB)) []byte {
+	t.Helper()
+	return rewriteArchive(t, archive, func(staging string) {
+		adb, err := sql.Open("sqlite", filepath.Join(staging, "state.db"))
+		if err != nil {
+			t.Fatalf("opening staged state.db: %v", err)
+		}
+		edit(adb)
+		if err := adb.Close(); err != nil {
+			t.Fatalf("closing staged state.db: %v", err)
+		}
+		resyncManifestChecksum(t, staging)
+	})
+}
+
+func execAll(t *testing.T, db *sql.DB, stmts ...string) {
+	t.Helper()
+	for _, s := range stmts {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatalf("%s: %v", s, err)
+		}
+	}
+}
+
+// assertRefusedBeforeWriting imports archive and requires the refusal
+// (status, code) with nothing written: no pre-import safety backup ran (so
+// no retention slot was taken), the restore was never reached, and the live
+// database reads exactly as before. RunReason reads Backup.Now once, and
+// ImportConfig takes the scheduler's restore hold only after RunReason, so
+// a refusal that never reaches Now never reached the hold either.
+func assertRefusedBeforeWriting(t *testing.T, h *Handler, db *sql.DB, archive []byte, status int, code string, wantInMessage ...string) {
+	t.Helper()
+	destDir := t.TempDir()
+	h.Backup.Destinations = []backup.Destination{{
+		ID:      "local",
+		Path:    destDir,
+		Enabled: true,
+		Retention: backup.Retention{
+			Daily:   backup.DefaultRetentionDaily,
+			Weekly:  backup.DefaultRetentionWeekly,
+			Monthly: backup.DefaultRetentionMonthly,
+		},
+	}}
+	backups := 0
+	h.Backup.Now = func() time.Time {
+		backups++
+		return time.Now().UTC()
+	}
+	before := liveFingerprint(t, db)
+
+	err := h.ImportConfig(context.Background(), importReq(archive))
+	ae, ok := err.(*apiError)
+	if !ok {
+		t.Fatalf("ImportConfig err = %v (%T), want *apiError", err, err)
+	}
+	if ae.statusCode != status || ae.code != code {
+		t.Fatalf("ImportConfig err = (%d, %q: %s), want (%d, %q)", ae.statusCode, ae.code, ae.message, status, code)
+	}
+	for _, want := range wantInMessage {
+		if !strings.Contains(ae.message, want) {
+			t.Fatalf("message %q does not contain %q", ae.message, want)
+		}
+	}
+	if backups != 0 {
+		t.Fatalf("the pre-import safety backup ran %d time(s) before the refusal", backups)
+	}
+	if entries, err := os.ReadDir(destDir); err != nil || len(entries) != 0 {
+		t.Fatalf("destination after refusal = %v (err %v), want empty", entries, err)
+	}
+	if after := liveFingerprint(t, db); after != before {
+		t.Fatalf("live database changed by a refused import:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	release, err := h.Scheduler.BeginDatabaseRestore(context.Background())
+	if code != "job_in_progress" {
+		if err != nil {
+			t.Fatalf("restore hold still held after the refusal: %v", err)
+		}
+		release()
+	}
+}
+
+// TestImportConfig_RefusesAnotherInstallationsArchive reproduces the
+// data-loss scenario: a second installation's exported archive imported
+// into a first one. Restored, it replaces the first installation's
+// machine_key_check, so its next start fails the Q28 check. It must be
+// refused and the live check value left as it was.
+func TestImportConfig_RefusesAnotherInstallationsArchive(t *testing.T) {
+	h, db, _ := newImportTestHandler(t)
+	other, otherDB, _ := newImportTestHandler(t)
+	seedMachineKeyCheck(t, otherDB, []byte("installation-b-check-value"))
+	archive := exportBytes(t, other)
+
+	insertSentinelShare(t, db, "sentinel")
+	assertRefusedBeforeWriting(t, h, db, archive, 409, "archive_other_installation", "fresh install")
+
+	var check []byte
+	if err := db.QueryRow(`SELECT check_value FROM machine_key_check WHERE id = 1`).Scan(&check); err != nil {
+		t.Fatalf("reading live check value: %v", err)
+	}
+	if string(check) != "installation-a-check-value" {
+		t.Fatalf("live check value = %q, want the first installation's own", check)
+	}
+}
+
+func TestImportConfig_RefusesArchiveWithoutMachineKeyCheck(t *testing.T) {
+	h, db, _ := newImportTestHandler(t)
+	archive := editArchiveDB(t, exportBytes(t, h), func(adb *sql.DB) {
+		execAll(t, adb, `DELETE FROM machine_key_check`)
+	})
+	assertRefusedBeforeWriting(t, h, db, archive, 409, "archive_other_installation")
+}
+
+// A live database with no check value cannot be compared with, so the
+// import is refused rather than allowed.
+func TestImportConfig_RefusesWhenLiveMachineKeyCheckIsMissing(t *testing.T) {
+	ctx := context.Background()
+	h, db, _ := newImportTestHandler(t)
+	archive := exportBytes(t, h)
+	execAll(t, db, `DELETE FROM machine_key_check`)
+
+	err := h.ImportConfig(ctx, importReq(archive))
+	if err == nil {
+		t.Fatal("ImportConfig = nil, want a refusal")
+	}
+	if ae, ok := err.(*apiError); ok && ae.statusCode < 400 {
+		t.Fatalf("ImportConfig err = %v", err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM machine_key_check`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("live machine_key_check rows = %d (err %v), want the live database untouched", n, err)
+	}
+}
+
+// TestImportConfig_RefusesArchiveWhoseArrayDiffers covers each way an
+// archive's view of the array can differ from the live one, and that
+// restoring it would put the database out of step with the disks.
+func TestImportConfig_RefusesArchiveWhoseArrayDiffers(t *testing.T) {
+	t.Run("exported before a disk was added", func(t *testing.T) {
+		h, db, _ := newImportTestHandler(t)
+		seedArray(t, db)
+		archive := exportBytes(t, h)
+		seedDisk(t, db, seededDisk{role: "data", index: 2, uuid: "uuid-d2-added", wwn: "wwn-d2"})
+
+		assertRefusedBeforeWriting(t, h, db, archive, 409, "archive_array_mismatch", "uuid-d2-added")
+	})
+
+	t.Run("exported during an evacuation, restored after it finished", func(t *testing.T) {
+		h, db, _ := newImportTestHandler(t)
+		seedArray(t, db)
+		seedDisk(t, db, seededDisk{role: "data", index: 2, uuid: "uuid-d2", wwn: "wwn-d2", removal: "evacuating"})
+		seedEvacuation(t, db)
+		archive := exportBytes(t, h)
+
+		execAll(t, db,
+			`UPDATE array_disks SET removal_state = 'unlisted' WHERE role = 'data' AND role_index = 2`,
+			`DELETE FROM relocation_manifest`,
+			`DELETE FROM relocation_removing_disks`,
+		)
+		assertRefusedBeforeWriting(t, h, db, archive, 409, "archive_array_mismatch", "removal_state", "relocation manifest", "/mnt/data2")
+	})
+
+	t.Run("exported when no array existed yet", func(t *testing.T) {
+		h, db, _ := newImportTestHandler(t)
+		archive := exportBytes(t, h)
+		seedArray(t, db)
+
+		assertRefusedBeforeWriting(t, h, db, archive, 409, "archive_array_mismatch", "uuid-d1", "uuid-p1")
+	})
+
+	t.Run("a disk replaced by another", func(t *testing.T) {
+		h, db, _ := newImportTestHandler(t)
+		seedArray(t, db)
+		archive := exportBytes(t, h)
+		execAll(t, db, `UPDATE array_disks SET fs_uuid = 'uuid-new', wwn = 'wwn-new' WHERE role = 'data'`)
+
+		assertRefusedBeforeWriting(t, h, db, archive, 409, "archive_array_mismatch", "uuid-d1", "uuid-new")
+	})
+
+	t.Run("a relocation manifest that differs", func(t *testing.T) {
+		h, db, _ := newImportTestHandler(t)
+		seedArray(t, db)
+		seedEvacuation(t, db)
+		archive := exportBytes(t, h)
+		execAll(t, db, `UPDATE relocation_manifest SET size = 101 WHERE rel_path = 'movies/b.mkv'`)
+
+		assertRefusedBeforeWriting(t, h, db, archive, 409, "archive_array_mismatch", "movies/b.mkv")
+	})
+}
+
+// TestImportConfig_RefusesArrayChangeMadeBeforeTheRestoreHold covers a
+// topology job that finishes between the first comparison and the
+// restore: the comparison runs again under the hold, so the restore never
+// puts the database out of step with the disks.
+func TestImportConfig_RefusesArrayChangeMadeBeforeTheRestoreHold(t *testing.T) {
+	ctx := context.Background()
+	h, db, _ := newImportTestHandler(t)
+	archive := exportBytes(t, h)
+	insertSentinelShare(t, db, "sentinel")
+	h.Backup.Now = func() time.Time {
+		seedDisk(t, db, seededDisk{role: "data", index: 1, uuid: "uuid-late", wwn: "wwn-late"})
+		return time.Now().UTC()
+	}
+
+	err := h.ImportConfig(ctx, importReq(archive))
+	ae, ok := err.(*apiError)
+	if !ok || ae.statusCode != 409 || ae.code != "archive_array_mismatch" {
+		t.Fatalf("ImportConfig err = %v (%T), want 409 archive_array_mismatch", err, err)
+	}
+	shares, lerr := store.NewShareStore(db).List(ctx)
+	if lerr != nil || len(shares) != 1 {
+		t.Fatalf("shares after refusal = %v (err %v), want the sentinel the restore would have removed", shares, lerr)
+	}
+	release, berr := h.Scheduler.BeginDatabaseRestore(ctx)
+	if berr != nil {
+		t.Fatalf("restore hold still held after the refusal: %v", berr)
+	}
+	release()
+}
+
+// TestImportConfig_AcceptsArchiveWithIdenticalArray is the same-installation,
+// same-array round trip the L3 suite runs, with an array, a relocation in
+// flight and a device name that changed across a reboot: what is compared is
+// the disks' identities, not the names the kernel gave them.
+func TestImportConfig_AcceptsArchiveWithIdenticalArray(t *testing.T) {
+	ctx := context.Background()
+	h, db, _ := newImportTestHandler(t)
+	seedArray(t, db)
+	seedDisk(t, db, seededDisk{role: "data", index: 2, uuid: "uuid-d2", wwn: "wwn-d2", removal: "evacuating"})
+	seedEvacuation(t, db)
+	archive := exportBytes(t, h)
+
+	insertSentinelShare(t, db, "rolled-back")
+	execAll(t, db, `UPDATE array_disks SET device = '/dev/moved-after-reboot' WHERE role = 'data' AND role_index = 1`)
+
+	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+		t.Fatalf("ImportConfig of an identical array: %v", err)
+	}
+	shares, err := store.NewShareStore(db).List(ctx)
+	if err != nil {
+		t.Fatalf("listing shares: %v", err)
+	}
+	if len(shares) != 0 {
+		t.Fatalf("shares after import = %v, want the export's none (the restore ran)", shares)
+	}
+}
+
+// TestImportConfig_EveryRefusalHappensBeforeAnythingIsWritten runs each
+// refusal ImportConfig has against a live database and requires that none
+// of them wrote a pre-import archive (which would take a pre-change
+// retention slot, #401), took the restore hold, or changed the database.
+func TestImportConfig_EveryRefusalHappensBeforeAnythingIsWritten(t *testing.T) {
+	t.Run("invalid_archive: checksum mismatch", func(t *testing.T) {
+		h, db, _ := newImportTestHandler(t)
+		archive := rewriteArchive(t, exportBytes(t, h), func(staging string) {
+			if err := tamperStateDB(t, filepath.Join(staging, "state.db")); err != nil {
+				t.Fatalf("tampering state.db: %v", err)
+			}
+		})
+		assertRefusedBeforeWriting(t, h, db, archive, 400, "invalid_archive")
+	})
+
+	t.Run("invalid_archive: unlisted file", func(t *testing.T) {
+		h, db, _ := newImportTestHandler(t)
+		archive := rewriteArchive(t, exportBytes(t, h), func(staging string) {
+			if err := os.WriteFile(filepath.Join(staging, "extra.txt"), []byte("x"), 0o600); err != nil {
+				t.Fatalf("writing extra file: %v", err)
+			}
+		})
+		assertRefusedBeforeWriting(t, h, db, archive, 400, "invalid_archive")
+	})
+
+	t.Run("incompatible_archive", func(t *testing.T) {
+		h, db, _ := newImportTestHandler(t)
+		archive := editArchiveDB(t, exportBytes(t, h), func(adb *sql.DB) {
+			execAll(t, adb, `DELETE FROM schema_migrations WHERE version = (SELECT MAX(version) FROM schema_migrations)`)
+		})
+		assertRefusedBeforeWriting(t, h, db, archive, 400, "incompatible_archive")
+	})
+
+	t.Run("job_in_progress", func(t *testing.T) {
+		h, db, _ := newImportTestHandler(t)
+		archive := exportBytes(t, h)
+		if err := job.NewStore(db).Create(context.Background(), &job.Job{
+			ID: uuid.NewString(), Type: job.TypeSync, Class: job.ClassParity,
+			Status: job.StatusRunning, CreatedAt: time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("seeding an active job: %v", err)
+		}
+		assertRefusedBeforeWriting(t, h, db, archive, 409, "job_in_progress")
+	})
+
+	t.Run("archive_other_installation", func(t *testing.T) {
+		h, db, _ := newImportTestHandler(t)
+		other, otherDB, _ := newImportTestHandler(t)
+		seedMachineKeyCheck(t, otherDB, []byte("installation-b-check-value"))
+		assertRefusedBeforeWriting(t, h, db, exportBytes(t, other), 409, "archive_other_installation")
+	})
+
+	t.Run("archive_array_mismatch", func(t *testing.T) {
+		h, db, _ := newImportTestHandler(t)
+		archive := exportBytes(t, h)
+		seedArray(t, db)
+		assertRefusedBeforeWriting(t, h, db, archive, 409, "archive_array_mismatch")
+	})
+}
+
+// TestImportConfig_RefusesAnArchiveHoldingAFileTheManifestDoesNotList: a
+// file the manifest does not list is never checksummed, so verification
+// used to accept it.
+func TestImportConfig_RefusesAnArchiveHoldingAFileTheManifestDoesNotList(t *testing.T) {
+	for _, rel := range []string{
+		"generated/extra.conf",
+		"stacks/media/extra.yml",
+		"templates/extra.json",
+		"custom/extra.custom.conf",
+		"extra.txt",
+	} {
+		t.Run(rel, func(t *testing.T) {
+			h, db, _ := newImportTestHandler(t)
+			archive := rewriteArchive(t, exportBytes(t, h), func(staging string) {
+				p := filepath.Join(staging, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+					t.Fatalf("creating %s: %v", filepath.Dir(p), err)
+				}
+				if err := os.WriteFile(p, []byte("not in the manifest"), 0o600); err != nil {
+					t.Fatalf("writing %s: %v", p, err)
+				}
+			})
+			assertRefusedBeforeWriting(t, h, db, archive, 400, "invalid_archive")
+		})
+	}
 }

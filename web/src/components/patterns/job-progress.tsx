@@ -8,6 +8,7 @@ import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "@/components/ui/tooltip";
 import type { components } from "@/lib/api/client";
+import { jobTypeLabel } from "@/lib/job-labels";
 
 type Job = components["schemas"]["Job"];
 
@@ -24,7 +25,7 @@ export function JobProgress({
   return (
     <Progress value={value}>
       <div className="flex items-center justify-between gap-2 text-sm">
-        <ProgressLabel>{job.type}</ProgressLabel>
+        <ProgressLabel>{jobTypeLabel(job.type, t)}</ProgressLabel>
         <div className="flex items-center gap-2">
           <ProgressValue />
           {job.cancellable ? (

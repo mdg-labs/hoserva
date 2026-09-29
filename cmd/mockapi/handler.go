@@ -84,6 +84,20 @@ type handler struct {
 	appsMu sync.Mutex
 	apps   []apiv1.App
 
+	// appdataMu guards appdataPolicies (#61): the per-container appdata
+	// backup policy set through SetAppdataBackupContainer. A container
+	// with no entry is stopped and included, like production.
+	appdataMu       sync.Mutex
+	appdataPolicies map[string]backup.AppdataPolicy
+	// appdataPreviews are the finished restore previews by job id: the mock
+	// has no scheduler, so a preview job is recorded as already succeeded.
+	appdataPreviews map[uuid.UUID]apiv1.AppdataRestorePreview
+
+	// drillMu guards drillLast (#63): the last restore drill's result,
+	// seeded as a pass and replaced by each StartRestoreDrill.
+	drillMu   sync.Mutex
+	drillLast *apiv1.RestoreDrillRun
+
 	externalMu sync.Mutex
 	external   map[string]apiv1.ExternalDisk
 
@@ -144,6 +158,8 @@ func newHandler(scenario string) (*handler, error) {
 		apps:         mockApps(),
 
 		backupDestinations: mockBackupDestinations(),
+		appdataPolicies:    make(map[string]backup.AppdataPolicy),
+		drillLast:          seededDrillRun(),
 		external:           make(map[string]apiv1.ExternalDisk),
 
 		users:                map[uuid.UUID]apiv1.UserSummary{mockAdminID: mockUserSummary()},

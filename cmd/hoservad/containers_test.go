@@ -169,6 +169,14 @@ type containersWiringHarness struct {
 	stopWatch    context.CancelFunc
 	apps         *appServices
 	ctx          context.Context
+
+	// The handler and registry the server serves, and what a test needs to
+	// wire more of the daemon on top of them.
+	handler  *api.Handler
+	registry *job.Registry
+	db       *sql.DB
+	arrays   *store.ArrayStore
+	root     string
 }
 
 // startReconcile starts the start-up reconciliation of interrupted
@@ -284,6 +292,11 @@ func newContainersWiringHarnessWith(t *testing.T, prepare func(*container.FakePr
 		stopWatch:    stopWatch,
 		apps:         apps,
 		ctx:          wctx,
+		handler:      handler,
+		registry:     registry,
+		db:           db,
+		arrays:       arrayStore,
+		root:         root,
 	}
 }
 
