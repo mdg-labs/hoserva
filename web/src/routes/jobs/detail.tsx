@@ -13,6 +13,7 @@ import { PATHS } from "@/hooks/paths";
 import { getJob, getJobLog, postJobCancel } from "@/lib/api/operations";
 import { useApiMutation } from "@/lib/api/use-api-mutation";
 import { useApiQuery } from "@/lib/api/use-api-query";
+import { jobClassLabel, jobTypeLabel } from "@/lib/job-labels";
 import type { components } from "@/lib/api/client";
 
 type Job = components["schemas"]["Job"];
@@ -59,7 +60,7 @@ export function JobDetailPage(): React.ReactElement {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-semibold font-heading">{job.type}</h1>
+          <h1 className="text-2xl font-semibold font-heading">{jobTypeLabel(job.type, t)}</h1>
           <p className="text-muted-foreground font-mono text-sm">{job.id}</p>
         </div>
         <Button variant="outline" render={<Link to={PATHS.jobs} />}>{t("jobs.detail.back")}</Button>
@@ -73,7 +74,7 @@ export function JobDetailPage(): React.ReactElement {
           <CardTitle>{t("jobs.detail.metadata")}</CardTitle>
         </CardHeader>
         <CardPanel className="grid gap-2 text-sm sm:grid-cols-2">
-          <p>{t("jobs.detail.class", { value: job.class })}</p>
+          <p>{t("jobs.detail.class", { value: jobClassLabel(job.class, t) })}</p>
           <p>
             {t("jobs.detail.status")}{" "}
             <StatusBadge tone={jobStatusTone(job.status)}>{jobStatusLabel(job.status, t)}</StatusBadge>

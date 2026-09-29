@@ -348,8 +348,8 @@ describe("dashboard, parity, wake-events and jobs pages", () => {
       </MemoryRouter>,
     );
 
-    await screen.findByRole("link", { name: "sync" });
-    expect(screen.getByRole("link", { name: "scrub" })).toBeInTheDocument();
+    await screen.findByRole("link", { name: "Parity sync" });
+    expect(screen.getByRole("link", { name: "Parity scrub" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("combobox", { name: "Status" }));
     const option = await screen.findByRole("option", { name: "Cancelled" });
@@ -357,9 +357,9 @@ describe("dashboard, parity, wake-events and jobs pages", () => {
     fireEvent.click(option);
 
     await waitFor(() => {
-      expect(screen.queryByRole("link", { name: "sync" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Parity sync" })).not.toBeInTheDocument();
     });
-    expect(screen.getByRole("link", { name: "scrub" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Parity scrub" })).toBeInTheDocument();
   });
 
   it("does not show a drift banner for a passing drift check", async () => {

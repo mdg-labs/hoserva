@@ -22,6 +22,7 @@ import { jobDetailPath } from "@/hooks/paths";
 import { getJobs, postJobCancel } from "@/lib/api/operations";
 import { useApiMutation } from "@/lib/api/use-api-mutation";
 import { useApiQuery } from "@/lib/api/use-api-query";
+import { jobClassLabel, jobTypeLabel } from "@/lib/job-labels";
 import type { components } from "@/lib/api/client";
 
 type Job = components["schemas"]["Job"];
@@ -72,9 +73,9 @@ export function JobsPage(): React.ReactElement {
     {
       id: "type",
       header: t("jobs.columns.type"),
-      cell: (job) => <Link to={jobDetailPath(job.id)}>{job.type}</Link>,
+      cell: (job) => <Link to={jobDetailPath(job.id)}>{jobTypeLabel(job.type, t)}</Link>,
     },
-    { id: "class", header: t("jobs.columns.class"), cell: (job) => job.class },
+    { id: "class", header: t("jobs.columns.class"), cell: (job) => jobClassLabel(job.class, t) },
     {
       id: "status",
       header: t("jobs.columns.status"),
@@ -125,7 +126,7 @@ export function JobsPage(): React.ReactElement {
                 { value: JOB_FILTER_ALL, label: t("jobs.filters.all") },
                 ...JOB_TYPE_FILTER_VALUES.map((value) => ({
                   value,
-                  label: t(`jobs.types.${value}`),
+                  label: jobTypeLabel(value, t),
                 })),
               ]}
             />
