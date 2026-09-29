@@ -15,8 +15,44 @@ import (
 
 // AppdataRunRequest selects what one appdata backup covers: the named
 // containers, or, with none named, every included one.
+//
+// Resolved is the set the job was submitted with (its scheduler scope,
+// AppdataService.ScopeNames) and is required: the run acts on exactly those
+// containers. One that no longer exists is skipped, and so is one that is
+// no longer included when Containers named none, but a container the scope
+// did not name is never added. An empty, non-nil Resolved backs up nothing;
+// nil is refused, since resolving at start is what lets a run act outside
+// its scope.
 type AppdataRunRequest struct {
 	Containers []string
+	Resolved   []string
+}
+
+// selectResolved is the part of scope that names a resolved container, and
+// a line for each name it had to skip.
+func selectResolved(scope []AppdataContainer, req AppdataRunRequest) (selected []AppdataContainer, skipped []string) {
+	byName := make(map[string]AppdataContainer, len(scope))
+	for _, c := range scope {
+		byName[c.Name] = c
+	}
+	seen := map[string]bool{}
+	for _, name := range req.Resolved {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		c, ok := byName[name]
+		switch {
+		case !ok:
+			skipped = append(skipped, fmt.Sprintf("skipping %s: it no longer exists or no longer has appdata", name))
+		case len(req.Containers) == 0 && !c.Included:
+			skipped = append(skipped, fmt.Sprintf("skipping %s: it is no longer included in the backup", name))
+		default:
+			selected = append(selected, c)
+		}
+	}
+	sort.Slice(selected, func(i, j int) bool { return selected[i].Name < selected[j].Name })
+	return selected, skipped
 }
 
 // appdataStaging returns a fresh, empty staging directory next to the
@@ -50,6 +86,9 @@ type stagedAppdata struct {
 // done. Every container the run stopped is started again whatever fails,
 // including after a cancel.
 func (a *AppdataService) Run(ctx context.Context, req AppdataRunRequest, out io.Writer) error {
+	if req.Resolved == nil {
+		return errors.New("appdata backup: the run was given no resolved containers, so it has no scope")
+	}
 	if err := a.lockRun(ctx); err != nil {
 		return err
 	}
@@ -69,9 +108,9 @@ func (a *AppdataService) Run(ctx context.Context, req AppdataRunRequest, out io.
 	if err != nil {
 		return err
 	}
-	selected, err := selectAppdata(scope, req.Containers)
-	if err != nil {
-		return err
+	selected, skipped := selectResolved(scope, req)
+	for _, line := range skipped {
+		_, _ = fmt.Fprintln(out, line)
 	}
 	if len(selected) == 0 {
 		_, _ = fmt.Fprintln(out, "no container with appdata is included in the backup")

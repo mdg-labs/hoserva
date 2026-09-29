@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,7 +145,17 @@ func (r *appdataRig) addApp(t *testing.T, name, image, state string, files map[s
 func (r *appdataRig) run(t *testing.T, names ...string) error {
 	t.Helper()
 	r.out.Reset()
-	return r.svc.Run(context.Background(), AppdataRunRequest{Containers: names}, r.out)
+	return runNamed(context.Background(), r.svc, r.out, names...)
+}
+
+// runNamed resolves what a submit would (ScopeNames) and runs the backup on
+// exactly that, the way the appdata_backup job does.
+func runNamed(ctx context.Context, svc *AppdataService, out io.Writer, names ...string) error {
+	resolved, err := svc.ScopeNames(ctx, names)
+	if err != nil {
+		return err
+	}
+	return svc.Run(ctx, AppdataRunRequest{Containers: names, Resolved: resolved}, out)
 }
 
 func (r *appdataRig) archives(t *testing.T, dir string) []string {
@@ -387,7 +398,7 @@ func TestAppdataRun_CancelledRunStillStartsEveryContainerItStopped(t *testing.T)
 			cancel()
 		}
 	}
-	err := rig.svc.Run(ctx, AppdataRunRequest{}, rig.out)
+	err := runNamed(ctx, rig.svc, rig.out)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run = %v, want context.Canceled", err)
 	}
@@ -490,12 +501,12 @@ func TestAppdataRun_ASecondRunWaitsForTheFirst(t *testing.T) {
 	}
 	first := make(chan error, 1)
 	go func() {
-		first <- rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{"alpha"}}, &bytes.Buffer{})
+		first <- runNamed(context.Background(), rig.svc, &bytes.Buffer{}, "alpha")
 	}()
 	<-entered
 	second := make(chan error, 1)
 	go func() {
-		second <- rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{"beta"}}, &bytes.Buffer{})
+		second <- runNamed(context.Background(), rig.svc, &bytes.Buffer{}, "beta")
 	}()
 
 	time.Sleep(200 * time.Millisecond)
@@ -537,7 +548,7 @@ func TestAppdataRun_ConcurrentRunsOfDifferentContainersAllSucceed(t *testing.T) 
 	errs := make(chan error, len(names))
 	for _, n := range names {
 		go func() {
-			errs <- rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{n}}, &bytes.Buffer{})
+			errs <- runNamed(context.Background(), rig.svc, &bytes.Buffer{}, n)
 		}()
 	}
 	for range names {
@@ -581,7 +592,7 @@ func TestAppdataRun_WaitsForARecoveryInsteadOfFailing(t *testing.T) {
 
 	ran := make(chan error, 1)
 	go func() {
-		ran <- rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{"beta"}}, &bytes.Buffer{})
+		ran <- runNamed(context.Background(), rig.svc, &bytes.Buffer{}, "beta")
 	}()
 	time.Sleep(200 * time.Millisecond)
 	select {
@@ -615,12 +626,12 @@ func TestAppdataRun_ACancelledWaitingRunDoesNothing(t *testing.T) {
 	}
 	first := make(chan error, 1)
 	go func() {
-		first <- rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{"alpha"}}, &bytes.Buffer{})
+		first <- runNamed(context.Background(), rig.svc, &bytes.Buffer{}, "alpha")
 	}()
 	<-entered
 	ctx, cancel := context.WithCancel(context.Background())
 	second := make(chan error, 1)
-	go func() { second <- rig.svc.Run(ctx, AppdataRunRequest{Containers: []string{"beta"}}, &bytes.Buffer{}) }()
+	go func() { second <- runNamed(ctx, rig.svc, &bytes.Buffer{}, "beta") }()
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 	close(release)
@@ -885,5 +896,86 @@ func TestAppdataRun_ARestartThatKeepsFailingStaysJournalledAcrossLaterRuns(t *te
 	alpha, _ := rig.engine.Inspect(context.Background(), "alpha")
 	if alpha.State != "running" {
 		t.Fatalf("alpha = %s after recovery, want running", alpha.State)
+	}
+}
+
+func TestAppdataRun_ResolvedNamesAreTheWholeScopeAndAContainerAddedLaterIsLeftAlone(t *testing.T) {
+	rig := newAppdataRig(t)
+	rig.addApp(t, "alpha", "sonarr", "running", map[string]string{"a": "1"})
+	rig.addApp(t, "late", "radarr", "running", map[string]string{"l": "1"})
+
+	err := rig.svc.Run(context.Background(), AppdataRunRequest{Resolved: []string{"alpha"}}, rig.out)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, want := strings.Join(rig.containers.Events(), ","), "stop alpha,start alpha"; got != want {
+		t.Fatalf("events = %s, want %s: a container outside the resolved scope was touched", got, want)
+	}
+	if got := rig.archives(t, rig.poolDir); len(got) != 1 || !strings.Contains(got[0], "-alpha-") {
+		t.Fatalf("archives = %v, want alpha's only", got)
+	}
+}
+
+func TestAppdataRun_ResolvedSkipsAContainerThatIsGoneOrNoLongerIncluded(t *testing.T) {
+	rig := newAppdataRig(t)
+	ctx := context.Background()
+	rig.addApp(t, "alpha", "sonarr", "running", map[string]string{"a": "1"})
+	rig.addApp(t, "beta", "radarr", "running", map[string]string{"b": "1"})
+	if _, err := rig.svc.SetPolicy(ctx, "beta", true, false); err != nil {
+		t.Fatal(err)
+	}
+
+	err := rig.svc.Run(ctx, AppdataRunRequest{Resolved: []string{"alpha", "beta", "gone"}}, rig.out)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, want := strings.Join(rig.containers.Events(), ","), "stop alpha,start alpha"; got != want {
+		t.Fatalf("events = %s, want %s", got, want)
+	}
+	out := rig.out.String()
+	for _, want := range []string{"skipping beta: it is no longer included", "skipping gone: it no longer exists"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output %q lacks %q", out, want)
+		}
+	}
+	if got := rig.archives(t, rig.poolDir); len(got) != 1 || !strings.Contains(got[0], "-alpha-") {
+		t.Fatalf("archives = %v, want alpha's only", got)
+	}
+
+	rig.containers.events = nil
+	rig.out.Reset()
+	err = rig.svc.Run(ctx, AppdataRunRequest{Containers: []string{"beta"}, Resolved: []string{"beta"}}, rig.out)
+	if err != nil {
+		t.Fatalf("Run of an explicitly requested, excluded container: %v", err)
+	}
+	if got, want := strings.Join(rig.containers.Events(), ","), "stop beta,start beta"; got != want {
+		t.Fatalf("events = %s, want %s: a container the operator asked for by name is still backed up", got, want)
+	}
+}
+
+func TestAppdataRun_ARunWithoutAResolvedScopeIsRefusedAndTouchesNothing(t *testing.T) {
+	rig := newAppdataRig(t)
+	rig.addApp(t, "alpha", "sonarr", "running", map[string]string{"a": "1"})
+
+	if err := rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{"alpha"}}, rig.out); err == nil {
+		t.Fatal("Run with no resolved containers succeeded")
+	}
+	if got := rig.containers.Events(); len(got) != 0 {
+		t.Fatalf("events = %v, want none", got)
+	}
+}
+
+func TestAppdataRun_AnEmptyResolvedScopeDoesNothingEvenWhenContainersAreIncludedNow(t *testing.T) {
+	rig := newAppdataRig(t)
+	rig.addApp(t, "alpha", "sonarr", "running", map[string]string{"a": "1"})
+
+	if err := rig.svc.Run(context.Background(), AppdataRunRequest{Resolved: []string{}}, rig.out); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := rig.containers.Events(); len(got) != 0 {
+		t.Fatalf("events = %v, want none", got)
+	}
+	if got := rig.archives(t, rig.poolDir); len(got) != 0 {
+		t.Fatalf("archives = %v, want none", got)
 	}
 }

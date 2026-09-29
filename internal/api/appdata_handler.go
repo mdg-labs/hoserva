@@ -87,8 +87,10 @@ func (h *Handler) SetAppdataBackupContainer(ctx context.Context, req *apiv1.SetA
 // containers, or every included one, scoped to the containers it will
 // stop so a recreate of one of them queues behind it, and to
 // backup.AppdataJobResource so it queues behind any other appdata backup or
-// restore rather than failing beside it. It is the one entry both the API
-// and the schedule use.
+// restore rather than failing beside it. The names it resolved are stored
+// in the job's params, so the run acts on exactly its scope and not on a
+// container that joined the backup while it was queued. It is the one entry
+// both the API and the schedule use.
 func SubmitAppdataBackup(ctx context.Context, svc *backup.AppdataService, sched *job.Scheduler, requested []string) (*job.Job, error) {
 	if svc == nil {
 		return nil, errAppdataNotConfigured()
@@ -103,7 +105,10 @@ func SubmitAppdataBackup(ctx context.Context, svc *backup.AppdataService, sched 
 	if err != nil {
 		return nil, mapAppdataError(err)
 	}
-	body, err := json.Marshal(job.AppdataBackupParams{Containers: requested})
+	if names == nil {
+		names = []string{}
+	}
+	body, err := json.Marshal(job.AppdataBackupParams{Containers: requested, Resolved: names})
 	if err != nil {
 		return nil, fmt.Errorf("encoding appdata_backup params: %w", err)
 	}

@@ -363,7 +363,7 @@ func TestAppdataRestore_ABackupOfAnotherContainerWaitsAndBothSucceed(t *testing.
 			}
 		}
 		backupOf := func() error {
-			return rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{"beta"}}, &bytes.Buffer{})
+			return runNamed(context.Background(), rig.svc, &bytes.Buffer{}, "beta")
 		}
 		restoreOf := func() error {
 			return rig.svc.Restore(context.Background(), AppdataRestoreRequest{

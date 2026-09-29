@@ -716,8 +716,8 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	}
 	h.Appdata = appdataSvc
 	registry.Register(job.TypeAppdataBackup, true, job.RunAppdataBackup(job.AppdataBackupDeps{
-		Backup: func(ctx context.Context, containers []string, out io.Writer) error {
-			return appdataSvc.Run(ctx, backup.AppdataRunRequest{Containers: containers}, out)
+		Backup: func(ctx context.Context, requested, resolved []string, out io.Writer) error {
+			return appdataSvc.Run(ctx, backup.AppdataRunRequest{Containers: requested, Resolved: resolved}, out)
 		},
 	}))
 	registry.Register(job.TypeAppdataRestore, false, job.RunAppdataRestore(func(ctx context.Context, p job.AppdataRestoreParams, out io.Writer) error {

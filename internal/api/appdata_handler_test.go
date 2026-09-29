@@ -71,8 +71,8 @@ func newAppdataFixture(t *testing.T) *appdataFixture {
 	}
 	h.Appdata = f.svc
 	reg.Register(job.TypeAppdataBackup, true, job.RunAppdataBackup(job.AppdataBackupDeps{
-		Backup: func(ctx context.Context, containers []string, out io.Writer) error {
-			return f.svc.Run(ctx, backup.AppdataRunRequest{Containers: containers}, out)
+		Backup: func(ctx context.Context, requested, resolved []string, out io.Writer) error {
+			return f.svc.Run(ctx, backup.AppdataRunRequest{Containers: requested, Resolved: resolved}, out)
 		},
 		Failed: func(context.Context, error) { f.failed.Add(1) },
 	}))
@@ -437,5 +437,28 @@ func TestHandler_GetAppdataRestorePreview_HoldsOnlyTheNewestResults(t *testing.T
 	_, err := f.h.GetAppdataRestorePreview(ctx, apiv1.GetAppdataRestorePreviewParams{JobId: first.ID})
 	if st, code := statusOf(f.h, err); st != 404 || code != "appdata_preview_gone" {
 		t.Fatalf("the oldest result after %d newer ones = %d %s, want 404 appdata_preview_gone", backup.AppdataPreviewKeep, st, code)
+	}
+}
+
+func TestHandler_StartAppdataBackup_RecordsTheResolvedNamesInTheJobParams(t *testing.T) {
+	f := newAppdataFixture(t)
+	ctx := context.Background()
+
+	j, err := f.h.StartAppdataBackup(ctx, apiv1.OptStartAppdataBackupRequest{})
+	if err != nil {
+		t.Fatalf("StartAppdataBackup: %v", err)
+	}
+	stored := awaitJob(t, f.sched, j.ID.String())
+	if got := string(stored.Params); got != `{"resolved":["db","sonarr"]}` {
+		t.Fatalf("params = %s, want the names a backup of every included container resolved to", got)
+	}
+
+	j, err = f.h.StartAppdataBackup(ctx, apiv1.NewOptStartAppdataBackupRequest(apiv1.StartAppdataBackupRequest{Containers: []string{"sonarr"}}))
+	if err != nil {
+		t.Fatalf("StartAppdataBackup: %v", err)
+	}
+	stored = awaitJob(t, f.sched, j.ID.String())
+	if got := string(stored.Params); got != `{"containers":["sonarr"],"resolved":["sonarr"]}` {
+		t.Fatalf("params = %s, want the request and what it resolved to", got)
 	}
 }

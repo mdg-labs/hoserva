@@ -9,9 +9,14 @@ import (
 )
 
 // AppdataBackupParams is appdata_backup's persisted payload: the
-// containers to back up, or none for every included one.
+// containers requested, or none for every included one, and the names
+// those resolved to when the job was submitted. Resolved is the job's
+// scope, so the run acts on no container outside it and a job without it
+// does not run. A submit that resolved to nothing records an empty,
+// non-nil list.
 type AppdataBackupParams struct {
 	Containers []string `json:"containers,omitempty"`
+	Resolved   []string `json:"resolved"`
 }
 
 // AppdataRestoreParams is the persisted payload of appdata_restore and of
@@ -31,7 +36,7 @@ func decodeAppdataBackupParams(params []byte) (AppdataBackupParams, error) {
 	if err := decodeJSON(params, &p); err != nil {
 		return AppdataBackupParams{}, err
 	}
-	for _, name := range p.Containers {
+	for _, name := range append(append([]string(nil), p.Containers...), p.Resolved...) {
 		if name == "" {
 			return AppdataBackupParams{}, errors.New("job: appdata_backup names an empty container")
 		}
@@ -52,9 +57,10 @@ func decodeAppdataRestoreParams(t Type, params []byte) (AppdataRestoreParams, er
 
 // AppdataBackupDeps is what RunAppdataBackup needs.
 type AppdataBackupDeps struct {
-	// Backup runs the backup (backup.AppdataService.Run), writing progress
-	// to out.
-	Backup func(ctx context.Context, containers []string, out io.Writer) error
+	// Backup runs the backup (backup.AppdataService.Run) on exactly the
+	// resolved names the job was submitted with, skipping any that are gone
+	// or no longer included, writing progress to out.
+	Backup func(ctx context.Context, requested, resolved []string, out io.Writer) error
 	// Failed is called with the error of a backup that failed, so it can
 	// be alerted on. It is not called when the job was cancelled.
 	Failed func(ctx context.Context, err error)
@@ -67,7 +73,10 @@ func RunAppdataBackup(deps AppdataBackupDeps) RunFunc {
 		if err != nil {
 			return err
 		}
-		if err := deps.Backup(ctx, p.Containers, rc.Output()); err != nil {
+		if p.Resolved == nil {
+			return errors.New("job: appdata_backup params carry no resolved containers, so the job has no scope to run in")
+		}
+		if err := deps.Backup(ctx, p.Containers, p.Resolved, rc.Output()); err != nil {
 			if deps.Failed != nil && ctx.Err() == nil {
 				deps.Failed(context.WithoutCancel(ctx), err)
 			}

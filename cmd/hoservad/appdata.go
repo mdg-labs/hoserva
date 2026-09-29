@@ -54,8 +54,8 @@ func wireAppdata(handler *api.Handler, registry *job.Registry, svc *backup.Appda
 	// it stopped; a restore is not cancellable, because a cancel between
 	// its steps is the one way to leave the appdata half replaced.
 	registry.Register(job.TypeAppdataBackup, true, job.RunAppdataBackup(job.AppdataBackupDeps{
-		Backup: func(ctx context.Context, containers []string, out io.Writer) error {
-			return svc.Run(ctx, backup.AppdataRunRequest{Containers: containers}, out)
+		Backup: func(ctx context.Context, requested, resolved []string, out io.Writer) error {
+			return svc.Run(ctx, backup.AppdataRunRequest{Containers: requested, Resolved: resolved}, out)
 		},
 		Failed: func(ctx context.Context, err error) { publishAppdataFailure(ctx, notifier, err) },
 	}))

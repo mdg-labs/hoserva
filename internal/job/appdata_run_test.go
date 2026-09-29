@@ -34,6 +34,8 @@ func TestAppdataParams_Validation(t *testing.T) {
 		"backup, named containers":     {TypeAppdataBackup, `{"containers":["a","b"]}`, false},
 		"backup, an empty name":        {TypeAppdataBackup, `{"containers":[""]}`, true},
 		"backup, unknown field":        {TypeAppdataBackup, `{"stop":false}`, true},
+		"backup, resolved":             {TypeAppdataBackup, `{"resolved":["a"]}`, false},
+		"backup, an empty resolved":    {TypeAppdataBackup, `{"resolved":[""]}`, true},
 		"restore":                      {TypeAppdataRestore, `{"container":"a","archive":"x.tar.zst","destinationId":"pool"}`, false},
 		"restore, no params":           {TypeAppdataRestore, ``, true},
 		"restore, no archive":          {TypeAppdataRestore, `{"container":"a","destinationId":"pool"}`, true},
@@ -59,14 +61,14 @@ func TestRunAppdataBackup_PassesTheNamedContainersAndWritesToTheJobLog(t *testin
 	s := newTestScheduler(t)
 	var got []string
 	s.registry.Register(TypeAppdataBackup, true, RunAppdataBackup(AppdataBackupDeps{
-		Backup: func(_ context.Context, containers []string, out io.Writer) error {
-			got = containers
+		Backup: func(_ context.Context, requested, _ []string, out io.Writer) error {
+			got = requested
 			_, _ = io.WriteString(out, "archiving alpha\n")
 			return nil
 		},
 	}))
 
-	j, err := s.Submit(context.Background(), TypeAppdataBackup, []string{"container:alpha"}, []byte(`{"containers":["alpha"]}`))
+	j, err := s.Submit(context.Background(), TypeAppdataBackup, []string{"container:alpha"}, []byte(`{"containers":["alpha"],"resolved":["alpha"]}`))
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -81,7 +83,9 @@ func TestRunAppdataBackup_FailureFailsTheJobAndIsReportedOnce(t *testing.T) {
 	var mu sync.Mutex
 	var failures []error
 	s.registry.Register(TypeAppdataBackup, true, RunAppdataBackup(AppdataBackupDeps{
-		Backup: func(context.Context, []string, io.Writer) error { return errors.New("destination pool: disk full") },
+		Backup: func(context.Context, []string, []string, io.Writer) error {
+			return errors.New("destination pool: disk full")
+		},
 		Failed: func(_ context.Context, err error) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -89,7 +93,7 @@ func TestRunAppdataBackup_FailureFailsTheJobAndIsReportedOnce(t *testing.T) {
 		},
 	}))
 
-	j, err := s.Submit(context.Background(), TypeAppdataBackup, nil, nil)
+	j, err := s.Submit(context.Background(), TypeAppdataBackup, nil, []byte(`{"resolved":[]}`))
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -109,7 +113,7 @@ func TestRunAppdataBackup_ACancelledRunIsNotAFailureAlert(t *testing.T) {
 	started := make(chan struct{})
 	var alerted bool
 	s.registry.Register(TypeAppdataBackup, true, RunAppdataBackup(AppdataBackupDeps{
-		Backup: func(ctx context.Context, _ []string, _ io.Writer) error {
+		Backup: func(ctx context.Context, _, _ []string, _ io.Writer) error {
 			close(started)
 			<-ctx.Done()
 			return ctx.Err()
@@ -117,7 +121,7 @@ func TestRunAppdataBackup_ACancelledRunIsNotAFailureAlert(t *testing.T) {
 		Failed: func(context.Context, error) { alerted = true },
 	}))
 
-	j, err := s.Submit(context.Background(), TypeAppdataBackup, nil, nil)
+	j, err := s.Submit(context.Background(), TypeAppdataBackup, nil, []byte(`{"resolved":[]}`))
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -282,5 +286,47 @@ func TestPrevOtherJobRun(t *testing.T) {
 		if got := PrevOtherJobRun(tc.now, utc, tc.job); !got.Equal(tc.want) {
 			t.Errorf("%s: PrevOtherJobRun = %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+func TestRunAppdataBackup_RunsWithTheResolvedScopeAndRefusesAJobWithoutOne(t *testing.T) {
+	for name, tc := range map[string]struct {
+		params        string
+		wantRun       bool
+		wantRequested []string
+		wantNames     []string
+	}{
+		"resolved":            {`{"containers":["a"],"resolved":["a"]}`, true, []string{"a"}, []string{"a"}},
+		"resolved, every one": {`{"resolved":["a","b"]}`, true, nil, []string{"a", "b"}},
+		"resolved to nothing": {`{"resolved":[]}`, true, nil, []string{}},
+		"no resolved":         {`{"containers":["a"]}`, false, nil, nil},
+		"empty params":        {`{}`, false, nil, nil},
+		"no params":           {``, false, nil, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newTestScheduler(t)
+			var ran bool
+			var gotRequested, gotNames []string
+			s.registry.Register(TypeAppdataBackup, true, RunAppdataBackup(AppdataBackupDeps{
+				Backup: func(_ context.Context, requested, resolved []string, _ io.Writer) error {
+					ran, gotRequested, gotNames = true, requested, resolved
+					return nil
+				},
+			}))
+			j, err := s.Submit(context.Background(), TypeAppdataBackup, nil, []byte(tc.params))
+			if err != nil {
+				t.Fatalf("Submit: %v", err)
+			}
+			done := await(t, s, j.ID)
+			if tc.wantRun {
+				if done.Status != StatusSucceeded || !reflect.DeepEqual(gotRequested, tc.wantRequested) || !reflect.DeepEqual(gotNames, tc.wantNames) {
+					t.Fatalf("status %s, requested=%v names=%#v; want succeeded with %v %#v", done.Status, gotRequested, gotNames, tc.wantRequested, tc.wantNames)
+				}
+				return
+			}
+			if ran || done.Status != StatusFailed || !strings.Contains(done.ErrorMessage, "no resolved containers") {
+				t.Fatalf("ran=%v status %s %q; want the job refused before any container is touched", ran, done.Status, done.ErrorMessage)
+			}
+		})
 	}
 }

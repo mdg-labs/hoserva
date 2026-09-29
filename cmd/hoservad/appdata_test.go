@@ -212,6 +212,7 @@ type scheduledAppdata struct {
 	h         *scheduleHarness
 	fake      *container.FakeProvider
 	svc       *backup.AppdataService
+	apps      *appServices
 	pub       *recordingPublisher
 	dest      string
 	halted    *atomic.Bool
@@ -259,7 +260,7 @@ func newScheduledAppdata(t *testing.T) *scheduledAppdata {
 		defer cancel()
 		_ = h.runner.Scheduler.Drain(dctx)
 	})
-	return &scheduledAppdata{h: h, fake: fake, svc: svc, pub: pub, dest: dest, halted: halted, clock: &clock, stateDir: root, appdataAt: dir}
+	return &scheduledAppdata{h: h, fake: fake, svc: svc, apps: apps, pub: pub, dest: dest, halted: halted, clock: &clock, stateDir: root, appdataAt: dir}
 }
 
 func (s *scheduledAppdata) appdataJobs(t *testing.T) []*job.Job {
@@ -509,9 +510,19 @@ func (g *gatedContainers) arm(skip int) {
 	g.armed, g.skip = true, skip
 }
 
+// rearm holds the next array check, with channels of its own, so a test can
+// hold a second job after the first hold was released.
+func (g *gatedContainers) rearm() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.armed, g.skip = true, 0
+	g.entered, g.release = make(chan struct{}), make(chan struct{})
+}
+
 func (g *gatedContainers) RequireArrayRunning() error {
 	g.mu.Lock()
 	hold := false
+	entered, release := g.entered, g.release
 	if g.armed {
 		if g.skip == 0 {
 			hold, g.armed = true, false
@@ -521,8 +532,8 @@ func (g *gatedContainers) RequireArrayRunning() error {
 	}
 	g.mu.Unlock()
 	if hold {
-		close(g.entered)
-		<-g.release
+		close(entered)
+		<-release
 	}
 	return g.AppdataContainers.RequireArrayRunning()
 }
@@ -697,7 +708,7 @@ func TestScheduleTick_TheWeeklyBackupQueuesBehindARestoreOfAnExcludedContainer(t
 	}
 	s.fake.AddContainer(container.Container{ID: "p", Name: "plex", Image: "plex", State: "exited",
 		Mounts: []container.Mount{{Source: plexDir, Destination: "/config", ReadWrite: true}}})
-	if err := s.svc.Run(ctx, backup.AppdataRunRequest{Containers: []string{"plex"}}, &bytes.Buffer{}); err != nil {
+	if err := runAppdataNamed(ctx, s.svc, "plex"); err != nil {
 		t.Fatalf("backing up plex: %v", err)
 	}
 	archives, _, err := s.svc.ListArchives(ctx, "plex")
@@ -748,5 +759,311 @@ func TestScheduleTick_TheWeeklyBackupQueuesBehindARestoreOfAnExcludedContainer(t
 	}
 	if n := s.pub.count(notify.EventAppdataBackupFailed); n != 0 {
 		t.Fatalf("appdata_backup_failed published %d times, want none", n)
+	}
+}
+
+// addRunningAppdataContainer installs a running container whose config
+// directory is inside the appdata location, the way a user installing an app
+// after a backup was queued would.
+func addRunningAppdataContainer(t *testing.T, fake *container.FakeProvider, appdataRoot, name string) {
+	t.Helper()
+	dir := filepath.Join(appdataRoot, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".db"), []byte(name), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake.AddContainer(container.Container{
+		ID: "id-" + name, Name: name, Image: name, State: "running",
+		Mounts: []container.Mount{{Source: dir, Destination: "/config", ReadWrite: true}},
+	})
+}
+
+func stopsOf(fake *container.FakeProvider, name string) int {
+	n := 0
+	for _, c := range fake.Calls() {
+		if c.Op == "stop" && (c.ID == name || c.ID == "id-"+name) {
+			n++
+		}
+	}
+	return n
+}
+
+func recreatesOf(fake *container.FakeProvider, name string) int {
+	n := 0
+	for _, c := range fake.Calls() {
+		if c.Op == "recreate" && (c.ID == name || c.ID == "id-"+name) {
+			n++
+		}
+	}
+	return n
+}
+
+// runAppdataNamed is a backup of names run the way the appdata_backup job
+// runs it: on what a submit resolves them to.
+func runAppdataNamed(ctx context.Context, svc *backup.AppdataService, names ...string) error {
+	resolved, err := svc.ScopeNames(ctx, names)
+	if err != nil {
+		return err
+	}
+	return svc.Run(ctx, backup.AppdataRunRequest{Containers: names, Resolved: resolved}, &bytes.Buffer{})
+}
+
+func hasArchiveOf(dest, name string) bool {
+	entries, _ := os.ReadDir(dest)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "-"+name+"-") {
+			return true
+		}
+	}
+	return false
+}
+
+// A backup's scope is fixed when it is submitted. A container installed
+// while the backup waits behind a restore is in no part of that scope, so
+// the backup must leave it running and unarchived: a job that acts outside
+// its scope lets a recreate of that container run beside it.
+func TestAppdataWiring_AQueuedBackupLeavesAContainerAddedAfterItWasSubmitted(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	gate := &gatedContainers{AppdataContainers: svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	svc.Containers = gate
+	wireAppdata(w.handler, w.registry, svc, &recordingPublisher{})
+	backedUp(t, w, "jellyfin")
+	archive := archiveNamed(t, dest, "jellyfin")
+
+	gate.arm(1)
+	req := `{"container":"jellyfin","archive":"` + archive + `","destinationId":"pool","confirm":true}`
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup/restore", req)
+	if status != http.StatusOK {
+		t.Fatalf("POST restore = %d %s", status, body)
+	}
+	var restore struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &restore)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restore job never started")
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup", ``)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup = %d %s", status, body)
+	}
+	var queued struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(body, &queued)
+	if queued.Status != "queued" {
+		t.Fatalf("the backup beside a running restore is %q, want queued", queued.Status)
+	}
+
+	addRunningAppdataContainer(t, w.fake, filepath.Join(w.root, "cache", "appdata"), "radarr")
+
+	// Let the restore finish and hold the backup as it starts: it is
+	// running, has not yet looked at what is installed, and its scope does
+	// not name radarr, so a recreate of radarr runs beside it instead of
+	// waiting for it.
+	restoreRelease := gate.release
+	gate.rearm()
+	close(restoreRelease)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the queued backup never started")
+	}
+	w.startReconcile()
+	status, body = w.do(t, http.MethodPost, "/apps/radarr/recreate")
+	if status != http.StatusOK {
+		t.Fatalf("POST recreate of radarr = %d %s", status, body)
+	}
+	var recreate struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &recreate)
+	if done := w.awaitJobByID(t, recreate.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("recreate of radarr while the backup runs: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := recreatesOf(w.fake, "radarr"); n != 1 {
+		t.Fatalf("radarr recreated %d times while the backup ran, want once", n)
+	}
+	if j, err := w.handler.Store.Get(context.Background(), queued.ID); err != nil || j.Status != job.StatusRunning {
+		t.Fatalf("the backup = %+v, %v; want it still running while the recreate ran", j, err)
+	}
+
+	close(gate.release)
+	if done := w.awaitJobByID(t, restore.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the queued backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := stopsOf(w.fake, "radarr"); n != 0 {
+		t.Fatalf("radarr was stopped %d times by a backup whose scope did not name it", n)
+	}
+	if hasArchiveOf(dest, "radarr") {
+		t.Fatal("a backup archived a container that was not in its scope")
+	}
+	if got := containerState(t, w.fake, "radarr"); got != "running" {
+		t.Fatalf("radarr = %s, want it left running", got)
+	}
+}
+
+// A container excluded from the backup, or removed, between the submit and
+// the start is skipped, not stopped: the job archives the rest.
+func TestAppdataWiring_AQueuedBackupSkipsAContainerExcludedOrRemovedBeforeItStarts(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	appdataRoot := filepath.Join(w.root, "cache", "appdata")
+	addRunningAppdataContainer(t, w.fake, appdataRoot, "sonarr")
+	addRunningAppdataContainer(t, w.fake, appdataRoot, "lidarr")
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	gate := &gatedContainers{AppdataContainers: svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	svc.Containers = gate
+	wireAppdata(w.handler, w.registry, svc, &recordingPublisher{})
+	backedUp(t, w, "jellyfin")
+	archive := archiveNamed(t, dest, "jellyfin")
+
+	gate.arm(1)
+	req := `{"container":"jellyfin","archive":"` + archive + `","destinationId":"pool","confirm":true}`
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup/restore", req)
+	if status != http.StatusOK {
+		t.Fatalf("POST restore = %d %s", status, body)
+	}
+	var restore struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &restore)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restore job never started")
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup", ``)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup = %d %s", status, body)
+	}
+	var queued struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &queued)
+
+	ctx := context.Background()
+	if _, err := svc.SetPolicy(ctx, "sonarr", true, false); err != nil {
+		t.Fatalf("excluding sonarr: %v", err)
+	}
+	if err := w.fake.Stop(ctx, "id-lidarr"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.fake.Remove(ctx, "id-lidarr", container.RemoveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	stopsBefore := stopsOf(w.fake, "sonarr")
+
+	close(gate.release)
+	if done := w.awaitJobByID(t, restore.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the queued backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := stopsOf(w.fake, "sonarr") - stopsBefore; n != 0 {
+		t.Fatalf("sonarr was stopped %d times after it was excluded", n)
+	}
+	if hasArchiveOf(dest, "sonarr") || hasArchiveOf(dest, "lidarr") {
+		t.Fatal("the backup archived a container that was excluded or removed before it started")
+	}
+}
+
+// The weekly backup is the same job as POST /appdata/backup, so a container
+// added while it waits behind a restore is not part of it either.
+func TestScheduleTick_TheWeeklyBackupLeavesAContainerAddedWhileItWasQueued(t *testing.T) {
+	ctx := context.Background()
+	s := newScheduledAppdata(t)
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("seeding tick: %v", err)
+	}
+	if err := runAppdataNamed(ctx, s.svc, "sonarr"); err != nil {
+		t.Fatalf("backing up sonarr: %v", err)
+	}
+	archives, _, err := s.svc.ListArchives(ctx, "sonarr")
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("archives of sonarr = %v, %v", archives, err)
+	}
+
+	gate := &gatedContainers{AppdataContainers: s.svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	s.svc.Containers = gate
+	handler := &api.Handler{Appdata: s.svc, Scheduler: s.h.runner.Scheduler}
+	gate.arm(1)
+	restore, err := handler.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{
+		Container: "sonarr", Archive: archives[0].Name, DestinationId: archives[0].DestinationID, Confirm: true,
+	})
+	if err != nil {
+		t.Fatalf("RestoreAppdata: %v", err)
+	}
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restore job never started")
+	}
+
+	*s.clock = time.Date(2026, 10, 4, 4, 1, 0, 0, time.UTC)
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("tick in the window: %v", err)
+	}
+	var backupJob *job.Job
+	for _, j := range s.appdataJobs(t) {
+		backupJob = j
+	}
+	if backupJob == nil || backupJob.Status != job.StatusQueued {
+		t.Fatalf("the scheduled backup = %+v, want it queued behind the restore", backupJob)
+	}
+
+	addRunningAppdataContainer(t, s.fake, filepath.Dir(s.appdataAt), "radarr")
+
+	// Let the restore finish and hold the weekly backup as it starts. Its
+	// scope does not name radarr, so a recreate of radarr runs beside it.
+	restoreRelease := gate.release
+	gate.rearm()
+	close(restoreRelease)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the queued backup never started")
+	}
+	wireContainers(handler, s.h.registry, s.apps, s.halted.Load, func() bool { return true }, arrayActionAdmit(s.h.runner.Scheduler))
+	reconcileContainersAtStart(ctx, s.apps, s.halted.Load, func() bool { return true }, 10*time.Millisecond)
+	recreate, err := handler.RecreateApp(ctx, apiv1.RecreateAppParams{ID: "radarr"})
+	if err != nil {
+		t.Fatalf("RecreateApp: %v", err)
+	}
+	if done := awaitTerminal(t, s.h.jobs, recreate.ID.String()); done.Status != job.StatusSucceeded {
+		t.Fatalf("recreate of radarr while the backup runs: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := recreatesOf(s.fake, "radarr"); n != 1 {
+		t.Fatalf("radarr recreated %d times while the backup ran, want once", n)
+	}
+	if j, err := s.h.jobs.Get(ctx, backupJob.ID); err != nil || j.Status != job.StatusRunning {
+		t.Fatalf("the scheduled backup = %+v, %v; want it still running while the recreate ran", j, err)
+	}
+
+	close(gate.release)
+	if done := awaitTerminal(t, s.h.jobs, restore.ID.String()); done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := awaitTerminal(t, s.h.jobs, backupJob.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the scheduled backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := stopsOf(s.fake, "radarr"); n != 0 {
+		t.Fatalf("radarr was stopped %d times by a backup whose scope did not name it", n)
+	}
+	if hasArchiveOf(s.dest, "radarr") {
+		t.Fatal("the scheduled backup archived a container that was not in its scope")
 	}
 }
