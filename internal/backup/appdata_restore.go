@@ -455,7 +455,7 @@ func (a *AppdataService) FindArchive(ctx context.Context, containerName, archive
 	if err != nil {
 		return err
 	}
-	release, why := a.Backup.admitDestination(dest)
+	release, why := a.Backup.admitDestination(ctx, dest)
 	if why != "" {
 		return fmt.Errorf("destination %q cannot be read: %s", dest.ID, why)
 	}

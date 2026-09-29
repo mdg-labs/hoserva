@@ -176,10 +176,7 @@ func (h *Handler) RegisterExternalDisk(ctx context.Context, req *apiv1.RegisterE
 		Mountpoint:        mountpoint,
 		BackupDestination: req.BackupDestination.Or(false),
 	}
-	if err := ext.PutExternalDisk(ctx, row); err != nil {
-		if errors.Is(err, store.ErrExternalExists) {
-			return nil, errExternalExists(err)
-		}
+	if err := h.putExternalDisk(ctx, ext, row); err != nil {
 		return nil, err
 	}
 	apiDisk := externalToAPI(row, inv)
@@ -192,12 +189,49 @@ func (h *Handler) UpdateExternalDisk(ctx context.Context, req *apiv1.UpdateExter
 		return nil, err
 	}
 	if v, ok := req.BackupDestination.Get(); ok {
-		if err := h.externalStore().SetBackupDestination(ctx, row.Label, v); err != nil {
+		if err := h.setExternalBackupDestination(ctx, row.Label, v); err != nil {
 			return nil, err
 		}
 		row.BackupDestination = v
 	}
 	return h.externalAPI(ctx, row)
+}
+
+// backupDestinationsConfigured reports whether destinations are stored,
+// which is when an external disk's flag must create or remove the disk's
+// destination (doc 10 §1) rather than stand alone.
+func (h *Handler) backupDestinationsConfigured() bool {
+	return h.Backup != nil && h.Backup.Store != nil
+}
+
+func (h *Handler) putExternalDisk(ctx context.Context, ext *store.ExternalStore, row store.ExternalDisk) error {
+	var err error
+	if row.BackupDestination && h.backupDestinationsConfigured() {
+		err = h.Backup.RegisterExternalDisk(ctx, row)
+	} else {
+		err = ext.PutExternalDisk(ctx, row)
+	}
+	return mapExternalBackupError(row.Label, err)
+}
+
+func (h *Handler) setExternalBackupDestination(ctx context.Context, label string, enabled bool) error {
+	if !h.backupDestinationsConfigured() {
+		return h.externalStore().SetBackupDestination(ctx, label, enabled)
+	}
+	return mapExternalBackupError(label, h.Backup.SetExternalDestination(ctx, label, enabled))
+}
+
+func mapExternalBackupError(label string, err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, store.ErrExternalExists):
+		return errExternalExists(err)
+	case errors.Is(err, store.ErrExternalNotFound):
+		return errExternalNotFound(label)
+	default:
+		return mapBackupDestinationError(err)
+	}
 }
 
 func (h *Handler) MountExternalDisk(ctx context.Context, params apiv1.MountExternalDiskParams) (*apiv1.ExternalDisk, error) {

@@ -26,6 +26,9 @@ type backupRig struct {
 	db       *sql.DB
 	cfg      config
 	settings *api.SettingsService
+	// rebuild runs newBackupService again against the same database, as a
+	// daemon restart does.
+	rebuild func() (*backup.Service, error)
 }
 
 // newBackupRig builds the backup service the way main.go's run() does:
@@ -67,14 +70,17 @@ func newBackupRig(t *testing.T, passphrase string) *backupRig {
 	if err := os.MkdirAll(cfg.stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	svc, err := newBackupService(ctx, cfg, db, machineKey, recipient, settings, disk.NewFakeRunner(), api.NewBackupDestinationStore(db))
+	build := func() (*backup.Service, error) {
+		return newBackupService(ctx, cfg, db, machineKey, recipient, settings, disk.NewFakeRunner(), api.NewBackupDestinationStore(db))
+	}
+	svc, err := build()
 	if err != nil {
 		t.Fatalf("newBackupService: %v", err)
 	}
 	// Service.Run stages at a process-global temp path keyed by this
 	// timestamp, so a fixed clock keeps concurrent test packages apart.
 	svc.Now = func() time.Time { return time.Date(2026, 9, 27, 3, 0, 0, 0, time.UTC) }
-	return &backupRig{svc: svc, db: db, cfg: cfg, settings: settings}
+	return &backupRig{svc: svc, db: db, cfg: cfg, settings: settings, rebuild: build}
 }
 
 func TestNewBackupService_ConfiguresBootAndPoolDestinations(t *testing.T) {

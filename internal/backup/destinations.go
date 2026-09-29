@@ -44,6 +44,8 @@ type DestinationStore interface {
 	// otherwise.
 	SeedDestinations(ctx context.Context, ds []Destination) error
 	// DeleteDestination returns ErrDestinationNotFound for an unknown id.
+	// Deleting "external:<label>" also clears that disk's backup-destination
+	// flag, in the same transaction (ExternalDestinationStore).
 	DeleteDestination(ctx context.Context, id string) error
 	// RecordBackupSuccess sets the last successful backup time and clears
 	// the stale-alert marker, so a later staleness alerts again.
@@ -591,7 +593,7 @@ func (s *Service) TestDestination(ctx context.Context, id string) (TestResult, e
 	if err != nil {
 		return TestResult{}, err
 	}
-	release, refusal := s.admitDestination(dest)
+	release, refusal := s.admitDestination(ctx, dest)
 	if refusal != "" {
 		return TestResult{Error: refusal}, nil
 	}

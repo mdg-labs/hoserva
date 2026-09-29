@@ -50,6 +50,26 @@ func (s *ArrayStore) External() *ExternalStore {
 	return &ExternalStore{db: s.db, q: s.q}
 }
 
+// InTx runs fn in one transaction: fn gets an ExternalStore whose writes
+// belong to it, and the queries of the same transaction for any other
+// table that must change together with an external-disk row. fn returning
+// an error rolls everything back.
+func (s *ExternalStore) InTx(ctx context.Context, fn func(ext *ExternalStore, q *storedb.Queries) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: beginning external disk transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.q.WithTx(tx)
+	if err := fn(&ExternalStore{db: s.db, q: q}, q); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: committing external disk transaction: %w", err)
+	}
+	return nil
+}
+
 // PutExternalDisk inserts d. Unique-constraint collisions are
 // ErrExternalExists rather than a raw SQLite error.
 func (s *ExternalStore) PutExternalDisk(ctx context.Context, d ExternalDisk) error {

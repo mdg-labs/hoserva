@@ -171,7 +171,7 @@ type drillFetch struct {
 // held only for the copy, so a drill cannot hold up an array stop while it
 // verifies.
 func (s *Service) fetchNewest(ctx context.Context, dest Destination, dir string) (drillFetch, error) {
-	release, why := s.admitDestination(dest)
+	release, why := s.admitDestination(ctx, dest)
 	if why != "" {
 		return drillFetch{}, fmt.Errorf("the destination cannot be read now: %s", why)
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	storedb "github.com/mdg-labs/hoserva/internal/store/db"
 )
 
 func TestExternalStore_PutGetListAndBackupFlag(t *testing.T) {
@@ -64,5 +66,33 @@ func TestArrayStore_DoesNotStoreExternalRole(t *testing.T) {
 	err := arrays.PutArray(ctx, ArraySettings{CreatePolicy: "mfs", MinFreeSpace: "20G"}, disks)
 	if err == nil {
 		t.Fatal("PutArray accepted role=external — array_disks CHECK must refuse it")
+	}
+}
+
+func TestExternalStore_InTxRollsBackEveryWriteWhenFnFails(t *testing.T) {
+	ctx := context.Background()
+	st := migratedArrayDB(t).External()
+	d := ExternalDisk{Label: "usb", Device: "/dev/sde", Filesystem: "xfs", FSUUID: "uuid-usb", Mountpoint: "/mnt/disks/usb"}
+
+	errStop := errors.New("stop")
+	err := st.InTx(ctx, func(ext *ExternalStore, _ *storedb.Queries) error {
+		if err := ext.PutExternalDisk(ctx, d); err != nil {
+			return err
+		}
+		return errStop
+	})
+	if !errors.Is(err, errStop) {
+		t.Fatalf("InTx = %v, want the function's error", err)
+	}
+	if _, err := st.GetExternalDisk(ctx, "usb"); !errors.Is(err, ErrExternalNotFound) {
+		t.Fatalf("a write of a failed transaction survived: %v", err)
+	}
+
+	err = st.InTx(ctx, func(ext *ExternalStore, _ *storedb.Queries) error { return ext.PutExternalDisk(ctx, d) })
+	if err != nil {
+		t.Fatalf("InTx: %v", err)
+	}
+	if _, err := st.GetExternalDisk(ctx, "usb"); err != nil {
+		t.Fatalf("a committed write is missing: %v", err)
 	}
 }

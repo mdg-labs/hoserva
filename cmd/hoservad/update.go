@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -65,6 +66,9 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 	defaults[0].Path = filepath.Join(cfg.stateDir, "backups")
 	if err := svc.SeedDestinations(ctx, defaults); err != nil {
 		return nil, fmt.Errorf("seeding default backup destinations: %w", err)
+	}
+	if err := svc.ReconcileExternalDestinations(ctx); err != nil {
+		log.Printf("hoservad: reconciling external-disk backup destinations: %v", err)
 	}
 	return svc, nil
 }

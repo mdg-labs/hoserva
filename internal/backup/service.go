@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/pool"
 )
 
@@ -69,6 +70,17 @@ type Service struct {
 	// than raced against it. Nil never refuses — the zero-value default,
 	// matching a Service built before job.ArraySequence is wired to one.
 	PoolWriteGate *PoolWriteGate
+
+	// ExternalRoot is where external disks mount, /mnt/disks/<label> (Q72),
+	// a destination path is compared against by path component to decide
+	// whether the disk it lives on must be mounted before every write. Empty
+	// uses disk.ExternalMountRoot; a test points it at a directory it fully
+	// controls.
+	ExternalRoot string
+	// ExternalMounted reports whether path is a mount point in the kernel
+	// mount table. Nil reads /proc/self/mountinfo (disk.KernelMounts); a test
+	// injects a fake so an ejected disk is observable without a real mount.
+	ExternalMounted func(ctx context.Context, path string) (bool, error)
 
 	destMu sync.Mutex
 }
@@ -246,7 +258,7 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 			continue
 		}
 
-		release, why := s.admitDestination(dest)
+		release, why := s.admitDestination(ctx, dest)
 		if why != "" {
 			s.log("skipping destination %q: %s", dest.ID, why)
 			skipped = true
@@ -297,9 +309,13 @@ func (s *Service) loadDestinations(ctx context.Context) ([]Destination, error) {
 // bare, empty directory on the root filesystem — os.MkdirAll inside
 // writeArchive would happily create it there, the archive would be
 // written onto the boot device without saying so, and it would be hidden
-// the moment the pool mounts back over it. A destination anywhere else
-// (the boot device, an external disk, a remote) is unaffected by the
-// array's own mount state and is always admitted.
+// the moment the pool mounts back over it. A destination on an external
+// disk (under /mnt/disks/<label>) needs the same check against that
+// disk's own mount, for the same reason: with the disk ejected, the write
+// would create the directory on the boot device. It takes no PoolWriteGate
+// slot — the array's stop does not unmount an external disk. A destination
+// anywhere else (the boot device, a remote) is unaffected by any mount
+// state and is always admitted.
 //
 // PoolWriteGate.begin runs before the mount check itself (#409): once it
 // admits a write, job.ArraySequence.Stop's own Close call cannot return —
@@ -308,9 +324,15 @@ func (s *Service) loadDestinations(ctx context.Context) ([]Destination, error) {
 // live, then torn down before the write that check was guarding ever
 // reaches disk. A non-empty reason means the destination was not
 // admitted; release is then a no-op.
-func (s *Service) admitDestination(dest Destination) (release func(), reason string) {
+func (s *Service) admitDestination(ctx context.Context, dest Destination) (release func(), reason string) {
 	noop := func() {}
-	if dest.isRemote() || !underPoolRoot(dest.Path, s.poolRoot()) {
+	if dest.isRemote() {
+		return noop, ""
+	}
+	if mountPoint, ok := externalMountPoint(dest.Path, s.externalRoot()); ok {
+		return noop, s.externalMountRefusal(ctx, mountPoint)
+	}
+	if !underPoolRoot(dest.Path, s.poolRoot()) {
 		return noop, ""
 	}
 	release = noop
@@ -376,6 +398,54 @@ func (s *Service) writeDestination(ctx context.Context, dest Destination, archiv
 		return true, fmt.Errorf("pruning destination %q: %w", dest.ID, err)
 	}
 	return true, nil
+}
+
+// externalMountPoint returns the mount point of the external disk a path
+// under root belongs to: root/<label>, whatever lies below it. A path that
+// is root itself has no disk to be mounted, so root is returned and is
+// never in the mount table.
+func externalMountPoint(path, root string) (string, bool) {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	if !underPoolRoot(path, root) {
+		return "", false
+	}
+	rel := strings.TrimPrefix(strings.TrimPrefix(path, root), string(filepath.Separator))
+	if rel == "" {
+		return root, true
+	}
+	label, _, _ := strings.Cut(rel, string(filepath.Separator))
+	return filepath.Join(root, label), true
+}
+
+// externalMountRefusal is empty when mountPoint is confirmed mounted. A
+// mount table that cannot be read is a refusal too: an external
+// destination on an ejected disk would otherwise be created on the boot
+// device (doc 10 §1). The table is the kernel's mountinfo — the disk itself
+// is never listed or read (Q13).
+func (s *Service) externalMountRefusal(ctx context.Context, mountPoint string) string {
+	mounted, err := s.externalMounted(ctx, mountPoint)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("confirming the external disk is mounted at %q: %v", mountPoint, err)
+	case !mounted:
+		return fmt.Sprintf("the external disk is not mounted at %q", mountPoint)
+	}
+	return ""
+}
+
+func (s *Service) externalRoot() string {
+	if s.ExternalRoot != "" {
+		return s.ExternalRoot
+	}
+	return disk.ExternalMountRoot
+}
+
+func (s *Service) externalMounted(ctx context.Context, path string) (bool, error) {
+	if s.ExternalMounted != nil {
+		return s.ExternalMounted(ctx, path)
+	}
+	return disk.KernelMounts{}.IsMounted(ctx, path)
 }
 
 // poolRoot is PoolRoot's default, pool.CatchAllPath.

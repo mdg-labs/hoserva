@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
@@ -118,25 +120,58 @@ func (h *handler) CreateBackupDestination(ctx context.Context, req *apiv1.Create
 
 func (h *handler) DeleteBackupDestination(ctx context.Context, params apiv1.DeleteBackupDestinationParams) error {
 	h.backupMu.Lock()
-	defer h.backupMu.Unlock()
+	removed := h.removeBackupDestinationLocked(params.DestinationId)
+	h.backupMu.Unlock()
+	if !removed {
+		return &mockError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
+	}
+	if label, ok := strings.CutPrefix(params.DestinationId, "external:"); ok {
+		h.externalMu.Lock()
+		if d, exists := h.external[label]; exists {
+			d.BackupDestination = false
+			h.external[label] = d
+		}
+		h.externalMu.Unlock()
+	}
+	return nil
+}
+
+func (h *handler) removeBackupDestinationLocked(id string) bool {
 	for i, d := range h.backupDestinations {
-		if d.ID == params.DestinationId {
+		if d.ID == id {
 			h.backupDestinations = append(h.backupDestinations[:i], h.backupDestinations[i+1:]...)
-			return nil
+			return true
 		}
 	}
-	return &mockError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
+	return false
 }
 
 // TestBackupDestination reports success for any known destination: the
-// mock has no destination to write to.
+// mock has no destination to write to. An "external:<label>" destination
+// whose disk is not mounted is refused the way the daemon refuses it.
 func (h *handler) TestBackupDestination(ctx context.Context, params apiv1.TestBackupDestinationParams) (*apiv1.BackupDestinationTestResult, error) {
 	h.backupMu.Lock()
-	defer h.backupMu.Unlock()
+	known := false
 	for _, d := range h.backupDestinations {
 		if d.ID == params.DestinationId {
-			return &apiv1.BackupDestinationTestResult{Success: true}, nil
+			known = true
+			break
 		}
 	}
-	return nil, &mockError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
+	h.backupMu.Unlock()
+	if !known {
+		return nil, &mockError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
+	}
+	if label, ok := strings.CutPrefix(params.DestinationId, "external:"); ok {
+		h.externalMu.Lock()
+		disk, exists := h.external[label]
+		h.externalMu.Unlock()
+		if !exists || !disk.Mounted {
+			return &apiv1.BackupDestinationTestResult{
+				Success: false,
+				Error:   apiv1.NewOptNilString(fmt.Sprintf("the external disk is not mounted at %q", "/mnt/disks/"+label)),
+			}, nil
+		}
+	}
+	return &apiv1.BackupDestinationTestResult{Success: true}, nil
 }
