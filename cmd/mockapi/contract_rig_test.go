@@ -651,6 +651,13 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 			}
 			return nil
 		},
+		// StorageServicesReleased stands in for hoservad's
+		// storageTargetSync.Ready (#385): this rig has no storageTargetSync,
+		// so it reads the same gate StorageReady does. Like hoservad with no
+		// array configured, it is never true when the scenario has none.
+		StorageServicesReleased: func() bool {
+			return len(expected) > 0 && degradedGate.Ready()
+		},
 		Schedules:   scheduleSvc,
 		Settings:    settingsSvc,
 		UPS:         upsSvc,

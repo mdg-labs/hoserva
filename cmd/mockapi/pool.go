@@ -305,8 +305,10 @@ func mockSystemStatus(scenario string, activeJobs int32, maintenance, degradedAc
 		// succeeded (degradedAcknowledged) and the array is not
 		// currently in maintenance — an acknowledge attempted during
 		// maintenance sets degradedAcknowledged but is refused
-		// (array_services_not_started) before this ever reports true.
-		StorageServicesReleased: apiv1.NewOptBool(!maintenance && (scenario != "degraded" || degradedAcknowledged)),
+		// (array_services_not_started) before this ever reports true. With
+		// no array at all (mockArrayDisks is nil) hoservad's storage target
+		// is never marked ready, so nothing is ever released.
+		StorageServicesReleased: apiv1.NewOptBool(mockArrayDisks(scenario) != nil && !maintenance && (scenario != "degraded" || degradedAcknowledged)),
 	}
 	if scenario == "degraded" {
 		status.ArrayDegraded = apiv1.NewOptBool(true)

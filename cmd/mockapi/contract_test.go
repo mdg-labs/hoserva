@@ -99,6 +99,28 @@ func TestContract_MockMatchesProductionValidation(t *testing.T) {
 	assertContractNoValidCase(t, covered, hasValid)
 }
 
+// TestContract_StorageServicesReleasedWithNoArray compares the one response
+// field the status-code contract above cannot: with no array configured
+// hoservad never marks storage ready, so GetStatus reports
+// storageServicesReleased=false and the mock must too (#429).
+func TestContract_StorageServicesReleasedWithNoArray(t *testing.T) {
+	ctx := context.Background()
+	prod, mock := newContractRig(t, "fresh-install")
+	if mockArrayDisks("fresh-install") != nil {
+		t.Fatal("fresh-install has an array; this test needs a scenario with none")
+	}
+	for name, h := range map[string]apiv1.Handler{"production": prod, "mock": mock} {
+		status, err := h.GetStatus(ctx)
+		if err != nil {
+			t.Fatalf("%s GetStatus: %v", name, err)
+		}
+		released, set := status.StorageServicesReleased.Get()
+		if !set || released {
+			t.Errorf("%s storageServicesReleased = (%v, set=%v), want (false, set=true) with no array", name, released, set)
+		}
+	}
+}
+
 // assertContractCoverage fails for any apiv1.Handler operation that is
 // neither in contractCases nor contractSkip: a new operation with no
 // table entry fails this test until one of the two is added (#272's own
