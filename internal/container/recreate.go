@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	dockercontainer "github.com/docker/docker/api/types/container"
-	dockerimage "github.com/docker/docker/api/types/image"
-	dockermount "github.com/docker/docker/api/types/mount"
-	dockernetwork "github.com/docker/docker/api/types/network"
+	dockercontainer "github.com/moby/moby/api/types/container"
+	dockermount "github.com/moby/moby/api/types/mount"
+	dockernetwork "github.com/moby/moby/api/types/network"
+	dockerclient "github.com/moby/moby/client"
 )
 
 const (
@@ -45,7 +45,7 @@ func (c *EngineClient) Recreate(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if old.ContainerJSONBase == nil || old.Config == nil || old.HostConfig == nil {
+	if old.Config == nil || old.HostConfig == nil {
 		return fmt.Errorf("container: the Engine returned an incomplete description of %q", ct.Name)
 	}
 	if old.HostConfig.AutoRemove {
@@ -60,7 +60,12 @@ func (c *EngineClient) Recreate(ctx context.Context, id string) error {
 
 	cfg, host, nets := recreateSpec(old)
 	createCtx, cancel := context.WithTimeout(ctx, lifecycleTimeout)
-	created, err := c.cli.ContainerCreate(createCtx, cfg, host, nets, nil, name+newNameSuffix)
+	created, err := c.cli.ContainerCreate(createCtx, dockerclient.ContainerCreateOptions{
+		Config:           cfg,
+		HostConfig:       host,
+		NetworkingConfig: nets,
+		Name:             name + newNameSuffix,
+	})
 	cancel()
 	if err != nil {
 		return fmt.Errorf("creating the replacement container (the existing container is untouched): %w", mapEngineErr(err))
@@ -78,31 +83,31 @@ func (c *EngineClient) swap(ctx context.Context, old dockercontainer.InspectResp
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*lifecycleTimeout)
 		defer cancel()
 		if startedNew {
-			if err := c.cli.ContainerStop(rctx, newID, dockercontainer.StopOptions{}); err != nil {
+			if _, err := c.cli.ContainerStop(rctx, newID, dockerclient.ContainerStopOptions{}); err != nil {
 				errs = append(errs, fmt.Errorf("stopping the replacement: %w", err))
 			}
 		}
 		if renamedNew {
-			if err := c.cli.ContainerRename(rctx, newID, name+newNameSuffix); err != nil {
+			if _, err := c.cli.ContainerRename(rctx, newID, dockerclient.ContainerRenameOptions{NewName: name + newNameSuffix}); err != nil {
 				errs = append(errs, fmt.Errorf("renaming the replacement aside: %w", err))
 			}
 		}
 		originalRestored := true
 		if renamedOld {
-			if err := c.cli.ContainerRename(rctx, old.ID, name); err != nil {
+			if _, err := c.cli.ContainerRename(rctx, old.ID, dockerclient.ContainerRenameOptions{NewName: name}); err != nil {
 				originalRestored = false
 				errs = append(errs, fmt.Errorf("giving the original container its name back (it is now called %s): %w", name+oldNameSuffix, err))
 			}
 		}
 		if stoppedOld && wasRunning {
-			if err := c.cli.ContainerStart(rctx, old.ID, dockercontainer.StartOptions{}); err != nil {
+			if _, err := c.cli.ContainerStart(rctx, old.ID, dockerclient.ContainerStartOptions{}); err != nil {
 				originalRestored = false
 				errs = append(errs, fmt.Errorf("starting the original container again: %w", err))
 			}
 		}
 		if !originalRestored {
 			errs = append(errs, fmt.Errorf("the replacement (%s) is left in place, because the original could not be restored", name+newNameSuffix))
-		} else if err := c.cli.ContainerRemove(rctx, newID, dockercontainer.RemoveOptions{}); err != nil {
+		} else if _, err := c.cli.ContainerRemove(rctx, newID, dockerclient.ContainerRemoveOptions{}); err != nil {
 			errs = append(errs, fmt.Errorf("removing the replacement (%s): %w", name+newNameSuffix, err))
 		}
 		if len(errs) > 1 {
@@ -123,19 +128,22 @@ func (c *EngineClient) swap(ctx context.Context, old dockercontainer.InspectResp
 	if wasRunning {
 		stoppedOld = true
 		if err := step(func(ctx context.Context) error {
-			return c.cli.ContainerStop(ctx, old.ID, dockercontainer.StopOptions{})
+			_, err := c.cli.ContainerStop(ctx, old.ID, dockerclient.ContainerStopOptions{})
+			return err
 		}); err != nil {
 			return rollback("stopping the original container", err)
 		}
 	}
 	if err := step(func(ctx context.Context) error {
-		return c.cli.ContainerRename(ctx, old.ID, name+oldNameSuffix)
+		_, err := c.cli.ContainerRename(ctx, old.ID, dockerclient.ContainerRenameOptions{NewName: name + oldNameSuffix})
+		return err
 	}); err != nil {
 		return rollback("renaming the original container aside", err)
 	}
 	renamedOld = true
 	if err := step(func(ctx context.Context) error {
-		return c.cli.ContainerRename(ctx, newID, name)
+		_, err := c.cli.ContainerRename(ctx, newID, dockerclient.ContainerRenameOptions{NewName: name})
+		return err
 	}); err != nil {
 		return rollback("naming the replacement container", err)
 	}
@@ -143,13 +151,15 @@ func (c *EngineClient) swap(ctx context.Context, old dockercontainer.InspectResp
 	if wasRunning {
 		startedNew = true
 		if err := step(func(ctx context.Context) error {
-			return c.cli.ContainerStart(ctx, newID, dockercontainer.StartOptions{})
+			_, err := c.cli.ContainerStart(ctx, newID, dockerclient.ContainerStartOptions{})
+			return err
 		}); err != nil {
 			return rollback("starting the replacement container", err)
 		}
 	}
 	if err := step(func(ctx context.Context) error {
-		return c.cli.ContainerRemove(ctx, old.ID, dockercontainer.RemoveOptions{})
+		_, err := c.cli.ContainerRemove(ctx, old.ID, dockerclient.ContainerRemoveOptions{})
+		return err
 	}); err != nil {
 		return fmt.Errorf("the container was replaced, but the original (%s) could not be removed: %w", name+oldNameSuffix, mapEngineErr(err))
 	}
@@ -161,7 +171,7 @@ func (c *EngineClient) swap(ctx context.Context, old dockercontainer.InspectResp
 func (c *EngineClient) pull(ctx context.Context, ref string) error {
 	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
-	rc, err := c.cli.ImagePull(ctx, ref, dockerimage.PullOptions{})
+	rc, err := c.cli.ImagePull(ctx, ref, dockerclient.ImagePullOptions{})
 	if err != nil {
 		return mapEngineErr(err)
 	}

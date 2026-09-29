@@ -28,7 +28,7 @@ type FakeProvider struct {
 // NewFakeProvider returns a FakeProvider that reports a recent, reachable
 // Engine and no containers or images until scripted otherwise.
 func NewFakeProvider() *FakeProvider {
-	return &FakeProvider{version: EngineVersion{Version: "27.3.1", APIVersion: "1.47", MinAPIVersion: "1.24"}}
+	return &FakeProvider{version: EngineVersion{Version: "29.8.1", APIVersion: "1.54", MinAPIVersion: "1.40"}}
 }
 
 // SetVersion scripts the EngineVersion Version returns.

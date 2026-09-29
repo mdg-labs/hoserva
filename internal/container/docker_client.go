@@ -3,18 +3,13 @@ package container
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
 	"github.com/distribution/reference"
-	dockertypes "github.com/docker/docker/api/types"
-	dockercontainer "github.com/docker/docker/api/types/container"
-	dockerevents "github.com/docker/docker/api/types/events"
-	dockerimage "github.com/docker/docker/api/types/image"
-	dockernetwork "github.com/docker/docker/api/types/network"
-	dockerclient "github.com/docker/docker/client"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	dockercontainer "github.com/moby/moby/api/types/container"
+	dockerimage "github.com/moby/moby/api/types/image"
+	dockerclient "github.com/moby/moby/client"
 )
 
 // engineTimeout bounds every Engine API call this package makes, so a
@@ -36,21 +31,21 @@ type EngineClient struct {
 // engineAPI is the part of the Docker SDK client EngineClient calls, so
 // the multi-step Recreate can be tested against a scripted Engine.
 type engineAPI interface {
-	ServerVersion(ctx context.Context) (dockertypes.Version, error)
+	ServerVersion(ctx context.Context, options dockerclient.ServerVersionOptions) (dockerclient.ServerVersionResult, error)
 	ClientVersion() string
-	ContainerList(ctx context.Context, options dockercontainer.ListOptions) ([]dockercontainer.Summary, error)
-	ContainerInspect(ctx context.Context, containerID string) (dockercontainer.InspectResponse, error)
-	ContainerCreate(ctx context.Context, config *dockercontainer.Config, hostConfig *dockercontainer.HostConfig, networkingConfig *dockernetwork.NetworkingConfig, platform *ocispec.Platform, containerName string) (dockercontainer.CreateResponse, error)
-	ContainerStart(ctx context.Context, containerID string, options dockercontainer.StartOptions) error
-	ContainerStop(ctx context.Context, containerID string, options dockercontainer.StopOptions) error
-	ContainerRestart(ctx context.Context, containerID string, options dockercontainer.StopOptions) error
-	ContainerRemove(ctx context.Context, containerID string, options dockercontainer.RemoveOptions) error
-	ContainerRename(ctx context.Context, containerID, newContainerName string) error
-	ContainerLogs(ctx context.Context, containerID string, options dockercontainer.LogsOptions) (io.ReadCloser, error)
-	ContainerStats(ctx context.Context, containerID string, stream bool) (dockercontainer.StatsResponseReader, error)
-	ImageList(ctx context.Context, options dockerimage.ListOptions) ([]dockerimage.Summary, error)
-	ImagePull(ctx context.Context, refStr string, options dockerimage.PullOptions) (io.ReadCloser, error)
-	Events(ctx context.Context, options dockerevents.ListOptions) (<-chan dockerevents.Message, <-chan error)
+	ContainerList(ctx context.Context, options dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error)
+	ContainerInspect(ctx context.Context, containerID string, options dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error)
+	ContainerCreate(ctx context.Context, options dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error)
+	ContainerStart(ctx context.Context, containerID string, options dockerclient.ContainerStartOptions) (dockerclient.ContainerStartResult, error)
+	ContainerStop(ctx context.Context, containerID string, options dockerclient.ContainerStopOptions) (dockerclient.ContainerStopResult, error)
+	ContainerRestart(ctx context.Context, containerID string, options dockerclient.ContainerRestartOptions) (dockerclient.ContainerRestartResult, error)
+	ContainerRemove(ctx context.Context, containerID string, options dockerclient.ContainerRemoveOptions) (dockerclient.ContainerRemoveResult, error)
+	ContainerRename(ctx context.Context, containerID string, options dockerclient.ContainerRenameOptions) (dockerclient.ContainerRenameResult, error)
+	ContainerLogs(ctx context.Context, containerID string, options dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error)
+	ContainerStats(ctx context.Context, containerID string, options dockerclient.ContainerStatsOptions) (dockerclient.ContainerStatsResult, error)
+	ImageList(ctx context.Context, options dockerclient.ImageListOptions) (dockerclient.ImageListResult, error)
+	ImagePull(ctx context.Context, refStr string, options dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error)
+	Events(ctx context.Context, options dockerclient.EventsListOptions) dockerclient.EventsResult
 }
 
 var _ engineAPI = (*dockerclient.Client)(nil)
@@ -58,7 +53,7 @@ var _ engineAPI = (*dockerclient.Client)(nil)
 // NewEngineClient returns an EngineClient talking to DOCKER_HOST, or the
 // Engine's own default Unix socket when it is unset.
 func NewEngineClient() (*EngineClient, error) {
-	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	cli, err := dockerclient.New(dockerclient.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("container: building docker client: %w", err)
 	}
@@ -82,7 +77,7 @@ func wrapEngineErr(err error) error {
 // Version reports EngineVersion.APIVersion as the client's own negotiated
 // API version (cli.ClientVersion(), Q38) — never v.APIVersion from
 // ServerVersion's response, which is the server's own maximum supported
-// version, not what NewEngineClient's WithAPIVersionNegotiation() actually
+// version, not what the client's default API version negotiation actually
 // settled on for every other call this Provider makes. ServerVersion's
 // request is itself what triggers that negotiation (its first call resolves
 // the API path through the same version check every other request does),
@@ -90,7 +85,7 @@ func wrapEngineErr(err error) error {
 func (c *EngineClient) Version(ctx context.Context) (EngineVersion, error) {
 	ctx, cancel := context.WithTimeout(ctx, engineTimeout)
 	defer cancel()
-	v, err := c.cli.ServerVersion(ctx)
+	v, err := c.cli.ServerVersion(ctx, dockerclient.ServerVersionOptions{})
 	if err != nil {
 		return EngineVersion{}, wrapEngineErr(err)
 	}
@@ -100,12 +95,12 @@ func (c *EngineClient) Version(ctx context.Context) (EngineVersion, error) {
 func (c *EngineClient) List(ctx context.Context) ([]Container, error) {
 	ctx, cancel := context.WithTimeout(ctx, engineTimeout)
 	defer cancel()
-	summaries, err := c.cli.ContainerList(ctx, dockercontainer.ListOptions{All: true})
+	res, err := c.cli.ContainerList(ctx, dockerclient.ContainerListOptions{All: true})
 	if err != nil {
 		return nil, wrapEngineErr(err)
 	}
-	out := make([]Container, 0, len(summaries))
-	for _, s := range summaries {
+	out := make([]Container, 0, len(res.Items))
+	for _, s := range res.Items {
 		out = append(out, containerFromSummary(s))
 	}
 	return out, nil
@@ -130,12 +125,12 @@ func (c *EngineClient) Inspect(ctx context.Context, id string) (Container, error
 func (c *EngineClient) Images(ctx context.Context) ([]Image, error) {
 	ctx, cancel := context.WithTimeout(ctx, engineTimeout)
 	defer cancel()
-	summaries, err := c.cli.ImageList(ctx, dockerimage.ListOptions{})
+	res, err := c.cli.ImageList(ctx, dockerclient.ImageListOptions{})
 	if err != nil {
 		return nil, wrapEngineErr(err)
 	}
-	out := make([]Image, 0, len(summaries))
-	for _, s := range summaries {
+	out := make([]Image, 0, len(res.Items))
+	for _, s := range res.Items {
 		out = append(out, imageFromSummary(s))
 	}
 	return out, nil
@@ -154,8 +149,12 @@ func containerFromSummary(s dockercontainer.Summary) Container {
 	repo, tag := splitImageRef(s.Image)
 	ports := make([]Port, 0, len(s.Ports))
 	for _, p := range s.Ports {
+		hostIP := ""
+		if p.IP.IsValid() {
+			hostIP = p.IP.String()
+		}
 		ports = append(ports, Port{
-			HostIP:        p.IP,
+			HostIP:        hostIP,
 			HostPort:      p.PublicPort,
 			ContainerPort: p.PrivatePort,
 			Protocol:      p.Type,

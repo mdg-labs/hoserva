@@ -3,15 +3,19 @@ package container
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"math"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
-	dockercontainer "github.com/docker/docker/api/types/container"
-	dockerevents "github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	dockercontainer "github.com/moby/moby/api/types/container"
+	dockerevents "github.com/moby/moby/api/types/events"
+	dockerclient "github.com/moby/moby/client"
 )
 
 func TestHealthFromStatus(t *testing.T) {
@@ -132,19 +136,19 @@ type logsEngine struct {
 	engineAPI
 	stream []byte
 	tty    bool
-	opts   dockercontainer.LogsOptions
+	opts   dockerclient.ContainerLogsOptions
 	closed bool
 }
 
-func (e *logsEngine) ContainerList(context.Context, dockercontainer.ListOptions) ([]dockercontainer.Summary, error) {
-	return []dockercontainer.Summary{{ID: "c1", Names: []string{"/jellyfin"}, State: "running"}}, nil
+func (e *logsEngine) ContainerList(context.Context, dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error) {
+	return dockerclient.ContainerListResult{Items: []dockercontainer.Summary{{ID: "c1", Names: []string{"/jellyfin"}, State: "running"}}}, nil
 }
 
-func (e *logsEngine) ContainerInspect(context.Context, string) (dockercontainer.InspectResponse, error) {
-	return dockercontainer.InspectResponse{Config: &dockercontainer.Config{Tty: e.tty}}, nil
+func (e *logsEngine) ContainerInspect(context.Context, string, dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error) {
+	return dockerclient.ContainerInspectResult{Container: dockercontainer.InspectResponse{Config: &dockercontainer.Config{Tty: e.tty}}}, nil
 }
 
-func (e *logsEngine) ContainerLogs(_ context.Context, _ string, o dockercontainer.LogsOptions) (io.ReadCloser, error) {
+func (e *logsEngine) ContainerLogs(_ context.Context, _ string, o dockerclient.ContainerLogsOptions) (dockerclient.ContainerLogsResult, error) {
 	e.opts = o
 	return &trackedCloser{Reader: bytes.NewReader(e.stream), closed: &e.closed}, nil
 }
@@ -159,12 +163,19 @@ func (c *trackedCloser) Close() error {
 	return nil
 }
 
+// writeFrame appends one Engine stream frame: a stream byte, three zero
+// bytes and the payload length as a big-endian uint32, then the payload.
+func writeFrame(buf *bytes.Buffer, stream stdcopy.StdType, payload string) {
+	header := [8]byte{byte(stream)}
+	binary.BigEndian.PutUint32(header[4:], uint32(len(payload)))
+	buf.Write(header[:])
+	buf.WriteString(payload)
+}
+
 func TestLogs_StripsTheEnginesStreamFraming(t *testing.T) {
 	var buf bytes.Buffer
-	w := stdcopy.NewStdWriter(&buf, stdcopy.Stdout)
-	_, _ = w.Write([]byte("hello\n"))
-	e := stdcopy.NewStdWriter(&buf, stdcopy.Stderr)
-	_, _ = e.Write([]byte("oops\n"))
+	writeFrame(&buf, stdcopy.Stdout, "hello\n")
+	writeFrame(&buf, stdcopy.Stderr, "oops\n")
 	eng := &logsEngine{stream: buf.Bytes()}
 
 	rc, err := (&EngineClient{cli: eng}).Logs(context.Background(), "jellyfin", LogOptions{Tail: 50, Follow: true})
@@ -215,16 +226,16 @@ func TestLogs_UnknownContainer(t *testing.T) {
 type removeEngine struct {
 	engineAPI
 	state   dockercontainer.ContainerState
-	removed *dockercontainer.RemoveOptions
+	removed *dockerclient.ContainerRemoveOptions
 }
 
-func (e *removeEngine) ContainerList(context.Context, dockercontainer.ListOptions) ([]dockercontainer.Summary, error) {
-	return []dockercontainer.Summary{{ID: "c1", Names: []string{"/jellyfin"}, State: e.state}}, nil
+func (e *removeEngine) ContainerList(context.Context, dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error) {
+	return dockerclient.ContainerListResult{Items: []dockercontainer.Summary{{ID: "c1", Names: []string{"/jellyfin"}, State: e.state}}}, nil
 }
 
-func (e *removeEngine) ContainerRemove(_ context.Context, _ string, o dockercontainer.RemoveOptions) error {
+func (e *removeEngine) ContainerRemove(_ context.Context, _ string, o dockerclient.ContainerRemoveOptions) (dockerclient.ContainerRemoveResult, error) {
 	e.removed = &o
-	return nil
+	return dockerclient.ContainerRemoveResult{}, nil
 }
 
 func TestEngineRemove_RefusesALiveContainerAndNeverForces(t *testing.T) {
@@ -252,15 +263,50 @@ func TestEngineRemove_RefusesALiveContainerAndNeverForces(t *testing.T) {
 	}
 }
 
+// statsEngine serves one stats sample.
+type statsEngine struct {
+	engineAPI
+	body string
+	opts dockerclient.ContainerStatsOptions
+}
+
+func (e *statsEngine) ContainerList(context.Context, dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error) {
+	return dockerclient.ContainerListResult{Items: []dockercontainer.Summary{{ID: "c1", Names: []string{"/jellyfin"}, State: "running"}}}, nil
+}
+
+func (e *statsEngine) ContainerStats(_ context.Context, _ string, o dockerclient.ContainerStatsOptions) (dockerclient.ContainerStatsResult, error) {
+	e.opts = o
+	return dockerclient.ContainerStatsResult{Body: io.NopCloser(strings.NewReader(e.body))}, nil
+}
+
+// The CPU share is the delta against the previous sample, which the Engine
+// only includes when asked for it: without IncludePreviousSample every
+// reading would report 0% CPU.
+func TestEngineStats_AsksForThePreviousSampleAndReducesIt(t *testing.T) {
+	eng := &statsEngine{body: `{"read":"2026-09-28T12:00:00Z","cpu_stats":{"cpu_usage":{"total_usage":300},"system_cpu_usage":2000,"online_cpus":4},"precpu_stats":{"cpu_usage":{"total_usage":100},"system_cpu_usage":1000},"memory_stats":{"usage":1000,"limit":8000}}`}
+	got, err := (&EngineClient{cli: eng}).Stats(context.Background(), "jellyfin")
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if eng.opts.Stream || !eng.opts.IncludePreviousSample {
+		t.Fatalf("stats options = %+v, want one sample that includes the previous one", eng.opts)
+	}
+	if math.Abs(got.CPUPercent-80) > 1e-9 || got.MemoryBytes != 1000 || got.MemoryLimitBytes != 8000 {
+		t.Fatalf("Stats = %+v, want 80%% CPU and the memory figures", got)
+	}
+}
+
 // eventsEngine feeds Watch one canned event stream.
 type eventsEngine struct {
 	engineAPI
 	msgs chan dockerevents.Message
 	errs chan error
+	opts dockerclient.EventsListOptions
 }
 
-func (e *eventsEngine) Events(context.Context, dockerevents.ListOptions) (<-chan dockerevents.Message, <-chan error) {
-	return e.msgs, e.errs
+func (e *eventsEngine) Events(_ context.Context, o dockerclient.EventsListOptions) dockerclient.EventsResult {
+	e.opts = o
+	return dockerclient.EventsResult{Messages: e.msgs, Err: e.errs}
 }
 
 func TestEngineWatch_DeliversEventsAndReportsStreamFailure(t *testing.T) {
@@ -278,5 +324,8 @@ func TestEngineWatch_DeliversEventsAndReportsStreamFailure(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].State != "exited" || got[0].Name != "jellyfin" {
 		t.Fatalf("delivered %+v, want the one die event and not the attach event", got)
+	}
+	if want := (dockerclient.Filters{"type": {"container": true}}); !reflect.DeepEqual(eng.opts.Filters, want) {
+		t.Fatalf("event filters = %v, want only container events %v", eng.opts.Filters, want)
 	}
 }

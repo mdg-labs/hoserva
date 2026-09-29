@@ -5,16 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
 
-	dockercontainer "github.com/docker/docker/api/types/container"
-	dockerimage "github.com/docker/docker/api/types/image"
-	dockermount "github.com/docker/docker/api/types/mount"
-	dockernetwork "github.com/docker/docker/api/types/network"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	dockercontainer "github.com/moby/moby/api/types/container"
+	dockermount "github.com/moby/moby/api/types/mount"
+	dockernetwork "github.com/moby/moby/api/types/network"
+	dockerclient "github.com/moby/moby/client"
 )
 
 // scriptedEngine is an Engine holding one container, recording every call
@@ -52,12 +52,10 @@ func newScriptedEngine(running bool) *scriptedEngine {
 		fail:  map[string]error{},
 		newID: newContainerID,
 		info: dockercontainer.InspectResponse{
-			ContainerJSONBase: &dockercontainer.ContainerJSONBase{
-				ID:         oldContainerID,
-				Name:       "/jellyfin",
-				State:      &dockercontainer.State{Status: dockercontainer.ContainerState(state), Running: running},
-				HostConfig: &dockercontainer.HostConfig{Binds: []string{"/mnt/cache/appdata/jellyfin:/config"}},
-			},
+			ID:         oldContainerID,
+			Name:       "/jellyfin",
+			State:      &dockercontainer.State{Status: dockercontainer.ContainerState(state), Running: running},
+			HostConfig: &dockercontainer.HostConfig{Binds: []string{"/mnt/cache/appdata/jellyfin:/config"}},
 			Config: &dockercontainer.Config{
 				Image:    "lscr.io/linuxserver/jellyfin:10.9.7",
 				Hostname: oldContainerID[:12],
@@ -85,26 +83,36 @@ func (e *scriptedEngine) recorded() []string {
 	return append([]string(nil), e.calls...)
 }
 
-func (e *scriptedEngine) ContainerList(ctx context.Context, o dockercontainer.ListOptions) ([]dockercontainer.Summary, error) {
-	return []dockercontainer.Summary{{ID: oldContainerID, Names: []string{"/jellyfin"}, State: e.info.State.Status}}, nil
+func (e *scriptedEngine) ContainerList(ctx context.Context, o dockerclient.ContainerListOptions) (dockerclient.ContainerListResult, error) {
+	return dockerclient.ContainerListResult{Items: []dockercontainer.Summary{{ID: oldContainerID, Names: []string{"/jellyfin"}, State: e.info.State.Status}}}, nil
 }
 
-func (e *scriptedEngine) ContainerInspect(ctx context.Context, id string) (dockercontainer.InspectResponse, error) {
-	return e.info, nil
+func (e *scriptedEngine) ContainerInspect(ctx context.Context, id string, o dockerclient.ContainerInspectOptions) (dockerclient.ContainerInspectResult, error) {
+	return dockerclient.ContainerInspectResult{Container: e.info}, nil
 }
 
-func (e *scriptedEngine) ImagePull(ctx context.Context, ref string, o dockerimage.PullOptions) (io.ReadCloser, error) {
+// pullStream is the body of a scripted image pull: only Read and Close
+// are used by EngineClient.pull.
+type pullStream struct {
+	io.ReadCloser
+	dockerclient.ImagePullResponse
+}
+
+func (p pullStream) Read(b []byte) (int, error) { return p.ReadCloser.Read(b) }
+func (p pullStream) Close() error               { return p.ReadCloser.Close() }
+
+func (e *scriptedEngine) ImagePull(ctx context.Context, ref string, o dockerclient.ImagePullOptions) (dockerclient.ImagePullResponse, error) {
 	if err := e.record("pull "+ref, "pull "+ref); err != nil {
 		return nil, err
 	}
-	return io.NopCloser(strings.NewReader(e.pullMsg)), nil
+	return pullStream{ReadCloser: io.NopCloser(strings.NewReader(e.pullMsg))}, nil
 }
 
-func (e *scriptedEngine) ContainerCreate(ctx context.Context, c *dockercontainer.Config, h *dockercontainer.HostConfig, n *dockernetwork.NetworkingConfig, p *ocispec.Platform, name string) (dockercontainer.CreateResponse, error) {
-	if err := e.record("create "+name, "create"); err != nil {
-		return dockercontainer.CreateResponse{}, err
+func (e *scriptedEngine) ContainerCreate(ctx context.Context, o dockerclient.ContainerCreateOptions) (dockerclient.ContainerCreateResult, error) {
+	if err := e.record("create "+o.Name, "create"); err != nil {
+		return dockerclient.ContainerCreateResult{}, err
 	}
-	return dockercontainer.CreateResponse{ID: e.newID}, nil
+	return dockerclient.ContainerCreateResult{ID: e.newID}, nil
 }
 
 func (e *scriptedEngine) step(op string, id string) error {
@@ -124,34 +132,34 @@ func (e *scriptedEngine) label(id string) string {
 	return id
 }
 
-func (e *scriptedEngine) ContainerStop(ctx context.Context, id string, o dockercontainer.StopOptions) error {
+func (e *scriptedEngine) ContainerStop(ctx context.Context, id string, o dockerclient.ContainerStopOptions) (dockerclient.ContainerStopResult, error) {
 	e.mu.Lock()
 	e.stopCtx = ctx
 	e.mu.Unlock()
-	return e.step("stop", id)
+	return dockerclient.ContainerStopResult{}, e.step("stop", id)
 }
 
-func (e *scriptedEngine) ContainerStart(ctx context.Context, id string, o dockercontainer.StartOptions) error {
+func (e *scriptedEngine) ContainerStart(ctx context.Context, id string, o dockerclient.ContainerStartOptions) (dockerclient.ContainerStartResult, error) {
 	e.mu.Lock()
 	e.stopCtxDoneAtStart = e.stopCtx != nil && e.stopCtx.Err() != nil
 	e.mu.Unlock()
-	return e.step("start", id)
+	return dockerclient.ContainerStartResult{}, e.step("start", id)
 }
 
-func (e *scriptedEngine) ContainerRename(ctx context.Context, id, name string) error {
+func (e *scriptedEngine) ContainerRename(ctx context.Context, id string, o dockerclient.ContainerRenameOptions) (dockerclient.ContainerRenameResult, error) {
 	e.mu.Lock()
-	e.calls = append(e.calls, fmt.Sprintf("rename %s -> %s", e.label(id), name))
-	err := e.fail["rename "+e.label(id)+" -> "+name]
+	e.calls = append(e.calls, fmt.Sprintf("rename %s -> %s", e.label(id), o.NewName))
+	err := e.fail["rename "+e.label(id)+" -> "+o.NewName]
 	e.mu.Unlock()
-	return err
+	return dockerclient.ContainerRenameResult{}, err
 }
 
-func (e *scriptedEngine) ContainerRemove(ctx context.Context, id string, o dockercontainer.RemoveOptions) error {
+func (e *scriptedEngine) ContainerRemove(ctx context.Context, id string, o dockerclient.ContainerRemoveOptions) (dockerclient.ContainerRemoveResult, error) {
 	err := e.step("remove", id)
 	if o.RemoveVolumes || o.Force {
-		return errors.New("Recreate must never remove volumes or force a removal")
+		return dockerclient.ContainerRemoveResult{}, errors.New("Recreate must never remove volumes or force a removal")
 	}
-	return err
+	return dockerclient.ContainerRemoveResult{}, err
 }
 
 func recreate(t *testing.T, e *scriptedEngine) error {
@@ -383,8 +391,8 @@ func TestRecreateSpec_CarriesAnonymousVolumesAndClearsRuntimeValues(t *testing.T
 		{Type: dockermount.TypeVolume, Name: "ro-vol", Destination: "/cfg", RW: false},
 	}
 	old.NetworkSettings = &dockercontainer.NetworkSettings{Networks: map[string]*dockernetwork.EndpointSettings{
-		"bridge": {NetworkID: "n1", EndpointID: "e1", IPAddress: "172.17.0.2"},
-		"lan":    {Aliases: []string{"jellyfin", oldContainerID[:12]}, IPAMConfig: &dockernetwork.EndpointIPAMConfig{IPv4Address: "10.0.0.5"}, IPAddress: "10.0.0.5"},
+		"bridge": {NetworkID: "n1", EndpointID: "e1", IPAddress: netip.MustParseAddr("172.17.0.2")},
+		"lan":    {Aliases: []string{"jellyfin", oldContainerID[:12]}, IPAMConfig: &dockernetwork.EndpointIPAMConfig{IPv4Address: netip.MustParseAddr("10.0.0.5")}, IPAddress: netip.MustParseAddr("10.0.0.5")},
 		"host":   {},
 	}}
 
@@ -419,7 +427,7 @@ func TestRecreateSpec_CarriesAnonymousVolumesAndClearsRuntimeValues(t *testing.T
 		t.Fatal("the host network was given an endpoint")
 	}
 	lan := nets.EndpointsConfig["lan"]
-	if lan == nil || !reflect.DeepEqual(lan.Aliases, []string{"jellyfin"}) || lan.IPAMConfig == nil || lan.IPAddress != "" {
+	if lan == nil || !reflect.DeepEqual(lan.Aliases, []string{"jellyfin"}) || lan.IPAMConfig == nil || lan.IPAddress.IsValid() {
 		t.Fatalf("lan endpoint = %+v, want the alias and static address kept and the old short-ID alias and runtime address dropped", lan)
 	}
 	if b := nets.EndpointsConfig["bridge"]; b == nil || b.EndpointID != "" || b.NetworkID != "" {

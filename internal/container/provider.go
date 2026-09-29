@@ -31,7 +31,7 @@ var ErrComposeUnavailable = errors.New("container: compose v2 plugin is not inst
 // (Q38): the release string and the API version negotiated for every
 // other call this Provider makes.
 type EngineVersion struct {
-	Version       string // e.g. "27.3.1"
+	Version       string // e.g. "29.8.1"
 	APIVersion    string // negotiated API version, e.g. "1.47"
 	MinAPIVersion string
 }
