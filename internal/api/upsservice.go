@@ -191,10 +191,10 @@ func (s *UPSService) Update(ctx context.Context, input UpdateUPSInput) (UPSView,
 	return upsViewFromRow(&row), nil
 }
 
-// Regenerate rewrites the NUT files from the stored settings, or removes
-// the managed ones when there are none, and reloads the units, so the
-// files match the database after a config import replaced it (doc 10 §1,
-// D4). It changes no row.
+// Regenerate rewrites the NUT files from the stored settings and reloads
+// the units, so the files match the database after a config import
+// replaced it (doc 10 §1, D4). With no stored settings it only removes the
+// managed NUT files and reloads nothing. It changes no row.
 func (s *UPSService) Regenerate(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

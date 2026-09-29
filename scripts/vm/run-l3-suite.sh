@@ -1137,6 +1137,14 @@ dump_hoserva_diagnostics() {
 # it sets CONFIG_REASON and returns 1.
 CONFIG_TEST_SHARE="hoserval3configtest"
 CONFIG_THROWAWAY_USER="hoserval3throwaway"
+# The share's own generated mount unit. deleteShare removes it (the pool
+# mount reconcile drops every unit the store no longer wants) while the
+# share's data directory on the disks stays, so its presence — unlike a
+# write through /mnt/user/<share> — separates "restored" from "never
+# deleted". The unit name is the mount path with "/" as "-" (pool.
+# UnitFileName), which for this dash-free share name is what
+# systemd-escape would give too.
+CONFIG_SHARE_UNIT="/etc/systemd/system/mnt-user-$CONFIG_TEST_SHARE.mount"
 # The custom config file the restore must put back: smb.custom.conf is
 # Samba's own include for user-owned settings (doc 10 §1, custom/). Each
 # marker is a comment line, so smb.conf stays valid whichever one it holds.
@@ -1245,6 +1253,10 @@ config_backup_restore() {
     CONFIG_REASON="smb.conf still has a [$CONFIG_TEST_SHARE] section after deleteShare — the import below would not prove it regenerates anything"
     return 1
   fi
+  if vm_ssh "test -e $CONFIG_SHARE_UNIT" 2>/dev/null; then
+    CONFIG_REASON="the share mount unit $CONFIG_SHARE_UNIT still exists after deleteShare — the import below would not prove it regenerates the share's mount"
+    return 1
+  fi
 
   local shares_mid users_mid
   shares_mid="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/shares" 2>/dev/null)"
@@ -1294,11 +1306,18 @@ config_backup_restore() {
 
   # The import also restores the files and regenerates every managed config
   # file from the restored database (doc 10 §1): the deleted share has its
-  # Samba section again, its path works through the pool mount, and the
-  # custom config file holds its archived content, not the edit made after
-  # the export.
+  # Samba section and its own mount unit again, its path works through the
+  # pool mount, and the custom config file holds its archived content, not
+  # the edit made after the export. The probe alone proves nothing about the
+  # import: deleteShare leaves the share's data directory in place, so it
+  # passes either way; the smb.conf section and the mount unit are what
+  # deleteShare removed and only the import brings back.
   if ! vm_ssh "grep -q '^\\[$CONFIG_TEST_SHARE\\]' /etc/samba/smb.conf" 2>/dev/null; then
     CONFIG_REASON="smb.conf has no [$CONFIG_TEST_SHARE] section after importConfig — the configs were not regenerated from the restored database"
+    return 1
+  fi
+  if ! vm_ssh "test -e $CONFIG_SHARE_UNIT" 2>/dev/null; then
+    CONFIG_REASON="the share mount unit $CONFIG_SHARE_UNIT is missing after importConfig — the share's mount was not regenerated from the restored database"
     return 1
   fi
   local probe_result probe_path="/mnt/user/$CONFIG_TEST_SHARE/.l3-config-probe"
