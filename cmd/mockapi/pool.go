@@ -613,7 +613,9 @@ func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	// stub-bytes comment above) — but it validates the body with the
 	// same backup.VerifyArchiveForImport production's own ImportConfig
 	// runs first (#269), so a non-archive upload is rejected the same
-	// way on both sides (D18).
+	// way on both sides (D18). It has no live database, so it never
+	// returns production's 409 archive_other_installation or
+	// archive_array_mismatch (backup.CheckRestorable).
 	tmp, err := os.CreateTemp("", "mockapi-config-import-*.tar.zst")
 	if err != nil {
 		return err

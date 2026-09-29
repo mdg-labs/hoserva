@@ -127,6 +127,14 @@ Two paths:
 
 **In-place restore** — from the UI, for rolling back a bad config change. Preview what will change, then apply.
 
+`POST /config/import` refuses, before anything is written (no pre-import backup, so a refused retry takes no pre-change retention slot, no restore hold, no change to the database), an archive it cannot safely restore in place:
+
+- **Not a sound archive** (400 `invalid_archive`): verification covers the whole archive, not only what the manifest lists. The manifest must list exactly the regular files the archive holds (a file it does not list, or a listed file that is missing, is refused), and the archive may hold only regular files and directories, each name once (a symlink, hardlink, device, FIFO or repeated name is refused). This is the same check the nightly chain and the restore drill run.
+- **Another installation's archive** (409 `archive_other_installation`): its `state.db` has no `machine_key_check` row or a different `check_value` from the live one. Restoring it would replace `machine_key_check` and `backup_recipient`, and the next start would fail the machine key check (Q28). Another installation's archive is restored only onto a fresh install (bare-metal flow, #276).
+- **A different array** (409 `archive_array_mismatch`): the archive's `array_disks` (role, role index, filesystem UUID, WWN, serial and `removal_state`, not the device name), `relocation_manifest` or `relocation_removing_disks` differ from the live ones; the message names each difference. The disk lifecycle jobs (doc 02 §4, doc 09 §4) are the only path that changes the array, so an in-place restore that would change it, or undo a relocation, is refused instead of half applied, and the pre-topology archive of a job that has since finished is refused the same way. Shares, users, groups, schedules and notification and backup settings, which is what an in-place restore rolls back, are never refused.
+
+The array comparison is `backup.CheckRestorable`, run before the pre-import backup and again once the scheduler's restore hold is taken, so a topology job that finishes in between cannot be restored over. Any failure to read either database also refuses.
+
 **Bare-metal restore** — the important one. `hoserva config import <archive>` on a freshly installed system (the same command as in-place restore; it detects a fresh install and runs this flow):
 
 1. Read the manifest and check compatibility: an archive from an older Hoserva is upgraded by the same schema-migration runner as a normal upgrade (doc 01 §4, D16); an archive from a newer Hoserva is refused

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -116,7 +117,10 @@ func addDirToTar(tw *tar.Writer, root, prefix string) error {
 	})
 }
 
-// unpackArchive extracts archivePath into dest.
+// unpackArchive extracts archivePath into dest. It accepts only regular
+// files and directories, each name once: a symlink, hardlink, device or
+// FIFO, or a name that appears twice (after cleaning), is an error, since
+// an archive BuildArchive wrote has none of them.
 func unpackArchive(archivePath, dest string) error {
 	in, err := os.Open(archivePath)
 	if err != nil {
@@ -132,6 +136,7 @@ func unpackArchive(archivePath, dest string) error {
 
 	tr := tar.NewReader(zr)
 	remaining := int64(maxArchiveExtractBytes)
+	seen := map[string]struct{}{}
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -144,6 +149,14 @@ func unpackArchive(archivePath, dest string) error {
 		if !strings.HasPrefix(target, filepath.Clean(dest)+string(os.PathSeparator)) && filepath.Clean(target) != filepath.Clean(dest) {
 			return fmt.Errorf("archive entry %q escapes destination", hdr.Name)
 		}
+		if hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg {
+			return fmt.Errorf("archive entry %q is not a regular file or directory", hdr.Name)
+		}
+		name := path.Clean(hdr.Name)
+		if _, dup := seen[name]; dup {
+			return fmt.Errorf("archive has a duplicate entry %q", hdr.Name)
+		}
+		seen[name] = struct{}{}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o700); err != nil {
@@ -168,8 +181,6 @@ func unpackArchive(archivePath, dest string) error {
 			if err != nil && err != io.EOF {
 				return err
 			}
-		default:
-			continue
 		}
 	}
 	return nil

@@ -10,7 +10,9 @@ import (
 )
 
 // VerifyArchive checks doc 10 §1's post-write requirements: the archive
-// unpacks, manifest checksums match, state.db opens and passes
+// unpacks holding only regular files and directories, each name once, the
+// manifest lists exactly the files it holds, its checksums match, state.db
+// opens and passes
 // PRAGMA integrity_check, and secrets.age decrypts when a passphrase is
 // given. Used by the nightly backup chain, which always has the
 // passphrase (or no secrets.age to check) since it just built the
@@ -30,6 +32,46 @@ func VerifyArchiveForImport(archivePath string) error {
 	return verifyArchive(archivePath, "", false)
 }
 
+// checkManifestCoversArchive requires the manifest and the unpacked
+// archive to name exactly the same regular files, manifest.json aside: a
+// file the manifest does not list is never checksummed, and a listed file
+// that is absent (or a name that points outside the archive) is not what the
+// manifest describes.
+func checkManifestCoversArchive(dir string, manifest Manifest) error {
+	present := map[string]struct{}{}
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		present[filepath.ToSlash(rel)] = struct{}{}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("listing extracted archive: %w", err)
+	}
+	for rel := range manifest.Checksums {
+		if _, ok := present[rel]; !ok {
+			return fmt.Errorf("manifest lists %s, which is not in the archive", rel)
+		}
+	}
+	for rel := range present {
+		if rel == "manifest.json" {
+			continue
+		}
+		if _, ok := manifest.Checksums[rel]; !ok {
+			return fmt.Errorf("archive contains %s, which is not listed in the manifest", rel)
+		}
+	}
+	return nil
+}
+
 func verifyArchive(archivePath, passphrase string, requireSecretsPassphrase bool) error {
 	dir, err := os.MkdirTemp("", "hoserva-backup-verify-*")
 	if err != nil {
@@ -45,8 +87,11 @@ func verifyArchive(archivePath, passphrase string, requireSecretsPassphrase bool
 	if err != nil {
 		return fmt.Errorf("reading manifest: %w", err)
 	}
+	if err := checkManifestCoversArchive(dir, manifest); err != nil {
+		return err
+	}
 	for rel, want := range manifest.Checksums {
-		got, err := hashFile(filepath.Join(dir, rel))
+		got, err := hashFile(filepath.Join(dir, filepath.FromSlash(rel)))
 		if err != nil {
 			return fmt.Errorf("hashing extracted %s: %w", rel, err)
 		}

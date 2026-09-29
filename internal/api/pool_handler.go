@@ -462,7 +462,9 @@ var errImportJobInProgress = &apiError{code: "job_in_progress", statusCode: 409,
 
 // ImportConfig restores the database step of doc 10 §1's in-place
 // restore (#269): checksum and integrity verification, then a schema-
-// version match, then a pre-import safety backup, then
+// version match, then a check that the archive is this installation's and
+// describes the array the disks are in (backup.CheckRestorable), then a
+// pre-import safety backup, then
 // backup.RestoreDatabase — SQLite's own online backup API, never a file-
 // level copy or rename over the live database's path (see
 // RestoreDatabase's own doc comment for why that corrupted it). Restoring
@@ -534,6 +536,22 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		}
 	}
 
+	// Everything that can refuse the import runs before anything is written:
+	// the pre-import backup below takes one of a destination's bounded
+	// pre-change retention slots (#401), so a refused retry must not reach it.
+	if err := checkImportRestorable(ctx, h.Backup.DB, stateDB); err != nil {
+		return err
+	}
+	if h.Store != nil {
+		active, err := h.Store.ListActive(ctx)
+		if err != nil {
+			return fmt.Errorf("checking for active jobs before import: %w", err)
+		}
+		if len(active) > 0 {
+			return errImportJobInProgress
+		}
+	}
+
 	// The archive's own queued/running job ids, read from the staged copy
 	// before anything overwrites it (#402): the only ids the post-restore
 	// interrupt step below is ever allowed to touch. A job inserted into
@@ -575,6 +593,13 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	}
 	defer release()
 
+	// Compared again now no job can change the array: a topology job that
+	// finished during the upload or the backup above would otherwise be
+	// restored over.
+	if err := checkImportRestorable(ctx, h.Backup.DB, stateDB); err != nil {
+		return err
+	}
+
 	if err := backup.RestoreDatabase(ctx, h.Backup.DB, stateDB); err != nil {
 		return fmt.Errorf("restoring database: %w", err)
 	}
@@ -598,6 +623,24 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		}
 	}
 	return nil
+}
+
+// checkImportRestorable maps backup.CheckRestorable's refusals to the
+// 409s importConfig documents; any other failure to compare refuses too,
+// as an error.
+func checkImportRestorable(ctx context.Context, live *sql.DB, stateDB string) error {
+	err := backup.CheckRestorable(ctx, live, stateDB)
+	var mismatch *backup.ArrayMismatchError
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, backup.ErrArchiveOtherInstallation):
+		return &apiError{code: "archive_other_installation", statusCode: 409, message: err.Error()}
+	case errors.As(err, &mismatch):
+		return &apiError{code: "archive_array_mismatch", statusCode: 409, message: err.Error()}
+	default:
+		return fmt.Errorf("comparing the archive with this installation: %w", err)
+	}
 }
 
 // importPostRestoreHookForTest, when non-nil, is called by ImportConfig
