@@ -103,6 +103,31 @@ func (s *Store) ListChannels(ctx context.Context) ([]*Channel, error) {
 	return out, nil
 }
 
+// ChannelSecret is one channel's stored credential, still sealed under the
+// machine key.
+type ChannelSecret struct {
+	ChannelID  string
+	Ciphertext []byte
+}
+
+// ListChannelSecrets returns the sealed credential of every channel that
+// has one, for the config backup to re-encrypt under the backup passphrase
+// (Q28). Like every other read here it never decrypts.
+func (s *Store) ListChannelSecrets(ctx context.Context) ([]ChannelSecret, error) {
+	rows, err := s.q.ListChannels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("notify: listing channel credentials: %w", err)
+	}
+	var out []ChannelSecret
+	for _, row := range rows {
+		if len(row.Secret) == 0 {
+			continue
+		}
+		out = append(out, ChannelSecret{ChannelID: row.ID, Ciphertext: row.Secret})
+	}
+	return out, nil
+}
+
 // UpdateChannel replaces id's name/type/enabled/config and credential in
 // one statement — secretCiphertext is whatever the caller has already
 // decided the new stored value should be (the existing one carried

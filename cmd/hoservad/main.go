@@ -458,24 +458,7 @@ func run(cfg config) error {
 		Client:    &acme.ProductionClient{},
 		Publisher: &acmeNotify{svc: notifyService},
 	}
-	backupService.Secrets = &backup.ServiceSecretSource{
-		BackupPassphraseFn: settingsService.BackupPassphrase,
-		DatabaseSecretsFn: func(reqCtx context.Context) ([]backup.DatabaseSecret, error) {
-			acmeSecrets, err := acmeDatabaseSecrets(reqCtx, acmeStore)
-			if err != nil {
-				return nil, err
-			}
-			upsSecrets, err := upsDatabaseSecrets(reqCtx, upsStore)
-			if err != nil {
-				return nil, err
-			}
-			destinationSecrets, err := backupDestinations.BackupDestinationSecrets(reqCtx)
-			if err != nil {
-				return nil, err
-			}
-			return append(append(acmeSecrets, upsSecrets...), destinationSecrets...), nil
-		},
-	}
+	backupService.Secrets = backupSecretSource(settingsService, acmeStore, upsStore, backupDestinations, notifyStore)
 	// wireTopologyBackup (#406, #408, doc 10 §1) must run before any of
 	// the registry.Register(job.TypeDiskFormat/DiskAdd/... calls below
 	// could admit a Submit for one of them: both Scheduler.Submit, for one

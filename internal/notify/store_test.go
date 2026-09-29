@@ -297,3 +297,29 @@ func TestListDueDeliveriesRespectsNextAttemptAt(t *testing.T) {
 		t.Fatalf("ListDueDeliveries = %+v, want only d1", got)
 	}
 }
+
+func TestListChannelSecrets_OnlyChannelsWithACredentialAreListedStillSealed(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		id     string
+		secret []byte
+	}{{"with", []byte("sealed-bytes")}, {"without", nil}} {
+		ch := &Channel{
+			ID: c.id, Name: c.id, Type: ChannelDiscord, Enabled: true,
+			CreatedAt: now, UpdatedAt: now,
+		}
+		if err := s.CreateChannel(ctx, ch, c.secret); err != nil {
+			t.Fatalf("CreateChannel %s: %v", c.id, err)
+		}
+	}
+
+	got, err := s.ListChannelSecrets(ctx)
+	if err != nil {
+		t.Fatalf("ListChannelSecrets: %v", err)
+	}
+	if len(got) != 1 || got[0].ChannelID != "with" || string(got[0].Ciphertext) != "sealed-bytes" {
+		t.Fatalf("ListChannelSecrets = %+v, want the one channel that has a credential", got)
+	}
+}
