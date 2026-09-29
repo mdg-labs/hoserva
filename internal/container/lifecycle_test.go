@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -519,10 +520,11 @@ func TestRecreate_FailureLeavesTheContainerAsItWas(t *testing.T) {
 	fake := NewFakeProvider()
 	fake.AddContainer(Container{ID: "c1", Name: "jellyfin", State: "running", Image: "jf", Tag: "10"})
 	fake.FailOn("recreate", "c1", errors.New("pull access denied"))
-	l := &Lifecycle{Provider: fake, Hub: NewHub()}
+	l := arrayUp(&Lifecycle{Provider: fake, Hub: NewHub()})
 
-	if _, err := l.Recreate(context.Background(), "jellyfin"); err == nil {
-		t.Fatal("Recreate succeeded")
+	_, err := l.Recreate(context.Background(), "jellyfin")
+	if err == nil || !strings.Contains(err.Error(), "pull access denied") {
+		t.Fatalf("Recreate = %v; want the injected pull failure", err)
 	}
 	c, err := fake.Inspect(context.Background(), "jellyfin")
 	if err != nil || c.State != "running" {
