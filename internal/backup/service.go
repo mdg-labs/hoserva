@@ -81,6 +81,11 @@ type Service struct {
 	// mount table. Nil reads /proc/self/mountinfo (disk.KernelMounts); a test
 	// injects a fake so an ejected disk is observable without a real mount.
 	ExternalMounted func(ctx context.Context, path string) (bool, error)
+	// ExternalGates, when set, gives each external disk a write gate that an
+	// eject of that disk closes (#454): a write admitted to /mnt/disks/<label>
+	// finishes before the disk is unmounted, and none is admitted after. Nil
+	// never refuses — the mount check alone then guards the write.
+	ExternalGates *ExternalWriteGates
 
 	destMu sync.Mutex
 	// archiveMu keeps a config backup's write and prune of a destination
@@ -146,7 +151,7 @@ func (g *PoolWriteGate) Close(ctx context.Context) error {
 	case <-ch:
 		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("backup: waiting for an in-flight pool-destination write to finish: %w", ctx.Err())
+		return fmt.Errorf("backup: waiting for an in-flight destination write to finish: %w", ctx.Err())
 	}
 }
 
@@ -316,25 +321,25 @@ func (s *Service) loadDestinations(ctx context.Context) ([]Destination, error) {
 // the moment the pool mounts back over it. A destination on an external
 // disk (under /mnt/disks/<label>) needs the same check against that
 // disk's own mount, for the same reason: with the disk ejected, the write
-// would create the directory on the boot device. It takes no PoolWriteGate
-// slot — the array's stop does not unmount an external disk. A destination
-// anywhere else (the boot device, a remote) is unaffected by any mount
-// state and is always admitted.
+// would create the directory on the boot device. A destination anywhere else
+// (the boot device, a remote) is unaffected by any mount state and is always
+// admitted.
 //
-// PoolWriteGate.begin runs before the mount check itself (#409): once it
-// admits a write, job.ArraySequence.Stop's own Close call cannot return —
-// and so cannot let an unmount proceed — until the returned release runs,
-// closing the exact race a mount check alone cannot: mount confirmed
-// live, then torn down before the write that check was guarding ever
-// reaches disk. A non-empty reason means the destination was not
-// admitted; release is then a no-op.
+// A gate slot is taken before the mount check itself, for a pool destination
+// from PoolWriteGate (#409) and for an external one from that disk's gate in
+// ExternalGates (#454): once it admits a write, job.ArraySequence.Stop's
+// Close, or an eject of the disk, cannot return — and so cannot let an
+// unmount proceed — until the returned release runs, closing the exact race
+// a mount check alone cannot: mount confirmed live, then torn down before
+// the write that check was guarding ever reaches disk. A non-empty reason
+// means the destination was not admitted; release is then a no-op.
 func (s *Service) admitDestination(ctx context.Context, dest Destination) (release func(), reason string) {
 	noop := func() {}
 	if dest.isRemote() {
 		return noop, ""
 	}
 	if mountPoint, ok := externalMountPoint(dest.Path, s.externalRoot()); ok {
-		return noop, s.externalMountRefusal(ctx, mountPoint)
+		return s.admitExternal(ctx, mountPoint)
 	}
 	if !underPoolRoot(dest.Path, s.poolRoot()) {
 		return noop, ""
@@ -422,6 +427,26 @@ func externalMountPoint(path, root string) (string, bool) {
 	}
 	label, _, _ := strings.Cut(rel, string(filepath.Separator))
 	return filepath.Join(root, label), true
+}
+
+// admitExternal takes mountPoint's disk gate slot, if the disk has one,
+// before confirming the disk is mounted. The external root itself is no disk
+// and has no gate; it is never in the mount table.
+func (s *Service) admitExternal(ctx context.Context, mountPoint string) (release func(), reason string) {
+	noop := func() {}
+	release = noop
+	if mountPoint != filepath.Clean(s.externalRoot()) {
+		label := filepath.Base(mountPoint)
+		var ok bool
+		if release, ok = s.ExternalGates.begin(label); !ok {
+			return noop, fmt.Sprintf("the external disk %q is ejected or being ejected", label)
+		}
+	}
+	if why := s.externalMountRefusal(ctx, mountPoint); why != "" {
+		release()
+		return noop, why
+	}
+	return release, ""
 }
 
 // externalMountRefusal is empty when mountPoint is confirmed mounted. A

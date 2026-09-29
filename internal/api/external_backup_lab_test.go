@@ -15,7 +15,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
@@ -197,5 +199,98 @@ func TestLabExternalBackupDestination_FollowsTheDisksMount(t *testing.T) {
 	row, err := store.NewExternalStore(db).GetExternalDisk(ctx, label)
 	if err != nil || row.BackupDestination {
 		t.Fatalf("stored disk after deleting its destination = %+v, %v; want the flag cleared", row, err)
+	}
+}
+
+// TestLabExternalBackupDestination_EjectWaitsForTheWriteInFlight proves #454
+// against a real mount: a backup has confirmed the disk is mounted (the
+// production mountinfo check, held open by the test) when the eject arrives
+// through the handler. The disk stays mounted until the archive is on it, and
+// nothing lands in the mount point on the root filesystem afterwards.
+func TestLabExternalBackupDestination_EjectWaitsForTheWriteInFlight(t *testing.T) {
+	lab := labDir(t)
+	ctx := context.Background()
+	r := disk.CommandRunner{}
+
+	const label = "labeject"
+	dev, uuid := labLoopFilesystem(ctx, t, r, lab, "external-454")
+	unit, err := disk.ExternalMountUnit(label, uuid, disk.XFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = r.Run(context.Background(), "umount", unit.Where)
+		_ = os.Remove(unit.Where)
+	})
+
+	db := openTestDB(t)
+	checking, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	svc := &backup.Service{
+		DB:            db,
+		Paths:         backup.DefaultPaths(t.TempDir(), filepath.Join(t.TempDir(), "hoserva")),
+		Store:         api.NewBackupDestinationStore(db),
+		Hostname:      "lab-host",
+		Version:       "0.0.0-lab",
+		ExternalGates: &backup.ExternalWriteGates{},
+		ExternalMounted: func(ctx context.Context, path string) (bool, error) {
+			mounted, err := disk.KernelMounts{}.IsMounted(ctx, path)
+			once.Do(func() {
+				close(checking)
+				<-release
+			})
+			return mounted, err
+		},
+	}
+	provider := disk.NewFakeProvider()
+	provider.AddDisk("/dev/sda", disk.Disk{Size: 8 * disk.TB, Boot: true})
+	provider.AddDisk(dev, disk.Disk{Size: 320 * disk.MB, Filesystem: "xfs", FSUUID: uuid})
+	h := &api.Handler{ArrayStore: store.NewArrayStore(db), Disks: provider, DiskRunner: r, Backup: svc, ExternalWriteGates: svc.ExternalGates}
+
+	if _, err := h.RegisterExternalDisk(ctx, &apiv1.RegisterExternalDiskRequest{
+		Device: dev, Label: label, BackupDestination: apiv1.NewOptBool(true),
+	}); err != nil {
+		t.Fatalf("RegisterExternalDisk: %v", err)
+	}
+	if _, err := h.MountExternalDisk(ctx, apiv1.MountExternalDiskParams{Label: label}); err != nil {
+		t.Fatalf("MountExternalDisk: %v", err)
+	}
+
+	run := make(chan error, 1)
+	go func() { run <- svc.Run(ctx) }()
+	<-checking
+
+	ejected := make(chan error, 1)
+	go func() {
+		_, err := h.EjectExternalDisk(ctx, apiv1.EjectExternalDiskParams{Label: label})
+		ejected <- err
+	}()
+	select {
+	case err := <-ejected:
+		t.Fatalf("EjectExternalDisk returned while a write to the disk was admitted: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if mounted, err := disk.IsMountpoint(unit.Where); err != nil || !mounted {
+		t.Fatalf("%s mounted = %v, %v while a write was in flight, want it still mounted", unit.Where, mounted, err)
+	}
+	close(release)
+
+	if err := <-run; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := <-ejected; err != nil {
+		t.Fatalf("EjectExternalDisk: %v", err)
+	}
+	if mounted, err := disk.IsMountpoint(unit.Where); err != nil || mounted {
+		t.Fatalf("%s mounted = %v, %v after the eject, want it unmounted", unit.Where, mounted, err)
+	}
+	if got := labArchives(t, unit.Where); len(got) != 0 {
+		t.Fatalf("archives on the root filesystem under %s after the eject: %v", unit.Where, got)
+	}
+	if _, err := h.MountExternalDisk(ctx, apiv1.MountExternalDiskParams{Label: label}); err != nil {
+		t.Fatalf("MountExternalDisk again: %v", err)
+	}
+	if got := labArchives(t, unit.Where); len(got) != 1 {
+		t.Fatalf("archives on the remounted disk = %v, want the one written before the eject", got)
 	}
 }

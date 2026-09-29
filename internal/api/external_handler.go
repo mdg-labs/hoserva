@@ -5,11 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
+	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
+
+// defaultExternalEjectWait bounds how long an eject waits for a backup write
+// to the disk to finish before giving up and leaving the disk mounted (#454).
+const defaultExternalEjectWait = 2 * time.Minute
+
+func (h *Handler) externalEjectWait() time.Duration {
+	if h.ExternalEjectWait > 0 {
+		return h.ExternalEjectWait
+	}
+	return defaultExternalEjectWait
+}
 
 func errExternalNotFound(label string) error {
 	return &apiError{code: "external_disk_not_found", statusCode: 404, message: fmt.Sprintf("no external disk %q", label)}
@@ -252,7 +265,10 @@ func (h *Handler) MountExternalDisk(ctx context.Context, params apiv1.MountExter
 	if unit.Filesystem == "" {
 		unit.Filesystem = disk.XFS
 	}
-	if err := disk.MountExternal(ctx, h.diskMounter(), unit); err != nil {
+	err = h.ExternalWriteGates.Mount(ctx, row.Label, func(ctx context.Context) error {
+		return disk.MountExternal(ctx, h.diskMounter(), unit)
+	})
+	if err != nil {
 		return nil, fmt.Errorf("mounting external disk %s: %w", row.Label, err)
 	}
 	apiDisk := externalToAPI(row, inv)
@@ -273,7 +289,13 @@ func (h *Handler) EjectExternalDisk(ctx context.Context, params apiv1.EjectExter
 			return nil, errInvalidPlan(err)
 		}
 	}
-	if err := disk.EjectExternal(ctx, h.diskMounter(), h.Disks, unit, row.Device); err != nil {
+	err = h.ExternalWriteGates.Eject(ctx, row.Label, h.externalEjectWait(), func(ctx context.Context) error {
+		return disk.EjectExternal(ctx, h.diskMounter(), h.Disks, unit, row.Device)
+	})
+	if errors.Is(err, backup.ErrExternalWriteInFlight) {
+		return nil, &apiError{code: "external_disk_busy", statusCode: 409, message: fmt.Sprintf("%v — external disk %q was left mounted", err, row.Label)}
+	}
+	if err != nil {
 		return nil, fmt.Errorf("ejecting external disk %s: %w", row.Label, err)
 	}
 	apiDisk := externalToAPI(row, inv)

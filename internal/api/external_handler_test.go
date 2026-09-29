@@ -10,6 +10,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
+	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/store"
 
@@ -334,5 +335,23 @@ func TestFormatExternalDisk_UUIDProbeFailurePersistsPendingUUID(t *testing.T) {
 	}
 	if _, mountErr := h.MountExternalDisk(ctx, apiv1.MountExternalDiskParams{Label: "backup"}); mountErr == nil {
 		t.Fatal("MountExternalDisk must refuse a pending UUID after a failed probe")
+	}
+}
+
+func TestEjectAndMountExternalDisk_RunThroughTheBackupWriteGate(t *testing.T) {
+	h, _, mounter, _ := newExternalHandler(t)
+	h.ExternalWriteGates = &backup.ExternalWriteGates{}
+	ctx := context.Background()
+	if _, err := h.MountExternalDisk(ctx, apiv1.MountExternalDiskParams{Label: "backup"}); err != nil {
+		t.Fatalf("MountExternalDisk: %v", err)
+	}
+	if _, err := h.EjectExternalDisk(ctx, apiv1.EjectExternalDiskParams{Label: "backup"}); err != nil {
+		t.Fatalf("EjectExternalDisk: %v", err)
+	}
+	if _, err := h.MountExternalDisk(ctx, apiv1.MountExternalDiskParams{Label: "backup"}); err != nil {
+		t.Fatalf("MountExternalDisk after eject: %v", err)
+	}
+	if len(mounter.Mounts) != 2 || len(mounter.Unmounts) != 1 {
+		t.Fatalf("mounts = %d, unmounts = %d; want 2 and 1", len(mounter.Mounts), len(mounter.Unmounts))
 	}
 }

@@ -61,6 +61,9 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 		DestinationCipher: machineKey,
 		Recipient:         recipient,
 		Version:           packageVersion(ctx, runner, "hoserva"),
+		// wireBackup hands this same instance to the handler, so an eject
+		// (#454) waits for the writes this service admits.
+		ExternalGates: &backup.ExternalWriteGates{},
 	}
 	defaults := backup.DefaultDestinations()
 	defaults[0].Path = filepath.Join(cfg.stateDir, "backups")
@@ -83,6 +86,7 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 // the assignment.
 func wireBackup(handler *api.Handler, backupService *backup.Service) {
 	handler.Backup = backupService
+	handler.ExternalWriteGates = backupService.ExternalGates
 }
 
 // updateShutdownLookup adapts the daemon's current job.ArraySequence to
