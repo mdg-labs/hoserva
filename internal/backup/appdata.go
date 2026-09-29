@@ -122,6 +122,9 @@ type AppdataService struct {
 	StartTimeout time.Duration
 
 	runMu sync.Mutex
+	// previews holds what the restore previews need: their staging
+	// directories and their finished results.
+	previews appdataPreviews
 }
 
 func (a *AppdataService) startTimeout() time.Duration {

@@ -12,7 +12,7 @@ import (
 )
 
 func TestAppdataJobs_AreServiceClassAndNotResumable(t *testing.T) {
-	for _, typ := range []Type{TypeAppdataBackup, TypeAppdataRestore} {
+	for _, typ := range []Type{TypeAppdataBackup, TypeAppdataRestore, TypeAppdataRestorePreview} {
 		class, ok := ClassOf(typ)
 		if !ok || class != ClassService {
 			t.Errorf("ClassOf(%s) = %q, %v; want the service class", typ, class, ok)
@@ -41,6 +41,10 @@ func TestAppdataParams_Validation(t *testing.T) {
 		"restore, no container":        {TypeAppdataRestore, `{"archive":"x","destinationId":"pool"}`, true},
 		"restore, unknown field":       {TypeAppdataRestore, `{"container":"a","archive":"x","destinationId":"p","confirm":true}`, true},
 		"restore, two objects":         {TypeAppdataRestore, `{"container":"a","archive":"x","destinationId":"p"}{}`, true},
+		"preview":                      {TypeAppdataRestorePreview, `{"container":"a","archive":"x.tar.zst","destinationId":"pool"}`, false},
+		"preview, no params":           {TypeAppdataRestorePreview, ``, true},
+		"preview, no archive":          {TypeAppdataRestorePreview, `{"container":"a","destinationId":"pool"}`, true},
+		"preview, unknown field":       {TypeAppdataRestorePreview, `{"container":"a","archive":"x","destinationId":"p","confirm":true}`, true},
 		"backup, two objects":          {TypeAppdataBackup, `{}{}`, true},
 		"recreate still needs its own": {TypeContainerRecreate, `{"containers":["a"]}`, true},
 	} {
@@ -146,6 +150,75 @@ func TestRunAppdataRestore_PassesTheRequestFromTheParams(t *testing.T) {
 	want := AppdataRestoreParams{Container: "alpha", Archive: "a.tar.zst", DestinationID: "pool"}
 	if done.Status != StatusSucceeded || got != want {
 		t.Fatalf("status %s, restore %+v; want succeeded with %+v", done.Status, got, want)
+	}
+}
+
+func TestRunAppdataRestorePreview_PassesTheRequestAndItsOwnJobID(t *testing.T) {
+	s := newTestScheduler(t)
+	var gotID string
+	var got AppdataRestoreParams
+	s.registry.Register(TypeAppdataRestorePreview, true, RunAppdataRestorePreview(func(_ context.Context, id string, p AppdataRestoreParams, _ io.Writer) error {
+		gotID, got = id, p
+		return nil
+	}))
+
+	j, err := s.Submit(context.Background(), TypeAppdataRestorePreview, []string{"container:alpha"}, []byte(`{"container":"alpha","archive":"a.tar.zst","destinationId":"pool"}`))
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	done := await(t, s, j.ID)
+	want := AppdataRestoreParams{Container: "alpha", Archive: "a.tar.zst", DestinationID: "pool"}
+	if done.Status != StatusSucceeded || got != want || gotID != j.ID {
+		t.Fatalf("status %s, preview of %+v under %q; want succeeded with %+v under %q", done.Status, got, gotID, want, j.ID)
+	}
+}
+
+// The scheduler queues a preview behind a backup or restore of the same
+// container and runs it beside those of others, which is what keeps a
+// scheduled backup from being refused by a preview.
+func TestAppdataRestorePreview_QueuesBehindTheSameContainersBackupAndRunsBesideOthers(t *testing.T) {
+	s := newTestScheduler(t)
+	release := make(chan struct{})
+	started := make(chan string, 4)
+	s.registry.Register(TypeAppdataBackup, true, func(_ context.Context, rc *RunContext) error {
+		started <- "backup"
+		<-release
+		return nil
+	})
+	s.registry.Register(TypeAppdataRestorePreview, true, func(_ context.Context, rc *RunContext) error {
+		started <- "preview"
+		return nil
+	})
+	ctx := context.Background()
+	params := []byte(`{"container":"alpha","archive":"a.tar.zst","destinationId":"pool"}`)
+
+	backupJob, err := s.Submit(ctx, TypeAppdataBackup, []string{"container:alpha"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := <-started; got != "backup" {
+		t.Fatalf("started %s first", got)
+	}
+	same, err := s.Submit(ctx, TypeAppdataRestorePreview, []string{"container:alpha"}, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same.Status != StatusQueued {
+		t.Fatalf("a preview of the container being backed up is %s, want queued", same.Status)
+	}
+	other, err := s.Submit(ctx, TypeAppdataRestorePreview, []string{"container:beta"}, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := await(t, s, other.ID); got.Status != StatusSucceeded {
+		t.Fatalf("a preview of another container beside the backup = %s", got.Status)
+	}
+	close(release)
+	if got := await(t, s, backupJob.ID); got.Status != StatusSucceeded {
+		t.Fatalf("backup = %s", got.Status)
+	}
+	if got := await(t, s, same.ID); got.Status != StatusSucceeded {
+		t.Fatalf("the queued preview = %s", got.Status)
 	}
 }
 

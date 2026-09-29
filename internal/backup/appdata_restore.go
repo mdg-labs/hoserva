@@ -72,18 +72,8 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 	defer func() { _ = os.RemoveAll(staging) }()
 
 	_, _ = fmt.Fprintf(out, "fetching %s from %s\n", req.Archive, source.Name)
-	plain, err := a.fetchAppdata(ctx, source, req.Archive, staging)
+	plain, hdr, err := a.fetchVerifiedAppdata(ctx, req, source, roots, staging)
 	if err != nil {
-		return err
-	}
-	hdr, _, err := verifyAppdata(plain)
-	if err != nil {
-		return invalidArchivef("%v", err)
-	}
-	if hdr.Container != req.Container {
-		return invalidArchivef("the archive holds %s, not %s", hdr.Container, req.Container)
-	}
-	if err := validateRestoreDirs(hdr.Dirs, roots); err != nil {
 		return err
 	}
 
@@ -118,6 +108,29 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 		return err
 	}
 	return a.replaceAppdata(ctx, out, plain, hdr)
+}
+
+// fetchVerifiedAppdata is the read-only part of a restore that the preview
+// shares: it fetches and decrypts the archive into staging, verifies it end
+// to end, and checks that it holds the requested container and that every
+// directory it names is inside the appdata location. It changes nothing but
+// staging.
+func (a *AppdataService) fetchVerifiedAppdata(ctx context.Context, req AppdataRestoreRequest, source Destination, roots []string, staging string) (string, appdataHeader, error) {
+	plain, err := a.fetchAppdata(ctx, source, req.Archive, staging)
+	if err != nil {
+		return "", appdataHeader{}, err
+	}
+	hdr, _, err := verifyAppdata(plain)
+	if err != nil {
+		return "", appdataHeader{}, invalidArchivef("%v", err)
+	}
+	if hdr.Container != req.Container {
+		return "", appdataHeader{}, invalidArchivef("the archive holds %s, not %s", hdr.Container, req.Container)
+	}
+	if err := validateRestoreDirs(hdr.Dirs, roots); err != nil {
+		return "", appdataHeader{}, err
+	}
+	return plain, hdr, nil
 }
 
 // snapshotAppdata writes the appdata the restore is about to replace to

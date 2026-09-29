@@ -105,6 +105,8 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.SetAppdataBackupContainerOperation:      RoleAdmin,
 	apiv1.ListAppdataArchivesOperation:            RoleAdmin,
 	apiv1.RestoreAppdataOperation:                 RoleAdmin,
+	apiv1.PreviewAppdataRestoreOperation:          RoleAdmin,
+	apiv1.GetAppdataRestorePreviewOperation:       RoleAdmin,
 	apiv1.ListNotificationsOperation:              RoleViewer,
 	apiv1.LoginOperation:                          RolePublic,
 	apiv1.MarkNotificationsReadOperation:          RoleViewer,

@@ -14,7 +14,8 @@ type AppdataBackupParams struct {
 	Containers []string `json:"containers,omitempty"`
 }
 
-// AppdataRestoreParams is appdata_restore's persisted payload.
+// AppdataRestoreParams is the persisted payload of appdata_restore and of
+// appdata_restore_preview, which names the same archive.
 type AppdataRestoreParams struct {
 	Container     string `json:"container"`
 	Archive       string `json:"archive"`
@@ -38,13 +39,13 @@ func decodeAppdataBackupParams(params []byte) (AppdataBackupParams, error) {
 	return p, nil
 }
 
-func decodeAppdataRestoreParams(params []byte) (AppdataRestoreParams, error) {
+func decodeAppdataRestoreParams(t Type, params []byte) (AppdataRestoreParams, error) {
 	var p AppdataRestoreParams
 	if err := decodeJSON(bytes.TrimSpace(params), &p); err != nil {
 		return AppdataRestoreParams{}, err
 	}
 	if p.Container == "" || p.Archive == "" || p.DestinationID == "" {
-		return AppdataRestoreParams{}, errors.New("job: appdata_restore params require a container, an archive and a destination")
+		return AppdataRestoreParams{}, fmt.Errorf("job: %s params require a container, an archive and a destination", t)
 	}
 	return p, nil
 }
@@ -81,7 +82,7 @@ func RunAppdataBackup(deps AppdataBackupDeps) RunFunc {
 // TypeAppdataRestore. restore is backup.AppdataService.Restore.
 func RunAppdataRestore(restore func(ctx context.Context, p AppdataRestoreParams, out io.Writer) error) RunFunc {
 	return func(ctx context.Context, rc *RunContext) error {
-		p, err := decodeAppdataRestoreParams(rc.Params())
+		p, err := decodeAppdataRestoreParams(TypeAppdataRestore, rc.Params())
 		if err != nil {
 			return err
 		}
@@ -89,6 +90,23 @@ func RunAppdataRestore(restore func(ctx context.Context, p AppdataRestoreParams,
 			return err
 		}
 		_, _ = fmt.Fprintf(rc.Output(), "appdata of %s restored\n", p.Container)
+		return nil
+	}
+}
+
+// RunAppdataRestorePreview is the RunFunc hoservad registers for
+// TypeAppdataRestorePreview. preview is backup.AppdataService.RunPreview,
+// which holds the result under the job's id.
+func RunAppdataRestorePreview(preview func(ctx context.Context, jobID string, p AppdataRestoreParams, out io.Writer) error) RunFunc {
+	return func(ctx context.Context, rc *RunContext) error {
+		p, err := decodeAppdataRestoreParams(TypeAppdataRestorePreview, rc.Params())
+		if err != nil {
+			return err
+		}
+		if err := preview(ctx, rc.JobID(), p, rc.Output()); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(rc.Output(), "previewed restoring %s\n", p.Container)
 		return nil
 	}
 }

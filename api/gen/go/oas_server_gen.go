@@ -398,6 +398,17 @@ type Handler interface {
 	//
 	// GET /appdata/backup
 	GetAppdataBackup(ctx context.Context) (*AppdataBackupConfig, error)
+	// GetAppdataRestorePreview implements getAppdataRestorePreview operation.
+	//
+	// The result of the `appdata_restore_preview` job `previewAppdataRestore` queued. The daemon holds the
+	// sixteen most recent results in memory, so a result is gone after a restart and after sixteen newer
+	// previews: preview again. 404 `job_not_found` for an id that is not a restore preview job, 409
+	// `appdata_preview_not_ready` while the job is queued or running, 409 `appdata_preview_failed` when it
+	// failed, was cancelled or was interrupted (the message says why; `getJob` and `getJobLog` have the
+	// rest), and 404 `appdata_preview_gone` when the job succeeded but its result is no longer held.
+	//
+	// GET /appdata/backup/restore/preview/{jobId}
+	GetAppdataRestorePreview(ctx context.Context, params GetAppdataRestorePreviewParams) (*AppdataRestorePreview, error)
 	// GetCacheUsage implements getCacheUsage operation.
 	//
 	// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
@@ -784,6 +795,27 @@ type Handler interface {
 	//
 	// POST /pool/rebalance/plan
 	PlanRebalance(ctx context.Context) (*RebalancePlan, error)
+	// PreviewAppdataRestore implements previewAppdataRestore operation.
+	//
+	// Queues an `appdata_restore_preview` job (service class, scoped to the container) that reports what
+	// `restoreAppdata` would overwrite for the same archive on the same destination, before anything is
+	// changed. Read the result with `getAppdataRestorePreview` once the job has succeeded. The job
+	// fetches, decrypts and verifies the archive exactly as the restore does and fails with the restore's
+	// own error when the archive is corrupt, is another container's, names a directory outside the appdata
+	// location, or holds entries a restore could not unpack. It then compares each archived directory with
+	// the live one, walking the live appdata only for this job: files present in both are `replaced`,
+	// files only in the archive are `added`, and files only in the live appdata are `removed`, because the
+	// restore replaces each directory as a whole. It stops no container, writes nothing under the appdata
+	// location and leaves no fetched archive on disk, on success or failure. It queues behind a backup or
+	// restore of the same container and runs beside those of others. Cancelling it stops the fetch, the
+	// reading of the archive and the walk of the live directories; the decryption and the verification
+	// read that follow the fetch run to their end first. 404 `archive_not_found` for an archive the named
+	// destination does not hold, 404 `backup_destination_not_found`, 400 `appdata_archive_invalid` for a
+	// request that names no archive of this installation and container, and 409 `array_stopped` while the
+	// array is stopped or its storage is not ready.
+	//
+	// POST /appdata/backup/restore/preview
+	PreviewAppdataRestore(ctx context.Context, req *PreviewAppdataRestoreRequest) (*Job, error)
 	// RebootHost implements rebootHost operation.
 	//
 	// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,

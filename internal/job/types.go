@@ -15,34 +15,35 @@ import "fmt"
 type Type string
 
 const (
-	TypeSync              Type = "sync"
-	TypeScrub             Type = "scrub"
-	TypeFix               Type = "fix"
-	TypeCheck             Type = "check"
-	TypeRebalance         Type = "rebalance"
-	TypeEvacuation        Type = "evacuation"
-	TypeShareRelocation   Type = "share_relocation"
-	TypeMover             Type = "mover"
-	TypeVMDiskRelocation  Type = "vm_disk_relocation"
-	TypeDiskFormat        Type = "disk_format"
-	TypeDiskAdd           Type = "disk_add"
-	TypeDiskRemove        Type = "disk_remove"
-	TypeDiskReplace       Type = "disk_replace"
-	TypeDiskUpgradeData   Type = "disk_upgrade_data"
-	TypeDiskUpgradeParity Type = "disk_upgrade_parity"
-	TypePoolRemount       Type = "pool_remount"
-	TypeAppdataBackup     Type = "appdata_backup"
-	TypeAppdataRestore    Type = "appdata_restore"
-	TypeContainerUpdate   Type = "container_update"
-	TypeContainerRecreate Type = "container_recreate"
-	TypeACMEIssue         Type = "acme_issue"
-	TypeVMStart           Type = "vm_start"
-	TypeVMStop            Type = "vm_stop"
-	TypeVMCreate          Type = "vm_create"
-	TypeVMDelete          Type = "vm_delete"
-	TypeVMSnapshot        Type = "vm_snapshot"
-	TypeVMClone           Type = "vm_clone"
-	TypeVMMigrationImport Type = "vm_migration_import"
+	TypeSync                  Type = "sync"
+	TypeScrub                 Type = "scrub"
+	TypeFix                   Type = "fix"
+	TypeCheck                 Type = "check"
+	TypeRebalance             Type = "rebalance"
+	TypeEvacuation            Type = "evacuation"
+	TypeShareRelocation       Type = "share_relocation"
+	TypeMover                 Type = "mover"
+	TypeVMDiskRelocation      Type = "vm_disk_relocation"
+	TypeDiskFormat            Type = "disk_format"
+	TypeDiskAdd               Type = "disk_add"
+	TypeDiskRemove            Type = "disk_remove"
+	TypeDiskReplace           Type = "disk_replace"
+	TypeDiskUpgradeData       Type = "disk_upgrade_data"
+	TypeDiskUpgradeParity     Type = "disk_upgrade_parity"
+	TypePoolRemount           Type = "pool_remount"
+	TypeAppdataBackup         Type = "appdata_backup"
+	TypeAppdataRestore        Type = "appdata_restore"
+	TypeAppdataRestorePreview Type = "appdata_restore_preview"
+	TypeContainerUpdate       Type = "container_update"
+	TypeContainerRecreate     Type = "container_recreate"
+	TypeACMEIssue             Type = "acme_issue"
+	TypeVMStart               Type = "vm_start"
+	TypeVMStop                Type = "vm_stop"
+	TypeVMCreate              Type = "vm_create"
+	TypeVMDelete              Type = "vm_delete"
+	TypeVMSnapshot            Type = "vm_snapshot"
+	TypeVMClone               Type = "vm_clone"
+	TypeVMMigrationImport     Type = "vm_migration_import"
 )
 
 // Class is the mutually exclusive job class the scheduler enforces
@@ -109,11 +110,12 @@ var classOf = map[Type]Class{
 	TypeDiskUpgradeParity: ClassTopology,
 	TypePoolRemount:       ClassTopology,
 
-	TypeAppdataBackup:     ClassService,
-	TypeAppdataRestore:    ClassService,
-	TypeContainerUpdate:   ClassService,
-	TypeContainerRecreate: ClassService,
-	TypeACMEIssue:         ClassService,
+	TypeAppdataBackup:         ClassService,
+	TypeAppdataRestore:        ClassService,
+	TypeAppdataRestorePreview: ClassService,
+	TypeContainerUpdate:       ClassService,
+	TypeContainerRecreate:     ClassService,
+	TypeACMEIssue:             ClassService,
 
 	TypeVMStart:           ClassVM,
 	TypeVMStop:            ClassVM,

@@ -219,3 +219,84 @@ func (h *handler) RestoreAppdata(ctx context.Context, req *apiv1.RestoreAppdataR
 	}
 	return nil, &mockError{code: "archive_not_found", statusCode: 404, message: fmt.Sprintf("%v: %s on destination %q", backup.ErrAppdataArchiveNotFound, req.Archive, req.DestinationId)}
 }
+
+// PreviewAppdataRestore runs the checks production's handler runs before it
+// queues the preview job, in the same order: a running array, the archive's
+// name (backup.CheckAppdataArchiveName), the destination, and the archive
+// being on it. The mock has no archive to read and no scheduler, so a valid
+// request returns a preview job that has already succeeded, holding a fixed
+// comparison of jellyfin's appdata for GetAppdataRestorePreview.
+func (h *handler) PreviewAppdataRestore(ctx context.Context, req *apiv1.PreviewAppdataRestoreRequest) (*apiv1.Job, error) {
+	if err := h.requireArrayRunning(); err != nil {
+		return nil, err
+	}
+	if err := backup.CheckAppdataArchiveName(req.Archive, req.Container, mockAppdataInstallation); err != nil {
+		return nil, mapMockAppdataError(err)
+	}
+	h.backupMu.Lock()
+	found := false
+	for _, d := range h.backupDestinations {
+		found = found || d.ID == req.DestinationId
+	}
+	h.backupMu.Unlock()
+	if !found {
+		return nil, &mockError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
+	}
+	for _, a := range mockAppdataArchives() {
+		if a.Name != req.Archive || a.DestinationID != req.DestinationId {
+			continue
+		}
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.maintenance {
+			return nil, errMaintenanceMode()
+		}
+		now := time.Now().UTC()
+		j := apiv1.Job{
+			ID:          uuid.New(),
+			Type:        apiv1.JobTypeAppdataRestorePreview,
+			Class:       apiv1.JobClassService,
+			Status:      apiv1.JobStatusSucceeded,
+			Cancellable: true,
+			CreatedAt:   now,
+			StartedAt:   apiv1.NewOptNilDateTime(now),
+			FinishedAt:  apiv1.NewOptNilDateTime(now),
+		}
+		h.jobs[j.ID] = j
+		h.appdataMu.Lock()
+		defer h.appdataMu.Unlock()
+		if h.appdataPreviews == nil {
+			h.appdataPreviews = map[uuid.UUID]apiv1.AppdataRestorePreview{}
+		}
+		h.appdataPreviews[j.ID] = apiv1.AppdataRestorePreview{
+			Container: req.Container, Archive: req.Archive, DestinationId: req.DestinationId, CreatedAt: a.ModTime,
+			Directories: []apiv1.AppdataRestorePreviewDirectory{{
+				Directory: "jellyfin",
+				Replaced:  apiv1.AppdataRestorePreviewGroup{Files: 2, Bytes: 48 * 1024 * 1024, Sample: []string{"data/library.db", "config/system.xml"}},
+				Added:     apiv1.AppdataRestorePreviewGroup{Files: 1, Bytes: 4096, Sample: []string{"config/encoding.xml"}},
+				Removed:   apiv1.AppdataRestorePreviewGroup{Files: 1, Bytes: 12 * 1024, Sample: []string{"log/log_20260929.log"}},
+			}},
+		}
+		return &j, nil
+	}
+	return nil, &mockError{code: "archive_not_found", statusCode: 404, message: fmt.Sprintf("%v: %s on destination %q", backup.ErrAppdataArchiveNotFound, req.Archive, req.DestinationId)}
+}
+
+// GetAppdataRestorePreview answers job_not_found for an id that is no
+// restore preview job, like production; every preview job the mock holds
+// has already succeeded.
+func (h *handler) GetAppdataRestorePreview(ctx context.Context, params apiv1.GetAppdataRestorePreviewParams) (*apiv1.AppdataRestorePreview, error) {
+	h.mu.Lock()
+	j, ok := h.jobs[params.JobId]
+	h.mu.Unlock()
+	if !ok || j.Type != apiv1.JobTypeAppdataRestorePreview {
+		return nil, errJobNotFound(params.JobId)
+	}
+	h.appdataMu.Lock()
+	defer h.appdataMu.Unlock()
+	p, ok := h.appdataPreviews[params.JobId]
+	if !ok {
+		return nil, &mockError{code: "appdata_preview_gone", statusCode: 404, message: "the result of this restore preview is no longer held: preview again"}
+	}
+	return &p, nil
+}

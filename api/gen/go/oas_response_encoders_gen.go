@@ -476,6 +476,19 @@ func encodeGetAppdataBackupResponse(response *AppdataBackupConfig, w http.Respon
 	return nil
 }
 
+func encodeGetAppdataRestorePreviewResponse(response *AppdataRestorePreview, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
 func encodeGetCacheUsageResponse(response NilCacheUsageBreakdown, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
@@ -1108,6 +1121,19 @@ func encodePlanDiskUpgradeResponse(response *DiskUpgradePlan, w http.ResponseWri
 }
 
 func encodePlanRebalanceResponse(response *RebalancePlan, w http.ResponseWriter, span trace.Span) error {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+
+	e := new(jx.Encoder)
+	response.Encode(e)
+	if _, err := e.WriteTo(w); err != nil {
+		return errors.Wrap(err, "write")
+	}
+
+	return nil
+}
+
+func encodePreviewAppdataRestoreResponse(response *Job, w http.ResponseWriter, span trace.Span) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(200)
 

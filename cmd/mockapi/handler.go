@@ -89,6 +89,9 @@ type handler struct {
 	// with no entry is stopped and included, like production.
 	appdataMu       sync.Mutex
 	appdataPolicies map[string]backup.AppdataPolicy
+	// appdataPreviews are the finished restore previews by job id: the mock
+	// has no scheduler, so a preview job is recorded as already succeeded.
+	appdataPreviews map[uuid.UUID]apiv1.AppdataRestorePreview
 
 	externalMu sync.Mutex
 	external   map[string]apiv1.ExternalDisk

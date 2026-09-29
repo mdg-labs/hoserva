@@ -704,7 +704,7 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	// scenario, so its appdata location is the temporary directory the
 	// containers above already mount, standing for the mock's
 	// mockAppdataRoot; the scope, the refusals and the job submission are
-	// what is compared. The two job types run the real backup and restore
+	// what is compared. The three job types run the real backup, restore and preview
 	// (not the no-op the other types get), so a case can restore an archive
 	// a backup it started has written.
 	appdataSvc := &backup.AppdataService{
@@ -722,6 +722,9 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 	}))
 	registry.Register(job.TypeAppdataRestore, false, job.RunAppdataRestore(func(ctx context.Context, p job.AppdataRestoreParams, out io.Writer) error {
 		return appdataSvc.Restore(ctx, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
+	}))
+	registry.Register(job.TypeAppdataRestorePreview, true, job.RunAppdataRestorePreview(func(ctx context.Context, id string, p job.AppdataRestoreParams, out io.Writer) error {
+		return appdataSvc.RunPreview(ctx, id, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
 	}))
 	return h
 }

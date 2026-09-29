@@ -419,6 +419,17 @@ type Invoker interface {
 	//
 	// GET /appdata/backup
 	GetAppdataBackup(ctx context.Context) (*AppdataBackupConfig, error)
+	// GetAppdataRestorePreview invokes getAppdataRestorePreview operation.
+	//
+	// The result of the `appdata_restore_preview` job `previewAppdataRestore` queued. The daemon holds the
+	// sixteen most recent results in memory, so a result is gone after a restart and after sixteen newer
+	// previews: preview again. 404 `job_not_found` for an id that is not a restore preview job, 409
+	// `appdata_preview_not_ready` while the job is queued or running, 409 `appdata_preview_failed` when it
+	// failed, was cancelled or was interrupted (the message says why; `getJob` and `getJobLog` have the
+	// rest), and 404 `appdata_preview_gone` when the job succeeded but its result is no longer held.
+	//
+	// GET /appdata/backup/restore/preview/{jobId}
+	GetAppdataRestorePreview(ctx context.Context, params GetAppdataRestorePreviewParams) (*AppdataRestorePreview, error)
 	// GetCacheUsage invokes getCacheUsage operation.
 	//
 	// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
@@ -805,6 +816,27 @@ type Invoker interface {
 	//
 	// POST /pool/rebalance/plan
 	PlanRebalance(ctx context.Context) (*RebalancePlan, error)
+	// PreviewAppdataRestore invokes previewAppdataRestore operation.
+	//
+	// Queues an `appdata_restore_preview` job (service class, scoped to the container) that reports what
+	// `restoreAppdata` would overwrite for the same archive on the same destination, before anything is
+	// changed. Read the result with `getAppdataRestorePreview` once the job has succeeded. The job
+	// fetches, decrypts and verifies the archive exactly as the restore does and fails with the restore's
+	// own error when the archive is corrupt, is another container's, names a directory outside the appdata
+	// location, or holds entries a restore could not unpack. It then compares each archived directory with
+	// the live one, walking the live appdata only for this job: files present in both are `replaced`,
+	// files only in the archive are `added`, and files only in the live appdata are `removed`, because the
+	// restore replaces each directory as a whole. It stops no container, writes nothing under the appdata
+	// location and leaves no fetched archive on disk, on success or failure. It queues behind a backup or
+	// restore of the same container and runs beside those of others. Cancelling it stops the fetch, the
+	// reading of the archive and the walk of the live directories; the decryption and the verification
+	// read that follow the fetch run to their end first. 404 `archive_not_found` for an archive the named
+	// destination does not hold, 404 `backup_destination_not_found`, 400 `appdata_archive_invalid` for a
+	// request that names no archive of this installation and container, and 409 `array_stopped` while the
+	// array is stopped or its storage is not ready.
+	//
+	// POST /appdata/backup/restore/preview
+	PreviewAppdataRestore(ctx context.Context, request *PreviewAppdataRestoreRequest) (*Job, error)
 	// RebootHost invokes rebootHost operation.
 	//
 	// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -6716,6 +6748,154 @@ func (c *Client) sendGetAppdataBackup(ctx context.Context) (res *AppdataBackupCo
 
 	stage = "DecodeResponse"
 	result, err := decodeGetAppdataBackupResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// GetAppdataRestorePreview invokes getAppdataRestorePreview operation.
+//
+// The result of the `appdata_restore_preview` job `previewAppdataRestore` queued. The daemon holds the
+// sixteen most recent results in memory, so a result is gone after a restart and after sixteen newer
+// previews: preview again. 404 `job_not_found` for an id that is not a restore preview job, 409
+// `appdata_preview_not_ready` while the job is queued or running, 409 `appdata_preview_failed` when it
+// failed, was cancelled or was interrupted (the message says why; `getJob` and `getJobLog` have the
+// rest), and 404 `appdata_preview_gone` when the job succeeded but its result is no longer held.
+//
+// GET /appdata/backup/restore/preview/{jobId}
+func (c *Client) GetAppdataRestorePreview(ctx context.Context, params GetAppdataRestorePreviewParams) (*AppdataRestorePreview, error) {
+	res, err := c.sendGetAppdataRestorePreview(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendGetAppdataRestorePreview(ctx context.Context, params GetAppdataRestorePreviewParams) (res *AppdataRestorePreview, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getAppdataRestorePreview"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/appdata/backup/restore/preview/{jobId}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetAppdataRestorePreviewOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/appdata/backup/restore/preview/"
+	{
+		// Encode "jobId" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "jobId",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.UUIDToString(params.JobId))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, GetAppdataRestorePreviewOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, GetAppdataRestorePreviewOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetAppdataRestorePreviewResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -12785,6 +12965,149 @@ func (c *Client) sendPlanRebalance(ctx context.Context) (res *RebalancePlan, err
 
 	stage = "DecodeResponse"
 	result, err := decodePlanRebalanceResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// PreviewAppdataRestore invokes previewAppdataRestore operation.
+//
+// Queues an `appdata_restore_preview` job (service class, scoped to the container) that reports what
+// `restoreAppdata` would overwrite for the same archive on the same destination, before anything is
+// changed. Read the result with `getAppdataRestorePreview` once the job has succeeded. The job
+// fetches, decrypts and verifies the archive exactly as the restore does and fails with the restore's
+// own error when the archive is corrupt, is another container's, names a directory outside the appdata
+// location, or holds entries a restore could not unpack. It then compares each archived directory with
+// the live one, walking the live appdata only for this job: files present in both are `replaced`,
+// files only in the archive are `added`, and files only in the live appdata are `removed`, because the
+// restore replaces each directory as a whole. It stops no container, writes nothing under the appdata
+// location and leaves no fetched archive on disk, on success or failure. It queues behind a backup or
+// restore of the same container and runs beside those of others. Cancelling it stops the fetch, the
+// reading of the archive and the walk of the live directories; the decryption and the verification
+// read that follow the fetch run to their end first. 404 `archive_not_found` for an archive the named
+// destination does not hold, 404 `backup_destination_not_found`, 400 `appdata_archive_invalid` for a
+// request that names no archive of this installation and container, and 409 `array_stopped` while the
+// array is stopped or its storage is not ready.
+//
+// POST /appdata/backup/restore/preview
+func (c *Client) PreviewAppdataRestore(ctx context.Context, request *PreviewAppdataRestoreRequest) (*Job, error) {
+	res, err := c.sendPreviewAppdataRestore(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendPreviewAppdataRestore(ctx context.Context, request *PreviewAppdataRestoreRequest) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("previewAppdataRestore"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/appdata/backup/restore/preview"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PreviewAppdataRestoreOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/appdata/backup/restore/preview"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodePreviewAppdataRestoreRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, PreviewAppdataRestoreOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, PreviewAppdataRestoreOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodePreviewAppdataRestoreResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

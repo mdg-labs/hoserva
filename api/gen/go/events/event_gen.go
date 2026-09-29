@@ -899,34 +899,35 @@ func (s *JobStatus) UnmarshalText(data []byte) error {
 type JobType string
 
 const (
-	JobTypeSync              JobType = "sync"
-	JobTypeScrub             JobType = "scrub"
-	JobTypeFix               JobType = "fix"
-	JobTypeCheck             JobType = "check"
-	JobTypeRebalance         JobType = "rebalance"
-	JobTypeEvacuation        JobType = "evacuation"
-	JobTypeShareRelocation   JobType = "share_relocation"
-	JobTypeMover             JobType = "mover"
-	JobTypeVMDiskRelocation  JobType = "vm_disk_relocation"
-	JobTypeDiskFormat        JobType = "disk_format"
-	JobTypeDiskAdd           JobType = "disk_add"
-	JobTypeDiskRemove        JobType = "disk_remove"
-	JobTypeDiskReplace       JobType = "disk_replace"
-	JobTypeDiskUpgradeData   JobType = "disk_upgrade_data"
-	JobTypeDiskUpgradeParity JobType = "disk_upgrade_parity"
-	JobTypePoolRemount       JobType = "pool_remount"
-	JobTypeAppdataBackup     JobType = "appdata_backup"
-	JobTypeAppdataRestore    JobType = "appdata_restore"
-	JobTypeContainerUpdate   JobType = "container_update"
-	JobTypeContainerRecreate JobType = "container_recreate"
-	JobTypeAcmeIssue         JobType = "acme_issue"
-	JobTypeVMStart           JobType = "vm_start"
-	JobTypeVMStop            JobType = "vm_stop"
-	JobTypeVMCreate          JobType = "vm_create"
-	JobTypeVMDelete          JobType = "vm_delete"
-	JobTypeVMSnapshot        JobType = "vm_snapshot"
-	JobTypeVMClone           JobType = "vm_clone"
-	JobTypeVMMigrationImport JobType = "vm_migration_import"
+	JobTypeSync                  JobType = "sync"
+	JobTypeScrub                 JobType = "scrub"
+	JobTypeFix                   JobType = "fix"
+	JobTypeCheck                 JobType = "check"
+	JobTypeRebalance             JobType = "rebalance"
+	JobTypeEvacuation            JobType = "evacuation"
+	JobTypeShareRelocation       JobType = "share_relocation"
+	JobTypeMover                 JobType = "mover"
+	JobTypeVMDiskRelocation      JobType = "vm_disk_relocation"
+	JobTypeDiskFormat            JobType = "disk_format"
+	JobTypeDiskAdd               JobType = "disk_add"
+	JobTypeDiskRemove            JobType = "disk_remove"
+	JobTypeDiskReplace           JobType = "disk_replace"
+	JobTypeDiskUpgradeData       JobType = "disk_upgrade_data"
+	JobTypeDiskUpgradeParity     JobType = "disk_upgrade_parity"
+	JobTypePoolRemount           JobType = "pool_remount"
+	JobTypeAppdataBackup         JobType = "appdata_backup"
+	JobTypeAppdataRestore        JobType = "appdata_restore"
+	JobTypeAppdataRestorePreview JobType = "appdata_restore_preview"
+	JobTypeContainerUpdate       JobType = "container_update"
+	JobTypeContainerRecreate     JobType = "container_recreate"
+	JobTypeAcmeIssue             JobType = "acme_issue"
+	JobTypeVMStart               JobType = "vm_start"
+	JobTypeVMStop                JobType = "vm_stop"
+	JobTypeVMCreate              JobType = "vm_create"
+	JobTypeVMDelete              JobType = "vm_delete"
+	JobTypeVMSnapshot            JobType = "vm_snapshot"
+	JobTypeVMClone               JobType = "vm_clone"
+	JobTypeVMMigrationImport     JobType = "vm_migration_import"
 )
 
 // AllValues returns all JobType values.
@@ -950,6 +951,7 @@ func (JobType) AllValues() []JobType {
 		JobTypePoolRemount,
 		JobTypeAppdataBackup,
 		JobTypeAppdataRestore,
+		JobTypeAppdataRestorePreview,
 		JobTypeContainerUpdate,
 		JobTypeContainerRecreate,
 		JobTypeAcmeIssue,
@@ -1001,6 +1003,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeAppdataBackup:
 		return []byte(s), nil
 	case JobTypeAppdataRestore:
+		return []byte(s), nil
+	case JobTypeAppdataRestorePreview:
 		return []byte(s), nil
 	case JobTypeContainerUpdate:
 		return []byte(s), nil
@@ -1083,6 +1087,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeAppdataRestore:
 		*s = JobTypeAppdataRestore
+		return nil
+	case JobTypeAppdataRestorePreview:
+		*s = JobTypeAppdataRestorePreview
 		return nil
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
@@ -3308,6 +3315,8 @@ func (s *JobType) Decode(d *jx.Decoder) error {
 		*s = JobTypeAppdataBackup
 	case JobTypeAppdataRestore:
 		*s = JobTypeAppdataRestore
+	case JobTypeAppdataRestorePreview:
+		*s = JobTypeAppdataRestorePreview
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
 	case JobTypeContainerRecreate:
@@ -4353,6 +4362,8 @@ func (s JobType) Validate() error {
 	case "appdata_backup":
 		return nil
 	case "appdata_restore":
+		return nil
+	case "appdata_restore_preview":
 		return nil
 	case "container_update":
 		return nil

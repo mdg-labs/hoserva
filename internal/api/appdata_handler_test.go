@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/backup"
@@ -27,6 +29,10 @@ type appdataFixture struct {
 	appdata string
 	pool    string
 	failed  atomic.Int32
+	// previewGate, when set before a preview is queued, holds the preview
+	// job until it is closed.
+	previewGate chan struct{}
+	backupJobID uuid.UUID
 }
 
 func newAppdataFixture(t *testing.T) *appdataFixture {
@@ -72,6 +78,12 @@ func newAppdataFixture(t *testing.T) *appdataFixture {
 	}))
 	reg.Register(job.TypeAppdataRestore, false, job.RunAppdataRestore(func(ctx context.Context, p job.AppdataRestoreParams, out io.Writer) error {
 		return f.svc.Restore(ctx, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
+	}))
+	reg.Register(job.TypeAppdataRestorePreview, true, job.RunAppdataRestorePreview(func(ctx context.Context, id string, p job.AppdataRestoreParams, out io.Writer) error {
+		if gate := f.previewGate; gate != nil {
+			<-gate
+		}
+		return f.svc.RunPreview(ctx, id, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
 	}))
 	return f
 }
@@ -277,5 +289,153 @@ func TestHandler_RestoreAppdata_RefusesWhatItCannotRestore(t *testing.T) {
 	_, err = f.h.RestoreAppdata(ctx, req)
 	if st, code := statusOf(f.h, err); st != 409 || code != "array_stopped" {
 		t.Fatalf("array stopped = %d %s, want 409 array_stopped", st, code)
+	}
+}
+
+// backedUpSonarr backs sonarr up and returns its archive.
+func (f *appdataFixture) backedUpSonarr(t *testing.T) apiv1.AppdataArchive {
+	t.Helper()
+	ctx := context.Background()
+	j, err := f.h.StartAppdataBackup(ctx, apiv1.NewOptStartAppdataBackupRequest(apiv1.StartAppdataBackupRequest{Containers: []string{"sonarr"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done := awaitJob(t, f.sched, j.ID.String()); done.Status != job.StatusSucceeded {
+		t.Fatalf("backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	f.backupJobID = j.ID
+	archives, err := f.h.ListAppdataArchives(ctx, apiv1.ListAppdataArchivesParams{Container: apiv1.NewOptString("sonarr")})
+	if err != nil || len(archives.Archives) != 1 {
+		t.Fatalf("ListAppdataArchives = %+v, %v", archives, err)
+	}
+	return archives.Archives[0]
+}
+
+func (f *appdataFixture) queuePreview(t *testing.T, a apiv1.AppdataArchive) *apiv1.Job {
+	t.Helper()
+	j, err := f.h.PreviewAppdataRestore(context.Background(), &apiv1.PreviewAppdataRestoreRequest{Container: "sonarr", Archive: a.Name, DestinationId: a.DestinationId})
+	if err != nil {
+		t.Fatalf("PreviewAppdataRestore: %v", err)
+	}
+	return j
+}
+
+func TestHandler_PreviewAppdataRestore_QueuesAServiceJobWhoseResultReportsWhatARestoreWouldOverwrite(t *testing.T) {
+	f := newAppdataFixture(t)
+	ctx := context.Background()
+	a := f.backedUpSonarr(t)
+	dir := filepath.Join(f.appdata, "sonarr")
+	if err := os.WriteFile(filepath.Join(dir, "data"), []byte("sonarr-broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new"), []byte("live only"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	j := f.queuePreview(t, a)
+	if j.Type != apiv1.JobTypeAppdataRestorePreview || j.Class != apiv1.JobClassService {
+		t.Fatalf("job = %s/%s, want appdata_restore_preview in the service class", j.Type, j.Class)
+	}
+	if done := awaitJob(t, f.sched, j.ID.String()); done.Status != job.StatusSucceeded {
+		t.Fatalf("preview job: %s %s", done.Status, done.ErrorMessage)
+	}
+	got, err := f.h.GetAppdataRestorePreview(ctx, apiv1.GetAppdataRestorePreviewParams{JobId: j.ID})
+	if err != nil {
+		t.Fatalf("GetAppdataRestorePreview: %v", err)
+	}
+	if len(got.Directories) != 1 {
+		t.Fatalf("directories = %+v", got.Directories)
+	}
+	d := got.Directories[0]
+	if d.Directory != "sonarr" ||
+		d.Replaced.Files != 1 || d.Replaced.Bytes != int64(len("sonarr-broken")) || len(d.Replaced.Sample) != 1 || d.Replaced.Sample[0] != "data" ||
+		d.Removed.Files != 1 || d.Removed.Sample[0] != "new" ||
+		d.Added.Files != 0 || d.Added.Sample == nil {
+		t.Fatalf("directory = %+v", d)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "data")); string(b) != "sonarr-broken" {
+		t.Fatalf("the preview changed the appdata: %q", b)
+	}
+	if st, err := f.fake.Inspect(ctx, "sonarr"); err != nil || st.State != "running" {
+		t.Fatalf("sonarr = %+v, %v after the preview, want running", st, err)
+	}
+	if left, _ := os.ReadDir(filepath.Dir(f.appdata)); len(left) != 1 {
+		t.Fatalf("the preview left %v next to the appdata location, want only appdata", left)
+	}
+}
+
+func TestHandler_PreviewAppdataRestore_RefusesWhatTheRestoreRefuses(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	_, err := h.PreviewAppdataRestore(context.Background(), &apiv1.PreviewAppdataRestoreRequest{Container: "a", Archive: "x", DestinationId: "pool"})
+	if st, code := statusOf(h, err); st != 501 || code != "not_configured" {
+		t.Fatalf("without a service = %d %s, want 501 not_configured", st, code)
+	}
+
+	f := newAppdataFixture(t)
+	ctx := context.Background()
+	req := &apiv1.PreviewAppdataRestoreRequest{Container: "sonarr", Archive: "hoserva-appdata-000000000000-sonarr-2026-01-01T00-00-00.tar.zst", DestinationId: backup.DefaultPoolID}
+	_, err = f.h.PreviewAppdataRestore(ctx, req)
+	if st, code := statusOf(f.h, err); st != 400 || code != "appdata_archive_invalid" {
+		t.Fatalf("another installation's archive = %d %s, want 400 appdata_archive_invalid", st, code)
+	}
+	f.stopped.Store(true)
+	_, err = f.h.PreviewAppdataRestore(ctx, req)
+	if st, code := statusOf(f.h, err); st != 409 || code != "array_stopped" {
+		t.Fatalf("array stopped = %d %s, want 409 array_stopped", st, code)
+	}
+}
+
+func TestHandler_GetAppdataRestorePreview_SaysWhyThereIsNoResult(t *testing.T) {
+	f := newAppdataFixture(t)
+	ctx := context.Background()
+	a := f.backedUpSonarr(t)
+	get := func(id uuid.UUID) (int, string, string) {
+		_, err := f.h.GetAppdataRestorePreview(ctx, apiv1.GetAppdataRestorePreviewParams{JobId: id})
+		if err == nil {
+			return 200, "", ""
+		}
+		st, code := statusOf(f.h, err)
+		return st, code, err.Error()
+	}
+
+	if st, code, _ := get(uuid.New()); st != 404 || code != "job_not_found" {
+		t.Fatalf("unknown job = %d %s, want 404 job_not_found", st, code)
+	}
+	if st, code, _ := get(f.backupJobID); st != 404 || code != "job_not_found" {
+		t.Fatalf("a backup job = %d %s, want 404 job_not_found", st, code)
+	}
+
+	f.previewGate = make(chan struct{})
+	queued := f.queuePreview(t, a)
+	if st, code, _ := get(queued.ID); st != 409 || code != "appdata_preview_not_ready" {
+		t.Fatalf("a preview that has not finished = %d %s, want 409 appdata_preview_not_ready", st, code)
+	}
+	if err := os.Remove(filepath.Join(f.pool, a.Name)); err != nil {
+		t.Fatal(err)
+	}
+	close(f.previewGate)
+	if done := awaitJob(t, f.sched, queued.ID.String()); done.Status != job.StatusFailed {
+		t.Fatalf("preview of a vanished archive = %s, want failed", done.Status)
+	}
+	if st, code, msg := get(queued.ID); st != 409 || code != "appdata_preview_failed" || !strings.Contains(msg, a.Name) {
+		t.Fatalf("a failed preview = %d %s %q, want 409 appdata_preview_failed naming the archive", st, code, msg)
+	}
+}
+
+func TestHandler_GetAppdataRestorePreview_HoldsOnlyTheNewestResults(t *testing.T) {
+	f := newAppdataFixture(t)
+	ctx := context.Background()
+	a := f.backedUpSonarr(t)
+	first := f.queuePreview(t, a)
+	awaitJob(t, f.sched, first.ID.String())
+	if _, err := f.h.GetAppdataRestorePreview(ctx, apiv1.GetAppdataRestorePreviewParams{JobId: first.ID}); err != nil {
+		t.Fatalf("the newest result: %v", err)
+	}
+	for i := 0; i < backup.AppdataPreviewKeep; i++ {
+		awaitJob(t, f.sched, f.queuePreview(t, a).ID.String())
+	}
+	_, err := f.h.GetAppdataRestorePreview(ctx, apiv1.GetAppdataRestorePreviewParams{JobId: first.ID})
+	if st, code := statusOf(f.h, err); st != 404 || code != "appdata_preview_gone" {
+		t.Fatalf("the oldest result after %d newer ones = %d %s, want 404 appdata_preview_gone", backup.AppdataPreviewKeep, st, code)
 	}
 }

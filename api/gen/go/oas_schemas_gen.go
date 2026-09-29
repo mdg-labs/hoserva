@@ -1173,6 +1173,158 @@ func (s *AppdataBackupContainer) SetWarning(val OptNilString) {
 	s.Warning = val
 }
 
+// Ref: #/components/schemas/AppdataRestorePreview
+type AppdataRestorePreview struct {
+	Container     string `json:"container"`
+	Archive       string `json:"archive"`
+	DestinationId string `json:"destinationId"`
+	// When the archive was taken.
+	CreatedAt   time.Time                        `json:"createdAt"`
+	Directories []AppdataRestorePreviewDirectory `json:"directories"`
+}
+
+// GetContainer returns the value of Container.
+func (s *AppdataRestorePreview) GetContainer() string {
+	return s.Container
+}
+
+// GetArchive returns the value of Archive.
+func (s *AppdataRestorePreview) GetArchive() string {
+	return s.Archive
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *AppdataRestorePreview) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *AppdataRestorePreview) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// GetDirectories returns the value of Directories.
+func (s *AppdataRestorePreview) GetDirectories() []AppdataRestorePreviewDirectory {
+	return s.Directories
+}
+
+// SetContainer sets the value of Container.
+func (s *AppdataRestorePreview) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetArchive sets the value of Archive.
+func (s *AppdataRestorePreview) SetArchive(val string) {
+	s.Archive = val
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *AppdataRestorePreview) SetDestinationId(val string) {
+	s.DestinationId = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *AppdataRestorePreview) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// SetDirectories sets the value of Directories.
+func (s *AppdataRestorePreview) SetDirectories(val []AppdataRestorePreviewDirectory) {
+	s.Directories = val
+}
+
+// Ref: #/components/schemas/AppdataRestorePreviewDirectory
+type AppdataRestorePreviewDirectory struct {
+	// The archived directory, relative to the appdata location (`jellyfin/config`).
+	Directory string                     `json:"directory"`
+	Replaced  AppdataRestorePreviewGroup `json:"replaced"`
+	Added     AppdataRestorePreviewGroup `json:"added"`
+	Removed   AppdataRestorePreviewGroup `json:"removed"`
+}
+
+// GetDirectory returns the value of Directory.
+func (s *AppdataRestorePreviewDirectory) GetDirectory() string {
+	return s.Directory
+}
+
+// GetReplaced returns the value of Replaced.
+func (s *AppdataRestorePreviewDirectory) GetReplaced() AppdataRestorePreviewGroup {
+	return s.Replaced
+}
+
+// GetAdded returns the value of Added.
+func (s *AppdataRestorePreviewDirectory) GetAdded() AppdataRestorePreviewGroup {
+	return s.Added
+}
+
+// GetRemoved returns the value of Removed.
+func (s *AppdataRestorePreviewDirectory) GetRemoved() AppdataRestorePreviewGroup {
+	return s.Removed
+}
+
+// SetDirectory sets the value of Directory.
+func (s *AppdataRestorePreviewDirectory) SetDirectory(val string) {
+	s.Directory = val
+}
+
+// SetReplaced sets the value of Replaced.
+func (s *AppdataRestorePreviewDirectory) SetReplaced(val AppdataRestorePreviewGroup) {
+	s.Replaced = val
+}
+
+// SetAdded sets the value of Added.
+func (s *AppdataRestorePreviewDirectory) SetAdded(val AppdataRestorePreviewGroup) {
+	s.Added = val
+}
+
+// SetRemoved sets the value of Removed.
+func (s *AppdataRestorePreviewDirectory) SetRemoved(val AppdataRestorePreviewGroup) {
+	s.Removed = val
+}
+
+// Ref: #/components/schemas/AppdataRestorePreviewGroup
+type AppdataRestorePreviewGroup struct {
+	// How many files are in this group. Symbolic links and other non-directory entries count as files;
+	// directories do not.
+	Files int64 `json:"files"`
+	// Total size of those files: for `replaced` and `removed` the size of the live files that would be
+	// lost, for `added` the size of the archive's files.
+	Bytes int64 `json:"bytes"`
+	// The first paths of the group in path order, relative to the directory, at most 20. `files` is the
+	// full count.
+	Sample []string `json:"sample"`
+}
+
+// GetFiles returns the value of Files.
+func (s *AppdataRestorePreviewGroup) GetFiles() int64 {
+	return s.Files
+}
+
+// GetBytes returns the value of Bytes.
+func (s *AppdataRestorePreviewGroup) GetBytes() int64 {
+	return s.Bytes
+}
+
+// GetSample returns the value of Sample.
+func (s *AppdataRestorePreviewGroup) GetSample() []string {
+	return s.Sample
+}
+
+// SetFiles sets the value of Files.
+func (s *AppdataRestorePreviewGroup) SetFiles(val int64) {
+	s.Files = val
+}
+
+// SetBytes sets the value of Bytes.
+func (s *AppdataRestorePreviewGroup) SetBytes(val int64) {
+	s.Bytes = val
+}
+
+// SetSample sets the value of Sample.
+func (s *AppdataRestorePreviewGroup) SetSample(val []string) {
+	s.Sample = val
+}
+
 // Ref: #/components/schemas/ApplyHostConfigRequest
 type ApplyHostConfigRequest struct {
 	Files []HostConfigChoice `json:"files"`
@@ -4452,34 +4604,35 @@ func (s *JobStatus) UnmarshalText(data []byte) error {
 type JobType string
 
 const (
-	JobTypeSync              JobType = "sync"
-	JobTypeScrub             JobType = "scrub"
-	JobTypeFix               JobType = "fix"
-	JobTypeCheck             JobType = "check"
-	JobTypeRebalance         JobType = "rebalance"
-	JobTypeEvacuation        JobType = "evacuation"
-	JobTypeShareRelocation   JobType = "share_relocation"
-	JobTypeMover             JobType = "mover"
-	JobTypeVMDiskRelocation  JobType = "vm_disk_relocation"
-	JobTypeDiskFormat        JobType = "disk_format"
-	JobTypeDiskAdd           JobType = "disk_add"
-	JobTypeDiskRemove        JobType = "disk_remove"
-	JobTypeDiskReplace       JobType = "disk_replace"
-	JobTypeDiskUpgradeData   JobType = "disk_upgrade_data"
-	JobTypeDiskUpgradeParity JobType = "disk_upgrade_parity"
-	JobTypePoolRemount       JobType = "pool_remount"
-	JobTypeAppdataBackup     JobType = "appdata_backup"
-	JobTypeAppdataRestore    JobType = "appdata_restore"
-	JobTypeContainerUpdate   JobType = "container_update"
-	JobTypeContainerRecreate JobType = "container_recreate"
-	JobTypeAcmeIssue         JobType = "acme_issue"
-	JobTypeVMStart           JobType = "vm_start"
-	JobTypeVMStop            JobType = "vm_stop"
-	JobTypeVMCreate          JobType = "vm_create"
-	JobTypeVMDelete          JobType = "vm_delete"
-	JobTypeVMSnapshot        JobType = "vm_snapshot"
-	JobTypeVMClone           JobType = "vm_clone"
-	JobTypeVMMigrationImport JobType = "vm_migration_import"
+	JobTypeSync                  JobType = "sync"
+	JobTypeScrub                 JobType = "scrub"
+	JobTypeFix                   JobType = "fix"
+	JobTypeCheck                 JobType = "check"
+	JobTypeRebalance             JobType = "rebalance"
+	JobTypeEvacuation            JobType = "evacuation"
+	JobTypeShareRelocation       JobType = "share_relocation"
+	JobTypeMover                 JobType = "mover"
+	JobTypeVMDiskRelocation      JobType = "vm_disk_relocation"
+	JobTypeDiskFormat            JobType = "disk_format"
+	JobTypeDiskAdd               JobType = "disk_add"
+	JobTypeDiskRemove            JobType = "disk_remove"
+	JobTypeDiskReplace           JobType = "disk_replace"
+	JobTypeDiskUpgradeData       JobType = "disk_upgrade_data"
+	JobTypeDiskUpgradeParity     JobType = "disk_upgrade_parity"
+	JobTypePoolRemount           JobType = "pool_remount"
+	JobTypeAppdataBackup         JobType = "appdata_backup"
+	JobTypeAppdataRestore        JobType = "appdata_restore"
+	JobTypeAppdataRestorePreview JobType = "appdata_restore_preview"
+	JobTypeContainerUpdate       JobType = "container_update"
+	JobTypeContainerRecreate     JobType = "container_recreate"
+	JobTypeAcmeIssue             JobType = "acme_issue"
+	JobTypeVMStart               JobType = "vm_start"
+	JobTypeVMStop                JobType = "vm_stop"
+	JobTypeVMCreate              JobType = "vm_create"
+	JobTypeVMDelete              JobType = "vm_delete"
+	JobTypeVMSnapshot            JobType = "vm_snapshot"
+	JobTypeVMClone               JobType = "vm_clone"
+	JobTypeVMMigrationImport     JobType = "vm_migration_import"
 )
 
 // AllValues returns all JobType values.
@@ -4503,6 +4656,7 @@ func (JobType) AllValues() []JobType {
 		JobTypePoolRemount,
 		JobTypeAppdataBackup,
 		JobTypeAppdataRestore,
+		JobTypeAppdataRestorePreview,
 		JobTypeContainerUpdate,
 		JobTypeContainerRecreate,
 		JobTypeAcmeIssue,
@@ -4554,6 +4708,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypeAppdataBackup:
 		return []byte(s), nil
 	case JobTypeAppdataRestore:
+		return []byte(s), nil
+	case JobTypeAppdataRestorePreview:
 		return []byte(s), nil
 	case JobTypeContainerUpdate:
 		return []byte(s), nil
@@ -4636,6 +4792,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeAppdataRestore:
 		*s = JobTypeAppdataRestore
+		return nil
+	case JobTypeAppdataRestorePreview:
+		*s = JobTypeAppdataRestorePreview
 		return nil
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
@@ -9727,6 +9886,44 @@ func (s *PoolStatus) SetLargestDiskFreeBytes(val OptNilInt64) {
 // SetLargestDiskPath sets the value of LargestDiskPath.
 func (s *PoolStatus) SetLargestDiskPath(val OptNilString) {
 	s.LargestDiskPath = val
+}
+
+// Ref: #/components/schemas/PreviewAppdataRestoreRequest
+type PreviewAppdataRestoreRequest struct {
+	Container string `json:"container"`
+	// An archive name from listAppdataArchives.
+	Archive       string `json:"archive"`
+	DestinationId string `json:"destinationId"`
+}
+
+// GetContainer returns the value of Container.
+func (s *PreviewAppdataRestoreRequest) GetContainer() string {
+	return s.Container
+}
+
+// GetArchive returns the value of Archive.
+func (s *PreviewAppdataRestoreRequest) GetArchive() string {
+	return s.Archive
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *PreviewAppdataRestoreRequest) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// SetContainer sets the value of Container.
+func (s *PreviewAppdataRestoreRequest) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetArchive sets the value of Archive.
+func (s *PreviewAppdataRestoreRequest) SetArchive(val string) {
+	s.Archive = val
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *PreviewAppdataRestoreRequest) SetDestinationId(val string) {
+	s.DestinationId = val
 }
 
 // One file a rebalance or evacuation plan moves (doc 09 §3-4).

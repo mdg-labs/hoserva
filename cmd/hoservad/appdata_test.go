@@ -403,3 +403,205 @@ func TestWireAppdata_WithoutDockerRegistersNothing(t *testing.T) {
 		t.Fatal("the schedule was wired to an absent service")
 	}
 }
+
+// backedUp runs a backup of one container through the daemon's handler.
+func backedUp(t *testing.T, w *containersWiringHarness, name string) {
+	t.Helper()
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup", `{"containers":["`+name+`"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup = %d %s", status, body)
+	}
+	var queued struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &queued)
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("backup: %s %s", done.Status, done.ErrorMessage)
+	}
+}
+
+func archiveNamed(t *testing.T, dest, container string) string {
+	t.Helper()
+	entries, _ := os.ReadDir(dest)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "-"+container+"-") {
+			return e.Name()
+		}
+	}
+	t.Fatalf("no archive of %s in %s", container, dest)
+	return ""
+}
+
+// POST /appdata/backup/restore/preview queues an appdata_restore_preview job
+// through the real daemon server and its job registry, and the preview it
+// reports is read back over HTTP without the appdata being changed.
+func TestAppdataWiring_RestorePreviewIsReachableOverHTTP(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	wireAppdata(w.handler, w.registry, svc, &recordingPublisher{})
+	backedUp(t, w, "jellyfin")
+	archive := archiveNamed(t, dest, "jellyfin")
+	live := filepath.Join(w.appdata, "library.db")
+	if err := os.WriteFile(live, []byte("corrupted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := `{"container":"jellyfin","archive":"` + archive + `","destinationId":"pool"}`
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup/restore/preview", req)
+	if status != http.StatusOK {
+		t.Fatalf("POST restore/preview = %d %s", status, body)
+	}
+	var queued struct {
+		ID    string `json:"id"`
+		Type  string `json:"type"`
+		Class string `json:"class"`
+	}
+	if err := json.Unmarshal(body, &queued); err != nil || queued.Type != "appdata_restore_preview" || queued.Class != "service" {
+		t.Fatalf("job = %s (%v), want an appdata_restore_preview service job", body, err)
+	}
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("preview job: %s %s", done.Status, done.ErrorMessage)
+	}
+
+	status, body = w.do(t, http.MethodGet, "/appdata/backup/restore/preview/"+queued.ID)
+	if status != http.StatusOK {
+		t.Fatalf("GET restore/preview/%s = %d %s", queued.ID, status, body)
+	}
+	var preview struct {
+		Directories []struct {
+			Replaced struct {
+				Files  int      `json:"files"`
+				Sample []string `json:"sample"`
+			} `json:"replaced"`
+		} `json:"directories"`
+	}
+	if err := json.Unmarshal(body, &preview); err != nil || len(preview.Directories) == 0 ||
+		preview.Directories[0].Replaced.Files != 1 || preview.Directories[0].Replaced.Sample[0] != "library.db" {
+		t.Fatalf("preview = %s (%v), want library.db replaced", body, err)
+	}
+	if got, _ := os.ReadFile(live); string(got) != "corrupted" {
+		t.Fatalf("library.db after the preview = %q, want it untouched", got)
+	}
+	if left, _ := os.ReadDir(filepath.Dir(filepath.Dir(w.appdata))); len(left) != 1 {
+		t.Fatalf("the preview left %v next to the appdata location, want only appdata", left)
+	}
+	if status, body = w.do(t, http.MethodGet, "/appdata/backup/restore/preview/00000000-0000-4000-8000-000000000000"); status != http.StatusNotFound {
+		t.Fatalf("GET of an unknown preview = %d %s, want 404", status, body)
+	}
+}
+
+// gatedContainers holds one RequireArrayRunning call until released, so a
+// test can keep a preview job running while it submits other jobs.
+type gatedContainers struct {
+	backup.AppdataContainers
+	mu      sync.Mutex
+	armed   bool
+	skip    int
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gatedContainers) arm(skip int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.armed, g.skip = true, skip
+}
+
+func (g *gatedContainers) RequireArrayRunning() error {
+	g.mu.Lock()
+	hold := false
+	if g.armed {
+		if g.skip == 0 {
+			hold, g.armed = true, false
+		} else {
+			g.skip--
+		}
+	}
+	g.mu.Unlock()
+	if hold {
+		close(g.entered)
+		<-g.release
+	}
+	return g.AppdataContainers.RequireArrayRunning()
+}
+
+// A backup submitted while a preview job is running is never failed by it:
+// the same container's backup queues behind the preview, another
+// container's runs beside it, and neither raises the backup-failed alert.
+func TestAppdataWiring_ABackupNeverFailsBecauseAPreviewIsRunning(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	sonarrDir := filepath.Join(w.root, "cache", "appdata", "sonarr")
+	if err := os.MkdirAll(sonarrDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sonarrDir, "sonarr.db"), []byte("series"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.fake.AddContainer(container.Container{
+		ID: "b", Name: "sonarr", Image: "sonarr", Tag: "4", State: "exited",
+		Mounts: []container.Mount{{Source: sonarrDir, Destination: "/config", ReadWrite: true}},
+	})
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	gate := &gatedContainers{AppdataContainers: svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	svc.Containers = gate
+	pub := &recordingPublisher{}
+	wireAppdata(w.handler, w.registry, svc, pub)
+	backedUp(t, w, "jellyfin")
+	archive := archiveNamed(t, dest, "jellyfin")
+
+	// The handler's own array check is the first call, the job's is the
+	// second, which is the one held.
+	gate.arm(1)
+	req := `{"container":"jellyfin","archive":"` + archive + `","destinationId":"pool"}`
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup/restore/preview", req)
+	if status != http.StatusOK {
+		t.Fatalf("POST restore/preview = %d %s", status, body)
+	}
+	var preview struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &preview)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the preview job never started")
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup", `{"containers":["sonarr"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup for another container = %d %s", status, body)
+	}
+	var other struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &other)
+	if done := w.awaitJobByID(t, other.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("a backup of another container beside the preview: %s %s", done.Status, done.ErrorMessage)
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup", `{"containers":["jellyfin"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup for the previewed container = %d %s", status, body)
+	}
+	var same struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(body, &same)
+	if same.Status != "queued" {
+		t.Fatalf("a backup of the container being previewed is %q, want it queued behind the preview", same.Status)
+	}
+
+	close(gate.release)
+	if done := w.awaitJobByID(t, preview.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("preview: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := w.awaitJobByID(t, same.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the queued backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := pub.count(notify.EventAppdataBackupFailed); n != 0 {
+		t.Fatalf("appdata_backup_failed published %d times, want none", n)
+	}
+}

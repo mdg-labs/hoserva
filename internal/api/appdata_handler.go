@@ -158,6 +158,84 @@ func (h *Handler) ListAppdataArchives(ctx context.Context, params apiv1.ListAppd
 	return out, nil
 }
 
+func previewGroupToAPI(g backup.AppdataPreviewGroup) apiv1.AppdataRestorePreviewGroup {
+	sample := g.Sample
+	if sample == nil {
+		sample = []string{}
+	}
+	return apiv1.AppdataRestorePreviewGroup{Files: g.Files, Bytes: g.Bytes, Sample: sample}
+}
+
+// PreviewAppdataRestore queues the job that reports what RestoreAppdata
+// would overwrite, after the same up-front checks the restore makes. Reading
+// the archive is as long-running as the restore's own fetch, so it is a job,
+// scoped to the container so it queues behind a backup or restore of it;
+// GetAppdataRestorePreview returns its result.
+func (h *Handler) PreviewAppdataRestore(ctx context.Context, req *apiv1.PreviewAppdataRestoreRequest) (*apiv1.Job, error) {
+	if h.Appdata == nil {
+		return nil, errAppdataNotConfigured()
+	}
+	if h.Scheduler == nil {
+		return nil, fmt.Errorf("job scheduler not configured")
+	}
+	if err := h.Appdata.RequireArrayRunning(); err != nil {
+		return nil, mapAppdataError(err)
+	}
+	if err := h.Appdata.FindArchive(ctx, req.Container, req.Archive, req.DestinationId); err != nil {
+		return nil, mapAppdataError(err)
+	}
+	body, err := json.Marshal(job.AppdataRestoreParams{Container: req.Container, Archive: req.Archive, DestinationID: req.DestinationId})
+	if err != nil {
+		return nil, fmt.Errorf("encoding appdata_restore_preview params: %w", err)
+	}
+	j, err := h.Scheduler.Submit(ctx, job.TypeAppdataRestorePreview, []string{"container:" + req.Container}, body)
+	if err != nil {
+		return nil, mapSchedulerError(uuid.Nil, err)
+	}
+	return jobToAPI(j)
+}
+
+func (h *Handler) GetAppdataRestorePreview(ctx context.Context, params apiv1.GetAppdataRestorePreviewParams) (*apiv1.AppdataRestorePreview, error) {
+	if h.Appdata == nil {
+		return nil, errAppdataNotConfigured()
+	}
+	j, err := h.Store.Get(ctx, params.JobId.String())
+	if err != nil {
+		return nil, mapStoreError(params.JobId, err)
+	}
+	if j.Type != job.TypeAppdataRestorePreview {
+		return nil, &apiError{code: "job_not_found", statusCode: 404, message: fmt.Sprintf("no restore preview job with id %s", params.JobId)}
+	}
+	switch j.Status {
+	case job.StatusQueued, job.StatusRunning:
+		return nil, &apiError{code: "appdata_preview_not_ready", statusCode: 409, message: fmt.Sprintf("the restore preview %s is %s", params.JobId, j.Status)}
+	case job.StatusSucceeded:
+	default:
+		msg := fmt.Sprintf("the restore preview %s is %s", params.JobId, j.Status)
+		if j.ErrorMessage != "" {
+			msg += ": " + j.ErrorMessage
+		}
+		return nil, &apiError{code: "appdata_preview_failed", statusCode: 409, message: msg}
+	}
+	p, ok := h.Appdata.Preview(j.ID)
+	if !ok {
+		return nil, &apiError{code: "appdata_preview_gone", statusCode: 404, message: fmt.Sprintf("the result of restore preview %s is no longer held: preview again", params.JobId)}
+	}
+	out := &apiv1.AppdataRestorePreview{
+		Container: p.Container, Archive: p.Archive, DestinationId: p.DestinationID, CreatedAt: p.CreatedAt,
+		Directories: make([]apiv1.AppdataRestorePreviewDirectory, 0, len(p.Directories)),
+	}
+	for _, d := range p.Directories {
+		out.Directories = append(out.Directories, apiv1.AppdataRestorePreviewDirectory{
+			Directory: d.Directory,
+			Replaced:  previewGroupToAPI(d.Replaced),
+			Added:     previewGroupToAPI(d.Added),
+			Removed:   previewGroupToAPI(d.Removed),
+		})
+	}
+	return out, nil
+}
+
 func (h *Handler) RestoreAppdata(ctx context.Context, req *apiv1.RestoreAppdataRequest) (*apiv1.Job, error) {
 	if h.Appdata == nil {
 		return nil, errAppdataNotConfigured()

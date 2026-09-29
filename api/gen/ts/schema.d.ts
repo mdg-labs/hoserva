@@ -1794,6 +1794,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/appdata/backup/restore/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview restoring one container's appdata
+         * @description Queues an `appdata_restore_preview` job (service class, scoped to the container) that reports what `restoreAppdata` would overwrite for the same archive on the same destination, before anything is changed. Read the result with `getAppdataRestorePreview` once the job has succeeded. The job fetches, decrypts and verifies the archive exactly as the restore does and fails with the restore's own error when the archive is corrupt, is another container's, names a directory outside the appdata location, or holds entries a restore could not unpack. It then compares each archived directory with the live one, walking the live appdata only for this job: files present in both are `replaced`, files only in the archive are `added`, and files only in the live appdata are `removed`, because the restore replaces each directory as a whole. It stops no container, writes nothing under the appdata location and leaves no fetched archive on disk, on success or failure. It queues behind a backup or restore of the same container and runs beside those of others. Cancelling it stops the fetch, the reading of the archive and the walk of the live directories; the decryption and the verification read that follow the fetch run to their end first. 404 `archive_not_found` for an archive the named destination does not hold, 404 `backup_destination_not_found`, 400 `appdata_archive_invalid` for a request that names no archive of this installation and container, and 409 `array_stopped` while the array is stopped or its storage is not ready.
+         */
+        post: operations["previewAppdataRestore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/appdata/backup/restore/preview/{jobId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a restore preview
+         * @description The result of the `appdata_restore_preview` job `previewAppdataRestore` queued. The daemon holds the sixteen most recent results in memory, so a result is gone after a restart and after sixteen newer previews: preview again. 404 `job_not_found` for an id that is not a restore preview job, 409 `appdata_preview_not_ready` while the job is queued or running, 409 `appdata_preview_failed` when it failed, was cancelled or was interrupted (the message says why; `getJob` and `getJobLog` have the rest), and 404 `appdata_preview_gone` when the job succeeded but its result is no longer held.
+         */
+        get: operations["getAppdataRestorePreview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/doctor": {
         parameters: {
             query?: never;
@@ -2435,7 +2477,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -3990,6 +4032,44 @@ export interface components {
                 destinationId: string;
                 message: string;
             }[];
+        };
+        PreviewAppdataRestoreRequest: {
+            container: string;
+            /** @description An archive name from listAppdataArchives. */
+            archive: string;
+            destinationId: string;
+        };
+        AppdataRestorePreviewGroup: {
+            /**
+             * Format: int64
+             * @description How many files are in this group. Symbolic links and other non-directory entries count as files; directories do not.
+             */
+            files: number;
+            /**
+             * Format: int64
+             * @description Total size of those files: for `replaced` and `removed` the size of the live files that would be lost, for `added` the size of the archive's files.
+             */
+            bytes: number;
+            /** @description The first paths of the group in path order, relative to the directory, at most 20. `files` is the full count. */
+            sample: string[];
+        };
+        AppdataRestorePreviewDirectory: {
+            /** @description The archived directory, relative to the appdata location (`jellyfin/config`). */
+            directory: string;
+            replaced: components["schemas"]["AppdataRestorePreviewGroup"];
+            added: components["schemas"]["AppdataRestorePreviewGroup"];
+            removed: components["schemas"]["AppdataRestorePreviewGroup"];
+        };
+        AppdataRestorePreview: {
+            container: string;
+            archive: string;
+            destinationId: string;
+            /**
+             * Format: date-time
+             * @description When the archive was taken.
+             */
+            createdAt: string;
+            directories: components["schemas"]["AppdataRestorePreviewDirectory"][];
         };
         RestoreAppdataRequest: {
             container: string;
@@ -6433,6 +6513,54 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    previewAppdataRestore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewAppdataRestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued or running preview job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAppdataRestorePreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                jobId: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What restoring the archive would overwrite. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppdataRestorePreview"];
                 };
             };
             default: components["responses"]["Error"];

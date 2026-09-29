@@ -616,6 +616,7 @@
       "pool_remount": "Pool remount",
       "appdata_backup": "Appdata backup",
       "appdata_restore": "Appdata restore",
+      "appdata_restore_preview": "Appdata restore preview",
       "container_update": "Container update",
       "container_recreate": "Container recreate",
       "acme_issue": "Certificate issue",

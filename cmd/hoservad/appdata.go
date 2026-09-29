@@ -41,7 +41,7 @@ func newAppdataService(apps *appServices, backupSvc *backup.Service, policies ba
 }
 
 // wireAppdata is what main.go calls to make appdata backup reachable: the
-// /appdata/backup operations (Handler.Appdata) and the two job types. A
+// /appdata/backup operations (Handler.Appdata) and the three job types. A
 // failed backup publishes notify.EventAppdataBackupFailed. A test calls it
 // too, rather than repeating the assignments. With no service (no Docker)
 // nothing is registered, and the operations answer 501.
@@ -61,6 +61,10 @@ func wireAppdata(handler *api.Handler, registry *job.Registry, svc *backup.Appda
 	}))
 	registry.Register(job.TypeAppdataRestore, false, job.RunAppdataRestore(func(ctx context.Context, p job.AppdataRestoreParams, out io.Writer) error {
 		return svc.Restore(ctx, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
+	}))
+	// A preview changes nothing, so a cancel is safe at any point.
+	registry.Register(job.TypeAppdataRestorePreview, true, job.RunAppdataRestorePreview(func(ctx context.Context, id string, p job.AppdataRestoreParams, out io.Writer) error {
+		return svc.RunPreview(ctx, id, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
 	}))
 }
 
