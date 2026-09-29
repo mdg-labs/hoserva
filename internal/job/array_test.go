@@ -1228,3 +1228,70 @@ func TestArraySequence_RefreshLive_UpdatesARunningPoolOnly(t *testing.T) {
 	}
 	sliceEqual(t, log, []string{"mount:/mnt/user", "mount:/mnt/user/media"})
 }
+
+// An /apps start or restart, or a remove that deletes appdata, admitted
+// before maintenance mode is still inside its Engine or directory work: Stop
+// and StopForShutdown must not reach any service (whose Stop lists the
+// running containers) until it has finished, or a container it starts lands
+// after that list and is left running while the pool unmounts.
+func TestArraySequence_Stop_WaitsForAnInFlightAppActionBeforeStoppingServices(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(ArraySequence, context.Context) error
+	}{
+		{"Stop", ArraySequence.Stop},
+		{"StopForShutdown", ArraySequence.StopForShutdown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var log []string
+			s := newTestScheduler(t)
+			if err := s.BeginAppAction(); err != nil {
+				t.Fatalf("BeginAppAction: %v", err)
+			}
+			seq := ArraySequence{Scheduler: s, Services: []ArrayService{&fakeArrayService{name: "container", log: &log}}}
+
+			stopDone := make(chan error, 1)
+			go func() { stopDone <- tc.stop(seq, context.Background()) }()
+
+			select {
+			case <-stopDone:
+				t.Fatal("stop returned while an app action was still in flight")
+			case <-time.After(50 * time.Millisecond):
+			}
+			if !s.InMaintenance() {
+				t.Fatal("maintenance mode is not active while stop waits for the app action")
+			}
+			if err := s.BeginAppAction(); !errors.Is(err, ErrMaintenanceMode) {
+				t.Fatalf("BeginAppAction while stop waits = %v, want ErrMaintenanceMode", err)
+			}
+
+			s.FinishAppAction()
+			select {
+			case err := <-stopDone:
+				if err != nil {
+					t.Fatalf("stop: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("stop did not return after the app action finished")
+			}
+			sliceEqual(t, log, []string{"stop:container"})
+		})
+	}
+}
+
+func TestArraySequence_Stop_AppActionDrainRespectsContextDeadline(t *testing.T) {
+	var log []string
+	s := newTestScheduler(t)
+	if err := s.BeginAppAction(); err != nil {
+		t.Fatalf("BeginAppAction: %v", err)
+	}
+	seq := ArraySequence{Scheduler: s, Services: []ArrayService{&fakeArrayService{name: "container", log: &log}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := seq.Stop(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop = %v, want the context's deadline", err)
+	}
+	if len(log) != 0 {
+		t.Fatalf("Stop touched services (%v) although an app action never finished", log)
+	}
+}

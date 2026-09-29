@@ -253,7 +253,7 @@ func newContainersWiringHarnessWith(t *testing.T, prepare func(*container.FakePr
 	apps := newContainers(fake, root, arrayStore, nil)
 	storageReady := &atomic.Bool{}
 	storageReady.Store(true)
-	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageReady.Load)
+	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageReady.Load, arrayActionAdmit(scheduler))
 	wctx, stopWatch := context.WithCancel(ctx)
 	t.Cleanup(stopWatch)
 	go apps.Watcher.Run(wctx)
@@ -431,7 +431,7 @@ func TestWireContainers_WithoutArrayStateRefusesEveryStart(t *testing.T) {
 	fake.AddContainer(container.Container{ID: "a", Name: "jellyfin", State: "exited"})
 	apps := newContainers(fake, t.TempDir(), nil, nil)
 	handler := &api.Handler{}
-	wireContainers(handler, job.NewRegistry(), apps, nil, nil)
+	wireContainers(handler, job.NewRegistry(), apps, nil, nil, nil)
 
 	_, err := handler.StartApp(context.Background(), apiv1.StartAppParams{ID: "jellyfin"})
 	if err == nil {

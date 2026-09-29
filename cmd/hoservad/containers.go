@@ -190,15 +190,18 @@ func (c *appServices) awaitReconciled(ctx context.Context) error {
 // reachable: the /apps operations (Handler.Lifecycle) and the recreate
 // job. A test calls it too, rather than repeating the assignments.
 // halted and storageReady are the same two signals the boot restore reads:
-// with them Lifecycle refuses start, restart and recreate while the array
-// is stopped or its storage is not ready, and with either nil it refuses
-// always (fail closed).
-func wireContainers(handler *api.Handler, registry *job.Registry, c *appServices, halted, storageReady func() bool) {
+// with them Lifecycle refuses start, restart, recreate and removing with
+// appdata while the array is stopped or its storage is not ready, and with
+// either nil it refuses always (fail closed). admit is the hold array stop
+// drains (arrayActionAdmit): start, restart and removing with appdata
+// hold it from their array check to their last write.
+func wireContainers(handler *api.Handler, registry *job.Registry, c *appServices, halted, storageReady func() bool, admit func() (func(), error)) {
 	if c == nil {
 		return
 	}
 	c.Lifecycle.Halted = halted
 	c.Lifecycle.StorageReady = storageReady
+	c.Lifecycle.Admit = admit
 	handler.Lifecycle = c.Lifecycle
 	// Recreate replaces the container only after everything that can fail
 	// has succeeded, and puts the original back if a later step fails, so
@@ -216,6 +219,19 @@ func wireContainers(handler *api.Handler, registry *job.Registry, c *appServices
 		_, err := c.Lifecycle.Recreate(ctx, id)
 		return err
 	}))
+}
+
+// arrayActionAdmit is Lifecycle.Admit over the scheduler: it takes the hold
+// ArraySequence.Stop drains, and once maintenance mode has begun refuses
+// with container.ErrArrayStopped, the same refusal Lifecycle gives a call
+// that arrives on an array that is already stopped.
+func arrayActionAdmit(s *job.Scheduler) func() (func(), error) {
+	return func() (func(), error) {
+		if err := s.BeginAppAction(); err != nil {
+			return nil, fmt.Errorf("%w: it is in maintenance mode — start the array first", container.ErrArrayStopped)
+		}
+		return s.FinishAppAction, nil
+	}
 }
 
 // appdataRoots is where Remove may delete a container's appdata, read from

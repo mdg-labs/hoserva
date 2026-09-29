@@ -43,6 +43,20 @@ type Lifecycle struct {
 	// refuses.
 	Halted       func() bool
 	StorageReady func() bool
+	// Admit takes the hold that array stop drains before it lists the
+	// running containers: Start, Restart and Remove with deleteAppdata
+	// call it before their array check and call the returned release when
+	// they return, so a call that passed its check is finished before the
+	// array stops, and one arriving after maintenance began is refused
+	// with an error wrapping ErrArrayStopped. Nil means no hold.
+	Admit func() (release func(), err error)
+}
+
+func (l *Lifecycle) admit() (func(), error) {
+	if l.Admit == nil {
+		return func() {}, nil
+	}
+	return l.Admit()
 }
 
 // RequireArrayRunning returns nil only when the array is running and its
@@ -74,6 +88,11 @@ type RemoveResult struct {
 
 // Start starts the container and returns its state afterwards.
 func (l *Lifecycle) Start(ctx context.Context, id string) (Container, error) {
+	release, err := l.admit()
+	if err != nil {
+		return Container{}, err
+	}
+	defer release()
 	if err := l.RequireArrayRunning(); err != nil {
 		return Container{}, err
 	}
@@ -87,6 +106,11 @@ func (l *Lifecycle) Stop(ctx context.Context, id string) (Container, error) {
 
 // Restart restarts the container and returns its state afterwards.
 func (l *Lifecycle) Restart(ctx context.Context, id string) (Container, error) {
+	release, err := l.admit()
+	if err != nil {
+		return Container{}, err
+	}
+	defer release()
 	if err := l.RequireArrayRunning(); err != nil {
 		return Container{}, err
 	}
@@ -143,10 +167,17 @@ func (l *Lifecycle) settle(ctx context.Context, id string) (Container, error) {
 // Deleting appdata needs the array running (RequireArrayRunning), checked
 // before anything else: with the array stopped the cache disk is not
 // mounted, every planned directory is missing, and removing the container
-// would report success while the real appdata stays on the disk. A remove
-// that keeps appdata never needs the array.
+// would report success while the real appdata stays on the disk. The hold
+// Admit takes lasts until the directories are deleted, so array stop
+// cannot unmount the cache in between. A remove that keeps appdata never
+// needs the array.
 func (l *Lifecycle) Remove(ctx context.Context, id string, deleteAppdata bool) (RemoveResult, error) {
 	if deleteAppdata {
+		release, err := l.admit()
+		if err != nil {
+			return RemoveResult{}, err
+		}
+		defer release()
 		if err := l.RequireArrayRunning(); err != nil {
 			return RemoveResult{}, err
 		}

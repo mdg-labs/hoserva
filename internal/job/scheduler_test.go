@@ -1439,3 +1439,45 @@ func TestScheduler_ShareMutationDrainWaitsAndMaintenanceRefuses(t *testing.T) {
 		t.Fatalf("BeginShareMutation during maintenance = %v, want ErrMaintenanceMode", err)
 	}
 }
+
+func TestScheduler_AppActionDrainWaitsAndMaintenanceRefuses(t *testing.T) {
+	s := NewScheduler(nil, nil, nil, NewRegistry())
+	if err := s.BeginAppAction(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- s.DrainAppActions(ctx)
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("DrainAppActions returned before FinishAppAction: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	s.FinishAppAction()
+	if err := <-done; err != nil {
+		t.Fatalf("DrainAppActions: %v", err)
+	}
+
+	if err := s.EnterMaintenance(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.BeginAppAction(); !errors.Is(err, ErrMaintenanceMode) {
+		t.Fatalf("BeginAppAction during maintenance = %v, want ErrMaintenanceMode", err)
+	}
+}
+
+func TestScheduler_AppActionDrainGivesUpWhenTheContextEnds(t *testing.T) {
+	s := NewScheduler(nil, nil, nil, NewRegistry())
+	if err := s.BeginAppAction(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := s.DrainAppActions(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("DrainAppActions with a held action = %v, want the context's deadline", err)
+	}
+}
