@@ -15,10 +15,6 @@ import (
 )
 
 var (
-	// ErrAppdataBusy is returned when an appdata backup or restore is
-	// already running: two would stop the same containers and copy the same
-	// directories at once.
-	ErrAppdataBusy = errors.New("backup: an appdata backup or restore is already running")
 	// ErrAppdataContainerNotFound is a container name with no appdata
 	// directory in scope.
 	ErrAppdataContainerNotFound = errors.New("backup: no such container in the appdata backup")
@@ -41,6 +37,14 @@ var (
 // appdata location so they use the cache disk's space, not the boot
 // device's.
 const appdataStagingDir = ".hoserva-backup-staging"
+
+// AppdataJobResource is in the scope of every appdata backup and restore
+// job, beside the containers it covers. Those jobs share one staging
+// directory and one stopped-container journal whichever containers they
+// cover, so this entry makes the scheduler run them one at a time and queue
+// the later one, where the containers alone would let disjoint ones start
+// together.
+const AppdataJobResource = "appdata"
 
 const defaultAppdataStartTimeout = 2 * time.Minute
 
@@ -121,10 +125,28 @@ type AppdataService struct {
 	// two minutes.
 	StartTimeout time.Duration
 
+	// runMu is held for the whole of a backup or restore and by
+	// RecoverStopped: they share the staging directory, which each clears
+	// when it starts, and the stopped-container journal. The scheduler
+	// already runs two jobs one at a time (AppdataJobResource); this is
+	// what keeps the recovery, which is no job, out of their way, and
+	// makes a run that gets here first wait rather than fail.
 	runMu sync.Mutex
 	// previews holds what the restore previews need: their staging
 	// directories and their finished results.
 	previews appdataPreviews
+}
+
+// lockRun waits for every other backup, restore and recovery to finish and
+// then takes the service. A run that was cancelled while it waited gives
+// the service straight back and stops nothing.
+func (a *AppdataService) lockRun(ctx context.Context) error {
+	a.runMu.Lock()
+	if err := ctx.Err(); err != nil {
+		a.runMu.Unlock()
+		return err
+	}
+	return nil
 }
 
 func (a *AppdataService) startTimeout() time.Duration {

@@ -35,8 +35,8 @@ func invalidArchivef(format string, args ...any) error {
 // unpacking or swapping leaves the live appdata as it was. The container
 // is started again whatever happens.
 func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest, out io.Writer) (err error) {
-	if !a.runMu.TryLock() {
-		return ErrAppdataBusy
+	if err := a.lockRun(ctx); err != nil {
+		return err
 	}
 	defer a.runMu.Unlock()
 	if err := a.Containers.RequireArrayRunning(); err != nil {

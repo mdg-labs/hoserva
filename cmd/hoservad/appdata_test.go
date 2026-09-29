@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/backup"
 	"github.com/mdg-labs/hoserva/internal/container"
@@ -602,6 +603,150 @@ func TestAppdataWiring_ABackupNeverFailsBecauseAPreviewIsRunning(t *testing.T) {
 		t.Fatalf("the queued backup: %s %s", done.Status, done.ErrorMessage)
 	}
 	if n := pub.count(notify.EventAppdataBackupFailed); n != 0 {
+		t.Fatalf("appdata_backup_failed published %d times, want none", n)
+	}
+}
+
+// A backup submitted while a restore of another container is running is
+// queued behind it, not failed as busy: the two share the staging directory
+// and the stopped-container journal, so the scheduler runs one at a time,
+// and the backup-failed alert stays quiet.
+func TestAppdataWiring_ABackupQueuesBehindARestoreOfAnotherContainer(t *testing.T) {
+	w := newContainersWiringHarness(t)
+	sonarrDir := filepath.Join(w.root, "cache", "appdata", "sonarr")
+	if err := os.MkdirAll(sonarrDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sonarrDir, "sonarr.db"), []byte("series"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.fake.AddContainer(container.Container{
+		ID: "b", Name: "sonarr", Image: "sonarr", Tag: "4", State: "exited",
+		Mounts: []container.Mount{{Source: sonarrDir, Destination: "/config", ReadWrite: true}},
+	})
+	dest := filepath.Join(w.root, "pool-backups")
+	svc := appdataBackupService(t, w.apps, w.arrays, w.db, w.root, dest)
+	gate := &gatedContainers{AppdataContainers: svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	svc.Containers = gate
+	pub := &recordingPublisher{}
+	wireAppdata(w.handler, w.registry, svc, pub)
+	backedUp(t, w, "jellyfin")
+	archive := archiveNamed(t, dest, "jellyfin")
+
+	// The handler's own array check is the first call, the restore's is the
+	// second, which is the one held.
+	gate.arm(1)
+	req := `{"container":"jellyfin","archive":"` + archive + `","destinationId":"pool","confirm":true}`
+	status, body := w.doBody(t, http.MethodPost, "/appdata/backup/restore", req)
+	if status != http.StatusOK {
+		t.Fatalf("POST restore = %d %s", status, body)
+	}
+	var restore struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(body, &restore)
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restore job never started")
+	}
+
+	status, body = w.doBody(t, http.MethodPost, "/appdata/backup", `{"containers":["sonarr"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("POST /appdata/backup for another container = %d %s", status, body)
+	}
+	var queued struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(body, &queued)
+	if queued.Status != "queued" {
+		t.Fatalf("a backup beside a restore of another container is %q, want it queued behind the restore", queued.Status)
+	}
+
+	close(gate.release)
+	if done := w.awaitJobByID(t, restore.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := w.awaitJobByID(t, queued.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the queued backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := pub.count(notify.EventAppdataBackupFailed); n != 0 {
+		t.Fatalf("appdata_backup_failed published %d times, want none", n)
+	}
+	_ = archiveNamed(t, dest, "sonarr")
+}
+
+// The weekly backup covers the included containers only, so a restore of a
+// container excluded from it has a scope of its own. When their windows
+// meet, the scheduled backup waits for the restore instead of failing busy
+// and losing its window.
+func TestScheduleTick_TheWeeklyBackupQueuesBehindARestoreOfAnExcludedContainer(t *testing.T) {
+	ctx := context.Background()
+	s := newScheduledAppdata(t)
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("seeding tick: %v", err)
+	}
+
+	plexDir := filepath.Join(filepath.Dir(s.appdataAt), "plex")
+	if err := os.MkdirAll(plexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plexDir, "plex.db"), []byte("library"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.fake.AddContainer(container.Container{ID: "p", Name: "plex", Image: "plex", State: "exited",
+		Mounts: []container.Mount{{Source: plexDir, Destination: "/config", ReadWrite: true}}})
+	if err := s.svc.Run(ctx, backup.AppdataRunRequest{Containers: []string{"plex"}}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("backing up plex: %v", err)
+	}
+	archives, _, err := s.svc.ListArchives(ctx, "plex")
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("archives of plex = %v, %v", archives, err)
+	}
+	if _, err := s.svc.SetPolicy(ctx, "plex", true, false); err != nil {
+		t.Fatalf("excluding plex: %v", err)
+	}
+
+	gate := &gatedContainers{AppdataContainers: s.svc.Containers, entered: make(chan struct{}), release: make(chan struct{})}
+	s.svc.Containers = gate
+	handler := &api.Handler{Appdata: s.svc, Scheduler: s.h.runner.Scheduler}
+	gate.arm(1)
+	restore, err := handler.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{
+		Container: "plex", Archive: archives[0].Name, DestinationId: archives[0].DestinationID, Confirm: true,
+	})
+	if err != nil {
+		t.Fatalf("RestoreAppdata: %v", err)
+	}
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the restore job never started")
+	}
+
+	*s.clock = time.Date(2026, 10, 4, 4, 1, 0, 0, time.UTC)
+	if err := s.h.runner.tick(ctx); err != nil {
+		t.Fatalf("tick in the window: %v", err)
+	}
+	var backupJob *job.Job
+	for _, j := range s.appdataJobs(t) {
+		backupJob = j
+	}
+	if backupJob == nil {
+		t.Fatal("the window opened and no backup was queued")
+	}
+	if backupJob.Status != job.StatusQueued {
+		t.Fatalf("the scheduled backup beside a restore of an excluded container is %q, want it queued behind the restore", backupJob.Status)
+	}
+
+	close(gate.release)
+	if done := awaitTerminal(t, s.h.jobs, restore.ID.String()); done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if done := awaitTerminal(t, s.h.jobs, backupJob.ID); done.Status != job.StatusSucceeded {
+		t.Fatalf("the scheduled backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	if n := s.pub.count(notify.EventAppdataBackupFailed); n != 0 {
 		t.Fatalf("appdata_backup_failed published %d times, want none", n)
 	}
 }

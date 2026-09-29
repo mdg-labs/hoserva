@@ -1,12 +1,14 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // restoreRig is an appdataRig with one running container, alpha, whose
@@ -332,5 +334,79 @@ func TestAppdataRestore_KeepsAnEarlierRunsStoppedContainerInTheJournal(t *testin
 	beta, _ := rig.engine.Inspect(context.Background(), "beta")
 	if beta.State != "running" {
 		t.Fatalf("beta = %s after recovery, want running", beta.State)
+	}
+}
+
+// A backup of one container and a restore of another, arriving together in
+// either order, both succeed: whichever comes second waits, leaves the
+// first's staging alone, and neither loses the other's journal entry.
+func TestAppdataRestore_ABackupOfAnotherContainerWaitsAndBothSucceed(t *testing.T) {
+	for _, restoreFirst := range []bool{true, false} {
+		rig := newRestoreRig(t)
+		if err := rig.store.CreateDestination(context.Background(), Destination{
+			ID: DefaultPoolID, Name: "Pool", Type: TypeLocal, Path: rig.poolDir, Enabled: true,
+			Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		rig.addApp(t, "beta", "radarr", "running", map[string]string{"b": "1"})
+		heldName, otherName := "alpha", "beta"
+		if !restoreFirst {
+			heldName, otherName = "beta", "alpha"
+		}
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		rig.containers.onStop = func(name string) {
+			if name == heldName {
+				close(entered)
+				<-release
+			}
+		}
+		backupOf := func() error {
+			return rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{"beta"}}, &bytes.Buffer{})
+		}
+		restoreOf := func() error {
+			return rig.svc.Restore(context.Background(), AppdataRestoreRequest{
+				Container: "alpha", Archive: rig.archive.Name, DestinationID: rig.archive.DestinationID,
+			}, &bytes.Buffer{})
+		}
+		first, second := restoreOf, backupOf
+		if !restoreFirst {
+			first, second = backupOf, restoreOf
+		}
+		firstDone := make(chan error, 1)
+		go func() { firstDone <- first() }()
+		<-entered
+		secondDone := make(chan error, 1)
+		go func() { secondDone <- second() }()
+
+		time.Sleep(200 * time.Millisecond)
+		for _, ev := range rig.containers.Events() {
+			if ev == "stop "+otherName {
+				t.Fatalf("restoreFirst=%v: %s was stopped while the other job held the service", restoreFirst, otherName)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(rig.cache, appdataStagingDir)); err != nil {
+			t.Fatalf("restoreFirst=%v: the running job's staging directory is gone: %v", restoreFirst, err)
+		}
+		close(release)
+		if err := <-firstDone; err != nil {
+			t.Fatalf("restoreFirst=%v: first job: %v", restoreFirst, err)
+		}
+		if err := <-secondDone; err != nil {
+			t.Fatalf("restoreFirst=%v: second job: %v", restoreFirst, err)
+		}
+		if got := readFile(t, filepath.Join(rig.dir, "config")); got != "v1" {
+			t.Fatalf("restoreFirst=%v: config = %q, want the restored v1", restoreFirst, got)
+		}
+		rig.archiveFor(t, rig.poolDir, "beta")
+		for _, n := range []string{"alpha", "beta"} {
+			if c, _ := rig.engine.Inspect(context.Background(), n); c.State != "running" {
+				t.Fatalf("restoreFirst=%v: %s = %s, want running", restoreFirst, n, c.State)
+			}
+		}
+		if _, err := os.Stat(rig.svc.JournalPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("restoreFirst=%v: journal left behind: %v", restoreFirst, err)
+		}
 	}
 }

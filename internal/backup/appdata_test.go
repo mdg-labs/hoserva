@@ -474,24 +474,164 @@ func TestAppdataRecoverStopped_WaitsForTheArrayAndForARunningBackup(t *testing.T
 	}
 }
 
-func TestAppdataRun_OneRunAtATime(t *testing.T) {
+// A second run that reaches the service while another is stopping and
+// copying waits its turn: it never fails as busy, and it takes nothing
+// (not the staging directory, not the journal) until the first is done.
+func TestAppdataRun_ASecondRunWaitsForTheFirst(t *testing.T) {
 	rig := newAppdataRig(t)
 	rig.addApp(t, "alpha", "sonarr", "running", map[string]string{"a": "1"})
+	rig.addApp(t, "beta", "radarr", "running", map[string]string{"b": "1"})
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	rig.containers.onStop = func(string) {
+		once.Do(func() { close(entered) })
+		<-release
+	}
+	first := make(chan error, 1)
+	go func() {
+		first <- rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{"alpha"}}, &bytes.Buffer{})
+	}()
+	<-entered
+	second := make(chan error, 1)
+	go func() {
+		second <- rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{"beta"}}, &bytes.Buffer{})
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	if got := strings.Join(rig.containers.Events(), ","); got != "stop alpha" {
+		t.Fatalf("events while the first run holds the service = %s, want the second to have done nothing", got)
+	}
+	select {
+	case err := <-second:
+		t.Fatalf("the second run returned %v while the first was still running", err)
+	default:
+	}
+	if _, err := os.Stat(filepath.Join(rig.cache, appdataStagingDir)); err != nil {
+		t.Fatalf("the first run's staging directory is gone: %v", err)
+	}
+
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if err := <-second; err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	rig.archiveFor(t, rig.poolDir, "alpha")
+	rig.archiveFor(t, rig.poolDir, "beta")
+	if _, err := os.Stat(rig.svc.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("journal left behind: %v", err)
+	}
+}
+
+// Several runs of different containers arriving together all succeed: each
+// keeps its own archive, every container it stopped is started again, and
+// no journal entry is lost or left behind.
+func TestAppdataRun_ConcurrentRunsOfDifferentContainersAllSucceed(t *testing.T) {
+	rig := newAppdataRig(t)
+	names := []string{"alpha", "beta", "gamma", "delta"}
+	for _, n := range names {
+		rig.addApp(t, n, n+"-image", "running", map[string]string{"data": n})
+	}
+	errs := make(chan error, len(names))
+	for _, n := range names {
+		go func() {
+			errs <- rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{n}}, &bytes.Buffer{})
+		}()
+	}
+	for range names {
+		if err := <-errs; err != nil {
+			t.Fatalf("a concurrent Run failed: %v", err)
+		}
+	}
+	for _, n := range names {
+		rig.archiveFor(t, rig.poolDir, n)
+		if c, _ := rig.engine.Inspect(context.Background(), n); c.State != "running" {
+			t.Fatalf("%s = %s after the runs, want running", n, c.State)
+		}
+	}
+	if _, err := os.Stat(rig.svc.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("journal left behind: %v", err)
+	}
+}
+
+// RecoverStopped starts containers while it holds the service, and is not a
+// job the scheduler could queue: a run that arrives meanwhile waits for it
+// instead of failing.
+func TestAppdataRun_WaitsForARecoveryInsteadOfFailing(t *testing.T) {
+	rig := newAppdataRig(t)
+	rig.addApp(t, "alpha", "sonarr", "exited", map[string]string{"a": "1"})
+	rig.addApp(t, "beta", "radarr", "running", map[string]string{"b": "1"})
+	if err := rig.svc.writeJournal([]string{"alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	rig.containers.onStart = func(string) {
+		close(entered)
+		<-release
+	}
+	recovered := make(chan error, 1)
+	go func() { recovered <- rig.svc.RecoverStopped(context.Background()) }()
+	<-entered
+	rig.containers.mu.Lock()
+	rig.containers.onStart = nil
+	rig.containers.mu.Unlock()
+
+	ran := make(chan error, 1)
+	go func() {
+		ran <- rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{"beta"}}, &bytes.Buffer{})
+	}()
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case err := <-ran:
+		t.Fatalf("Run returned %v while the recovery was still starting containers", err)
+	default:
+	}
+	close(release)
+	if err := <-recovered; err != nil {
+		t.Fatalf("RecoverStopped: %v", err)
+	}
+	if err := <-ran; err != nil {
+		t.Fatalf("Run after the recovery: %v", err)
+	}
+	rig.archiveFor(t, rig.poolDir, "beta")
+	if _, err := os.Stat(rig.svc.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("journal left behind: %v", err)
+	}
+}
+
+// A run cancelled while it waits stops nothing once its turn comes.
+func TestAppdataRun_ACancelledWaitingRunDoesNothing(t *testing.T) {
+	rig := newAppdataRig(t)
+	rig.addApp(t, "alpha", "sonarr", "running", map[string]string{"a": "1"})
+	rig.addApp(t, "beta", "radarr", "running", map[string]string{"b": "1"})
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	rig.containers.onStop = func(string) {
 		close(entered)
 		<-release
 	}
-	done := make(chan error, 1)
-	go func() { done <- rig.svc.Run(context.Background(), AppdataRunRequest{}, &bytes.Buffer{}) }()
+	first := make(chan error, 1)
+	go func() {
+		first <- rig.svc.Run(context.Background(), AppdataRunRequest{Containers: []string{"alpha"}}, &bytes.Buffer{})
+	}()
 	<-entered
-	if err := rig.svc.Run(context.Background(), AppdataRunRequest{}, &bytes.Buffer{}); !errors.Is(err, ErrAppdataBusy) {
-		t.Fatalf("second Run = %v, want ErrAppdataBusy", err)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	second := make(chan error, 1)
+	go func() { second <- rig.svc.Run(ctx, AppdataRunRequest{Containers: []string{"beta"}}, &bytes.Buffer{}) }()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
 	close(release)
-	if err := <-done; err != nil {
+	if err := <-first; err != nil {
 		t.Fatalf("first Run: %v", err)
+	}
+	if err := <-second; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled waiting Run = %v, want context.Canceled", err)
+	}
+	if got := strings.Join(rig.containers.Events(), ","); got != "stop alpha,start alpha" {
+		t.Fatalf("events = %s, want only the first run's", got)
 	}
 }
 

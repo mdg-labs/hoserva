@@ -28,8 +28,6 @@ func mapAppdataError(err error) error {
 		return &apiError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
 	case errors.Is(err, backup.ErrAppdataArchiveInvalid):
 		return &apiError{code: "appdata_archive_invalid", statusCode: 400, message: err.Error()}
-	case errors.Is(err, backup.ErrAppdataBusy):
-		return &apiError{code: "appdata_busy", statusCode: 409, message: err.Error()}
 	case errors.Is(err, backup.ErrAppdataNoDestination):
 		return &apiError{code: "no_appdata_destination", statusCode: 409, message: err.Error()}
 	case errors.Is(err, container.ErrUnavailable):
@@ -87,8 +85,10 @@ func (h *Handler) SetAppdataBackupContainer(ctx context.Context, req *apiv1.SetA
 
 // SubmitAppdataBackup queues an appdata_backup job for the named
 // containers, or every included one, scoped to the containers it will
-// stop so a recreate of one of them queues behind it. It is the one entry
-// both the API and the schedule use.
+// stop so a recreate of one of them queues behind it, and to
+// backup.AppdataJobResource so it queues behind any other appdata backup or
+// restore rather than failing beside it. It is the one entry both the API
+// and the schedule use.
 func SubmitAppdataBackup(ctx context.Context, svc *backup.AppdataService, sched *job.Scheduler, requested []string) (*job.Job, error) {
 	if svc == nil {
 		return nil, errAppdataNotConfigured()
@@ -107,7 +107,7 @@ func SubmitAppdataBackup(ctx context.Context, svc *backup.AppdataService, sched 
 	if err != nil {
 		return nil, fmt.Errorf("encoding appdata_backup params: %w", err)
 	}
-	j, err := sched.Submit(ctx, job.TypeAppdataBackup, containerResources(names), body)
+	j, err := sched.Submit(ctx, job.TypeAppdataBackup, append(containerResources(names), backup.AppdataJobResource), body)
 	if err != nil {
 		return nil, mapSchedulerError(uuid.Nil, err)
 	}
@@ -256,7 +256,7 @@ func (h *Handler) RestoreAppdata(ctx context.Context, req *apiv1.RestoreAppdataR
 	if err != nil {
 		return nil, fmt.Errorf("encoding appdata_restore params: %w", err)
 	}
-	j, err := h.Scheduler.Submit(ctx, job.TypeAppdataRestore, []string{"container:" + req.Container}, body)
+	j, err := h.Scheduler.Submit(ctx, job.TypeAppdataRestore, []string{"container:" + req.Container, backup.AppdataJobResource}, body)
 	if err != nil {
 		return nil, mapSchedulerError(uuid.Nil, err)
 	}

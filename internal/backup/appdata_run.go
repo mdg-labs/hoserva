@@ -50,8 +50,8 @@ type stagedAppdata struct {
 // done. Every container the run stopped is started again whatever fails,
 // including after a cancel.
 func (a *AppdataService) Run(ctx context.Context, req AppdataRunRequest, out io.Writer) error {
-	if !a.runMu.TryLock() {
-		return ErrAppdataBusy
+	if err := a.lockRun(ctx); err != nil {
+		return err
 	}
 	defer a.runMu.Unlock()
 	if err := a.Containers.RequireArrayRunning(); err != nil {
