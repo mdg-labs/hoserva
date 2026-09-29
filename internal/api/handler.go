@@ -156,6 +156,10 @@ type Handler struct {
 	// checks. Nil reports Docker as not configured on this build, distinct
 	// from Docker being absent from the host (container.ErrUnavailable).
 	Container container.Provider
+	// Lifecycle is the start/stop/restart/recreate/remove/logs/stats
+	// business logic for Apps (doc 04 §1) over the same Provider as
+	// Container. Nil returns 501 from those operations.
+	Lifecycle *container.Lifecycle
 	// ComposeRunner execs `docker compose version` for the doctor Compose
 	// v2 check. Nil uses the real container.CommandRunner.
 	ComposeRunner container.Runner

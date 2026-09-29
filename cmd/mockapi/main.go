@@ -58,7 +58,7 @@ func run(addr, scenario string) error {
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/events", eventsH)
-	mux.Handle("/", apiServer)
+	mux.Handle("/", flushAppLogs(apiServer))
 
 	httpSrv := &http.Server{Addr: addr, Handler: mux}
 

@@ -328,7 +328,23 @@ func run(cfg config) error {
 		return fmt.Errorf("restoring persisted maintenance mode: %w", err)
 	}
 
-	arraySeq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, linuxDisks.Exec)
+	// The Docker client is built here, ahead of the array sequence, because
+	// running containers are one of its Services (doc 02 §4). Construction
+	// only resolves DOCKER_HOST (or the default socket) and never dials the
+	// Engine (doc 04 §3, "hoservad starts regardless"), so a host with no
+	// Docker installed still starts normally: every Apps/doctor call reports
+	// container.ErrUnavailable instead of 501ing, and the array sequence's
+	// container step finds nothing running.
+	var dockerProvider container.Provider
+	dockerClient, err := container.NewEngineClient()
+	if err != nil {
+		log.Printf("hoservad: building the docker client: %v — Apps and doctor's Docker checks will report it unavailable", err)
+	} else {
+		dockerProvider = dockerClient
+	}
+	apps := newContainers(dockerProvider, absStateDir, arrayStore, notifyService)
+
+	arraySeq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, linuxDisks.Exec, apps.arrayService())
 	if err != nil {
 		return fmt.Errorf("building array stop/start sequence: %w", err)
 	}
@@ -485,7 +501,7 @@ func run(cfg config) error {
 	// (cmd/hoservad/array.go) also re-applies ackHolder to the fresh gate
 	// it builds, so an earlier acknowledgement of a still-missing disk
 	// survives this rebuild instead of being undone by it (#385).
-	rebuildArraySequence := newRebuildArraySequence(scheduler, arrayStore, shareStore, disks, linuxDisks.Exec, storageTarget, poolWriteGate, handler, ackHolder)
+	rebuildArraySequence := newRebuildArraySequence(scheduler, arrayStore, shareStore, disks, linuxDisks.Exec, storageTarget, poolWriteGate, handler, ackHolder, apps.arrayService())
 	// installReloadHandler (cmd/hoservad/reload.go) re-runs
 	// rebuildArraySequence on SIGHUP — packaging/debian/hoserva-storage.rules's own
 	// trigger for a disk arriving or leaving while hoservad is already
@@ -523,16 +539,13 @@ func run(cfg config) error {
 	handler.Generator = generator
 	handler.HostConfig = store.NewHostConfigStore(db)
 	handler.Docker = cfggen.ExecDocker{}
-	// handler.Container is wired unconditionally: construction only
-	// resolves DOCKER_HOST (or the default socket) and never dials the
-	// Engine (doc 04 §3, "hoservad starts regardless"), so a host with no
-	// Docker installed still starts normally and every Apps/doctor call
-	// reports container.ErrUnavailable instead of 501ing.
-	dockerClient, err := container.NewEngineClient()
-	if err != nil {
-		log.Printf("hoservad: building the docker client: %v — Apps and doctor's Docker checks will report it unavailable", err)
-	} else {
-		handler.Container = dockerClient
+	if dockerProvider != nil {
+		handler.Container = dockerProvider
+	}
+	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageTarget.Ready)
+	if apps != nil {
+		go apps.Watcher.Run(ctx)
+		restoreContainersAfterShutdown(ctx, apps, scheduler.InMaintenance, storageTarget.Ready)
 	}
 	handler.ComposeRunner = container.CommandRunner{}
 	handler.DockerRestart = cfggen.SystemdServiceRestarter{Unit: "docker.service", Runner: linuxDisks.Exec}
@@ -1009,14 +1022,14 @@ func buildTCPServer(handler *api.Handler, authStore *api.AuthStore, authService 
 		return nil, fmt.Errorf("building generated API server: %w", err)
 	}
 
-	events := &api.EventsHandler{Hub: hub, NotifyHub: notifyHub, Authenticate: tcpEventsAuthenticate(authService)}
+	events := &api.EventsHandler{Hub: hub, NotifyHub: notifyHub, ContainerHub: containerHubOf(handler), Authenticate: tcpEventsAuthenticate(authService)}
 
 	mux := http.NewServeMux()
 	// http.MaxBytesHandler wraps both API routes, not the SPA branch
 	// below (a GET with no body has nothing for it to bound) — see
 	// maxRequestBodyBytes's own doc comment.
 	mux.Handle(apiPathPrefix+"/events", http.MaxBytesHandler(api.SetupGate(withSourceAddrMiddleware(events), authStore, apiPathPrefix), maxRequestBodyBytes))
-	mux.Handle(apiPathPrefix+"/", http.MaxBytesHandler(api.SetupGate(withSourceAddrMiddleware(apiServer), authStore, apiPathPrefix), maxRequestBodyBytes))
+	mux.Handle(apiPathPrefix+"/", http.MaxBytesHandler(api.SetupGate(withSourceAddrMiddleware(api.FlushLogStream(apiPathPrefix, apiServer)), authStore, apiPathPrefix), maxRequestBodyBytes))
 	mountAPINotFoundRoutes(mux)
 	mux.Handle("/", spaHandler(webRoot))
 
@@ -1068,7 +1081,7 @@ func buildUnixServer(handler *api.Handler, authStore *api.AuthStore, hub *job.Hu
 	// The connection's own SO_PEERCRED already authorized it before any
 	// request on it reaches this handler at all (unixSocketAuthMiddleware,
 	// below) — there is nothing left to authenticate for /events.
-	events := &api.EventsHandler{Hub: hub, NotifyHub: notifyHub, Authenticate: func(r *http.Request) error { return nil }}
+	events := &api.EventsHandler{Hub: hub, NotifyHub: notifyHub, ContainerHub: containerHubOf(handler), Authenticate: func(r *http.Request) error { return nil }}
 
 	mux := http.NewServeMux()
 	// http.MaxBytesHandler wraps both API routes — see
@@ -1077,7 +1090,7 @@ func buildUnixServer(handler *api.Handler, authStore *api.AuthStore, hub *job.Hu
 	// sending an oversized body by mistake shouldn't cost the daemon
 	// unbounded memory either.
 	mux.Handle(apiPathPrefix+"/events", http.MaxBytesHandler(api.SetupGate(events, authStore, apiPathPrefix), maxRequestBodyBytes))
-	mux.Handle(apiPathPrefix+"/", http.MaxBytesHandler(api.SetupGate(apiServer, authStore, apiPathPrefix), maxRequestBodyBytes))
+	mux.Handle(apiPathPrefix+"/", http.MaxBytesHandler(api.SetupGate(api.FlushLogStream(apiPathPrefix, apiServer), authStore, apiPathPrefix), maxRequestBodyBytes))
 	mountAPINotFoundRoutes(mux)
 
 	guarded := unixSocketAuthMiddleware(mux, auth.OSGroupLookup{}, uint32(os.Getuid()))

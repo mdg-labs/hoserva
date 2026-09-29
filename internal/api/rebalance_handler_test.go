@@ -89,11 +89,13 @@ func newRebalanceTestHandler(t *testing.T) (h *api.Handler, scheduler *job.Sched
 	noopEvacuationSync := func(context.Context, []parity.ManifestEntry, map[string]bool) error { return nil }
 	trackedCount := func(context.Context) (int, error) { return 1000, nil }
 	registry.Register(job.TypeRebalance, true, job.RunRebalance(job.RebalanceDeps{
+		Open:             cache.NewFakeOpenChecker(),
 		Sync:             noopSync,
 		TrackedFileCount: trackedCount,
 		Store:            arrayStore,
 	}))
 	registry.Register(job.TypeEvacuation, true, job.RunEvacuation(job.EvacuationDeps{
+		Open:             cache.NewFakeOpenChecker(),
 		Sync:             noopEvacuationSync,
 		TrackedFileCount: trackedCount,
 		Shares:           sharesFn,

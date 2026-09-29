@@ -99,10 +99,11 @@ tags:
     description: >-
       Docker Engine containers and images (`hoserva app list`, doc 04 §2,
       §3): every container the Engine reports, managed and unmanaged
-      alike, read-only in this part — start/stop/lifecycle actions and
-      the Compose stack model are later issues. `available` is false, with
-      no error, whenever Docker itself is not reachable: a missing
-      prerequisite is Apps' normal state, not a failed request.
+      alike, with the same lifecycle actions for both (doc 04 §1, §2):
+      start, stop, restart, recreate, remove, logs and stats. The Compose
+      stack model is a later issue. `available` is false, with no error,
+      whenever Docker itself is not reachable: a missing prerequisite is
+      Apps' normal state, not a failed request.
 
 # Two transports (doc 01 §5): a Unix socket for the local root/`hoserva`-group
 # CLI, and TLS-only TCP for the web UI and remote/scripted use. Same handlers,
@@ -2767,10 +2768,10 @@ paths:
       summary: List containers
       description: >-
         Every container the Docker Engine reports, managed and unmanaged
-        alike (doc 04 §2) — Compose stack installs, lifecycle actions and
-        the managed/unmanaged distinction against an installed stack are
-        later issues (#277, #278). available is false, with no error,
-        whenever Docker itself is not reachable (doc 04 §3).
+        alike (doc 04 §2) — Compose stack installs and the
+        managed/unmanaged distinction against an installed stack are a
+        later issue (#278). available is false, with no error, whenever
+        Docker itself is not reachable (doc 04 §3).
       tags: [apps]
       x-hoserva-role: viewer
       responses:
@@ -2812,8 +2813,8 @@ paths:
       operationId: getApp
       summary: Inspect a container
       description: >-
-        One container's current state, image, tag, ports and mounts
-        (doc 04 §3) — stats and health are #277's own operations.
+        One container's current state, health, image, tag, ports and
+        mounts (doc 04 §3).
       tags: [apps]
       x-hoserva-role: viewer
       responses:
@@ -2823,6 +2824,239 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/App'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: removeApp
+      summary: Remove a container
+      description: >-
+        Removes a stopped container (`app_running`, 409, for one that is
+        not stopped). The container's appdata is kept unless
+        `deleteAppdata` is explicitly true: then the bind-mount
+        directories strictly inside the appdata location (the cache
+        disk's `appdata` directory) are deleted, together with the
+        container's anonymous volumes. Anything outside that location, the
+        location itself, and any directory another container mounts, or
+        that lies inside a directory of appdata another container mounts,
+        is never deleted — a request that would delete one is refused
+        (`appdata_shared`, 409) and removes nothing. `deleteAppdata` with no appdata location is refused
+        (`appdata_unavailable`, 409). Every refusal happens before the
+        container is removed.
+      tags: [apps]
+      x-hoserva-role: admin
+      parameters:
+        - name: deleteAppdata
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: >-
+            Also delete the container's appdata. Never implied by anything
+            else; absent means false.
+      responses:
+        "200":
+          description: The container was removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemoveAppResult'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/{id}/start:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The container's Engine ID or name.
+    post:
+      operationId: startApp
+      summary: Start a container
+      description: >-
+        Starts the container and returns its state afterwards, and
+        publishes a `container_state` event. Managed and unmanaged
+        containers alike. Refused with 409 `array_stopped`, before the
+        Engine is called, while the array is stopped (maintenance mode) or
+        its storage is not ready: a container started then would write
+        onto the boot device under `/mnt/user` and `/mnt/cache`. If the
+        array's state cannot be read the start is refused too, with 503
+        `array_state_unknown`.
+      tags: [apps]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The container after starting.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/App'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/{id}/stop:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The container's Engine ID or name.
+    post:
+      operationId: stopApp
+      summary: Stop a container
+      description: >-
+        Stops the container (the Engine's own grace period, then a kill)
+        and returns its state afterwards, and publishes a
+        `container_state` event.
+      tags: [apps]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The container after stopping.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/App'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/{id}/restart:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The container's Engine ID or name.
+    post:
+      operationId: restartApp
+      summary: Restart a container
+      description: >-
+        Restarts the container and returns its state afterwards, and
+        publishes a `container_state` event. Refused with 409
+        `array_stopped`, before the Engine is called, while the array is
+        stopped (maintenance mode) or its storage is not ready, and with
+        503 `array_state_unknown` if the array's state cannot be read —
+        the same refusal as `startApp`.
+      tags: [apps]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The container after restarting.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/App'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/{id}/recreate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The container's Engine ID or name.
+    post:
+      operationId: recreateApp
+      summary: Recreate a container
+      description: >-
+        Queues a `container_recreate` job (service class): it pulls the
+        container's image again and replaces the container with one built
+        from the same configuration, volumes and networks. If the pull or
+        the creation of the replacement fails, or the replacement does not
+        start, the original container is left as it was — same name and
+        volumes, running again if it was running. A container started with
+        `--rm` cannot be recreated: the Engine deletes it the moment it
+        stops, so the job fails before changing anything. Refused with 409
+        `array_stopped` while the array is stopped (maintenance mode) or
+        its storage is not ready, and with 503 `array_state_unknown` if
+        the array's state cannot be read; no job is queued. The job checks
+        again when it runs and fails, changing nothing, if the array has
+        stopped since.
+      tags: [apps]
+      x-hoserva-role: admin
+      responses:
+        "200":
+          description: The queued job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/{id}/logs:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The container's Engine ID or name.
+    get:
+      operationId: getAppLogs
+      summary: Read a container's logs
+      description: >-
+        The container's stdout and stderr as plain text: the last `tail`
+        lines, then, with `follow` true, every new line as it is written
+        until the client disconnects or the container exits (each line is
+        flushed as it arrives).
+      tags: [apps]
+      x-hoserva-role: admin
+      parameters:
+        - name: tail
+          in: query
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            maximum: 10000
+            default: 200
+          description: How many trailing lines to start from.
+        - name: follow
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: The container's log text.
+          content:
+            text/plain:
+              schema:
+                type: string
+                format: binary
+        default:
+          $ref: '#/components/responses/Error'
+
+  /apps/{id}/stats:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The container's Engine ID or name.
+    get:
+      operationId: getAppStats
+      summary: Read a container's resource use
+      description: >-
+        CPU, memory, network and block I/O for a running container
+        (`app_not_running`, 409, for one that is not running — a stopped
+        container is never reported as using nothing).
+      tags: [apps]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The container's current resource use.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppStats'
         default:
           $ref: '#/components/responses/Error'
 
@@ -3538,6 +3772,7 @@ components:
         # Service
         - appdata_backup
         - container_update
+        - container_recreate
         - acme_issue
         # VM
         - vm_start
@@ -3662,10 +3897,6 @@ components:
         leaves the pool and the array altogether.
       enum: [evacuating, evacuated, unpooled, unlisted]
 
-    ContainerState:
-      type: string
-      enum: [running, stopped, restarting, exited, paused]
-
     NotificationLevel:
       type: string
       enum: [info, warning, error, critical]
@@ -3714,6 +3945,15 @@ components:
 
     ContainerStateEvent:
       type: object
+      description: >-
+        A container's state or health changed — sent when the Engine
+        reports it (a start, die, pause, unpause or health check result,
+        including a container killed from outside Hoserva) and when a
+        start, stop, restart or recreate through the API finishes. `state`
+        is the Engine's own vocabulary. `health` is present only when the
+        event carries a health check result (or the container's health
+        after an API action); a start, stop or die resets the check and
+        the Engine's event omits it.
       required: [event, data]
       properties:
         event:
@@ -3728,7 +3968,9 @@ components:
             name:
               type: string
             state:
-              $ref: '#/components/schemas/ContainerState'
+              $ref: '#/components/schemas/AppState'
+            health:
+              $ref: '#/components/schemas/AppHealth'
             at:
               type: string
               format: date-time
@@ -4809,6 +5051,59 @@ components:
       enum: [created, running, paused, restarting, removing, exited, dead]
       description: The Docker Engine's own container state vocabulary.
 
+    AppHealth:
+      type: string
+      enum: [none, starting, healthy, unhealthy]
+      description: >-
+        The container's HEALTHCHECK result, in the Engine's own
+        vocabulary; `none` when the container defines no health check.
+
+    AppStats:
+      type: object
+      required: [at, cpuPercent, memoryBytes, memoryLimitBytes, networkRxBytes, networkTxBytes, blockReadBytes, blockWriteBytes]
+      properties:
+        at:
+          type: string
+          format: date-time
+        cpuPercent:
+          type: number
+          format: double
+          description: >-
+            Share of the host's CPU time the container used since the
+            previous sample, times the CPUs online (100 is one full core).
+        memoryBytes:
+          type: integer
+          format: int64
+          description: Memory in use, without reclaimable page cache.
+        memoryLimitBytes:
+          type: integer
+          format: int64
+        networkRxBytes:
+          type: integer
+          format: int64
+        networkTxBytes:
+          type: integer
+          format: int64
+        blockReadBytes:
+          type: integer
+          format: int64
+        blockWriteBytes:
+          type: integer
+          format: int64
+
+    RemoveAppResult:
+      type: object
+      required: [deletedPaths]
+      properties:
+        deletedPaths:
+          type: array
+          items:
+            type: string
+          description: >-
+            The appdata directories deleted. Empty unless `deleteAppdata`
+            was requested — and possibly empty then too, when none of the
+            container's mounts lay inside the appdata location.
+
     AppPort:
       type: object
       required: [containerPort, protocol]
@@ -4839,12 +5134,14 @@ components:
 
     App:
       type: object
-      required: [id, name, image, tag, state, status, ports, mounts]
+      required: [id, name, image, tag, state, status, health, ports, mounts]
       properties:
         id:
           type: string
         name:
           type: string
+        health:
+          $ref: '#/components/schemas/AppHealth'
         image:
           type: string
           description: The image repository, without its tag.

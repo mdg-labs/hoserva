@@ -156,7 +156,7 @@ func p358StartDaemon(t *testing.T, stateDir, configRoot string, counter *p358Syn
 	provider := &disk.LinuxProvider{Lister: disk.NewLister(), Exec: exec}
 	handler := &api.Handler{Scheduler: scheduler, Store: jobStore, ArrayStore: arrays, Disks: provider}
 	rebuild := func(ctx context.Context) error {
-		seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, exec)
+		seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, exec, nil)
 		if err != nil {
 			return err
 		}

@@ -35,7 +35,12 @@ import (
 // so ArraySequence.Stop always stops them before any unmount can run,
 // and every caller (array stop, the UPS low-battery shutdown, the
 // update reboot) gets the same ordering because they all run this one
-// sequence.
+// sequence. Running containers come first in that slice when the daemon
+// has a Docker client: they stop before Samba and NFS, and a container
+// that will not stop holds the array stop up before any unmount, the same
+// way a Samba or NFS that will not stop does. containers is one instance
+// shared by every rebuild, since it remembers across an array stop which
+// containers array start still owes a start.
 //
 // A data disk that has left the pool (unpooled, #358) is in no pool
 // mount's branch list; an unlisted one is not part of the sequence at all.
@@ -44,7 +49,7 @@ import (
 // pending (doc 02 §4 UR2), and Start confirms every mounted array disk
 // against the filesystem UUID SQLite names before anything above the
 // disks starts (UR9).
-func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *store.ArrayStore, shares *store.ShareStore, disks disk.Provider, runner disk.Runner) (*job.ArraySequence, error) {
+func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *store.ArrayStore, shares *store.ShareStore, disks disk.Provider, runner disk.Runner, containers job.ArrayService) (*job.ArraySequence, error) {
 	settings, assigned, err := arrays.GetArray(ctx)
 	if err != nil {
 		if errors.Is(err, store.ErrNoArray) {
@@ -135,15 +140,24 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 		gate.Evaluate(present)
 	}
 
+	// Stop order (doc 02 §4): containers stop before Samba and NFS, and
+	// Start runs the slice in reverse. VMs, once they exist, go before
+	// containers. A nil containers means no Docker client was built.
+	var services []job.ArrayService
+	if containers != nil {
+		services = append(services, containers)
+	}
+	services = append(services,
+		disk.ServiceUnitController{ServiceName: "Samba", Unit: cfggen.SambaServiceUnit, Runner: runner},
+		disk.ServiceUnitController{ServiceName: "NFS", Unit: cfggen.NFSServiceUnit, Runner: runner},
+	)
+
 	seq := &job.ArraySequence{
 		Scheduler: scheduler,
 		Gate:      job.PendingUpgradeGate{Gate: gate, Scheduler: scheduler},
 		DiskCheck: job.ArrayDiskUUIDCheck{Mounts: disk.KernelMounts{Runner: runner}, Disks: checked},
-		Services: []job.ArrayService{
-			disk.ServiceUnitController{ServiceName: "Samba", Unit: cfggen.SambaServiceUnit, Runner: runner},
-			disk.ServiceUnitController{ServiceName: "NFS", Unit: cfggen.NFSServiceUnit, Runner: runner},
-		},
-		Disks: diskMounts,
+		Services:  services,
+		Disks:     diskMounts,
 	}
 	if len(dataMounts) == 0 {
 		return seq, nil
@@ -372,11 +386,11 @@ func wireAcknowledgeDegraded(handler *api.Handler, storageTarget *storageTargetS
 // acknowledged, so any one of this closure's own callers (a share edit, a
 // disk-topology change, a SIGHUP) would undo the user's acknowledgement
 // the moment it ran.
-func newRebuildArraySequence(scheduler *job.Scheduler, arrayStore *store.ArrayStore, shareStore *store.ShareStore, disks disk.Provider, runner disk.Runner, storageTarget *storageTargetSync, poolWriteGate job.PoolWriteGate, handler *api.Handler, ack *acknowledgedDegraded) func(ctx context.Context) error {
+func newRebuildArraySequence(scheduler *job.Scheduler, arrayStore *store.ArrayStore, shareStore *store.ShareStore, disks disk.Provider, runner disk.Runner, storageTarget *storageTargetSync, poolWriteGate job.PoolWriteGate, handler *api.Handler, ack *acknowledgedDegraded, containers job.ArrayService) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		ack.seqMu.Lock()
 		defer ack.seqMu.Unlock()
-		seq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, runner)
+		seq, err := newArraySequence(ctx, scheduler, arrayStore, shareStore, disks, runner, containers)
 		if err != nil {
 			return err
 		}

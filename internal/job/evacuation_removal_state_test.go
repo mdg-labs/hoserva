@@ -63,6 +63,7 @@ func newEvacuationOwnershipHarness(t *testing.T) *evacuationOwnershipHarness {
 // parityRegistrar.register does, over h's real stores.
 func (h *evacuationOwnershipHarness) register(sync EvacuationSyncFunc, arrayReady func(context.Context) error) {
 	h.s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             sync,
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{h.share}, nil },

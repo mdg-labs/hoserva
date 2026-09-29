@@ -1688,7 +1688,7 @@ export interface paths {
         };
         /**
          * List containers
-         * @description Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose stack installs, lifecycle actions and the managed/unmanaged distinction against an installed stack are later issues (#277, #278). available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
+         * @description Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose stack installs and the managed/unmanaged distinction against an installed stack are a later issue (#278). available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
          */
         get: operations["listApps"];
         put?: never;
@@ -1731,9 +1731,151 @@ export interface paths {
         };
         /**
          * Inspect a container
-         * @description One container's current state, image, tag, ports and mounts (doc 04 §3) — stats and health are #277's own operations.
+         * @description One container's current state, health, image, tag, ports and mounts (doc 04 §3).
          */
         get: operations["getApp"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove a container
+         * @description Removes a stopped container (`app_running`, 409, for one that is not stopped). The container's appdata is kept unless `deleteAppdata` is explicitly true: then the bind-mount directories strictly inside the appdata location (the cache disk's `appdata` directory) are deleted, together with the container's anonymous volumes. Anything outside that location, the location itself, and any directory another container mounts, or that lies inside a directory of appdata another container mounts, is never deleted — a request that would delete one is refused (`appdata_shared`, 409) and removes nothing. `deleteAppdata` with no appdata location is refused (`appdata_unavailable`, 409). Every refusal happens before the container is removed.
+         */
+        delete: operations["removeApp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a container
+         * @description Starts the container and returns its state afterwards, and publishes a `container_state` event. Managed and unmanaged containers alike. Refused with 409 `array_stopped`, before the Engine is called, while the array is stopped (maintenance mode) or its storage is not ready: a container started then would write onto the boot device under `/mnt/user` and `/mnt/cache`. If the array's state cannot be read the start is refused too, with 503 `array_state_unknown`.
+         */
+        post: operations["startApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop a container
+         * @description Stops the container (the Engine's own grace period, then a kill) and returns its state afterwards, and publishes a `container_state` event.
+         */
+        post: operations["stopApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restart a container
+         * @description Restarts the container and returns its state afterwards, and publishes a `container_state` event. Refused with 409 `array_stopped`, before the Engine is called, while the array is stopped (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read — the same refusal as `startApp`.
+         */
+        post: operations["restartApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}/recreate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recreate a container
+         * @description Queues a `container_recreate` job (service class): it pulls the container's image again and replaces the container with one built from the same configuration, volumes and networks. If the pull or the creation of the replacement fails, or the replacement does not start, the original container is left as it was — same name and volumes, running again if it was running. A container started with `--rm` cannot be recreated: the Engine deletes it the moment it stops, so the job fails before changing anything. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no job is queued. The job checks again when it runs and fails, changing nothing, if the array has stopped since.
+         */
+        post: operations["recreateApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read a container's logs
+         * @description The container's stdout and stderr as plain text: the last `tail` lines, then, with `follow` true, every new line as it is written until the client disconnects or the container exits (each line is flushed as it arrives).
+         */
+        get: operations["getAppLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{id}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read a container's resource use
+         * @description CPU, memory, network and block I/O for a running container (`app_not_running`, 409, for one that is not running — a stopped container is never reported as using nothing).
+         */
+        get: operations["getAppStats"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2138,7 +2280,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "container_update" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -2185,8 +2327,6 @@ export interface components {
          */
         DiskRemovalState: "evacuating" | "evacuated" | "unpooled" | "unlisted";
         /** @enum {string} */
-        ContainerState: "running" | "stopped" | "restarting" | "exited" | "paused";
-        /** @enum {string} */
         NotificationLevel: "info" | "warning" | "error" | "critical";
         JobProgressEvent: {
             /**
@@ -2211,6 +2351,7 @@ export interface components {
                 at: string;
             };
         };
+        /** @description A container's state or health changed — sent when the Engine reports it (a start, die, pause, unpause or health check result, including a container killed from outside Hoserva) and when a start, stop, restart or recreate through the API finishes. `state` is the Engine's own vocabulary. `health` is present only when the event carries a health check result (or the container's health after an API action); a start, stop or die resets the check and the Engine's event omits it. */
         ContainerStateEvent: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -2220,7 +2361,8 @@ export interface components {
             data: {
                 containerId: string;
                 name: string;
-                state: components["schemas"]["ContainerState"];
+                state: components["schemas"]["AppState"];
+                health?: components["schemas"]["AppHealth"];
                 /** Format: date-time */
                 at: string;
             };
@@ -2747,6 +2889,39 @@ export interface components {
          * @enum {string}
          */
         AppState: "created" | "running" | "paused" | "restarting" | "removing" | "exited" | "dead";
+        /**
+         * @description The container's HEALTHCHECK result, in the Engine's own vocabulary; `none` when the container defines no health check.
+         * @enum {string}
+         */
+        AppHealth: "none" | "starting" | "healthy" | "unhealthy";
+        AppStats: {
+            /** Format: date-time */
+            at: string;
+            /**
+             * Format: double
+             * @description Share of the host's CPU time the container used since the previous sample, times the CPUs online (100 is one full core).
+             */
+            cpuPercent: number;
+            /**
+             * Format: int64
+             * @description Memory in use, without reclaimable page cache.
+             */
+            memoryBytes: number;
+            /** Format: int64 */
+            memoryLimitBytes: number;
+            /** Format: int64 */
+            networkRxBytes: number;
+            /** Format: int64 */
+            networkTxBytes: number;
+            /** Format: int64 */
+            blockReadBytes: number;
+            /** Format: int64 */
+            blockWriteBytes: number;
+        };
+        RemoveAppResult: {
+            /** @description The appdata directories deleted. Empty unless `deleteAppdata` was requested — and possibly empty then too, when none of the container's mounts lay inside the appdata location. */
+            deletedPaths: string[];
+        };
         AppPort: {
             hostIP?: string;
             /** @description Absent when this container port is not published to the host. */
@@ -2764,6 +2939,7 @@ export interface components {
         App: {
             id: string;
             name: string;
+            health: components["schemas"]["AppHealth"];
             /** @description The image repository, without its tag. */
             image: string;
             tag: string;
@@ -5879,6 +6055,181 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["App"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    removeApp: {
+        parameters: {
+            query?: {
+                /** @description Also delete the container's appdata. Never implied by anything else; absent means false. */
+                deleteAppdata?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The container was removed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoveAppResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The container after starting. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["App"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    stopApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The container after stopping. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["App"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    restartApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The container after restarting. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["App"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    recreateApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAppLogs: {
+        parameters: {
+            query?: {
+                /** @description How many trailing lines to start from. */
+                tail?: number;
+                follow?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The container's log text. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAppStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's Engine ID or name. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The container's current resource use. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppStats"];
                 };
             };
             default: components["responses"]["Error"];

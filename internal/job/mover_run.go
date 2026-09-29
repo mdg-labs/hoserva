@@ -23,6 +23,11 @@ type MoverDeps struct {
 	Config    cache.Config
 	Results   *cache.ResultStore
 	UsagePlan func(ctx context.Context) (cacheMount string, shares []cache.UsageShare, err error)
+	// Open is the open-file checker cache.Run consults before and after
+	// each copy. Production leaves it nil, which cache.Deps resolves to
+	// the real /proc-scanning ProcOpenChecker; a unit test injects a fake
+	// so it never walks the host's /proc.
+	Open cache.OpenChecker
 }
 
 // RunMover is the RunFunc hoservad registers for TypeMover: a thin
@@ -43,7 +48,7 @@ func RunMover(d MoverDeps) RunFunc {
 				_, _ = fmt.Fprintf(rc.Output(), format+"\n", args...)
 			},
 		}
-		report, err := cache.Run(ctx, shares, d.Config, cache.Deps{}, hooks, rc.InitialCheckpoint())
+		report, err := cache.Run(ctx, shares, d.Config, cache.Deps{Open: d.Open}, hooks, rc.InitialCheckpoint())
 		if !report.StartedAt.IsZero() {
 			_, _ = fmt.Fprintln(rc.Output(), report.Summary())
 			if d.Results != nil {

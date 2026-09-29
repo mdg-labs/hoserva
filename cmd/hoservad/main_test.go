@@ -92,7 +92,7 @@ func newParityRegistrationEnv(t *testing.T) (context.Context, *parityRegistratio
 	// not this closure directly — so a test proves CancelDiskRemoval
 	// reaches it through the same indirection production wiring uses.
 	arrayReadyHook := func(ctx context.Context) error {
-		seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, fakeRunner)
+		seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, fakeRunner, nil)
 		if err != nil {
 			return err
 		}

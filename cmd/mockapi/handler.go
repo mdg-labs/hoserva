@@ -72,6 +72,12 @@ type handler struct {
 
 	shares map[string]apiv1.Share
 
+	// appsMu guards apps, the containers this mock instance lists: the
+	// lifecycle operations change them, so a following ListApps shows the
+	// effect of the caller's own start, stop or remove.
+	appsMu sync.Mutex
+	apps   []apiv1.App
+
 	externalMu sync.Mutex
 	external   map[string]apiv1.ExternalDisk
 
@@ -129,6 +135,7 @@ func newHandler(scenario string) (*handler, error) {
 		updateStatus: defaultMockUpdateStatus(),
 		network:      defaultMockNetwork(),
 		shares:       make(map[string]apiv1.Share),
+		apps:         mockApps(),
 		external:     make(map[string]apiv1.ExternalDisk),
 
 		users:                map[uuid.UUID]apiv1.UserSummary{mockAdminID: mockUserSummary()},

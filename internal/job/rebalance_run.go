@@ -22,6 +22,11 @@ type RebalanceDeps struct {
 	// that touches a disk leaving the array (#366): the plan was computed
 	// before that disk entered removal. Required.
 	Store *store.ArrayStore
+	// Open is the open-file checker cache.RunRebalance consults before and
+	// after each copy. Production leaves it nil, which cache.Deps resolves
+	// to the real /proc-scanning ProcOpenChecker; a unit test injects a
+	// fake so it never walks the host's /proc.
+	Open cache.OpenChecker
 }
 
 // RunRebalance is the RunFunc hoservad registers for job.TypeRebalance: a
@@ -53,7 +58,7 @@ func RunRebalance(d RebalanceDeps) RunFunc {
 				_, _ = fmt.Fprintf(rc.Output(), format+"\n", args...)
 			},
 		}
-		report, err := cache.RunRebalance(ctx, p.Plan, d.Config, cache.Deps{Sync: d.Sync, TrackedFileCount: d.TrackedFileCount}, hooks, rc.InitialCheckpoint())
+		report, err := cache.RunRebalance(ctx, p.Plan, d.Config, cache.Deps{Sync: d.Sync, TrackedFileCount: d.TrackedFileCount, Open: d.Open}, hooks, rc.InitialCheckpoint())
 		if !report.StartedAt.IsZero() {
 			_, _ = fmt.Fprintln(rc.Output(), report.Summary())
 		}

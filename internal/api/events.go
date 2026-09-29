@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mdg-labs/hoserva/api/gen/go/events"
+	"github.com/mdg-labs/hoserva/internal/container"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
 )
@@ -65,6 +66,22 @@ func alertToEvent(a *notify.Alert) (events.Event, error) {
 	}), nil
 }
 
+func stateChangeToEvent(sc container.StateChange) (events.Event, error) {
+	data := events.ContainerStateEventData{
+		ContainerId: sc.ID,
+		Name:        sc.Name,
+		State:       events.AppState(sc.State),
+		At:          sc.At,
+	}
+	if sc.Health != "" {
+		data.Health = events.NewOptAppHealth(events.AppHealth(sc.Health))
+	}
+	return events.NewContainerStateEventEvent(events.ContainerStateEvent{
+		Event: string(events.ContainerStateEventEvent),
+		Data:  data,
+	}), nil
+}
+
 // defaultKeepAlive paces the SSE comment lines EventsHandler sends while
 // idle, so a client (and any reverse proxy in front of hoservad) sees the
 // connection is still alive rather than timing it out.
@@ -86,6 +103,7 @@ const defaultKeepAlive = 15 * time.Second
 type EventsHandler struct {
 	Hub          *job.Hub
 	NotifyHub    *notify.Hub
+	ContainerHub *container.Hub
 	Authenticate func(r *http.Request) error
 	KeepAlive    time.Duration
 }
@@ -113,6 +131,12 @@ func (h *EventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.NotifyHub != nil {
 		notifyCh, unsubscribeNotify = h.NotifyHub.Subscribe()
 		defer unsubscribeNotify()
+	}
+	var containerCh <-chan container.StateChange
+	if h.ContainerHub != nil {
+		var unsubscribeContainers func()
+		containerCh, unsubscribeContainers = h.ContainerHub.Subscribe()
+		defer unsubscribeContainers()
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -147,6 +171,13 @@ func (h *EventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := writeEvent(w, flusher, func() (events.Event, error) { return alertToEvent(a) }); err != nil {
+				return
+			}
+		case sc, ok := <-containerCh:
+			if !ok {
+				return
+			}
+			if err := writeEvent(w, flusher, func() (events.Event, error) { return stateChangeToEvent(sc) }); err != nil {
 				return
 			}
 		case <-ticker.C:

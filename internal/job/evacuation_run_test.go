@@ -159,6 +159,7 @@ func TestRunEvacuation_MovesThroughScheduler_PostCheckPasses(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -206,6 +207,7 @@ func TestRunEvacuation_GuardBlocked_LeavesSourceUntouched(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -249,6 +251,7 @@ func TestRunEvacuation_RequiresShares(t *testing.T) {
 	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
 
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 	}))
@@ -282,6 +285,7 @@ func TestRunEvacuation_RequiresStoreAndArrayReady(t *testing.T) {
 
 	base1 := func() EvacuationDeps {
 		return EvacuationDeps{
+			Open:             fakeOpen(),
 			Sync:             evacuationSyncFuncFromEngine(eng),
 			TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 			Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -348,6 +352,7 @@ func TestRunEvacuation_MarksRemovingAndAppliesLive_BeforeAnyCopy(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             sync,
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -406,6 +411,7 @@ func TestRunEvacuation_ArrayReadyFailure_FailsBeforeAnyCopy(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             sync,
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -451,6 +457,7 @@ func TestRunEvacuation_Success_MarksEvacuated(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -495,6 +502,7 @@ func TestRunEvacuation_SyncCarriesRemovingDisks(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -538,6 +546,7 @@ func TestRunEvacuation_PersistsAndClearsRelocationManifest(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -595,6 +604,7 @@ func TestRunEvacuation_GuardBlocked_ClearsRemovingDisks(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -660,6 +670,7 @@ func TestRunEvacuation_ContextCancelled_ClearsRemovingDisks(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	fn := RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -737,6 +748,7 @@ func TestRunEvacuation_FailedRun_LaterSyncSeesNoManifest(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	fn := RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(evacEng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -822,6 +834,7 @@ func TestRunEvacuation_CleanFinish_ClearSurvivesLateCancel(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{filepath.Join(diskMount, "media")}}
 	fn := RunEvacuation(EvacuationDeps{
+		Open: fakeOpen(),
 		Sync: func(context.Context, []parity.ManifestEntry, map[string]bool) error {
 			t.Fatal("Sync must not be called for a zero-move plan")
 			return nil
@@ -891,6 +904,7 @@ func TestRunEvacuation_MaintenanceInterrupt_KeepsRemovingDisks_ThenCancelClears(
 		return evacuationSyncFuncFromEngine(eng)(ctx, manifest, removingDisks)
 	}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             sync,
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -971,6 +985,7 @@ func TestRunEvacuation_InterruptedThenResumed_ReappliesRemovingState(t *testing.
 	share := cache.Share{Name: "media", Branches: []string{src}}
 
 	fn := RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -1092,6 +1107,7 @@ func TestRunEvacuation_BoundsManifestReplaceCalls(t *testing.T) {
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open: fakeOpen(),
 		Sync: evacuationSyncFuncFromEngine(eng),
 		// 20 tracked files makes rebalanceBatchSize compute a 2-file
 		// batch limit (10% of 20/(100-10) ≈ 2.2, truncated) — small

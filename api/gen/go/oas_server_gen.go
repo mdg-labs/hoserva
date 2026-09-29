@@ -352,11 +352,25 @@ type Handler interface {
 	FormatExternalDisk(ctx context.Context, req *FormatExternalDiskRequest, params FormatExternalDiskParams) (*ExternalDisk, error)
 	// GetApp implements getApp operation.
 	//
-	// One container's current state, image, tag, ports and mounts (doc 04 §3) — stats and health are
-	// #277's own operations.
+	// One container's current state, health, image, tag, ports and mounts (doc 04 §3).
 	//
 	// GET /apps/{id}
 	GetApp(ctx context.Context, params GetAppParams) (*App, error)
+	// GetAppLogs implements getAppLogs operation.
+	//
+	// The container's stdout and stderr as plain text: the last `tail` lines, then, with `follow` true,
+	// every new line as it is written until the client disconnects or the container exits (each line is
+	// flushed as it arrives).
+	//
+	// GET /apps/{id}/logs
+	GetAppLogs(ctx context.Context, params GetAppLogsParams) (GetAppLogsOK, error)
+	// GetAppStats implements getAppStats operation.
+	//
+	// CPU, memory, network and block I/O for a running container (`app_not_running`, 409, for one that is
+	// not running — a stopped container is never reported as using nothing).
+	//
+	// GET /apps/{id}/stats
+	GetAppStats(ctx context.Context, params GetAppStatsParams) (*AppStats, error)
 	// GetCacheUsage implements getCacheUsage operation.
 	//
 	// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
@@ -535,9 +549,8 @@ type Handler interface {
 	// ListApps implements listApps operation.
 	//
 	// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose
-	// stack installs, lifecycle actions and the managed/unmanaged distinction against an installed stack
-	// are later issues (#277, #278). available is false, with no error, whenever Docker itself is not
-	// reachable (doc 04 §3).
+	// stack installs and the managed/unmanaged distinction against an installed stack are a later issue
+	// (#278). available is false, with no error, whenever Docker itself is not reachable (doc 04 §3).
 	//
 	// GET /apps
 	ListApps(ctx context.Context) (*ListAppsOK, error)
@@ -735,6 +748,20 @@ type Handler interface {
 	//
 	// POST /settings/updates/reboot
 	RebootHost(ctx context.Context, req *ConfirmUpdateRequest) (*UpdateStatus, error)
+	// RecreateApp implements recreateApp operation.
+	//
+	// Queues a `container_recreate` job (service class): it pulls the container's image again and replaces
+	// the container with one built from the same configuration, volumes and networks. If the pull or the
+	// creation of the replacement fails, or the replacement does not start, the original container is left
+	// as it was — same name and volumes, running again if it was running. A container started with
+	// `--rm` cannot be recreated: the Engine deletes it the moment it stops, so the job fails before
+	// changing anything. Refused with 409 `array_stopped` while the array is stopped (maintenance mode) or
+	// its storage is not ready, and with 503 `array_state_unknown` if the array's state cannot be read; no
+	// job is queued. The job checks again when it runs and fails, changing nothing, if the array has
+	// stopped since.
+	//
+	// POST /apps/{id}/recreate
+	RecreateApp(ctx context.Context, params RecreateAppParams) (*Job, error)
 	// RegenerateTLSCertificate implements regenerateTLSCertificate operation.
 	//
 	// Replaces the daemon's TLS certificate with a freshly generated self-signed certificate (Q9) and
@@ -751,6 +778,19 @@ type Handler interface {
 	//
 	// POST /disks/external
 	RegisterExternalDisk(ctx context.Context, req *RegisterExternalDiskRequest) (*ExternalDisk, error)
+	// RemoveApp implements removeApp operation.
+	//
+	// Removes a stopped container (`app_running`, 409, for one that is not stopped). The container's
+	// appdata is kept unless `deleteAppdata` is explicitly true: then the bind-mount directories strictly
+	// inside the appdata location (the cache disk's `appdata` directory) are deleted, together with the
+	// container's anonymous volumes. Anything outside that location, the location itself, and any
+	// directory another container mounts, or that lies inside a directory of appdata another container
+	// mounts, is never deleted — a request that would delete one is refused (`appdata_shared`, 409) and
+	// removes nothing. `deleteAppdata` with no appdata location is refused (`appdata_unavailable`, 409).
+	// Every refusal happens before the container is removed.
+	//
+	// DELETE /apps/{id}
+	RemoveApp(ctx context.Context, params RemoveAppParams) (*RemoveAppResult, error)
 	// ReplaceDisk implements replaceDisk operation.
 	//
 	// Queues a Topology job (`job.TypeDiskReplace`) that formats or adopts the replacement at the same
@@ -775,6 +815,15 @@ type Handler interface {
 	//
 	// POST /users/{username}/reset-password
 	ResetUserPassword(ctx context.Context, req *ResetUserPasswordRequest, params ResetUserPasswordParams) error
+	// RestartApp implements restartApp operation.
+	//
+	// Restarts the container and returns its state afterwards, and publishes a `container_state` event.
+	// Refused with 409 `array_stopped`, before the Engine is called, while the array is stopped
+	// (maintenance mode) or its storage is not ready, and with 503 `array_state_unknown` if the array's
+	// state cannot be read — the same refusal as `startApp`.
+	//
+	// POST /apps/{id}/restart
+	RestartApp(ctx context.Context, params RestartAppParams) (*App, error)
 	// ResumeJob implements resumeJob operation.
 	//
 	// Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk
@@ -851,6 +900,16 @@ type Handler interface {
 	//
 	// POST /users/{userId}/password
 	SetUserPassword(ctx context.Context, req *SetUserPasswordRequest, params SetUserPasswordParams) error
+	// StartApp implements startApp operation.
+	//
+	// Starts the container and returns its state afterwards, and publishes a `container_state` event.
+	// Managed and unmanaged containers alike. Refused with 409 `array_stopped`, before the Engine is
+	// called, while the array is stopped (maintenance mode) or its storage is not ready: a container
+	// started then would write onto the boot device under `/mnt/user` and `/mnt/cache`. If the array's
+	// state cannot be read the start is refused too, with 503 `array_state_unknown`.
+	//
+	// POST /apps/{id}/start
+	StartApp(ctx context.Context, params StartAppParams) (*App, error)
 	// StartArray implements startArray operation.
 	//
 	// Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share
@@ -918,6 +977,13 @@ type Handler interface {
 	//
 	// POST /parity/sync
 	StartSync(ctx context.Context, req *StartSyncRequest) (*Job, error)
+	// StopApp implements stopApp operation.
+	//
+	// Stops the container (the Engine's own grace period, then a kill) and returns its state afterwards,
+	// and publishes a `container_state` event.
+	//
+	// POST /apps/{id}/stop
+	StopApp(ctx context.Context, params StopAppParams) (*App, error)
 	// StopArray implements stopArray operation.
 	//
 	// Enters maintenance mode (Q70, doc 02 §4, `hoserva array stop`): refuse new jobs and interrupt

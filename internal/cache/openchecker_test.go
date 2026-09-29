@@ -80,3 +80,20 @@ func TestFakeOpenChecker_SetOpenToggles(t *testing.T) {
 		t.Fatal("expected /a to be closed")
 	}
 }
+
+// TestDeps_ZeroValueSelectsProcOpenChecker pins what production relies on:
+// hoservad's mover, relocation, rebalance and evacuation wiring leaves the
+// open-file checker unset, so a zero Deps must resolve to the real
+// /proc-scanning ProcOpenChecker, never to a checker that reports nothing
+// open.
+func TestDeps_ZeroValueSelectsProcOpenChecker(t *testing.T) {
+	got := Deps{}.withDefaults().Open
+	if _, ok := got.(ProcOpenChecker); !ok {
+		t.Fatalf("Deps{}.withDefaults().Open = %T, want ProcOpenChecker", got)
+	}
+
+	fake := NewFakeOpenChecker()
+	if got := (Deps{Open: fake}).withDefaults().Open; got != OpenChecker(fake) {
+		t.Fatalf("an injected Open was replaced: got %T", got)
+	}
+}

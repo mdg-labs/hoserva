@@ -56,6 +56,7 @@ existing line by adding its PR number.
 - **errors** — `os.IsNotExist` on a `%w`-wrapped error; use `errors.Is(err, fs.ErrNotExist)` — PR 201
 - **errors** — infrastructure failure mapped to HTTP 400 with raw internal text — PR 216
 - **errors** — external command without `CommandContext` or a timeout, able to block a request forever — PR 174, 206
+- **errors** — one deadline shared across a multi-step sequence, so a slow but successful early step leaves a later step too little time and it fails into a needless rollback or a leftover — PR 430
 
 ## Web UI
 - **ui-states** — `openapi-fetch` returns `{ error }` instead of throwing, and can return `error: undefined` on an empty non-OK body; ignoring either turns a failed request into empty, "no array" or success state — PR 187, 193, 199, 216, 228, 344
@@ -98,7 +99,7 @@ existing line by adding its PR number.
 - **security** — user or state values written into a config format without escaping control characters — PR 254
 
 ## Tests
-- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open") — PR 159, 163, 231, 337, 403, 421
+- **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached) — PR 159, 163, 231, 337, 403, 421, 430
 - **tests** — unsynchronized read of state written by another goroutine — PR 166, 246
 - **tests** — exact equality between two separately sampled system values — PR 236
 - **tests** — parallel labs compile test binaries into one directory, so one lab replaces another's binary — PR 344

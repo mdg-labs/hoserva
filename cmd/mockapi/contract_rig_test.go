@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -157,6 +158,7 @@ var contractProductionRunFuncs = []job.Type{
 	job.TypeEvacuation,
 	job.TypeShareRelocation,
 	job.TypeACMEIssue,
+	job.TypeContainerRecreate,
 }
 
 // contractDiskFromInventory converts one of mockDiskInventory's own
@@ -297,7 +299,18 @@ func newContractUpdateEngine(t *testing.T, dbPath string) contractUpdateFixture 
 // GetApp("jellyfin") contract case gets the identical 200/404 outcome on
 // both handlers — this rig mounts nothing for real, so it is the only
 // state either side has for Apps.
-func contractContainerProvider() *container.FakeProvider {
+//
+// appdata is a real temporary appdata root: production's shared-appdata
+// check resolves mount sources on disk, so jellyfin and transcoder mount
+// real directories — transcoder's inside jellyfin's, the way the mock's
+// own two fixtures overlap.
+func contractContainerProvider(t *testing.T, appdata string) *container.FakeProvider {
+	t.Helper()
+	jellyfinDir := filepath.Join(appdata, "jellyfin")
+	transcodeDir := filepath.Join(jellyfinDir, "transcode")
+	if err := os.MkdirAll(transcodeDir, 0o755); err != nil {
+		t.Fatalf("creating contract appdata: %v", err)
+	}
 	f := container.NewFakeProvider()
 	f.AddContainer(container.Container{
 		ID:     "3f2a9c1e4b5d",
@@ -306,6 +319,24 @@ func contractContainerProvider() *container.FakeProvider {
 		Tag:    "10.9.7",
 		State:  "running",
 		Status: "Up 3 hours",
+		Mounts: []container.Mount{{Source: jellyfinDir, Destination: "/config", ReadWrite: true}},
+	})
+	f.AddContainer(container.Container{
+		ID:     "4c8e0d2a7b91",
+		Name:   "transcoder",
+		Image:  "example/transcoder",
+		Tag:    "1.4.0",
+		State:  "exited",
+		Status: "Exited (0) 5 hours ago",
+		Mounts: []container.Mount{{Source: transcodeDir, Destination: "/transcode", ReadWrite: true}},
+	})
+	f.AddContainer(container.Container{
+		ID:     "9b1d7e2f6a3c",
+		Name:   "portainer",
+		Image:  "portainer/portainer-ce",
+		Tag:    "2.21.4",
+		State:  "exited",
+		Status: "Exited (0) 2 days ago",
 	})
 	return f
 }
@@ -534,12 +565,47 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		}
 	})
 
+	appdata := filepath.Join(t.TempDir(), "appdata")
+	containers := contractContainerProvider(t, appdata)
 	return &api.Handler{
-		Scheduler:  scheduler,
-		Store:      jobStore,
-		Logs:       logs,
-		Disks:      provider,
-		Container:  contractContainerProvider(),
+		Scheduler: scheduler,
+		Store:     jobStore,
+		Logs:      logs,
+		Disks:     provider,
+		Container: containers,
+		// Like hoservad's appdataRoots (cmd/hoservad/containers.go), the
+		// appdata location exists only when the array has a cache disk
+		// (container.CacheAppdataRoots, the same rule); it is then a
+		// temporary directory here, standing for the mock's
+		// mockAppdataRoot, so no case deletes anything outside it. No
+		// scenario has a cache disk, so this rig never reaches the
+		// deletion itself — only the appdata_unavailable refusal.
+		Lifecycle: &container.Lifecycle{
+			Provider: containers,
+			// The array state hoservad wires (cmd/hoservad/containers.go):
+			// the scheduler's maintenance mode and, standing in for the
+			// storage target this rig does not have, the storage gate —
+			// which, like hoservad with no array configured
+			// (newArraySequence returns nil), is never ready when the
+			// scenario has no array.
+			Halted: scheduler.InMaintenance,
+			StorageReady: func() bool {
+				return len(expected) > 0 && degradedGate.Ready()
+			},
+			AppdataRoots: func(ctx context.Context) ([]string, error) {
+				_, disks, err := arrayStore.GetArray(ctx)
+				if err != nil {
+					if errors.Is(err, store.ErrNoArray) {
+						return nil, nil
+					}
+					return nil, err
+				}
+				if container.CacheAppdataRoots(disks) == nil {
+					return nil, nil
+				}
+				return []string{appdata}, nil
+			},
+		},
 		ArrayStore: arrayStore,
 		// ArrayReady: CancelDiskRemoval (#361) is the only handler method
 		// that calls it directly rather than through a job — this rig

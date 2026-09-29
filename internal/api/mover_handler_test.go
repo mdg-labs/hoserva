@@ -59,6 +59,7 @@ func newMoverResultHandler(t *testing.T) (*api.Handler, *job.Scheduler, cache.Sh
 	logs := job.NewLogStore(t.TempDir())
 	registry := job.NewRegistry()
 	registry.Register(job.TypeMover, true, job.RunMover(job.MoverDeps{
+		Open: cache.NewFakeOpenChecker(),
 		Shares: func(ctx context.Context) ([]cache.Share, error) {
 			return []cache.Share{share}, nil
 		},

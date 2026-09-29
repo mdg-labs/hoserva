@@ -44,6 +44,7 @@ func TestRunMover_MovesThroughScheduler(t *testing.T) {
 	share := newTestMoverShare(t)
 
 	s.registry.Register(TypeMover, true, RunMover(MoverDeps{
+		Open: fakeOpen(),
 		Shares: func(ctx context.Context) ([]cache.Share, error) {
 			return []cache.Share{share}, nil
 		},
@@ -79,6 +80,7 @@ func TestRunMover_SharesErrorFailsTheJob(t *testing.T) {
 	wantErr := context.DeadlineExceeded
 
 	s.registry.Register(TypeMover, true, RunMover(MoverDeps{
+		Open: fakeOpen(),
 		Shares: func(ctx context.Context) ([]cache.Share, error) {
 			return nil, wantErr
 		},
@@ -117,6 +119,7 @@ func TestRunMover_LogsPartialReportOnError(t *testing.T) {
 	}
 
 	fn := RunMover(MoverDeps{
+		Open: fakeOpen(),
 		Shares: func(ctx context.Context) ([]cache.Share, error) {
 			return []cache.Share{share}, nil
 		},
@@ -155,6 +158,7 @@ func TestMaintenanceChain_MoverStepRunsWhenRegistered(t *testing.T) {
 	share := newTestMoverShare(t)
 
 	s.registry.Register(TypeMover, true, RunMover(MoverDeps{
+		Open: fakeOpen(),
 		Shares: func(ctx context.Context) ([]cache.Share, error) {
 			return []cache.Share{share}, nil
 		},
@@ -192,6 +196,7 @@ func TestRunMover_PersistsStructuredResult(t *testing.T) {
 
 	s := newTestScheduler(t)
 	s.registry.Register(TypeMover, true, RunMover(MoverDeps{
+		Open: fakeOpen(),
 		Shares: func(ctx context.Context) ([]cache.Share, error) {
 			return []cache.Share{share}, nil
 		},
@@ -239,6 +244,7 @@ func TestRunMover_PersistsResultWhenContextIsCancelled(t *testing.T) {
 	results := cache.NewResultStore(db)
 	share := newTestMoverShare(t)
 	fn := RunMover(MoverDeps{
+		Open: fakeOpen(),
 		Shares: func(context.Context) ([]cache.Share, error) {
 			return []cache.Share{share}, nil
 		},

@@ -65,6 +65,7 @@ func TestRunShareRelocation_ToCache_GuardBlocked_LeavesArrayUntouched(t *testing
 	eng.ScriptGuardBlock(trippedGuard())
 
 	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:  fakeOpen(),
 		Share: func(context.Context, string) (cache.Share, error) { return share, nil },
 		Sync:  syncFuncFromEngine(eng),
 	}))
@@ -107,6 +108,7 @@ func TestRunShareRelocation_ToCache_MovesThroughScheduler(t *testing.T) {
 	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
 
 	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:  fakeOpen(),
 		Share: func(context.Context, string) (cache.Share, error) { return share, nil },
 		Sync:  syncFuncFromEngine(eng),
 	}))
@@ -145,6 +147,7 @@ func TestRunShareRelocation_ToArray_MovesThroughScheduler(t *testing.T) {
 	mustWriteFile(t, src, "report bytes")
 
 	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:  fakeOpen(),
 		Share: func(context.Context, string) (cache.Share, error) { return share, nil },
 	}))
 
@@ -241,6 +244,7 @@ func TestRunShareRelocation_ToCache_PersistsManifestBeforeFirstSync_ThenClears(t
 	}
 
 	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
 		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
 		Sync:     sync,
 		Manifest: store,
@@ -294,6 +298,7 @@ func TestRunShareRelocation_ToCache_SyncDuringOutstandingRelocation_SeesManifest
 	relocEng := newRecordingEngine()
 	relocEng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
 	fn := RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
 		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
 		Sync:     syncFuncFromEngine(relocEng),
 		Manifest: store,
@@ -404,6 +409,7 @@ func TestRunShareRelocation_ToCache_FinalSyncFailure_LeavesManifestPersisted(t *
 	}
 
 	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
 		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
 		Sync:     sync,
 		Manifest: store,
@@ -455,6 +461,7 @@ func TestRunShareRelocation_ToCache_ManifestSurvivesInterruption_ThenClearsOnRes
 	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
 
 	fn := RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
 		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
 		Sync:     syncFuncFromEngine(eng),
 		Manifest: store,
@@ -561,6 +568,7 @@ func TestRunShareRelocation_ToCache_PersistsManifestOnce_NotPerCheckpoint(t *tes
 	eng.ScriptSync([]parity.Progress{{Percent: 100}}, nil)
 
 	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
 		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
 		Sync:     syncFuncFromEngine(eng),
 		Manifest: replacer,
@@ -634,6 +642,7 @@ func TestRunShareRelocation_ToCache_CancelBetweenFinalSyncAndClear_ClearSurvives
 	}
 
 	fn := RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
 		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
 		Sync:     sync,
 		Manifest: manifestStore,
@@ -687,6 +696,7 @@ func TestRunShareRelocation_ToCache_ClearFailure_SurfacesAsPlainFailure(t *testi
 	}
 
 	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
 		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
 		Sync:     syncFuncFromEngine(eng),
 		Manifest: manifestStore,
@@ -717,6 +727,7 @@ func TestRunShareRelocation_UnknownShareFailsTheJob(t *testing.T) {
 	wantErr := errors.New("no such share")
 
 	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:  fakeOpen(),
 		Share: func(context.Context, string) (cache.Share, error) { return cache.Share{}, wantErr },
 	}))
 

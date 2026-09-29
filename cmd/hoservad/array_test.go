@@ -82,7 +82,7 @@ func presentMatchingDisks(p *disk.FakeProvider, disks []store.ArrayDisk) {
 
 func attachDaemonArray(t *testing.T, ctx context.Context, h *api.Handler, arrays *store.ArrayStore, shares *store.ShareStore, disks disk.Provider, runner disk.Runner) {
 	t.Helper()
-	seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, disks, runner)
+	seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, disks, runner, nil)
 	if err != nil {
 		t.Fatalf("newArraySequence: %v", err)
 	}
@@ -689,7 +689,7 @@ func TestNewArraySequence_ListErrorLeavesGateUnready(t *testing.T) {
 	persistSampleArray(t, arrays)
 	failing := failListProvider{Provider: disks, err: context.DeadlineExceeded}
 
-	seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, failing, runner)
+	seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, failing, runner, nil)
 	if err != nil {
 		t.Fatalf("newArraySequence: %v — a List failure must not abort daemon startup", err)
 	}
@@ -755,7 +755,7 @@ func newLiveArrayCreateEnv(t *testing.T) (context.Context, *api.Handler, *disk.F
 		Generator: cfggen.NewGenerator(t.TempDir()),
 		Mounter:   disk.NewFakeMounter(),
 		ArrayReady: func(ctx context.Context) error {
-			seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, fakeRunner)
+			seq, err := newArraySequence(ctx, scheduler, arrays, shares, provider, fakeRunner, nil)
 			if err != nil {
 				return err
 			}
@@ -955,7 +955,7 @@ func TestShareService_PostCommit_KeepsArraySequenceShareMountsInSyncWithStore(t 
 	generator := cfggen.NewGenerator(filepath.Join(root, "etc"))
 	shareService := newShareService(shares, arrays, generator, failOnMountMounter{refuseSubstr: "badshare"}, nil)
 	shareService.PostCommit = func(ctx context.Context) error {
-		seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, disks, runner)
+		seq, err := newArraySequence(ctx, h.Scheduler, arrays, shares, disks, runner, nil)
 		if err != nil {
 			return err
 		}

@@ -2,14 +2,15 @@
 // doc 04 §2-§3): nothing outside this package talks to the Engine API
 // directly. Every caller — the API and, later, the CLI's dev mode — goes
 // through Provider, so Apps is testable without a real Docker daemon (doc
-// 06 §2). This first part covers a read-only client and prerequisite
-// detection; start/stop/lifecycle actions and the Compose stack model are
-// #277 and #278.
+// 06 §2). It covers listing and inspection, prerequisite detection and the
+// lifecycle actions (start, stop, restart, recreate, remove, logs, stats,
+// state events); the Compose stack model is #278.
 package container
 
 import (
 	"context"
 	"errors"
+	"io"
 	"time"
 )
 
@@ -66,6 +67,7 @@ type Container struct {
 	Tag    string
 	State  string
 	Status string
+	Health string // one of the Health constants
 	Ports  []Port
 	Mounts []Mount
 }
@@ -78,15 +80,95 @@ type Image struct {
 	Created  time.Time
 }
 
+// ErrRunning is returned by Remove for a container that is not stopped:
+// removing a live container would kill it mid-write.
+var ErrRunning = errors.New("container: the container is running")
+
+// ErrNotRunning is returned by Stats for a container that is not running,
+// so a stopped container is never reported as using zero CPU and memory.
+var ErrNotRunning = errors.New("container: the container is not running")
+
+// Container health, in the Engine's own vocabulary (HEALTHCHECK). "none"
+// means the container defines no health check, or the Engine reported
+// none for it.
+const (
+	HealthNone      = "none"
+	HealthStarting  = "starting"
+	HealthHealthy   = "healthy"
+	HealthUnhealthy = "unhealthy"
+)
+
+// Stats is one point-in-time resource reading for a running container.
+type Stats struct {
+	At               time.Time
+	CPUPercent       float64
+	MemoryBytes      uint64
+	MemoryLimitBytes uint64
+	NetworkRxBytes   uint64
+	NetworkTxBytes   uint64
+	BlockReadBytes   uint64
+	BlockWriteBytes  uint64
+}
+
+// LogOptions selects which part of a container's output Logs returns.
+type LogOptions struct {
+	// Tail is the number of trailing lines to start from; negative means
+	// every line the Engine still holds.
+	Tail int
+	// Follow keeps the stream open and delivers new lines as they are
+	// written, until the context is cancelled or the container exits.
+	Follow bool
+}
+
+// RemoveOptions selects what Remove deletes beyond the container itself.
+type RemoveOptions struct {
+	// Volumes also removes the container's anonymous volumes. Named
+	// volumes and bind mounts are never touched by the Engine.
+	Volumes bool
+}
+
+// StateChange is one container state or health transition, as the Engine
+// reported it or as an API action just observed it. Health is empty when
+// the change carries no health information.
+type StateChange struct {
+	ID     string
+	Name   string
+	State  string
+	Health string
+	At     time.Time
+}
+
 // Provider is the interface every subsystem touching the Docker Engine
 // API sits behind (doc 01 §4, doc 06 §2): a real client, backed by the
 // Engine API with a negotiated API version (Q38), and a scriptable fake
 // for tests. Every method returns ErrUnavailable, wrapped, when the
 // Engine cannot be reached — a caller must never read that as "no
 // containers" (doc 04 §3: Apps shows a prerequisite banner instead).
+// Lifecycle methods take a container's Engine ID or name, matched exactly
+// like Inspect, and return ErrNotFound for anything else.
 type Provider interface {
 	Version(ctx context.Context) (EngineVersion, error)
 	List(ctx context.Context) ([]Container, error)
 	Inspect(ctx context.Context, id string) (Container, error)
 	Images(ctx context.Context) ([]Image, error)
+
+	Start(ctx context.Context, id string) error
+	Stop(ctx context.Context, id string) error
+	Restart(ctx context.Context, id string) error
+	// Remove returns ErrRunning for a container that is not stopped.
+	Remove(ctx context.Context, id string, opts RemoveOptions) error
+	// Recreate pulls the container's image again and replaces the
+	// container with one built from the same configuration, volumes and
+	// networks. A failure at any step leaves the original container as it
+	// was: same name, configuration and volumes, running if it was running.
+	Recreate(ctx context.Context, id string) error
+	// Logs returns the container's stdout and stderr as plain text. The
+	// caller closes the reader; cancelling ctx also ends a follow.
+	Logs(ctx context.Context, id string, opts LogOptions) (io.ReadCloser, error)
+	// Stats returns ErrNotRunning for a container that is not running.
+	Stats(ctx context.Context, id string) (Stats, error)
+	// Watch calls fn for every container state or health change the Engine
+	// reports, until ctx is cancelled or the event stream fails. It never
+	// polls: a killed container arrives as an event.
+	Watch(ctx context.Context, fn func(StateChange)) error
 }

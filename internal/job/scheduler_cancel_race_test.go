@@ -100,6 +100,7 @@ func TestScheduler_EvacuationCancelRace_AfterGracefulStop_DoesNotOrphanExemption
 		return evacuationSyncFuncFromEngine(eng)(ctx, manifest, removingDisks)
 	}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             sync,
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -204,6 +205,7 @@ func TestScheduler_EvacuationCancel_ReapplyFailure_SurfacesCancelCleanupError(t 
 		return evacuationSyncFuncFromEngine(eng)(ctx, manifest, removingDisks)
 	}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             sync,
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -294,6 +296,7 @@ func TestScheduler_EvacuationCancel_ManifestClearFailure_SurfacesCancelCleanupEr
 		return evacuationSyncFuncFromEngine(eng)(ctx, manifest, removingDisks)
 	}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             sync,
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -365,6 +368,7 @@ func TestScheduler_EvacuationCancel_BetweenResumableDecisionAndReturn_ClearsExem
 		return evacuationSyncFuncFromEngine(eng)(ctx, manifest, removingDisks)
 	}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             sync,
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -447,6 +451,7 @@ func TestScheduler_EvacuationCancelRace_AfterRunEvacuationReturns_DoesNotOrphanE
 		return evacuationSyncFuncFromEngine(eng)(ctx, manifest, removingDisks)
 	}
 	inner := RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             sync,
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -555,6 +560,7 @@ func TestScheduler_EvacuationCancel_ResumedRun_DuringPreCopyArrayReady_ClearsExe
 		return evacuationSyncFuncFromEngine(eng)(ctx, manifest, removingDisks)
 	}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             sync,
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -634,6 +640,7 @@ func TestScheduler_EvacuationFailure_ResumedRun_AtPreCopyArrayReady_ClearsExempt
 		return evacuationSyncFuncFromEngine(eng)(ctx, manifest, removingDisks)
 	}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             sync,
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -840,6 +847,7 @@ func TestScheduler_ShareRelocationCancelRace_BeforeReturn_ManifestClearFailureIs
 	manifest := &blockingClearManifestReplacer{started: started, release: release, err: wantErr}
 
 	s.registry.Register(TypeShareRelocation, true, RunShareRelocation(ShareRelocationDeps{
+		Open:     fakeOpen(),
 		Share:    func(context.Context, string) (cache.Share, error) { return share, nil },
 		Sync:     syncFuncFromEngine(eng),
 		Manifest: manifest,
@@ -926,6 +934,7 @@ func TestScheduler_EvacuationCancelRace_BeforeFinished_FailedManifestClearIsNotE
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	s.registry.Register(TypeEvacuation, true, RunEvacuation(EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
@@ -1002,6 +1011,7 @@ func TestScheduler_EvacuationCancelRace_BeforeManifestClearReturn_FailedClearIsN
 
 	share := cache.Share{Name: "media", Branches: []string{src}}
 	deps := EvacuationDeps{
+		Open:             fakeOpen(),
 		Sync:             evacuationSyncFuncFromEngine(eng),
 		TrackedFileCount: func(context.Context) (int, error) { return 1000, nil },
 		Shares:           func(context.Context) ([]cache.Share, error) { return []cache.Share{share}, nil },
