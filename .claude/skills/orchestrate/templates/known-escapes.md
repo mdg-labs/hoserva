@@ -22,6 +22,7 @@ existing line by adding its PR number.
 - **scope** — API/CLI option accepted and silently ignored (`--follow`, `--json`, `dryRun`/`confirm`/`percent` payload) — PR 174
 - **scope** — stub or sample data presented as real (sample diff rows, hard-coded "Confirmed", `Mounted` from disk count) — PR 174, 187, 210
 - **scope** — feature covers only the first or common case (first NIC only, common timezones only, cache disks missing from a step) — PR 182, 213
+- **scope** — an operation that replaces or deletes a directory stops and job-scopes only the container that owns it, not every container whose bind mount lies inside it or holds it, so another keeps writing into the removed tree — PR 453
 
 ## Partial failure and atomicity
 - **partial-failure** — DB row committed before a later side effect (generated file, mount, Samba account, audit row, notification row) that can fail; error returned over a half-applied change, or retry blocked by the leftover row — PR 174, 206, 213, 216, 218, 228
@@ -57,6 +58,7 @@ existing line by adding its PR number.
 - **errors** — infrastructure failure mapped to HTTP 400 with raw internal text — PR 216
 - **errors** — external command without `CommandContext` or a timeout, able to block a request forever — PR 174, 206
 - **errors** — one deadline shared across a multi-step sequence, so a slow but successful early step leaves a later step too little time and it fails into a needless rollback or a leftover — PR 430
+- **errors** — a fixed deadline sized for the small case applied to a transfer whose size is unbounded (a multi-gigabyte archive over rclone), so large inputs fail on size alone — PR 453
 
 ## Web UI
 - **ui-states** — `openapi-fetch` returns `{ error }` instead of throwing, and can return `error: undefined` on an empty non-OK body; ignoring either turns a failed request into empty, "no array" or success state — PR 187, 193, 199, 216, 228, 344
