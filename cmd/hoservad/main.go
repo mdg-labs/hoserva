@@ -554,6 +554,7 @@ func run(cfg config) error {
 	if apps != nil {
 		go apps.Watcher.Run(ctx)
 		restoreContainersAfterShutdown(ctx, apps, scheduler.InMaintenance, storageTarget.Ready)
+		reconcileContainersAtStart(ctx, apps, scheduler.InMaintenance, storageTarget.Ready, containerRestoreInterval)
 	}
 	handler.ComposeRunner = container.CommandRunner{}
 	handler.DockerRestart = cfggen.SystemdServiceRestarter{Unit: "docker.service", Runner: linuxDisks.Exec}

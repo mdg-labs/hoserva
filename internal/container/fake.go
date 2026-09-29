@@ -18,11 +18,12 @@ type FakeProvider struct {
 	images     []Image
 	imagesErr  error
 
-	failures map[string]error
-	calls    []FakeCall
-	logs     map[string]string
-	stats    map[string]Stats
-	watchers map[chan StateChange]struct{}
+	failures       map[string]error
+	reconciliation []Reconciliation
+	calls          []FakeCall
+	logs           map[string]string
+	stats          map[string]Stats
+	watchers       map[chan StateChange]struct{}
 }
 
 // NewFakeProvider returns a FakeProvider that reports a recent, reachable

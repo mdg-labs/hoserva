@@ -167,9 +167,26 @@ type containersWiringHarness struct {
 	storageReady *atomic.Bool
 	appdata      string
 	stopWatch    context.CancelFunc
+	apps         *appServices
+	ctx          context.Context
+}
+
+// startReconcile starts the start-up reconciliation of interrupted
+// recreates the way main.go does, and returns the channel that closes
+// when it has finished. The harness does not start it on its own, so a
+// test that changes the array state is not raced by it.
+func (w *containersWiringHarness) startReconcile() <-chan struct{} {
+	return reconcileContainersAtStart(w.ctx, w.apps, w.scheduler.InMaintenance, w.storageReady.Load, 10*time.Millisecond)
 }
 
 func newContainersWiringHarness(t *testing.T) *containersWiringHarness {
+	t.Helper()
+	return newContainersWiringHarnessWith(t, nil)
+}
+
+// newContainersWiringHarnessWith scripts the fake Docker through prepare
+// before the daemon wiring starts using it.
+func newContainersWiringHarnessWith(t *testing.T, prepare func(*container.FakeProvider)) *containersWiringHarness {
 	t.Helper()
 	ctx := context.Background()
 	root := t.TempDir()
@@ -219,6 +236,9 @@ func newContainersWiringHarness(t *testing.T) *containersWiringHarness {
 		ID: "a", Name: "jellyfin", Image: "jf", Tag: "10", State: "exited",
 		Mounts: []container.Mount{{Source: appdata, Destination: "/config", ReadWrite: true}},
 	})
+	if prepare != nil {
+		prepare(fake)
+	}
 
 	registry := job.NewRegistry()
 	jobStore := job.NewStore(db)
@@ -262,6 +282,8 @@ func newContainersWiringHarness(t *testing.T) *containersWiringHarness {
 		storageReady: storageReady,
 		appdata:      appdata,
 		stopWatch:    stopWatch,
+		apps:         apps,
+		ctx:          wctx,
 	}
 }
 
@@ -425,6 +447,7 @@ func TestWireContainers_WithoutArrayStateRefusesEveryStart(t *testing.T) {
 
 func TestContainersWiring_RecreateRunsAsAJobRegisteredByTheDaemonWiring(t *testing.T) {
 	w := newContainersWiringHarness(t)
+	w.startReconcile()
 
 	status, body := w.do(t, http.MethodPost, "/apps/jellyfin/recreate")
 	if status == http.StatusNotImplemented {

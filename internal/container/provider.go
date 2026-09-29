@@ -162,6 +162,10 @@ type Provider interface {
 	// networks. A failure at any step leaves the original container as it
 	// was: same name, configuration and volumes, running if it was running.
 	Recreate(ctx context.Context, id string) error
+	// Reconcile finishes or undoes a Recreate that was cut short by the
+	// daemon dying, and reports what it found (see EngineClient.Reconcile).
+	// It may start a container, so it runs only while the array is up.
+	Reconcile(ctx context.Context) ([]Reconciliation, error)
 	// Logs returns the container's stdout and stderr as plain text. The
 	// caller closes the reader; cancelling ctx also ends a follow.
 	Logs(ctx context.Context, id string, opts LogOptions) (io.ReadCloser, error)
