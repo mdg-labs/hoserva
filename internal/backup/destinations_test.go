@@ -696,6 +696,49 @@ func TestCheckStaleDestinations(t *testing.T) {
 	}
 }
 
+func TestCheckStaleDestinations_SuccessDuringTheAlertKeepsTheNextStalenessAlerting(t *testing.T) {
+	rig := newRemoteRig(t)
+	ctx := context.Background()
+	if err := rig.store.CreateDestination(ctx, Destination{
+		ID: "stale", Name: "Stale", Type: TypeLocal, Path: "/b", Enabled: true, CreatedAt: rig.now.Add(-100 * time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A backup succeeds after the check read the row but before it marks
+	// the alert sent.
+	raced := false
+	alert := func(ctx context.Context, _ string, _ *time.Time) error {
+		if !raced {
+			raced = true
+			return rig.store.RecordBackupSuccess(ctx, "stale", rig.now)
+		}
+		return nil
+	}
+	if err := rig.svc.CheckStaleDestinations(ctx, rig.now, alert); err != nil {
+		t.Fatalf("a success racing the mark is a state change, not a failure: %v", err)
+	}
+	got, err := rig.store.GetDestination(ctx, "stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StaleAlertedAt != nil {
+		t.Fatalf("the healthy destination was marked alerted over the racing success: %+v", got)
+	}
+
+	var alerted []string
+	alert = func(_ context.Context, name string, _ *time.Time) error {
+		alerted = append(alerted, name)
+		return nil
+	}
+	if err := rig.svc.CheckStaleDestinations(ctx, rig.now.Add(72*time.Hour), alert); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(alerted, "Stale") {
+		t.Fatalf("alerted = %v, want Stale once it went stale again", alerted)
+	}
+}
+
 func TestCheckStaleDestinations_RetriesAFailedAlert(t *testing.T) {
 	rig := newRemoteRig(t)
 	ctx := context.Background()

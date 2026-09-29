@@ -140,16 +140,18 @@ func (q *Queries) ListBackupDestinations(ctx context.Context) ([]*BackupDestinat
 }
 
 const markBackupDestinationStaleAlerted = `-- name: MarkBackupDestinationStaleAlerted :execrows
-UPDATE backup_destinations SET stale_alerted_at = ? WHERE id = ?
+UPDATE backup_destinations SET stale_alerted_at = ?
+WHERE id = ? AND last_successful_backup_at IS ?3
 `
 
 type MarkBackupDestinationStaleAlertedParams struct {
-	StaleAlertedAt sql.NullString `json:"stale_alerted_at"`
-	ID             string         `json:"id"`
+	StaleAlertedAt                 sql.NullString `json:"stale_alerted_at"`
+	ID                             string         `json:"id"`
+	ObservedLastSuccessfulBackupAt sql.NullString `json:"observed_last_successful_backup_at"`
 }
 
 func (q *Queries) MarkBackupDestinationStaleAlerted(ctx context.Context, arg MarkBackupDestinationStaleAlertedParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, markBackupDestinationStaleAlerted, arg.StaleAlertedAt, arg.ID)
+	result, err := q.db.ExecContext(ctx, markBackupDestinationStaleAlerted, arg.StaleAlertedAt, arg.ID, arg.ObservedLastSuccessfulBackupAt)
 	if err != nil {
 		return 0, err
 	}

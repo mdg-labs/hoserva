@@ -224,7 +224,14 @@ func TestBackupDestinationStore_RoundTripsAndTracksSuccess(t *testing.T) {
 	}
 
 	alertedAt := created.Add(72 * time.Hour)
-	if err := st.MarkStaleAlerted(ctx, "dest-1", alertedAt); err != nil {
+	earlier := created.Add(time.Hour)
+	if err := st.MarkStaleAlerted(ctx, "dest-1", &earlier, alertedAt); !errors.Is(err, backup.ErrDestinationNotFound) {
+		t.Fatalf("a mark against a success time the row does not hold = %v, want ErrDestinationNotFound", err)
+	}
+	if got, _ = st.GetDestination(ctx, "dest-1"); got.StaleAlertedAt != nil {
+		t.Fatal("a mark against a changed row was recorded")
+	}
+	if err := st.MarkStaleAlerted(ctx, "dest-1", nil, alertedAt); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ = st.GetDestination(ctx, "dest-1"); got.StaleAlertedAt == nil {
@@ -237,6 +244,12 @@ func TestBackupDestinationStore_RoundTripsAndTracksSuccess(t *testing.T) {
 	got, _ = st.GetDestination(ctx, "dest-1")
 	if got.LastSuccessfulBackupAt == nil || !got.LastSuccessfulBackupAt.Equal(success) || got.StaleAlertedAt != nil {
 		t.Fatalf("after a success: %+v, want the time recorded and the alert cleared", got)
+	}
+	if err := st.MarkStaleAlerted(ctx, "dest-1", got.LastSuccessfulBackupAt, alertedAt); err != nil {
+		t.Fatalf("a mark against the success time the row holds: %v", err)
+	}
+	if got, _ = st.GetDestination(ctx, "dest-1"); got.StaleAlertedAt == nil {
+		t.Fatal("the stale alert after a success was not recorded")
 	}
 
 	local := backup.Destination{ID: "boot", Name: "Boot", Type: backup.TypeLocal, Path: "/x", Enabled: true, CreatedAt: created}

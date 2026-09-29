@@ -205,11 +205,15 @@ func (s *BackupDestinationStore) RecordBackupSuccess(ctx context.Context, id str
 }
 
 // MarkStaleAlerted implements backup.DestinationStore.
-func (s *BackupDestinationStore) MarkStaleAlerted(ctx context.Context, id string, at time.Time) error {
-	n, err := s.q.MarkBackupDestinationStaleAlerted(ctx, storedb.MarkBackupDestinationStaleAlertedParams{
+func (s *BackupDestinationStore) MarkStaleAlerted(ctx context.Context, id string, observed *time.Time, at time.Time) error {
+	params := storedb.MarkBackupDestinationStaleAlertedParams{
 		StaleAlertedAt: sql.NullString{String: at.UTC().Format(timeFormat), Valid: true},
 		ID:             id,
-	})
+	}
+	if observed != nil {
+		params.ObservedLastSuccessfulBackupAt = sql.NullString{String: observed.UTC().Format(timeFormat), Valid: true}
+	}
+	n, err := s.q.MarkBackupDestinationStaleAlerted(ctx, params)
 	if err != nil {
 		return fmt.Errorf("marking destination %q alerted: %w", id, err)
 	}

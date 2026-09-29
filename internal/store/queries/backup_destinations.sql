@@ -28,4 +28,5 @@ SET last_successful_backup_at = ?, stale_alerted_at = NULL
 WHERE id = ?;
 
 -- name: MarkBackupDestinationStaleAlerted :execrows
-UPDATE backup_destinations SET stale_alerted_at = ? WHERE id = ?;
+UPDATE backup_destinations SET stale_alerted_at = ?
+WHERE id = ? AND last_successful_backup_at IS sqlc.narg(observed_last_successful_backup_at);

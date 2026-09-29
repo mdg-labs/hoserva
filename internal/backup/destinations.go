@@ -48,7 +48,12 @@ type DestinationStore interface {
 	// RecordBackupSuccess sets the last successful backup time and clears
 	// the stale-alert marker, so a later staleness alerts again.
 	RecordBackupSuccess(ctx context.Context, id string, at time.Time) error
-	MarkStaleAlerted(ctx context.Context, id string, at time.Time) error
+	// MarkStaleAlerted sets the stale-alert marker only while the row's
+	// last successful backup time still equals observed, so a success
+	// recorded after the stale check read the row is never masked. It
+	// returns ErrDestinationNotFound when the id is unknown or the time
+	// has moved on.
+	MarkStaleAlerted(ctx context.Context, id string, observed *time.Time, at time.Time) error
 }
 
 // backendSpec describes what one remote destination type accepts, in
@@ -558,7 +563,8 @@ func (s *Service) CheckStaleDestinations(ctx context.Context, now time.Time, ale
 			failures = append(failures, fmt.Errorf("alerting on stale destination %q: %w", d.ID, err))
 			continue
 		}
-		if err := st.MarkStaleAlerted(ctx, d.ID, now); err != nil {
+		err := st.MarkStaleAlerted(ctx, d.ID, d.LastSuccessfulBackupAt, now)
+		if err != nil && !errors.Is(err, ErrDestinationNotFound) {
 			failures = append(failures, fmt.Errorf("marking destination %q alerted: %w", d.ID, err))
 		}
 	}

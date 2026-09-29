@@ -143,8 +143,22 @@ func (f *FakeDestinationStore) RecordBackupSuccess(ctx context.Context, id strin
 	})
 }
 
-func (f *FakeDestinationStore) MarkStaleAlerted(ctx context.Context, id string, at time.Time) error {
-	return f.update(id, func(d *Destination) { d.StaleAlertedAt = &at })
+func (f *FakeDestinationStore) MarkStaleAlerted(ctx context.Context, id string, observed *time.Time, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.dests {
+		d := &f.dests[i]
+		if d.ID != id {
+			continue
+		}
+		if (d.LastSuccessfulBackupAt == nil) != (observed == nil) ||
+			(observed != nil && !d.LastSuccessfulBackupAt.Equal(*observed)) {
+			return ErrDestinationNotFound
+		}
+		d.StaleAlertedAt = &at
+		return nil
+	}
+	return ErrDestinationNotFound
 }
 
 // FakeRclone is a scriptable RcloneRunner backed by an in-memory remote
