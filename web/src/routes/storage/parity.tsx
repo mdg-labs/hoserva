@@ -24,6 +24,7 @@ import {
 } from "@/lib/api/operations";
 import { useApiMutation } from "@/lib/api/use-api-mutation";
 import { useApiQuery } from "@/lib/api/use-api-query";
+import { jobTypeLabel } from "@/lib/job-labels";
 import type { components } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
@@ -221,7 +222,7 @@ export function ParityPage(): React.ReactElement {
           ) : (
             parityJobs.map((job) => (
               <div key={job.id} data-job-id={job.id} className="flex items-center justify-between gap-2">
-                <span>{job.type}</span>
+                <span>{jobTypeLabel(job.type, t)}</span>
                 <StatusBadge tone={jobStatusTone(job.status)}>{jobStatusLabel(job.status, t)}</StatusBadge>
               </div>
             ))

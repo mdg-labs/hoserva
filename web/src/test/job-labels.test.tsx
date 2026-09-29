@@ -1,15 +1,18 @@
-// #435: the jobs list, the type filter and the job detail heading must show a
+// #435, #437: the jobs list, the type filter and the job detail heading must show a
 // catalog label for every JobType/JobClass value, and the raw string for a
 // value this client does not know yet (a newer daemon than the UI).
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AppShell } from "@/components/patterns/app-shell";
 import i18n from "@/lib/i18n";
 import { JOB_CLASS_VALUES, JOB_TYPE_VALUES, jobClassLabel, jobTypeLabel } from "@/lib/job-labels";
+import { DashboardPage } from "@/routes/dashboard";
 import { JobDetailPage } from "@/routes/jobs/detail";
 import { JobsPage } from "@/routes/jobs/index";
+import { ParityPage } from "@/routes/storage/parity";
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
@@ -193,5 +196,87 @@ describe("job detail labels (#435)", () => {
     expect(screen.getByText("Class: Disk layout")).toBeInTheDocument();
     expect(screen.getAllByText("Upgrade parity disk")).toHaveLength(2);
     expect(screen.queryByText("disk_upgrade_parity")).not.toBeInTheDocument();
+  });
+});
+
+describe("parity history and dashboard banner labels (#437)", () => {
+  beforeEach(() => {
+    cleanup();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      addEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: false,
+      media: query,
+      onchange: null,
+      removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+  });
+
+  function mockApi(jobs: unknown[]): void {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/status") {
+        return Promise.resolve({
+          data: { healthy: true, summary: "OK", arrayDegraded: false, parityBlocked: false, activeJobs: 0 },
+          response: { ok: true },
+        });
+      }
+      if (path === "/pool") {
+        return Promise.resolve({ data: { mounted: true, disks: [] }, response: { ok: true } });
+      }
+      if (path === "/jobs") {
+        return Promise.resolve({ data: { jobs }, response: { ok: true } });
+      }
+      if (path === "/doctor") {
+        return Promise.resolve({ data: { overall: "pass", checks: [] }, response: { ok: true } });
+      }
+      if (path === "/parity") {
+        return Promise.resolve({ data: { freshness: "green", guard: { wouldBlock: false } }, response: { ok: true } });
+      }
+      return Promise.resolve({ data: null, response: { ok: false } });
+    });
+  }
+
+  it("labels each job type in the parity history", async () => {
+    mockApi([
+      { id: "p-1", type: "sync", class: "parity", status: "succeeded", resumable: false, cancellable: false, createdAt: "2026-01-01T00:00:00Z" },
+      { id: "p-2", type: "scrub", class: "parity", status: "failed", resumable: false, cancellable: false, createdAt: "2026-01-01T00:01:00Z" },
+      { id: "p-3", type: "fix", class: "parity", status: "succeeded", resumable: false, cancellable: false, createdAt: "2026-01-01T00:02:00Z" },
+    ]);
+
+    const { container } = render(
+      <MemoryRouter>
+        <AppShell>
+          <ParityPage />
+        </AppShell>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(container.querySelector('[data-job-id="p-1"]')).not.toBeNull());
+    const row = (id: string) => container.querySelector(`[data-job-id="${id}"]`) as HTMLElement;
+    expect(within(row("p-1")).getByText("Parity sync")).toBeInTheDocument();
+    expect(within(row("p-2")).getByText("Parity scrub")).toBeInTheDocument();
+    expect(within(row("p-3")).getByText("Parity fix")).toBeInTheDocument();
+    expect(within(row("p-1")).queryByText("sync")).not.toBeInTheDocument();
+    expect(within(row("p-2")).queryByText("scrub")).not.toBeInTheDocument();
+    expect(within(row("p-3")).queryByText("fix")).not.toBeInTheDocument();
+  });
+
+  it("names the failed job by its label in the dashboard banner", async () => {
+    mockApi([
+      { id: "f-1", type: "disk_upgrade_parity", class: "topology", status: "failed", resumable: false, cancellable: false, createdAt: "2026-01-01T00:00:00Z", error: { message: "disk vanished" } },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AppShell>
+          <DashboardPage />
+        </AppShell>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Job failed: Upgrade parity disk")).toBeInTheDocument();
+    expect(screen.queryByText(/disk_upgrade_parity/)).not.toBeInTheDocument();
   });
 });
