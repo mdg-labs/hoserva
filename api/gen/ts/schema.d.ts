@@ -1639,6 +1639,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/config/import/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview a config import
+         * @description Reads the same archive upload as `importConfig` and reports what an in-place import would change, without changing anything: it writes no database row, no pre-import archive, takes no job hold, and leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive, with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409 `archive_array_mismatch`); `groups` compares the archive's database with the live one per category and is empty when the archive's schema version differs, since the two cannot be compared. An archive that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is read.
+         */
+        post: operations["previewConfigImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/backup/destinations": {
         parameters: {
             query?: never;
@@ -4085,6 +4105,54 @@ export interface components {
             archive: string;
             destinationId: string;
         };
+        /** @description A refusal `importConfig` would return for this archive. */
+        ConfigImportBlocker: {
+            /** @enum {string} */
+            code: "incompatible_archive" | "archive_other_installation" | "archive_array_mismatch";
+            message: string;
+        };
+        /** @description Something about an import that is true whatever the archive holds. */
+        ConfigImportNote: {
+            /** @enum {string} */
+            code: "sessions_replaced";
+            message: string;
+        };
+        ConfigImportChange: {
+            /** @enum {string} */
+            kind: "share" | "share_user_permission" | "share_group_permission" | "user" | "user_group" | "user_group_member" | "api_token" | "schedule_chain" | "schedule_job" | "notification_channel" | "notification_route" | "notification_severity" | "notification_quiet_hours" | "backup_destination" | "appdata_backup_container" | "backup_recipient" | "acme" | "ups" | "array_settings" | "array_state" | "host_config" | "external_disk" | "hostname" | "timezone" | "backup_passphrase" | "update_channel" | "update_check";
+            /** @description What a user calls it: a share name, a username, a schedule job, a destination name; `share / user` for a permission, `group / user` for a membership, `user / token name` for an API token, `event / channel` for a route, the label of an external disk, the kind of a host configuration decision. Empty for the settings that exist once. A secret or a passphrase is reported as changed, never by its value. */
+            name: string;
+        };
+        ConfigImportGroup: {
+            /** @enum {string} */
+            category: "shares" | "accounts" | "schedules" | "notifications" | "backup" | "system";
+            /** @description In the archive, not in the live configuration. */
+            added: components["schemas"]["ConfigImportChange"][];
+            /** @description In both, with different content. */
+            changed: components["schemas"]["ConfigImportChange"][];
+            /** @description In the live configuration, not in the archive. */
+            removed: components["schemas"]["ConfigImportChange"][];
+        };
+        ConfigImportArchive: {
+            /**
+             * Format: date-time
+             * @description When the archive was taken.
+             */
+            timestamp: string;
+            host: string;
+            hoservaVersion: string;
+            /** @description The database schema version of the archive. */
+            schemaVersion: string;
+        };
+        ConfigImportPreview: {
+            archive: components["schemas"]["ConfigImportArchive"];
+            liveSchemaVersion: string;
+            /** @description Refusals `importConfig` would return for this archive; empty when it would go ahead (a running job, which is not a property of the archive, refuses it too). */
+            blockers: components["schemas"]["ConfigImportBlocker"][];
+            /** @description One entry per category, in a fixed order, each listing what an import would add, change or remove. History and runtime tables (jobs, the audit log, spin events, notification deliveries and alerts, usage, mover and cache results) are not listed. Empty when the schema versions differ. */
+            groups: components["schemas"]["ConfigImportGroup"][];
+            notes: components["schemas"]["ConfigImportNote"][];
+        };
         AppdataRestorePreviewGroup: {
             /**
              * Format: int64
@@ -6346,6 +6414,34 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    previewConfigImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    archive: string;
+                };
+            };
+        };
+        responses: {
+            /** @description What the import would change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigImportPreview"];
+                };
             };
             default: components["responses"]["Error"];
         };

@@ -2082,6 +2082,623 @@ func (s *CancelDiskRemovalRequest) SetMountpoint(val string) {
 	s.Mountpoint = val
 }
 
+// Ref: #/components/schemas/ConfigImportArchive
+type ConfigImportArchive struct {
+	// When the archive was taken.
+	Timestamp      time.Time `json:"timestamp"`
+	Host           string    `json:"host"`
+	HoservaVersion string    `json:"hoservaVersion"`
+	// The database schema version of the archive.
+	SchemaVersion string `json:"schemaVersion"`
+}
+
+// GetTimestamp returns the value of Timestamp.
+func (s *ConfigImportArchive) GetTimestamp() time.Time {
+	return s.Timestamp
+}
+
+// GetHost returns the value of Host.
+func (s *ConfigImportArchive) GetHost() string {
+	return s.Host
+}
+
+// GetHoservaVersion returns the value of HoservaVersion.
+func (s *ConfigImportArchive) GetHoservaVersion() string {
+	return s.HoservaVersion
+}
+
+// GetSchemaVersion returns the value of SchemaVersion.
+func (s *ConfigImportArchive) GetSchemaVersion() string {
+	return s.SchemaVersion
+}
+
+// SetTimestamp sets the value of Timestamp.
+func (s *ConfigImportArchive) SetTimestamp(val time.Time) {
+	s.Timestamp = val
+}
+
+// SetHost sets the value of Host.
+func (s *ConfigImportArchive) SetHost(val string) {
+	s.Host = val
+}
+
+// SetHoservaVersion sets the value of HoservaVersion.
+func (s *ConfigImportArchive) SetHoservaVersion(val string) {
+	s.HoservaVersion = val
+}
+
+// SetSchemaVersion sets the value of SchemaVersion.
+func (s *ConfigImportArchive) SetSchemaVersion(val string) {
+	s.SchemaVersion = val
+}
+
+// A refusal `importConfig` would return for this archive.
+// Ref: #/components/schemas/ConfigImportBlocker
+type ConfigImportBlocker struct {
+	Code    ConfigImportBlockerCode `json:"code"`
+	Message string                  `json:"message"`
+}
+
+// GetCode returns the value of Code.
+func (s *ConfigImportBlocker) GetCode() ConfigImportBlockerCode {
+	return s.Code
+}
+
+// GetMessage returns the value of Message.
+func (s *ConfigImportBlocker) GetMessage() string {
+	return s.Message
+}
+
+// SetCode sets the value of Code.
+func (s *ConfigImportBlocker) SetCode(val ConfigImportBlockerCode) {
+	s.Code = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ConfigImportBlocker) SetMessage(val string) {
+	s.Message = val
+}
+
+type ConfigImportBlockerCode string
+
+const (
+	ConfigImportBlockerCodeIncompatibleArchive      ConfigImportBlockerCode = "incompatible_archive"
+	ConfigImportBlockerCodeArchiveOtherInstallation ConfigImportBlockerCode = "archive_other_installation"
+	ConfigImportBlockerCodeArchiveArrayMismatch     ConfigImportBlockerCode = "archive_array_mismatch"
+)
+
+// AllValues returns all ConfigImportBlockerCode values.
+func (ConfigImportBlockerCode) AllValues() []ConfigImportBlockerCode {
+	return []ConfigImportBlockerCode{
+		ConfigImportBlockerCodeIncompatibleArchive,
+		ConfigImportBlockerCodeArchiveOtherInstallation,
+		ConfigImportBlockerCodeArchiveArrayMismatch,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportBlockerCode) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportBlockerCodeIncompatibleArchive:
+		return []byte(s), nil
+	case ConfigImportBlockerCodeArchiveOtherInstallation:
+		return []byte(s), nil
+	case ConfigImportBlockerCodeArchiveArrayMismatch:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportBlockerCode) UnmarshalText(data []byte) error {
+	switch ConfigImportBlockerCode(data) {
+	case ConfigImportBlockerCodeIncompatibleArchive:
+		*s = ConfigImportBlockerCodeIncompatibleArchive
+		return nil
+	case ConfigImportBlockerCodeArchiveOtherInstallation:
+		*s = ConfigImportBlockerCodeArchiveOtherInstallation
+		return nil
+	case ConfigImportBlockerCodeArchiveArrayMismatch:
+		*s = ConfigImportBlockerCodeArchiveArrayMismatch
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ConfigImportChange
+type ConfigImportChange struct {
+	Kind ConfigImportChangeKind `json:"kind"`
+	// What a user calls it: a share name, a username, a schedule job, a destination name; `share / user`
+	// for a permission, `group / user` for a membership, `user / token name` for an API token,
+	// `event / channel` for a route, the label of an external disk, the kind of a host configuration
+	// decision. Empty for the settings that exist once. A secret or a passphrase is reported as changed,
+	// never by its value.
+	Name string `json:"name"`
+}
+
+// GetKind returns the value of Kind.
+func (s *ConfigImportChange) GetKind() ConfigImportChangeKind {
+	return s.Kind
+}
+
+// GetName returns the value of Name.
+func (s *ConfigImportChange) GetName() string {
+	return s.Name
+}
+
+// SetKind sets the value of Kind.
+func (s *ConfigImportChange) SetKind(val ConfigImportChangeKind) {
+	s.Kind = val
+}
+
+// SetName sets the value of Name.
+func (s *ConfigImportChange) SetName(val string) {
+	s.Name = val
+}
+
+type ConfigImportChangeKind string
+
+const (
+	ConfigImportChangeKindShare                  ConfigImportChangeKind = "share"
+	ConfigImportChangeKindShareUserPermission    ConfigImportChangeKind = "share_user_permission"
+	ConfigImportChangeKindShareGroupPermission   ConfigImportChangeKind = "share_group_permission"
+	ConfigImportChangeKindUser                   ConfigImportChangeKind = "user"
+	ConfigImportChangeKindUserGroup              ConfigImportChangeKind = "user_group"
+	ConfigImportChangeKindUserGroupMember        ConfigImportChangeKind = "user_group_member"
+	ConfigImportChangeKindAPIToken               ConfigImportChangeKind = "api_token"
+	ConfigImportChangeKindScheduleChain          ConfigImportChangeKind = "schedule_chain"
+	ConfigImportChangeKindScheduleJob            ConfigImportChangeKind = "schedule_job"
+	ConfigImportChangeKindNotificationChannel    ConfigImportChangeKind = "notification_channel"
+	ConfigImportChangeKindNotificationRoute      ConfigImportChangeKind = "notification_route"
+	ConfigImportChangeKindNotificationSeverity   ConfigImportChangeKind = "notification_severity"
+	ConfigImportChangeKindNotificationQuietHours ConfigImportChangeKind = "notification_quiet_hours"
+	ConfigImportChangeKindBackupDestination      ConfigImportChangeKind = "backup_destination"
+	ConfigImportChangeKindAppdataBackupContainer ConfigImportChangeKind = "appdata_backup_container"
+	ConfigImportChangeKindBackupRecipient        ConfigImportChangeKind = "backup_recipient"
+	ConfigImportChangeKindAcme                   ConfigImportChangeKind = "acme"
+	ConfigImportChangeKindUps                    ConfigImportChangeKind = "ups"
+	ConfigImportChangeKindArraySettings          ConfigImportChangeKind = "array_settings"
+	ConfigImportChangeKindArrayState             ConfigImportChangeKind = "array_state"
+	ConfigImportChangeKindHostConfig             ConfigImportChangeKind = "host_config"
+	ConfigImportChangeKindExternalDisk           ConfigImportChangeKind = "external_disk"
+	ConfigImportChangeKindHostname               ConfigImportChangeKind = "hostname"
+	ConfigImportChangeKindTimezone               ConfigImportChangeKind = "timezone"
+	ConfigImportChangeKindBackupPassphrase       ConfigImportChangeKind = "backup_passphrase"
+	ConfigImportChangeKindUpdateChannel          ConfigImportChangeKind = "update_channel"
+	ConfigImportChangeKindUpdateCheck            ConfigImportChangeKind = "update_check"
+)
+
+// AllValues returns all ConfigImportChangeKind values.
+func (ConfigImportChangeKind) AllValues() []ConfigImportChangeKind {
+	return []ConfigImportChangeKind{
+		ConfigImportChangeKindShare,
+		ConfigImportChangeKindShareUserPermission,
+		ConfigImportChangeKindShareGroupPermission,
+		ConfigImportChangeKindUser,
+		ConfigImportChangeKindUserGroup,
+		ConfigImportChangeKindUserGroupMember,
+		ConfigImportChangeKindAPIToken,
+		ConfigImportChangeKindScheduleChain,
+		ConfigImportChangeKindScheduleJob,
+		ConfigImportChangeKindNotificationChannel,
+		ConfigImportChangeKindNotificationRoute,
+		ConfigImportChangeKindNotificationSeverity,
+		ConfigImportChangeKindNotificationQuietHours,
+		ConfigImportChangeKindBackupDestination,
+		ConfigImportChangeKindAppdataBackupContainer,
+		ConfigImportChangeKindBackupRecipient,
+		ConfigImportChangeKindAcme,
+		ConfigImportChangeKindUps,
+		ConfigImportChangeKindArraySettings,
+		ConfigImportChangeKindArrayState,
+		ConfigImportChangeKindHostConfig,
+		ConfigImportChangeKindExternalDisk,
+		ConfigImportChangeKindHostname,
+		ConfigImportChangeKindTimezone,
+		ConfigImportChangeKindBackupPassphrase,
+		ConfigImportChangeKindUpdateChannel,
+		ConfigImportChangeKindUpdateCheck,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportChangeKind) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportChangeKindShare:
+		return []byte(s), nil
+	case ConfigImportChangeKindShareUserPermission:
+		return []byte(s), nil
+	case ConfigImportChangeKindShareGroupPermission:
+		return []byte(s), nil
+	case ConfigImportChangeKindUser:
+		return []byte(s), nil
+	case ConfigImportChangeKindUserGroup:
+		return []byte(s), nil
+	case ConfigImportChangeKindUserGroupMember:
+		return []byte(s), nil
+	case ConfigImportChangeKindAPIToken:
+		return []byte(s), nil
+	case ConfigImportChangeKindScheduleChain:
+		return []byte(s), nil
+	case ConfigImportChangeKindScheduleJob:
+		return []byte(s), nil
+	case ConfigImportChangeKindNotificationChannel:
+		return []byte(s), nil
+	case ConfigImportChangeKindNotificationRoute:
+		return []byte(s), nil
+	case ConfigImportChangeKindNotificationSeverity:
+		return []byte(s), nil
+	case ConfigImportChangeKindNotificationQuietHours:
+		return []byte(s), nil
+	case ConfigImportChangeKindBackupDestination:
+		return []byte(s), nil
+	case ConfigImportChangeKindAppdataBackupContainer:
+		return []byte(s), nil
+	case ConfigImportChangeKindBackupRecipient:
+		return []byte(s), nil
+	case ConfigImportChangeKindAcme:
+		return []byte(s), nil
+	case ConfigImportChangeKindUps:
+		return []byte(s), nil
+	case ConfigImportChangeKindArraySettings:
+		return []byte(s), nil
+	case ConfigImportChangeKindArrayState:
+		return []byte(s), nil
+	case ConfigImportChangeKindHostConfig:
+		return []byte(s), nil
+	case ConfigImportChangeKindExternalDisk:
+		return []byte(s), nil
+	case ConfigImportChangeKindHostname:
+		return []byte(s), nil
+	case ConfigImportChangeKindTimezone:
+		return []byte(s), nil
+	case ConfigImportChangeKindBackupPassphrase:
+		return []byte(s), nil
+	case ConfigImportChangeKindUpdateChannel:
+		return []byte(s), nil
+	case ConfigImportChangeKindUpdateCheck:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportChangeKind) UnmarshalText(data []byte) error {
+	switch ConfigImportChangeKind(data) {
+	case ConfigImportChangeKindShare:
+		*s = ConfigImportChangeKindShare
+		return nil
+	case ConfigImportChangeKindShareUserPermission:
+		*s = ConfigImportChangeKindShareUserPermission
+		return nil
+	case ConfigImportChangeKindShareGroupPermission:
+		*s = ConfigImportChangeKindShareGroupPermission
+		return nil
+	case ConfigImportChangeKindUser:
+		*s = ConfigImportChangeKindUser
+		return nil
+	case ConfigImportChangeKindUserGroup:
+		*s = ConfigImportChangeKindUserGroup
+		return nil
+	case ConfigImportChangeKindUserGroupMember:
+		*s = ConfigImportChangeKindUserGroupMember
+		return nil
+	case ConfigImportChangeKindAPIToken:
+		*s = ConfigImportChangeKindAPIToken
+		return nil
+	case ConfigImportChangeKindScheduleChain:
+		*s = ConfigImportChangeKindScheduleChain
+		return nil
+	case ConfigImportChangeKindScheduleJob:
+		*s = ConfigImportChangeKindScheduleJob
+		return nil
+	case ConfigImportChangeKindNotificationChannel:
+		*s = ConfigImportChangeKindNotificationChannel
+		return nil
+	case ConfigImportChangeKindNotificationRoute:
+		*s = ConfigImportChangeKindNotificationRoute
+		return nil
+	case ConfigImportChangeKindNotificationSeverity:
+		*s = ConfigImportChangeKindNotificationSeverity
+		return nil
+	case ConfigImportChangeKindNotificationQuietHours:
+		*s = ConfigImportChangeKindNotificationQuietHours
+		return nil
+	case ConfigImportChangeKindBackupDestination:
+		*s = ConfigImportChangeKindBackupDestination
+		return nil
+	case ConfigImportChangeKindAppdataBackupContainer:
+		*s = ConfigImportChangeKindAppdataBackupContainer
+		return nil
+	case ConfigImportChangeKindBackupRecipient:
+		*s = ConfigImportChangeKindBackupRecipient
+		return nil
+	case ConfigImportChangeKindAcme:
+		*s = ConfigImportChangeKindAcme
+		return nil
+	case ConfigImportChangeKindUps:
+		*s = ConfigImportChangeKindUps
+		return nil
+	case ConfigImportChangeKindArraySettings:
+		*s = ConfigImportChangeKindArraySettings
+		return nil
+	case ConfigImportChangeKindArrayState:
+		*s = ConfigImportChangeKindArrayState
+		return nil
+	case ConfigImportChangeKindHostConfig:
+		*s = ConfigImportChangeKindHostConfig
+		return nil
+	case ConfigImportChangeKindExternalDisk:
+		*s = ConfigImportChangeKindExternalDisk
+		return nil
+	case ConfigImportChangeKindHostname:
+		*s = ConfigImportChangeKindHostname
+		return nil
+	case ConfigImportChangeKindTimezone:
+		*s = ConfigImportChangeKindTimezone
+		return nil
+	case ConfigImportChangeKindBackupPassphrase:
+		*s = ConfigImportChangeKindBackupPassphrase
+		return nil
+	case ConfigImportChangeKindUpdateChannel:
+		*s = ConfigImportChangeKindUpdateChannel
+		return nil
+	case ConfigImportChangeKindUpdateCheck:
+		*s = ConfigImportChangeKindUpdateCheck
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ConfigImportGroup
+type ConfigImportGroup struct {
+	Category ConfigImportGroupCategory `json:"category"`
+	// In the archive, not in the live configuration.
+	Added []ConfigImportChange `json:"added"`
+	// In both, with different content.
+	Changed []ConfigImportChange `json:"changed"`
+	// In the live configuration, not in the archive.
+	Removed []ConfigImportChange `json:"removed"`
+}
+
+// GetCategory returns the value of Category.
+func (s *ConfigImportGroup) GetCategory() ConfigImportGroupCategory {
+	return s.Category
+}
+
+// GetAdded returns the value of Added.
+func (s *ConfigImportGroup) GetAdded() []ConfigImportChange {
+	return s.Added
+}
+
+// GetChanged returns the value of Changed.
+func (s *ConfigImportGroup) GetChanged() []ConfigImportChange {
+	return s.Changed
+}
+
+// GetRemoved returns the value of Removed.
+func (s *ConfigImportGroup) GetRemoved() []ConfigImportChange {
+	return s.Removed
+}
+
+// SetCategory sets the value of Category.
+func (s *ConfigImportGroup) SetCategory(val ConfigImportGroupCategory) {
+	s.Category = val
+}
+
+// SetAdded sets the value of Added.
+func (s *ConfigImportGroup) SetAdded(val []ConfigImportChange) {
+	s.Added = val
+}
+
+// SetChanged sets the value of Changed.
+func (s *ConfigImportGroup) SetChanged(val []ConfigImportChange) {
+	s.Changed = val
+}
+
+// SetRemoved sets the value of Removed.
+func (s *ConfigImportGroup) SetRemoved(val []ConfigImportChange) {
+	s.Removed = val
+}
+
+type ConfigImportGroupCategory string
+
+const (
+	ConfigImportGroupCategoryShares        ConfigImportGroupCategory = "shares"
+	ConfigImportGroupCategoryAccounts      ConfigImportGroupCategory = "accounts"
+	ConfigImportGroupCategorySchedules     ConfigImportGroupCategory = "schedules"
+	ConfigImportGroupCategoryNotifications ConfigImportGroupCategory = "notifications"
+	ConfigImportGroupCategoryBackup        ConfigImportGroupCategory = "backup"
+	ConfigImportGroupCategorySystem        ConfigImportGroupCategory = "system"
+)
+
+// AllValues returns all ConfigImportGroupCategory values.
+func (ConfigImportGroupCategory) AllValues() []ConfigImportGroupCategory {
+	return []ConfigImportGroupCategory{
+		ConfigImportGroupCategoryShares,
+		ConfigImportGroupCategoryAccounts,
+		ConfigImportGroupCategorySchedules,
+		ConfigImportGroupCategoryNotifications,
+		ConfigImportGroupCategoryBackup,
+		ConfigImportGroupCategorySystem,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportGroupCategory) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportGroupCategoryShares:
+		return []byte(s), nil
+	case ConfigImportGroupCategoryAccounts:
+		return []byte(s), nil
+	case ConfigImportGroupCategorySchedules:
+		return []byte(s), nil
+	case ConfigImportGroupCategoryNotifications:
+		return []byte(s), nil
+	case ConfigImportGroupCategoryBackup:
+		return []byte(s), nil
+	case ConfigImportGroupCategorySystem:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportGroupCategory) UnmarshalText(data []byte) error {
+	switch ConfigImportGroupCategory(data) {
+	case ConfigImportGroupCategoryShares:
+		*s = ConfigImportGroupCategoryShares
+		return nil
+	case ConfigImportGroupCategoryAccounts:
+		*s = ConfigImportGroupCategoryAccounts
+		return nil
+	case ConfigImportGroupCategorySchedules:
+		*s = ConfigImportGroupCategorySchedules
+		return nil
+	case ConfigImportGroupCategoryNotifications:
+		*s = ConfigImportGroupCategoryNotifications
+		return nil
+	case ConfigImportGroupCategoryBackup:
+		*s = ConfigImportGroupCategoryBackup
+		return nil
+	case ConfigImportGroupCategorySystem:
+		*s = ConfigImportGroupCategorySystem
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Something about an import that is true whatever the archive holds.
+// Ref: #/components/schemas/ConfigImportNote
+type ConfigImportNote struct {
+	Code    ConfigImportNoteCode `json:"code"`
+	Message string               `json:"message"`
+}
+
+// GetCode returns the value of Code.
+func (s *ConfigImportNote) GetCode() ConfigImportNoteCode {
+	return s.Code
+}
+
+// GetMessage returns the value of Message.
+func (s *ConfigImportNote) GetMessage() string {
+	return s.Message
+}
+
+// SetCode sets the value of Code.
+func (s *ConfigImportNote) SetCode(val ConfigImportNoteCode) {
+	s.Code = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ConfigImportNote) SetMessage(val string) {
+	s.Message = val
+}
+
+type ConfigImportNoteCode string
+
+const (
+	ConfigImportNoteCodeSessionsReplaced ConfigImportNoteCode = "sessions_replaced"
+)
+
+// AllValues returns all ConfigImportNoteCode values.
+func (ConfigImportNoteCode) AllValues() []ConfigImportNoteCode {
+	return []ConfigImportNoteCode{
+		ConfigImportNoteCodeSessionsReplaced,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportNoteCode) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportNoteCodeSessionsReplaced:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportNoteCode) UnmarshalText(data []byte) error {
+	switch ConfigImportNoteCode(data) {
+	case ConfigImportNoteCodeSessionsReplaced:
+		*s = ConfigImportNoteCodeSessionsReplaced
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ConfigImportPreview
+type ConfigImportPreview struct {
+	Archive           ConfigImportArchive `json:"archive"`
+	LiveSchemaVersion string              `json:"liveSchemaVersion"`
+	// Refusals `importConfig` would return for this archive; empty when it would go ahead (a running job,
+	// which is not a property of the archive, refuses it too).
+	Blockers []ConfigImportBlocker `json:"blockers"`
+	// One entry per category, in a fixed order, each listing what an import would add, change or remove.
+	// History and runtime tables (jobs, the audit log, spin events, notification deliveries and alerts,
+	// usage, mover and cache results) are not listed. Empty when the schema versions differ.
+	Groups []ConfigImportGroup `json:"groups"`
+	Notes  []ConfigImportNote  `json:"notes"`
+}
+
+// GetArchive returns the value of Archive.
+func (s *ConfigImportPreview) GetArchive() ConfigImportArchive {
+	return s.Archive
+}
+
+// GetLiveSchemaVersion returns the value of LiveSchemaVersion.
+func (s *ConfigImportPreview) GetLiveSchemaVersion() string {
+	return s.LiveSchemaVersion
+}
+
+// GetBlockers returns the value of Blockers.
+func (s *ConfigImportPreview) GetBlockers() []ConfigImportBlocker {
+	return s.Blockers
+}
+
+// GetGroups returns the value of Groups.
+func (s *ConfigImportPreview) GetGroups() []ConfigImportGroup {
+	return s.Groups
+}
+
+// GetNotes returns the value of Notes.
+func (s *ConfigImportPreview) GetNotes() []ConfigImportNote {
+	return s.Notes
+}
+
+// SetArchive sets the value of Archive.
+func (s *ConfigImportPreview) SetArchive(val ConfigImportArchive) {
+	s.Archive = val
+}
+
+// SetLiveSchemaVersion sets the value of LiveSchemaVersion.
+func (s *ConfigImportPreview) SetLiveSchemaVersion(val string) {
+	s.LiveSchemaVersion = val
+}
+
+// SetBlockers sets the value of Blockers.
+func (s *ConfigImportPreview) SetBlockers(val []ConfigImportBlocker) {
+	s.Blockers = val
+}
+
+// SetGroups sets the value of Groups.
+func (s *ConfigImportPreview) SetGroups(val []ConfigImportGroup) {
+	s.Groups = val
+}
+
+// SetNotes sets the value of Notes.
+func (s *ConfigImportPreview) SetNotes(val []ConfigImportNote) {
+	s.Notes = val
+}
+
 // Ref: #/components/schemas/ConfigureLetsEncryptRequest
 type ConfigureLetsEncryptRequest struct {
 	// Hostname the certificate will cover, challenged via DNS-01.
@@ -9977,6 +10594,20 @@ func (s *PreviewAppdataRestoreRequest) SetArchive(val string) {
 // SetDestinationId sets the value of DestinationId.
 func (s *PreviewAppdataRestoreRequest) SetDestinationId(val string) {
 	s.DestinationId = val
+}
+
+type PreviewConfigImportReq struct {
+	Archive ht.MultipartFile `json:"archive"`
+}
+
+// GetArchive returns the value of Archive.
+func (s *PreviewConfigImportReq) GetArchive() ht.MultipartFile {
+	return s.Archive
+}
+
+// SetArchive sets the value of Archive.
+func (s *PreviewConfigImportReq) SetArchive(val ht.MultipartFile) {
+	s.Archive = val
 }
 
 // One file a rebalance or evacuation plan moves (doc 09 §3-4).

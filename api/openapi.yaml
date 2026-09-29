@@ -2728,6 +2728,47 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /config/import/preview:
+    post:
+      operationId: previewConfigImport
+      summary: Preview a config import
+      description: >-
+        Reads the same archive upload as `importConfig` and reports what an
+        in-place import would change, without changing anything: it writes
+        no database row, no pre-import archive, takes no job hold, and
+        leaves no file behind. `blockers` lists the refusals `importConfig`
+        would return for this archive, with the same codes and messages
+        (400 `incompatible_archive`, 409 `archive_other_installation`, 409
+        `archive_array_mismatch`); `groups` compares the archive's database
+        with the live one per category and is empty when the archive's
+        schema version differs, since the two cannot be compared. An
+        archive that cannot be read is refused as `importConfig` refuses it
+        (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with
+        no config backup wired answers 501 `not_configured`. Nothing on a
+        data disk is read.
+      tags: [config]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [archive]
+              properties:
+                archive:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: What the import would change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigImportPreview'
+        default:
+          $ref: '#/components/responses/Error'
+
   /backup/destinations:
     get:
       operationId: listBackupDestinations
@@ -7497,6 +7538,144 @@ components:
           type: string
           minLength: 1
           maxLength: 64
+
+    ConfigImportBlocker:
+      type: object
+      required: [code, message]
+      description: >-
+        A refusal `importConfig` would return for this archive.
+      properties:
+        code:
+          type: string
+          enum: [incompatible_archive, archive_other_installation, archive_array_mismatch]
+        message:
+          type: string
+
+    ConfigImportNote:
+      type: object
+      required: [code, message]
+      description: Something about an import that is true whatever the archive holds.
+      properties:
+        code:
+          type: string
+          enum: [sessions_replaced]
+        message:
+          type: string
+
+    ConfigImportChange:
+      type: object
+      required: [kind, name]
+      properties:
+        kind:
+          type: string
+          enum:
+            - share
+            - share_user_permission
+            - share_group_permission
+            - user
+            - user_group
+            - user_group_member
+            - api_token
+            - schedule_chain
+            - schedule_job
+            - notification_channel
+            - notification_route
+            - notification_severity
+            - notification_quiet_hours
+            - backup_destination
+            - appdata_backup_container
+            - backup_recipient
+            - acme
+            - ups
+            - array_settings
+            - array_state
+            - host_config
+            - external_disk
+            - hostname
+            - timezone
+            - backup_passphrase
+            - update_channel
+            - update_check
+        name:
+          type: string
+          description: >-
+            What a user calls it: a share name, a username, a schedule job,
+            a destination name; `share / user` for a permission,
+            `group / user` for a membership, `user / token name` for an
+            API token, `event / channel` for a route, the label of an
+            external disk, the kind of a host configuration decision.
+            Empty for the settings that exist once. A secret or a
+            passphrase is reported as changed, never by its value.
+
+    ConfigImportGroup:
+      type: object
+      required: [category, added, changed, removed]
+      properties:
+        category:
+          type: string
+          enum: [shares, accounts, schedules, notifications, backup, system]
+        added:
+          type: array
+          description: In the archive, not in the live configuration.
+          items:
+            $ref: '#/components/schemas/ConfigImportChange'
+        changed:
+          type: array
+          description: In both, with different content.
+          items:
+            $ref: '#/components/schemas/ConfigImportChange'
+        removed:
+          type: array
+          description: In the live configuration, not in the archive.
+          items:
+            $ref: '#/components/schemas/ConfigImportChange'
+
+    ConfigImportArchive:
+      type: object
+      required: [timestamp, host, hoservaVersion, schemaVersion]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: When the archive was taken.
+        host:
+          type: string
+        hoservaVersion:
+          type: string
+        schemaVersion:
+          type: string
+          description: The database schema version of the archive.
+
+    ConfigImportPreview:
+      type: object
+      required: [archive, liveSchemaVersion, blockers, groups, notes]
+      properties:
+        archive:
+          $ref: '#/components/schemas/ConfigImportArchive'
+        liveSchemaVersion:
+          type: string
+        blockers:
+          type: array
+          description: >-
+            Refusals `importConfig` would return for this archive; empty
+            when it would go ahead (a running job, which is not a property
+            of the archive, refuses it too).
+          items:
+            $ref: '#/components/schemas/ConfigImportBlocker'
+        groups:
+          type: array
+          description: >-
+            One entry per category, in a fixed order, each listing what an
+            import would add, change or remove. History and runtime tables
+            (jobs, the audit log, spin events, notification deliveries and
+            alerts, usage, mover and cache results) are not listed. Empty
+            when the schema versions differ.
+          items:
+            $ref: '#/components/schemas/ConfigImportGroup'
+        notes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConfigImportNote'
 
     AppdataRestorePreviewGroup:
       type: object

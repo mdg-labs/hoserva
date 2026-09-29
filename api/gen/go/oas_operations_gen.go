@@ -94,6 +94,7 @@ const (
 	PlanDiskUpgradeOperation                OperationName = "PlanDiskUpgrade"
 	PlanRebalanceOperation                  OperationName = "PlanRebalance"
 	PreviewAppdataRestoreOperation          OperationName = "PreviewAppdataRestore"
+	PreviewConfigImportOperation            OperationName = "PreviewConfigImport"
 	RebootHostOperation                     OperationName = "RebootHost"
 	RecreateAppOperation                    OperationName = "RecreateApp"
 	RegenerateTLSCertificateOperation       OperationName = "RegenerateTLSCertificate"

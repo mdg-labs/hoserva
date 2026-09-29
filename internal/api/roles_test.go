@@ -173,6 +173,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.ListWakeEventsOperation,
 		apiv1.MountExternalDiskOperation,
 		apiv1.PlanDiskAddOperation,
+		apiv1.PreviewConfigImportOperation,
 		apiv1.PlanDiskEvacuationOperation,
 		apiv1.PlanDiskReplaceOperation,
 		apiv1.PlanDiskUpgradeOperation,

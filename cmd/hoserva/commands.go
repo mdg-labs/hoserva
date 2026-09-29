@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ogen-go/ogen/http"
@@ -867,7 +868,7 @@ func logsCmd() *cobra.Command {
 func configCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "config", Short: "Config backup"}
 	var outPath string
-	var confirm bool
+	var confirm, preview bool
 
 	export := &cobra.Command{
 		Use:   "export",
@@ -919,10 +920,13 @@ func configCmd() *cobra.Command {
 
 	importCmd := &cobra.Command{
 		Use:   "import [archive]",
-		Short: "Import a config archive",
+		Short: "Import a config archive, or preview what importing it would change",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !confirm {
+			if preview && confirm {
+				return fmt.Errorf("--preview changes nothing; drop --confirm to preview, or --preview to import")
+			}
+			if !preview && !confirm {
 				return fmt.Errorf("import requires --confirm")
 			}
 			c, err := newAPIClient()
@@ -938,6 +942,20 @@ func configCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if preview {
+				out, err := c.PreviewConfigImport(apiCtx(), &apiv1.PreviewConfigImportReq{
+					Archive: http.MultipartFile{Name: args[0], File: f, Size: st.Size()},
+				})
+				if err != nil {
+					return mapAPIErr(err)
+				}
+				if jsonOutput {
+					emit(out)
+				} else {
+					printConfigImportPreview(out)
+				}
+				return nil
+			}
 			req := &apiv1.ImportConfigReq{
 				Confirm: true,
 				Archive: http.MultipartFile{Name: args[0], File: f, Size: st.Size()},
@@ -948,10 +966,59 @@ func configCmd() *cobra.Command {
 			return nil
 		},
 	}
-	importCmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm import (required)")
+	importCmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm import (required unless --preview)")
+	importCmd.Flags().BoolVar(&preview, "preview", false, "List what importing the archive would change, without changing anything")
 
 	cmd.AddCommand(export, importCmd)
 	return cmd
+}
+
+var configImportCategoryLabels = map[apiv1.ConfigImportGroupCategory]string{
+	apiv1.ConfigImportGroupCategoryShares:        "Shares and share permissions",
+	apiv1.ConfigImportGroupCategoryAccounts:      "Users, groups and API tokens",
+	apiv1.ConfigImportGroupCategorySchedules:     "Schedules",
+	apiv1.ConfigImportGroupCategoryNotifications: "Notifications",
+	apiv1.ConfigImportGroupCategoryBackup:        "Backup destinations and appdata backup settings",
+	apiv1.ConfigImportGroupCategorySystem:        "System settings",
+}
+
+func printConfigImportPreview(p *apiv1.ConfigImportPreview) {
+	fmt.Printf("Archive taken %s on %s by Hoserva %s (schema %s; running schema %s)\n",
+		p.Archive.Timestamp.Format(time.RFC3339), p.Archive.Host, p.Archive.HoservaVersion, p.Archive.SchemaVersion, p.LiveSchemaVersion)
+	for _, b := range p.Blockers {
+		fmt.Printf("Import would be refused (%s): %s\n", b.Code, b.Message)
+	}
+	changes := 0
+	for _, g := range p.Groups {
+		n := len(g.Added) + len(g.Changed) + len(g.Removed)
+		changes += n
+		if n == 0 {
+			continue
+		}
+		fmt.Printf("\n%s\n", configImportCategoryLabels[g.Category])
+		for _, group := range []struct {
+			mark  string
+			items []apiv1.ConfigImportChange
+		}{{"+", g.Added}, {"~", g.Changed}, {"-", g.Removed}} {
+			for _, c := range group.items {
+				fmt.Printf("  %s %s\n", group.mark, describeConfigImportChange(c))
+			}
+		}
+	}
+	if changes == 0 && len(p.Groups) > 0 {
+		fmt.Println("\nNo changes to the configuration.")
+	}
+	for _, n := range p.Notes {
+		fmt.Printf("\n%s\n", n.Message)
+	}
+}
+
+func describeConfigImportChange(c apiv1.ConfigImportChange) string {
+	kind := strings.ReplaceAll(string(c.Kind), "_", " ")
+	if c.Name == "" {
+		return kind
+	}
+	return kind + ": " + c.Name
 }
 
 func doctorCmd() *cobra.Command {

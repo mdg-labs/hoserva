@@ -1100,6 +1100,23 @@ func (UnimplementedHandler) PreviewAppdataRestore(ctx context.Context, req *Prev
 	return r, ht.ErrNotImplemented
 }
 
+// PreviewConfigImport implements previewConfigImport operation.
+//
+// Reads the same archive upload as `importConfig` and reports what an in-place import would change,
+// without changing anything: it writes no database row, no pre-import archive, takes no job hold, and
+// leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive,
+// with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409
+// `archive_array_mismatch`); `groups` compares the archive's database with the live one per category
+// and is empty when the archive's schema version differs, since the two cannot be compared. An archive
+// that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
+// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
+// on a data disk is read.
+//
+// POST /config/import/preview
+func (UnimplementedHandler) PreviewConfigImport(ctx context.Context, req *PreviewConfigImportReq) (r *ConfigImportPreview, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // RebootHost implements rebootHost operation.
 //
 // Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,

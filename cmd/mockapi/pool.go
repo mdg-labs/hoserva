@@ -31,6 +31,10 @@ func errInvalidArchive(err error) error {
 	return &mockError{code: "invalid_archive", statusCode: 400, message: err.Error()}
 }
 
+func errArchiveTooLarge() error {
+	return &mockError{code: "archive_too_large", statusCode: 413, message: "config archive exceeds 512 MiB"}
+}
+
 func errRootOnlyRecovery() error {
 	return &mockError{code: "forbidden", statusCode: 403, message: "this operation requires root over the Unix socket"}
 }
@@ -615,19 +619,72 @@ func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	// runs first (#269), so a non-archive upload is rejected the same
 	// way on both sides (D18). It has no live database, so it never
 	// returns production's 409 archive_other_installation or
-	// archive_array_mismatch (backup.CheckRestorable).
+	// archive_array_mismatch (backup.CheckImport).
+	return verifyMockArchive(req.Archive.File)
+}
+
+// PreviewConfigImport validates the upload like ImportConfig and then
+// answers with a fixed sample: the mock has no live database to compare
+// the archive with, so the changes and the archive's identity are not read
+// from the upload.
+func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewConfigImportReq) (*apiv1.ConfigImportPreview, error) {
+	if err := verifyMockArchive(req.Archive.File); err != nil {
+		return nil, err
+	}
+	empty := []apiv1.ConfigImportChange{}
+	group := func(c apiv1.ConfigImportGroupCategory, added, changed, removed []apiv1.ConfigImportChange) apiv1.ConfigImportGroup {
+		return apiv1.ConfigImportGroup{Category: c, Added: added, Changed: changed, Removed: removed}
+	}
+	return &apiv1.ConfigImportPreview{
+		Archive: apiv1.ConfigImportArchive{
+			Timestamp:      time.Date(2026, 9, 1, 3, 0, 0, 0, time.UTC),
+			Host:           "hoserva",
+			HoservaVersion: "0.0.0-mock",
+			SchemaVersion:  "mock",
+		},
+		LiveSchemaVersion: "mock",
+		Blockers:          []apiv1.ConfigImportBlocker{},
+		Groups: []apiv1.ConfigImportGroup{
+			group(apiv1.ConfigImportGroupCategoryShares,
+				[]apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindShare, Name: "photos"}},
+				[]apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindShare, Name: "media"}},
+				empty),
+			group(apiv1.ConfigImportGroupCategoryAccounts, empty, empty,
+				[]apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindUser, Name: "guest"}}),
+			group(apiv1.ConfigImportGroupCategorySchedules, empty,
+				[]apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindScheduleJob, Name: "appdata_backup"}}, empty),
+			group(apiv1.ConfigImportGroupCategoryNotifications, empty, empty, empty),
+			group(apiv1.ConfigImportGroupCategoryBackup, empty, empty, empty),
+			group(apiv1.ConfigImportGroupCategorySystem, empty, empty, empty),
+		},
+		Notes: []apiv1.ConfigImportNote{{
+			Code:    apiv1.ConfigImportNoteCodeSessionsReplaced,
+			Message: "Active sign-in sessions are replaced by the archive's, so the current user is signed out.",
+		}},
+	}, nil
+}
+
+// maxMockArchiveBytes is the size production's importConfig refuses an
+// upload beyond.
+var maxMockArchiveBytes int64 = 512 << 20
+
+func verifyMockArchive(archive io.Reader) error {
 	tmp, err := os.CreateTemp("", "mockapi-config-import-*.tar.zst")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
-	if _, err := io.Copy(tmp, req.Archive.File); err != nil {
+	n, err := io.Copy(tmp, io.LimitReader(archive, maxMockArchiveBytes+1))
+	if err != nil {
 		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return err
+	}
+	if n > maxMockArchiveBytes {
+		return errArchiveTooLarge()
 	}
 	if err := backup.VerifyArchiveForImport(tmpPath); err != nil {
 		return errInvalidArchive(err)

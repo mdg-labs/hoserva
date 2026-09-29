@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/url"
 	"slices"
 	"strings"
 )
@@ -42,12 +41,15 @@ func (e *ArrayMismatchError) Error() string {
 // removal_state, not the device name, which changes across a reboot),
 // relocation_manifest and relocation_removing_disks (doc 09 §4, Q14).
 func CheckRestorable(ctx context.Context, live *sql.DB, archiveDB string) error {
-	arc, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: archiveDB, RawQuery: "mode=ro"}).String())
+	arc, err := openArchiveDB(archiveDB)
 	if err != nil {
-		return fmt.Errorf("opening the archive's database: %w", err)
+		return err
 	}
 	defer func() { _ = arc.Close() }()
+	return checkRestorable(ctx, live, arc)
+}
 
+func checkRestorable(ctx context.Context, live, arc *sql.DB) error {
 	if err := checkSameInstallation(ctx, live, arc); err != nil {
 		return err
 	}

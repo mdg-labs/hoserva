@@ -852,6 +852,20 @@ type Invoker interface {
 	//
 	// POST /appdata/backup/restore/preview
 	PreviewAppdataRestore(ctx context.Context, request *PreviewAppdataRestoreRequest) (*Job, error)
+	// PreviewConfigImport invokes previewConfigImport operation.
+	//
+	// Reads the same archive upload as `importConfig` and reports what an in-place import would change,
+	// without changing anything: it writes no database row, no pre-import archive, takes no job hold, and
+	// leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive,
+	// with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409
+	// `archive_array_mismatch`); `groups` compares the archive's database with the live one per category
+	// and is empty when the archive's schema version differs, since the two cannot be compared. An archive
+	// that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
+	// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
+	// on a data disk is read.
+	//
+	// POST /config/import/preview
+	PreviewConfigImport(ctx context.Context, request *PreviewConfigImportReq) (*ConfigImportPreview, error)
 	// RebootHost invokes rebootHost operation.
 	//
 	// Waits for any running Parity, Array-write or Topology job, runs the Q70 clean shutdown sequence,
@@ -13270,6 +13284,142 @@ func (c *Client) sendPreviewAppdataRestore(ctx context.Context, request *Preview
 
 	stage = "DecodeResponse"
 	result, err := decodePreviewAppdataRestoreResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// PreviewConfigImport invokes previewConfigImport operation.
+//
+// Reads the same archive upload as `importConfig` and reports what an in-place import would change,
+// without changing anything: it writes no database row, no pre-import archive, takes no job hold, and
+// leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive,
+// with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409
+// `archive_array_mismatch`); `groups` compares the archive's database with the live one per category
+// and is empty when the archive's schema version differs, since the two cannot be compared. An archive
+// that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
+// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
+// on a data disk is read.
+//
+// POST /config/import/preview
+func (c *Client) PreviewConfigImport(ctx context.Context, request *PreviewConfigImportReq) (*ConfigImportPreview, error) {
+	res, err := c.sendPreviewConfigImport(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendPreviewConfigImport(ctx context.Context, request *PreviewConfigImportReq) (res *ConfigImportPreview, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("previewConfigImport"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/config/import/preview"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, PreviewConfigImportOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/config/import/preview"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodePreviewConfigImportRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, PreviewConfigImportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, PreviewConfigImportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodePreviewConfigImportResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

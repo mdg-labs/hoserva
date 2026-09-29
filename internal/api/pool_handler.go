@@ -453,7 +453,8 @@ func (e *exportReadCloser) Close() error {
 	return err
 }
 
-const maxConfigArchiveBytes = 512 << 20
+// maxConfigArchiveBytes is a variable only so a test can lower it.
+var maxConfigArchiveBytes int64 = 512 << 20
 
 // errImportJobInProgress refuses an import while a job is running or
 // queued (doc 01 §4): restoring the database would rewrite the jobs
@@ -463,7 +464,7 @@ var errImportJobInProgress = &apiError{code: "job_in_progress", statusCode: 409,
 // ImportConfig restores the database step of doc 10 §1's in-place
 // restore (#269): checksum and integrity verification, then a schema-
 // version match, then a check that the archive is this installation's and
-// describes the array the disks are in (backup.CheckRestorable), then a
+// describes the array the disks are in (backup.CheckImport, shared with previewConfigImport), then a
 // pre-import safety backup, then
 // backup.RestoreDatabase — SQLite's own online backup API, never a file-
 // level copy or rename over the live database's path (see
@@ -473,73 +474,21 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if !req.Confirm {
 		return errConfirmRequired
 	}
-	if h.Backup == nil || h.Backup.DB == nil || h.Scheduler == nil {
-		return &apiError{code: "not_configured", statusCode: 501, message: "config import is not configured on this daemon"}
+	if !h.importConfigured() {
+		return errConfigImportNotConfigured
 	}
 
-	tmp, err := os.CreateTemp("", "hoserva-config-import-*.tar.zst")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() {
-		_ = os.Remove(tmpPath)
-	}()
-	if _, err := io.Copy(tmp, io.LimitReader(req.Archive.File, maxConfigArchiveBytes+1)); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("reading archive: %w", err)
-	}
-	st, err := tmp.Stat()
-	if err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if st.Size() > maxConfigArchiveBytes {
-		_ = tmp.Close()
-		return &apiError{code: "archive_too_large", statusCode: 413, message: "config archive exceeds 512 MiB"}
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	// Structural verification only (checksums, PRAGMA integrity_check):
-	// secrets.age, if present, is neither required nor decrypted here —
-	// this restores the database only (#62 restores the rest).
-	if err := backup.VerifyArchiveForImport(tmpPath); err != nil {
-		return &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
-	}
-	staging, err := os.MkdirTemp("", "hoserva-import-staging-*")
+	staging, err := stageImportArchive(req.Archive.File)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
-	if err := unpackTarZst(tmpPath, staging); err != nil {
-		return &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
-	}
 	stateDB := filepath.Join(staging, "state.db")
-	if _, err := os.Stat(stateDB); err != nil {
-		return &apiError{code: "invalid_archive", statusCode: 400, message: "archive is missing state.db"}
-	}
-
-	archiveVersion, err := readSchemaVersion(ctx, "file:"+stateDB+"?mode=ro")
-	if err != nil {
-		return &apiError{code: "invalid_archive", statusCode: 400, message: fmt.Sprintf("reading archive schema version: %v", err)}
-	}
-	liveVersion, err := (&store.Runner{DB: h.Backup.DB}).CurrentVersion(ctx)
-	if err != nil {
-		return fmt.Errorf("reading live database schema version: %w", err)
-	}
-	if archiveVersion != liveVersion {
-		return &apiError{
-			code:       "incompatible_archive",
-			statusCode: 400,
-			message:    fmt.Sprintf("archive schema version %s does not match the running database's %s", archiveVersion, liveVersion),
-		}
-	}
 
 	// Everything that can refuse the import runs before anything is written:
 	// the pre-import backup below takes one of a destination's bounded
 	// pre-change retention slots (#401), so a refused retry must not reach it.
-	if err := checkImportRestorable(ctx, h.Backup.DB, stateDB); err != nil {
+	if err := checkImport(ctx, h.Backup.DB, stateDB); err != nil {
 		return err
 	}
 	if h.Store != nil {
@@ -596,7 +545,7 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	// Compared again now no job can change the array: a topology job that
 	// finished during the upload or the backup above would otherwise be
 	// restored over.
-	if err := checkImportRestorable(ctx, h.Backup.DB, stateDB); err != nil {
+	if err := checkImport(ctx, h.Backup.DB, stateDB); err != nil {
 		return err
 	}
 
@@ -625,22 +574,148 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	return nil
 }
 
-// checkImportRestorable maps backup.CheckRestorable's refusals to the
-// 409s importConfig documents; any other failure to compare refuses too,
-// as an error.
-func checkImportRestorable(ctx context.Context, live *sql.DB, stateDB string) error {
-	err := backup.CheckRestorable(ctx, live, stateDB)
-	var mismatch *backup.ArrayMismatchError
-	switch {
-	case err == nil:
-		return nil
-	case errors.Is(err, backup.ErrArchiveOtherInstallation):
-		return &apiError{code: "archive_other_installation", statusCode: 409, message: err.Error()}
-	case errors.As(err, &mismatch):
-		return &apiError{code: "archive_array_mismatch", statusCode: 409, message: err.Error()}
-	default:
-		return fmt.Errorf("comparing the archive with this installation: %w", err)
+var errConfigImportNotConfigured = &apiError{code: "not_configured", statusCode: 501, message: "config import is not configured on this daemon"}
+
+func (h *Handler) importConfigured() bool {
+	return h.Backup != nil && h.Backup.DB != nil && h.Scheduler != nil
+}
+
+// stageImportArchive reads an uploaded archive, refuses one that is too
+// large or does not verify, and unpacks it into a fresh directory, which the
+// caller removes; it removes the upload itself and, on an error, the
+// directory too. Structural verification only (checksums, PRAGMA
+// integrity_check): secrets.age, if present, is neither required nor
+// decrypted, since an in-place import restores the database only.
+func stageImportArchive(archive io.Reader) (staging string, err error) {
+	tmp, err := os.CreateTemp("", "hoserva-config-import-*.tar.zst")
+	if err != nil {
+		return "", err
 	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := io.Copy(tmp, io.LimitReader(archive, maxConfigArchiveBytes+1)); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("reading archive: %w", err)
+	}
+	st, err := tmp.Stat()
+	if err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if st.Size() > maxConfigArchiveBytes {
+		_ = tmp.Close()
+		return "", &apiError{code: "archive_too_large", statusCode: 413, message: "config archive exceeds 512 MiB"}
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	if err := backup.VerifyArchiveForImport(tmpPath); err != nil {
+		return "", &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
+	}
+	staging, err = os.MkdirTemp("", "hoserva-import-staging-*")
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(staging)
+		}
+	}()
+	if err := unpackTarZst(tmpPath, staging); err != nil {
+		return "", &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
+	}
+	if _, err := os.Stat(filepath.Join(staging, "state.db")); err != nil {
+		return "", &apiError{code: "invalid_archive", statusCode: 400, message: "archive is missing state.db"}
+	}
+	return staging, nil
+}
+
+// importRefusalStatus is the HTTP status importConfig answers each
+// backup.ImportRefusal code with.
+var importRefusalStatus = map[string]int{
+	backup.RefusalIncompatibleArchive: 400,
+	backup.RefusalOtherInstallation:   409,
+	backup.RefusalArrayMismatch:       409,
+}
+
+// checkImport runs backup.CheckImport, the one check importConfig and
+// previewConfigImport share, and turns its refusal into importConfig's
+// error; a failure to compare refuses too, as an error.
+func checkImport(ctx context.Context, live *sql.DB, stateDB string) error {
+	check, err := backup.CheckImport(ctx, live, stateDB)
+	var unreadable *backup.UnreadableArchiveError
+	switch {
+	case errors.As(err, &unreadable):
+		return &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
+	case err != nil:
+		return err
+	case check.Refusal != nil:
+		return &apiError{code: check.Refusal.Code, statusCode: importRefusalStatus[check.Refusal.Code], message: check.Refusal.Message}
+	}
+	return nil
+}
+
+// PreviewConfigImport is importConfig's dry run (doc 10 §1): the same upload
+// and the same checks, then a comparison of the archive's database with the
+// live one, and nothing written — no database change, no pre-import backup,
+// no scheduler hold, and the staged copy is removed on every path.
+func (h *Handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewConfigImportReq) (*apiv1.ConfigImportPreview, error) {
+	if !h.importConfigured() {
+		return nil, errConfigImportNotConfigured
+	}
+	staging, err := stageImportArchive(req.Archive.File)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(staging) }()
+
+	p, err := backup.PreviewImport(ctx, h.Backup.DB, staging)
+	var unreadable *backup.UnreadableArchiveError
+	switch {
+	case errors.As(err, &unreadable):
+		return nil, &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
+	case err != nil:
+		return nil, fmt.Errorf("previewing the import: %w", err)
+	}
+	return configImportPreviewToAPI(p), nil
+}
+
+func configImportPreviewToAPI(p backup.ImportPreview) *apiv1.ConfigImportPreview {
+	out := &apiv1.ConfigImportPreview{
+		Archive: apiv1.ConfigImportArchive{
+			Timestamp:      p.Timestamp,
+			Host:           p.Host,
+			HoservaVersion: p.HoservaVersion,
+			SchemaVersion:  p.ArchiveSchemaVersion,
+		},
+		LiveSchemaVersion: p.LiveSchemaVersion,
+		Blockers:          make([]apiv1.ConfigImportBlocker, len(p.Blockers)),
+		Groups:            make([]apiv1.ConfigImportGroup, len(p.Groups)),
+		Notes:             make([]apiv1.ConfigImportNote, len(p.Notes)),
+	}
+	for i, b := range p.Blockers {
+		out.Blockers[i] = apiv1.ConfigImportBlocker{Code: apiv1.ConfigImportBlockerCode(b.Code), Message: b.Message}
+	}
+	for i, g := range p.Groups {
+		out.Groups[i] = apiv1.ConfigImportGroup{
+			Category: apiv1.ConfigImportGroupCategory(g.Category),
+			Added:    configImportChangesToAPI(g.Added),
+			Changed:  configImportChangesToAPI(g.Changed),
+			Removed:  configImportChangesToAPI(g.Removed),
+		}
+	}
+	for i, n := range p.Notes {
+		out.Notes[i] = apiv1.ConfigImportNote{Code: apiv1.ConfigImportNoteCode(n.Code), Message: n.Message}
+	}
+	return out
+}
+
+func configImportChangesToAPI(cs []backup.ImportChange) []apiv1.ConfigImportChange {
+	out := make([]apiv1.ConfigImportChange, len(cs))
+	for i, c := range cs {
+		out[i] = apiv1.ConfigImportChange{Kind: apiv1.ConfigImportChangeKind(c.Kind), Name: c.Name}
+	}
+	return out
 }
 
 // importPostRestoreHookForTest, when non-nil, is called by ImportConfig
@@ -679,18 +754,6 @@ func readActiveJobIDs(ctx context.Context, dsn string) ([]string, error) {
 		return nil, err
 	}
 	return ids, nil
-}
-
-// readSchemaVersion opens dsn read-only and reads its store bookkeeping
-// version, without mutating the file it points at — used against the
-// staged, not-yet-trusted archive copy of state.db.
-func readSchemaVersion(ctx context.Context, dsn string) (string, error) {
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = db.Close() }()
-	return (&store.Runner{DB: db}).CurrentVersion(ctx)
 }
 
 func packTarZst(dir, dest string) error {
@@ -783,7 +846,7 @@ func unpackTarZst(archivePath, dest string) error {
 	}
 	defer zr.Close()
 	tr := tar.NewReader(zr)
-	remaining := int64(maxConfigArchiveBytes)
+	remaining := maxConfigArchiveBytes
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {

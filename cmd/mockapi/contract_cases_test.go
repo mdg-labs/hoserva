@@ -2334,6 +2334,17 @@ var contractCases = []contractCase{
 		},
 	},
 
+	{
+		op:   "PreviewConfigImport",
+		name: "invalid_archive",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.PreviewConfigImport(ctx, &apiv1.PreviewConfigImportReq{
+				Archive: ht.MultipartFile{File: bytes.NewReader([]byte("not a tar.zst archive"))},
+			})
+			return err
+		},
+	},
+
 	// --- Backup destinations (#60): both sides run backup.PrepareDestination,
 	// so these pin the status and error code each returns for the same
 	// request, not the shared validation itself ---

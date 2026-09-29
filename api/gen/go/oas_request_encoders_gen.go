@@ -455,6 +455,27 @@ func encodePreviewAppdataRestoreRequest(
 	return nil
 }
 
+func encodePreviewConfigImportRequest(
+	req *PreviewConfigImportReq,
+	r *http.Request,
+) error {
+	const contentType = "multipart/form-data"
+	request := req
+
+	q := uri.NewFormEncoder(map[string]string{})
+	body, boundary := ht.CreateMultipartBody(func(w *multipart.Writer) error {
+		if err := request.Archive.WriteMultipart("archive", w); err != nil {
+			return errors.Wrap(err, "write \"archive\"")
+		}
+		if err := q.WriteMultipart(w); err != nil {
+			return errors.Wrap(err, "write multipart")
+		}
+		return nil
+	})
+	ht.SetCloserBody(r, body, mime.FormatMediaType(contentType, map[string]string{"boundary": boundary}))
+	return nil
+}
+
 func encodeRebootHostRequest(
 	req *ConfirmUpdateRequest,
 	r *http.Request,

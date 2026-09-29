@@ -81,6 +81,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.ListExternalDisksOperation:              RoleViewer,
 	apiv1.MountExternalDiskOperation:              RoleAdmin,
 	apiv1.PlanDiskAddOperation:                    RoleAdmin,
+	apiv1.PreviewConfigImportOperation:            RoleAdmin,
 	apiv1.PlanDiskEvacuationOperation:             RoleAdmin,
 	apiv1.PlanDiskReplaceOperation:                RoleAdmin,
 	apiv1.PlanDiskUpgradeOperation:                RoleAdmin,
