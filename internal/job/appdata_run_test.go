@@ -146,13 +146,13 @@ func TestRunAppdataRestore_PassesTheRequestFromTheParams(t *testing.T) {
 		return nil
 	}))
 
-	j, err := s.Submit(context.Background(), TypeAppdataRestore, []string{"container:alpha"}, []byte(`{"container":"alpha","archive":"a.tar.zst","destinationId":"pool"}`))
+	j, err := s.Submit(context.Background(), TypeAppdataRestore, []string{"container:alpha", "container:beta"}, []byte(`{"container":"alpha","archive":"a.tar.zst","destinationId":"pool","sharers":["beta"]}`))
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
 	done := await(t, s, j.ID)
-	want := AppdataRestoreParams{Container: "alpha", Archive: "a.tar.zst", DestinationID: "pool"}
-	if done.Status != StatusSucceeded || got != want {
+	want := AppdataRestoreParams{Container: "alpha", Archive: "a.tar.zst", DestinationID: "pool", Sharers: []string{"beta"}}
+	if done.Status != StatusSucceeded || !reflect.DeepEqual(got, want) {
 		t.Fatalf("status %s, restore %+v; want succeeded with %+v", done.Status, got, want)
 	}
 }
@@ -172,7 +172,7 @@ func TestRunAppdataRestorePreview_PassesTheRequestAndItsOwnJobID(t *testing.T) {
 	}
 	done := await(t, s, j.ID)
 	want := AppdataRestoreParams{Container: "alpha", Archive: "a.tar.zst", DestinationID: "pool"}
-	if done.Status != StatusSucceeded || got != want || gotID != j.ID {
+	if done.Status != StatusSucceeded || !reflect.DeepEqual(got, want) || gotID != j.ID {
 		t.Fatalf("status %s, preview of %+v under %q; want succeeded with %+v under %q", done.Status, got, gotID, want, j.ID)
 	}
 }

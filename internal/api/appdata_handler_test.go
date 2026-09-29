@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -77,7 +78,7 @@ func newAppdataFixture(t *testing.T) *appdataFixture {
 		Failed: func(context.Context, error) { f.failed.Add(1) },
 	}))
 	reg.Register(job.TypeAppdataRestore, false, job.RunAppdataRestore(func(ctx context.Context, p job.AppdataRestoreParams, out io.Writer) error {
-		return f.svc.Restore(ctx, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
+		return f.svc.Restore(ctx, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID, Sharers: p.Sharers}, out)
 	}))
 	reg.Register(job.TypeAppdataRestorePreview, true, job.RunAppdataRestorePreview(func(ctx context.Context, id string, p job.AppdataRestoreParams, out io.Writer) error {
 		if gate := f.previewGate; gate != nil {
@@ -460,5 +461,48 @@ func TestHandler_StartAppdataBackup_RecordsTheResolvedNamesInTheJobParams(t *tes
 	stored = awaitJob(t, f.sched, j.ID.String())
 	if got := string(stored.Params); got != `{"containers":["sonarr"],"resolved":["sonarr"]}` {
 		t.Fatalf("params = %s, want the request and what it resolved to", got)
+	}
+}
+
+// A restore's scheduler scope holds every container sharing the restored
+// appdata, so a recreate of one cannot run beside the restore that stops it.
+func TestHandler_RestoreAppdata_ScopesTheContainersSharingTheAppdata(t *testing.T) {
+	f := newAppdataFixture(t)
+	ctx := context.Background()
+	j, err := f.h.StartAppdataBackup(ctx, apiv1.NewOptStartAppdataBackupRequest(apiv1.StartAppdataBackupRequest{Containers: []string{"sonarr"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done := awaitJob(t, f.sched, j.ID.String()); done.Status != job.StatusSucceeded {
+		t.Fatalf("backup: %s %s", done.Status, done.ErrorMessage)
+	}
+	shared := filepath.Join(f.appdata, "sonarr", "transcode")
+	if err := os.MkdirAll(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.fake.AddContainer(container.Container{
+		ID: "id-transcoder", Name: "transcoder", Image: "example/transcoder", State: "running",
+		Mounts: []container.Mount{{Source: shared, Destination: "/transcode"}},
+	})
+	archives, err := f.h.ListAppdataArchives(ctx, apiv1.ListAppdataArchivesParams{Container: apiv1.NewOptString("sonarr")})
+	if err != nil || len(archives.Archives) != 1 {
+		t.Fatalf("ListAppdataArchives = %+v, %v", archives, err)
+	}
+	a := archives.Archives[0]
+
+	j, err = f.h.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{Container: "sonarr", Archive: a.Name, DestinationId: a.DestinationId, Confirm: true})
+	if err != nil {
+		t.Fatalf("RestoreAppdata: %v", err)
+	}
+	done := awaitJob(t, f.sched, j.ID.String())
+	if done.Status != job.StatusSucceeded {
+		t.Fatalf("restore: %s %s", done.Status, done.ErrorMessage)
+	}
+	if !slices.Contains(done.ResourceIDs, "container:transcoder") {
+		t.Fatalf("restore resources = %v, want container:transcoder among them", done.ResourceIDs)
+	}
+	tc, _ := f.fake.Inspect(ctx, "transcoder")
+	if tc.State != "running" {
+		t.Fatalf("transcoder = %s after the restore, want started again", tc.State)
 	}
 }

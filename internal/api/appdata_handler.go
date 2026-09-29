@@ -257,11 +257,16 @@ func (h *Handler) RestoreAppdata(ctx context.Context, req *apiv1.RestoreAppdataR
 	if err := h.Appdata.FindArchive(ctx, req.Container, req.Archive, req.DestinationId); err != nil {
 		return nil, mapAppdataError(err)
 	}
-	body, err := json.Marshal(job.AppdataRestoreParams{Container: req.Container, Archive: req.Archive, DestinationID: req.DestinationId})
+	sharers, err := h.Appdata.RestoreSharers(ctx, req.Container)
+	if err != nil {
+		return nil, mapAppdataError(err)
+	}
+	body, err := json.Marshal(job.AppdataRestoreParams{Container: req.Container, Archive: req.Archive, DestinationID: req.DestinationId, Sharers: sharers})
 	if err != nil {
 		return nil, fmt.Errorf("encoding appdata_restore params: %w", err)
 	}
-	j, err := h.Scheduler.Submit(ctx, job.TypeAppdataRestore, []string{"container:" + req.Container, backup.AppdataJobResource}, body)
+	resources := append(containerResources(append([]string{req.Container}, sharers...)), backup.AppdataJobResource)
+	j, err := h.Scheduler.Submit(ctx, job.TypeAppdataRestore, resources, body)
 	if err != nil {
 		return nil, mapSchedulerError(uuid.Nil, err)
 	}

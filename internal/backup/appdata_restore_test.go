@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mdg-labs/hoserva/internal/container"
 )
 
 // restoreRig is an appdataRig with one running container, alpha, whose
@@ -408,5 +410,90 @@ func TestAppdataRestore_ABackupOfAnotherContainerWaitsAndBothSucceed(t *testing.
 		if _, err := os.Stat(rig.svc.JournalPath); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("restoreFirst=%v: journal left behind: %v", restoreFirst, err)
 		}
+	}
+}
+
+// addSharer adds a running container that bind-mounts alpha's sub
+// directory, the way a transcoder mounts part of a media server's appdata.
+func (r *restoreRig) addSharer(t *testing.T) {
+	t.Helper()
+	r.engine.AddContainer(container.Container{
+		ID: "id-transcoder", Name: "transcoder", Image: "example/transcoder", State: "running",
+		Mounts: []container.Mount{{Source: filepath.Join(r.dir, "sub"), Destination: "/transcode", ReadWrite: true}},
+	})
+}
+
+func TestAppdataRestoreSharers_NamesEveryOtherContainerMountingTheSameAppdata(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.addSharer(t)
+	rig.addApp(t, "beta", "radarr", "running", map[string]string{"b": "1"})
+
+	got, err := rig.svc.RestoreSharers(context.Background(), "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "transcoder" {
+		t.Fatalf("RestoreSharers(alpha) = %v, want [transcoder]", got)
+	}
+	got, err = rig.svc.RestoreSharers(context.Background(), "transcoder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "alpha" {
+		t.Fatalf("RestoreSharers(transcoder) = %v, want [alpha], whose mount holds transcoder's", got)
+	}
+}
+
+// A container sharing the restored appdata keeps its bind mount on the tree
+// the restore renames away and deletes, so it is stopped with the restored
+// container and started again after it.
+func TestAppdataRestore_StopsAContainerSharingTheRestoredAppdata(t *testing.T) {
+	rig := newRestoreRig(t)
+	if err := rig.store.CreateDestination(context.Background(), Destination{
+		ID: DefaultPoolID, Name: "Pool", Type: TypeLocal, Path: rig.poolDir, Enabled: true,
+		Retention: Retention{Daily: 7, Weekly: 4, Monthly: 6},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rig.addSharer(t)
+	sharers, err := rig.svc.RestoreSharers(context.Background(), "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rig.out.Reset()
+	if err := rig.svc.Restore(context.Background(), AppdataRestoreRequest{
+		Container: "alpha", Archive: rig.archive.Name, DestinationID: rig.archive.DestinationID, Sharers: sharers,
+	}, rig.out); err != nil {
+		t.Fatalf("Restore: %v\n%s", err, rig.out)
+	}
+	if got, want := strings.Join(rig.containers.Events(), ","), "stop transcoder,stop alpha,start alpha,start transcoder"; got != want {
+		t.Fatalf("events = %s, want %s", got, want)
+	}
+	if got := readFile(t, filepath.Join(rig.dir, "config")); got != "v1" {
+		t.Fatalf("config = %q, want the archived v1", got)
+	}
+	if _, err := os.Stat(rig.svc.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("journal left behind: %v", err)
+	}
+}
+
+// A running container that shares the restored appdata but was not in the
+// job's scope when it was queued could be recreated beside the restore, so
+// the restore refuses before it stops or changes anything.
+func TestAppdataRestore_RefusesWhenARunningSharerIsOutsideTheJobsScope(t *testing.T) {
+	rig := newRestoreRig(t)
+	rig.addSharer(t)
+
+	err := rig.restore(t)
+	if err == nil || !strings.Contains(err.Error(), "transcoder") {
+		t.Fatalf("Restore = %v, want a refusal naming transcoder", err)
+	}
+	rig.requireLiveUntouched(t)
+	if ev := rig.containers.Events(); len(ev) != 0 {
+		t.Fatalf("events = %v, want nothing stopped", ev)
+	}
+	if _, err := os.Stat(rig.svc.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("journal written by a refused restore: %v", err)
 	}
 }

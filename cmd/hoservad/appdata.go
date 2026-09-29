@@ -60,7 +60,7 @@ func wireAppdata(handler *api.Handler, registry *job.Registry, svc *backup.Appda
 		Failed: func(ctx context.Context, err error) { publishAppdataFailure(ctx, notifier, err) },
 	}))
 	registry.Register(job.TypeAppdataRestore, false, job.RunAppdataRestore(func(ctx context.Context, p job.AppdataRestoreParams, out io.Writer) error {
-		return svc.Restore(ctx, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
+		return svc.Restore(ctx, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID, Sharers: p.Sharers}, out)
 	}))
 	// A preview changes nothing, so a cancel is safe at any point.
 	registry.Register(job.TypeAppdataRestorePreview, true, job.RunAppdataRestorePreview(func(ctx context.Context, id string, p job.AppdataRestoreParams, out io.Writer) error {

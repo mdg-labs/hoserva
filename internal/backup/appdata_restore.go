@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // AppdataRestoreRequest names one archive on one destination and the
@@ -18,6 +19,85 @@ type AppdataRestoreRequest struct {
 	Container     string
 	Archive       string
 	DestinationID string
+	// Sharers are the other containers whose appdata overlaps Container's,
+	// resolved when the job was submitted (RestoreSharers) and part of its
+	// scheduler scope, so the restore may stop them.
+	Sharers []string
+}
+
+// RestoreSharers names every other container with a bind mount in the
+// appdata of name, or with one that holds it: the restore swaps that tree,
+// so they are stopped with it and, as its job's scope, cannot be recreated
+// beside it.
+func (a *AppdataService) RestoreSharers(ctx context.Context, name string) ([]string, error) {
+	scope, err := a.Scope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var target []string
+	for _, c := range scope {
+		if c.Name == name {
+			target = c.Dirs
+		}
+	}
+	var out []string
+	for _, c := range scope {
+		if c.Name != name && dirsOverlap(c.Dirs, target) {
+			out = append(out, c.Name)
+		}
+	}
+	return out, nil
+}
+
+func dirsOverlap(a, b []string) bool {
+	for _, x := range a {
+		for _, y := range b {
+			if withinDir(x, y) || withinDir(y, x) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// restoreStopList is what the restore stops: each running container that
+// shares hdr's directories, in name order, then the restored container. A
+// running sharer the job was not submitted with refuses the restore, since
+// nothing keeps a recreate of it from running beside it.
+func (a *AppdataService) restoreStopList(ctx context.Context, req AppdataRestoreRequest, hdr appdataHeader, roots []string) ([]AppdataContainer, error) {
+	listed, err := a.Containers.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing containers: %w", err)
+	}
+	resolved := resolveRoots(roots)
+	allowed := map[string]bool{}
+	for _, n := range req.Sharers {
+		allowed[n] = true
+	}
+	var sharers []string
+	running := false
+	for _, c := range listed {
+		if c.Name == req.Container {
+			running = containerActive(c.State)
+			continue
+		}
+		if !containerActive(c.State) || !dirsOverlap(appdataDirs(c, resolved), hdr.Dirs) {
+			continue
+		}
+		if !allowed[c.Name] {
+			return nil, fmt.Errorf("%s is running and mounts appdata this restore replaces, but it was not in the restore's scope when it was queued: restore again", c.Name)
+		}
+		sharers = append(sharers, c.Name)
+	}
+	sort.Strings(sharers)
+	var out []AppdataContainer
+	for _, n := range sharers {
+		out = append(out, AppdataContainer{Name: n})
+	}
+	if running {
+		out = append(out, AppdataContainer{Name: req.Container})
+	}
+	return out, nil
 }
 
 func invalidArchivef(format string, args ...any) error {
@@ -27,12 +107,12 @@ func invalidArchivef(format string, args ...any) error {
 // Restore replaces one container's appdata with an archive's content
 // (doc 10 §2). Nothing is changed until the archive has been fetched,
 // decrypted and verified end to end and every directory it names has been
-// checked to lie inside the appdata location. Then the container is
-// stopped if it is running, a snapshot of the appdata about to be replaced
+// checked to lie inside the appdata location. Then the container, and
+// every running container sharing those directories, is stopped, a snapshot of the appdata about to be replaced
 // is written to the destinations, and only if that snapshot was written
 // somewhere is the appdata replaced: the archive is unpacked next to the
 // live directories first and swapped in by renames, so a failure while
-// unpacking or swapping leaves the live appdata as it was. The container
+// unpacking or swapping leaves the live appdata as it was. What was stopped
 // is started again whatever happens.
 func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest, out io.Writer) (err error) {
 	if err := a.lockRun(ctx); err != nil {
@@ -77,30 +157,30 @@ func (a *AppdataService) Restore(ctx context.Context, req AppdataRestoreRequest,
 		return err
 	}
 
-	listed, err := a.Containers.List(ctx)
+	toStop, err := a.restoreStopList(ctx, req, hdr, roots)
 	if err != nil {
-		return fmt.Errorf("listing containers: %w", err)
-	}
-	running := false
-	for _, c := range listed {
-		if c.Name == req.Container {
-			running = containerActive(c.State)
-		}
+		return err
 	}
 	var attempted []AppdataContainer
-	if running {
-		if err := a.journalAdd([]string{req.Container}); err != nil {
+	if len(toStop) > 0 {
+		names := make([]string, len(toStop))
+		for i, c := range toStop {
+			names[i] = c.Name
+		}
+		if err := a.journalAdd(names); err != nil {
 			return err
 		}
-		attempted = append(attempted, AppdataContainer{Name: req.Container})
 		defer func() {
 			if rerr := a.restartAll(ctx, out, attempted); rerr != nil {
 				err = errors.Join(err, rerr)
 			}
 		}()
-		_, _ = fmt.Fprintf(out, "stopping %s\n", req.Container)
-		if _, err := a.Containers.Stop(ctx, req.Container); err != nil {
-			return fmt.Errorf("stopping %s: %w", req.Container, err)
+	}
+	for _, c := range toStop {
+		attempted = append(attempted, c)
+		_, _ = fmt.Fprintf(out, "stopping %s\n", c.Name)
+		if _, err := a.Containers.Stop(ctx, c.Name); err != nil {
+			return fmt.Errorf("stopping %s: %w", c.Name, err)
 		}
 	}
 

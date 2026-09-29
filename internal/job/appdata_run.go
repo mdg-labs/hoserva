@@ -20,11 +20,14 @@ type AppdataBackupParams struct {
 }
 
 // AppdataRestoreParams is the persisted payload of appdata_restore and of
-// appdata_restore_preview, which names the same archive.
+// appdata_restore_preview, which names the same archive. Sharers, on a
+// restore only, are the other containers whose appdata overlaps the
+// restored one's, resolved at submit and part of the job's scope.
 type AppdataRestoreParams struct {
-	Container     string `json:"container"`
-	Archive       string `json:"archive"`
-	DestinationID string `json:"destinationId"`
+	Container     string   `json:"container"`
+	Archive       string   `json:"archive"`
+	DestinationID string   `json:"destinationId"`
+	Sharers       []string `json:"sharers,omitempty"`
 }
 
 func decodeAppdataBackupParams(params []byte) (AppdataBackupParams, error) {
