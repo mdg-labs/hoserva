@@ -83,6 +83,10 @@ type Service struct {
 	ExternalMounted func(ctx context.Context, path string) (bool, error)
 
 	destMu sync.Mutex
+	// archiveMu keeps a config backup's write and prune of a destination
+	// from landing between a restore drill's listing of it and its fetch of
+	// the archive it picked (#444).
+	archiveMu sync.Mutex
 }
 
 // PoolWriteGate coordinates a config backup's write to a destination under
@@ -381,6 +385,8 @@ func (s *Service) writeDestination(ctx context.Context, dest Destination, archiv
 	if err != nil {
 		return false, fmt.Errorf("preparing destination %q: %w", dest.ID, err)
 	}
+	s.archiveMu.Lock()
+	defer s.archiveMu.Unlock()
 	if sidecarPath != "" {
 		if err := target.write(ctx, sidecarPath); err != nil {
 			return false, fmt.Errorf("writing destination %q: %w", dest.ID, err)
