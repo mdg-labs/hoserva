@@ -2165,6 +2165,7 @@ const (
 	ConfigImportBlockerCodeIncompatibleArchive      ConfigImportBlockerCode = "incompatible_archive"
 	ConfigImportBlockerCodeArchiveOtherInstallation ConfigImportBlockerCode = "archive_other_installation"
 	ConfigImportBlockerCodeArchiveArrayMismatch     ConfigImportBlockerCode = "archive_array_mismatch"
+	ConfigImportBlockerCodeRestorePathUnsafe        ConfigImportBlockerCode = "restore_path_unsafe"
 )
 
 // AllValues returns all ConfigImportBlockerCode values.
@@ -2173,6 +2174,7 @@ func (ConfigImportBlockerCode) AllValues() []ConfigImportBlockerCode {
 		ConfigImportBlockerCodeIncompatibleArchive,
 		ConfigImportBlockerCodeArchiveOtherInstallation,
 		ConfigImportBlockerCodeArchiveArrayMismatch,
+		ConfigImportBlockerCodeRestorePathUnsafe,
 	}
 }
 
@@ -2184,6 +2186,8 @@ func (s ConfigImportBlockerCode) MarshalText() ([]byte, error) {
 	case ConfigImportBlockerCodeArchiveOtherInstallation:
 		return []byte(s), nil
 	case ConfigImportBlockerCodeArchiveArrayMismatch:
+		return []byte(s), nil
+	case ConfigImportBlockerCodeRestorePathUnsafe:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -2202,6 +2206,9 @@ func (s *ConfigImportBlockerCode) UnmarshalText(data []byte) error {
 	case ConfigImportBlockerCodeArchiveArrayMismatch:
 		*s = ConfigImportBlockerCodeArchiveArrayMismatch
 		return nil
+	case ConfigImportBlockerCodeRestorePathUnsafe:
+		*s = ConfigImportBlockerCodeRestorePathUnsafe
+		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
@@ -2213,8 +2220,9 @@ type ConfigImportChange struct {
 	// What a user calls it: a share name, a username, a schedule job, a destination name; `share / user`
 	// for a permission, `group / user` for a membership, `user / token name` for an API token,
 	// `event / channel` for a route, the label of an external disk, the kind of a host configuration
-	// decision. Empty for the settings that exist once. A secret or a passphrase is reported as changed,
-	// never by its value.
+	// decision, the path of a custom config file or template relative to its directory, `stack/file` for a
+	// stack's compose or `meta.json` file. Empty for the settings that exist once. A secret or a
+	// passphrase is reported as changed, never by its value.
 	Name string `json:"name"`
 }
 
@@ -2267,6 +2275,9 @@ const (
 	ConfigImportChangeKindBackupPassphrase       ConfigImportChangeKind = "backup_passphrase"
 	ConfigImportChangeKindUpdateChannel          ConfigImportChangeKind = "update_channel"
 	ConfigImportChangeKindUpdateCheck            ConfigImportChangeKind = "update_check"
+	ConfigImportChangeKindCustomConfigFile       ConfigImportChangeKind = "custom_config_file"
+	ConfigImportChangeKindTemplateFile           ConfigImportChangeKind = "template_file"
+	ConfigImportChangeKindStackFile              ConfigImportChangeKind = "stack_file"
 )
 
 // AllValues returns all ConfigImportChangeKind values.
@@ -2298,6 +2309,9 @@ func (ConfigImportChangeKind) AllValues() []ConfigImportChangeKind {
 		ConfigImportChangeKindBackupPassphrase,
 		ConfigImportChangeKindUpdateChannel,
 		ConfigImportChangeKindUpdateCheck,
+		ConfigImportChangeKindCustomConfigFile,
+		ConfigImportChangeKindTemplateFile,
+		ConfigImportChangeKindStackFile,
 	}
 }
 
@@ -2355,6 +2369,12 @@ func (s ConfigImportChangeKind) MarshalText() ([]byte, error) {
 	case ConfigImportChangeKindUpdateChannel:
 		return []byte(s), nil
 	case ConfigImportChangeKindUpdateCheck:
+		return []byte(s), nil
+	case ConfigImportChangeKindCustomConfigFile:
+		return []byte(s), nil
+	case ConfigImportChangeKindTemplateFile:
+		return []byte(s), nil
+	case ConfigImportChangeKindStackFile:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -2442,6 +2462,15 @@ func (s *ConfigImportChangeKind) UnmarshalText(data []byte) error {
 	case ConfigImportChangeKindUpdateCheck:
 		*s = ConfigImportChangeKindUpdateCheck
 		return nil
+	case ConfigImportChangeKindCustomConfigFile:
+		*s = ConfigImportChangeKindCustomConfigFile
+		return nil
+	case ConfigImportChangeKindTemplateFile:
+		*s = ConfigImportChangeKindTemplateFile
+		return nil
+	case ConfigImportChangeKindStackFile:
+		*s = ConfigImportChangeKindStackFile
+		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
@@ -2507,6 +2536,9 @@ const (
 	ConfigImportGroupCategoryNotifications ConfigImportGroupCategory = "notifications"
 	ConfigImportGroupCategoryBackup        ConfigImportGroupCategory = "backup"
 	ConfigImportGroupCategorySystem        ConfigImportGroupCategory = "system"
+	ConfigImportGroupCategoryCustomConfig  ConfigImportGroupCategory = "custom_config"
+	ConfigImportGroupCategoryTemplates     ConfigImportGroupCategory = "templates"
+	ConfigImportGroupCategoryStacks        ConfigImportGroupCategory = "stacks"
 )
 
 // AllValues returns all ConfigImportGroupCategory values.
@@ -2518,6 +2550,9 @@ func (ConfigImportGroupCategory) AllValues() []ConfigImportGroupCategory {
 		ConfigImportGroupCategoryNotifications,
 		ConfigImportGroupCategoryBackup,
 		ConfigImportGroupCategorySystem,
+		ConfigImportGroupCategoryCustomConfig,
+		ConfigImportGroupCategoryTemplates,
+		ConfigImportGroupCategoryStacks,
 	}
 }
 
@@ -2535,6 +2570,12 @@ func (s ConfigImportGroupCategory) MarshalText() ([]byte, error) {
 	case ConfigImportGroupCategoryBackup:
 		return []byte(s), nil
 	case ConfigImportGroupCategorySystem:
+		return []byte(s), nil
+	case ConfigImportGroupCategoryCustomConfig:
+		return []byte(s), nil
+	case ConfigImportGroupCategoryTemplates:
+		return []byte(s), nil
+	case ConfigImportGroupCategoryStacks:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -2561,6 +2602,15 @@ func (s *ConfigImportGroupCategory) UnmarshalText(data []byte) error {
 		return nil
 	case ConfigImportGroupCategorySystem:
 		*s = ConfigImportGroupCategorySystem
+		return nil
+	case ConfigImportGroupCategoryCustomConfig:
+		*s = ConfigImportGroupCategoryCustomConfig
+		return nil
+	case ConfigImportGroupCategoryTemplates:
+		*s = ConfigImportGroupCategoryTemplates
+		return nil
+	case ConfigImportGroupCategoryStacks:
+		*s = ConfigImportGroupCategoryStacks
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

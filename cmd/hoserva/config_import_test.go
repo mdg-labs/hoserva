@@ -36,6 +36,18 @@ func testConfigImportPreview() *apiv1.ConfigImportPreview {
 				Changed:  []apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindUps}},
 			},
 			{Category: apiv1.ConfigImportGroupCategorySchedules},
+			{
+				Category: apiv1.ConfigImportGroupCategoryCustomConfig,
+				Changed:  []apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindCustomConfigFile, Name: "smb.custom.conf"}},
+			},
+			{
+				Category: apiv1.ConfigImportGroupCategoryTemplates,
+				Added:    []apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindTemplateFile, Name: "plex/template.json"}},
+			},
+			{
+				Category: apiv1.ConfigImportGroupCategoryStacks,
+				Removed:  []apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindStackFile, Name: "web/compose.yml"}},
+			},
 		},
 		Notes: []apiv1.ConfigImportNote{{Code: apiv1.ConfigImportNoteCodeSessionsReplaced, Message: "Active sign-in sessions are replaced by the archive's."}},
 	}
@@ -94,6 +106,9 @@ func TestConfigImportPreview_SendsTheArchiveWithoutConfirmAndPrintsTheGroups(t *
 		"Import would be refused (archive_array_mismatch): the archive's array differs from the live array",
 		"Shares and share permissions", "+ share: photos", "~ share user permission: media / alice", "- share: scratch",
 		"System settings", "~ ups",
+		"Custom config files", "~ custom config file: smb.custom.conf",
+		"App templates", "+ template file: plex/template.json",
+		"App stacks", "- stack file: web/compose.yml",
 		"Active sign-in sessions are replaced by the archive's.",
 	} {
 		if !strings.Contains(printed, want) {
@@ -117,7 +132,7 @@ func TestConfigImportPreview_JSONOutputIsTheResponse(t *testing.T) {
 	if err := json.Unmarshal([]byte(printed), &got); err != nil {
 		t.Fatalf("output is not the preview's JSON: %v\n%s", err, printed)
 	}
-	if len(got.Groups) != 3 || got.Archive.Host != "nas" {
+	if len(got.Groups) != 6 || got.Archive.Host != "nas" {
 		t.Fatalf("decoded preview = %+v", got)
 	}
 }

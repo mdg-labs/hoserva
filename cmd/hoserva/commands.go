@@ -980,6 +980,9 @@ var configImportCategoryLabels = map[apiv1.ConfigImportGroupCategory]string{
 	apiv1.ConfigImportGroupCategoryNotifications: "Notifications",
 	apiv1.ConfigImportGroupCategoryBackup:        "Backup destinations and appdata backup settings",
 	apiv1.ConfigImportGroupCategorySystem:        "System settings",
+	apiv1.ConfigImportGroupCategoryCustomConfig:  "Custom config files",
+	apiv1.ConfigImportGroupCategoryTemplates:     "App templates",
+	apiv1.ConfigImportGroupCategoryStacks:        "App stacks",
 }
 
 func printConfigImportPreview(p *apiv1.ConfigImportPreview) {

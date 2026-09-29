@@ -121,7 +121,7 @@ func TestConfigImportPreview_ServedByTheDaemonsHandler(t *testing.T) {
 	if err := json.Unmarshal(respBody, &preview); err != nil {
 		t.Fatalf("decoding the preview: %v\n%s", err, respBody)
 	}
-	if len(preview.Blockers) != 0 || len(preview.Groups) != 6 || preview.LiveSchemaVersion == "" {
-		t.Fatalf("preview of the daemon's own export = %s, want no blockers, six categories and a schema version", respBody)
+	if len(preview.Blockers) != 0 || len(preview.Groups) != 9 || preview.LiveSchemaVersion == "" {
+		t.Fatalf("preview of the daemon's own export = %s, want no blockers, nine categories and a schema version", respBody)
 	}
 }

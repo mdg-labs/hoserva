@@ -99,6 +99,13 @@ type Handler struct {
 	// Backup is the config archive builder for export/import — nil returns
 	// 501 from those operations.
 	Backup *backup.Service
+	// RegenerateConfig is cmd/hoservad's hook for ImportConfig (doc 10 §1):
+	// after the database has been restored it regenerates every managed
+	// config file whose inputs are in the database and applies the result to
+	// the running pool (D4). Nil refuses the import with 501, since an
+	// import that skipped it would leave the generated files describing the
+	// database it replaced.
+	RegenerateConfig func(ctx context.Context) error
 	// ExternalWriteGates is the per-disk gate Backup's writes to an external
 	// disk take a slot in (#454): eject closes it and waits for a write in
 	// flight before unmounting, and mount reopens it. It must be the same

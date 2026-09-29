@@ -202,11 +202,26 @@ func (s *Service) Run(ctx context.Context) error {
 // even when a later same-day backup would otherwise take today's daily-tier
 // slot and prune it.
 func (s *Service) RunReason(ctx context.Context, reason Reason) error {
+	_, err := s.RunReasonArchive(ctx, reason)
+	return err
+}
+
+// WrittenArchive is the archive a run wrote and the names of the
+// destinations it wrote it to.
+type WrittenArchive struct {
+	Name         string
+	Destinations []string
+}
+
+// RunReasonArchive is RunReason that also reports the archive it wrote, so
+// a caller guarding a destructive change can name the backup to restore
+// from. The result is empty when the run fails.
+func (s *Service) RunReasonArchive(ctx context.Context, reason Reason) (WrittenArchive, error) {
 	if !reason.valid() {
-		return fmt.Errorf("backup: unknown reason %q", reason)
+		return WrittenArchive{}, fmt.Errorf("backup: unknown reason %q", reason)
 	}
 	if s.DB == nil {
-		return fmt.Errorf("backup: no database configured")
+		return WrittenArchive{}, fmt.Errorf("backup: no database configured")
 	}
 	now := time.Now().UTC()
 	if s.Now != nil {
@@ -215,13 +230,13 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 
 	staging, err := os.MkdirTemp("", "hoserva-config-staging-*")
 	if err != nil {
-		return fmt.Errorf("creating staging directory: %w", err)
+		return WrittenArchive{}, fmt.Errorf("creating staging directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
 	_, err = BuildArchive(ctx, s.DB, s.Paths, s.Secrets, s.Cipher, s.Hostname, s.Version, now, staging, WithRecipient(s.Recipient))
 	if err != nil {
-		return err
+		return WrittenArchive{}, err
 	}
 
 	// Packed into a directory private to this run — not staging, which
@@ -232,34 +247,35 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 	// also isolates those.
 	archiveDir, err := os.MkdirTemp("", "hoserva-config-archive-*")
 	if err != nil {
-		return fmt.Errorf("creating archive directory: %w", err)
+		return WrittenArchive{}, fmt.Errorf("creating archive directory: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(archiveDir) }()
 
 	dests, err := s.loadDestinations(ctx)
 	if err != nil {
-		return err
+		return WrittenArchive{}, err
 	}
 	name := resolveArchiveName(s.installationID(), now, reason, dests)
 	archivePath := filepath.Join(archiveDir, name)
 	if err := packArchive(staging, archivePath); err != nil {
-		return fmt.Errorf("packing archive: %w", err)
+		return WrittenArchive{}, fmt.Errorf("packing archive: %w", err)
 	}
 
 	passphrase := ""
 	if s.Secrets != nil {
 		if p, ok, err := s.Secrets.BackupPassphrase(ctx); err != nil {
-			return fmt.Errorf("reading backup passphrase for verification: %w", err)
+			return WrittenArchive{}, fmt.Errorf("reading backup passphrase for verification: %w", err)
 		} else if ok {
 			passphrase = p
 		}
 	}
 	if err := VerifyArchive(archivePath, passphrase); err != nil {
-		return fmt.Errorf("verifying archive: %w", err)
+		return WrittenArchive{}, fmt.Errorf("verifying archive: %w", err)
 	}
 
 	var artifacts *encryptedArtifacts
 	var failures []error
+	var writtenTo []string
 	wrote := false
 	skipped := false
 	for _, dest := range dests {
@@ -277,6 +293,7 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 		release()
 		if written {
 			wrote = true
+			writtenTo = append(writtenTo, destinationLabel(dest))
 		}
 		if err != nil {
 			failures = append(failures, err)
@@ -293,12 +310,19 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 		for _, err := range failures {
 			s.log("%v", err)
 		}
-		return nil
+		return WrittenArchive{Name: name, Destinations: writtenTo}, nil
 	}
 	if skipped {
-		return errors.Join(append([]error{fmt.Errorf("backup: every enabled destination was skipped or unavailable")}, failures...)...)
+		return WrittenArchive{}, errors.Join(append([]error{fmt.Errorf("backup: every enabled destination was skipped or unavailable")}, failures...)...)
 	}
-	return errors.Join(failures...)
+	return WrittenArchive{}, errors.Join(failures...)
+}
+
+func destinationLabel(d Destination) string {
+	if d.Name != "" {
+		return d.Name
+	}
+	return d.ID
 }
 
 func (s *Service) loadDestinations(ctx context.Context) ([]Destination, error) {

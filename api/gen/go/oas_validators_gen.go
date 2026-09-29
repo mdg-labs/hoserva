@@ -1025,6 +1025,8 @@ func (s ConfigImportBlockerCode) Validate() error {
 		return nil
 	case "archive_array_mismatch":
 		return nil
+	case "restore_path_unsafe":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}
@@ -1106,6 +1108,12 @@ func (s ConfigImportChangeKind) Validate() error {
 	case "update_channel":
 		return nil
 	case "update_check":
+		return nil
+	case "custom_config_file":
+		return nil
+	case "template_file":
+		return nil
+	case "stack_file":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
@@ -1232,6 +1240,12 @@ func (s ConfigImportGroupCategory) Validate() error {
 	case "backup":
 		return nil
 	case "system":
+		return nil
+	case "custom_config":
+		return nil
+	case "templates":
+		return nil
+	case "stacks":
 		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)

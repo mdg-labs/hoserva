@@ -554,6 +554,9 @@ func run(cfg config) error {
 	handler.Shares = shareService
 	handler.MoverResults = moverResults
 	wireBackup(handler, backupService)
+	// The strict topology hook, so an import that cannot apply the restored
+	// configuration to the running pool says so instead of logging it.
+	wireConfigImport(handler, parityReg.callArrayReady)
 	appdataService := newAppdataService(apps, backupService, api.NewAppdataPolicyStore(db), arrayStore, absStateDir)
 	wireAppdata(handler, registry, appdataService, notifyService)
 	wireRestoreDrill(registry, backupService, api.NewDrillStore(db), notifyService)

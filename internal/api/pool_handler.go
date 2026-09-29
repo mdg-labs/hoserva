@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -461,20 +462,29 @@ var maxConfigArchiveBytes int64 = 512 << 20
 // table and the relocation/mover state underneath it.
 var errImportJobInProgress = &apiError{code: "job_in_progress", statusCode: 409, message: "a job is running or queued — import would rewrite the jobs table underneath it"}
 
-// ImportConfig restores the database step of doc 10 §1's in-place
-// restore (#269): checksum and integrity verification, then a schema-
-// version match, then a check that the archive is this installation's and
-// describes the array the disks are in (backup.CheckImport, shared with previewConfigImport), then a
-// pre-import safety backup, then
-// backup.RestoreDatabase — SQLite's own online backup API, never a file-
-// level copy or rename over the live database's path (see
-// RestoreDatabase's own doc comment for why that corrupted it). Restoring
-// generated config files, stacks, templates and secrets.age is #62.
+// ImportConfig is doc 10 §1's in-place restore. Verification (checksums,
+// PRAGMA integrity_check) extracts the archive once, and everything below
+// restores from that one tree. Then a schema-version match, a check that
+// the archive is this installation's and describes the array the disks are
+// in (backup.CheckImport, shared with previewConfigImport), and a check
+// that every file it would restore lands inside its own directory
+// (backup.PlanFiles). Then a pre-import safety backup, and, under the
+// scheduler's restore hold, the staging of every file the restore will
+// write (backup.StageFiles) — so a failure to stage leaves the database and
+// every directory untouched. Only then backup.RestoreDatabase, SQLite's own
+// online backup API, never a file-level copy or rename over the live
+// database's path (see RestoreDatabase's own doc comment for why that
+// corrupted it), followed by putting the staged custom config, templates
+// and stacks in place and regenerating every managed config file from the
+// restored database (Handler.RegenerateConfig). A failure after the
+// database was restored is reported with the pre-import archive to go back
+// to. Restoring secrets.age and reporting what could not be restored is
+// #443.
 func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) error {
 	if !req.Confirm {
 		return errConfirmRequired
 	}
-	if !h.importConfigured() {
+	if !h.importConfigured() || h.RegenerateConfig == nil {
 		return errConfigImportNotConfigured
 	}
 
@@ -501,6 +511,12 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		}
 	}
 
+	// A file the restore would refuse is refused here too, before the
+	// backup below takes a retention slot.
+	if _, err := backup.PlanFiles(staging, h.Backup.Paths); err != nil {
+		return filesRefusal(err)
+	}
+
 	// The archive's own queued/running job ids, read from the staged copy
 	// before anything overwrites it (#402): the only ids the post-restore
 	// interrupt step below is ever allowed to touch. A job inserted into
@@ -517,7 +533,8 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	// backup would otherwise take today's daily-tier slot and prune it
 	// (#401) — if it fails, the import is refused and the live database
 	// is untouched.
-	if err := h.Backup.RunReason(ctx, backup.ReasonPreImport); err != nil {
+	preImport, err := h.Backup.RunReasonArchive(ctx, backup.ReasonPreImport)
+	if err != nil {
 		return fmt.Errorf("backing up before import: %w", err)
 	}
 
@@ -548,6 +565,23 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if err := checkImport(ctx, h.Backup.DB, stateDB); err != nil {
 		return err
 	}
+
+	// Every file the restore writes is copied next to its directory, and
+	// checked against the manifest, before the database is touched: a
+	// failure here changes nothing.
+	if importBeforeStageHookForTest != nil {
+		importBeforeStageHookForTest(staging)
+	}
+	staged, err := backup.StageFiles(ctx, staging, h.Backup.Paths)
+	if err != nil {
+		var unsafe *backup.UnsafeRestorePathError
+		if errors.As(err, &unsafe) {
+			return filesRefusal(err)
+		}
+		log.Printf("hoservad: config import: staging the archive's files: %v", err)
+		return &apiError{code: "import_failed", statusCode: 500, message: fmt.Sprintf("the import did not start and nothing was changed: %v", err)}
+	}
+	defer staged.Discard()
 
 	// The array's stopped and maintenance state is the machine's physical
 	// state, not configuration: the live row is written into the staged
@@ -581,12 +615,53 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	// now-restored table holds, which would also catch a job inserted
 	// into the live database in the narrow window around this restore
 	// but never part of the archive at all (#402).
+	//
+	// The database has been replaced, so each remaining step is attempted
+	// whatever the others did, on a context a client's disconnect cannot
+	// cancel: stopping half way would leave the files and the generated
+	// configs describing the old database.
+	finish := context.WithoutCancel(ctx)
+	var failures []error
 	if h.Store != nil {
-		if err := h.Store.InterruptByID(ctx, restoredActiveIDs, time.Now().UTC()); err != nil {
-			return fmt.Errorf("interrupting jobs restored from the archive: %w", err)
+		if err := h.Store.InterruptByID(finish, restoredActiveIDs, time.Now().UTC()); err != nil {
+			failures = append(failures, fmt.Errorf("interrupting jobs restored from the archive: %w", err))
 		}
 	}
+	if err := staged.Apply(); err != nil {
+		failures = append(failures, err)
+	}
+	if err := h.RegenerateConfig(finish); err != nil {
+		failures = append(failures, fmt.Errorf("regenerating the configuration from the restored database: %w", err))
+	}
+	if len(failures) > 0 {
+		reasons := make([]string, len(failures))
+		for i, f := range failures {
+			reasons[i] = f.Error()
+		}
+		msg := fmt.Sprintf("the database was restored but the import did not finish: %s. The configuration as it was before the import is in %s",
+			strings.Join(reasons, "; "), describePreImport(preImport))
+		log.Printf("hoservad: config import: %s", msg)
+		return &apiError{code: "import_failed", statusCode: 500, message: msg}
+	}
 	return nil
+}
+
+func describePreImport(a backup.WrittenArchive) string {
+	if a.Name == "" {
+		return "no pre-import archive, since no backup destination was written to"
+	}
+	return fmt.Sprintf("the pre-import archive %s, on %s", a.Name, strings.Join(a.Destinations, ", "))
+}
+
+// filesRefusal is the error for a path the restore refuses (a symbolic
+// link, or an archive path outside its directory); nothing has been
+// written, so it is a refusal like the others.
+func filesRefusal(err error) error {
+	var unsafe *backup.UnsafeRestorePathError
+	if errors.As(err, &unsafe) {
+		return &apiError{code: backup.RefusalUnsafeRestorePath, statusCode: 409, message: err.Error()}
+	}
+	return fmt.Errorf("checking the archive's files: %w", err)
 }
 
 var errConfigImportNotConfigured = &apiError{code: "not_configured", statusCode: 501, message: "config import is not configured on this daemon"}
@@ -596,12 +671,12 @@ func (h *Handler) importConfigured() bool {
 }
 
 // stageImportArchive reads an uploaded archive, refuses one that is too
-// large or does not verify, and unpacks it into a fresh directory, which the
-// caller removes; it removes the upload itself and, on an error, the
-// directory too. Structural verification only (checksums, PRAGMA
-// integrity_check): secrets.age, if present, is neither required nor
-// decrypted, since an in-place import restores the database only.
-func stageImportArchive(archive io.Reader) (staging string, err error) {
+// large or does not verify, and returns the tree it extracted and verified
+// (backup.ExtractVerifiedArchive), which the caller removes; it removes the
+// upload itself. The import restores from this one tree. Structural
+// verification only (checksums, PRAGMA integrity_check): secrets.age, if
+// present, is neither required nor decrypted.
+func stageImportArchive(archive io.Reader) (tree string, err error) {
 	tmp, err := os.CreateTemp("", "hoserva-config-import-*.tar.zst")
 	if err != nil {
 		return "", err
@@ -624,25 +699,11 @@ func stageImportArchive(archive io.Reader) (staging string, err error) {
 	if err := tmp.Close(); err != nil {
 		return "", err
 	}
-	if err := backup.VerifyArchiveForImport(tmpPath); err != nil {
-		return "", &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
-	}
-	staging, err = os.MkdirTemp("", "hoserva-import-staging-*")
+	tree, err = backup.ExtractVerifiedArchive(tmpPath)
 	if err != nil {
-		return "", err
-	}
-	defer func() {
-		if err != nil {
-			_ = os.RemoveAll(staging)
-		}
-	}()
-	if err := unpackTarZst(tmpPath, staging); err != nil {
 		return "", &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
 	}
-	if _, err := os.Stat(filepath.Join(staging, "state.db")); err != nil {
-		return "", &apiError{code: "invalid_archive", statusCode: 400, message: "archive is missing state.db"}
-	}
-	return staging, nil
+	return tree, nil
 }
 
 // importRefusalStatus is the HTTP status importConfig answers each
@@ -684,7 +745,7 @@ func (h *Handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
-	p, err := backup.PreviewImport(ctx, h.Backup.DB, staging)
+	p, err := backup.PreviewImport(ctx, h.Backup.DB, h.Backup.Paths, staging)
 	var unreadable *backup.UnreadableArchiveError
 	switch {
 	case errors.As(err, &unreadable):
@@ -740,6 +801,12 @@ func configImportChangesToAPI(cs []backup.ImportChange) []apiv1.ConfigImportChan
 // window (#402), instead of racing the real clock. Never set outside a
 // test.
 var importPostRestoreHookForTest func()
+
+// importBeforeStageHookForTest, when non-nil, is called with the verified
+// extracted tree right before ImportConfig stages its files, so a test can
+// change a file in the tree between verification and restore. Never set
+// outside a test.
+var importBeforeStageHookForTest func(tree string)
 
 // readActiveJobIDs opens dsn read-only and returns the ids of every job
 // whose status is queued or running, without mutating the file it points
@@ -847,59 +914,4 @@ func addDirToTar(tw *tar.Writer, root, prefix string) error {
 		_ = f.Close()
 		return err
 	})
-}
-
-func unpackTarZst(archivePath, dest string) error {
-	in, err := os.Open(archivePath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
-	zr, err := zstd.NewReader(in)
-	if err != nil {
-		return err
-	}
-	defer zr.Close()
-	tr := tar.NewReader(zr)
-	remaining := maxConfigArchiveBytes
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dest, filepath.FromSlash(hdr.Name))
-		if !strings.HasPrefix(target, filepath.Clean(dest)+string(os.PathSeparator)) && filepath.Clean(target) != filepath.Clean(dest) {
-			return fmt.Errorf("archive entry escapes destination")
-		}
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o700); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-				return err
-			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-			if err != nil {
-				return err
-			}
-			n, copyErr := io.CopyN(out, tr, remaining+1)
-			closeErr := out.Close()
-			if n > remaining {
-				return fmt.Errorf("archive exceeds extraction limit")
-			}
-			remaining -= n
-			if copyErr != nil && copyErr != io.EOF {
-				return copyErr
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-		}
-	}
-	return nil
 }

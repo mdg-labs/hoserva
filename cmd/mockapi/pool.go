@@ -656,6 +656,10 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 			group(apiv1.ConfigImportGroupCategoryNotifications, empty, empty, empty),
 			group(apiv1.ConfigImportGroupCategoryBackup, empty, empty, empty),
 			group(apiv1.ConfigImportGroupCategorySystem, empty, empty, empty),
+			group(apiv1.ConfigImportGroupCategoryCustomConfig, empty,
+				[]apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindCustomConfigFile, Name: "smb.custom.conf"}}, empty),
+			group(apiv1.ConfigImportGroupCategoryTemplates, empty, empty, empty),
+			group(apiv1.ConfigImportGroupCategoryStacks, empty, empty, empty),
 		},
 		Notes: []apiv1.ConfigImportNote{
 			{

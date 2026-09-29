@@ -4957,6 +4957,8 @@ func (s *ConfigImportBlockerCode) Decode(d *jx.Decoder) error {
 		*s = ConfigImportBlockerCodeArchiveOtherInstallation
 	case ConfigImportBlockerCodeArchiveArrayMismatch:
 		*s = ConfigImportBlockerCodeArchiveArrayMismatch
+	case ConfigImportBlockerCodeRestorePathUnsafe:
+		*s = ConfigImportBlockerCodeRestorePathUnsafe
 	default:
 		*s = ConfigImportBlockerCode(v)
 	}
@@ -5156,6 +5158,12 @@ func (s *ConfigImportChangeKind) Decode(d *jx.Decoder) error {
 		*s = ConfigImportChangeKindUpdateChannel
 	case ConfigImportChangeKindUpdateCheck:
 		*s = ConfigImportChangeKindUpdateCheck
+	case ConfigImportChangeKindCustomConfigFile:
+		*s = ConfigImportChangeKindCustomConfigFile
+	case ConfigImportChangeKindTemplateFile:
+		*s = ConfigImportChangeKindTemplateFile
+	case ConfigImportChangeKindStackFile:
+		*s = ConfigImportChangeKindStackFile
 	default:
 		*s = ConfigImportChangeKind(v)
 	}
@@ -5379,6 +5387,12 @@ func (s *ConfigImportGroupCategory) Decode(d *jx.Decoder) error {
 		*s = ConfigImportGroupCategoryBackup
 	case ConfigImportGroupCategorySystem:
 		*s = ConfigImportGroupCategorySystem
+	case ConfigImportGroupCategoryCustomConfig:
+		*s = ConfigImportGroupCategoryCustomConfig
+	case ConfigImportGroupCategoryTemplates:
+		*s = ConfigImportGroupCategoryTemplates
+	case ConfigImportGroupCategoryStacks:
+		*s = ConfigImportGroupCategoryStacks
 	default:
 		*s = ConfigImportGroupCategory(v)
 	}

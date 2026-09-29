@@ -1137,6 +1137,12 @@ dump_hoserva_diagnostics() {
 # it sets CONFIG_REASON and returns 1.
 CONFIG_TEST_SHARE="hoserval3configtest"
 CONFIG_THROWAWAY_USER="hoserval3throwaway"
+# The custom config file the restore must put back: smb.custom.conf is
+# Samba's own include for user-owned settings (doc 10 §1, custom/). Each
+# marker is a comment line, so smb.conf stays valid whichever one it holds.
+CONFIG_CUSTOM_FILE="/etc/hoserva/smb.custom.conf"
+CONFIG_CUSTOM_ARCHIVED="# hoserva-l3-archived-custom"
+CONFIG_CUSTOM_EDITED="# hoserva-l3-edited-after-export"
 
 config_backup_restore() {
   CONFIG_NOT_YET=0
@@ -1179,6 +1185,11 @@ config_backup_restore() {
   pool_before="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/pool" 2>/dev/null)"
   if [[ "$pool_before" != *'"role":"parity"'* || "$pool_before" != *'"role":"data"'* ]]; then
     CONFIG_REASON="getPool before export does not show the parity/data role assignment step 3 created: $pool_before"
+    return 1
+  fi
+
+  if ! vm_ssh "echo '$CONFIG_CUSTOM_ARCHIVED' | sudo tee $CONFIG_CUSTOM_FILE >/dev/null" 2>/dev/null; then
+    CONFIG_REASON="could not write the custom config file $CONFIG_CUSTOM_FILE ahead of the export"
     return 1
   fi
 
@@ -1226,6 +1237,15 @@ config_backup_restore() {
     return 1
   fi
 
+  if ! vm_ssh "echo '$CONFIG_CUSTOM_EDITED' | sudo tee $CONFIG_CUSTOM_FILE >/dev/null" 2>/dev/null; then
+    CONFIG_REASON="could not edit the custom config file $CONFIG_CUSTOM_FILE ahead of the import round-trip"
+    return 1
+  fi
+  if vm_ssh "grep -q '^\\[$CONFIG_TEST_SHARE\\]' /etc/samba/smb.conf" 2>/dev/null; then
+    CONFIG_REASON="smb.conf still has a [$CONFIG_TEST_SHARE] section after deleteShare — the import below would not prove it regenerates anything"
+    return 1
+  fi
+
   local shares_mid users_mid
   shares_mid="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/shares" 2>/dev/null)"
   users_mid="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR https://127.0.0.1:8008/api/v1/users" 2>/dev/null)"
@@ -1269,6 +1289,28 @@ config_backup_restore() {
   fi
   if [[ "$pool_after" != *'"role":"parity"'* || "$pool_after" != *'"role":"data"'* ]]; then
     CONFIG_REASON="getPool after importConfig does not show the parity/data role assignment from before the export: $pool_after"
+    return 1
+  fi
+
+  # The import also restores the files and regenerates every managed config
+  # file from the restored database (doc 10 §1): the deleted share has its
+  # Samba section again, its path works through the pool mount, and the
+  # custom config file holds its archived content, not the edit made after
+  # the export.
+  if ! vm_ssh "grep -q '^\\[$CONFIG_TEST_SHARE\\]' /etc/samba/smb.conf" 2>/dev/null; then
+    CONFIG_REASON="smb.conf has no [$CONFIG_TEST_SHARE] section after importConfig — the configs were not regenerated from the restored database"
+    return 1
+  fi
+  local probe_result probe_path="/mnt/user/$CONFIG_TEST_SHARE/.l3-config-probe"
+  probe_result="$(vm_ssh "sudo sh -c 'echo l3-probe > $probe_path && cat $probe_path && rm -f $probe_path'" 2>/dev/null)"
+  if [[ "$probe_result" != "l3-probe" ]]; then
+    CONFIG_REASON="the restored share's path /mnt/user/$CONFIG_TEST_SHARE is not usable through the pool mount after importConfig (probe returned: ${probe_result:-nothing})"
+    return 1
+  fi
+  local custom_after
+  custom_after="$(vm_ssh "sudo cat $CONFIG_CUSTOM_FILE" 2>/dev/null)"
+  if [[ "$custom_after" != *"$CONFIG_CUSTOM_ARCHIVED"* || "$custom_after" == *"$CONFIG_CUSTOM_EDITED"* ]]; then
+    CONFIG_REASON="$CONFIG_CUSTOM_FILE after importConfig is not the archived content (it holds: $custom_after)"
     return 1
   fi
 

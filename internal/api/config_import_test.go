@@ -76,6 +76,7 @@ func newImportTestHandlerWithRegistry(t *testing.T) (*Handler, *job.Registry, *s
 			DB:    db,
 			Paths: backup.Paths{DBPath: dbPath},
 		},
+		RegenerateConfig: func(context.Context) error { return nil },
 	}
 	return h, registry, db, dbPath
 }
@@ -524,10 +525,7 @@ func TestImportConfig_ChecksumMismatchIsRejected(t *testing.T) {
 	h, _, _ := newImportTestHandler(t)
 	archive := exportBytes(t, h)
 
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking baseline archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	if err := tamperStateDB(t, filepath.Join(staging, "state.db")); err != nil {
 		t.Fatalf("tampering state.db: %v", err)
 	}
@@ -544,10 +542,7 @@ func TestImportConfig_MissingStateDBIsRejected(t *testing.T) {
 	h, _, _ := newImportTestHandler(t)
 	archive := exportBytes(t, h)
 
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking baseline archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	if err := os.Remove(filepath.Join(staging, "state.db")); err != nil {
 		t.Fatalf("removing state.db: %v", err)
 	}
@@ -567,10 +562,7 @@ func TestImportConfig_OlderSchemaVersionIsIncompatible(t *testing.T) {
 	h, _, _ := newImportTestHandler(t)
 	archive := exportBytes(t, h)
 
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking baseline archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	stateDBPath := filepath.Join(staging, "state.db")
 	adb, err := sql.Open("sqlite", stateDBPath)
 	if err != nil {
@@ -598,10 +590,7 @@ func TestImportConfig_NewerSchemaVersionIsIncompatible(t *testing.T) {
 	h, _, _ := newImportTestHandler(t)
 	archive := exportBytes(t, h)
 
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking baseline archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	stateDBPath := filepath.Join(staging, "state.db")
 	adb, err := sql.Open("sqlite", stateDBPath)
 	if err != nil {
@@ -692,10 +681,7 @@ func TestExportConfig_EmbedsIdentityAgeDecryptableWithPassphrase(t *testing.T) {
 
 	archive := exportBytes(t, h)
 
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking exported archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	identityAge, err := os.ReadFile(filepath.Join(staging, "identity.age"))
 	if err != nil {
 		t.Fatalf("exported archive has no identity.age: %v", err)
@@ -738,6 +724,19 @@ func assertIncompatibleArchive(t *testing.T, err error) {
 	if ae.statusCode != 400 || ae.code != "incompatible_archive" {
 		t.Fatalf("err = (%d, %q), want (400, incompatible_archive)", ae.statusCode, ae.code)
 	}
+}
+
+// extractArchive unpacks a valid archive into a fresh directory the test
+// then edits and repacks, through the same extraction ImportConfig verifies
+// and restores from.
+func extractArchive(t *testing.T, archive []byte) string {
+	t.Helper()
+	tree, err := backup.ExtractVerifiedArchive(writeTemp(t, archive))
+	if err != nil {
+		t.Fatalf("unpacking baseline archive: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tree) })
+	return tree
 }
 
 func writeTemp(t *testing.T, data []byte) string {
@@ -912,10 +911,7 @@ func liveFingerprint(t *testing.T, db *sql.DB) string {
 
 func rewriteArchive(t *testing.T, archive []byte, edit func(staging string)) []byte {
 	t.Helper()
-	staging := t.TempDir()
-	if err := unpackTarZst(writeTemp(t, archive), staging); err != nil {
-		t.Fatalf("unpacking archive: %v", err)
-	}
+	staging := extractArchive(t, archive)
 	edit(staging)
 	return repackTarZst(t, staging)
 }
