@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
@@ -26,6 +27,15 @@ import (
 // archive is one sequential read of it and needs no second copy of the
 // data: a truncated or altered archive has no trailer, or one that does
 // not match what was read.
+//
+// The trailer's SHA256 covers every byte of the tar stream before the
+// trailer entry: each entry's header (name, type, mode, owner, times, link
+// target, size), its content and its padding, so it covers everything
+// extraction reads from an entry. The zstd frame's own checksum covers the
+// whole decompressed stream including the trailer, and verifyAppdata reads
+// to the end of the frame to check it. Both are unkeyed checksums stored in
+// the archive itself: they detect accidental corruption and truncation, and
+// say nothing about an archive someone rewrote and re-checksummed on purpose.
 const (
 	appdataFormatVersion = 1
 	appdataHeaderName    = "hoserva-appdata.json"
@@ -50,7 +60,8 @@ type appdataHeader struct {
 // appdataTrailer is what the packer wrote. Changed counts files that were
 // not the size they had when their header was written, because they shrank
 // or grew, or vanished, while they were copied; a stopped container has
-// none. A file rewritten in place at the same size is not detected.
+// none. A file rewritten in place at the same size is not detected. SHA256
+// is over the tar stream up to the trailer entry.
 type appdataTrailer struct {
 	Files   int64  `json:"files"`
 	Bytes   int64  `json:"bytes"`
@@ -88,23 +99,27 @@ func packAppdata(ctx context.Context, dest string, hdr appdataHeader) (appdataTr
 	if err := out.Chmod(0o600); err != nil {
 		return fail(fmt.Errorf("restricting archive temp file: %w", err))
 	}
-	zw, err := zstd.NewWriter(out)
+	zw, err := zstd.NewWriter(out, zstd.WithEncoderCRC(true))
 	if err != nil {
 		return fail(fmt.Errorf("creating zstd writer: %w", err))
 	}
-	tw := tar.NewWriter(zw)
+	sum := sha256.New()
+	tw := tar.NewWriter(io.MultiWriter(zw, sum))
 
 	hdr.Version = appdataFormatVersion
 	if err := writeAppdataMeta(tw, appdataHeaderName, hdr, hdr.CreatedAt); err != nil {
 		_ = zw.Close()
 		return fail(err)
 	}
-	sum := sha256.New()
 	for i, dir := range hdr.Dirs {
-		if err := packAppdataTree(ctx, tw, sum, &trailer, dir, appdataPrefix(i)); err != nil {
+		if err := packAppdataTree(ctx, tw, &trailer, dir, appdataPrefix(i)); err != nil {
 			_ = zw.Close()
 			return fail(fmt.Errorf("archiving %s: %w", dir, err))
 		}
+	}
+	if err := tw.Flush(); err != nil {
+		_ = zw.Close()
+		return fail(fmt.Errorf("padding the last archived file: %w", err))
 	}
 	trailer.SHA256 = hex.EncodeToString(sum.Sum(nil))
 	if err := writeAppdataMeta(tw, appdataTrailerName, trailer, hdr.CreatedAt); err != nil {
@@ -132,12 +147,15 @@ func packAppdata(ctx context.Context, dest string, hdr appdataHeader) (appdataTr
 	return trailer, fsyncDir(filepath.Dir(dest))
 }
 
+// writeAppdataMeta writes v as a regular entry whose header is one USTAR
+// block, which is what lets verifyAppdata find where the tar stream the
+// trailer's checksum covers ends.
 func writeAppdataMeta(tw *tar.Writer, name string, v any, at time.Time) error {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("encoding %s: %w", name, err)
 	}
-	if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(raw)), ModTime: at}); err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(raw)), ModTime: at.Round(time.Second), Format: tar.FormatUSTAR}); err != nil {
 		return fmt.Errorf("writing %s: %w", name, err)
 	}
 	if _, err := tw.Write(raw); err != nil {
@@ -146,7 +164,7 @@ func writeAppdataMeta(tw *tar.Writer, name string, v any, at time.Time) error {
 	return nil
 }
 
-func packAppdataTree(ctx context.Context, tw *tar.Writer, sum io.Writer, trailer *appdataTrailer, root, prefix string) error {
+func packAppdataTree(ctx context.Context, tw *tar.Writer, trailer *appdataTrailer, root, prefix string) error {
 	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -194,7 +212,7 @@ func packAppdataTree(ctx context.Context, tw *tar.Writer, sum io.Writer, trailer
 			h.Name = name
 			return tw.WriteHeader(h)
 		case info.Mode().IsRegular():
-			return packAppdataFile(tw, sum, trailer, p, name)
+			return packAppdataFile(tw, trailer, p, name)
 		default:
 			trailer.Skipped++
 			return nil
@@ -202,7 +220,7 @@ func packAppdataTree(ctx context.Context, tw *tar.Writer, sum io.Writer, trailer
 	})
 }
 
-func packAppdataFile(tw *tar.Writer, sum io.Writer, trailer *appdataTrailer, p, name string) error {
+func packAppdataFile(tw *tar.Writer, trailer *appdataTrailer, p, name string) error {
 	f, err := os.Open(p)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -228,7 +246,7 @@ func packAppdataFile(tw *tar.Writer, sum io.Writer, trailer *appdataTrailer, p, 
 	if err := tw.WriteHeader(h); err != nil {
 		return err
 	}
-	changed, err := copyExactly(io.MultiWriter(tw, sum), f, h.Size)
+	changed, err := copyExactly(tw, f, h.Size)
 	if err != nil {
 		return err
 	}
@@ -264,7 +282,35 @@ func copyExactly(w io.Writer, r io.Reader, size int64) (changed bool, err error)
 	return false, nil
 }
 
-// verifyAppdata reads the whole archive and checks it against its own
+// laggingHash hashes what is written to it except the last lag bytes,
+// which it holds back. The tar stream is read through it, so once the
+// header block of the trailer entry has been read it has hashed exactly
+// what precedes that block, whichever way the reader chunks its reads.
+type laggingHash struct {
+	h       hash.Hash
+	pending []byte
+	lag     int
+}
+
+func (l *laggingHash) Write(p []byte) (int, error) {
+	l.pending = append(l.pending, p...)
+	if extra := len(l.pending) - l.lag; extra > 0 {
+		_, _ = l.h.Write(l.pending[:extra])
+		l.pending = append(l.pending[:0], l.pending[extra:]...)
+	}
+	return len(p), nil
+}
+
+func (l *laggingHash) sum() string {
+	return hex.EncodeToString(l.h.Sum(nil))
+}
+
+// tarBlock is the size of a tar header block, and of the trailer entry's
+// header, which writeAppdataMeta keeps to one.
+const tarBlock = 512
+
+// verifyAppdata reads the whole archive, to the end of its zstd frame so
+// the frame's checksum is checked too, and checks it against its own
 // trailer, returning the header.
 func verifyAppdata(archivePath string) (appdataHeader, appdataTrailer, error) {
 	var hdr appdataHeader
@@ -279,7 +325,8 @@ func verifyAppdata(archivePath string) (appdataHeader, appdataTrailer, error) {
 		return hdr, trailer, fmt.Errorf("creating zstd reader: %w", err)
 	}
 	defer zr.Close()
-	tr := tar.NewReader(zr)
+	stream := &laggingHash{h: sha256.New(), lag: tarBlock}
+	tr := tar.NewReader(io.TeeReader(zr, stream))
 
 	first, err := tr.Next()
 	if err != nil {
@@ -296,7 +343,6 @@ func verifyAppdata(archivePath string) (appdataHeader, appdataTrailer, error) {
 	}
 
 	var got appdataTrailer
-	sum := sha256.New()
 	var written *appdataTrailer
 	for {
 		e, err := tr.Next()
@@ -310,6 +356,7 @@ func verifyAppdata(archivePath string) (appdataHeader, appdataTrailer, error) {
 			return hdr, trailer, errors.New("archive has entries after its trailer")
 		}
 		if e.Name == appdataTrailerName {
+			got.SHA256 = stream.sum()
 			var t appdataTrailer
 			if err := readAppdataMeta(tr, e, &t); err != nil {
 				return hdr, trailer, err
@@ -323,7 +370,7 @@ func verifyAppdata(archivePath string) (appdataHeader, appdataTrailer, error) {
 		if e.Typeflag != tar.TypeReg {
 			continue
 		}
-		n, err := io.Copy(sum, tr)
+		n, err := io.Copy(io.Discard, tr)
 		if err != nil {
 			return hdr, trailer, fmt.Errorf("reading %q: %w", e.Name, err)
 		}
@@ -333,7 +380,13 @@ func verifyAppdata(archivePath string) (appdataHeader, appdataTrailer, error) {
 	if written == nil {
 		return hdr, trailer, errors.New("archive has no trailer: it is incomplete")
 	}
-	got.SHA256 = hex.EncodeToString(sum.Sum(nil))
+	rest, err := io.Copy(io.Discard, zr)
+	if err != nil {
+		return hdr, trailer, fmt.Errorf("reading the end of the archive: %w", err)
+	}
+	if rest > 0 {
+		return hdr, trailer, errors.New("archive has data after its end")
+	}
 	if got.Files != written.Files || got.Bytes != written.Bytes || got.SHA256 != written.SHA256 {
 		return hdr, trailer, fmt.Errorf("archive content does not match its trailer (read %d files, %d bytes; trailer says %d files, %d bytes, or its checksum differs)", got.Files, got.Bytes, written.Files, written.Bytes)
 	}
