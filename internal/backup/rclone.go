@@ -25,11 +25,21 @@ const RcloneInstallCommand = "sudo apt install rclone"
 var ErrRcloneMissing = fmt.Errorf("backup: rclone is not installed — install it with: %s", RcloneInstallCommand)
 
 // Each rclone invocation gets its own deadline, so a slow upload does not
-// leave the verification and prune steps that follow it with no time.
+// leave the verification and prune steps that follow it with no time. A
+// copy is given rcloneCopyTimeout plus the time its size takes at
+// rcloneMinRate, since an appdata archive can run to many gigabytes.
 const (
 	rcloneCopyTimeout  = 15 * time.Minute
 	rcloneQuickTimeout = 2 * time.Minute
+	rcloneMinRate      = 512 * 1024
 )
+
+func rcloneTransferTimeout(size int64) time.Duration {
+	if size <= 0 {
+		return rcloneCopyTimeout
+	}
+	return rcloneCopyTimeout + time.Duration(size/rcloneMinRate)*time.Second
+}
 
 // rcloneRemoteName is the name of the on-the-fly remote every non-"rclone"
 // destination is configured under, through RCLONE_CONFIG_<NAME>_* in the
@@ -162,7 +172,7 @@ func (t *rcloneTarget) write(ctx context.Context, srcPath string) error {
 	if err != nil {
 		return fmt.Errorf("reading archive to upload: %w", err)
 	}
-	if _, err := t.run(ctx, rcloneCopyTimeout, "copy", "--immutable", srcPath, t.dir); err != nil {
+	if _, err := t.run(ctx, rcloneTransferTimeout(info.Size()), "copy", "--immutable", srcPath, t.dir); err != nil {
 		return fmt.Errorf("uploading to %q: %w", t.dir, err)
 	}
 	files, err := t.listFiles(ctx)
@@ -203,7 +213,16 @@ func (t *rcloneTarget) fetch(ctx context.Context, name, dstPath string) error {
 	if _, err := os.Lstat(dstPath); err == nil {
 		return fmt.Errorf("fetching %q: %q already exists", name, dstPath)
 	}
-	if _, err := t.run(ctx, rcloneCopyTimeout, "copyto", t.remoteFile(name), dstPath); err != nil {
+	// A listing that fails leaves the size unknown and the copy the base
+	// deadline; the copy reports why the remote cannot be read.
+	listed, _ := t.listFiles(ctx)
+	var size int64
+	for _, f := range listed {
+		if f.Name == name {
+			size = f.Size
+		}
+	}
+	if _, err := t.run(ctx, rcloneTransferTimeout(size), "copyto", t.remoteFile(name), dstPath); err != nil {
 		return fmt.Errorf("downloading %q: %w", t.remoteFile(name), err)
 	}
 	return nil
