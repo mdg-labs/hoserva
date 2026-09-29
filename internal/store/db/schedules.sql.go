@@ -10,6 +10,26 @@ import (
 	"database/sql"
 )
 
+const claimScheduleJobRun = `-- name: ClaimScheduleJobRun :execrows
+UPDATE schedule_jobs SET last_run_at = ?1
+WHERE job_id = ?2
+  AND last_run_at IS ?3
+`
+
+type ClaimScheduleJobRunParams struct {
+	LastRunAt   sql.NullString `json:"last_run_at"`
+	JobID       string         `json:"job_id"`
+	LastRunAt_2 sql.NullString `json:"last_run_at_2"`
+}
+
+func (q *Queries) ClaimScheduleJobRun(ctx context.Context, arg ClaimScheduleJobRunParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimScheduleJobRun, arg.LastRunAt, arg.JobID, arg.LastRunAt_2)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getScheduleChain = `-- name: GetScheduleChain :one
 
 SELECT
@@ -48,7 +68,7 @@ func (q *Queries) GetScheduleChain(ctx context.Context) (*ScheduleChain, error) 
 }
 
 const getScheduleJob = `-- name: GetScheduleJob :one
-SELECT job_id, enabled, frequency, start_time, updated_at
+SELECT job_id, enabled, frequency, start_time, updated_at, last_run_at
 FROM schedule_jobs
 WHERE job_id = ?
 `
@@ -62,12 +82,13 @@ func (q *Queries) GetScheduleJob(ctx context.Context, jobID string) (*ScheduleJo
 		&i.Frequency,
 		&i.StartTime,
 		&i.UpdatedAt,
+		&i.LastRunAt,
 	)
 	return &i, err
 }
 
 const listScheduleJobs = `-- name: ListScheduleJobs :many
-SELECT job_id, enabled, frequency, start_time, updated_at
+SELECT job_id, enabled, frequency, start_time, updated_at, last_run_at
 FROM schedule_jobs
 ORDER BY job_id ASC
 `
@@ -87,6 +108,7 @@ func (q *Queries) ListScheduleJobs(ctx context.Context) ([]*ScheduleJob, error) 
 			&i.Frequency,
 			&i.StartTime,
 			&i.UpdatedAt,
+			&i.LastRunAt,
 		); err != nil {
 			return nil, err
 		}

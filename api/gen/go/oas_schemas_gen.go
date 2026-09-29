@@ -976,6 +976,203 @@ func (s *AppStats) SetBlockWriteBytes(val int64) {
 	s.BlockWriteBytes = val
 }
 
+// Ref: #/components/schemas/AppdataArchive
+type AppdataArchive struct {
+	// The archive's file name on the destination.
+	Name            string `json:"name"`
+	Container       string `json:"container"`
+	DestinationId   string `json:"destinationId"`
+	DestinationName string `json:"destinationName"`
+	// The archive's modification time on the destination.
+	CreatedAt time.Time `json:"createdAt"`
+	Size      int64     `json:"size"`
+	Encrypted bool      `json:"encrypted"`
+	// `pre-restore` for the snapshot a restore took of the appdata it replaced; absent for an ordinary
+	// backup.
+	Reason OptNilString `json:"reason"`
+}
+
+// GetName returns the value of Name.
+func (s *AppdataArchive) GetName() string {
+	return s.Name
+}
+
+// GetContainer returns the value of Container.
+func (s *AppdataArchive) GetContainer() string {
+	return s.Container
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *AppdataArchive) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// GetDestinationName returns the value of DestinationName.
+func (s *AppdataArchive) GetDestinationName() string {
+	return s.DestinationName
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *AppdataArchive) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// GetSize returns the value of Size.
+func (s *AppdataArchive) GetSize() int64 {
+	return s.Size
+}
+
+// GetEncrypted returns the value of Encrypted.
+func (s *AppdataArchive) GetEncrypted() bool {
+	return s.Encrypted
+}
+
+// GetReason returns the value of Reason.
+func (s *AppdataArchive) GetReason() OptNilString {
+	return s.Reason
+}
+
+// SetName sets the value of Name.
+func (s *AppdataArchive) SetName(val string) {
+	s.Name = val
+}
+
+// SetContainer sets the value of Container.
+func (s *AppdataArchive) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *AppdataArchive) SetDestinationId(val string) {
+	s.DestinationId = val
+}
+
+// SetDestinationName sets the value of DestinationName.
+func (s *AppdataArchive) SetDestinationName(val string) {
+	s.DestinationName = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *AppdataArchive) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// SetSize sets the value of Size.
+func (s *AppdataArchive) SetSize(val int64) {
+	s.Size = val
+}
+
+// SetEncrypted sets the value of Encrypted.
+func (s *AppdataArchive) SetEncrypted(val bool) {
+	s.Encrypted = val
+}
+
+// SetReason sets the value of Reason.
+func (s *AppdataArchive) SetReason(val OptNilString) {
+	s.Reason = val
+}
+
+// Ref: #/components/schemas/AppdataBackupConfig
+type AppdataBackupConfig struct {
+	Containers []AppdataBackupContainer `json:"containers"`
+}
+
+// GetContainers returns the value of Containers.
+func (s *AppdataBackupConfig) GetContainers() []AppdataBackupContainer {
+	return s.Containers
+}
+
+// SetContainers sets the value of Containers.
+func (s *AppdataBackupConfig) SetContainers(val []AppdataBackupContainer) {
+	s.Containers = val
+}
+
+// Ref: #/components/schemas/AppdataBackupContainer
+type AppdataBackupContainer struct {
+	Name string `json:"name"`
+	// The container's image repository, without its tag.
+	Image   string `json:"image"`
+	Running bool   `json:"running"`
+	// Whether the backup stops the container while its appdata is copied. Only a running container is
+	// stopped.
+	Stop     bool `json:"stop"`
+	Included bool `json:"included"`
+	// Whether the image is a known database (Postgres, MariaDB, MySQL, MongoDB, Redis and similar).
+	DatabaseImage bool `json:"databaseImage"`
+	// Present when a known database image is included but not stopped.
+	Warning OptNilString `json:"warning"`
+}
+
+// GetName returns the value of Name.
+func (s *AppdataBackupContainer) GetName() string {
+	return s.Name
+}
+
+// GetImage returns the value of Image.
+func (s *AppdataBackupContainer) GetImage() string {
+	return s.Image
+}
+
+// GetRunning returns the value of Running.
+func (s *AppdataBackupContainer) GetRunning() bool {
+	return s.Running
+}
+
+// GetStop returns the value of Stop.
+func (s *AppdataBackupContainer) GetStop() bool {
+	return s.Stop
+}
+
+// GetIncluded returns the value of Included.
+func (s *AppdataBackupContainer) GetIncluded() bool {
+	return s.Included
+}
+
+// GetDatabaseImage returns the value of DatabaseImage.
+func (s *AppdataBackupContainer) GetDatabaseImage() bool {
+	return s.DatabaseImage
+}
+
+// GetWarning returns the value of Warning.
+func (s *AppdataBackupContainer) GetWarning() OptNilString {
+	return s.Warning
+}
+
+// SetName sets the value of Name.
+func (s *AppdataBackupContainer) SetName(val string) {
+	s.Name = val
+}
+
+// SetImage sets the value of Image.
+func (s *AppdataBackupContainer) SetImage(val string) {
+	s.Image = val
+}
+
+// SetRunning sets the value of Running.
+func (s *AppdataBackupContainer) SetRunning(val bool) {
+	s.Running = val
+}
+
+// SetStop sets the value of Stop.
+func (s *AppdataBackupContainer) SetStop(val bool) {
+	s.Stop = val
+}
+
+// SetIncluded sets the value of Included.
+func (s *AppdataBackupContainer) SetIncluded(val bool) {
+	s.Included = val
+}
+
+// SetDatabaseImage sets the value of DatabaseImage.
+func (s *AppdataBackupContainer) SetDatabaseImage(val bool) {
+	s.DatabaseImage = val
+}
+
+// SetWarning sets the value of Warning.
+func (s *AppdataBackupContainer) SetWarning(val OptNilString) {
+	s.Warning = val
+}
+
 // Ref: #/components/schemas/ApplyHostConfigRequest
 type ApplyHostConfigRequest struct {
 	Files []HostConfigChoice `json:"files"`
@@ -4272,6 +4469,7 @@ const (
 	JobTypeDiskUpgradeParity JobType = "disk_upgrade_parity"
 	JobTypePoolRemount       JobType = "pool_remount"
 	JobTypeAppdataBackup     JobType = "appdata_backup"
+	JobTypeAppdataRestore    JobType = "appdata_restore"
 	JobTypeContainerUpdate   JobType = "container_update"
 	JobTypeContainerRecreate JobType = "container_recreate"
 	JobTypeAcmeIssue         JobType = "acme_issue"
@@ -4304,6 +4502,7 @@ func (JobType) AllValues() []JobType {
 		JobTypeDiskUpgradeParity,
 		JobTypePoolRemount,
 		JobTypeAppdataBackup,
+		JobTypeAppdataRestore,
 		JobTypeContainerUpdate,
 		JobTypeContainerRecreate,
 		JobTypeAcmeIssue,
@@ -4353,6 +4552,8 @@ func (s JobType) MarshalText() ([]byte, error) {
 	case JobTypePoolRemount:
 		return []byte(s), nil
 	case JobTypeAppdataBackup:
+		return []byte(s), nil
+	case JobTypeAppdataRestore:
 		return []byte(s), nil
 	case JobTypeContainerUpdate:
 		return []byte(s), nil
@@ -4432,6 +4633,9 @@ func (s *JobType) UnmarshalText(data []byte) error {
 		return nil
 	case JobTypeAppdataBackup:
 		*s = JobTypeAppdataBackup
+		return nil
+	case JobTypeAppdataRestore:
+		*s = JobTypeAppdataRestore
 		return nil
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
@@ -4594,6 +4798,58 @@ func (s *ListAppImagesOK) SetMessage(val OptString) {
 // SetImages sets the value of Images.
 func (s *ListAppImagesOK) SetImages(val []AppImage) {
 	s.Images = val
+}
+
+// Ref: #/components/schemas/ListAppdataArchivesOK
+type ListAppdataArchivesOK struct {
+	Archives []AppdataArchive `json:"archives"`
+	// Destinations that could not be listed, and why.
+	Unavailable []ListAppdataArchivesOKUnavailableItem `json:"unavailable"`
+}
+
+// GetArchives returns the value of Archives.
+func (s *ListAppdataArchivesOK) GetArchives() []AppdataArchive {
+	return s.Archives
+}
+
+// GetUnavailable returns the value of Unavailable.
+func (s *ListAppdataArchivesOK) GetUnavailable() []ListAppdataArchivesOKUnavailableItem {
+	return s.Unavailable
+}
+
+// SetArchives sets the value of Archives.
+func (s *ListAppdataArchivesOK) SetArchives(val []AppdataArchive) {
+	s.Archives = val
+}
+
+// SetUnavailable sets the value of Unavailable.
+func (s *ListAppdataArchivesOK) SetUnavailable(val []ListAppdataArchivesOKUnavailableItem) {
+	s.Unavailable = val
+}
+
+type ListAppdataArchivesOKUnavailableItem struct {
+	DestinationId string `json:"destinationId"`
+	Message       string `json:"message"`
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *ListAppdataArchivesOKUnavailableItem) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// GetMessage returns the value of Message.
+func (s *ListAppdataArchivesOKUnavailableItem) GetMessage() string {
+	return s.Message
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *ListAppdataArchivesOKUnavailableItem) SetDestinationId(val string) {
+	s.DestinationId = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ListAppdataArchivesOKUnavailableItem) SetMessage(val string) {
+	s.Message = val
 }
 
 // Ref: #/components/schemas/ListAppsOK
@@ -8409,6 +8665,52 @@ func (o OptShareSMB) Or(d ShareSMB) ShareSMB {
 	return d
 }
 
+// NewOptStartAppdataBackupRequest returns new OptStartAppdataBackupRequest with value set to v.
+func NewOptStartAppdataBackupRequest(v StartAppdataBackupRequest) OptStartAppdataBackupRequest {
+	return OptStartAppdataBackupRequest{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptStartAppdataBackupRequest is optional StartAppdataBackupRequest.
+type OptStartAppdataBackupRequest struct {
+	Value StartAppdataBackupRequest
+	Set   bool
+}
+
+// IsSet returns true if OptStartAppdataBackupRequest was set.
+func (o OptStartAppdataBackupRequest) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptStartAppdataBackupRequest) Reset() {
+	var v StartAppdataBackupRequest
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptStartAppdataBackupRequest) SetTo(v StartAppdataBackupRequest) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptStartAppdataBackupRequest) Get() (v StartAppdataBackupRequest, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptStartAppdataBackupRequest) Or(d StartAppdataBackupRequest) StartAppdataBackupRequest {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptString returns new OptString with value set to v.
 func NewOptString(v string) OptString {
 	return OptString{
@@ -9882,6 +10184,56 @@ func (s *ResetUserPasswordRequest) SetPassword(val string) {
 	s.Password = val
 }
 
+// Ref: #/components/schemas/RestoreAppdataRequest
+type RestoreAppdataRequest struct {
+	Container string `json:"container"`
+	// An archive name from listAppdataArchives.
+	Archive       string `json:"archive"`
+	DestinationId string `json:"destinationId"`
+	// Must be true, because the restore overwrites the container's appdata.
+	Confirm bool `json:"confirm"`
+}
+
+// GetContainer returns the value of Container.
+func (s *RestoreAppdataRequest) GetContainer() string {
+	return s.Container
+}
+
+// GetArchive returns the value of Archive.
+func (s *RestoreAppdataRequest) GetArchive() string {
+	return s.Archive
+}
+
+// GetDestinationId returns the value of DestinationId.
+func (s *RestoreAppdataRequest) GetDestinationId() string {
+	return s.DestinationId
+}
+
+// GetConfirm returns the value of Confirm.
+func (s *RestoreAppdataRequest) GetConfirm() bool {
+	return s.Confirm
+}
+
+// SetContainer sets the value of Container.
+func (s *RestoreAppdataRequest) SetContainer(val string) {
+	s.Container = val
+}
+
+// SetArchive sets the value of Archive.
+func (s *RestoreAppdataRequest) SetArchive(val string) {
+	s.Archive = val
+}
+
+// SetDestinationId sets the value of DestinationId.
+func (s *RestoreAppdataRequest) SetDestinationId(val string) {
+	s.DestinationId = val
+}
+
+// SetConfirm sets the value of Confirm.
+func (s *RestoreAppdataRequest) SetConfirm(val bool) {
+	s.Confirm = val
+}
+
 // RevokeApiTokenNoContent is response for RevokeApiToken operation.
 type RevokeApiTokenNoContent struct{}
 
@@ -10155,6 +10507,32 @@ func (s *SessionCookie) SetAPIKey(val string) {
 // SetRoles sets the value of Roles.
 func (s *SessionCookie) SetRoles(val []string) {
 	s.Roles = val
+}
+
+// Ref: #/components/schemas/SetAppdataBackupContainerRequest
+type SetAppdataBackupContainerRequest struct {
+	Stop     bool `json:"stop"`
+	Included bool `json:"included"`
+}
+
+// GetStop returns the value of Stop.
+func (s *SetAppdataBackupContainerRequest) GetStop() bool {
+	return s.Stop
+}
+
+// GetIncluded returns the value of Included.
+func (s *SetAppdataBackupContainerRequest) GetIncluded() bool {
+	return s.Included
+}
+
+// SetStop sets the value of Stop.
+func (s *SetAppdataBackupContainerRequest) SetStop(val bool) {
+	s.Stop = val
+}
+
+// SetIncluded sets the value of Included.
+func (s *SetAppdataBackupContainerRequest) SetIncluded(val bool) {
+	s.Included = val
 }
 
 // Ref: #/components/schemas/SetUserGroupMembersRequest
@@ -10956,6 +11334,22 @@ func (s *SpinTransitionToState) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/StartAppdataBackupRequest
+type StartAppdataBackupRequest struct {
+	// Limits the run to these containers; omit for every included one.
+	Containers []string `json:"containers"`
+}
+
+// GetContainers returns the value of Containers.
+func (s *StartAppdataBackupRequest) GetContainers() []string {
+	return s.Containers
+}
+
+// SetContainers sets the value of Containers.
+func (s *StartAppdataBackupRequest) SetContainers(val []string) {
+	s.Containers = val
 }
 
 // Ref: #/components/schemas/StartFixRequest

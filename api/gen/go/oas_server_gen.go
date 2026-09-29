@@ -387,6 +387,17 @@ type Handler interface {
 	//
 	// GET /apps/{id}/stats
 	GetAppStats(ctx context.Context, params GetAppStatsParams) (*AppStats, error)
+	// GetAppdataBackup implements getAppdataBackup operation.
+	//
+	// Every container with a bind-mounted directory inside the appdata location (the cache disk's
+	// `appdata` directory), each with whether the backup stops it while its directory is copied and
+	// whether it is in the backup at all (doc 10 §2). A container the operator has not configured is
+	// stopped and included. A known database image that is not stopped carries `warning`: copying a
+	// database's files while it runs can produce an archive that does not restore. 501 `not_configured`
+	// when this daemon has no Docker Engine client, and 503 when the Engine is not reachable.
+	//
+	// GET /appdata/backup
+	GetAppdataBackup(ctx context.Context) (*AppdataBackupConfig, error)
 	// GetCacheUsage implements getCacheUsage operation.
 	//
 	// Appdata / pending-moves / other byte breakdown for the cache disk (doc 03 §3.6). Computed as a
@@ -562,6 +573,15 @@ type Handler interface {
 	//
 	// GET /apps/images
 	ListAppImages(ctx context.Context) (*ListAppImagesOK, error)
+	// ListAppdataArchives implements listAppdataArchives operation.
+	//
+	// The appdata archives this installation wrote to each enabled backup destination, newest first,
+	// optionally for one container. It lists the destinations when asked — a remote destination is
+	// reached through rclone — and a destination that could not be listed is reported in `unavailable`
+	// instead of being read as having no archives.
+	//
+	// GET /appdata/backup/archives
+	ListAppdataArchives(ctx context.Context, params ListAppdataArchivesParams) (*ListAppdataArchivesOK, error)
 	// ListApps implements listApps operation.
 	//
 	// Every container the Docker Engine reports, managed and unmanaged alike (doc 04 §2) — Compose
@@ -850,6 +870,19 @@ type Handler interface {
 	//
 	// POST /apps/{id}/restart
 	RestartApp(ctx context.Context, params RestartAppParams) (*App, error)
+	// RestoreAppdata implements restoreAppdata operation.
+	//
+	// Queues an `appdata_restore` job (service class). The archive is fetched, decrypted and verified
+	// before anything is changed. Then the container is stopped if it is running, a snapshot of its
+	// current appdata is written to the enabled backup destinations, and only when that snapshot is
+	// written is the appdata replaced by the archive's content; if the snapshot cannot be written the live
+	// appdata is not touched. The container is started again afterwards. Requires `confirm: true`: the
+	// restore overwrites the container's appdata (400 `confirmation_required` otherwise). 404
+	// `archive_not_found` for an archive the named destination does not hold, and 409 `array_stopped`
+	// while the array is stopped or its storage is not ready.
+	//
+	// POST /appdata/backup/restore
+	RestoreAppdata(ctx context.Context, req *RestoreAppdataRequest) (*Job, error)
 	// ResumeJob implements resumeJob operation.
 	//
 	// Only resumable job types (mover, rebalance, evacuation, share relocation, data- and parity-disk
@@ -910,6 +943,14 @@ type Handler interface {
 	//
 	// POST /notifications/channels/{channelId}/test
 	SendTestNotification(ctx context.Context, params SendTestNotificationParams) (*NotificationTestResult, error)
+	// SetAppdataBackupContainer implements setAppdataBackupContainer operation.
+	//
+	// Replaces the container's policy. Opting a known database image out of being stopped is allowed, and
+	// the response carries `warning` saying why that is a bad idea. 404 `container_not_found` for a name
+	// with no appdata directory in scope.
+	//
+	// PUT /appdata/backup/containers/{name}
+	SetAppdataBackupContainer(ctx context.Context, req *SetAppdataBackupContainerRequest, params SetAppdataBackupContainerParams) (*AppdataBackupContainer, error)
 	// SetUserGroupMembers implements setUserGroupMembers operation.
 	//
 	// A full replace of the group's member list.
@@ -936,6 +977,20 @@ type Handler interface {
 	//
 	// POST /apps/{id}/start
 	StartApp(ctx context.Context, params StartAppParams) (*App, error)
+	// StartAppdataBackup implements startAppdataBackup operation.
+	//
+	// Queues an `appdata_backup` job (service class): every container that is running and set to be
+	// stopped is stopped, each included container's appdata directories are archived, one archive per
+	// container, on the same device as the appdata location, the stopped containers are started again in
+	// reverse order, and only then are the archives verified and written to the enabled backup
+	// destinations (never the boot device's default destination, which is too small for appdata).
+	// `containers` limits the run to the named containers; omit it for every included one. Refused with
+	// 409 `array_stopped` while the array is stopped or its storage is not ready — with the cache disk
+	// unmounted the appdata directories are empty — and 404 `container_not_found` for a name that is not
+	// in scope. A run that fails publishes an `appdata_backup_failed` notification.
+	//
+	// POST /appdata/backup
+	StartAppdataBackup(ctx context.Context, req OptStartAppdataBackupRequest) (*Job, error)
 	// StartArray implements startArray operation.
 	//
 	// Reverses `stopArray` (Q70, doc 02 §4, `hoserva array start`): mount disks, the catch-all and share

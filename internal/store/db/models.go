@@ -28,6 +28,13 @@ type ApiToken struct {
 	CreatedAt string `json:"created_at"`
 }
 
+type AppdataBackupContainer struct {
+	Container string `json:"container"`
+	Stop      int64  `json:"stop"`
+	Included  int64  `json:"included"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 type ArrayDisk struct {
 	ID           int64          `json:"id"`
 	Role         string         `json:"role"`
@@ -238,11 +245,12 @@ type ScheduleChain struct {
 }
 
 type ScheduleJob struct {
-	JobID     string `json:"job_id"`
-	Enabled   int64  `json:"enabled"`
-	Frequency string `json:"frequency"`
-	StartTime string `json:"start_time"`
-	UpdatedAt string `json:"updated_at"`
+	JobID     string         `json:"job_id"`
+	Enabled   int64          `json:"enabled"`
+	Frequency string         `json:"frequency"`
+	StartTime string         `json:"start_time"`
+	UpdatedAt string         `json:"updated_at"`
+	LastRunAt sql.NullString `json:"last_run_at"`
 }
 
 type SchemaInfo struct {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -2447,4 +2448,210 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+
+	// --- Appdata backup (#61): the scope, the refusals and the job
+	// submission; what a job then does is production's own tests. ---
+	{
+		op:   "GetAppdataBackup",
+		name: "valid_lists_the_containers_in_scope",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.GetAppdataBackup(ctx)
+			return err
+		},
+	},
+	{
+		op:   "SetAppdataBackupContainer",
+		name: "valid_opting_a_database_out_of_being_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.SetAppdataBackupContainer(ctx, &apiv1.SetAppdataBackupContainerRequest{Stop: false, Included: true},
+				apiv1.SetAppdataBackupContainerParams{Name: "postgres"})
+			return err
+		},
+	},
+	{
+		op:   "SetAppdataBackupContainer",
+		name: "container_with_no_appdata_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.SetAppdataBackupContainer(ctx, &apiv1.SetAppdataBackupContainerRequest{Stop: true, Included: true},
+				apiv1.SetAppdataBackupContainerParams{Name: "portainer"})
+			return err
+		},
+	},
+	{
+		op:   "SetAppdataBackupContainer",
+		name: "unknown_container_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.SetAppdataBackupContainer(ctx, &apiv1.SetAppdataBackupContainerRequest{Stop: true, Included: true},
+				apiv1.SetAppdataBackupContainerParams{Name: "no-such-container"})
+			return err
+		},
+	},
+	{
+		op:   "StartAppdataBackup",
+		name: "valid_every_included_container",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartAppdataBackup(ctx, apiv1.OptStartAppdataBackupRequest{})
+			return err
+		},
+	},
+	{
+		op:   "StartAppdataBackup",
+		name: "valid_named_containers",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartAppdataBackup(ctx, apiv1.NewOptStartAppdataBackupRequest(apiv1.StartAppdataBackupRequest{Containers: []string{"jellyfin"}}))
+			return err
+		},
+	},
+	{
+		op:   "StartAppdataBackup",
+		name: "container_with_no_appdata_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartAppdataBackup(ctx, apiv1.NewOptStartAppdataBackupRequest(apiv1.StartAppdataBackupRequest{Containers: []string{"portainer"}}))
+			return err
+		},
+	},
+	{
+		op:   "StartAppdataBackup",
+		name: "refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.StartAppdataBackup(ctx, apiv1.OptStartAppdataBackupRequest{})
+			return err
+		},
+	},
+	{
+		op:       "StartAppdataBackup",
+		name:     "refused_while_storage_is_not_ready",
+		scenario: "degraded",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.StartAppdataBackup(ctx, apiv1.OptStartAppdataBackupRequest{})
+			return err
+		},
+	},
+	{
+		op:   "ListAppdataArchives",
+		name: "valid_lists_the_archives_of_a_container",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListAppdataArchives(ctx, apiv1.ListAppdataArchivesParams{Container: apiv1.NewOptString("jellyfin")})
+			return err
+		},
+	},
+	{
+		// The production side writes its archive by running a backup
+		// first; the mock reports fixed ones.
+		op:   "RestoreAppdata",
+		name: "valid_restore_of_an_archive_on_a_destination",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			a, err := contractOrdinaryArchive(ctx, h, true)
+			if err != nil {
+				return err
+			}
+			_, err = h.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{Container: "jellyfin", Archive: a.Name, DestinationId: a.DestinationId, Confirm: true})
+			return err
+		},
+	},
+	{
+		op:   "RestoreAppdata",
+		name: "confirm_is_required",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{Container: "jellyfin", Archive: "x.tar.zst", DestinationId: "pool"})
+			return err
+		},
+	},
+	{
+		op:   "RestoreAppdata",
+		name: "refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{Container: "jellyfin", Archive: "x.tar.zst", DestinationId: "pool", Confirm: true})
+			return err
+		},
+	},
+	{
+		op:   "RestoreAppdata",
+		name: "an_archive_name_that_is_not_one_is_invalid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{Container: "jellyfin", Archive: "../../etc/passwd", DestinationId: "pool", Confirm: true})
+			return err
+		},
+	},
+	{
+		op:   "RestoreAppdata",
+		name: "another_installations_archive_is_invalid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{
+				Container: "jellyfin", Archive: "hoserva-appdata-ffffffffffff-jellyfin-2026-09-01T04-00-00.tar.zst", DestinationId: "pool", Confirm: true,
+			})
+			return err
+		},
+	},
+	{
+		op:   "RestoreAppdata",
+		name: "an_archive_of_another_container_is_invalid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			a, err := contractOrdinaryArchive(ctx, h, true)
+			if err != nil {
+				return err
+			}
+			_, err = h.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{Container: "postgres", Archive: a.Name, DestinationId: a.DestinationId, Confirm: true})
+			return err
+		},
+	},
+	{
+		op:   "RestoreAppdata",
+		name: "unknown_destination_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			a, err := contractOrdinaryArchive(ctx, h, true)
+			if err != nil {
+				return err
+			}
+			_, err = h.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{Container: "jellyfin", Archive: a.Name, DestinationId: "nope", Confirm: true})
+			return err
+		},
+	},
+	{
+		op:   "RestoreAppdata",
+		name: "an_archive_the_destination_does_not_hold_is_not_found",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			a, err := contractOrdinaryArchive(ctx, h, true)
+			if err != nil {
+				return err
+			}
+			missing := strings.Replace(a.Name, ".tar.zst", "-9.tar.zst", 1)
+			_, err = h.RestoreAppdata(ctx, &apiv1.RestoreAppdataRequest{Container: "jellyfin", Archive: missing, DestinationId: a.DestinationId, Confirm: true})
+			return err
+		},
+	},
+}
+
+// contractOrdinaryArchive returns an ordinary (not pre-restore) archive of
+// jellyfin. With backup true it first starts a backup and waits for its
+// archive to appear: production's destination starts empty, the mock's
+// already lists fixed ones.
+func contractOrdinaryArchive(ctx context.Context, h apiv1.Handler, backup bool) (apiv1.AppdataArchive, error) {
+	if backup {
+		if _, err := h.StartAppdataBackup(ctx, apiv1.NewOptStartAppdataBackupRequest(apiv1.StartAppdataBackupRequest{Containers: []string{"jellyfin"}})); err != nil {
+			return apiv1.AppdataArchive{}, err
+		}
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		list, err := h.ListAppdataArchives(ctx, apiv1.ListAppdataArchivesParams{Container: apiv1.NewOptString("jellyfin")})
+		if err != nil {
+			return apiv1.AppdataArchive{}, err
+		}
+		for _, a := range list.Archives {
+			if !a.Reason.IsSet() || a.Reason.IsNull() {
+				return a, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return apiv1.AppdataArchive{}, fmt.Errorf("no archive of jellyfin appeared")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }

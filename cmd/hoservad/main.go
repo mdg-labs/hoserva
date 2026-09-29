@@ -571,6 +571,8 @@ func run(cfg config) error {
 	handler.Shares = shareService
 	handler.MoverResults = moverResults
 	wireBackup(handler, backupService)
+	appdataService := newAppdataService(apps, backupService, api.NewAppdataPolicyStore(db), arrayStore, absStateDir)
+	wireAppdata(handler, registry, appdataService, notifyService)
 
 	registry.Register(job.TypeDiskFormat, false, job.RunDiskFormat(job.DiskFormatDeps{
 		Provider:   disks,
@@ -691,7 +693,7 @@ func run(cfg config) error {
 		Statter:  pool.StatfsSpaceStatter{},
 		Notifier: notifyService,
 	}, spaceAlertInterval)
-	go runScheduleLoop(ctx, &scheduleRunner{
+	schedRunner := &scheduleRunner{
 		Schedules:   scheduleService,
 		Scheduler:   scheduler,
 		Guard:       chainGuard,
@@ -700,7 +702,9 @@ func run(cfg config) error {
 		Notifier:    &scheduleNotifier{svc: notifyService},
 		ACME:        acmeService,
 		Jobs:        jobStore,
-	}, scheduleTickInterval)
+	}
+	wireAppdataSchedule(schedRunner, appdataService, scheduler, notifyService)
+	go runScheduleLoop(ctx, schedRunner, scheduleTickInterval)
 
 	errCh := make(chan error, 2)
 	go func() {

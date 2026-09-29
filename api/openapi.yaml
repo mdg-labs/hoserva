@@ -2811,6 +2811,166 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /appdata/backup:
+    get:
+      operationId: getAppdataBackup
+      summary: Appdata backup policy
+      description: >-
+        Every container with a bind-mounted directory inside the appdata
+        location (the cache disk's `appdata` directory), each with whether
+        the backup stops it while its directory is copied and whether it is
+        in the backup at all (doc 10 §2). A container the operator has not
+        configured is stopped and included. A known database image that is
+        not stopped carries `warning`: copying a database's files while it
+        runs can produce an archive that does not restore. 501
+        `not_configured` when this daemon has no Docker Engine client, and
+        503 when the Engine is not reachable.
+      tags: [backup]
+      x-hoserva-role: viewer
+      responses:
+        "200":
+          description: The containers in scope and their policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppdataBackupConfig'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: startAppdataBackup
+      summary: Start an appdata backup
+      description: >-
+        Queues an `appdata_backup` job (service class): every container that
+        is running and set to be stopped is stopped, each included
+        container's appdata directories are archived, one archive per
+        container, on the same device as the appdata location, the stopped
+        containers are started again in reverse order, and only then are the
+        archives verified and written to the enabled backup destinations
+        (never the boot device's default destination, which is too small for
+        appdata). `containers` limits the run to the named containers; omit
+        it for every included one. Refused with 409 `array_stopped` while the
+        array is stopped or its storage is not ready — with the cache disk
+        unmounted the appdata directories are empty — and 404
+        `container_not_found` for a name that is not in scope. A run that
+        fails publishes an `appdata_backup_failed` notification.
+      tags: [backup]
+      x-hoserva-role: admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAppdataBackupRequest'
+      responses:
+        "200":
+          description: The queued or running appdata backup job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /appdata/backup/containers/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 255
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+        description: The container's name.
+    put:
+      operationId: setAppdataBackupContainer
+      summary: Set a container's appdata backup policy
+      description: >-
+        Replaces the container's policy. Opting a known database image out
+        of being stopped is allowed, and the response carries `warning`
+        saying why that is a bad idea. 404 `container_not_found` for a name
+        with no appdata directory in scope.
+      tags: [backup]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetAppdataBackupContainerRequest'
+      responses:
+        "200":
+          description: The container with its new policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppdataBackupContainer'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /appdata/backup/archives:
+    get:
+      operationId: listAppdataArchives
+      summary: List appdata archives
+      description: >-
+        The appdata archives this installation wrote to each enabled backup
+        destination, newest first, optionally for one container. It lists the
+        destinations when asked — a remote destination is reached through
+        rclone — and a destination that could not be listed is reported in
+        `unavailable` instead of being read as having no archives.
+      tags: [backup]
+      x-hoserva-role: admin
+      parameters:
+        - name: container
+          in: query
+          schema:
+            type: string
+            maxLength: 255
+      responses:
+        "200":
+          description: The archives found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAppdataArchivesOK'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /appdata/backup/restore:
+    post:
+      operationId: restoreAppdata
+      summary: Restore one container's appdata
+      description: >-
+        Queues an `appdata_restore` job (service class). The archive is
+        fetched, decrypted and verified before anything is changed. Then the
+        container is stopped if it is running, a snapshot of its current
+        appdata is written to the enabled backup destinations, and only when
+        that snapshot is written is the appdata replaced by the archive's
+        content; if the snapshot cannot be written the live appdata is not
+        touched. The container is started again afterwards. Requires
+        `confirm: true`: the restore overwrites the container's appdata
+        (400 `confirmation_required` otherwise). 404 `archive_not_found` for
+        an archive the named destination does not hold, and 409
+        `array_stopped` while the array is stopped or its storage is not
+        ready.
+      tags: [backup]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreAppdataRequest'
+      responses:
+        "200":
+          description: The queued or running appdata restore job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+
   /doctor:
     get:
       operationId: runDoctor
@@ -3885,6 +4045,7 @@ components:
         - pool_remount
         # Service
         - appdata_backup
+        - appdata_restore
         - container_update
         - container_recreate
         - acme_issue
@@ -7015,3 +7176,136 @@ components:
             - string
             - "null"
           description: Why the test failed, present only when success is false.
+
+    AppdataBackupContainer:
+      type: object
+      required: [name, image, running, stop, included, databaseImage]
+      properties:
+        name:
+          type: string
+        image:
+          type: string
+          description: The container's image repository, without its tag.
+        running:
+          type: boolean
+        stop:
+          type: boolean
+          description: >-
+            Whether the backup stops the container while its appdata is
+            copied. Only a running container is stopped.
+        included:
+          type: boolean
+        databaseImage:
+          type: boolean
+          description: >-
+            Whether the image is a known database (Postgres, MariaDB, MySQL,
+            MongoDB, Redis and similar).
+        warning:
+          type:
+            - string
+            - "null"
+          description: >-
+            Present when a known database image is included but not stopped.
+
+    AppdataBackupConfig:
+      type: object
+      required: [containers]
+      properties:
+        containers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppdataBackupContainer'
+
+    SetAppdataBackupContainerRequest:
+      type: object
+      required: [stop, included]
+      properties:
+        stop:
+          type: boolean
+        included:
+          type: boolean
+
+    StartAppdataBackupRequest:
+      type: object
+      properties:
+        containers:
+          type: array
+          maxItems: 1000
+          items:
+            type: string
+            minLength: 1
+            maxLength: 255
+          description: Limits the run to these containers; omit for every included one.
+
+    AppdataArchive:
+      type: object
+      required: [name, container, destinationId, destinationName, createdAt, size, encrypted]
+      properties:
+        name:
+          type: string
+          description: The archive's file name on the destination.
+        container:
+          type: string
+        destinationId:
+          type: string
+        destinationName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+          description: The archive's modification time on the destination.
+        size:
+          type: integer
+          format: int64
+        encrypted:
+          type: boolean
+        reason:
+          type:
+            - string
+            - "null"
+          description: >-
+            `pre-restore` for the snapshot a restore took of the appdata it
+            replaced; absent for an ordinary backup.
+
+    ListAppdataArchivesOK:
+      type: object
+      required: [archives, unavailable]
+      properties:
+        archives:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppdataArchive'
+        unavailable:
+          type: array
+          description: Destinations that could not be listed, and why.
+          items:
+            type: object
+            required: [destinationId, message]
+            properties:
+              destinationId:
+                type: string
+              message:
+                type: string
+
+    RestoreAppdataRequest:
+      type: object
+      required: [container, archive, destinationId, confirm]
+      properties:
+        container:
+          type: string
+          minLength: 1
+          maxLength: 255
+        archive:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: An archive name from listAppdataArchives.
+        destinationId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        confirm:
+          type: boolean
+          description: >-
+            Must be true, because the restore overwrites the container's
+            appdata.

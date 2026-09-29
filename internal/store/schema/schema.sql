@@ -439,12 +439,16 @@ CREATE TABLE schedule_chain (
     updated_at TEXT NOT NULL
 ) STRICT;
 
+-- last_run_at is the RFC3339 UTC instant the daemon claimed a separately
+-- scheduled job's most recent window, before it ran; NULL means never.
+-- Settings upserts leave it untouched.
 CREATE TABLE schedule_jobs (
     job_id TEXT PRIMARY KEY CHECK (job_id IN ('smart_self_test', 'appdata_backup', 'restore_drill', 'container_update_check')),
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
     frequency TEXT NOT NULL CHECK (frequency IN ('daily', 'weekly', 'monthly')),
     start_time TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    last_run_at TEXT
 ) STRICT;
 
 -- Q76 host-config onboarding: one row per detected category the user
@@ -718,4 +722,16 @@ CREATE TABLE backup_destinations (
     last_successful_backup_at TEXT,
     stale_alerted_at TEXT,
     created_at TEXT NOT NULL
+) STRICT;
+
+-- Appdata backup policy (#61, doc 10 §2): one row per container whose
+-- policy differs from the default (stopped for the backup, included in it).
+-- A container with no row uses the defaults. container is the Engine name,
+-- which survives a recreate; the row is not tied to a container that still
+-- exists.
+CREATE TABLE appdata_backup_containers (
+    container TEXT PRIMARY KEY,
+    stop INTEGER NOT NULL CHECK (stop IN (0, 1)),
+    included INTEGER NOT NULL CHECK (included IN (0, 1)),
+    updated_at TEXT NOT NULL
 ) STRICT;

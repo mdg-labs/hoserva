@@ -29,6 +29,9 @@ type ScheduleJobRow struct {
 	Frequency string
 	StartTime string
 	UpdatedAt string
+	// LastRunAt is when the daemon last claimed one of the job's windows,
+	// empty if it never has. UpsertJob leaves it alone.
+	LastRunAt string
 }
 
 // ScheduleStore reads and writes schedule_chain and schedule_jobs.
@@ -93,9 +96,26 @@ func (s *ScheduleStore) ListJobs(ctx context.Context) ([]ScheduleJobRow, error) 
 			Frequency: row.Frequency,
 			StartTime: row.StartTime,
 			UpdatedAt: row.UpdatedAt,
+			LastRunAt: row.LastRunAt.String,
 		}
 	}
 	return out, nil
+}
+
+// ClaimJobRun records at as the job's last claimed window, but only while
+// its last-run time is still previous (empty for never), so a claim
+// another caller made in between is never overwritten. It reports whether
+// this call made the claim.
+func (s *ScheduleStore) ClaimJobRun(ctx context.Context, jobID, previous, at string) (bool, error) {
+	n, err := s.q.ClaimScheduleJobRun(ctx, storedb.ClaimScheduleJobRunParams{
+		LastRunAt:   sql.NullString{String: at, Valid: true},
+		JobID:       jobID,
+		LastRunAt_2: sql.NullString{String: previous, Valid: previous != ""},
+	})
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
 
 // UpsertJob persists one separately scheduled job row.
@@ -182,7 +202,7 @@ func defaultChainRow(now string) ScheduleChainRow {
 func defaultOtherJobRows(now string) []ScheduleJobRow {
 	return []ScheduleJobRow{
 		{JobID: "smart_self_test", Enabled: true, Frequency: "weekly", StartTime: "03:00", UpdatedAt: now},
-		{JobID: "appdata_backup", Enabled: false, Frequency: "daily", StartTime: "04:00", UpdatedAt: now},
+		{JobID: "appdata_backup", Enabled: true, Frequency: "weekly", StartTime: "04:00", UpdatedAt: now},
 		{JobID: "restore_drill", Enabled: false, Frequency: "monthly", StartTime: "05:00", UpdatedAt: now},
 		{JobID: "container_update_check", Enabled: true, Frequency: "daily", StartTime: "06:00", UpdatedAt: now},
 	}

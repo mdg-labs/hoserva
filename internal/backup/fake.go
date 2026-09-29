@@ -163,7 +163,7 @@ func (f *FakeDestinationStore) MarkStaleAlerted(ctx context.Context, id string, 
 
 // FakeRclone is a scriptable RcloneRunner backed by an in-memory remote
 // filesystem, for tests (CLAUDE.md). It understands exactly the rclone
-// subcommands the package runs — version, obscure, copy, lsjson, cat,
+// subcommands the package runs — version, obscure, copy, copyto, lsjson, cat,
 // deletefile — and records every call.
 type FakeRclone struct {
 	mu sync.Mutex
@@ -262,6 +262,16 @@ func (f *FakeRclone) Run(ctx context.Context, c RcloneCommand) ([]byte, error) {
 		}
 		f.files[key], f.mtime[key], f.dirs[dir] = data, now, true
 		return nil, nil
+	case "copyto":
+		src, dst := args[len(args)-2], args[len(args)-1]
+		data, ok := f.files[src]
+		if !ok {
+			return nil, &RcloneExitError{Code: 4, Output: "object not found"}
+		}
+		if err := os.WriteFile(dst, data, 0o600); err != nil {
+			return nil, &RcloneExitError{Code: 1, Output: err.Error()}
+		}
+		return nil, nil
 	case "lsjson":
 		dir := args[len(args)-1]
 		if !f.dirs[dir] {
@@ -296,4 +306,34 @@ func (f *FakeRclone) Run(ctx context.Context, c RcloneCommand) ([]byte, error) {
 		return nil, nil
 	}
 	return nil, &RcloneExitError{Code: 1, Output: "unsupported subcommand " + args[0]}
+}
+
+// FakeAppdataPolicyStore is an in-memory AppdataPolicyStore for tests
+// (CLAUDE.md).
+type FakeAppdataPolicyStore struct {
+	mu       sync.Mutex
+	policies map[string]AppdataPolicy
+}
+
+var _ AppdataPolicyStore = (*FakeAppdataPolicyStore)(nil)
+
+func (f *FakeAppdataPolicyStore) ListAppdataPolicies(ctx context.Context) ([]AppdataPolicy, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]AppdataPolicy, 0, len(f.policies))
+	for _, p := range f.policies {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Container < out[j].Container })
+	return out, nil
+}
+
+func (f *FakeAppdataPolicyStore) SetAppdataPolicy(ctx context.Context, p AppdataPolicy, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.policies == nil {
+		f.policies = map[string]AppdataPolicy{}
+	}
+	f.policies[p.Container] = p
+	return nil
 }

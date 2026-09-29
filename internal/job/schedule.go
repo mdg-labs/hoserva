@@ -62,7 +62,7 @@ var defaultChainEnabled = map[Step]bool{
 
 var defaultOtherJobs = []OtherJobSettings{
 	{ID: "smart_self_test", Enabled: true, Frequency: FrequencyWeekly, Time: "03:00"},
-	{ID: "appdata_backup", Enabled: false, Frequency: FrequencyDaily, Time: "04:00"},
+	{ID: "appdata_backup", Enabled: true, Frequency: FrequencyWeekly, Time: "04:00"},
 	{ID: "restore_drill", Enabled: false, Frequency: FrequencyMonthly, Time: "05:00"},
 	{ID: "container_update_check", Enabled: true, Frequency: FrequencyDaily, Time: "06:00"},
 }
@@ -236,6 +236,51 @@ func NextOtherJobRun(now time.Time, loc *time.Location, job OtherJobSettings) ti
 		}
 		return candidate.AddDate(0, 0, 1).UTC()
 	}
+}
+
+// PrevOtherJobRun returns the most recent instant at or before now at which
+// a separately scheduled job's window opened, on the same weekday and day
+// of month NextOtherJobRun uses.
+func PrevOtherJobRun(now time.Time, loc *time.Location, job OtherJobSettings) time.Time {
+	hour, minute, err := ParseClock(job.Time)
+	if err != nil {
+		hour, minute, _ = ParseClock("00:00")
+	}
+	localNow := now.In(loc)
+	year, month, day := localNow.Date()
+	candidate := time.Date(year, month, day, hour, minute, 0, 0, loc)
+
+	switch job.Frequency {
+	case FrequencyWeekly:
+		days := (int(candidate.Weekday()) - int(time.Sunday) + 7) % 7
+		candidate = candidate.AddDate(0, 0, -days)
+		if candidate.After(localNow) {
+			candidate = candidate.AddDate(0, 0, -7)
+		}
+	case FrequencyMonthly:
+		candidate = time.Date(year, month, 1, hour, minute, 0, 0, loc)
+		if candidate.After(localNow) {
+			candidate = candidate.AddDate(0, -1, 0)
+		}
+	default:
+		if candidate.After(localNow) {
+			candidate = candidate.AddDate(0, 0, -1)
+		}
+	}
+	return candidate.UTC()
+}
+
+// OtherJobIsDue reports whether a window of a separately scheduled job has
+// opened since since — the later of when it last ran and when its schedule
+// was last saved, so enabling a weekly job on a Tuesday waits for Sunday
+// instead of running at once. A window missed while the daemon was down is
+// still due once it is back, but only once: it is one run, not one per
+// missed window.
+func OtherJobIsDue(now time.Time, loc *time.Location, job OtherJobSettings, since time.Time) bool {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return job.Enabled && PrevOtherJobRun(now, loc, job).After(since)
 }
 
 // ChainWindows builds ScheduledWindows for the maintenance chain's

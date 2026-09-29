@@ -1707,6 +1707,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/appdata/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Appdata backup policy
+         * @description Every container with a bind-mounted directory inside the appdata location (the cache disk's `appdata` directory), each with whether the backup stops it while its directory is copied and whether it is in the backup at all (doc 10 §2). A container the operator has not configured is stopped and included. A known database image that is not stopped carries `warning`: copying a database's files while it runs can produce an archive that does not restore. 501 `not_configured` when this daemon has no Docker Engine client, and 503 when the Engine is not reachable.
+         */
+        get: operations["getAppdataBackup"];
+        put?: never;
+        /**
+         * Start an appdata backup
+         * @description Queues an `appdata_backup` job (service class): every container that is running and set to be stopped is stopped, each included container's appdata directories are archived, one archive per container, on the same device as the appdata location, the stopped containers are started again in reverse order, and only then are the archives verified and written to the enabled backup destinations (never the boot device's default destination, which is too small for appdata). `containers` limits the run to the named containers; omit it for every included one. Refused with 409 `array_stopped` while the array is stopped or its storage is not ready — with the cache disk unmounted the appdata directories are empty — and 404 `container_not_found` for a name that is not in scope. A run that fails publishes an `appdata_backup_failed` notification.
+         */
+        post: operations["startAppdataBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/appdata/backup/containers/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a container's appdata backup policy
+         * @description Replaces the container's policy. Opting a known database image out of being stopped is allowed, and the response carries `warning` saying why that is a bad idea. 404 `container_not_found` for a name with no appdata directory in scope.
+         */
+        put: operations["setAppdataBackupContainer"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/appdata/backup/archives": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List appdata archives
+         * @description The appdata archives this installation wrote to each enabled backup destination, newest first, optionally for one container. It lists the destinations when asked — a remote destination is reached through rclone — and a destination that could not be listed is reported in `unavailable` instead of being read as having no archives.
+         */
+        get: operations["listAppdataArchives"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/appdata/backup/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore one container's appdata
+         * @description Queues an `appdata_restore` job (service class). The archive is fetched, decrypted and verified before anything is changed. Then the container is stopped if it is running, a snapshot of its current appdata is written to the enabled backup destinations, and only when that snapshot is written is the appdata replaced by the archive's content; if the snapshot cannot be written the live appdata is not touched. The container is started again afterwards. Requires `confirm: true`: the restore overwrites the container's appdata (400 `confirmation_required` otherwise). 404 `archive_not_found` for an archive the named destination does not hold, and 409 `array_stopped` while the array is stopped or its storage is not ready.
+         */
+        post: operations["restoreAppdata"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/doctor": {
         parameters: {
             query?: never;
@@ -2348,7 +2435,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -3854,6 +3941,63 @@ export interface components {
             success: boolean;
             /** @description Why the test failed, present only when success is false. */
             error?: string | null;
+        };
+        AppdataBackupContainer: {
+            name: string;
+            /** @description The container's image repository, without its tag. */
+            image: string;
+            running: boolean;
+            /** @description Whether the backup stops the container while its appdata is copied. Only a running container is stopped. */
+            stop: boolean;
+            included: boolean;
+            /** @description Whether the image is a known database (Postgres, MariaDB, MySQL, MongoDB, Redis and similar). */
+            databaseImage: boolean;
+            /** @description Present when a known database image is included but not stopped. */
+            warning?: string | null;
+        };
+        AppdataBackupConfig: {
+            containers: components["schemas"]["AppdataBackupContainer"][];
+        };
+        SetAppdataBackupContainerRequest: {
+            stop: boolean;
+            included: boolean;
+        };
+        StartAppdataBackupRequest: {
+            /** @description Limits the run to these containers; omit for every included one. */
+            containers?: string[];
+        };
+        AppdataArchive: {
+            /** @description The archive's file name on the destination. */
+            name: string;
+            container: string;
+            destinationId: string;
+            destinationName: string;
+            /**
+             * Format: date-time
+             * @description The archive's modification time on the destination.
+             */
+            createdAt: string;
+            /** Format: int64 */
+            size: number;
+            encrypted: boolean;
+            /** @description `pre-restore` for the snapshot a restore took of the appdata it replaced; absent for an ordinary backup. */
+            reason?: string | null;
+        };
+        ListAppdataArchivesOK: {
+            archives: components["schemas"]["AppdataArchive"][];
+            /** @description Destinations that could not be listed, and why. */
+            unavailable: {
+                destinationId: string;
+                message: string;
+            }[];
+        };
+        RestoreAppdataRequest: {
+            container: string;
+            /** @description An archive name from listAppdataArchives. */
+            archive: string;
+            destinationId: string;
+            /** @description Must be true, because the restore overwrites the container's appdata. */
+            confirm: boolean;
         };
     };
     responses: {
@@ -6167,6 +6311,128 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BackupDestinationTestResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getAppdataBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The containers in scope and their policy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppdataBackupConfig"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startAppdataBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StartAppdataBackupRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued or running appdata backup job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setAppdataBackupContainer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The container's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetAppdataBackupContainerRequest"];
+            };
+        };
+        responses: {
+            /** @description The container with its new policy. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppdataBackupContainer"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listAppdataArchives: {
+        parameters: {
+            query?: {
+                container?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The archives found. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAppdataArchivesOK"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    restoreAppdata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreAppdataRequest"];
+            };
+        };
+        responses: {
+            /** @description The queued or running appdata restore job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
             default: components["responses"]["Error"];

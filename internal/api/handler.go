@@ -98,6 +98,10 @@ type Handler struct {
 	// Backup is the config archive builder for export/import — nil returns
 	// 501 from those operations.
 	Backup *backup.Service
+	// Appdata is doc 10 §2's per-container appdata backup and restore,
+	// built over Backup's destinations and the Docker Engine. Nil returns
+	// 501 from those operations.
+	Appdata *backup.AppdataService
 	// Settings is #178's hostname/timezone/backup-passphrase business
 	// logic — nil returns an internal error from those operations.
 	Settings *SettingsService

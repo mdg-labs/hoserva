@@ -42,12 +42,12 @@ ON CONFLICT (id) DO UPDATE SET
 UPDATE schedule_chain SET last_run_at = ? WHERE id = 1;
 
 -- name: ListScheduleJobs :many
-SELECT job_id, enabled, frequency, start_time, updated_at
+SELECT job_id, enabled, frequency, start_time, updated_at, last_run_at
 FROM schedule_jobs
 ORDER BY job_id ASC;
 
 -- name: GetScheduleJob :one
-SELECT job_id, enabled, frequency, start_time, updated_at
+SELECT job_id, enabled, frequency, start_time, updated_at, last_run_at
 FROM schedule_jobs
 WHERE job_id = ?;
 
@@ -59,3 +59,8 @@ ON CONFLICT (job_id) DO UPDATE SET
     frequency = excluded.frequency,
     start_time = excluded.start_time,
     updated_at = excluded.updated_at;
+
+-- name: ClaimScheduleJobRun :execrows
+UPDATE schedule_jobs SET last_run_at = ?1
+WHERE job_id = ?2
+  AND last_run_at IS ?3;

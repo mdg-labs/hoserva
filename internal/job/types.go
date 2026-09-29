@@ -32,6 +32,7 @@ const (
 	TypeDiskUpgradeParity Type = "disk_upgrade_parity"
 	TypePoolRemount       Type = "pool_remount"
 	TypeAppdataBackup     Type = "appdata_backup"
+	TypeAppdataRestore    Type = "appdata_restore"
 	TypeContainerUpdate   Type = "container_update"
 	TypeContainerRecreate Type = "container_recreate"
 	TypeACMEIssue         Type = "acme_issue"
@@ -109,6 +110,7 @@ var classOf = map[Type]Class{
 	TypePoolRemount:       ClassTopology,
 
 	TypeAppdataBackup:     ClassService,
+	TypeAppdataRestore:    ClassService,
 	TypeContainerUpdate:   ClassService,
 	TypeContainerRecreate: ClassService,
 	TypeACMEIssue:         ClassService,

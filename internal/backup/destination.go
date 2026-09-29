@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -164,12 +165,84 @@ func writeArchive(dest Destination, archivePath string) error {
 type archiveTarget interface {
 	write(ctx context.Context, srcPath string) error
 	list(ctx context.Context) ([]archiveEntry, error)
+	// files lists every regular file in the destination's directory,
+	// whatever its name.
+	files(ctx context.Context) ([]targetFile, error)
+	// fetch copies the named file to dstPath, which must not exist.
+	fetch(ctx context.Context, name, dstPath string) error
 	remove(ctx context.Context, name string) error
 	readBack(ctx context.Context, name string) ([]byte, error)
 }
 
+// targetFile is one file in a destination's directory.
+type targetFile struct {
+	name    string
+	size    int64
+	modTime time.Time
+}
+
 type localTarget struct {
 	dest Destination
+}
+
+func (t localTarget) files(_ context.Context) ([]targetFile, error) {
+	entries, err := os.ReadDir(t.dest.Path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("listing destination %q: %w", t.dest.Path, err)
+	}
+	var out []targetFile
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, targetFile{name: e.Name(), size: info.Size(), modTime: info.ModTime()})
+	}
+	return out, nil
+}
+
+func (t localTarget) fetch(ctx context.Context, name, dstPath string) error {
+	if name != filepath.Base(name) || name == "." || name == ".." {
+		return fmt.Errorf("fetching %q: not a file name", name)
+	}
+	in, err := os.Open(filepath.Join(t.dest.Path, name))
+	if err != nil {
+		return fmt.Errorf("opening %q: %w", filepath.Join(t.dest.Path, name), err)
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.OpenFile(dstPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("creating %q: %w", dstPath, err)
+	}
+	if _, err := io.Copy(out, ctxReader{ctx: ctx, r: in}); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dstPath)
+		return fmt.Errorf("copying %q: %w", name, err)
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(dstPath)
+		return fmt.Errorf("copying %q: %w", name, err)
+	}
+	return nil
+}
+
+// ctxReader stops a copy of a large file when its context ends.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 func (t localTarget) write(_ context.Context, srcPath string) error {

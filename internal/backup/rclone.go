@@ -182,6 +182,33 @@ func (t *rcloneTarget) write(ctx context.Context, srcPath string) error {
 	return fmt.Errorf("verifying upload: %q is not on the destination after the copy", name)
 }
 
+func (t *rcloneTarget) files(ctx context.Context) ([]targetFile, error) {
+	listed, err := t.listFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []targetFile
+	for _, f := range listed {
+		if !f.IsDir {
+			out = append(out, targetFile{name: f.Name, size: f.Size, modTime: f.ModTime})
+		}
+	}
+	return out, nil
+}
+
+func (t *rcloneTarget) fetch(ctx context.Context, name, dstPath string) error {
+	if name != filepath.Base(name) || name == "." || name == ".." {
+		return fmt.Errorf("fetching %q: not a file name", name)
+	}
+	if _, err := os.Lstat(dstPath); err == nil {
+		return fmt.Errorf("fetching %q: %q already exists", name, dstPath)
+	}
+	if _, err := t.run(ctx, rcloneCopyTimeout, "copyto", t.remoteFile(name), dstPath); err != nil {
+		return fmt.Errorf("downloading %q: %w", t.remoteFile(name), err)
+	}
+	return nil
+}
+
 func (t *rcloneTarget) list(ctx context.Context) ([]archiveEntry, error) {
 	files, err := t.listFiles(ctx)
 	if err != nil {

@@ -245,6 +245,11 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.CreateBackupDestinationOperation,
 		apiv1.DeleteBackupDestinationOperation,
 		apiv1.TestBackupDestinationOperation,
+		apiv1.GetAppdataBackupOperation,
+		apiv1.StartAppdataBackupOperation,
+		apiv1.SetAppdataBackupContainerOperation,
+		apiv1.ListAppdataArchivesOperation,
+		apiv1.RestoreAppdataOperation,
 	}
 	sort.Slice(generated, func(i, j int) bool { return generated[i] < generated[j] })
 
