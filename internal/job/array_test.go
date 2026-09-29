@@ -1286,10 +1286,22 @@ func TestArraySequence_Stop_AppActionDrainRespectsContextDeadline(t *testing.T) 
 		t.Fatalf("BeginAppAction: %v", err)
 	}
 	seq := ArraySequence{Scheduler: s, Services: []ArrayService{&fakeArrayService{name: "container", log: &log}}}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	if err := seq.Stop(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Stop = %v, want the context's deadline", err)
+	// Tripped only once maintenance is entered, so the deadline can expire
+	// inside the app-action drain and not in the maintenance write.
+	ctx := newTrippableDeadlineContext()
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- seq.Stop(ctx) }()
+	waitFor(t, 10*time.Second, s.InMaintenance)
+	ctx.trip()
+
+	var err error
+	select {
+	case err = <-stopDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop did not return after the context deadline expired while an app action was in flight")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "app start, restart and remove") {
+		t.Fatalf("Stop = %v, want the app-action drain's deadline", err)
 	}
 	if len(log) != 0 {
 		t.Fatalf("Stop touched services (%v) although an app action never finished", log)
