@@ -693,3 +693,29 @@ CREATE TABLE ups_config (
     runtime_seconds INTEGER NOT NULL CHECK (runtime_seconds >= 0),
     updated_at TEXT NOT NULL
 ) STRICT;
+
+-- Config-backup destinations (#60, D4, doc 10 §1): every place a backup is
+-- written, local or remote. Boot and pool are seeded on first start (Q40).
+-- options is a JSON object of non-secret rclone backend settings;
+-- secrets is the machine-key ciphertext (Q28) of a JSON object of the
+-- destination's credentials, empty for a local path — write-only on the
+-- API. last_successful_backup_at is the newest archive written to this
+-- destination and stale_alerted_at the moment a stale-destination alert
+-- was sent for the current staleness (cleared by the next success), both
+-- NULL until they happen.
+CREATE TABLE backup_destinations (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    type TEXT NOT NULL CHECK (type IN ('local', 'smb', 's3', 'sftp', 'webdav', 'rclone')),
+    path TEXT NOT NULL,
+    options TEXT NOT NULL,
+    secrets BLOB NOT NULL,
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    encrypt INTEGER NOT NULL CHECK (encrypt IN (0, 1)),
+    retention_daily INTEGER NOT NULL CHECK (retention_daily >= 0),
+    retention_weekly INTEGER NOT NULL CHECK (retention_weekly >= 0),
+    retention_monthly INTEGER NOT NULL CHECK (retention_monthly >= 0),
+    last_successful_backup_at TEXT,
+    stale_alerted_at TEXT,
+    created_at TEXT NOT NULL
+) STRICT;

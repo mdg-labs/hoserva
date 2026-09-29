@@ -186,6 +186,16 @@ type Invoker interface {
 	//
 	// POST /disks/array
 	CreateArray(ctx context.Context, request *CreateArrayRequest) (*Job, error)
+	// CreateBackupDestination invokes createBackupDestination operation.
+	//
+	// A remote destination (`smb`, `s3`, `sftp`, `webdav`, `rclone`) is written through rclone and is
+	// always encrypted (Q80). It is refused with 400 `backup_passphrase_required` while no backup
+	// passphrase is set, and with 424 `rclone_missing` — whose `message` carries the install command
+	// (Q41) — when rclone is not installed. Credentials in `secrets` are sealed under the machine key
+	// before they reach the database. Local destinations work without rclone.
+	//
+	// POST /backup/destinations
+	CreateBackupDestination(ctx context.Context, request *CreateBackupDestinationRequest) (*BackupDestination, error)
 	// CreateFirstAdmin invokes createFirstAdmin operation.
 	//
 	// Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
@@ -228,6 +238,12 @@ type Invoker interface {
 	//
 	// POST /user-groups
 	CreateUserGroup(ctx context.Context, request *CreateUserGroupRequest) (*UserGroup, error)
+	// DeleteBackupDestination invokes deleteBackupDestination operation.
+	//
+	// Removes the destination's configuration. Archives already written to it are left where they are.
+	//
+	// DELETE /backup/destinations/{destinationId}
+	DeleteBackupDestination(ctx context.Context, params DeleteBackupDestinationParams) error
 	// DeleteNotificationChannel invokes deleteNotificationChannel operation.
 	//
 	// Also removes every routing entry that named this channel.
@@ -575,6 +591,13 @@ type Invoker interface {
 	//
 	// GET /apps
 	ListApps(ctx context.Context) (*ListAppsOK, error)
+	// ListBackupDestinations invokes listBackupDestinations operation.
+	//
+	// Every place a config backup is written, with its last successful backup and whether it is stale (doc
+	// 10 §1). Credentials are never returned — `hasSecrets` is the only trace of them (Q28).
+	//
+	// GET /backup/destinations
+	ListBackupDestinations(ctx context.Context) (*ListBackupDestinationsOK, error)
 	// ListDisks invokes listDisks operation.
 	//
 	// Every block device Hoserva knows about (doc 02 §4).
@@ -808,7 +831,10 @@ type Invoker interface {
 	// directory another container mounts, or that lies inside a directory of appdata another container
 	// mounts, is never deleted — a request that would delete one is refused (`appdata_shared`, 409) and
 	// removes nothing. `deleteAppdata` with no appdata location is refused (`appdata_unavailable`, 409).
-	// Every refusal happens before the container is removed.
+	// `deleteAppdata` is refused with 409 `array_stopped` while the array is stopped (maintenance mode) or
+	// its storage is not ready, because the cache disk is not mounted and the appdata on it could not be
+	// deleted, and with 503 `array_state_unknown` if the array's state cannot be read. A remove that keeps
+	// appdata is allowed on a stopped array. Every refusal happens before the container is removed.
 	//
 	// DELETE /apps/{id}
 	RemoveApp(ctx context.Context, params RemoveAppParams) (*RemoveAppResult, error)
@@ -1017,6 +1043,14 @@ type Invoker interface {
 	//
 	// POST /array/stop
 	StopArray(ctx context.Context, request *StopArrayRequest) (*SystemStatus, error)
+	// TestBackupDestination invokes testBackupDestination operation.
+	//
+	// Writes a small file to the destination, reads it back and deletes it (doc 10 §1: an untested backup
+	// destination is decoration). A destination that cannot be reached is a `200` with `success` false and
+	// the reason; a missing rclone is a `424` `rclone_missing`.
+	//
+	// POST /backup/destinations/{destinationId}/test
+	TestBackupDestination(ctx context.Context, params TestBackupDestinationParams) (*BackupDestinationTestResult, error)
 	// UnlockUser invokes unlockUser operation.
 	//
 	// Clears the account's login rate-limiter lockout (doc 01 §7, Q78). Root-only over the Unix socket,
@@ -3120,6 +3154,138 @@ func (c *Client) sendCreateArray(ctx context.Context, request *CreateArrayReques
 	return result, nil
 }
 
+// CreateBackupDestination invokes createBackupDestination operation.
+//
+// A remote destination (`smb`, `s3`, `sftp`, `webdav`, `rclone`) is written through rclone and is
+// always encrypted (Q80). It is refused with 400 `backup_passphrase_required` while no backup
+// passphrase is set, and with 424 `rclone_missing` — whose `message` carries the install command
+// (Q41) — when rclone is not installed. Credentials in `secrets` are sealed under the machine key
+// before they reach the database. Local destinations work without rclone.
+//
+// POST /backup/destinations
+func (c *Client) CreateBackupDestination(ctx context.Context, request *CreateBackupDestinationRequest) (*BackupDestination, error) {
+	res, err := c.sendCreateBackupDestination(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendCreateBackupDestination(ctx context.Context, request *CreateBackupDestinationRequest) (res *BackupDestination, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("createBackupDestination"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/backup/destinations"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, CreateBackupDestinationOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/backup/destinations"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeCreateBackupDestinationRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, CreateBackupDestinationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, CreateBackupDestinationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeCreateBackupDestinationResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // CreateFirstAdmin invokes createFirstAdmin operation.
 //
 // Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
@@ -3720,6 +3886,149 @@ func (c *Client) sendCreateUserGroup(ctx context.Context, request *CreateUserGro
 
 	stage = "DecodeResponse"
 	result, err := decodeCreateUserGroupResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// DeleteBackupDestination invokes deleteBackupDestination operation.
+//
+// Removes the destination's configuration. Archives already written to it are left where they are.
+//
+// DELETE /backup/destinations/{destinationId}
+func (c *Client) DeleteBackupDestination(ctx context.Context, params DeleteBackupDestinationParams) error {
+	_, err := c.sendDeleteBackupDestination(ctx, params)
+	return err
+}
+
+func (c *Client) sendDeleteBackupDestination(ctx context.Context, params DeleteBackupDestinationParams) (res *DeleteBackupDestinationNoContent, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("deleteBackupDestination"),
+		semconv.HTTPRequestMethodKey.String("DELETE"),
+		semconv.URLTemplateKey.String("/backup/destinations/{destinationId}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, DeleteBackupDestinationOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/backup/destinations/"
+	{
+		// Encode "destinationId" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "destinationId",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.DestinationId))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, DeleteBackupDestinationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, DeleteBackupDestinationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeDeleteBackupDestinationResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}
@@ -9525,6 +9834,132 @@ func (c *Client) sendListApps(ctx context.Context) (res *ListAppsOK, err error) 
 	return result, nil
 }
 
+// ListBackupDestinations invokes listBackupDestinations operation.
+//
+// Every place a config backup is written, with its last successful backup and whether it is stale (doc
+// 10 §1). Credentials are never returned — `hasSecrets` is the only trace of them (Q28).
+//
+// GET /backup/destinations
+func (c *Client) ListBackupDestinations(ctx context.Context) (*ListBackupDestinationsOK, error) {
+	res, err := c.sendListBackupDestinations(ctx)
+	return res, err
+}
+
+func (c *Client) sendListBackupDestinations(ctx context.Context) (res *ListBackupDestinationsOK, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("listBackupDestinations"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/backup/destinations"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ListBackupDestinationsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/backup/destinations"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, ListBackupDestinationsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, ListBackupDestinationsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeListBackupDestinationsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ListDisks invokes listDisks operation.
 //
 // Every block device Hoserva knows about (doc 02 §4).
@@ -12570,7 +13005,10 @@ func (c *Client) sendRegisterExternalDisk(ctx context.Context, request *Register
 // directory another container mounts, or that lies inside a directory of appdata another container
 // mounts, is never deleted — a request that would delete one is refused (`appdata_shared`, 409) and
 // removes nothing. `deleteAppdata` with no appdata location is refused (`appdata_unavailable`, 409).
-// Every refusal happens before the container is removed.
+// `deleteAppdata` is refused with 409 `array_stopped` while the array is stopped (maintenance mode) or
+// its storage is not ready, because the cache disk is not mounted and the appdata on it could not be
+// deleted, and with 503 `array_state_unknown` if the array's state cannot be read. A remove that keeps
+// appdata is allowed on a stopped array. Every refusal happens before the container is removed.
 //
 // DELETE /apps/{id}
 func (c *Client) RemoveApp(ctx context.Context, params RemoveAppParams) (*RemoveAppResult, error) {
@@ -15791,6 +16229,152 @@ func (c *Client) sendStopArray(ctx context.Context, request *StopArrayRequest) (
 
 	stage = "DecodeResponse"
 	result, err := decodeStopArrayResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// TestBackupDestination invokes testBackupDestination operation.
+//
+// Writes a small file to the destination, reads it back and deletes it (doc 10 §1: an untested backup
+// destination is decoration). A destination that cannot be reached is a `200` with `success` false and
+// the reason; a missing rclone is a `424` `rclone_missing`.
+//
+// POST /backup/destinations/{destinationId}/test
+func (c *Client) TestBackupDestination(ctx context.Context, params TestBackupDestinationParams) (*BackupDestinationTestResult, error) {
+	res, err := c.sendTestBackupDestination(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendTestBackupDestination(ctx context.Context, params TestBackupDestinationParams) (res *BackupDestinationTestResult, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("testBackupDestination"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/backup/destinations/{destinationId}/test"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, TestBackupDestinationOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/backup/destinations/"
+	{
+		// Encode "destinationId" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "destinationId",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.DestinationId))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/test"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, TestBackupDestinationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, TestBackupDestinationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeTestBackupDestinationResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

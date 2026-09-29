@@ -154,7 +154,8 @@ func (h *handler) setAppState(id string, state apiv1.AppState, status string) (*
 }
 
 // requireArrayRunning mirrors container.Lifecycle.RequireArrayRunning as
-// hoservad wires it: Start, Restart and Recreate are refused, before
+// hoservad wires it: Start, Restart, Recreate and RemoveApp with
+// deleteAppdata are refused, before
 // anything else is looked at, while the array is in maintenance mode or the
 // storage target has not been reached. In hoservad the storage target is
 // never reached with no array configured, and with a degraded array only
@@ -223,13 +224,20 @@ func (h *handler) RecreateApp(ctx context.Context, params apiv1.RecreateAppParam
 
 const mockAppdataRoot = "/mnt/cache/appdata/"
 
-// RemoveApp mirrors production: only a stopped container is removed, and
+// RemoveApp mirrors production: asking for appdata deletion is refused with
+// array_stopped, before anything else is looked at, while the array is not
+// running (a plain remove is not); only a stopped container is removed, and
 // appdata is deleted only when asked for — then only the mounts inside the
 // appdata location, which the mock reports without touching any disk. The
 // location is the cache disk's, as in hoservad (container.CacheAppdataRoots):
 // no scenario has a cache disk, so asking for appdata deletion is refused
 // with appdata_unavailable everywhere the mock has an array.
 func (h *handler) RemoveApp(ctx context.Context, params apiv1.RemoveAppParams) (*apiv1.RemoveAppResult, error) {
+	if params.DeleteAppdata.Or(false) {
+		if err := h.requireArrayRunning(); err != nil {
+			return nil, err
+		}
+	}
 	return h.removeApp(params, container.CacheAppdataRoots(mockArrayDisks(h.scenario)) != nil)
 }
 

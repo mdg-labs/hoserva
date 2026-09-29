@@ -335,6 +335,14 @@ func (s ArraySequence) stop(ctx context.Context, persist bool) error {
 		if err := s.Scheduler.DrainShareMutations(ctx); err != nil {
 			return err
 		}
+		// Likewise an /apps start, restart or remove with appdata that
+		// passed its array check before maintenance began: it must land
+		// before the container service lists what is running, not after,
+		// and a remove must finish deleting before the cache unmounts.
+		// This holds whatever dockerd's live-restore setting is.
+		if err := s.Scheduler.DrainAppActions(ctx); err != nil {
+			return err
+		}
 	}
 
 	if err := s.stopSequence(ctx, 0, persist); err != nil {

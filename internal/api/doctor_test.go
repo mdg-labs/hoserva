@@ -216,12 +216,48 @@ func TestDockerEngineChecks_OldVersionWarns(t *testing.T) {
 // a recent Engine must not trip the same warning.
 func TestDockerEngineChecks_RecentVersionPasses(t *testing.T) {
 	f := container.NewFakeProvider()
-	f.SetVersion(container.EngineVersion{Version: "27.3.1", APIVersion: "1.47", MinAPIVersion: "1.24"})
+	f.SetVersion(container.EngineVersion{Version: "29.8.1", APIVersion: "1.56", MinAPIVersion: "1.24"})
 
 	report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) { return false, nil }, nil, f, nil)
 	check := findDoctorCheck(report, "docker")
 	if check.Status != apiv1.DoctorCheckStatusPass {
 		t.Fatalf("docker status = %q, want pass for a recent Engine; message=%q", check.Status, check.Message)
+	}
+}
+
+// TestDockerEngineChecks_FloorIsTheFirstReleaseWithoutTheEscapeAdvisories
+// pins the floor at 29.5.1, the first Engine release that fixes the four
+// container-escape advisories: 28.5.2 (the last 28.x) and 29.5.0 warn,
+// 29.5.1 passes. It goes through runDoctorChecks, the function the
+// GET /api/v1/doctor handler serves.
+func TestDockerEngineChecks_FloorIsTheFirstReleaseWithoutTheEscapeAdvisories(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    apiv1.DoctorCheckStatus
+	}{
+		{"28.5.2", apiv1.DoctorCheckStatusWarn},
+		{"29.5.0", apiv1.DoctorCheckStatusWarn},
+		{"29.5.1", apiv1.DoctorCheckStatusPass},
+		{"29.8.1", apiv1.DoctorCheckStatusPass},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			f := container.NewFakeProvider()
+			f.SetVersion(container.EngineVersion{Version: tc.version, APIVersion: "1.54", MinAPIVersion: "1.24"})
+
+			report := runDoctorChecks(context.Background(), nil, nil, func(string) (bool, error) { return false, nil }, nil, f, nil)
+			check := findDoctorCheck(report, "docker")
+			if check.Status != tc.want {
+				t.Fatalf("docker status for Engine %s = %q, want %q; message=%q", tc.version, check.Status, tc.want, check.Message)
+			}
+			if tc.want == apiv1.DoctorCheckStatusWarn {
+				if !strings.Contains(check.Message, tc.version) || !strings.Contains(check.Message, "29.5.1") {
+					t.Fatalf("docker message = %q, want the installed version and the floor named", check.Message)
+				}
+				if !check.Remediation.Set {
+					t.Fatal("docker warning carries no upgrade remediation")
+				}
+			}
+		})
 	}
 }
 

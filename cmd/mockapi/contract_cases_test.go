@@ -511,6 +511,51 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// #428: deleting appdata is refused with 409 array_stopped while the
+	// array is stopped or its storage is not ready — before the container
+	// is looked up or removed — and a plain remove is still allowed.
+	{
+		op:   "RemoveApp",
+		name: "delete_appdata_refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "portainer", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "RemoveApp",
+		name: "delete_appdata_refused_before_the_container_is_looked_up",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "no-such-container", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:       "RemoveApp",
+		name:     "delete_appdata_refused_while_storage_is_not_ready",
+		scenario: "degraded",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "portainer", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "RemoveApp",
+		name: "allowed_without_appdata_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "portainer"})
+			return err
+		},
+	},
 	{
 		// Production refuses appdata deletion with appdata_unavailable/409
 		// when the array has no cache disk to hold appdata, and no mock
@@ -2285,6 +2330,121 @@ var contractCases = []contractCase{
 				Confirm: true,
 				Archive: ht.MultipartFile{File: bytes.NewReader([]byte("not a tar.zst archive"))},
 			})
+		},
+	},
+
+	// --- Backup destinations (#60): both sides run backup.PrepareDestination,
+	// so these pin the status and error code each returns for the same
+	// request, not the shared validation itself ---
+	{
+		op:   "ListBackupDestinations",
+		name: "valid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ListBackupDestinations(ctx)
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "valid_local",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "External disk", Type: apiv1.BackupDestinationTypeLocal, Path: "/mnt/disks/backup",
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "relative_path",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "Relative", Type: apiv1.BackupDestinationTypeLocal, Path: "backups",
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "system_path",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "System", Type: apiv1.BackupDestinationTypeLocal, Path: "/etc",
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "state_dir_path",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "State", Type: apiv1.BackupDestinationTypeLocal, Path: "/var/lib/hoserva/stacks",
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "duplicate_name",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "Boot device", Type: apiv1.BackupDestinationTypeLocal, Path: "/mnt/disks/other",
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "remote_without_passphrase",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "Bucket", Type: apiv1.BackupDestinationTypeS3, Path: "bucket/hoserva",
+				Options: apiv1.OptCreateBackupDestinationRequestOptions{Set: true, Value: apiv1.CreateBackupDestinationRequestOptions{"access_key_id": "AKIA"}},
+				Secrets: apiv1.OptCreateBackupDestinationRequestSecrets{Set: true, Value: apiv1.CreateBackupDestinationRequestSecrets{"secret_access_key": "s3cr3t"}},
+			})
+			return err
+		},
+	},
+	{
+		op:   "CreateBackupDestination",
+		name: "remote_unencrypted",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.CreateBackupDestination(ctx, &apiv1.CreateBackupDestinationRequest{
+				Name: "Bucket", Type: apiv1.BackupDestinationTypeS3, Path: "bucket/hoserva",
+				Encrypt: apiv1.NewOptBool(false),
+			})
+			return err
+		},
+	},
+	{
+		op:   "DeleteBackupDestination",
+		name: "valid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.DeleteBackupDestination(ctx, apiv1.DeleteBackupDestinationParams{DestinationId: "boot"})
+		},
+	},
+	{
+		op:   "DeleteBackupDestination",
+		name: "unknown_id",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return h.DeleteBackupDestination(ctx, apiv1.DeleteBackupDestinationParams{DestinationId: "nope"})
+		},
+	},
+	{
+		op:   "TestBackupDestination",
+		name: "valid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.TestBackupDestination(ctx, apiv1.TestBackupDestinationParams{DestinationId: "boot"})
+			return err
+		},
+	},
+	{
+		op:   "TestBackupDestination",
+		name: "unknown_id",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.TestBackupDestination(ctx, apiv1.TestBackupDestinationParams{DestinationId: "nope"})
+			return err
 		},
 	},
 }

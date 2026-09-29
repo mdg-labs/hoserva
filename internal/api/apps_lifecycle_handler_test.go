@@ -433,6 +433,41 @@ func TestHandler_StartRestartRecreate_RefusedWhileTheArrayIsStopped(t *testing.T
 	}
 }
 
+// The data-loss scenario at the API boundary for appdata deletion: with the
+// array stopped, or its storage not ready, the cache disk is not mounted, so
+// deleting appdata would remove the container and report success while the
+// real appdata stays on the disk. It is refused with a 409, before the
+// container is removed, and nothing on disk is touched.
+func TestHandler_RemoveApp_DeleteAppdataRefusedWhileTheArrayIsStopped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		down func(*appsFixture)
+	}{
+		{"maintenance mode", func(f *appsFixture) { f.stopped.Store(true) }},
+		{"storage not ready", func(f *appsFixture) { f.storageDown.Store(true) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAppsFixture(t)
+			ctx := context.Background()
+			tc.down(f)
+
+			_, err := f.h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "jellyfin", DeleteAppdata: apiv1.NewOptBool(true)})
+			if st, code := statusOf(f.h, err); st != 409 || code != "array_stopped" {
+				t.Fatalf("RemoveApp with deleteAppdata = %d %s, want 409 array_stopped", st, code)
+			}
+			if calls := f.fake.Calls(); len(calls) != 0 {
+				t.Fatalf("the Engine saw %v although the remove was refused", calls)
+			}
+			if _, err := f.fake.Inspect(ctx, "jellyfin"); err != nil {
+				t.Fatalf("container removed by a refused request: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(f.cfgDir, "library.db")); err != nil {
+				t.Fatalf("appdata touched by a refused request: %v", err)
+			}
+		})
+	}
+}
+
 // An array state Lifecycle cannot read refuses too, as a 503 rather than a
 // start on a guess.
 func TestHandler_Start_RefusedWhenTheArrayStateCannotBeRead(t *testing.T) {

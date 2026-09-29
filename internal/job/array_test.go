@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -402,17 +404,59 @@ func TestArraySequence_Stop_DrainRespectsContextDeadline(t *testing.T) {
 		await(t, s, j.ID)
 	})
 
+	// The deadline must be able to expire only inside Drain: a real
+	// time.WithTimeout would also bound the SQLite write that enters
+	// maintenance mode, and on a loaded runner that write can outlast it.
+	ctx := newTrippableDeadlineContext()
 	seq := ArraySequence{Scheduler: s}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- seq.Stop(ctx) }()
 
-	if err := seq.Stop(ctx); err == nil {
-		t.Fatal("Stop: got nil error, want the context deadline to propagate while the job is still running")
+	waitFor(t, 10*time.Second, s.InMaintenance)
+	ctx.trip()
+
+	var stopErr error
+	select {
+	case stopErr = <-stopDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop did not return after the context deadline expired while the job was still running")
+	}
+	if !errors.Is(stopErr, context.DeadlineExceeded) {
+		t.Fatalf("Stop: got %v, want an error wrapping context.DeadlineExceeded", stopErr)
+	}
+	if !strings.Contains(stopErr.Error(), "waiting for running jobs to stop") {
+		t.Fatalf("Stop: got %v, want the drain wait's own error", stopErr)
 	}
 	if !s.InMaintenance() {
 		t.Fatal("Stop: maintenance mode must stay active when the drain wait times out")
 	}
 }
+
+// trippableDeadlineContext behaves like a context whose deadline passes at
+// a moment the test chooses: Done is open and Err is nil until trip, after
+// which Err reports context.DeadlineExceeded.
+type trippableDeadlineContext struct {
+	context.Context
+	done chan struct{}
+	once sync.Once
+}
+
+func newTrippableDeadlineContext() *trippableDeadlineContext {
+	return &trippableDeadlineContext{Context: context.Background(), done: make(chan struct{})}
+}
+
+func (c *trippableDeadlineContext) Done() <-chan struct{} { return c.done }
+
+func (c *trippableDeadlineContext) Err() error {
+	select {
+	case <-c.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (c *trippableDeadlineContext) trip() { c.once.Do(func() { close(c.done) }) }
 
 func TestArraySequence_Stop_EntersMaintenanceBeforeStoppingAnyService(t *testing.T) {
 	var log []string
@@ -1183,4 +1227,83 @@ func TestArraySequence_RefreshLive_UpdatesARunningPoolOnly(t *testing.T) {
 		t.Fatalf("RefreshLive(running): %v", err)
 	}
 	sliceEqual(t, log, []string{"mount:/mnt/user", "mount:/mnt/user/media"})
+}
+
+// An /apps start or restart, or a remove that deletes appdata, admitted
+// before maintenance mode is still inside its Engine or directory work: Stop
+// and StopForShutdown must not reach any service (whose Stop lists the
+// running containers) until it has finished, or a container it starts lands
+// after that list and is left running while the pool unmounts.
+func TestArraySequence_Stop_WaitsForAnInFlightAppActionBeforeStoppingServices(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(ArraySequence, context.Context) error
+	}{
+		{"Stop", ArraySequence.Stop},
+		{"StopForShutdown", ArraySequence.StopForShutdown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var log []string
+			s := newTestScheduler(t)
+			if err := s.BeginAppAction(); err != nil {
+				t.Fatalf("BeginAppAction: %v", err)
+			}
+			seq := ArraySequence{Scheduler: s, Services: []ArrayService{&fakeArrayService{name: "container", log: &log}}}
+
+			stopDone := make(chan error, 1)
+			go func() { stopDone <- tc.stop(seq, context.Background()) }()
+
+			select {
+			case <-stopDone:
+				t.Fatal("stop returned while an app action was still in flight")
+			case <-time.After(50 * time.Millisecond):
+			}
+			if !s.InMaintenance() {
+				t.Fatal("maintenance mode is not active while stop waits for the app action")
+			}
+			if err := s.BeginAppAction(); !errors.Is(err, ErrMaintenanceMode) {
+				t.Fatalf("BeginAppAction while stop waits = %v, want ErrMaintenanceMode", err)
+			}
+
+			s.FinishAppAction()
+			select {
+			case err := <-stopDone:
+				if err != nil {
+					t.Fatalf("stop: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("stop did not return after the app action finished")
+			}
+			sliceEqual(t, log, []string{"stop:container"})
+		})
+	}
+}
+
+func TestArraySequence_Stop_AppActionDrainRespectsContextDeadline(t *testing.T) {
+	var log []string
+	s := newTestScheduler(t)
+	if err := s.BeginAppAction(); err != nil {
+		t.Fatalf("BeginAppAction: %v", err)
+	}
+	seq := ArraySequence{Scheduler: s, Services: []ArrayService{&fakeArrayService{name: "container", log: &log}}}
+	// Tripped only once maintenance is entered, so the deadline can expire
+	// inside the app-action drain and not in the maintenance write.
+	ctx := newTrippableDeadlineContext()
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- seq.Stop(ctx) }()
+	waitFor(t, 10*time.Second, s.InMaintenance)
+	ctx.trip()
+
+	var err error
+	select {
+	case err = <-stopDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Stop did not return after the context deadline expired while an app action was in flight")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "app start, restart and remove") {
+		t.Fatalf("Stop = %v, want the app-action drain's deadline", err)
+	}
+	if len(log) != 0 {
+		t.Fatalf("Stop touched services (%v) although an app action never finished", log)
+	}
 }

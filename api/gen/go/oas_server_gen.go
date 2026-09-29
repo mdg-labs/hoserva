@@ -165,6 +165,16 @@ type Handler interface {
 	//
 	// POST /disks/array
 	CreateArray(ctx context.Context, req *CreateArrayRequest) (*Job, error)
+	// CreateBackupDestination implements createBackupDestination operation.
+	//
+	// A remote destination (`smb`, `s3`, `sftp`, `webdav`, `rclone`) is written through rclone and is
+	// always encrypted (Q80). It is refused with 400 `backup_passphrase_required` while no backup
+	// passphrase is set, and with 424 `rclone_missing` — whose `message` carries the install command
+	// (Q41) — when rclone is not installed. Credentials in `secrets` are sealed under the machine key
+	// before they reach the database. Local destinations work without rclone.
+	//
+	// POST /backup/destinations
+	CreateBackupDestination(ctx context.Context, req *CreateBackupDestinationRequest) (*BackupDestination, error)
 	// CreateFirstAdmin implements createFirstAdmin operation.
 	//
 	// Reachable only before an admin exists; refused once one does. Creating the admin is atomic — a
@@ -207,6 +217,12 @@ type Handler interface {
 	//
 	// POST /user-groups
 	CreateUserGroup(ctx context.Context, req *CreateUserGroupRequest) (*UserGroup, error)
+	// DeleteBackupDestination implements deleteBackupDestination operation.
+	//
+	// Removes the destination's configuration. Archives already written to it are left where they are.
+	//
+	// DELETE /backup/destinations/{destinationId}
+	DeleteBackupDestination(ctx context.Context, params DeleteBackupDestinationParams) error
 	// DeleteNotificationChannel implements deleteNotificationChannel operation.
 	//
 	// Also removes every routing entry that named this channel.
@@ -554,6 +570,13 @@ type Handler interface {
 	//
 	// GET /apps
 	ListApps(ctx context.Context) (*ListAppsOK, error)
+	// ListBackupDestinations implements listBackupDestinations operation.
+	//
+	// Every place a config backup is written, with its last successful backup and whether it is stale (doc
+	// 10 §1). Credentials are never returned — `hasSecrets` is the only trace of them (Q28).
+	//
+	// GET /backup/destinations
+	ListBackupDestinations(ctx context.Context) (*ListBackupDestinationsOK, error)
 	// ListDisks implements listDisks operation.
 	//
 	// Every block device Hoserva knows about (doc 02 §4).
@@ -787,7 +810,10 @@ type Handler interface {
 	// directory another container mounts, or that lies inside a directory of appdata another container
 	// mounts, is never deleted — a request that would delete one is refused (`appdata_shared`, 409) and
 	// removes nothing. `deleteAppdata` with no appdata location is refused (`appdata_unavailable`, 409).
-	// Every refusal happens before the container is removed.
+	// `deleteAppdata` is refused with 409 `array_stopped` while the array is stopped (maintenance mode) or
+	// its storage is not ready, because the cache disk is not mounted and the appdata on it could not be
+	// deleted, and with 503 `array_state_unknown` if the array's state cannot be read. A remove that keeps
+	// appdata is allowed on a stopped array. Every refusal happens before the container is removed.
 	//
 	// DELETE /apps/{id}
 	RemoveApp(ctx context.Context, params RemoveAppParams) (*RemoveAppResult, error)
@@ -996,6 +1022,14 @@ type Handler interface {
 	//
 	// POST /array/stop
 	StopArray(ctx context.Context, req *StopArrayRequest) (*SystemStatus, error)
+	// TestBackupDestination implements testBackupDestination operation.
+	//
+	// Writes a small file to the destination, reads it back and deletes it (doc 10 §1: an untested backup
+	// destination is decoration). A destination that cannot be reached is a `200` with `success` false and
+	// the reason; a missing rclone is a `424` `rclone_missing`.
+	//
+	// POST /backup/destinations/{destinationId}/test
+	TestBackupDestination(ctx context.Context, params TestBackupDestinationParams) (*BackupDestinationTestResult, error)
 	// UnlockUser implements unlockUser operation.
 	//
 	// Clears the account's login rate-limiter lockout (doc 01 §7, Q78). Root-only over the Unix socket,

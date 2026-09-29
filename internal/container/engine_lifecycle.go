@@ -10,10 +10,10 @@ import (
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
-	dockercontainer "github.com/docker/docker/api/types/container"
-	dockerevents "github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	dockercontainer "github.com/moby/moby/api/types/container"
+	dockerevents "github.com/moby/moby/api/types/events"
+	dockerclient "github.com/moby/moby/client"
 )
 
 // lifecycleTimeout bounds a start, stop, restart or remove: a stop alone
@@ -43,7 +43,8 @@ func (c *EngineClient) Start(ctx context.Context, id string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, lifecycleTimeout)
 	defer cancel()
-	return mapEngineErr(c.cli.ContainerStart(ctx, ct.ID, dockercontainer.StartOptions{}))
+	_, err = c.cli.ContainerStart(ctx, ct.ID, dockerclient.ContainerStartOptions{})
+	return mapEngineErr(err)
 }
 
 func (c *EngineClient) Stop(ctx context.Context, id string) error {
@@ -53,7 +54,8 @@ func (c *EngineClient) Stop(ctx context.Context, id string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, lifecycleTimeout)
 	defer cancel()
-	return mapEngineErr(c.cli.ContainerStop(ctx, ct.ID, dockercontainer.StopOptions{}))
+	_, err = c.cli.ContainerStop(ctx, ct.ID, dockerclient.ContainerStopOptions{})
+	return mapEngineErr(err)
 }
 
 func (c *EngineClient) Restart(ctx context.Context, id string) error {
@@ -63,7 +65,8 @@ func (c *EngineClient) Restart(ctx context.Context, id string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, lifecycleTimeout)
 	defer cancel()
-	return mapEngineErr(c.cli.ContainerRestart(ctx, ct.ID, dockercontainer.StopOptions{}))
+	_, err = c.cli.ContainerRestart(ctx, ct.ID, dockerclient.ContainerRestartOptions{})
+	return mapEngineErr(err)
 }
 
 func (c *EngineClient) Remove(ctx context.Context, id string, opts RemoveOptions) error {
@@ -78,7 +81,8 @@ func (c *EngineClient) Remove(ctx context.Context, id string, opts RemoveOptions
 	}
 	ctx, cancel := context.WithTimeout(ctx, lifecycleTimeout)
 	defer cancel()
-	return mapEngineErr(c.cli.ContainerRemove(ctx, ct.ID, dockercontainer.RemoveOptions{RemoveVolumes: opts.Volumes}))
+	_, err = c.cli.ContainerRemove(ctx, ct.ID, dockerclient.ContainerRemoveOptions{RemoveVolumes: opts.Volumes})
+	return mapEngineErr(err)
 }
 
 func (c *EngineClient) Logs(ctx context.Context, id string, opts LogOptions) (io.ReadCloser, error) {
@@ -94,7 +98,7 @@ func (c *EngineClient) Logs(ctx context.Context, id string, opts LogOptions) (io
 	if opts.Tail >= 0 {
 		tail = strconv.Itoa(opts.Tail)
 	}
-	rc, err := c.cli.ContainerLogs(ctx, ct.ID, dockercontainer.LogsOptions{
+	rc, err := c.cli.ContainerLogs(ctx, ct.ID, dockerclient.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     opts.Follow,
@@ -131,11 +135,11 @@ func (d *demuxedLogs) Close() error {
 func (c *EngineClient) inspectEngine(ctx context.Context, id string) (dockercontainer.InspectResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, engineTimeout)
 	defer cancel()
-	info, err := c.cli.ContainerInspect(ctx, id)
+	res, err := c.cli.ContainerInspect(ctx, id, dockerclient.ContainerInspectOptions{})
 	if err != nil {
 		return dockercontainer.InspectResponse{}, mapEngineErr(err)
 	}
-	return info, nil
+	return res.Container, nil
 }
 
 func (c *EngineClient) Stats(ctx context.Context, id string) (Stats, error) {
@@ -148,7 +152,7 @@ func (c *EngineClient) Stats(ctx context.Context, id string) (Stats, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, engineTimeout)
 	defer cancel()
-	resp, err := c.cli.ContainerStats(ctx, ct.ID, false)
+	resp, err := c.cli.ContainerStats(ctx, ct.ID, dockerclient.ContainerStatsOptions{IncludePreviousSample: true})
 	if err != nil {
 		return Stats{}, mapEngineErr(err)
 	}
@@ -220,19 +224,19 @@ func healthFromStatus(status string) string {
 }
 
 func (c *EngineClient) Watch(ctx context.Context, fn func(StateChange)) error {
-	msgs, errs := c.cli.Events(ctx, dockerevents.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("type", string(dockerevents.ContainerEventType))),
+	events := c.cli.Events(ctx, dockerclient.EventsListOptions{
+		Filters: dockerclient.Filters{}.Add("type", string(dockerevents.ContainerEventType)),
 	})
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case err := <-errs:
+		case err := <-events.Err:
 			if err == nil {
 				return nil
 			}
 			return wrapEngineErr(err)
-		case m, open := <-msgs:
+		case m, open := <-events.Messages:
 			if !open {
 				return nil
 			}

@@ -37,7 +37,7 @@ existing line by adding its PR number.
 - **durability** — `rename` without an fsync of the directory; truncate-then-write of a settings file or certificate; archive written in place with `O_TRUNC`; a certificate and key replaced as two renames with no recovery if the process stops between them — PR 150, 174, 213, 236, 344
 - **atomicity** — read-modify-write of a whole row lets concurrent partial updates overwrite each other — PR 182, 199
 - **atomicity** — check-then-act on a path (validate, then re-resolve by name) — PR 228, 236
-- **atomicity** — a conditional clear keyed only on the row, not on the state and holder the caller checked, so a transition that lands between read and write is wiped — PR 382
+- **atomicity** — a clear or mark keyed only on the row, not on the state and holder the caller checked, so a transition that lands between read and write is wiped (a stale-alert mark over a success recorded after the check read the row) — PR 382, 433
 - **atomicity** — a maintenance check that returns before the mutation, so array stop can unmount while the mutation is still writing under the mountpoint — PR 344
 - **atomicity** — a cancel or stop flag read in one lock hold and the start done in a later one, so a request that lands in the gap is accepted and then ignored — PR 412
 - **ordering** — a side effect that takes a bounded resource (a pre-change archive's retention slot) runs before the admission check that can refuse the operation, so refused retries use up what real changes rely on — PR 412
@@ -83,6 +83,7 @@ existing line by adding its PR number.
 - **spec-drift** — handler requires a field the OpenAPI schema marks optional — PR 213
 - **doc-drift** — a design doc names a state or identifier the code never persists — PR 370
 - **doc-drift** — a command example in a skill or prompt drops a required operand (`issue-edit --body-file` with no issue number or file), so an agent following it literally fails — PR 412
+- **doc-drift** — a design doc states an external source's conditions more broadly than the source does (an advisory's exploit trigger), so a reader misjudges the exposure — PR 433
 - **doc-drift** — a code comment still describes behaviour a later fix removed, inviting the next change to put it back — PR 394
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
 - **validation** — mode selected by a flag's non-empty value rather than its presence, so an empty value falls through to the default path (`-ups-notify ""` starting a second daemon) — PR 337
@@ -100,6 +101,7 @@ existing line by adding its PR number.
 
 ## Tests
 - **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached) — PR 159, 163, 231, 337, 403, 421, 430
+- **tests** — a short real deadline also bounds setup I/O ahead of the code under test (the SQLite write entering maintenance), so on a loaded runner the error comes from the setup step and an `errors.Is` check still passes; trip the deadline once the step under test is reached and assert its own error text — PR 433
 - **tests** — unsynchronized read of state written by another goroutine — PR 166, 246
 - **tests** — exact equality between two separately sampled system values — PR 236
 - **tests** — parallel labs compile test binaries into one directory, so one lab replaces another's binary — PR 344

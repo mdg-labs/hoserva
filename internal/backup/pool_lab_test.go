@@ -101,7 +101,7 @@ func TestLabService_RunSkipsPoolDestinationOnceGenuinelyUnmounted(t *testing.T) 
 	if err := svc.Run(ctx); err != nil {
 		t.Fatalf("Run while the pool is genuinely mounted: %v", err)
 	}
-	firstName := archiveName(first, ReasonNone, 0)
+	firstName := archiveName(svc.installationID(), first, ReasonNone, 0)
 	if _, err := os.Stat(filepath.Join(poolDest, firstName)); err != nil {
 		t.Fatalf("archive missing from the pool destination while genuinely mounted: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestLabService_RunSkipsPoolDestinationOnceGenuinelyUnmounted(t *testing.T) 
 	if err := svc.Run(ctx); err != nil {
 		t.Fatalf("Run once the pool is genuinely unmounted: %v", err)
 	}
-	secondName := archiveName(second, ReasonNone, 0)
+	secondName := archiveName(svc.installationID(), second, ReasonNone, 0)
 	if _, err := os.Stat(filepath.Join(bootDest, secondName)); err != nil {
 		t.Fatalf("boot archive missing after the pool was unmounted: %v", err)
 	}

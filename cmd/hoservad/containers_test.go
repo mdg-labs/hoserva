@@ -167,9 +167,26 @@ type containersWiringHarness struct {
 	storageReady *atomic.Bool
 	appdata      string
 	stopWatch    context.CancelFunc
+	apps         *appServices
+	ctx          context.Context
+}
+
+// startReconcile starts the start-up reconciliation of interrupted
+// recreates the way main.go does, and returns the channel that closes
+// when it has finished. The harness does not start it on its own, so a
+// test that changes the array state is not raced by it.
+func (w *containersWiringHarness) startReconcile() <-chan struct{} {
+	return reconcileContainersAtStart(w.ctx, w.apps, w.scheduler.InMaintenance, w.storageReady.Load, 10*time.Millisecond)
 }
 
 func newContainersWiringHarness(t *testing.T) *containersWiringHarness {
+	t.Helper()
+	return newContainersWiringHarnessWith(t, nil)
+}
+
+// newContainersWiringHarnessWith scripts the fake Docker through prepare
+// before the daemon wiring starts using it.
+func newContainersWiringHarnessWith(t *testing.T, prepare func(*container.FakeProvider)) *containersWiringHarness {
 	t.Helper()
 	ctx := context.Background()
 	root := t.TempDir()
@@ -219,6 +236,9 @@ func newContainersWiringHarness(t *testing.T) *containersWiringHarness {
 		ID: "a", Name: "jellyfin", Image: "jf", Tag: "10", State: "exited",
 		Mounts: []container.Mount{{Source: appdata, Destination: "/config", ReadWrite: true}},
 	})
+	if prepare != nil {
+		prepare(fake)
+	}
 
 	registry := job.NewRegistry()
 	jobStore := job.NewStore(db)
@@ -233,7 +253,7 @@ func newContainersWiringHarness(t *testing.T) *containersWiringHarness {
 	apps := newContainers(fake, root, arrayStore, nil)
 	storageReady := &atomic.Bool{}
 	storageReady.Store(true)
-	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageReady.Load)
+	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageReady.Load, arrayActionAdmit(scheduler))
 	wctx, stopWatch := context.WithCancel(ctx)
 	t.Cleanup(stopWatch)
 	go apps.Watcher.Run(wctx)
@@ -262,6 +282,8 @@ func newContainersWiringHarness(t *testing.T) *containersWiringHarness {
 		storageReady: storageReady,
 		appdata:      appdata,
 		stopWatch:    stopWatch,
+		apps:         apps,
+		ctx:          wctx,
 	}
 }
 
@@ -409,7 +431,7 @@ func TestWireContainers_WithoutArrayStateRefusesEveryStart(t *testing.T) {
 	fake.AddContainer(container.Container{ID: "a", Name: "jellyfin", State: "exited"})
 	apps := newContainers(fake, t.TempDir(), nil, nil)
 	handler := &api.Handler{}
-	wireContainers(handler, job.NewRegistry(), apps, nil, nil)
+	wireContainers(handler, job.NewRegistry(), apps, nil, nil, nil)
 
 	_, err := handler.StartApp(context.Background(), apiv1.StartAppParams{ID: "jellyfin"})
 	if err == nil {
@@ -425,6 +447,7 @@ func TestWireContainers_WithoutArrayStateRefusesEveryStart(t *testing.T) {
 
 func TestContainersWiring_RecreateRunsAsAJobRegisteredByTheDaemonWiring(t *testing.T) {
 	w := newContainersWiringHarness(t)
+	w.startReconcile()
 
 	status, body := w.do(t, http.MethodPost, "/apps/jellyfin/recreate")
 	if status == http.StatusNotImplemented {
@@ -488,6 +511,49 @@ func TestContainersWiring_RemoveKeepsAppdataUnlessAskedTo(t *testing.T) {
 	}
 	if _, err := os.Stat(w.appdata); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("appdata still exists after an explicit request to delete it: %v", err)
+	}
+}
+
+// The data-loss scenario through the real daemon: with the array stopped,
+// or its storage not ready, the cache disk is not mounted, so a remove that
+// deletes appdata would remove the container, report success and leave the
+// real appdata on the disk. DELETE ?deleteAppdata=true is refused with 409
+// array_stopped; the Engine sees no remove and the appdata is untouched.
+// The same DELETE without deleteAppdata is still allowed.
+func TestContainersWiring_RemoveWithAppdataRefusedWhileTheArrayIsStopped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		down func(*containersWiringHarness)
+	}{
+		{"maintenance mode", func(w *containersWiringHarness) {
+			if err := w.scheduler.EnterMaintenance(context.Background()); err != nil {
+				t.Fatalf("EnterMaintenance: %v", err)
+			}
+		}},
+		{"storage not ready", func(w *containersWiringHarness) { w.storageReady.Store(false) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newContainersWiringHarness(t)
+			tc.down(w)
+
+			status, body := w.do(t, http.MethodDelete, "/apps/jellyfin?deleteAppdata=true")
+			if status != http.StatusConflict || !bytes.Contains(body, []byte(`"array_stopped"`)) {
+				t.Fatalf("DELETE ?deleteAppdata=true on a stopped array = %d %s, want 409 array_stopped", status, body)
+			}
+			if calls := w.fake.Calls(); len(calls) != 0 {
+				t.Fatalf("the Engine saw %v although the remove was refused", calls)
+			}
+			if _, err := os.Stat(filepath.Join(w.appdata, "library.db")); err != nil {
+				t.Fatalf("appdata touched by a refused remove: %v", err)
+			}
+
+			if status, body := w.do(t, http.MethodDelete, "/apps/jellyfin"); status != http.StatusOK {
+				t.Fatalf("DELETE without appdata on a stopped array = %d %s, want 200", status, body)
+			}
+			if _, err := os.Stat(filepath.Join(w.appdata, "library.db")); err != nil {
+				t.Fatalf("appdata deleted by a remove that did not ask for it: %v", err)
+			}
+		})
 	}
 }
 

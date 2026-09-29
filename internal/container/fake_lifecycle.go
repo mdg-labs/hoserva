@@ -14,7 +14,7 @@ type FakeCall struct {
 }
 
 // FailOn scripts op ("start", "stop", "restart", "remove", "recreate",
-// "logs", "stats") to return err for the container whose ID or name is
+// "logs", "stats", "reconcile") to return err for the container whose ID or name is
 // id, or for every container when id is "". The container is left
 // exactly as it was. A nil err clears the script.
 func (f *FakeProvider) FailOn(op, id string, err error) {
@@ -190,6 +190,28 @@ func (f *FakeProvider) Recreate(ctx context.Context, id string) error {
 	defer f.mu.Unlock()
 	_, err := f.actLocked("recreate", id)
 	return err
+}
+
+// SetReconciliation scripts what Reconcile reports.
+func (f *FakeProvider) SetReconciliation(r []Reconciliation) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reconciliation = append([]Reconciliation(nil), r...)
+}
+
+// Reconcile records a "reconcile" call and returns what SetReconciliation
+// scripted; FailOn("reconcile", "", err) makes it fail instead.
+func (f *FakeProvider) Reconcile(ctx context.Context) ([]Reconciliation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, FakeCall{Op: "reconcile"})
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	if err, ok := f.failures["reconcile\x00"]; ok {
+		return nil, err
+	}
+	return append([]Reconciliation(nil), f.reconciliation...), nil
 }
 
 func (f *FakeProvider) Logs(ctx context.Context, id string, opts LogOptions) (io.ReadCloser, error) {

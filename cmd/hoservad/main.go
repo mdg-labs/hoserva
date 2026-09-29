@@ -441,7 +441,11 @@ func run(cfg config) error {
 	if parityEngine != nil {
 		parityReg.register(parityEngine)
 	}
-	backupService := newBackupService(ctx, cfg, db, machineKey, backupRecipient, settingsService, linuxDisks.Exec)
+	backupDestinations := api.NewBackupDestinationStore(db)
+	backupService, err := newBackupService(ctx, cfg, db, machineKey, backupRecipient, settingsService, linuxDisks.Exec, backupDestinations)
+	if err != nil {
+		return err
+	}
 	// The same instance arraySeq's own PoolWriteGate holds above (#409):
 	// ArraySequence.Stop's Close call and Start's Open call actually gate
 	// backupService.RunReason's own write to a destination under the
@@ -465,7 +469,11 @@ func run(cfg config) error {
 			if err != nil {
 				return nil, err
 			}
-			return append(acmeSecrets, upsSecrets...), nil
+			destinationSecrets, err := backupDestinations.BackupDestinationSecrets(reqCtx)
+			if err != nil {
+				return nil, err
+			}
+			return append(append(acmeSecrets, upsSecrets...), destinationSecrets...), nil
 		},
 	}
 	// wireTopologyBackup (#406, #408, doc 10 §1) must run before any of
@@ -542,10 +550,11 @@ func run(cfg config) error {
 	if dockerProvider != nil {
 		handler.Container = dockerProvider
 	}
-	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageTarget.Ready)
+	wireContainers(handler, registry, apps, scheduler.InMaintenance, storageTarget.Ready, arrayActionAdmit(scheduler))
 	if apps != nil {
 		go apps.Watcher.Run(ctx)
 		restoreContainersAfterShutdown(ctx, apps, scheduler.InMaintenance, storageTarget.Ready)
+		reconcileContainersAtStart(ctx, apps, scheduler.InMaintenance, storageTarget.Ready, containerRestoreInterval)
 	}
 	handler.ComposeRunner = container.CommandRunner{}
 	handler.DockerRestart = cfggen.SystemdServiceRestarter{Unit: "docker.service", Runner: linuxDisks.Exec}
@@ -683,13 +692,14 @@ func run(cfg config) error {
 		Notifier: notifyService,
 	}, spaceAlertInterval)
 	go runScheduleLoop(ctx, &scheduleRunner{
-		Schedules: scheduleService,
-		Scheduler: scheduler,
-		Guard:     chainGuard,
-		Backup:    backupService,
-		Notifier:  &scheduleNotifier{svc: notifyService},
-		ACME:      acmeService,
-		Jobs:      jobStore,
+		Schedules:   scheduleService,
+		Scheduler:   scheduler,
+		Guard:       chainGuard,
+		Backup:      backupService,
+		BackupStale: &staleDestinationChecker{svc: backupService, publisher: notifyService},
+		Notifier:    &scheduleNotifier{svc: notifyService},
+		ACME:        acmeService,
+		Jobs:        jobStore,
 	}, scheduleTickInterval)
 
 	errCh := make(chan error, 2)

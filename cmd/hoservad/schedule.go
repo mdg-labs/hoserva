@@ -50,6 +50,11 @@ type scheduleRunner struct {
 	Notifier  job.ChainNotifier
 	ACME      *acme.Service
 	Jobs      *job.Store
+	// BackupStale alerts on a backup destination that has gone without a
+	// successful backup (doc 10 §1). Nil skips the check.
+	BackupStale interface {
+		CheckStale(ctx context.Context) error
+	}
 }
 
 func runScheduleLoop(ctx context.Context, r *scheduleRunner, interval time.Duration) {
@@ -68,6 +73,13 @@ func runScheduleLoop(ctx context.Context, r *scheduleRunner, interval time.Durat
 }
 
 func (r *scheduleRunner) tick(ctx context.Context) error {
+	// Independent of the chain: a stale-destination check that fails must
+	// not starve the maintenance chain, nor the reverse.
+	if r != nil && r.BackupStale != nil {
+		if err := r.BackupStale.CheckStale(ctx); err != nil {
+			log.Printf("hoservad: checking for stale backup destinations: %v", err)
+		}
+	}
 	if err := r.tickChain(ctx); err != nil {
 		return err
 	}

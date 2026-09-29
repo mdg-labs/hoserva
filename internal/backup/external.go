@@ -12,6 +12,8 @@ func ExternalDestination(label string) (Destination, error) {
 	}
 	return Destination{
 		ID:      "external:" + label,
+		Name:    label,
+		Type:    TypeLocal,
 		Path:    path,
 		Enabled: true,
 		Retention: Retention{

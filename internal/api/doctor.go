@@ -24,7 +24,7 @@ import (
 const (
 	mergerfsMinVersion            = "2.40.2"
 	snapraidMinVersion            = "12.4"
-	dockerEngineMinVersion        = "24.0.0"
+	dockerEngineMinVersion        = "29.5.1"
 	nvidiaContainerToolkitPackage = "nvidia-container-toolkit"
 	doctorProbeTimeout            = 8 * time.Second
 )
@@ -187,11 +187,11 @@ func dockerUnavailableCheckFor(installed func() bool) apiv1.DoctorCheck {
 }
 
 // dockerEngineVersionCheck warns when the reachable Engine is older than
-// dockerEngineMinVersion (doc 04 §3: "warns when the installed Engine is a
-// release upstream no longer supports") — a tested floor bumped over time
-// exactly like mergerfsMinVersion/snapraidMinVersion above, never a hard
-// requirement: the API version itself is negotiated at runtime (Q38), not
-// pinned.
+// dockerEngineMinVersion (doc 04 §3, Q38): the newer of the oldest release
+// upstream still supports and the first release without a published
+// container-escape advisory. It is a floor bumped over time exactly like
+// mergerfsMinVersion/snapraidMinVersion above, never a hard requirement:
+// the API version itself is negotiated at runtime (Q38), not pinned.
 func dockerEngineVersionCheck(v container.EngineVersion) apiv1.DoctorCheck {
 	msg := fmt.Sprintf("Docker Engine %s is reachable (API %s)", v.Version, v.APIVersion)
 	if versionBelow(v.Version, dockerEngineMinVersion) {
@@ -199,7 +199,7 @@ func dockerEngineVersionCheck(v container.EngineVersion) apiv1.DoctorCheck {
 			ID:          "docker",
 			Name:        "Docker Engine",
 			Status:      apiv1.DoctorCheckStatusWarn,
-			Message:     fmt.Sprintf("Docker Engine %s is a release upstream no longer supports", v.Version),
+			Message:     fmt.Sprintf("Docker Engine %s is older than %s, the first release without a known container-escape vulnerability that upstream still supports", v.Version, dockerEngineMinVersion),
 			Remediation: apiv1.NewOptNilString("Upgrade Docker Engine: https://docs.docker.com/engine/install/debian/"),
 		}
 	}

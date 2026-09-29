@@ -67,6 +67,23 @@ type AuditLog struct {
 	At     string         `json:"at"`
 }
 
+type BackupDestination struct {
+	ID                     string         `json:"id"`
+	Name                   string         `json:"name"`
+	Type                   string         `json:"type"`
+	Path                   string         `json:"path"`
+	Options                string         `json:"options"`
+	Secrets                []byte         `json:"secrets"`
+	Enabled                int64          `json:"enabled"`
+	Encrypt                int64          `json:"encrypt"`
+	RetentionDaily         int64          `json:"retention_daily"`
+	RetentionWeekly        int64          `json:"retention_weekly"`
+	RetentionMonthly       int64          `json:"retention_monthly"`
+	LastSuccessfulBackupAt sql.NullString `json:"last_successful_backup_at"`
+	StaleAlertedAt         sql.NullString `json:"stale_alerted_at"`
+	CreatedAt              string         `json:"created_at"`
+}
+
 type BackupRecipient struct {
 	ID              int64  `json:"id"`
 	PublicRecipient string `json:"public_recipient"`

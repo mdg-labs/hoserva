@@ -215,6 +215,13 @@ type Scheduler struct {
 	// cannot mkdir on a disk after that disk is gone.
 	shareMutations int
 	shareWaiters   []chan struct{}
+	// appActions counts /apps start, restart and remove-with-appdata calls
+	// admitted before maintenance mode, for the same reason: array stop
+	// waits for them so a container started, or appdata deleted, by a
+	// call that passed the array check cannot land after the containers
+	// were listed and stopped or after the cache was unmounted.
+	appActions int
+	appWaiters []chan struct{}
 	// settleHook, when non-nil, is called synchronously by runJob once a
 	// job's rj.finished has just been set true — after its RunFunc has
 	// returned, but before the job is removed from s.running — so a test
@@ -1179,6 +1186,59 @@ func (s *Scheduler) DrainShareMutations(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("job: waiting for share updates to finish: %w", ctx.Err())
+	}
+}
+
+// BeginAppAction admits one container start, restart, or remove that
+// deletes appdata. It fails once maintenance mode is active, under the
+// same lock that EnterMaintenance sets that flag, so an action cannot
+// begin after array stop has decided to list and stop the containers.
+// FinishAppAction must be called when the action returns, including on
+// error.
+func (s *Scheduler) BeginAppAction() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.maintenance {
+		return ErrMaintenanceMode
+	}
+	s.appActions++
+	return nil
+}
+
+// FinishAppAction records that an action admitted by BeginAppAction has
+// finished.
+func (s *Scheduler) FinishAppAction() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.appActions == 0 {
+		return
+	}
+	s.appActions--
+	if s.appActions == 0 {
+		for _, ch := range s.appWaiters {
+			close(ch)
+		}
+		s.appWaiters = nil
+	}
+}
+
+// DrainAppActions blocks until every action admitted before maintenance
+// mode has finished, or until ctx is done. ArraySequence.Stop calls it
+// after EnterMaintenance and before any service stops.
+func (s *Scheduler) DrainAppActions(ctx context.Context) error {
+	s.mu.Lock()
+	if s.appActions == 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	ch := make(chan struct{})
+	s.appWaiters = append(s.appWaiters, ch)
+	s.mu.Unlock()
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("job: waiting for app start, restart and remove calls to finish: %w", ctx.Err())
 	}
 }
 

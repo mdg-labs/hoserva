@@ -3,9 +3,11 @@ package container
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -45,11 +47,11 @@ func newAppdataFixture(t *testing.T) *appdataFixture {
 			{Source: f.mediaDir, Destination: "/media", ReadWrite: false},
 		},
 	})
-	f.l = &Lifecycle{
+	f.l = arrayUp(&Lifecycle{
 		Provider:     f.fake,
 		Hub:          NewHub(),
 		AppdataRoots: func(context.Context) ([]string, error) { return []string{f.root}, nil },
-	}
+	})
 	return f
 }
 
@@ -123,6 +125,71 @@ func TestStopAndRemove_AllowedWhileTheArrayIsStopped(t *testing.T) {
 	}
 	if _, err := l.Logs(ctx, "jellyfin", LogOptions{}); err != nil {
 		t.Fatalf("Logs: %v", err)
+	}
+}
+
+// The data-loss scenario for appdata deletion: with the array stopped the
+// cache disk is not mounted, so every planned appdata directory is missing
+// and would be skipped — the container removed, the call a success, the
+// real appdata left on the cache disk to be picked up by a later install.
+// Every way the array can be unusable refuses Remove with deleteAppdata
+// before the Engine or any directory is touched. The fixture's directory
+// exists here, so a Remove that got as far as deleting would show as a
+// missing file.
+func TestRemove_DeleteAppdataRefusedUnlessTheArrayIsRunning(t *testing.T) {
+	tests := []struct {
+		name    string
+		halted  func() bool
+		ready   func() bool
+		wantErr error
+	}{
+		{"maintenance mode", func() bool { return true }, func() bool { return true }, ErrArrayStopped},
+		{"storage not ready", func() bool { return false }, func() bool { return false }, ErrArrayStopped},
+		{"maintenance mode and storage not ready", func() bool { return true }, func() bool { return false }, ErrArrayStopped},
+		{"no maintenance signal", nil, func() bool { return true }, ErrArrayStateUnknown},
+		{"no storage signal", func() bool { return false }, nil, ErrArrayStateUnknown},
+		{"no signals", nil, nil, ErrArrayStateUnknown},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAppdataFixture(t)
+			f.l.Halted, f.l.StorageReady = tc.halted, tc.ready
+
+			res, err := f.l.Remove(context.Background(), "jellyfin", true)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Remove error = %v, want %v", err, tc.wantErr)
+			}
+			if len(res.DeletedPaths) != 0 {
+				t.Fatalf("DeletedPaths = %v after a refused Remove", res.DeletedPaths)
+			}
+			if calls := f.fake.Calls(); len(calls) != 0 {
+				t.Fatalf("the Engine saw %v although the Remove was refused", calls)
+			}
+			all, _ := f.fake.List(context.Background())
+			if !mustHave(t, all, "jellyfin") {
+				t.Fatal("the container was removed by a refused Remove")
+			}
+			if !exists(t, filepath.Join(f.cfgDir, "library.db")) {
+				t.Fatal("appdata was touched by a refused Remove")
+			}
+			if !exists(t, filepath.Join(f.mediaDir, "movie.mkv")) {
+				t.Fatal("a directory outside the appdata root was touched by a refused Remove")
+			}
+		})
+	}
+}
+
+// A remove that does not ask for appdata deletion never needs the array,
+// however unusable: it is how a container is taken out of a stopped array.
+func TestRemove_WithoutAppdataDeletionNeedsNoArrayState(t *testing.T) {
+	f := newAppdataFixture(t)
+	f.l.Halted, f.l.StorageReady = nil, nil
+
+	if _, err := f.l.Remove(context.Background(), "jellyfin", false); err != nil {
+		t.Fatalf("Remove without appdata deletion: %v", err)
+	}
+	if !exists(t, filepath.Join(f.cfgDir, "library.db")) {
+		t.Fatal("appdata was deleted by a remove that did not ask for it")
 	}
 }
 
@@ -555,5 +622,183 @@ func TestStats_StoppedContainerIsNotReportedAsIdle(t *testing.T) {
 	l := &Lifecycle{Provider: fake}
 	if _, err := l.Stats(context.Background(), "jellyfin"); !errors.Is(err, ErrNotRunning) {
 		t.Fatalf("Stats error = %v, want ErrNotRunning", err)
+	}
+}
+
+// gatedProvider holds the Engine call of start, restart or remove until the
+// test lets it go, standing in for a slow dockerd.
+type gatedProvider struct {
+	*FakeProvider
+	entered chan string
+	release chan struct{}
+}
+
+func newGatedProvider(fake *FakeProvider) *gatedProvider {
+	return &gatedProvider{FakeProvider: fake, entered: make(chan string, 4), release: make(chan struct{})}
+}
+
+func (g *gatedProvider) hold(op string) {
+	g.entered <- op
+	<-g.release
+}
+
+func (g *gatedProvider) Start(ctx context.Context, id string) error {
+	g.hold("start")
+	return g.FakeProvider.Start(ctx, id)
+}
+
+func (g *gatedProvider) Restart(ctx context.Context, id string) error {
+	g.hold("restart")
+	return g.FakeProvider.Restart(ctx, id)
+}
+
+func (g *gatedProvider) Remove(ctx context.Context, id string, opts RemoveOptions) error {
+	g.hold("remove")
+	return g.FakeProvider.Remove(ctx, id, opts)
+}
+
+// arrayHold is a Lifecycle.Admit that records how many actions are in
+// flight and can be made to refuse, like the daemon's scheduler-backed one.
+type arrayHold struct {
+	mu       sync.Mutex
+	inflight int
+	admitted int
+	refuse   error
+	onFinish func()
+}
+
+func (h *arrayHold) admit() (func(), error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.refuse != nil {
+		return nil, h.refuse
+	}
+	h.inflight++
+	h.admitted++
+	return func() {
+		if h.onFinish != nil {
+			h.onFinish()
+		}
+		h.mu.Lock()
+		h.inflight--
+		h.mu.Unlock()
+	}, nil
+}
+
+func (h *arrayHold) counts() (inflight, admitted int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.inflight, h.admitted
+}
+
+// The data-loss scenario for an in-flight start or restart: array stop
+// drains the hold before it lists the running containers, so the hold must
+// cover the whole Engine call — a start that had already passed the array
+// check and is still inside dockerd is what would land after that list.
+func TestStartRestart_HoldTheArrayActionUntilTheEngineReturns(t *testing.T) {
+	for _, action := range []string{"start", "restart"} {
+		t.Run(action, func(t *testing.T) {
+			fake := NewFakeProvider()
+			fake.AddContainer(Container{ID: "c1", Name: "jellyfin", State: "exited"})
+			gated := newGatedProvider(fake)
+			hold := &arrayHold{}
+			l := arrayUp(&Lifecycle{Provider: gated, Hub: NewHub(), Admit: hold.admit})
+			do := map[string]func(context.Context, string) (Container, error){"start": l.Start, "restart": l.Restart}[action]
+
+			done := make(chan error, 1)
+			go func() { _, err := do(context.Background(), "jellyfin"); done <- err }()
+
+			if op := <-gated.entered; op != action {
+				t.Fatalf("Engine saw %q, want %q", op, action)
+			}
+			if inflight, _ := hold.counts(); inflight != 1 {
+				t.Fatalf("in-flight actions while the Engine call is held = %d, want 1", inflight)
+			}
+			close(gated.release)
+			if err := <-done; err != nil {
+				t.Fatalf("%s: %v", action, err)
+			}
+			if inflight, admitted := hold.counts(); inflight != 0 || admitted != 1 {
+				t.Fatalf("after %s: in flight %d, admitted %d, want 0 and 1", action, inflight, admitted)
+			}
+		})
+	}
+}
+
+// A refused admission ends the call before the array check and the Engine.
+func TestStartRestartRemoveWithAppdata_RefusedByTheHold(t *testing.T) {
+	for _, action := range []string{"start", "restart", "remove"} {
+		t.Run(action, func(t *testing.T) {
+			f := newAppdataFixture(t)
+			hold := &arrayHold{refuse: fmt.Errorf("%w: it is in maintenance mode", ErrArrayStopped)}
+			f.l.Admit = hold.admit
+			ctx := context.Background()
+			var err error
+			switch action {
+			case "start":
+				_, err = f.l.Start(ctx, "jellyfin")
+			case "restart":
+				_, err = f.l.Restart(ctx, "jellyfin")
+			case "remove":
+				_, err = f.l.Remove(ctx, "jellyfin", true)
+			}
+			if !errors.Is(err, ErrArrayStopped) {
+				t.Fatalf("%s error = %v, want ErrArrayStopped", action, err)
+			}
+			if calls := f.fake.Calls(); len(calls) != 0 {
+				t.Fatalf("the Engine saw %v although the %s was refused", calls, action)
+			}
+			if !exists(t, filepath.Join(f.cfgDir, "library.db")) {
+				t.Fatal("appdata was touched by a refused remove")
+			}
+		})
+	}
+}
+
+// A remove with appdata is held from its array check until the appdata
+// directories are gone: array stop must not unmount the cache in between,
+// or the delete finds every directory missing and reports success.
+func TestRemoveWithAppdata_HoldsTheArrayActionUntilTheDirectoriesAreDeleted(t *testing.T) {
+	f := newAppdataFixture(t)
+	gated := newGatedProvider(f.fake)
+	f.l.Provider = gated
+	hold := &arrayHold{}
+	f.l.Admit = hold.admit
+	cfgFile := filepath.Join(f.cfgDir, "library.db")
+	var appdataAtRelease bool
+	hold.onFinish = func() { appdataAtRelease = exists(t, cfgFile) }
+
+	done := make(chan error, 1)
+	go func() { _, err := f.l.Remove(context.Background(), "jellyfin", true); done <- err }()
+
+	if op := <-gated.entered; op != "remove" {
+		t.Fatalf("Engine saw %q, want remove", op)
+	}
+	if inflight, _ := hold.counts(); inflight != 1 {
+		t.Fatalf("in-flight actions while the Engine remove is held = %d, want 1", inflight)
+	}
+	close(gated.release)
+	if err := <-done; err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if appdataAtRelease {
+		t.Fatal("the hold was released before the appdata directories were deleted")
+	}
+	if inflight, _ := hold.counts(); inflight != 0 {
+		t.Fatalf("in-flight actions after Remove = %d, want 0", inflight)
+	}
+}
+
+// Removing without appdata deletion is how a container leaves a stopped
+// array, so it is neither held nor refused by the hold.
+func TestRemoveWithoutAppdata_IsNotHeld(t *testing.T) {
+	f := newAppdataFixture(t)
+	hold := &arrayHold{refuse: ErrArrayStopped}
+	f.l.Admit = hold.admit
+	if _, err := f.l.Remove(context.Background(), "jellyfin", false); err != nil {
+		t.Fatalf("Remove without appdata deletion: %v", err)
+	}
+	if _, admitted := hold.counts(); admitted != 0 {
+		t.Fatalf("admitted = %d, want 0", admitted)
 	}
 }

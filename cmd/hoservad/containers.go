@@ -27,6 +27,10 @@ type appServices struct {
 	Lifecycle *container.Lifecycle
 	Array     *container.ArrayService
 	Watcher   *container.Watcher
+
+	// reconciled closes when reconcileContainersAtStart has finished; the
+	// recreate job runs only after it.
+	reconciled chan struct{}
 }
 
 // newContainers builds them over provider, or returns nil for a nil
@@ -46,7 +50,8 @@ func newContainers(provider container.Provider, stateDir string, arrays *store.A
 			Provider:  provider,
 			StatePath: filepath.Join(stateDir, containerArrayStateName),
 		},
-		Watcher: &container.Watcher{Provider: provider, Hub: hub},
+		Watcher:    &container.Watcher{Provider: provider, Hub: hub},
+		reconciled: make(chan struct{}),
 	}
 	if notifier != nil {
 		c.Watcher.OnUnhealthy = func(sc container.StateChange) {
@@ -116,28 +121,117 @@ func restoreContainersAfterShutdown(ctx context.Context, c *appServices, halted,
 	return done
 }
 
+// reconcileWait is how long a recreate job waits for the start-up
+// reconciliation before it gives up.
+const reconcileWait = 2 * time.Minute
+
+// reconcileContainersAtStart, in the background, undoes what a recreate
+// that the last hoservad process did not finish left behind: a container
+// still under its _hoserva-old or _hoserva-new name (container
+// EngineClient.Reconcile). It can start the original again, so it waits
+// for the array to be up like the boot restore does, and it tries again
+// every interval while Docker is not answering yet. What it found is
+// written to the daemon log. The returned channel closes when a pass has
+// completed, or failed for a reason waiting will not fix — what could not
+// be reconciled is then still there for the next start. It does not close
+// when ctx ends: the daemon is going down.
+func reconcileContainersAtStart(ctx context.Context, c *appServices, halted, storageReady func() bool, interval time.Duration) <-chan struct{} {
+	if c == nil {
+		done := make(chan struct{})
+		close(done)
+		return done
+	}
+	go func() {
+		timer := time.NewTimer(0)
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			if halted != nil && storageReady != nil && !halted() && storageReady() {
+				reports, err := c.Lifecycle.Provider.Reconcile(ctx)
+				for _, r := range reports {
+					log.Printf("hoservad: container %s, left by an interrupted recreate: %s: %s", r.Name, r.Outcome, r.Detail)
+				}
+				if err == nil {
+					close(c.reconciled)
+					return
+				}
+				if !errors.Is(err, container.ErrUnavailable) {
+					log.Printf("hoservad: reconciling containers left by an interrupted recreate: %v", err)
+					close(c.reconciled)
+					return
+				}
+			}
+			timer.Reset(interval)
+		}
+	}()
+	return c.reconciled
+}
+
+// awaitReconciled blocks until the start-up reconciliation has finished,
+// the context ends, or reconcileWait has passed.
+func (c *appServices) awaitReconciled(ctx context.Context) error {
+	timer := time.NewTimer(reconcileWait)
+	defer timer.Stop()
+	select {
+	case <-c.reconciled:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return errors.New("the containers left by an interrupted recreate have not been reconciled yet — try again shortly")
+	}
+}
+
 // wireContainers is what main.go calls to make container lifecycle
 // reachable: the /apps operations (Handler.Lifecycle) and the recreate
 // job. A test calls it too, rather than repeating the assignments.
 // halted and storageReady are the same two signals the boot restore reads:
-// with them Lifecycle refuses start, restart and recreate while the array
-// is stopped or its storage is not ready, and with either nil it refuses
-// always (fail closed).
-func wireContainers(handler *api.Handler, registry *job.Registry, c *appServices, halted, storageReady func() bool) {
+// with them Lifecycle refuses start, restart, recreate and removing with
+// appdata while the array is stopped or its storage is not ready, and with
+// either nil it refuses always (fail closed). admit is the hold array stop
+// drains (arrayActionAdmit): start, restart and removing with appdata
+// hold it from their array check to their last write.
+func wireContainers(handler *api.Handler, registry *job.Registry, c *appServices, halted, storageReady func() bool, admit func() (func(), error)) {
 	if c == nil {
 		return
 	}
 	c.Lifecycle.Halted = halted
 	c.Lifecycle.StorageReady = storageReady
+	c.Lifecycle.Admit = admit
 	handler.Lifecycle = c.Lifecycle
 	// Recreate replaces the container only after everything that can fail
 	// has succeeded, and puts the original back if a later step fails, so
 	// it is not cancellable: a cancel between its steps would be the one
 	// way to leave both containers half-swapped.
+	// It also waits for reconcileContainersAtStart, so it never starts
+	// while an interrupted recreate's leftovers are still being sorted out.
 	registry.Register(job.TypeContainerRecreate, false, job.RunContainerRecreate(func(ctx context.Context, id string) error {
+		if err := c.Lifecycle.RequireArrayRunning(); err != nil {
+			return err
+		}
+		if err := c.awaitReconciled(ctx); err != nil {
+			return err
+		}
 		_, err := c.Lifecycle.Recreate(ctx, id)
 		return err
 	}))
+}
+
+// arrayActionAdmit is Lifecycle.Admit over the scheduler: it takes the hold
+// ArraySequence.Stop drains, and once maintenance mode has begun refuses
+// with container.ErrArrayStopped, the same refusal Lifecycle gives a call
+// that arrives on an array that is already stopped.
+func arrayActionAdmit(s *job.Scheduler) func() (func(), error) {
+	return func() (func(), error) {
+		if err := s.BeginAppAction(); err != nil {
+			return nil, fmt.Errorf("%w: it is in maintenance mode — start the array first", container.ErrArrayStopped)
+		}
+		return s.FinishAppAction, nil
+	}
 }
 
 // appdataRoots is where Remove may delete a container's appdata, read from

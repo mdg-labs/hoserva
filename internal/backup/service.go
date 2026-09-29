@@ -2,7 +2,10 @@ package backup
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -16,15 +19,26 @@ import (
 
 // Service implements job.ConfigBackup (doc 10 §1, Q30).
 type Service struct {
-	DB           *sql.DB
-	Paths        Paths
+	DB    *sql.DB
+	Paths Paths
+	// Destinations is the fixed destination list a Service without a Store
+	// writes to. With a Store, the stored destinations are used instead.
 	Destinations []Destination
-	Secrets      SecretSource
-	Cipher       SecretCipher
-	Recipient    *Recipient
-	Hostname     string
-	Version      string
-	Now          func() time.Time
+	// Store holds the operator-managed destinations (D4). RunReason reads
+	// it on every run, so an added or removed destination takes effect on
+	// the next backup without a restart.
+	Store DestinationStore
+	// Rclone runs rclone for remote destinations. Nil uses ExecRclone.
+	Rclone RcloneRunner
+	// DestinationCipher seals a new remote destination's credentials under
+	// the machine key (Q28); Cipher unseals them.
+	DestinationCipher RecipientCipher
+	Secrets           SecretSource
+	Cipher            SecretCipher
+	Recipient         *Recipient
+	Hostname          string
+	Version           string
+	Now               func() time.Time
 
 	// PoolRoot is the pool's own catch-all mount root (doc 02 §1, Q12) a
 	// destination path is compared against, by path component rather than
@@ -53,6 +67,8 @@ type Service struct {
 	// than raced against it. Nil never refuses — the zero-value default,
 	// matching a Service built before job.ArraySequence is wired to one.
 	PoolWriteGate *PoolWriteGate
+
+	destMu sync.Mutex
 }
 
 // PoolWriteGate coordinates a config backup's write to a destination under
@@ -197,7 +213,11 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 	}
 	defer func() { _ = os.RemoveAll(archiveDir) }()
 
-	name := resolveArchiveName(now, reason, s.Destinations)
+	dests, err := s.loadDestinations(ctx)
+	if err != nil {
+		return err
+	}
+	name := resolveArchiveName(s.installationID(), now, reason, dests)
 	archivePath := filepath.Join(archiveDir, name)
 	if err := packArchive(staging, archivePath); err != nil {
 		return fmt.Errorf("packing archive: %w", err)
@@ -216,86 +236,144 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 	}
 
 	var artifacts *encryptedArtifacts
+	var failures []error
 	wrote := false
 	skipped := false
-	for _, dest := range s.Destinations {
+	for _, dest := range dests {
 		if !dest.Enabled {
 			continue
 		}
 
-		// A destination under the pool's own mount root needs a live mount
-		// check before every write (#409): with the array stopped,
-		// CatchAllPath is a bare, empty directory on the root filesystem —
-		// os.MkdirAll inside writeArchive would happily create it there,
-		// the archive would be written onto the boot device without saying
-		// so, and it would be hidden the moment the pool mounts back over
-		// it. A destination anywhere else (the boot device, an external
-		// disk) is unaffected by the array's own mount state and is always
-		// attempted.
-		//
-		// PoolWriteGate.begin runs first, before the mount check itself
-		// (#409): once it admits this write, job.ArraySequence.Stop's own
-		// Close call cannot return — and so cannot let an unmount proceed
-		// — until the deferred end below runs at the end of this whole
-		// RunReason call, closing the exact race a mount check alone
-		// cannot: mount confirmed live, then torn down before the write
-		// that check was guarding ever reaches disk.
-		if underPoolRoot(dest.Path, s.poolRoot()) {
-			if s.PoolWriteGate != nil {
-				if !s.PoolWriteGate.begin() {
-					s.log("skipping destination %q: the pool is closed for writing while the array is stopping", dest.ID)
-					skipped = true
-					continue
-				}
-				defer s.PoolWriteGate.end()
-			}
-			mounted, err := s.poolMounted()
-			switch {
-			case err != nil:
-				s.log("skipping destination %q: confirming the pool is mounted at %q: %v", dest.ID, s.poolRoot(), err)
-				skipped = true
-				continue
-			case !mounted:
-				s.log("skipping destination %q: the pool is not mounted at %q", dest.ID, s.poolRoot())
-				skipped = true
-				continue
-			}
+		release, why := s.admitDestination(dest)
+		if why != "" {
+			s.log("skipping destination %q: %s", dest.ID, why)
+			skipped = true
+			continue
 		}
+		written, err := s.writeDestination(ctx, dest, archivePath, name, passphrase, now, &artifacts)
+		release()
+		if written {
+			wrote = true
+		}
+		if err != nil {
+			failures = append(failures, err)
+		}
+	}
 
-		writePath, writeName := archivePath, name
-		if dest.Encrypt {
-			if artifacts == nil {
-				// Written into archiveDir (both derived from archivePath's
-				// own directory), so archiveDir's own deferred removal
-				// above covers these too.
-				artifacts, err = s.buildArtifacts(archivePath, passphrase)
-				if err != nil {
-					return fmt.Errorf("encrypting archive for destination %q: %w", dest.ID, err)
-				}
-			}
-			writePath, writeName = artifacts.ArchivePath, filepath.Base(artifacts.ArchivePath)
-			if err := writeArchive(dest, artifacts.SidecarPath); err != nil {
-				return fmt.Errorf("writing destination %q: %w", dest.ID, err)
-			}
+	// A destination that failed while another was written is logged and
+	// left to the stale-destination alert (doc 10 §1); a run left with
+	// nothing written anywhere fails closed (#409), so a pre-change backup
+	// refuses the change it guards rather than report a snapshot that was
+	// never taken. A Service with no enabled destination at all (nothing
+	// to skip) is unrelated — that configuration is a no-op.
+	if wrote {
+		for _, err := range failures {
+			s.log("%v", err)
 		}
-		if err := writeArchive(dest, writePath); err != nil {
-			return fmt.Errorf("writing destination %q: %w", dest.ID, err)
-		}
-		if err := pruneDestination(dest, now, writeName); err != nil {
-			return fmt.Errorf("pruning destination %q: %w", dest.ID, err)
-		}
-		wrote = true
+		return nil
 	}
-	// A run that skipped at least one enabled destination and wrote to
-	// none of them fails closed (#409): a pre-change backup must refuse
-	// the change it guards rather than report a snapshot that was never
-	// actually taken anywhere. A Service with no enabled destination at
-	// all (nothing to skip) is unrelated to this check — that configuration
-	// already succeeded as a no-op before this fix, and still does.
-	if skipped && !wrote {
-		return fmt.Errorf("backup: every enabled destination was skipped or unavailable")
+	if skipped {
+		return errors.Join(append([]error{fmt.Errorf("backup: every enabled destination was skipped or unavailable")}, failures...)...)
 	}
-	return nil
+	return errors.Join(failures...)
+}
+
+func (s *Service) loadDestinations(ctx context.Context) ([]Destination, error) {
+	if s.Store == nil {
+		return s.Destinations, nil
+	}
+	dests, err := s.Store.ListDestinations(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing backup destinations: %w", err)
+	}
+	return dests, nil
+}
+
+// admitDestination decides whether dest may be written to right now. A
+// destination under the pool's own mount root needs a live mount check
+// before every write (#409): with the array stopped, CatchAllPath is a
+// bare, empty directory on the root filesystem — os.MkdirAll inside
+// writeArchive would happily create it there, the archive would be
+// written onto the boot device without saying so, and it would be hidden
+// the moment the pool mounts back over it. A destination anywhere else
+// (the boot device, an external disk, a remote) is unaffected by the
+// array's own mount state and is always admitted.
+//
+// PoolWriteGate.begin runs before the mount check itself (#409): once it
+// admits a write, job.ArraySequence.Stop's own Close call cannot return —
+// and so cannot let an unmount proceed — until the returned release runs,
+// closing the exact race a mount check alone cannot: mount confirmed
+// live, then torn down before the write that check was guarding ever
+// reaches disk. A non-empty reason means the destination was not
+// admitted; release is then a no-op.
+func (s *Service) admitDestination(dest Destination) (release func(), reason string) {
+	noop := func() {}
+	if dest.isRemote() || !underPoolRoot(dest.Path, s.poolRoot()) {
+		return noop, ""
+	}
+	release = noop
+	if s.PoolWriteGate != nil {
+		if !s.PoolWriteGate.begin() {
+			return noop, "the pool is closed for writing while the array is stopping"
+		}
+		release = s.PoolWriteGate.end
+	}
+	mounted, err := s.poolMounted()
+	switch {
+	case err != nil:
+		release()
+		return noop, fmt.Sprintf("confirming the pool is mounted at %q: %v", s.poolRoot(), err)
+	case !mounted:
+		release()
+		return noop, fmt.Sprintf("the pool is not mounted at %q", s.poolRoot())
+	}
+	return release, ""
+}
+
+// writeDestination writes the archive (and, when dest encrypts, its
+// identity sidecar) to dest, records the success, and prunes. written is
+// true once the archive itself is on the destination, even if the prune
+// that follows fails.
+func (s *Service) writeDestination(ctx context.Context, dest Destination, archivePath, name, passphrase string, now time.Time, artifacts **encryptedArtifacts) (written bool, err error) {
+	if dest.isRemote() && !dest.Encrypt {
+		return false, fmt.Errorf("writing destination %q: a remote destination is never written unencrypted (Q80)", dest.ID)
+	}
+	writePath, writeName, sidecarPath := archivePath, name, ""
+	if dest.Encrypt {
+		if *artifacts == nil {
+			// Written into the run's own archive directory (both derived
+			// from archivePath's own directory), so its deferred removal
+			// covers these too.
+			a, err := s.buildArtifacts(archivePath, passphrase)
+			if err != nil {
+				return false, fmt.Errorf("encrypting archive for destination %q: %w", dest.ID, err)
+			}
+			*artifacts = a
+		}
+		writePath, writeName, sidecarPath = (*artifacts).ArchivePath, filepath.Base((*artifacts).ArchivePath), (*artifacts).SidecarPath
+	}
+
+	target, err := s.targetFor(ctx, dest)
+	if err != nil {
+		return false, fmt.Errorf("preparing destination %q: %w", dest.ID, err)
+	}
+	if sidecarPath != "" {
+		if err := target.write(ctx, sidecarPath); err != nil {
+			return false, fmt.Errorf("writing destination %q: %w", dest.ID, err)
+		}
+	}
+	if err := target.write(ctx, writePath); err != nil {
+		return false, fmt.Errorf("writing destination %q: %w", dest.ID, err)
+	}
+	if s.Store != nil {
+		if err := s.Store.RecordBackupSuccess(ctx, dest.ID, now); err != nil && !errors.Is(err, ErrDestinationNotFound) {
+			return true, fmt.Errorf("recording the backup to destination %q: %w", dest.ID, err)
+		}
+	}
+	if err := pruneTarget(ctx, target, s.archiveOwner(dest), dest.Retention, now, writeName); err != nil {
+		return true, fmt.Errorf("pruning destination %q: %w", dest.ID, err)
+	}
+	return true, nil
 }
 
 // poolRoot is PoolRoot's default, pool.CatchAllPath.
@@ -350,6 +428,26 @@ func (s *Service) buildArtifacts(archivePath, passphrase string) (*encryptedArti
 	return buildEncryptedArtifacts(archivePath, s.Recipient.Public, sidecar)
 }
 
+// installationID is the id every archive name carries, so a destination
+// shared with another installation can tell whose archive is whose. It is
+// derived from the onboarding recipient's public key, which is generated
+// once per installation and never rotated (Q80), and falls back to the
+// hostname for a Service built without one.
+func (s *Service) installationID() string {
+	seed := "host:" + s.Hostname
+	if s.Recipient != nil && s.Recipient.Public != "" {
+		seed = "recipient:" + s.Recipient.Public
+	}
+	sum := sha256.Sum256([]byte("hoserva-backup-installation-v1\x00" + seed))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// archiveOwner is what retention on dest may remove: this installation's
+// archives, plus legacy ones on the default destinations.
+func (s *Service) archiveOwner(dest Destination) archiveOwner {
+	return archiveOwner{installation: s.installationID(), legacy: isDefaultDestination(dest)}
+}
+
 // archiveName formats one candidate archive filename. suffix is 0 for the
 // unadorned name; any value 2 or above appends "-<suffix>" to the
 // timestamp to resolve a collision (#401) — 1 is never passed, since the
@@ -357,15 +455,15 @@ func (s *Service) buildArtifacts(archivePath, passphrase string) (*encryptedArti
 // resolution (not doc 10 §1's original minute resolution) is itself part
 // of that fix: two runs in the same minute now produce different base
 // names before collision suffixing is even needed.
-func archiveName(now time.Time, reason Reason, suffix int) string {
+func archiveName(installation string, now time.Time, reason Reason, suffix int) string {
 	ts := now.UTC().Format("2006-01-02T15-04-05")
 	if suffix > 0 {
 		ts = fmt.Sprintf("%s-%d", ts, suffix)
 	}
 	if reason != ReasonNone {
-		return fmt.Sprintf("hoserva-config-%s.%s.tar.zst", ts, reason)
+		return fmt.Sprintf("hoserva-config-%s-%s.%s.tar.zst", installation, ts, reason)
 	}
-	return fmt.Sprintf("hoserva-config-%s.tar.zst", ts)
+	return fmt.Sprintf("hoserva-config-%s-%s.tar.zst", installation, ts)
 }
 
 // resolveArchiveName picks the first candidate archiveName produces that no
@@ -375,13 +473,13 @@ func archiveName(now time.Time, reason Reason, suffix int) string {
 // launched from the same request do. Checking every enabled destination,
 // not just one, keeps a single archive name meaningful across all of them
 // for the same run.
-func resolveArchiveName(now time.Time, reason Reason, destinations []Destination) string {
-	name := archiveName(now, reason, 0)
+func resolveArchiveName(installation string, now time.Time, reason Reason, destinations []Destination) string {
+	name := archiveName(installation, now, reason, 0)
 	if !archiveNameTaken(name, destinations) {
 		return name
 	}
 	for suffix := 2; ; suffix++ {
-		name := archiveName(now, reason, suffix)
+		name := archiveName(installation, now, reason, suffix)
 		if !archiveNameTaken(name, destinations) {
 			return name
 		}
@@ -390,7 +488,7 @@ func resolveArchiveName(now time.Time, reason Reason, destinations []Destination
 
 func archiveNameTaken(name string, destinations []Destination) bool {
 	for _, dest := range destinations {
-		if !dest.Enabled {
+		if !dest.Enabled || dest.isRemote() {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(dest.Path, name)); err == nil {

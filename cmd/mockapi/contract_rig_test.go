@@ -651,6 +651,13 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 			}
 			return nil
 		},
+		// StorageServicesReleased stands in for hoservad's
+		// storageTargetSync.Ready (#385): this rig has no storageTargetSync,
+		// so it reads the same gate StorageReady does. Like hoservad with no
+		// array configured, it is never true when the scenario has none.
+		StorageServicesReleased: func() bool {
+			return len(expected) > 0 && degradedGate.Ready()
+		},
 		Schedules:   scheduleSvc,
 		Settings:    settingsSvc,
 		UPS:         upsSvc,
@@ -672,8 +679,36 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		// so nothing here is written to any real path). ExportConfig
 		// stays out of contractCases (contractSkip's own entry) since the
 		// mock's own stub bytes give it no failure path to compare.
-		Backup: &backup.Service{DB: db, Paths: backup.Paths{DBPath: dbPath}},
+		//
+		// Its destinations (#60) are the mock's two seeded ones, "boot"
+		// and "pool", with paths in this test's own temp directory so
+		// nothing is written to a real path, and a fake rclone.
+		Backup: contractBackupService(t, db, dbPath),
 	}
+}
+
+func contractBackupService(t *testing.T, db *sql.DB, dbPath string) *backup.Service {
+	t.Helper()
+	defaultPaths := backup.DefaultPaths("", "")
+	svc := &backup.Service{
+		DB: db,
+		// StateDir and ConfigRoot are only the protected-path inputs of
+		// destination admission; DBPath is what the service writes to.
+		Paths:             backup.Paths{DBPath: dbPath, StateDir: defaultPaths.StateDir, ConfigRoot: defaultPaths.ConfigRoot},
+		Store:             api.NewBackupDestinationStore(db),
+		Rclone:            &backup.FakeRclone{},
+		Cipher:            backup.FakeSecretCipher{},
+		DestinationCipher: backup.FakeSecretCipher{},
+	}
+	defaults := mockBackupDestinations()
+	root := t.TempDir()
+	for i := range defaults {
+		defaults[i].Path = filepath.Join(root, defaults[i].ID)
+	}
+	if err := svc.SeedDestinations(context.Background(), defaults); err != nil {
+		t.Fatalf("seeding contract backup destinations: %v", err)
+	}
+	return svc
 }
 
 // newContractMockHandler is the mock side of the pair: newHandler's own
