@@ -45,11 +45,11 @@ func newAppdataFixture(t *testing.T) *appdataFixture {
 			{Source: f.mediaDir, Destination: "/media", ReadWrite: false},
 		},
 	})
-	f.l = &Lifecycle{
+	f.l = arrayUp(&Lifecycle{
 		Provider:     f.fake,
 		Hub:          NewHub(),
 		AppdataRoots: func(context.Context) ([]string, error) { return []string{f.root}, nil },
-	}
+	})
 	return f
 }
 
@@ -123,6 +123,71 @@ func TestStopAndRemove_AllowedWhileTheArrayIsStopped(t *testing.T) {
 	}
 	if _, err := l.Logs(ctx, "jellyfin", LogOptions{}); err != nil {
 		t.Fatalf("Logs: %v", err)
+	}
+}
+
+// The data-loss scenario for appdata deletion: with the array stopped the
+// cache disk is not mounted, so every planned appdata directory is missing
+// and would be skipped — the container removed, the call a success, the
+// real appdata left on the cache disk to be picked up by a later install.
+// Every way the array can be unusable refuses Remove with deleteAppdata
+// before the Engine or any directory is touched. The fixture's directory
+// exists here, so a Remove that got as far as deleting would show as a
+// missing file.
+func TestRemove_DeleteAppdataRefusedUnlessTheArrayIsRunning(t *testing.T) {
+	tests := []struct {
+		name    string
+		halted  func() bool
+		ready   func() bool
+		wantErr error
+	}{
+		{"maintenance mode", func() bool { return true }, func() bool { return true }, ErrArrayStopped},
+		{"storage not ready", func() bool { return false }, func() bool { return false }, ErrArrayStopped},
+		{"maintenance mode and storage not ready", func() bool { return true }, func() bool { return false }, ErrArrayStopped},
+		{"no maintenance signal", nil, func() bool { return true }, ErrArrayStateUnknown},
+		{"no storage signal", func() bool { return false }, nil, ErrArrayStateUnknown},
+		{"no signals", nil, nil, ErrArrayStateUnknown},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAppdataFixture(t)
+			f.l.Halted, f.l.StorageReady = tc.halted, tc.ready
+
+			res, err := f.l.Remove(context.Background(), "jellyfin", true)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Remove error = %v, want %v", err, tc.wantErr)
+			}
+			if len(res.DeletedPaths) != 0 {
+				t.Fatalf("DeletedPaths = %v after a refused Remove", res.DeletedPaths)
+			}
+			if calls := f.fake.Calls(); len(calls) != 0 {
+				t.Fatalf("the Engine saw %v although the Remove was refused", calls)
+			}
+			all, _ := f.fake.List(context.Background())
+			if !mustHave(t, all, "jellyfin") {
+				t.Fatal("the container was removed by a refused Remove")
+			}
+			if !exists(t, filepath.Join(f.cfgDir, "library.db")) {
+				t.Fatal("appdata was touched by a refused Remove")
+			}
+			if !exists(t, filepath.Join(f.mediaDir, "movie.mkv")) {
+				t.Fatal("a directory outside the appdata root was touched by a refused Remove")
+			}
+		})
+	}
+}
+
+// A remove that does not ask for appdata deletion never needs the array,
+// however unusable: it is how a container is taken out of a stopped array.
+func TestRemove_WithoutAppdataDeletionNeedsNoArrayState(t *testing.T) {
+	f := newAppdataFixture(t)
+	f.l.Halted, f.l.StorageReady = nil, nil
+
+	if _, err := f.l.Remove(context.Background(), "jellyfin", false); err != nil {
+		t.Fatalf("Remove without appdata deletion: %v", err)
+	}
+	if !exists(t, filepath.Join(f.cfgDir, "library.db")) {
+		t.Fatal("appdata was deleted by a remove that did not ask for it")
 	}
 }
 

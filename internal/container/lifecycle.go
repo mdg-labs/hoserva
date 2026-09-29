@@ -8,16 +8,18 @@ import (
 	"time"
 )
 
-// ErrArrayStopped is returned by Start, Restart and Recreate while the
-// array is stopped (maintenance mode) or its storage is not ready: a
-// container started then binds /mnt/user and /mnt/cache paths that are
-// empty directories on the boot device, writes into them, and the data
-// disappears under the pool when it mounts (doc 02 §1).
+// ErrArrayStopped is returned by Start, Restart and Recreate, and by Remove
+// when it is asked to delete appdata, while the array is stopped
+// (maintenance mode) or its storage is not ready: a container started then
+// binds /mnt/user and /mnt/cache paths that are empty directories on the
+// boot device, writes into them, and the data disappears under the pool
+// when it mounts (doc 02 §1); appdata deletion finds the cache disk's
+// directories missing and deletes nothing.
 var ErrArrayStopped = errors.New("container: the array is stopped")
 
-// ErrArrayStateUnknown is returned by the same three actions when the
-// Lifecycle has no way to read the array's state, so the refusal fails
-// closed instead of starting on a guess.
+// ErrArrayStateUnknown is returned by the same actions when the Lifecycle
+// has no way to read the array's state, so the refusal fails closed
+// instead of acting on a guess.
 var ErrArrayStateUnknown = errors.New("container: the array state cannot be read")
 
 // Lifecycle is the business logic behind the /apps lifecycle operations
@@ -45,10 +47,11 @@ type Lifecycle struct {
 
 // RequireArrayRunning returns nil only when the array is running and its
 // storage ready — the one condition under which a container may be
-// started. Start, Restart and Recreate call it before any Engine call, so
-// a container's bind mounts are never resolved against an unmounted pool
-// even when dockerd is reachable; the API also calls it, to refuse a
-// recreate before queueing a job that would fail.
+// started or its appdata deleted. Start, Restart, Recreate and Remove with
+// deleteAppdata call it before any Engine call, so a container's bind
+// mounts are never resolved against an unmounted pool even when dockerd is
+// reachable; the API also calls it, to refuse a recreate before queueing a
+// job that would fail.
 func (l *Lifecycle) RequireArrayRunning() error {
 	if l.Halted == nil || l.StorageReady == nil {
 		return ErrArrayStateUnknown
@@ -136,7 +139,18 @@ func (l *Lifecycle) settle(ctx context.Context, id string) (Container, error) {
 // refuse the request is checked before the container is removed, and the
 // directories are deleted only after the Engine has removed it, so a
 // failed removal deletes nothing.
+//
+// Deleting appdata needs the array running (RequireArrayRunning), checked
+// before anything else: with the array stopped the cache disk is not
+// mounted, every planned directory is missing, and removing the container
+// would report success while the real appdata stays on the disk. A remove
+// that keeps appdata never needs the array.
 func (l *Lifecycle) Remove(ctx context.Context, id string, deleteAppdata bool) (RemoveResult, error) {
+	if deleteAppdata {
+		if err := l.RequireArrayRunning(); err != nil {
+			return RemoveResult{}, err
+		}
+	}
 	c, err := l.Provider.Inspect(ctx, id)
 	if err != nil {
 		return RemoveResult{}, err

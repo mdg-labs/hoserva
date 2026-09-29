@@ -514,6 +514,49 @@ func TestContainersWiring_RemoveKeepsAppdataUnlessAskedTo(t *testing.T) {
 	}
 }
 
+// The data-loss scenario through the real daemon: with the array stopped,
+// or its storage not ready, the cache disk is not mounted, so a remove that
+// deletes appdata would remove the container, report success and leave the
+// real appdata on the disk. DELETE ?deleteAppdata=true is refused with 409
+// array_stopped; the Engine sees no remove and the appdata is untouched.
+// The same DELETE without deleteAppdata is still allowed.
+func TestContainersWiring_RemoveWithAppdataRefusedWhileTheArrayIsStopped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		down func(*containersWiringHarness)
+	}{
+		{"maintenance mode", func(w *containersWiringHarness) {
+			if err := w.scheduler.EnterMaintenance(context.Background()); err != nil {
+				t.Fatalf("EnterMaintenance: %v", err)
+			}
+		}},
+		{"storage not ready", func(w *containersWiringHarness) { w.storageReady.Store(false) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newContainersWiringHarness(t)
+			tc.down(w)
+
+			status, body := w.do(t, http.MethodDelete, "/apps/jellyfin?deleteAppdata=true")
+			if status != http.StatusConflict || !bytes.Contains(body, []byte(`"array_stopped"`)) {
+				t.Fatalf("DELETE ?deleteAppdata=true on a stopped array = %d %s, want 409 array_stopped", status, body)
+			}
+			if calls := w.fake.Calls(); len(calls) != 0 {
+				t.Fatalf("the Engine saw %v although the remove was refused", calls)
+			}
+			if _, err := os.Stat(filepath.Join(w.appdata, "library.db")); err != nil {
+				t.Fatalf("appdata touched by a refused remove: %v", err)
+			}
+
+			if status, body := w.do(t, http.MethodDelete, "/apps/jellyfin"); status != http.StatusOK {
+				t.Fatalf("DELETE without appdata on a stopped array = %d %s, want 200", status, body)
+			}
+			if _, err := os.Stat(filepath.Join(w.appdata, "library.db")); err != nil {
+				t.Fatalf("appdata deleted by a remove that did not ask for it: %v", err)
+			}
+		})
+	}
+}
+
 // A container killed from outside Hoserva arrives on the daemon's real
 // /events stream as a container_state event, through the Watcher main.go
 // starts — not by anything polling the container.

@@ -41,6 +41,34 @@ func TestRemoveAppRefusesAppdataWithoutACacheDisk(t *testing.T) {
 	}
 }
 
+// Deleting appdata needs the array running, as in hoservad: the refusal is
+// array_stopped, it comes before the container is looked up or the
+// appdata location is considered, and it leaves the container in place. A
+// plain remove is still allowed.
+func TestRemoveAppRefusesAppdataWhileTheArrayIsStopped(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatalf("newHandler: %v", err)
+	}
+	h.maintenance = true
+
+	for _, id := range []string{"portainer", "no-such-container"} {
+		_, err = h.RemoveApp(t.Context(), apiv1.RemoveAppParams{ID: id, DeleteAppdata: apiv1.NewOptBool(true)})
+		if err == nil {
+			t.Fatalf("RemoveApp(%s, deleteAppdata=true) on a stopped array: expected array_stopped, got success", id)
+		}
+		if code := mockErrorCode(t, err); code != "array_stopped" {
+			t.Fatalf("code = %q, want array_stopped", code)
+		}
+	}
+	if _, err := h.findApp("portainer"); err != nil {
+		t.Fatalf("a refused removal must leave the container: %v", err)
+	}
+	if _, err := h.RemoveApp(t.Context(), apiv1.RemoveAppParams{ID: "portainer"}); err != nil {
+		t.Fatalf("RemoveApp without deleteAppdata on a stopped array: %v", err)
+	}
+}
+
 func TestRemoveAppWithAppdataAvailable(t *testing.T) {
 	t.Run("shared appdata is refused", func(t *testing.T) {
 		h, err := newHandler("healthy")

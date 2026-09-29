@@ -511,6 +511,51 @@ var contractCases = []contractCase{
 			return err
 		},
 	},
+	// #428: deleting appdata is refused with 409 array_stopped while the
+	// array is stopped or its storage is not ready — before the container
+	// is looked up or removed — and a plain remove is still allowed.
+	{
+		op:   "RemoveApp",
+		name: "delete_appdata_refused_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "portainer", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "RemoveApp",
+		name: "delete_appdata_refused_before_the_container_is_looked_up",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "no-such-container", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:       "RemoveApp",
+		name:     "delete_appdata_refused_while_storage_is_not_ready",
+		scenario: "degraded",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "portainer", DeleteAppdata: apiv1.NewOptBool(true)})
+			return err
+		},
+	},
+	{
+		op:   "RemoveApp",
+		name: "allowed_without_appdata_while_the_array_is_stopped",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.RemoveApp(ctx, apiv1.RemoveAppParams{ID: "portainer"})
+			return err
+		},
+	},
 	{
 		// Production refuses appdata deletion with appdata_unavailable/409
 		// when the array has no cache disk to hold appdata, and no mock

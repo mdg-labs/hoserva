@@ -831,7 +831,10 @@ type Invoker interface {
 	// directory another container mounts, or that lies inside a directory of appdata another container
 	// mounts, is never deleted — a request that would delete one is refused (`appdata_shared`, 409) and
 	// removes nothing. `deleteAppdata` with no appdata location is refused (`appdata_unavailable`, 409).
-	// Every refusal happens before the container is removed.
+	// `deleteAppdata` is refused with 409 `array_stopped` while the array is stopped (maintenance mode) or
+	// its storage is not ready, because the cache disk is not mounted and the appdata on it could not be
+	// deleted, and with 503 `array_state_unknown` if the array's state cannot be read. A remove that keeps
+	// appdata is allowed on a stopped array. Every refusal happens before the container is removed.
 	//
 	// DELETE /apps/{id}
 	RemoveApp(ctx context.Context, params RemoveAppParams) (*RemoveAppResult, error)
@@ -13002,7 +13005,10 @@ func (c *Client) sendRegisterExternalDisk(ctx context.Context, request *Register
 // directory another container mounts, or that lies inside a directory of appdata another container
 // mounts, is never deleted — a request that would delete one is refused (`appdata_shared`, 409) and
 // removes nothing. `deleteAppdata` with no appdata location is refused (`appdata_unavailable`, 409).
-// Every refusal happens before the container is removed.
+// `deleteAppdata` is refused with 409 `array_stopped` while the array is stopped (maintenance mode) or
+// its storage is not ready, because the cache disk is not mounted and the appdata on it could not be
+// deleted, and with 503 `array_state_unknown` if the array's state cannot be read. A remove that keeps
+// appdata is allowed on a stopped array. Every refusal happens before the container is removed.
 //
 // DELETE /apps/{id}
 func (c *Client) RemoveApp(ctx context.Context, params RemoveAppParams) (*RemoveAppResult, error) {
