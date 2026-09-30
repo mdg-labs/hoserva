@@ -56,9 +56,15 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 	if configRoot == "" {
 		configRoot = "/etc"
 	}
+	paths := backup.DefaultPaths(cfg.stateDir, filepath.Join(configRoot, "hoserva"))
+	// The path hoservad loaded the key from, which --machine-key-path can
+	// move anywhere, not the packaged one DefaultPaths guesses.
+	if cfg.machineKeyPath != "" {
+		paths.MachineKeyPath = cfg.machineKeyPath
+	}
 	svc := &backup.Service{
 		DB:                db,
-		Paths:             backup.DefaultPaths(cfg.stateDir, filepath.Join(configRoot, "hoserva")),
+		Paths:             paths,
 		Store:             destinations,
 		Secrets:           &backup.ServiceSecretSource{BackupPassphraseFn: settings.BackupPassphrase},
 		Cipher:            machineKey,

@@ -81,5 +81,6 @@ func DefaultPaths(stateDir, configRoot string) Paths {
 		StacksDir:           filepath.Join(stateDir, "stacks"),
 		TemplatesDir:        filepath.Join(stateDir, "templates"),
 		SnapraidContentPath: filepath.Join(stateDir, "snapraid.content"),
+		MachineKeyPath:      filepath.Join(configRoot, "secret.key"),
 	}
 }
