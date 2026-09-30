@@ -3619,7 +3619,7 @@ func (s *ConfigImportSecrets) SetStacks(val []string) {
 
 // `none`: the archive has no passphrase-protected section (it was built without a backup passphrase).
 // `opened`: the passphrase available opens it. `no_passphrase`: it has one and no passphrase is
-// available. `passphrase_incorrect`: it has one and the configured passphrase does not open it.
+// available. `passphrase_incorrect`: it has one and the passphrase available does not open it.
 // Ref: #/components/schemas/ConfigImportSecretsStatus
 type ConfigImportSecretsStatus string
 

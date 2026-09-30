@@ -615,22 +615,24 @@ type Invoker interface {
 	// and why, the name of the pre-import archive and which passphrase seals its secrets. Every refusal
 	// happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does
 	// not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link,
-	// device, FIFO or duplicate entry, or has a `secrets.age` that is not readable), 400
-	// `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's
-	// `secrets.age`), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409
-	// `archive_other_installation` (its machine key check value differs from this installation's or is
-	// missing; a different installation's archive is restored only onto a fresh install) and 409
-	// `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the
-	// live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would
-	// restore lands on a symbolic link or on something that is not a regular file, or it names a path
-	// outside the directory it is restored into; nothing is followed). A bare-metal restore that would
-	// replace a Samba or NFS file already on this server also refuses with 409 `host_files_not_saved` when
-	// no backup destination is enabled to take the copy of it that the pre-import archive carries. A
-	// failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the
-	// database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from
-	// and which of the file categories were restored and which left as they were. The array's own state,
-	// running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an
-	// import cannot return a stopped array to normal operation.
+	// device, FIFO or duplicate entry, or has a `secrets.age` or `identity.age` that is not readable,
+	// which shows once a passphrase is tried against it), 400 `backup_passphrase_incorrect` (a
+	// `passphrase` was given and it does not open the archive's `secrets.age` or, for an archive with an
+	// `identity.age` and no `secrets.age`, its `identity.age`; one that opens `secrets.age` but not
+	// `identity.age` is not refused), 400 `incompatible_archive` (another schema version), 409
+	// `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this
+	// installation's or is missing; a different installation's archive is restored only onto a fresh
+	// install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in
+	// flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe`
+	// (a file it would restore lands on a symbolic link or on something that is not a regular file, or it
+	// names a path outside the directory it is restored into; nothing is followed). A bare-metal restore
+	// that would replace a Samba or NFS file already on this server also refuses with 409
+	// `host_files_not_saved` when no backup destination is enabled to take the copy of it that the
+	// pre-import archive carries. A failure to stage the files answers 500 `import_failed` with nothing
+	// changed; a failure once the database has been replaced answers 500 `import_failed` naming the
+	// pre-import archive to restore from and which of the file categories were restored and which left as
+	// they were. The array's own state, running, in maintenance mode or stopped, is kept as it is, never
+	// restored from the archive, so an import cannot return a stopped array to normal operation.
 	//
 	// On a fresh install, one with no array configured, whatever admin accounts it has, the import is the
 	// bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array
@@ -916,8 +918,12 @@ type Invoker interface {
 	// the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section
 	// (`status`, for `secrets.age`) and whether the passphrase available opens it and `identity.age`
 	// (`identity`), and if not, which stacks' `.env` files would not be restored. The optional
-	// `passphrase` is tried as `importConfig` tries it, and one that does not open the archive's
-	// `secrets.age` or `identity.age` is refused as 400 `backup_passphrase_incorrect`. An archive that
+	// `passphrase` is tried as `importConfig` tries it: one that does not open the archive's
+	// `secrets.age`, or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`,
+	// is refused as 400 `backup_passphrase_incorrect`; one that opens `secrets.age` but not `identity.age`
+	// is not refused, and `identity` reports `passphrase_incorrect`. Without a `passphrase` the configured
+	// one is tried, and one that is absent or does not open the files shows only in `secrets`, never as a
+	// refusal; an archive with neither file has nothing to check a `passphrase` against. An archive that
 	// cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
 	// `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
 	// on a data disk is read.
@@ -10001,22 +10007,24 @@ func (c *Client) sendGetUserSharePermissions(ctx context.Context, params GetUser
 // and why, the name of the pre-import archive and which passphrase seals its secrets. Every refusal
 // happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does
 // not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link,
-// device, FIFO or duplicate entry, or has a `secrets.age` that is not readable), 400
-// `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's
-// `secrets.age`), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409
-// `archive_other_installation` (its machine key check value differs from this installation's or is
-// missing; a different installation's archive is restored only onto a fresh install) and 409
-// `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the
-// live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would
-// restore lands on a symbolic link or on something that is not a regular file, or it names a path
-// outside the directory it is restored into; nothing is followed). A bare-metal restore that would
-// replace a Samba or NFS file already on this server also refuses with 409 `host_files_not_saved` when
-// no backup destination is enabled to take the copy of it that the pre-import archive carries. A
-// failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the
-// database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from
-// and which of the file categories were restored and which left as they were. The array's own state,
-// running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an
-// import cannot return a stopped array to normal operation.
+// device, FIFO or duplicate entry, or has a `secrets.age` or `identity.age` that is not readable,
+// which shows once a passphrase is tried against it), 400 `backup_passphrase_incorrect` (a
+// `passphrase` was given and it does not open the archive's `secrets.age` or, for an archive with an
+// `identity.age` and no `secrets.age`, its `identity.age`; one that opens `secrets.age` but not
+// `identity.age` is not refused), 400 `incompatible_archive` (another schema version), 409
+// `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this
+// installation's or is missing; a different installation's archive is restored only onto a fresh
+// install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in
+// flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe`
+// (a file it would restore lands on a symbolic link or on something that is not a regular file, or it
+// names a path outside the directory it is restored into; nothing is followed). A bare-metal restore
+// that would replace a Samba or NFS file already on this server also refuses with 409
+// `host_files_not_saved` when no backup destination is enabled to take the copy of it that the
+// pre-import archive carries. A failure to stage the files answers 500 `import_failed` with nothing
+// changed; a failure once the database has been replaced answers 500 `import_failed` naming the
+// pre-import archive to restore from and which of the file categories were restored and which left as
+// they were. The array's own state, running, in maintenance mode or stopped, is kept as it is, never
+// restored from the archive, so an import cannot return a stopped array to normal operation.
 //
 // On a fresh install, one with no array configured, whatever admin accounts it has, the import is the
 // bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array
@@ -13473,8 +13481,12 @@ func (c *Client) sendPreviewAppdataRestore(ctx context.Context, request *Preview
 // the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section
 // (`status`, for `secrets.age`) and whether the passphrase available opens it and `identity.age`
 // (`identity`), and if not, which stacks' `.env` files would not be restored. The optional
-// `passphrase` is tried as `importConfig` tries it, and one that does not open the archive's
-// `secrets.age` or `identity.age` is refused as 400 `backup_passphrase_incorrect`. An archive that
+// `passphrase` is tried as `importConfig` tries it: one that does not open the archive's
+// `secrets.age`, or, for an archive with an `identity.age` and no `secrets.age`, its `identity.age`,
+// is refused as 400 `backup_passphrase_incorrect`; one that opens `secrets.age` but not `identity.age`
+// is not refused, and `identity` reports `passphrase_incorrect`. Without a `passphrase` the configured
+// one is tried, and one that is absent or does not open the files shows only in `secrets`, never as a
+// refusal; an archive with neither file has nothing to check a `passphrase` against. An archive that
 // cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413
 // `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing
 // on a data disk is read.

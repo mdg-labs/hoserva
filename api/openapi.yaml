@@ -2762,9 +2762,13 @@ paths:
         before anything is written, including the pre-import backup: 400
         `invalid_archive` (it does not unpack or checksum, holds a file its
         manifest does not list or lacks one it lists, holds a link,
-        device, FIFO or duplicate entry, or has a `secrets.age` that is
-        not readable), 400 `backup_passphrase_incorrect` (a `passphrase`
-        was given and it does not open the archive's `secrets.age`), 400
+        device, FIFO or duplicate entry, or has a `secrets.age` or
+        `identity.age` that is not readable, which shows once a passphrase
+        is tried against it), 400 `backup_passphrase_incorrect` (a `passphrase`
+        was given and it does not open the archive's `secrets.age` or, for
+        an archive with an `identity.age` and no `secrets.age`, its
+        `identity.age`; one that opens `secrets.age` but not `identity.age`
+        is not refused), 400
         `incompatible_archive` (another
         schema version), 409 `job_in_progress`, 409
         `archive_other_installation` (its machine key check value differs
@@ -2897,9 +2901,15 @@ paths:
         (`status`, for `secrets.age`) and whether the passphrase available
         opens it and `identity.age` (`identity`), and if not, which stacks'
         `.env` files would not be restored. The optional `passphrase`
-        is tried as `importConfig` tries it, and one that does not open the
-        archive's `secrets.age` or `identity.age` is refused as 400
-        `backup_passphrase_incorrect`. An
+        is tried as `importConfig` tries it: one that does not open the
+        archive's `secrets.age`, or, for an archive with an `identity.age`
+        and no `secrets.age`, its `identity.age`, is refused as 400
+        `backup_passphrase_incorrect`; one that opens `secrets.age` but not
+        `identity.age` is not refused, and `identity` reports
+        `passphrase_incorrect`. Without a `passphrase` the configured one
+        is tried, and one that is absent or does not open the files shows
+        only in `secrets`, never as a refusal; an archive with neither file has nothing to check a
+        `passphrase` against. An
         archive that cannot be read is refused as `importConfig` refuses it
         (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with
         no config backup wired answers 501 `not_configured`. Nothing on a
@@ -7883,8 +7893,8 @@ components:
         `none`: the archive has no passphrase-protected section (it was built
         without a backup passphrase). `opened`: the passphrase available
         opens it. `no_passphrase`: it has one and no passphrase is
-        available. `passphrase_incorrect`: it has one and the configured
-        passphrase does not open it.
+        available. `passphrase_incorrect`: it has one and the passphrase
+        available does not open it.
 
     ConfigImportSecrets:
       type: object
