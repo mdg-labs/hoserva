@@ -1,8 +1,10 @@
 package api_test
 
 import (
+	"compress/gzip"
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"path/filepath"
 	"testing"
@@ -416,3 +418,54 @@ func TestHandler_NewError_UnclassifiedErrorMapsToInternal500(t *testing.T) {
 type errUnclassified struct{}
 
 func (errUnclassified) Error() string { return "boom" }
+
+func TestHandler_GetJobLog_ServesOutputOfARunningJob(t *testing.T) {
+	ctx := context.Background()
+	h, s, r := newTestHandler(t)
+
+	wrote := make(chan struct{})
+	release := make(chan struct{})
+	r.Register(job.TypeSync, false, func(ctx context.Context, rc *job.RunContext) error {
+		if _, err := io.WriteString(rc.Output(), "syncing disk 1\n"); err != nil {
+			return err
+		}
+		close(wrote)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	j, err := s.Submit(ctx, job.TypeSync, nil, nil)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	t.Cleanup(func() {
+		close(release)
+		waitForStatus(t, h.Store, j.ID, job.StatusSucceeded)
+	})
+
+	select {
+	case <-wrote:
+	case <-time.After(10 * time.Second):
+		t.Fatal("job never wrote its output")
+	}
+
+	id, _ := uuid.Parse(j.ID)
+	got, err := h.GetJobLog(ctx, apiv1.GetJobLogParams{JobId: id})
+	if err != nil {
+		t.Fatalf("GetJobLog: %v", err)
+	}
+	gz, err := gzip.NewReader(got)
+	if err != nil {
+		t.Fatalf("a running job's log must start a valid gzip stream: %v", err)
+	}
+	data, err := io.ReadAll(gz)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("reading running job's log: %v", err)
+	}
+	if string(data) != "syncing disk 1\n" {
+		t.Fatalf("GetJobLog of a running job = %q, want %q", data, "syncing disk 1\n")
+	}
+}

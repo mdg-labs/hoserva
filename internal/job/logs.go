@@ -48,10 +48,12 @@ func (l *LogStore) path(id string) string {
 	return filepath.Join(l.Dir, id+".log.gz")
 }
 
-// Create opens id's log file for writing, gzip-compressed. The returned
-// WriteCloser's Close both flushes the gzip stream and closes the
-// underlying file — a caller that forgets to Close leaves a truncated,
-// unreadable gzip member, exactly like any other buffered writer.
+// Create opens id's log file for writing, gzip-compressed. Every Write is
+// flushed to the file, so Open on a still-running job's log decodes all
+// output written so far (a reader sees io.ErrUnexpectedEOF at the end, as
+// the gzip trailer is absent). The returned WriteCloser's Close writes the
+// trailer and closes the underlying file — a caller that forgets to Close
+// leaves a gzip member without its trailer.
 func (l *LogStore) Create(id string) (io.WriteCloser, error) {
 	if err := os.MkdirAll(l.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("job log store: creating %s: %w", l.Dir, err)
@@ -68,7 +70,19 @@ type gzipWriteCloser struct {
 	f  *os.File
 }
 
-func (w *gzipWriteCloser) Write(p []byte) (int, error) { return w.gz.Write(p) }
+// Write sync-flushes the gzip stream after every write, so the file always
+// ends on a deflate block boundary and getJobLog can decode everything a
+// running job has written so far.
+func (w *gzipWriteCloser) Write(p []byte) (int, error) {
+	n, err := w.gz.Write(p)
+	if err != nil {
+		return n, err
+	}
+	if err := w.gz.Flush(); err != nil {
+		return n, err
+	}
+	return n, nil
+}
 
 func (w *gzipWriteCloser) Close() error {
 	if err := w.gz.Close(); err != nil {

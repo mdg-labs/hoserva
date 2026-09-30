@@ -156,3 +156,78 @@ func TestLogStore_PruneOnEmptyDirectoryIsANoOp(t *testing.T) {
 		t.Fatalf("Prune on a directory that was never created: %v", err)
 	}
 }
+
+func readGzipPrefix(t *testing.T, r io.Reader) string {
+	t.Helper()
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	got, err := io.ReadAll(gz)
+	if err != nil && err != io.ErrUnexpectedEOF {
+		t.Fatalf("reading decompressed log: %v", err)
+	}
+	return string(got)
+}
+
+func TestLogStore_OpenSeesEveryWriteBeforeClose(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+
+	w, err := l.Create("running")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	var want string
+	for _, line := range []string{"first line\n", "second line\n", "third line\n"} {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		want += line
+
+		r, err := l.Open("running")
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		got := readGzipPrefix(t, r)
+		_ = r.Close()
+		if got != want {
+			t.Fatalf("log of a still-running job = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestLogStore_CloseAfterFlushedWritesLeavesCompleteGzip(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+
+	w, err := l.Create("finished")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for _, line := range []string{"a\n", "b\n"} {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	r, err := l.Open("finished")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	got, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("a closed log must be a complete gzip stream, got: %v", err)
+	}
+	if string(got) != "a\nb\n" {
+		t.Fatalf("log content = %q, want %q", got, "a\nb\n")
+	}
+}
