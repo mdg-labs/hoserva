@@ -362,7 +362,7 @@ func (a *AppdataService) fetchAppdata(ctx context.Context, dest Destination, nam
 // decryptArchiveFile decrypts src with the age X25519 identity into dst,
 // streaming, since an appdata archive does not fit in memory.
 func decryptArchiveFile(src, dst, identity string) error {
-	id, err := age.ParseX25519Identity(identity)
+	id, err := parseIdentity(identity)
 	if err != nil {
 		return fmt.Errorf("parsing onboarding identity: %w", err)
 	}
