@@ -188,8 +188,12 @@ func TestNewArraySequence_WiresStopAndStartWhenTopologyExists(t *testing.T) {
 		t.Fatalf("Disks = %d, want %d assigned disks", len(h.Array.Disks), len(assigned))
 	}
 	for i, m := range h.Array.Disks {
-		if _, ok := m.(disk.MountUnitController); !ok {
-			t.Fatalf("Disks[%d] is %T, want disk.MountUnitController", i, m)
+		slot, ok := m.(guardedSlotMount)
+		if !ok {
+			t.Fatalf("Disks[%d] is %T, want guardedSlotMount", i, m)
+		}
+		if _, ok := slot.inner.(disk.MountUnitController); !ok {
+			t.Fatalf("Disks[%d] wraps %T, want disk.MountUnitController", i, slot.inner)
 		}
 		if m.Where() != assigned[i].Mountpoint {
 			t.Fatalf("Disks[%d].Where() = %q, want %q", i, m.Where(), assigned[i].Mountpoint)

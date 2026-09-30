@@ -368,3 +368,174 @@ func TestManifestPersistsAcrossGeneratorInstances(t *testing.T) {
 		t.Fatalf("Check on a fresh Generator instance = %v, want StatusManaged", status)
 	}
 }
+
+func putHostFile(t *testing.T, g *Generator, rel, body string) string {
+	t.Helper()
+	full := filepath.Join(g.Root, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return full
+}
+
+func TestHostFileDecisionForIsOnlyTheFilesGeneratorWrites(t *testing.T) {
+	for _, tc := range []struct {
+		kind, decision string
+		want           HostFileDecision
+		ok             bool
+	}{
+		{KindSamba, DecisionImport, HostFileDecision{Path: PathSamba, Decision: DecisionImport}, true},
+		{KindNFS, DecisionLeave, HostFileDecision{Path: PathNFS, Decision: DecisionLeave}, true},
+		{KindFstab, DecisionImport, HostFileDecision{}, false},
+		{KindDockerImages, DecisionImport, HostFileDecision{}, false},
+		{KindSamba, "maybe", HostFileDecision{}, false},
+	} {
+		got, ok := HostFileDecisionFor(tc.kind, tc.decision)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("HostFileDecisionFor(%s, %s) = %+v, %v; want %+v, %v", tc.kind, tc.decision, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+// The restored host_config says import, the host's manifest has never heard
+// of smb.conf, and Write refuses it (ErrExistingHostFile, the 409
+// unmanaged_config a share write returned, #471). PlanHostFiles names it as
+// a file the restore replaces, and ReconcileHostFiles is what lets Write
+// through, without touching the file itself.
+func TestReconcileHostFilesLetsAWriteReplaceAnImportedFileAndOnlyThen(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	full := putHostFile(t, g, PathSamba, "[global]\n")
+	file := File{Path: PathSamba, Command: "hoserva apply", Body: []byte("[media]\n")}
+	if err := g.Write(ctx, file, 1, time.Now()); !errors.Is(err, ErrExistingHostFile) {
+		t.Fatalf("Write before reconciling = %v, want ErrExistingHostFile", err)
+	}
+
+	plan, err := g.PlanHostFiles(ctx, []HostFileDecision{{Path: PathSamba, Decision: DecisionImport}})
+	if err != nil {
+		t.Fatalf("PlanHostFiles: %v", err)
+	}
+	if len(plan.Replace) != 1 || plan.Replace[0].Path != PathSamba || len(plan.Record) != 1 {
+		t.Fatalf("plan = %+v, want smb.conf to be replaced and recorded", plan)
+	}
+	if got, _ := os.ReadFile(full); string(got) != "[global]\n" {
+		t.Fatalf("planning changed the file: %q", got)
+	}
+	if err := g.Write(ctx, file, 1, time.Now()); !errors.Is(err, ErrExistingHostFile) {
+		t.Fatalf("Write after planning only = %v, want ErrExistingHostFile", err)
+	}
+
+	if err := g.ReconcileHostFiles(ctx, plan.Record); err != nil {
+		t.Fatalf("ReconcileHostFiles: %v", err)
+	}
+	if got, _ := os.ReadFile(full); string(got) != "[global]\n" {
+		t.Fatalf("reconciling wrote the file: %q", got)
+	}
+	if st, err := g.Check(ctx, PathSamba); err != nil || st != StatusManaged {
+		t.Fatalf("Check = %v, %v; want managed", st, err)
+	}
+	if err := g.Write(ctx, file, 1, time.Now()); err != nil {
+		t.Fatalf("Write after reconciling: %v", err)
+	}
+	if got, _ := os.ReadFile(full); !strings.Contains(string(got), "[media]") {
+		t.Fatalf("Write did not replace the file: %q", got)
+	}
+}
+
+// A leave decision, a kind with no decision, and a file that is not there are
+// none of them replaced; leave is recorded unmanaged so nothing writes it.
+func TestPlanHostFilesReplacesOnlyWhatARestoredImportTakesOver(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	full := putHostFile(t, g, PathSamba, "[global]\n")
+
+	plan, err := g.PlanHostFiles(ctx, []HostFileDecision{
+		{Path: PathSamba, Decision: DecisionLeave},
+		{Path: PathNFS, Decision: DecisionImport},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Replace) != 0 {
+		t.Fatalf("Replace = %+v, want nothing: leave keeps the file and the exports file is absent", plan.Replace)
+	}
+	if len(plan.Record) != 1 || plan.Record[0] != (HostFileDecision{Path: PathSamba, Decision: DecisionLeave}) {
+		t.Fatalf("Record = %+v, want smb.conf left", plan.Record)
+	}
+	if err := g.ReconcileHostFiles(ctx, plan.Record); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := g.Check(ctx, PathSamba); err != nil || st != StatusUnmanaged {
+		t.Fatalf("Check = %v, %v; want unmanaged", st, err)
+	}
+	if err := g.Write(ctx, File{Path: PathSamba, Command: "c", Body: []byte("x")}, 1, time.Now()); !errors.Is(err, ErrUnmanaged) {
+		t.Fatalf("Write of a left file = %v, want ErrUnmanaged", err)
+	}
+	if got, _ := os.ReadFile(full); string(got) != "[global]\n" {
+		t.Fatalf("the left file changed: %q", got)
+	}
+}
+
+// A file the manifest already records is this host's own history: one marked
+// unmanaged is the user's decision and is never taken over by a restored
+// import, and one managed is replaced but is not recorded again.
+func TestPlanAndReconcileHostFilesKeepAnExistingManifestRecord(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	putHostFile(t, g, PathNFS, "/srv 10.0.0.0/8(rw)\n")
+	if err := g.KeepUnmanaged(ctx, PathNFS); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Write(ctx, File{Path: PathSamba, Command: "c", Body: []byte("[media]\n")}, 1, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	both := []HostFileDecision{{Path: PathSamba, Decision: DecisionImport}, {Path: PathNFS, Decision: DecisionImport}}
+	plan, err := g.PlanHostFiles(ctx, both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Replace) != 1 || plan.Replace[0].Path != PathSamba || len(plan.Record) != 0 {
+		t.Fatalf("plan = %+v, want only the managed smb.conf replaced and nothing recorded", plan)
+	}
+	if err := g.ReconcileHostFiles(ctx, both); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := g.Check(ctx, PathNFS); st != StatusUnmanaged {
+		t.Fatalf("a restored import took over the exports file the user left: %v", st)
+	}
+}
+
+func TestReconcileHostFilesSkipsAFileThatIsGone(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	if err := g.ReconcileHostFiles(ctx, []HostFileDecision{{Path: PathSamba, Decision: DecisionImport}}); err != nil {
+		t.Fatalf("ReconcileHostFiles: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(g.Root, ".hoserva", "manifest.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a manifest was written for a file that does not exist: %v", err)
+	}
+}
+
+// A manifest or file that cannot be read is a failure, never "nothing to do":
+// the caller refuses the restore rather than overwrite what it could not see.
+func TestPlanHostFilesFailsClosedOnAnUnreadableManifest(t *testing.T) {
+	g := NewGenerator(t.TempDir())
+	ctx := context.Background()
+	putHostFile(t, g, PathSamba, "[global]\n")
+	if err := os.MkdirAll(filepath.Join(g.Root, ".hoserva"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(g.Root, ".hoserva", "manifest.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.PlanHostFiles(ctx, []HostFileDecision{{Path: PathSamba, Decision: DecisionImport}}); err == nil {
+		t.Fatal("PlanHostFiles read an unparseable manifest as empty")
+	}
+	if err := g.ReconcileHostFiles(ctx, []HostFileDecision{{Path: PathSamba, Decision: DecisionImport}}); err == nil {
+		t.Fatal("ReconcileHostFiles read an unparseable manifest as empty")
+	}
+}

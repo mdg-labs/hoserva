@@ -8,19 +8,26 @@ import (
 	"sync"
 )
 
-// UnitMounter brings a physical disk's MountUnit up and down. Production
-// uses SystemdMounter (config.Generator already wrote the unit file; this
-// asks systemd to start it). The loop-device lab has no init system
-// (doc 06 §3), so lab tests use DirectMounter, which mounts by
-// filesystem UUID with the same What= the unit would have used (Q21).
+// UnitMounter brings a physical disk's MountUnit up and down. Array slots
+// use SystemdMounter in production (config.Generator already wrote the unit
+// file; this asks systemd to start it). DirectMounter mounts by filesystem
+// UUID with the same What= the unit would have used (Q21) and starts no
+// unit. Production uses it for the disk-upgrade jobs and external disks
+// (see DirectMounter), and the loop-device lab, which has no init system
+// (doc 06 §3), uses it in place of SystemdMounter.
 type UnitMounter interface {
 	Mount(ctx context.Context, unit MountUnit) error
 	Unmount(ctx context.Context, unit MountUnit) error
 }
 
 // DirectMounter mounts unit at unit.Where by filesystem UUID, as an
-// argv, never a shell. It is the lab/test path: no systemd, same UUID
-// bind MountUnit.Render emits.
+// argv, never a shell: no systemd, same UUID bind MountUnit.Render emits.
+// It is a production mounter as well as the lab's: hoservad uses it for the
+// new parity disk's initial mount in a parity-disk upgrade
+// (DiskUpgradeParityDeps.UpgradeMounter), for external disks
+// (api.Handler.DiskMounter, whose nil default it is), and, through
+// KernelMounts.Mount, for the data-disk upgrade's mounts. Its checks, such
+// as the post-mount UUID confirmation, therefore guard real disks.
 type DirectMounter struct {
 	Runner Runner
 }
@@ -28,7 +35,8 @@ type DirectMounter struct {
 // Mount creates unit.Where if needed and mounts UUID=unit.UUID there.
 // A disk already mounted at unit.Where by that same UUID is success, so
 // a create-array retry after a partial apply does not fail as a second
-// format would.
+// format would. Success is only returned once the mount table shows
+// unit.UUID at unit.Where, whatever mount's exit status was.
 func (m DirectMounter) Mount(ctx context.Context, unit MountUnit) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -42,6 +50,11 @@ func (m DirectMounter) Mount(ctx context.Context, unit MountUnit) error {
 			return nil
 		}
 		return fmt.Errorf("disk: mounting %s at %s: %w", unit.UUID, unit.Where, err)
+	}
+	// nofail makes mount(8) exit 0 when no device carries the UUID, so the
+	// exit status alone does not say the filesystem is there.
+	if err := ConfirmMountedUUID(ctx, m.Runner, unit.Where, unit.UUID); err != nil {
+		return fmt.Errorf("disk: mounting %s at %s exited 0 but the filesystem is not mounted there: %w", unit.UUID, unit.Where, err)
 	}
 	return nil
 }

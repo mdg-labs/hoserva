@@ -266,9 +266,22 @@ paths:
     get:
       operationId: getJobLog
       summary: Download a job's captured stdout/stderr
-      description: Kept for 90 days (Q74).
+      description: >-
+        Kept for 90 days (Q74). With `follow` true on a job that has not
+        finished, the response stays open and carries the gzip stream of the
+        log as it grows (each write is flushed as it arrives, so a client
+        decompressing on the fly prints every line at once), and ends when
+        the job reaches a terminal state, when the client disconnects, or on
+        a read error; a clean end carries the gzip trailer. `follow` on a
+        finished job is the same as omitting it.
       tags: [jobs]
       x-hoserva-role: viewer
+      parameters:
+        - name: follow
+          in: query
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: The job's captured output, compressed.
@@ -2726,7 +2739,11 @@ paths:
         each difference), and 409 `restore_path_unsafe` (a file it would
         restore lands on a symbolic link or on something that is not a
         regular file, or it names a path outside the directory it is
-        restored into; nothing is followed). A failure to stage the files
+        restored into; nothing is followed). A bare-metal restore that
+        would replace a Samba or NFS file already on this server also
+        refuses with 409 `host_files_not_saved` when no backup destination
+        is enabled to take the copy of it that the pre-import archive
+        carries. A failure to stage the files
         answers 500 `import_failed` with nothing changed; a failure once the
         database has been replaced answers 500 `import_failed` naming the
         pre-import archive to restore from and which of the file categories
@@ -2734,6 +2751,28 @@ paths:
         array's own state, running, in maintenance
         mode or stopped, is kept as it is, never restored from the archive,
         so an import cannot return a stopped array to normal operation.
+
+
+        On a fresh install, one with no array configured, whatever admin
+        accounts it has, the import is the bare-metal restore (doc 10 §1)
+        of another installation's archive. It takes the archive's array
+        disks from `state.db` and matches each against the attached disks
+        by identity; the mapping is what `previewConfigImport` shows, and
+        the import refuses with 409 `disk_mapping_required` without
+        `diskMapping`, the mapping the user confirmed, and with 409
+        `disk_mapping_stale` when it no longer matches the attached disks.
+        An archive from an older schema version is upgraded on a staged
+        copy of its database by the same migration runner a normal upgrade
+        uses; one from a newer version is refused with 409
+        `archive_newer_version`. This box's own machine key check and backup
+        recipient are kept, so `hoservad` starts, and every database secret
+        sealed under the archive's key is cleared and reported in
+        `notRestored`. Only matched disks are mounted; an absent, replaced
+        or ambiguous disk stays a row of the restored array, unmounted, and
+        is reported in `notRestored` (the replace flow adopts a replacement
+        disk), and no disk is ever formatted or partitioned. While no admin account exists this operation and
+        `previewConfigImport` are served on the Unix socket only; the TCP
+        listener answers 409 `setup_required`.
       tags: [config]
       x-hoserva-role: admin
       requestBody:
@@ -2758,6 +2797,22 @@ paths:
                     The backup passphrase the archive's `secrets.age` was
                     sealed under. Optional: omitted, the configured backup
                     passphrase is tried.
+                diskMapping:
+                  type: string
+                  minLength: 1
+                  maxLength: 65536
+                  description: >-
+                    The JSON of a `ConfigImportDiskMapping`: the mapping the
+                    user confirmed, which is `previewConfigImport`'s
+                    `bareMetal.diskMapping` as it was shown. Required when
+                    the installation has no array (409
+                    `disk_mapping_required` without it) and refused with
+                    409 `disk_mapping_not_applicable` otherwise, since an
+                    import into an array restores no disks. Sent as a JSON
+                    string, not a JSON part, because the generated clients
+                    send an empty part for an unset optional object; one that
+                    is not a valid mapping is refused as 400
+                    `invalid_disk_mapping`.
       responses:
         "200":
           description: Import completed; what it restored and what it did not.
@@ -2794,6 +2849,20 @@ paths:
         (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with
         no config backup wired answers 501 `not_configured`. Nothing on a
         data disk is read.
+
+
+        On a fresh install, one with no array configured, `bareMetal`
+        reports the bare-metal restore (see `importConfig`): whether the
+        archive's database would be upgraded, and one entry per array disk
+        the archive records, with the attached disk it matched, or none,
+        and a state of `matched`, `absent`, `replaced` or `ambiguous`.
+        `bareMetal.diskMapping` is the mapping to confirm, ready to send as
+        `importConfig`'s `diskMapping`. An archive from a newer schema
+        version is a blocker (`archive_newer_version`) with no `bareMetal`.
+        The refusals for another installation's archive or a different
+        array (`archive_other_installation`, `archive_array_mismatch`) apply
+        to an installation that has an array only. While no admin account
+        exists this operation is served on the Unix socket only.
       tags: [config]
       x-hoserva-role: admin
       requestBody:
@@ -7603,18 +7672,22 @@ components:
       properties:
         code:
           type: string
-          enum: [incompatible_archive, archive_other_installation, archive_array_mismatch, restore_path_unsafe]
+          enum: [incompatible_archive, archive_newer_version, archive_other_installation, archive_array_mismatch, restore_path_unsafe]
         message:
           type: string
 
     ConfigImportNote:
       type: object
       required: [code, message]
-      description: Something about an import that is true whatever the archive holds.
+      description: >-
+        Something about an import that holds whatever the archive contains, or,
+        for `host_files_replaced`, about what a bare-metal restore does to this
+        server's own files: it names each Samba or NFS file already on the
+        server that the restore replaces, which the backup taken first saves.
       properties:
         code:
           type: string
-          enum: [sessions_replaced, array_state_kept]
+          enum: [sessions_replaced, array_state_kept, host_files_replaced]
         message:
           type: string
 
@@ -7763,6 +7836,114 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ConfigImportNote'
+        bareMetal:
+          $ref: '#/components/schemas/ConfigImportBareMetal'
+
+    ConfigImportDiskState:
+      type: string
+      enum: [matched, absent, replaced, ambiguous]
+      description: >-
+        `matched`: exactly one attached disk carries the recorded identity
+        (WWN, else serial; a weak-identity disk by filesystem UUID and
+        size, Q21) and its filesystem is the recorded one. `absent`: no
+        attached disk is it. `replaced`: the identity or the filesystem
+        differs, either an attached disk holds the recorded filesystem with
+        another identity or the disk with the recorded identity holds
+        another filesystem. `ambiguous`: more than one attached disk
+        matches, a disk and its clone. A disk that is not `matched` stays a
+        row of the restored array with its recorded filesystem, is never
+        mounted or adopted by the restore, and leaves the array degraded.
+
+    ConfigImportDisk:
+      type: object
+      required: [name, role, roleIndex, mountpoint, fsUuid, weakIdentity, state]
+      description: One array disk the archive records, and what it matched.
+      properties:
+        name:
+          type: string
+          description: >-
+            What a user calls it: the role and index, its mountpoint and the
+            identity it was recorded with.
+        role:
+          $ref: '#/components/schemas/ArrayDiskRole'
+        roleIndex:
+          type: integer
+          format: int64
+          minimum: 1
+        mountpoint:
+          type: string
+        fsUuid:
+          type: string
+          description: The filesystem UUID the archive records for the slot.
+        wwn:
+          type: string
+        serial:
+          type: string
+        byIdName:
+          type: string
+        weakIdentity:
+          type: boolean
+        sizeBytes:
+          type: integer
+          format: int64
+        state:
+          $ref: '#/components/schemas/ConfigImportDiskState'
+        device:
+          type: string
+          description: >-
+            The attached disk it matched, or the disk holding its filesystem
+            when `replaced`; absent for `absent` and `ambiguous`.
+
+    ConfigImportDiskMappingEntry:
+      type: object
+      required: [role, roleIndex, device]
+      properties:
+        role:
+          $ref: '#/components/schemas/ArrayDiskRole'
+        roleIndex:
+          type: integer
+          format: int64
+          minimum: 1
+        device:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: The attached disk the slot was matched to.
+
+    ConfigImportDiskMapping:
+      type: object
+      required: [disks]
+      description: >-
+        The mapping of the archive's array disks to the attached disks that
+        a user confirms: one entry per `matched` disk, and none for any
+        other. An empty list confirms an archive that records no array
+        disks, or that none of its disks is attached.
+      properties:
+        disks:
+          type: array
+          maxItems: 512
+          items:
+            $ref: '#/components/schemas/ConfigImportDiskMappingEntry'
+
+    ConfigImportBareMetal:
+      type: object
+      required: [schemaUpgrade, disks, diskMapping]
+      description: >-
+        The bare-metal restore of an archive onto a fresh install (doc 10
+        §1), present when the installation has no array configured and the
+        archive's schema is not newer.
+      properties:
+        schemaUpgrade:
+          type: boolean
+          description: >-
+            The archive's database is older than the running schema and is
+            upgraded, on a staged copy, by the migration runner.
+        disks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConfigImportDisk'
+        diskMapping:
+          $ref: '#/components/schemas/ConfigImportDiskMapping'
 
     ConfigImportRestored:
       type: object
@@ -7796,20 +7977,33 @@ components:
       properties:
         kind:
           type: string
-          enum: [stack_env]
+          enum: [stack_env, disk, database_secret]
         name:
           type: string
-          description: The stack whose `.env` file it is.
+          description: >-
+            The stack whose `.env` file it is (`stack_env`), the array disk
+            by its `ConfigImportDisk.name` (`disk`), or the table and column
+            of a database secret cleared by a bare-metal restore, with the
+            row it was in (`database_secret`).
         reason:
           type: string
-          enum: [no_secrets, no_passphrase, passphrase_incorrect, stack_not_in_archive, left_in_place]
+          enum: [no_secrets, no_passphrase, passphrase_incorrect, stack_not_in_archive, left_in_place, disk_absent, disk_replaced, disk_ambiguous, sealed_under_other_key]
           description: >-
             `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the
             archive's passphrase-protected section could not be opened (see
             `ConfigImportSecretsStatus`). `stack_not_in_archive`: that
             section holds an `.env` for a stack the archive has no files of.
             `left_in_place`: the `.env` on this machine was kept because the
-            archive holds none for that stack.
+            archive holds none for that stack. `disk_absent`,
+            `disk_replaced` and `disk_ambiguous`: a bare-metal restore did
+            not match the array disk (see `ConfigImportDiskState`), so it
+            stays a row of the restored array, unmounted, and the array is
+            degraded: nothing mounts, matched disks included, until the
+            degraded array is acknowledged or the replace flow (doc 09 §4)
+            adopts a replacement disk. `sealed_under_other_key`: the
+            secret was sealed under the machine key of the installation the
+            archive came from, which this machine does not have, so a
+            bare-metal restore cleared it.
         message:
           type: string
 

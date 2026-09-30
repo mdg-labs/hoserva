@@ -106,6 +106,12 @@ type Handler struct {
 	// import that skipped it would leave the generated files describing the
 	// database it replaced.
 	RegenerateConfig func(ctx context.Context) error
+	// RegenerateArray is the bare-metal restore's extra hook (doc 10 §1):
+	// the restored database names an array this installation never had, so
+	// before RegenerateConfig it writes the disk mount units and
+	// snapraid.conf from it, which an in-place import never needs (its
+	// array is unchanged). Nil refuses a bare-metal import with 501.
+	RegenerateArray func(ctx context.Context) error
 	// ExternalWriteGates is the per-disk gate Backup's writes to an external
 	// disk take a slot in (#454): eject closes it and waits for a write in
 	// flight before unmounting, and mount reopens it. It must be the same
@@ -298,11 +304,28 @@ func (h *Handler) ResumeJob(ctx context.Context, params apiv1.ResumeJobParams) (
 	return jobToAPI(j)
 }
 
+// jobLogFollowPoll is how often a followed job log checks whether the job
+// has finished once it has read everything written so far. The log lives on
+// the boot SSD and the check is one job-row read, so it touches no data disk.
+const jobLogFollowPoll = 500 * time.Millisecond
+
 func (h *Handler) GetJobLog(ctx context.Context, params apiv1.GetJobLogParams) (apiv1.GetJobLogOK, error) {
-	if _, err := h.Store.Get(ctx, params.JobId.String()); err != nil {
+	id := params.JobId.String()
+	j, err := h.Store.Get(ctx, id)
+	if err != nil {
 		return apiv1.GetJobLogOK{}, mapStoreError(params.JobId, err)
 	}
-	r, err := h.Logs.Open(params.JobId.String())
+	if params.Follow.Or(false) && !j.Status.Terminal() {
+		finished := func(ctx context.Context) (bool, error) {
+			cur, err := h.Store.Get(ctx, id)
+			if err != nil {
+				return false, fmt.Errorf("reading job %s while following its log: %w", id, err)
+			}
+			return cur.Status.Terminal(), nil
+		}
+		return apiv1.GetJobLogOK{Data: h.Logs.Follow(ctx, id, finished, jobLogFollowPoll)}, nil
+	}
+	r, err := h.Logs.Open(id)
 	if err != nil {
 		if errors.Is(err, job.ErrLogNotFound) {
 			return apiv1.GetJobLogOK{}, &apiError{code: "job_log_not_found", statusCode: 404, message: fmt.Sprintf("job %s has no captured log", params.JobId)}

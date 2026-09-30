@@ -216,7 +216,12 @@
       "title": "Needs attention",
       "degraded": "The array is degraded.",
       "syncBlocked": "Parity sync is blocked by the threshold guard.",
-      "failedJob": "Job failed: {{type}}"
+      "failedJob": "Job failed: {{type}}",
+      "backupStale_one": "A backup destination has gone without a successful backup: {{names}}",
+      "backupStale_other": "{{count}} backup destinations have gone without a successful backup: {{names}}",
+      "backupStaleDescription": "No backup has been written there for at least two days.",
+      "backupStaleAction": "Open backup settings",
+      "backupUnknown": "Could not check the backup destinations"
     }
   },
   "pool": {
@@ -1175,6 +1180,498 @@
           "title": "Container update checks",
           "description": "Check installed containers for available image updates."
         }
+      }
+    },
+    "backup": {
+      "unavailableTitle": "Backups are not available on this server",
+      "unavailableDescription": "This daemon has no backup service configured, so there is nothing to show or change here.",
+      "destinations": {
+        "title": "Backup destinations",
+        "description": "Where Hoserva writes config backups. A fresh install has two local destinations: the boot device and a folder on the pool.",
+        "nfsNote": "Backing up to an NFS share? Mount the share on this server, then add its mount path as a local folder.",
+        "loadFailed": "Could not load backup destinations",
+        "add": "Add destination",
+        "empty": {
+          "title": "No backup destinations yet",
+          "description": "Add a destination so config backups have somewhere to go. Until you do, nothing is backed up off this server's own disks."
+        },
+        "columns": {
+          "name": "Name",
+          "type": "Type",
+          "enabled": "Enabled",
+          "retention": "Retention",
+          "encryption": "Encryption",
+          "lastBackup": "Last successful backup",
+          "status": "Status",
+          "actions": "Actions"
+        },
+        "types": {
+          "local": "Local folder",
+          "smb": "SMB share",
+          "s3": "S3-compatible storage",
+          "sftp": "SFTP server",
+          "webdav": "WebDAV server",
+          "rclone": "rclone remote"
+        },
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "retention": "{{daily}} daily, {{weekly}} weekly, {{monthly}} monthly",
+        "encrypted": "Encrypted",
+        "notEncrypted": "Not encrypted",
+        "neverBackedUp": "Never",
+        "status": {
+          "stale": "Stale",
+          "staleHint": "No successful backup in the last two days.",
+          "paused": "Paused",
+          "ok": "Healthy",
+          "waiting": "Waiting for first backup"
+        },
+        "test": "Test connection",
+        "testFor": "Test connection to {{name}}",
+        "testPassed": "Connection test passed",
+        "testPassedDescription": "Hoserva wrote a file to {{name}}, read it back and removed it.",
+        "testFailed": "Connection test failed",
+        "testFailedUnknown": "The destination did not say why.",
+        "testError": "Could not test {{name}}",
+        "rcloneMissing": "rclone is not installed",
+        "remove": "Remove",
+        "removeFor": "Remove {{name}}",
+        "removeTitle": "Remove {{name}}?",
+        "removeDescription": "This takes the destination out of Hoserva's settings. Nothing is written to it from now on.",
+        "removeKept": "Archives already written to {{name}} stay where they are. Hoserva does not delete them.",
+        "removeConfirm": "Remove destination",
+        "removeFailed": "Could not remove the destination",
+        "removed": "Destination removed"
+      },
+      "addForm": {
+        "title": "Add backup destination",
+        "description": "Config backups are written here on the nightly schedule.",
+        "submit": "Add destination",
+        "failed": "Could not add the destination",
+        "added": "Destination added",
+        "name": "Name",
+        "namePlaceholder": "Offsite copy",
+        "type": "Type",
+        "path": {
+          "local": "Folder",
+          "smb": "Share and folder",
+          "s3": "Bucket and prefix",
+          "sftp": "Folder",
+          "webdav": "Folder",
+          "rclone": "Folder"
+        },
+        "pathHint": {
+          "local": "An absolute path on this server. For an NFS share, mount it first and enter its mount path.",
+          "smb": "The share name, then an optional folder, such as backups/hoserva.",
+          "s3": "The bucket name, then an optional prefix, such as my-bucket/hoserva.",
+          "sftp": "The folder on the server. Leave empty for the login folder.",
+          "webdav": "A folder within the WebDAV address. Leave empty to use the address itself.",
+          "rclone": "A folder within the rclone remote. Leave empty for its top level."
+        },
+        "enabled": "Enabled",
+        "enabledHint": "A disabled destination is kept, but no backup is written to it.",
+        "encrypt": "Encrypt archives",
+        "encryptHint": "Each archive can then only be opened with the backup passphrase.",
+        "encryptRemote": "Archives written to a remote destination are always encrypted with your backup passphrase.",
+        "retention": "Retention",
+        "retentionHint": "How many archives to keep: the newest of each day, week and month.",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "monthly": "Monthly",
+        "archivesUnit": "archives",
+        "secretHint": "Stored encrypted and never shown again.",
+        "passphraseNeededTitle": "Set a backup passphrase first",
+        "passphraseNeededDescription": "A remote destination is always encrypted, and that needs a backup passphrase.",
+        "setPassphrase": "Set backup passphrase"
+      },
+      "fields": {
+        "host": {
+          "label": "Server address",
+          "hint": "Host name or IP address of the server."
+        },
+        "user": {
+          "label": "User name"
+        },
+        "port": {
+          "label": "Port",
+          "hint": "Leave empty for the default port."
+        },
+        "domain": {
+          "label": "Domain",
+          "hint": "Optional Windows domain."
+        },
+        "access_key_id": {
+          "label": "Access key ID"
+        },
+        "provider": {
+          "label": "Provider",
+          "hint": "Optional, such as AWS, Minio or Wasabi."
+        },
+        "endpoint": {
+          "label": "Endpoint",
+          "hint": "Optional. Needed for S3-compatible services other than AWS."
+        },
+        "region": {
+          "label": "Region",
+          "hint": "Optional."
+        },
+        "key_file": {
+          "label": "Private key file",
+          "hint": "Path to a key file on this server. Use this or a password."
+        },
+        "known_hosts_file": {
+          "label": "Known hosts file",
+          "hint": "Path to a known_hosts file on this server. Without it the server's identity is not verified."
+        },
+        "url": {
+          "label": "Address",
+          "hint": "The WebDAV address, such as https://cloud.example.com/remote.php/dav/files/user/."
+        },
+        "vendor": {
+          "label": "Vendor",
+          "hint": "Optional, such as nextcloud or owncloud."
+        },
+        "remote": {
+          "label": "rclone remote name",
+          "hint": "The name of a remote already set up with rclone config."
+        },
+        "pass": {
+          "label": "Password"
+        },
+        "secret_access_key": {
+          "label": "Secret access key"
+        }
+      },
+      "config": {
+        "title": "Config backup",
+        "description": "One archive with your Hoserva settings: shares, users, schedules, destinations and more. It is also written to your destinations by the nightly maintenance chain, after the parity sync.",
+        "download": "Download config backup",
+        "downloadFailed": "Could not download the config backup",
+        "downloaded": "Config backup downloaded",
+        "downloadOnly": "Downloading is the only manual option for now. Backups to your destinations follow the nightly schedule.",
+        "passphraseTitle": "Backup passphrase",
+        "passphraseSet": "A backup passphrase is set.",
+        "passphraseNotSet": "No backup passphrase is set.",
+        "passphraseHint": "It protects the secrets in every archive and is required for remote destinations. Hoserva never shows it again after you save it.",
+        "passphraseLoadFailed": "Could not load the backup passphrase status",
+        "setPassphrase": "Set passphrase",
+        "changePassphrase": "Change passphrase"
+      },
+      "passphrase": {
+        "setTitle": "Set backup passphrase",
+        "changeTitle": "Change backup passphrase",
+        "description": "The passphrase protects the secrets stored in backups. Keep it somewhere safe.",
+        "warning": "If this server is lost, an archive on a remote destination cannot be opened without the passphrase.",
+        "changeWarning": "Archives written earlier were sealed with the passphrase that was set at the time. Keep the previous one for them.",
+        "passphrase": "Passphrase",
+        "confirm": "Repeat the passphrase",
+        "mismatch": "The two passphrases do not match.",
+        "save": "Save passphrase",
+        "saveFailed": "Could not save the passphrase",
+        "saved": "Backup passphrase saved"
+      },
+      "restore": {
+        "title": "Restore",
+        "description": "Bring back your Hoserva settings from a config backup: to undo a change on this server, or to set up a new server from an archive. You see what would change before anything is applied.",
+        "archive": "Config backup archive",
+        "archiveHint": "A hoserva-config file, downloaded from this page or found on a backup destination.",
+        "passphrase": "Backup passphrase (optional)",
+        "passphraseHint": "Opens the secrets in the archive, such as the .env files of your apps. Leave it empty to use this server's backup passphrase.",
+        "previewAction": "Preview restore",
+        "previewFailed": "Could not preview the archive",
+        "previewEmpty": "The server answered without a preview.",
+        "errors": {
+          "invalid_archive": "This file is not a readable config backup",
+          "archive_too_large": "This archive is too large to restore",
+          "incompatible_archive": "This archive is from an incompatible version",
+          "archive_newer_version": "This archive is from a newer Hoserva version",
+          "archive_other_installation": "This archive was made by a different installation",
+          "archive_array_mismatch": "This archive describes a different array",
+          "restore_path_unsafe": "This archive would write to an unsafe location",
+          "job_in_progress": "A job is running, so the restore cannot start",
+          "backup_passphrase_incorrect": "That passphrase does not open this archive",
+          "disk_mapping_stale": "The attached disks changed since the preview",
+          "disk_mapping_required": "The disk mapping has to be confirmed",
+          "host_files_not_saved": "There is nowhere to save this server's current Samba and NFS settings first",
+          "not_configured": "This server has no backup service"
+        },
+        "blockers": {
+          "incompatible_archive": "This archive is from an incompatible version",
+          "archive_newer_version": "This archive is from a newer Hoserva version",
+          "archive_other_installation": "This archive was made by a different installation",
+          "archive_array_mismatch": "This archive describes a different array",
+          "restore_path_unsafe": "This archive would write to an unsafe location"
+        },
+        "notes": {
+          "sessions_replaced": "You will be signed out",
+          "array_state_kept": "The array keeps its current state",
+          "host_files_replaced": "Files already on this server will be replaced"
+        },
+        "preview": {
+          "archiveTitle": "About this archive",
+          "madeAt": "Made",
+          "host": "Server",
+          "version": "Hoserva version",
+          "schemaDiffers": "The changes cannot be listed",
+          "schemaDiffersHint": "The archive's data format ({{archive}}) differs from this server's ({{live}}), so the two cannot be compared. The restore still checks the archive before it changes anything.",
+          "noChanges": "Nothing in this archive differs from the current configuration.",
+          "added": "Added from the archive",
+          "changed": "Changed to the archive's version",
+          "removed": "Removed, because it is not in the archive",
+          "changeItem": "{{kind}}: {{name}}"
+        },
+        "categories": {
+          "shares": "Shares",
+          "accounts": "Accounts",
+          "schedules": "Schedules",
+          "notifications": "Notifications",
+          "backup": "Backup settings",
+          "system": "System settings",
+          "custom_config": "Custom config files",
+          "templates": "App templates",
+          "stacks": "App stacks",
+          "stack_env": "App secrets (.env files)"
+        },
+        "kinds": {
+          "share": "Share",
+          "share_user_permission": "Share access for a user",
+          "share_group_permission": "Share access for a group",
+          "user": "User",
+          "user_group": "User group",
+          "user_group_member": "Group membership",
+          "api_token": "API token",
+          "schedule_chain": "Nightly maintenance schedule",
+          "schedule_job": "Scheduled job",
+          "notification_channel": "Notification channel",
+          "notification_route": "Notification route",
+          "notification_severity": "Notification severity setting",
+          "notification_quiet_hours": "Quiet hours",
+          "backup_destination": "Backup destination",
+          "appdata_backup_container": "Appdata backup setting",
+          "backup_recipient": "Backup encryption key",
+          "acme": "Certificate settings",
+          "ups": "UPS settings",
+          "array_settings": "Array settings",
+          "host_config": "Host configuration decision",
+          "external_disk": "External disk",
+          "hostname": "Host name",
+          "timezone": "Time zone",
+          "backup_passphrase": "Backup passphrase",
+          "update_channel": "Update channel",
+          "update_check": "Update check setting",
+          "custom_config_file": "Custom config file",
+          "template_file": "App template",
+          "stack_file": "App stack file"
+        },
+        "secrets": {
+          "title": "Secrets",
+          "stacksNotRestored": "The .env files of these apps would not be restored:",
+          "statuses": {
+            "none": "No secrets section",
+            "opened": "Secrets open",
+            "no_passphrase": "No passphrase available",
+            "passphrase_incorrect": "Passphrase does not open it"
+          },
+          "hints": {
+            "none": "This archive was made without a backup passphrase, so it holds no secrets. Everything else is restored.",
+            "opened": "The passphrase opens the archive's secrets, so the .env files of your apps are restored too.",
+            "no_passphrase": "The archive holds secrets, and no passphrase is available to open them. Enter the passphrase above, or everything else is restored without them.",
+            "passphrase_incorrect": "This server's backup passphrase does not open the archive's secrets. Enter the passphrase the archive was made with, or everything else is restored without them."
+          }
+        },
+        "disks": {
+          "title": "Array disks",
+          "schemaUpgrade": "The archive is from an older version. Its data is upgraded to this version while it is restored.",
+          "schemaSame": "The archive's data format matches this version and is restored as it is.",
+          "none": "The archive records no array disks.",
+          "noneAttached": "No disk attached",
+          "columns": {
+            "disk": "Disk in the archive",
+            "attached": "Attached disk",
+            "state": "Match"
+          },
+          "states": {
+            "matched": "Matched",
+            "absent": "Not attached",
+            "replaced": "Replaced",
+            "ambiguous": "Ambiguous"
+          },
+          "unmatchedTitle_one": "{{count}} disk is not matched",
+          "unmatchedTitle_other": "{{count}} disks are not matched",
+          "unmatchedDescription": "A disk that is not matched stays in the restored array but is not mounted, and the array starts degraded. Nothing is formatted or partitioned. Add the replacement disk afterwards.",
+          "confirm": "This disk mapping is right",
+          "confirmHint": "Only matched disks are mounted. Confirm the table above before you restore."
+        },
+        "apply": {
+          "action": "Restore this configuration",
+          "title": "Restore this configuration",
+          "description": "This replaces the settings on this server with the ones in the archive.",
+          "confirmTitle": "Replace this server's configuration",
+          "phrase": "restore",
+          "itemReplace": "Shares, users, schedules, destinations, app templates and app stacks are replaced by the archive's.",
+          "itemSignedOut": "You will be signed out when the restore finishes.",
+          "itemSafetyArchive": "A backup of the current configuration is written first, so you can go back.",
+          "confirm": "Restore",
+          "failed": "The restore failed",
+          "noReport": "The server did not return a restore report. Check the destinations for the backup made before the restore.",
+          "previewAgain": "Preview again"
+        },
+        "report": {
+          "signedOutTitle": "The restore is finished and you were signed out",
+          "signedOutDescription": "The archive's sign-in sessions replaced the current ones. Sign in again to continue.",
+          "signIn": "Go to sign in",
+          "restoredTitle": "What was restored",
+          "columns": {
+            "category": "Category",
+            "added": "Added",
+            "changed": "Changed",
+            "removed": "Removed"
+          },
+          "notRestoredTitle": "What was not restored",
+          "notRestoredItem": "{{kind}}: {{name}}",
+          "nothingLeftOut": "Everything in the archive was restored.",
+          "safetyArchiveTitle": "Backup made before the restore",
+          "safetyArchive": "The configuration as it was before is saved as {{archive}}.",
+          "noSafetyArchive": "No backup destination was written to before the restore.",
+          "preImportSecrets": {
+            "none": "That backup holds no secrets.",
+            "request": "That backup's secrets are sealed with the passphrase you entered.",
+            "configured": "That backup's secrets are sealed with this server's backup passphrase."
+          }
+        },
+        "notRestoredKinds": {
+          "stack_env": "App secrets",
+          "disk": "Array disk",
+          "database_secret": "Stored secret"
+        },
+        "reasons": {
+          "no_secrets": "Archive has no secrets",
+          "no_passphrase": "No passphrase",
+          "passphrase_incorrect": "Wrong passphrase",
+          "stack_not_in_archive": "App not in the archive",
+          "left_in_place": "Kept as it was",
+          "disk_absent": "Disk not attached",
+          "disk_replaced": "Disk replaced",
+          "disk_ambiguous": "Disk ambiguous",
+          "sealed_under_other_key": "Sealed under another server's key"
+        }
+      },
+      "appdata": {
+        "title": "Appdata backup",
+        "description": "Backs up each app's own files (its appdata folder) so an app can be put back the way it was. Choose which apps are included and whether each is stopped while its files are copied. The schedule is on the Schedules page.",
+        "backUpNow": "Back up now",
+        "backupFailed": "Could not start the appdata backup",
+        "errors": {
+          "array_stopped": "The array is stopped, so appdata cannot be backed up or restored",
+          "container_not_found": "That app has no appdata in the backup",
+          "archive_not_found": "That archive is no longer on the destination",
+          "backup_destination_not_found": "That backup destination no longer exists",
+          "appdata_archive_invalid": "That is not an appdata archive of this server and app",
+          "appdata_preview_gone": "The preview is no longer available",
+          "appdata_preview_failed": "The preview failed",
+          "appdata_preview_not_ready": "The preview is not ready yet",
+          "not_configured": "This server cannot back up appdata"
+        },
+        "policy": {
+          "loadFailed": "Could not load the appdata backup settings",
+          "saveFailed": "Could not save the backup setting for {{name}}",
+          "retry": "Try again",
+          "noEngineTitle": "Apps are not available on this server",
+          "noEngineDescription": "This server has no Docker Engine connection, so there are no apps whose appdata could be backed up.",
+          "engineUnreachableTitle": "The Docker Engine is not reachable",
+          "engineUnreachableDescription": "Hoserva could not reach the Docker Engine, so it cannot list the apps to back up.",
+          "empty": {
+            "title": "No apps with appdata",
+            "description": "No container keeps files in the appdata folder yet. Apps you install will appear here."
+          },
+          "columns": {
+            "container": "App",
+            "included": "Back up",
+            "stop": "Stop while copying",
+            "actions": "Actions"
+          },
+          "includeFor": "Include {{name}} in the appdata backup",
+          "stopFor": "Stop {{name}} while its appdata is copied",
+          "backUpFor": "Back up {{name}} now",
+          "backUpOne": "Back up now",
+          "databaseImage": "Database image",
+          "hint": "Copying a database's files while it runs can give a backup that does not restore, so databases are best stopped while they are copied. An app that is stopped is started again afterwards."
+        },
+        "job": {
+          "backupSucceeded": "Appdata backup finished",
+          "backupFailed": "The appdata backup failed",
+          "restoreSucceeded": "Appdata restore finished",
+          "restoreFailed": "The appdata restore failed",
+          "statusIs": "Job status: {{status}}.",
+          "followFailed": "Could not follow the job",
+          "cancelFailed": "Could not cancel the job"
+        },
+        "archives": {
+          "title": "Appdata archives and restore",
+          "description": "The appdata backups found on your destinations, newest first. Restore puts one app's files back from an archive, after showing what it would replace.",
+          "refresh": "Refresh archives",
+          "loadFailed": "Could not load the appdata archives",
+          "unavailableTitle": "{{destination}} could not be listed",
+          "empty": {
+            "title": "No appdata archives yet",
+            "description": "No appdata backup has been written to a destination yet. Use Back up now, or wait for the schedule.",
+            "descriptionPartial": "None were found on the destinations that could be listed."
+          },
+          "columns": {
+            "destination": "Destination",
+            "archive": "Archive",
+            "created": "Taken",
+            "size": "Size",
+            "actions": "Actions"
+          },
+          "preRestore": "Snapshot before a restore",
+          "encrypted": "Encrypted",
+          "restore": "Restore",
+          "restoreFor": "Restore {{container}} from {{archive}}"
+        },
+        "restore": {
+          "title": "Restore {{container}}",
+          "description": "From {{archive}}, taken {{when}}.",
+          "previewFailed": "Could not preview the restore",
+          "previewAgain": "Preview again",
+          "noChanges": "The archive and the current files are identical, so nothing would change.",
+          "replaced": "Replaced",
+          "added": "Added",
+          "removed": "Removed",
+          "groupLabel": "{{label}} ({{size}})",
+          "moreFiles_one": "…and {{count}} more file",
+          "moreFiles_other": "…and {{count}} more files",
+          "confirmTitle": "Replace the appdata of {{container}}",
+          "itemReplace": "Each folder in the archive is replaced as a whole: files that are not in the archive are removed.",
+          "itemSnapshot": "A snapshot of the current appdata is written to your destinations first. If that fails, nothing is changed.",
+          "itemStop": "The app is stopped during the restore and started again afterwards.",
+          "confirm": "Restore",
+          "applyFailed": "Could not start the restore"
+        }
+      },
+      "drill": {
+        "title": "Restore drill",
+        "description": "Checks that your newest backup on each destination can really be restored. It fetches the archive, opens it the way a restore would and verifies it, then throws everything away. Nothing is written to a destination.",
+        "loadFailed": "Could not load the last restore drill",
+        "neverRunTitle": "Never run yet",
+        "neverRunDescription": "No restore drill has run yet. It runs on its schedule, or you can run one now.",
+        "passed": "Passed",
+        "failed": "Failed",
+        "ranAt": "Ran {{when}}",
+        "noDestinationsTested": "The drill could not test any destination",
+        "destinationsTitle": "Destinations tested",
+        "archiveTested": "Archive tested: {{archive}}",
+        "noArchive": "No archive found",
+        "reasonUnknown": "No reason given.",
+        "nextRun": "Next scheduled run",
+        "notScheduled": "Not scheduled. The restore drill schedule is off.",
+        "scheduleUnavailable": "Could not load the schedule.",
+        "runNow": "Run now",
+        "refresh": "Refresh result",
+        "runFailed": "Could not start the restore drill",
+        "queuedTitle": "Restore drill queued",
+        "queuedDescription": "The result appears here when the job finishes. Job status: {{status}}.",
+        "viewJob": "View job"
       }
     },
     "updates": {

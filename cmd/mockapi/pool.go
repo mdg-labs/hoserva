@@ -399,8 +399,20 @@ func (h *handler) AcknowledgeDegradedArray(ctx context.Context) (*apiv1.SystemSt
 	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance, h.degradedAcknowledged), nil
 }
 
+// poolMountedLocked is this mock's stand-in for production's live mount
+// check of the pool root: the scenario has a pool at all and the array is
+// not stopped. GetPool and the backup destination test both read it, so the
+// two endpoints cannot disagree. Callers hold h.mu.
+func (h *handler) poolMountedLocked() bool {
+	return mockPoolStatus(h.scenario).Mounted && !h.maintenance
+}
+
 func (h *handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
-	return mockPoolStatus(h.scenario), nil
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	status := mockPoolStatus(h.scenario)
+	status.Mounted = h.poolMountedLocked()
+	return status, nil
 }
 
 func (h *handler) ListDisks(ctx context.Context) (*apiv1.ListDisksOK, error) {
@@ -619,16 +631,34 @@ func (h *handler) ExportConfig(ctx context.Context) (apiv1.ExportConfigOK, error
 // upload's own. It has no live database, so it never returns production's
 // 409 archive_other_installation or archive_array_mismatch
 // (backup.CheckImport), and the counts of what was restored are a fixed
-// sample.
+// sample. On a fresh install it refuses with 409 host_files_not_saved when
+// no backup destination is enabled, since its preview always names a host
+// file the restore replaces.
 func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) (*apiv1.ConfigImportReport, error) {
 	if !req.Confirm {
 		return nil, errConfirmRequired()
+	}
+	mapping, err := mockDiskMappingFromRequest(req.DiskMapping)
+	if err != nil {
+		return nil, err
 	}
 	tree, err := stageMockArchive(req.Archive.File)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = os.RemoveAll(tree) }()
+	var bareMetalNotRestored []backup.NotRestored
+	if h.mockFresh() {
+		bareMetalNotRestored, err = h.mockBareMetalNotRestored(ctx, tree, mapping)
+		if err != nil {
+			return nil, err
+		}
+		if !h.mockHasEnabledBackupDestination() {
+			return nil, &mockError{code: "host_files_not_saved", statusCode: 409, message: "this restore replaces files already on this server, and no backup destination took the copy of them that must come first; enable a backup destination and try again. Nothing was restored"}
+		}
+	} else if mapping != nil {
+		return nil, &mockError{code: "disk_mapping_not_applicable", statusCode: 409, message: "this installation has an array, so an import restores no disks and takes no diskMapping"}
+	}
 	secrets, err := h.resolveMockSecrets(ctx, tree, req.Passphrase)
 	if err != nil {
 		return nil, err
@@ -637,6 +667,7 @@ func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if err != nil {
 		return nil, err
 	}
+	notRestored = append(bareMetalNotRestored, notRestored...)
 
 	restored := func(c apiv1.ConfigImportRestoredCategory, added, changed, removed int64) apiv1.ConfigImportRestored {
 		return apiv1.ConfigImportRestored{Category: c, Added: added, Changed: changed, Removed: removed}
@@ -721,9 +752,37 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 		return nil, err
 	}
 	defer func() { _ = os.RemoveAll(tree) }()
+	var bareMetal apiv1.OptConfigImportBareMetal
+	blockers := []apiv1.ConfigImportBlocker{}
+	if h.mockFresh() {
+		bm, found, err := h.mockBareMetalPreview(ctx, tree)
+		if err != nil {
+			return nil, err
+		}
+		blockers = found
+		if bm != nil {
+			bareMetal = apiv1.NewOptConfigImportBareMetal(*bm)
+		}
+	}
 	secrets, err := h.resolveMockSecrets(ctx, tree, req.Passphrase)
 	if err != nil {
 		return nil, err
+	}
+	notes := []apiv1.ConfigImportNote{
+		{
+			Code:    apiv1.ConfigImportNoteCodeSessionsReplaced,
+			Message: "Active sign-in sessions are replaced by the archive's, so the current user is signed out.",
+		},
+		{
+			Code:    apiv1.ConfigImportNoteCodeArrayStateKept,
+			Message: "The array's current state, running, in maintenance mode or stopped, is kept: the import does not restore the archive's.",
+		},
+	}
+	if bareMetal.Set {
+		notes = append(notes, apiv1.ConfigImportNote{
+			Code:    apiv1.ConfigImportNoteCodeHostFilesReplaced,
+			Message: "These files already on this server will be replaced by ones generated from the restored configuration: Samba configuration (/etc/samba/smb.conf). Their current contents are saved in the backup taken before the restore.",
+		})
 	}
 	empty := []apiv1.ConfigImportChange{}
 	group := func(c apiv1.ConfigImportGroupCategory, added, changed, removed []apiv1.ConfigImportChange) apiv1.ConfigImportGroup {
@@ -741,7 +800,8 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 			Status: apiv1.ConfigImportSecretsStatus(secrets.Status),
 			Stacks: append([]string{}, secrets.Stacks...),
 		},
-		Blockers: []apiv1.ConfigImportBlocker{},
+		Blockers:  blockers,
+		BareMetal: bareMetal,
 		Groups: []apiv1.ConfigImportGroup{
 			group(apiv1.ConfigImportGroupCategoryShares,
 				[]apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindShare, Name: "photos"}},
@@ -759,16 +819,7 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 			group(apiv1.ConfigImportGroupCategoryTemplates, empty, empty, empty),
 			group(apiv1.ConfigImportGroupCategoryStacks, empty, empty, empty),
 		},
-		Notes: []apiv1.ConfigImportNote{
-			{
-				Code:    apiv1.ConfigImportNoteCodeSessionsReplaced,
-				Message: "Active sign-in sessions are replaced by the archive's, so the current user is signed out.",
-			},
-			{
-				Code:    apiv1.ConfigImportNoteCodeArrayStateKept,
-				Message: "The array's current state, running, in maintenance mode or stopped, is kept: the import does not restore the archive's.",
-			},
-		},
+		Notes: notes,
 	}, nil
 }
 

@@ -556,7 +556,7 @@ func run(cfg config) error {
 	wireBackup(handler, backupService)
 	// The strict topology hook, so an import that cannot apply the restored
 	// configuration to the running pool says so instead of logging it.
-	wireConfigImport(handler, parityReg.callArrayReady)
+	wireConfigImport(handler, parityReg.callArrayReady, regenerateArrayFiles(arrayStore, shareStore, generator))
 	appdataService := newAppdataService(apps, backupService, api.NewAppdataPolicyStore(db), arrayStore, absStateDir)
 	wireAppdata(handler, registry, appdataService, notifyService)
 	wireRestoreDrill(registry, backupService, api.NewDrillStore(db), notifyService)
@@ -566,7 +566,7 @@ func run(cfg config) error {
 		Runner:     linuxDisks.Exec,
 		Store:      arrayStore,
 		Generator:  generator,
-		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		Mounter:    newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}),
 		ArrayReady: topologyChanged,
 	}))
 	registry.Register(job.TypeDiskAdd, false, job.RunDiskAdd(job.DiskAddDeps{
@@ -574,7 +574,7 @@ func run(cfg config) error {
 		Runner:     linuxDisks.Exec,
 		Store:      arrayStore,
 		Generator:  generator,
-		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		Mounter:    newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}),
 		ArrayReady: topologyChanged,
 	}))
 	// The replace and upgrade jobs resolve the parity engine per call: a
@@ -593,7 +593,7 @@ func run(cfg config) error {
 		Probe:      handler.BlankProbe,
 		Store:      arrayStore,
 		Generator:  generator,
-		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		Mounter:    newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}),
 		Parity:     replaceParityEngine,
 		ArrayReady: topologyChanged,
 	}))
@@ -619,8 +619,8 @@ func run(cfg config) error {
 		Runner:         linuxDisks.Exec,
 		Store:          arrayStore,
 		Generator:      generator,
-		Mounter:        disk.SystemdMounter{Runner: linuxDisks.Exec},
-		UpgradeMounter: disk.DirectMounter{Runner: linuxDisks.Exec},
+		Mounter:        newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}),
+		UpgradeMounter: newArrayDiskMounter(linuxDisks.Exec, disk.DirectMounter{Runner: linuxDisks.Exec}),
 		Parity:         replaceParityEngine,
 		ArrayReady:     topologyChanged,
 	}))
@@ -1092,7 +1092,11 @@ func buildUnixServer(handler *api.Handler, authStore *api.AuthStore, hub *job.Hu
 	// sending an oversized body by mistake shouldn't cost the daemon
 	// unbounded memory either.
 	mux.Handle(apiPathPrefix+"/events", http.MaxBytesHandler(api.SetupGate(events, authStore, apiPathPrefix), maxRequestBodyBytes))
-	mux.Handle(apiPathPrefix+"/", http.MaxBytesHandler(api.SetupGate(api.FlushLogStream(apiPathPrefix, apiServer), authStore, apiPathPrefix), maxRequestBodyBytes))
+	// The bare-metal restore (doc 10 §1) runs from the root shell of a box no
+	// one has set up yet, so the two import operations pass the setup gate
+	// here and nowhere else: buildTCPServer's gate keeps them closed until an
+	// admin exists.
+	mux.Handle(apiPathPrefix+"/", http.MaxBytesHandler(api.SetupGate(api.FlushLogStream(apiPathPrefix, apiServer), authStore, apiPathPrefix, api.ConfigImportPaths...), maxRequestBodyBytes))
 	mountAPINotFoundRoutes(mux)
 
 	guarded := unixSocketAuthMiddleware(mux, auth.OSGroupLookup{}, uint32(os.Getuid()))

@@ -3,9 +3,13 @@ package job
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -154,5 +158,399 @@ func TestLogStore_PruneOnEmptyDirectoryIsANoOp(t *testing.T) {
 	l := NewLogStore(filepath.Join(t.TempDir(), "does-not-exist-yet"))
 	if err := l.Prune(time.Now(), nil); err != nil {
 		t.Fatalf("Prune on a directory that was never created: %v", err)
+	}
+}
+
+func readGzipPrefix(t *testing.T, r io.Reader) string {
+	t.Helper()
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	got, err := io.ReadAll(gz)
+	if err != nil && err != io.ErrUnexpectedEOF {
+		t.Fatalf("reading decompressed log: %v", err)
+	}
+	return string(got)
+}
+
+func TestLogStore_OpenSeesEveryWriteBeforeClose(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+
+	w, err := l.Create("running")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	var want string
+	for _, line := range []string{"first line\n", "second line\n", "third line\n"} {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		want += line
+
+		r, err := l.Open("running")
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		got := readGzipPrefix(t, r)
+		_ = r.Close()
+		if got != want {
+			t.Fatalf("log of a still-running job = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestLogStore_CloseAfterFlushedWritesLeavesCompleteGzip(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+
+	w, err := l.Create("finished")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for _, line := range []string{"a\n", "b\n"} {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	r, err := l.Open("finished")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	got, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("a closed log must be a complete gzip stream, got: %v", err)
+	}
+	if string(got) != "a\nb\n" {
+		t.Fatalf("log content = %q, want %q", got, "a\nb\n")
+	}
+}
+
+type followFlag struct{ done atomic.Bool }
+
+func (f *followFlag) finished(context.Context) (bool, error) { return f.done.Load(), nil }
+
+func readWithin(t *testing.T, r io.Reader, n int) string {
+	t.Helper()
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, n)
+		_, _ = io.ReadFull(r, buf)
+		got <- string(buf)
+	}()
+	select {
+	case s := <-got:
+		return s
+	case <-time.After(10 * time.Second):
+		t.Fatal("no output arrived while the job was still running")
+		return ""
+	}
+}
+
+func TestLogStore_FollowDeliversOutputWhileTheJobRunsAndEndsWithTheTrailer(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	w, err := l.Create("j")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	var flag followFlag
+	f := l.Follow(context.Background(), "j", flag.finished, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+	if _, err := io.WriteString(w, "one\n"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("gzip.NewReader on a running job's log: %v", err)
+	}
+	if got := readWithin(t, gz, 4); got != "one\n" {
+		t.Fatalf("first chunk = %q, want %q", got, "one\n")
+	}
+	if _, err := io.WriteString(w, "two\n"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := readWithin(t, gz, 4); got != "two\n" {
+		t.Fatalf("second chunk = %q, want %q", got, "two\n")
+	}
+	if _, err := io.WriteString(w, "three\n"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	flag.done.Store(true)
+	rest, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("a finished job's followed log must end with a clean gzip trailer: %v", err)
+	}
+	if string(rest) != "three\n" {
+		t.Fatalf("rest = %q, want %q", rest, "three\n")
+	}
+}
+
+func TestLogStore_FollowWaitsForALogThatDoesNotExistYet(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	var flag followFlag
+	f := l.Follow(context.Background(), "queued", flag.finished, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+
+	got := make(chan []byte, 1)
+	go func() {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			got <- nil
+			return
+		}
+		b, _ := io.ReadAll(gz)
+		got <- b
+	}()
+	time.Sleep(50 * time.Millisecond)
+	w, err := l.Create("queued")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := io.WriteString(w, "late\n"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	flag.done.Store(true)
+	select {
+	case b := <-got:
+		if string(b) != "late\n" {
+			t.Fatalf("output = %q, want %q", b, "late\n")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the follower never ended")
+	}
+}
+
+func TestLogStore_FollowOfAFinishedJobWithNoLogIsEmpty(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	var flag followFlag
+	flag.done.Store(true)
+	f := l.Follow(context.Background(), "gone", flag.finished, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+	if b, err := io.ReadAll(f); err != nil || len(b) != 0 {
+		t.Fatalf("ReadAll = %q, %v; want empty and nil", b, err)
+	}
+}
+
+func TestLogStore_FollowEndsWhenTheContextEnds(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	w, err := l.Create("j")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+	var flag followFlag
+	ctx, cancel := context.WithCancel(context.Background())
+	f := l.Follow(ctx, "j", flag.finished, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+
+	errc := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(f)
+		errc <- err
+	}()
+	cancel()
+	select {
+	case err := <-errc:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Read after cancel = %v, want context.Canceled", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a cancelled follower kept waiting")
+	}
+}
+
+func TestLogStore_FollowAsksFinishedOnlyOnceCaughtUp(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	var out bytes.Buffer
+	for i := range 4096 {
+		out.WriteString("line " + strconv.Itoa(i*7919) + "\n")
+	}
+	writeLogRun(t, l, "j", out.String(), true)
+	var calls atomic.Int32
+	finished := func(context.Context) (bool, error) {
+		calls.Add(1)
+		return true, nil
+	}
+	f := l.Follow(context.Background(), "j", finished, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+	buf := make([]byte, 64)
+	for {
+		_, err := f.Read(buf)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("finished was consulted %d times reading a finished log, want 1 (only once caught up)", n)
+	}
+}
+
+func TestLogStore_FollowSurfacesAFinishedCheckError(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	boom := errors.New("store unavailable")
+	f := l.Follow(context.Background(), "j", func(context.Context) (bool, error) { return false, boom }, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+	if _, err := io.ReadAll(f); !errors.Is(err, boom) {
+		t.Fatalf("Read = %v, want the finished-check error", err)
+	}
+}
+
+func writeLogRun(t *testing.T, l *LogStore, id, text string, closeLog bool) {
+	t.Helper()
+	w, err := l.Create(id)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := io.WriteString(w, text); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if closeLog {
+		if err := w.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		return
+	}
+	if err := w.(*gzipWriteCloser).f.Close(); err != nil {
+		t.Fatalf("closing the file without a gzip trailer: %v", err)
+	}
+}
+
+func readWholeLog(t *testing.T, l *LogStore, id string) string {
+	t.Helper()
+	r, err := l.Open(id)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	got, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("a resumed job's log must be one complete gzip stream: %v", err)
+	}
+	return string(got)
+}
+
+func TestLogStore_CreateOfAnExistingLogKeepsEarlierOutput(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	writeLogRun(t, l, "j", "run one\n", true)
+	writeLogRun(t, l, "j", "run two\n", true)
+	writeLogRun(t, l, "j", "run three\n", true)
+	if got := readWholeLog(t, l, "j"); got != "run one\nrun two\nrun three\n" {
+		t.Fatalf("log = %q, want the output of all three runs in order", got)
+	}
+}
+
+func TestLogStore_SealThenCreateAfterARunThatNeverClosedItsLog(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	writeLogRun(t, l, "j", "run one\n", false)
+	if err := l.Seal("j"); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	writeLogRun(t, l, "j", "run two\n", true)
+	if got := readWholeLog(t, l, "j"); got != "run one\nrun two\n" {
+		t.Fatalf("log = %q, want run one's output kept although its gzip trailer was never written", got)
+	}
+}
+
+func TestLogStore_SealThenCreateAfterARunCutOffMidWrite(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	writeLogRun(t, l, "j", "run one\n", false)
+	f, err := os.OpenFile(l.path("j"), os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte{0x05, 0xc3, 0x11}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Seal("j"); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	writeLogRun(t, l, "j", "run two\n", true)
+	if got := readWholeLog(t, l, "j"); got != "run one\nrun two\n" {
+		t.Fatalf("log = %q, want the output decoded before the damage, then run two", got)
+	}
+	entries, err := os.ReadDir(l.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("log directory holds %d entries after the repair, want only the log", len(entries))
+	}
+}
+
+func TestLogStore_SealThenCreateOverAnEmptyLogFile(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	if err := os.WriteFile(l.path("j"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Seal("j"); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	writeLogRun(t, l, "j", "run\n", true)
+	if got := readWholeLog(t, l, "j"); got != "run\n" {
+		t.Fatalf("log = %q, want %q", got, "run\n")
+	}
+}
+
+func TestLogStore_FollowCrossesTheMemberBoundaryOfAResumedJob(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	writeLogRun(t, l, "j", "run one\n", true)
+
+	var flag followFlag
+	f := l.Follow(context.Background(), "j", flag.finished, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("gzip.NewReader: %v", err)
+	}
+	if got := readWithin(t, gz, len("run one\n")); got != "run one\n" {
+		t.Fatalf("first run = %q, want %q", got, "run one\n")
+	}
+
+	w, err := l.Create("j")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := io.WriteString(w, "run two\n"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := readWithin(t, gz, len("run two\n")); got != "run two\n" {
+		t.Fatalf("resumed run = %q, want %q while it is still running", got, "run two\n")
+	}
+	if _, err := io.WriteString(w, "end\n"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	flag.done.Store(true)
+	rest, err := io.ReadAll(gz)
+	if err != nil || string(rest) != "end\n" {
+		t.Fatalf("rest = %q, %v; want %q and a clean end", rest, err, "end\n")
 	}
 }

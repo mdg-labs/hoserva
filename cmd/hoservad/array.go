@@ -92,13 +92,16 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 			Role:    d.Role,
 			MountAt: d.Mountpoint,
 		})
-		diskMounts = append(diskMounts, disk.MountUnitController{
-			Unit: disk.MountUnit{
-				Where:      d.Mountpoint,
-				UUID:       d.FSUUID,
-				Filesystem: disk.FilesystemType(d.Filesystem),
+		diskMounts = append(diskMounts, guardedSlotMount{
+			inner: disk.MountUnitController{
+				Unit: disk.MountUnit{
+					Where:      d.Mountpoint,
+					UUID:       d.FSUUID,
+					Filesystem: disk.FilesystemType(d.Filesystem),
+				},
+				Runner: runner,
 			},
-			Runner: runner,
+			runner: runner,
 		})
 		switch d.Role {
 		case store.ArrayRoleData:
@@ -181,7 +184,7 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 	// the pool down. Lab tests keep using pool.Mounter (direct exec).
 	seq.CatchAll = pool.MountController{
 		Mnt:     catchAll,
-		Mounter: pool.SystemdMounter{Runner: runner},
+		Mounter: guardedCatchAllMounter{inner: pool.SystemdMounter{Runner: runner}, runner: runner},
 	}
 
 	rows, err := shares.List(ctx)

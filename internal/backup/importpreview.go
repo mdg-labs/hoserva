@@ -206,12 +206,30 @@ func PreviewImport(ctx context.Context, live *sql.DB, paths Paths, stagingDir st
 	if err != nil {
 		return ImportPreview{}, err
 	}
-	p := ImportPreview{
+	p := newImportPreview(manifest, check.ArchiveSchemaVersion, check.LiveSchemaVersion)
+	if check.Refusal != nil {
+		p.Blockers = append(p.Blockers, *check.Refusal)
+	}
+	files, err := p.planFiles(stagingDir, paths, opts...)
+	if err != nil {
+		return ImportPreview{}, err
+	}
+	if check.ArchiveSchemaVersion != check.LiveSchemaVersion {
+		return p, nil
+	}
+	if err := p.compare(ctx, live, arc, files); err != nil {
+		return ImportPreview{}, err
+	}
+	return p, nil
+}
+
+func newImportPreview(manifest Manifest, archiveSchema, liveSchema string) ImportPreview {
+	return ImportPreview{
 		Timestamp:            manifest.Timestamp,
 		Host:                 manifest.Host,
 		HoservaVersion:       manifest.Hoserva,
-		ArchiveSchemaVersion: check.ArchiveSchemaVersion,
-		LiveSchemaVersion:    check.LiveSchemaVersion,
+		ArchiveSchemaVersion: archiveSchema,
+		LiveSchemaVersion:    liveSchema,
 		Blockers:             []ImportRefusal{},
 		Groups:               []ImportGroup{},
 		Notes: []ImportNote{
@@ -225,9 +243,11 @@ func PreviewImport(ctx context.Context, live *sql.DB, paths Paths, stagingDir st
 			},
 		},
 	}
-	if check.Refusal != nil {
-		p.Blockers = append(p.Blockers, *check.Refusal)
-	}
+}
+
+// planFiles is PlanFiles for a preview: a path the restore would refuse is
+// a blocker, and the files' categories are then listed without changes.
+func (p *ImportPreview) planFiles(stagingDir string, paths Paths, opts ...FilesOption) ([]FileChanges, error) {
 	files, err := PlanFiles(stagingDir, paths, opts...)
 	var unsafe *UnsafeRestorePathError
 	switch {
@@ -238,14 +258,17 @@ func PreviewImport(ctx context.Context, live *sql.DB, paths Paths, stagingDir st
 			files = append(files, FileChanges{Category: c})
 		}
 	case err != nil:
-		return ImportPreview{}, fmt.Errorf("comparing the archive's files: %w", err)
+		return nil, fmt.Errorf("comparing the archive's files: %w", err)
 	}
-	if check.ArchiveSchemaVersion != check.LiveSchemaVersion {
-		return p, nil
-	}
+	return files, nil
+}
+
+// compare fills p's groups from the two databases, then the files'.
+func (p *ImportPreview) compare(ctx context.Context, live, arc *sql.DB, files []FileChanges) error {
+	var err error
 	p.Groups, err = diffConfig(ctx, live, arc)
 	if err != nil {
-		return ImportPreview{}, err
+		return err
 	}
 	for _, c := range files {
 		p.Groups = append(p.Groups, ImportGroup{
@@ -255,7 +278,7 @@ func PreviewImport(ctx context.Context, live *sql.DB, paths Paths, stagingDir st
 			Removed:  fileChanges(fileGroupKinds[c.Category], c.Removed),
 		})
 	}
-	return p, nil
+	return nil
 }
 
 func fileChanges(kind string, names []string) []ImportChange {

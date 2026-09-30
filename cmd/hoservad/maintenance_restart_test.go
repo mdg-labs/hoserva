@@ -79,6 +79,7 @@ func newMaintenanceRestartWiring(t *testing.T, dbPath string) *maintenanceRestar
 
 	fakeRunner := disk.NewFakeRunner()
 	storageTarget := &storageTargetSync{
+		MountpointGuard: noMountpointGuard,
 		Generator:       cfggen.NewGenerator(t.TempDir()),
 		Runner:          fakeRunner,
 		FlagPath:        filepath.Join(t.TempDir(), "storage-ready"),

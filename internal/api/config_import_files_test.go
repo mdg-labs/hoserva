@@ -578,7 +578,7 @@ func TestPreviewConfigImport_CategoriesAndBlockersMatchTheSchema(t *testing.T) {
 	for _, c := range (apiv1.ConfigImportBlockerCode("")).AllValues() {
 		blockers = append(blockers, string(c))
 	}
-	want := []string{backup.RefusalIncompatibleArchive, backup.RefusalOtherInstallation, backup.RefusalArrayMismatch, backup.RefusalUnsafeRestorePath}
+	want := []string{backup.RefusalIncompatibleArchive, backup.RefusalNewerArchive, backup.RefusalOtherInstallation, backup.RefusalArrayMismatch, backup.RefusalUnsafeRestorePath}
 	slices.Sort(blockers)
 	slices.Sort(want)
 	if !slices.Equal(want, blockers) {

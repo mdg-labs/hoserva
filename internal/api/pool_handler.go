@@ -20,6 +20,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/pool"
@@ -123,32 +124,10 @@ func (h *Handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
 }
 
 // matchArrayDisk finds the stored array_disks row that identifies the same
-// physical disk as d (Q21), reusing disk.Identity.Matches rather than a
-// second implementation: WWN when both sides have one, else serial. It
-// never falls back to comparing /dev/sdX paths, which renumber across
-// reboots (#326) — a stored member whose device changed is still found by
-// its identity, and a different disk that took over its old path is left
-// unmatched. A weak-identity array disk (no wwn/serial by-id link at all,
-// e.g. every disk in the loop-device lab, doc 06 §3) is matched by
-// filesystem UUID and size (Q21) instead, since disk.Identity carries no
-// field to compare those through Matches. When the stored row has no size
-// (NULL, rows from before #327), the match falls back to filesystem UUID
-// alone so an upgrade never leaves a live member unmatched.
+// physical disk as d (Q21); backup.MatchAttachedDisk is the one match GetPool
+// and a bare-metal restore's disk mapping share.
 func matchArrayDisk(d disk.Disk, arrayDisks []store.ArrayDisk) (int, bool) {
-	inv := disk.Identity{WWN: d.WWN, Serial: d.Serial, WeakIdentity: d.WeakIdentity, ByIDName: d.ByIDName}
-	for i, ad := range arrayDisks {
-		stored := disk.Identity{WWN: ad.WWN, Serial: ad.Serial, WeakIdentity: ad.WeakIdentity, ByIDName: ad.ByIDName}
-		if inv.Matches(stored) {
-			return i, true
-		}
-		if ad.WeakIdentity && d.WeakIdentity && ad.FSUUID != "" && ad.FSUUID == d.FSUUID {
-			if ad.SizeSet && ad.Size != d.Size {
-				continue
-			}
-			return i, true
-		}
-	}
-	return 0, false
+	return backup.MatchAttachedDisk(d, arrayDisks)
 }
 
 // wrongFilesystem reports whether a present disk matched to ad by identity
@@ -485,12 +464,28 @@ var errImportJobInProgress = &apiError{code: "job_in_progress", statusCode: 409,
 // secrets.age; a passphrase given that does not is refused before anything
 // is written, and without one that does, everything else is restored and the
 // report says the .env files were not. The report is the answer.
+//
+// An installation with no array takes the bare-metal branch instead of the
+// in-place checks (config_import_baremetal.go): the archive's database is
+// staged and upgraded, its disks mapped onto the attached ones, and the
+// mapping the request confirmed must be the one the attached disks give,
+// before anything is written. The restore then prepares the staged database
+// (backup.BareMetal.Apply) before the same restore, and writes the disk
+// mount units and snapraid.conf (Handler.RegenerateArray) ahead of the
+// regeneration.
 func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) (*apiv1.ConfigImportReport, error) {
 	if !req.Confirm {
 		return nil, errConfirmRequired
 	}
 	if !h.importConfigured() || h.RegenerateConfig == nil {
 		return nil, errConfigImportNotConfigured
+	}
+
+	// Read before the upload is, so a mapping that is not one is refused
+	// without unpacking anything.
+	mapping, err := diskMappingFromRequest(req.DiskMapping)
+	if err != nil {
+		return nil, err
 	}
 
 	staging, err := stageImportArchive(req.Archive.File)
@@ -500,11 +495,33 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	defer func() { _ = os.RemoveAll(staging) }()
 	stateDB := filepath.Join(staging, "state.db")
 
+	// On an installation with no array the import is the bare-metal restore
+	// of another installation's archive (doc 10 §1): the archive's database
+	// is staged, upgraded and mapped onto the attached disks here, and every
+	// step below reads that staged copy instead of the archive's own.
+	fresh, err := backup.IsFreshInstall(ctx, h.Backup.DB)
+	if err != nil {
+		return nil, err
+	}
+	var bm *bareMetalImport
+	if fresh {
+		bm, err = h.stageBareMetal(ctx, staging, mapping)
+		if err != nil {
+			return nil, err
+		}
+		defer bm.staged.Discard()
+		stateDB = bm.staged.Path()
+	} else if mapping != nil {
+		return nil, errDiskMappingNotApplicable
+	}
+
 	// Everything that can refuse the import runs before anything is written:
 	// the pre-import backup below takes one of a destination's bounded
 	// pre-change retention slots (#401), so a refused retry must not reach it.
-	if err := checkImport(ctx, h.Backup.DB, stateDB); err != nil {
-		return nil, err
+	if bm == nil {
+		if err := checkImport(ctx, h.Backup.DB, stateDB); err != nil {
+			return nil, err
+		}
 	}
 	secrets, err := h.resolveSecrets(ctx, staging, req.Passphrase)
 	if err != nil {
@@ -530,9 +547,14 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if err != nil {
 		return nil, fmt.Errorf("listing the stack .env files the import leaves: %w", err)
 	}
-	dbChanges, err := backup.DiffImport(ctx, h.Backup.DB, stateDB)
-	if err != nil {
-		return nil, fmt.Errorf("comparing the archive's database with this installation's: %w", err)
+	// A bare-metal restore changes the staged database further (below, under
+	// the hold), so it compares once that is done.
+	var dbChanges []backup.ImportGroup
+	if bm == nil {
+		dbChanges, err = backup.DiffImport(ctx, h.Backup.DB, stateDB)
+		if err != nil {
+			return nil, fmt.Errorf("comparing the archive's database with this installation's: %w", err)
+		}
 	}
 
 	// The archive's own queued/running job ids, read from the staged copy
@@ -561,9 +583,26 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if restoresEnvs {
 		runOpts = append(runOpts, backup.SealSecretsWith(envPassphrase))
 	}
+	// A bare-metal restore also replaces the host files the restored
+	// configuration imports that this host already has, which its own
+	// manifest never heard of (doc 10 §1): they are planned now, saved in the
+	// archive below, and only then recorded and written.
+	var hostFiles config.HostFilePlan
+	if bm != nil {
+		hostFiles, err = h.planHostFiles(ctx, bm.staged)
+		if err != nil {
+			return nil, err
+		}
+		if len(hostFiles.Replace) > 0 {
+			runOpts = append(runOpts, backup.CaptureHostFiles(h.Generator.Root, hostFilePaths(hostFiles.Replace)))
+		}
+	}
 	preImport, err := h.Backup.RunReasonArchive(ctx, backup.ReasonPreImport, runOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("backing up before import: %w", err)
+	}
+	if len(hostFiles.Replace) > 0 && preImport.Name == "" {
+		return nil, errHostFilesNotSaved
 	}
 	preImportSecrets := apiv1.ConfigImportPreImportSecretsNone
 	switch {
@@ -597,9 +636,26 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 
 	// Compared again now no job can change the array: a topology job that
 	// finished during the upload or the backup above would otherwise be
-	// restored over.
-	if err := checkImport(ctx, h.Backup.DB, stateDB); err != nil {
-		return nil, err
+	// restored over. A bare-metal restore maps the disks again, since one may
+	// have been attached or pulled since the user confirmed the mapping.
+	if bm == nil {
+		if err := checkImport(ctx, h.Backup.DB, stateDB); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := h.confirmBareMetal(ctx, bm); err != nil {
+			return nil, err
+		}
+		bmNotRestored, err := bm.staged.Apply(ctx, h.Backup.DB, bm.mapped)
+		if err != nil {
+			log.Printf("hoservad: config import: preparing the archive's database: %v", err)
+			return nil, &apiError{code: "import_failed", statusCode: 500, message: fmt.Sprintf("the import did not start and nothing was changed: %v", err)}
+		}
+		notRestored = append(bmNotRestored, notRestored...)
+		dbChanges, err = backup.DiffImport(ctx, h.Backup.DB, stateDB)
+		if err != nil {
+			return nil, fmt.Errorf("comparing the archive's database with this installation's: %w", err)
+		}
 	}
 
 	// Every file the restore writes is copied next to its directory, and
@@ -665,6 +721,16 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	}
 	if err := staged.Apply(); err != nil {
 		failures = append(failures, err)
+	}
+	if bm != nil {
+		if h.Generator != nil {
+			if err := h.Generator.ReconcileHostFiles(finish, hostFiles.Record); err != nil {
+				failures = append(failures, fmt.Errorf("recording the restored host-file decisions: %w", err))
+			}
+		}
+		if err := h.RegenerateArray(finish); err != nil {
+			failures = append(failures, fmt.Errorf("regenerating the disk mount units and snapraid.conf from the restored array: %w", err))
+		}
 	}
 	if err := h.RegenerateConfig(finish); err != nil {
 		failures = append(failures, fmt.Errorf("regenerating the configuration from the restored database: %w", err))
@@ -838,6 +904,14 @@ func (h *Handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 		return nil, err
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
+
+	fresh, err := backup.IsFreshInstall(ctx, h.Backup.DB)
+	if err != nil {
+		return nil, err
+	}
+	if fresh {
+		return h.previewBareMetal(ctx, staging, req.Passphrase)
+	}
 
 	// Resolved first so a .env the import would refuse to write is a
 	// blocker, but its own refusal comes after the archive's, as

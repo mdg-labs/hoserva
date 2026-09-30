@@ -1,6 +1,9 @@
 package main
 
 import (
+	"compress/gzip"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -830,7 +833,10 @@ func logsCmd() *cobra.Command {
 					return err
 				}
 				if follow {
-					return fmt.Errorf("--follow is not supported yet")
+					if jsonOutput {
+						return fmt.Errorf("--follow streams plain text and cannot be combined with --json")
+					}
+					return followJobLog(id)
 				}
 				log, err := c.GetJobLog(apiCtx(), apiv1.GetJobLogParams{JobId: id})
 				if err != nil {
@@ -865,11 +871,69 @@ func logsCmd() *cobra.Command {
 	return cmd
 }
 
+// followJobLog prints a job's log as it grows. The server streams the log's
+// gzip file as the job writes it, so the body is decompressed on the fly
+// through a pipe. It returns nil when the server ends the stream (the job
+// finished) or the user interrupts, and an error when the transport breaks,
+// the server refuses, or the stream is not valid gzip. A stream the server
+// closed without the gzip trailer (a job whose log was never closed) ends
+// cleanly too: everything it carried was printed.
+func followJobLog(id uuid.UUID) error {
+	pr, pw := io.Pipe()
+	printed := make(chan error, 1)
+	go func() {
+		err := printGzip(pr, os.Stdout)
+		pr.CloseWithError(err)
+		printed <- err
+	}()
+
+	c, err := newStreamingAPIClient(pw)
+	if err != nil {
+		_ = pw.Close()
+		<-printed
+		return err
+	}
+	ctx, stop := signal.NotifyContext(apiCtx(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	_, callErr := c.GetJobLog(ctx, apiv1.GetJobLogParams{JobId: id, Follow: apiv1.NewOptBool(true)})
+	if callErr != nil {
+		pw.CloseWithError(callErr)
+	} else {
+		_ = pw.Close()
+	}
+	printErr := <-printed
+
+	if callErr != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return mapAPIErr(callErr)
+	}
+	if printErr != nil && !errors.Is(printErr, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("reading the job log: %w", printErr)
+	}
+	return nil
+}
+
+// printGzip decompresses src to dst as bytes arrive. A src that ends before
+// its first byte is an empty log, not an error.
+func printGzip(src io.Reader, dst io.Writer) error {
+	gz, err := gzip.NewReader(src)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	_, err = io.Copy(dst, gz)
+	return err
+}
+
 func configCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "config", Short: "Config backup"}
 	var outPath string
 	var confirm, preview bool
-	var passphraseFile string
+	var passphraseFile, diskMappingFile string
 
 	export := &cobra.Command{
 		Use:   "export",
@@ -930,6 +994,17 @@ func configCmd() *cobra.Command {
 			if !preview && !confirm {
 				return fmt.Errorf("import requires --confirm")
 			}
+			if preview && cmd.Flags().Changed("disk-mapping-file") {
+				return fmt.Errorf("--disk-mapping-file confirms a mapping, which --preview does not import; drop --preview to confirm it")
+			}
+			var diskMapping apiv1.OptString
+			if cmd.Flags().Changed("disk-mapping-file") {
+				m, err := readDiskMappingFile(diskMappingFile)
+				if err != nil {
+					return err
+				}
+				diskMapping = apiv1.NewOptString(m)
+			}
 			var passphrase apiv1.OptString
 			if cmd.Flags().Changed("passphrase-file") {
 				p, err := readPassphraseFile(passphraseFile)
@@ -967,9 +1042,10 @@ func configCmd() *cobra.Command {
 				return nil
 			}
 			report, err := c.ImportConfig(apiCtx(), &apiv1.ImportConfigReq{
-				Confirm:    true,
-				Archive:    http.MultipartFile{Name: args[0], File: f, Size: st.Size()},
-				Passphrase: passphrase,
+				Confirm:     true,
+				Archive:     http.MultipartFile{Name: args[0], File: f, Size: st.Size()},
+				Passphrase:  passphrase,
+				DiskMapping: diskMapping,
 			})
 			if err != nil {
 				return mapAPIErr(err)
@@ -984,6 +1060,7 @@ func configCmd() *cobra.Command {
 	}
 	importCmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm import (required unless --preview)")
 	importCmd.Flags().BoolVar(&preview, "preview", false, "List what importing the archive would change, without changing anything")
+	importCmd.Flags().StringVar(&diskMappingFile, "disk-mapping-file", "", "File holding the disk mapping to confirm for a restore onto a fresh install (the diskMapping of the preview's bareMetal block, from --preview --json)")
 	importCmd.Flags().StringVar(&passphraseFile, "passphrase-file", "", "File holding the backup passphrase the archive's secrets were sealed under (default: the configured one)")
 
 	cmd.AddCommand(export, importCmd)
@@ -1032,6 +1109,62 @@ func printConfigImportPreview(p *apiv1.ConfigImportPreview) {
 	for _, n := range p.Notes {
 		fmt.Printf("\n%s\n", n.Message)
 	}
+	if bm, ok := p.BareMetal.Get(); ok {
+		printConfigImportBareMetal(bm)
+	}
+}
+
+func printConfigImportBareMetal(bm apiv1.ConfigImportBareMetal) {
+	fmt.Println("\nThis installation has no array, so importing restores another installation's archive onto it.")
+	if bm.SchemaUpgrade {
+		fmt.Println("The archive's database is older than this Hoserva's and is upgraded first.")
+	}
+	if len(bm.Disks) == 0 {
+		fmt.Println("The archive records no array disks.")
+	} else {
+		fmt.Println("\nThe archive's array disks, against the attached disks:")
+	}
+	unmatched := false
+	for _, d := range bm.Disks {
+		switch d.State {
+		case apiv1.ConfigImportDiskStateMatched:
+			fmt.Printf("  %s: matched, on %s\n", d.Name, d.Device.Or(""))
+		default:
+			unmatched = true
+			line := fmt.Sprintf("  %s: %s", d.Name, d.State)
+			if dev, ok := d.Device.Get(); ok {
+				line += fmt.Sprintf(" (%s)", dev)
+			}
+			fmt.Println(line + ", not mounted")
+		}
+	}
+	if unmatched {
+		fmt.Println("A disk that is not matched stays a row of the restored array, unmounted, and the array is degraded: nothing mounts, matched disks included, until the degraded array is acknowledged or the replace flow adopts a replacement disk.")
+	}
+	mapping, err := json.MarshalIndent(bm.DiskMapping, "", "  ")
+	if err != nil {
+		fmt.Printf("\nThe mapping to confirm could not be printed: %v\n", err)
+		return
+	}
+	fmt.Printf("\nTo restore with these disks, save this mapping to a file and run the import with --confirm --disk-mapping-file <file>:\n%s\n", mapping)
+}
+
+// readDiskMappingFile reads the mapping the user confirmed and returns its
+// JSON, checked to be a ConfigImportDiskMapping, as importConfig's diskMapping.
+func readDiskMappingFile(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading the disk mapping file: %w", err)
+	}
+	var m apiv1.ConfigImportDiskMapping
+	if err := json.Unmarshal(b, &m); err != nil {
+		return "", fmt.Errorf("the disk mapping file %s is not a disk mapping (the diskMapping of a preview's bareMetal block): %w", path, err)
+	}
+	doc, err := json.Marshal(&m)
+	if err != nil {
+		return "", err
+	}
+	return string(doc), nil
 }
 
 func describeConfigImportSecrets(s apiv1.ConfigImportSecrets) string {

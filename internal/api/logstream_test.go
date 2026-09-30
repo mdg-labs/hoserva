@@ -44,15 +44,18 @@ func TestFlushLogStream_DeliversALineBeforeTheStreamEnds(t *testing.T) {
 	}
 }
 
-// The wrapper only touches log requests: any other route passes through
-// with the original ResponseWriter.
+// The wrapper only touches container and job log requests: any other route
+// passes through with the original ResponseWriter.
 func TestFlushLogStream_LeavesOtherRoutesAlone(t *testing.T) {
 	for path, wrapped := range map[string]bool{
 		"/api/v1/apps/jellyfin/logs": true,
 		"/api/v1/apps/jellyfin":      false,
 		"/api/v1/apps/a/b/logs":      false,
 		"/api/v1/apps//logs":         false,
-		"/api/v1/jobs/x/log":         false,
+		"/api/v1/jobs/x/log":         true,
+		"/api/v1/jobs/x/y/log":       false,
+		"/api/v1/jobs//log":          false,
+		"/api/v1/jobs/x":             false,
 		"/api/v1/events":             false,
 	} {
 		var got http.ResponseWriter

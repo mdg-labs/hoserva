@@ -3,7 +3,9 @@ package backup
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +22,9 @@ type Paths struct {
 	StacksDir           string
 	TemplatesDir        string
 	SnapraidContentPath string
+	// MachineKeyPath is the machine key file hoservad loaded (Q28). Whatever
+	// the archive would otherwise copy, this file never enters it.
+	MachineKeyPath string
 }
 
 // ArchiveOption configures an optional part of BuildArchive's output.
@@ -34,6 +39,25 @@ type ArchiveOption func(*archiveOptions)
 type archiveOptions struct {
 	recipient   *Recipient
 	sealSecrets string
+	hostRoot    string
+	hostFiles   []string
+}
+
+// hostFilesDir is the archive directory holding the host files a restore is
+// about to replace, each at its path relative to the host's config root. It
+// is written only into the pre-import archive of a bare-metal restore; no
+// restore reads it back (the files it holds are the new host's, not the
+// configuration being restored), so it is there for a user to recover from.
+const hostFilesDir = "host"
+
+// WithHostFiles copies each of rels, relative to root, into the archive's
+// host/ directory. A file that cannot be read fails the build: the caller is
+// about to replace it, so a copy that is not there must stop it.
+func WithHostFiles(root string, rels []string) ArchiveOption {
+	return func(o *archiveOptions) {
+		o.hostRoot = root
+		o.hostFiles = rels
+	}
 }
 
 // WithSecretsPassphrase seals secrets.age under passphrase instead of the
@@ -96,16 +120,35 @@ func BuildArchive(ctx context.Context, db *sql.DB, paths Paths, src SecretSource
 		}
 	}
 
-	if err := copyTreeIfExists(paths.ConfigRoot, filepath.Join(stagingDir, "generated"), isGeneratedFile); err != nil {
+	keys, err := newMachineKeyFilter(paths.MachineKeyPath)
+	if err != nil {
 		return Manifest{}, err
 	}
-	if err := copyTreeIfExists(paths.ConfigRoot, filepath.Join(stagingDir, "custom"), isCustomFile); err != nil {
+
+	if err := copyTreeIfExists(paths.ConfigRoot, filepath.Join(stagingDir, "generated"), isGeneratedFile, keys); err != nil {
 		return Manifest{}, err
 	}
-	if err := copyTreeIfExists(paths.TemplatesDir, filepath.Join(stagingDir, "templates"), nil); err != nil {
+	if err := copyTreeIfExists(paths.ConfigRoot, filepath.Join(stagingDir, "custom"), isCustomFile, keys); err != nil {
 		return Manifest{}, err
 	}
-	if err := copySnapraidContent(paths.SnapraidContentPath, filepath.Join(stagingDir, "snapraid-content")); err != nil {
+	if err := copyTreeIfExists(paths.TemplatesDir, filepath.Join(stagingDir, "templates"), nil, keys); err != nil {
+		return Manifest{}, err
+	}
+	for _, rel := range cfg.hostFiles {
+		if !filepath.IsLocal(rel) {
+			return Manifest{}, fmt.Errorf("host file %q is not inside the host's config root", rel)
+		}
+		hostFile := filepath.Join(cfg.hostRoot, rel)
+		if isKey, err := keys.isMachineKey(hostFile); err != nil {
+			return Manifest{}, fmt.Errorf("saving host file %s: %w", rel, err)
+		} else if isKey {
+			return Manifest{}, fmt.Errorf("host file %q is the machine key, which an archive never holds", rel)
+		}
+		if err := copyPath(filepath.Join(stagingDir, hostFilesDir, rel), hostFile); err != nil {
+			return Manifest{}, fmt.Errorf("saving host file %s: %w", rel, err)
+		}
+	}
+	if err := copySnapraidContent(paths.SnapraidContentPath, filepath.Join(stagingDir, "snapraid-content"), keys); err != nil {
 		return Manifest{}, err
 	}
 
@@ -127,6 +170,49 @@ func BuildArchive(ctx context.Context, db *sql.DB, paths Paths, src SecretSource
 		return Manifest{}, err
 	}
 	return manifest, nil
+}
+
+// machineKeyFileName is the machine key's file name in the packaged layout.
+// A file of that name is left out wherever it is found, so a caller that
+// leaves Paths.MachineKeyPath empty still cannot put the key in an archive.
+const machineKeyFileName = "secret.key"
+
+// machineKeyFilter decides, for each file the builder is about to copy,
+// whether it is the machine key. The configured key is matched by identity
+// (os.SameFile on the followed file), not by spelling, so a symlink or hard
+// link to it, or another path to the same file, is left out too.
+type machineKeyFilter struct {
+	key os.FileInfo
+}
+
+func newMachineKeyFilter(path string) (*machineKeyFilter, error) {
+	if path == "" {
+		return &machineKeyFilter{}, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return &machineKeyFilter{}, nil
+		}
+		return nil, fmt.Errorf("checking machine key %s: %w", path, err)
+	}
+	return &machineKeyFilter{key: info}, nil
+}
+
+// isMachineKey errors when path cannot be examined: a file that might be the
+// key is never copied on the strength of a failed comparison.
+func (f *machineKeyFilter) isMachineKey(path string) (bool, error) {
+	if filepath.Base(path) == machineKeyFileName {
+		return true, nil
+	}
+	if f.key == nil {
+		return false, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, fmt.Errorf("checking %s against the machine key: %w", path, err)
+	}
+	return os.SameFile(f.key, info), nil
 }
 
 func isGeneratedFile(rel string) bool {
@@ -167,7 +253,7 @@ func listArchiveFiles(root string) ([]string, error) {
 	return out, err
 }
 
-func copyTreeIfExists(src, dst string, include func(rel string) bool) error {
+func copyTreeIfExists(src, dst string, include func(rel string) bool, keys *machineKeyFilter) error {
 	if src == "" {
 		return nil
 	}
@@ -193,6 +279,9 @@ func copyTreeIfExists(src, dst string, include func(rel string) bool) error {
 		if include != nil && !include(filepath.Base(src)) {
 			return nil
 		}
+		if isKey, err := keys.isMachineKey(src); err != nil || isKey {
+			return err
+		}
 		return copyPath(filepath.Join(dst, filepath.Base(src)), src)
 	}
 
@@ -213,11 +302,14 @@ func copyTreeIfExists(src, dst string, include func(rel string) bool) error {
 		if include != nil && !include(rel) {
 			return nil
 		}
+		if isKey, err := keys.isMachineKey(path); err != nil || isKey {
+			return err
+		}
 		return copyPath(filepath.Join(dst, rel), path)
 	})
 }
 
-func copySnapraidContent(src, dstDir string) error {
+func copySnapraidContent(src, dstDir string, keys *machineKeyFilter) error {
 	if src == "" {
 		return nil
 	}
@@ -229,7 +321,10 @@ func copySnapraidContent(src, dstDir string) error {
 		return fmt.Errorf("checking snapraid content %s: %w", src, err)
 	}
 	if info.IsDir() {
-		return copyTreeIfExists(src, dstDir, nil)
+		return copyTreeIfExists(src, dstDir, nil, keys)
+	}
+	if isKey, err := keys.isMachineKey(src); err != nil || isKey {
+		return err
 	}
 	if err := os.MkdirAll(dstDir, 0o700); err != nil {
 		return err

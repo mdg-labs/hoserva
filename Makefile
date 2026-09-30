@@ -272,7 +272,7 @@ $(error invalid L3_STEPS: must not contain '$$' — no Make or shell expansion s
 endif
 export L3_STEPS
 
-.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
+.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-scan-outbound web-outbound-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -291,6 +291,14 @@ web-build:
 	@echo "web: npm run build"
 	cd web && $(NPM) run build
 	@test -f web/dist/index.html || { echo "web-build: web/dist/index.html is missing after 'npm run build' — the embed (web/embed.go) would ship a placeholder, not the app" >&2; exit 1; }
+
+# Q49: the built app embeds no outbound request. web-scan-outbound scans an
+# existing web/dist only — CI's web job, which has just built it, runs that.
+web-check-outbound: web-build
+	scripts/devenv/check-web-outbound.sh web/dist
+
+web-scan-outbound:
+	scripts/devenv/check-web-outbound.sh web/dist
 
 build: web-build
 	@mkdir -p $(BIN_DIR)
@@ -317,7 +325,7 @@ web-test:
 	@echo "web test"
 	cd web && $(NPM) run test
 
-test: test-unit packaging-test test-gh
+test: test-unit packaging-test test-gh web-outbound-test
 
 # Go's own "./..." wildcard skips "vendor", "testdata" and dot/underscore
 # directories, but not "node_modules" (`go help packages`) — once web/'s
@@ -363,6 +371,11 @@ test-gh:
 	scripts/test-epic-status.sh
 	scripts/test-issue-readiness.sh
 	scripts/test-check-gh-rest.sh
+
+# Fixture test for the Q49 outbound-request check's allowlist (issue #461);
+# it scans throwaway directories, not the web build.
+web-outbound-test:
+	scripts/devenv/test-check-web-outbound.sh
 
 # Go-only lint: CI's lint-and-unit job calls this so it does not also
 # run the web job's lint/typecheck. Local `make lint` still includes
@@ -698,6 +711,13 @@ vm-restore:
 vm-deploy:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-deploy)" >&2; exit 1; }
 	scripts/vm/deploy.sh
+
+# Replaces only this lab's VM's OS disk with a fresh image and installs
+# Hoserva on it (a bare-metal reinstall); every array disk is kept. DEB=
+# and TAG= are vm-deploy's.
+vm-reinstall-os:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-reinstall-os)" >&2; exit 1; }
+	scripts/vm/reinstall-os.sh
 
 vm-destroy:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-destroy)" >&2; exit 1; }

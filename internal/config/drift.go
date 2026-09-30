@@ -270,6 +270,108 @@ func (g *Generator) ApplyHostFileDecisions(ctx context.Context, files []HostFile
 	return func() error { return g.saveManifest(previous) }, nil
 }
 
+// HostFileDecisionFor is the Q76 decision a host_config row records for a
+// file Generator writes (Samba and NFS). Any other kind, or a decision that is
+// neither import nor leave, is not one.
+func HostFileDecisionFor(kind, decision string) (HostFileDecision, bool) {
+	if kind != KindSamba && kind != KindNFS {
+		return HostFileDecision{}, false
+	}
+	if decision != DecisionImport && decision != DecisionLeave {
+		return HostFileDecision{}, false
+	}
+	return HostFileDecision{Path: HostFilePath(kind), Decision: decision}, true
+}
+
+// HostFilePlan is what a restored host_config means for the files already on
+// this host when Generator has no manifest that knew them (a bare-metal
+// restore onto a freshly installed OS, doc 10 §1): Replace lists the files
+// the regeneration will write over, Record the decisions that put the
+// manifest where the restored database already is.
+type HostFilePlan struct {
+	Replace []HostFileDecision
+	Record  []HostFileDecision
+}
+
+// PlanHostFiles reads, and writes nothing. A file the manifest already marks
+// unmanaged is the decision this host's own user made and is left out of both
+// lists; an import decision for a file that exists is Replace, and, if the
+// manifest has no record of it, Record, as is a leave decision for one.
+func (g *Generator) PlanHostFiles(ctx context.Context, decisions []HostFileDecision) (HostFilePlan, error) {
+	if err := ctx.Err(); err != nil {
+		return HostFilePlan{}, err
+	}
+	manifest, err := g.loadManifest()
+	if err != nil {
+		return HostFilePlan{}, err
+	}
+	var plan HostFilePlan
+	for _, d := range decisions {
+		full, key, err := g.resolvePath(d.Path)
+		if err != nil {
+			return HostFilePlan{}, err
+		}
+		rec, tracked := manifest[key]
+		if tracked && rec.Unmanaged {
+			continue
+		}
+		_, err = os.Stat(full)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return HostFilePlan{}, fmt.Errorf("config: checking %s: %w", key, err)
+		}
+		if d.Decision == DecisionImport {
+			plan.Replace = append(plan.Replace, d)
+		}
+		if !tracked {
+			plan.Record = append(plan.Record, d)
+		}
+	}
+	return plan, nil
+}
+
+// ReconcileHostFiles records each decision in one atomic manifest write. A
+// path the manifest has a record of since PlanHostFiles, or that no longer
+// exists, is skipped: the plan was made before a backup and the restore, and
+// neither may take a decision back or record a file that is gone.
+func (g *Generator) ReconcileHostFiles(ctx context.Context, record []HostFileDecision) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(record) == 0 {
+		return nil
+	}
+	manifest, err := g.loadManifest()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, d := range record {
+		full, key, err := g.resolvePath(d.Path)
+		if err != nil {
+			return err
+		}
+		if _, tracked := manifest[key]; tracked {
+			continue
+		}
+		if _, err := os.Stat(full); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return fmt.Errorf("config: checking %s: %w", key, err)
+		}
+		if err := g.setHostFileDecision(manifest, d.Path, d.Decision); err != nil {
+			return err
+		}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return g.saveManifest(manifest)
+}
+
 func cloneManifest(m map[string]record) map[string]record {
 	out := make(map[string]record, len(m))
 	for k, v := range m {

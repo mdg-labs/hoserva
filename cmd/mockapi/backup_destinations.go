@@ -139,6 +139,21 @@ func (h *handler) DeleteBackupDestination(ctx context.Context, params apiv1.Dele
 	return nil
 }
 
+// mockHasEnabledBackupDestination is whether the pre-import archive of a
+// restore would be written anywhere: the mock's preview always names a host
+// file the restore replaces, so a bare-metal import without one is refused as
+// production refuses it.
+func (h *handler) mockHasEnabledBackupDestination() bool {
+	h.backupMu.Lock()
+	defer h.backupMu.Unlock()
+	for _, d := range h.backupDestinations {
+		if d.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *handler) removeBackupDestinationLocked(id string) bool {
 	for i, d := range h.backupDestinations {
 		if d.ID == id {
@@ -193,7 +208,7 @@ func (h *handler) mockDestinationRefusal(dest backup.Destination) string {
 	}
 	if underPath(path, pool.CatchAllPath) {
 		h.mu.Lock()
-		mounted := mockPoolStatus(h.scenario).Mounted && !h.maintenance
+		mounted := h.poolMountedLocked()
 		h.mu.Unlock()
 		if !mounted {
 			return fmt.Sprintf("the pool is not mounted at %q", pool.CatchAllPath)

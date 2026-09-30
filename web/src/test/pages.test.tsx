@@ -436,6 +436,108 @@ describe("dashboard, parity, wake-events and jobs pages", () => {
     expect(screen.queryByText("No array configured")).not.toBeInTheDocument();
   });
 
+  function mockDashboardBackup(result: unknown): void {
+    mockApiForStatus({ healthy: true, summary: "OK", arrayDegraded: false, parityBlocked: false, activeJobs: 0 });
+    const base = mockGet.getMockImplementation();
+    mockGet.mockImplementation((path: string, ...rest: unknown[]) =>
+      path === "/backup/destinations" ? Promise.resolve(result) : base?.(path, ...rest),
+    );
+  }
+
+  function backupDestinationRow(name: string, stale: boolean) {
+    return {
+      id: name,
+      name,
+      type: "local",
+      path: "/backups",
+      enabled: true,
+      encrypt: false,
+      retention: { daily: 7, weekly: 4, monthly: 6 },
+      hasSecrets: false,
+      stale,
+      createdAt: "2026-09-01T00:00:00Z",
+    };
+  }
+
+  async function renderDashboard(): Promise<void> {
+    render(
+      <MemoryRouter>
+        <AppShell>
+          <DashboardPage />
+        </AppShell>
+      </MemoryRouter>,
+    );
+    await screen.findByText("Pool capacity");
+    await waitFor(() => {
+      expect(mockGet.mock.calls.some((call) => call[0] === "/backup/destinations")).toBe(true);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  it("names a stale backup destination in the dashboard's attention row and links to backup settings", async () => {
+    mockDashboardBackup({
+      data: { destinations: [backupDestinationRow("Boot device", false), backupDestinationRow("Offsite copy", true)] },
+      response: { ok: true },
+    });
+
+    await renderDashboard();
+
+    expect(
+      await screen.findByText("A backup destination has gone without a successful backup: Offsite copy"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open backup settings" })).toHaveAttribute("href", "/settings/backup");
+  });
+
+  it("lists every stale backup destination in one banner", async () => {
+    mockDashboardBackup({
+      data: { destinations: [backupDestinationRow("Boot device", true), backupDestinationRow("Offsite copy", true)] },
+      response: { ok: true },
+    });
+
+    await renderDashboard();
+
+    expect(
+      await screen.findByText("2 backup destinations have gone without a successful backup: Boot device and Offsite copy"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no backup row on the dashboard when no destination is stale", async () => {
+    mockDashboardBackup({
+      data: { destinations: [backupDestinationRow("Boot device", false)] },
+      response: { ok: true },
+    });
+
+    await renderDashboard();
+
+    expect(screen.queryByText(/without a successful backup/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Could not check the backup destinations")).not.toBeInTheDocument();
+    expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
+  });
+
+  it("shows no backup row on the dashboard when the daemon has no backup service", async () => {
+    mockDashboardBackup({
+      error: { code: "not_configured", message: "backups are not configured" },
+      response: { ok: false },
+    });
+
+    await renderDashboard();
+
+    expect(screen.queryByText("Could not check the backup destinations")).not.toBeInTheDocument();
+    expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
+  });
+
+  it("says the backup destinations could not be checked instead of hiding a failed request", async () => {
+    mockDashboardBackup({
+      error: { code: "internal", message: "backup service unavailable" },
+      response: { ok: false },
+    });
+
+    await renderDashboard();
+
+    expect(await screen.findByText("Could not check the backup destinations")).toBeInTheDocument();
+    expect(screen.getByText("backup service unavailable")).toBeInTheDocument();
+  });
+
   it("does not invent green freshness when parity status is missing after a successful diff", async () => {
     mockGet.mockImplementation((path: string) => {
       if (path === "/status") {

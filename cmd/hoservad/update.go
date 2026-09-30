@@ -11,13 +11,16 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	cfggen "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
+	"github.com/mdg-labs/hoserva/internal/store"
 	"github.com/mdg-labs/hoserva/internal/update"
 )
 
@@ -53,9 +56,15 @@ func newBackupService(ctx context.Context, cfg config, db *sql.DB, machineKey *a
 	if configRoot == "" {
 		configRoot = "/etc"
 	}
+	paths := backup.DefaultPaths(cfg.stateDir, filepath.Join(configRoot, "hoserva"))
+	// The path hoservad loaded the key from, which --machine-key-path can
+	// move anywhere, not the packaged one DefaultPaths guesses.
+	if cfg.machineKeyPath != "" {
+		paths.MachineKeyPath = cfg.machineKeyPath
+	}
 	svc := &backup.Service{
 		DB:                db,
-		Paths:             backup.DefaultPaths(cfg.stateDir, filepath.Join(configRoot, "hoserva")),
+		Paths:             paths,
 		Store:             destinations,
 		Secrets:           &backup.ServiceSecretSource{BackupPassphraseFn: settings.BackupPassphrase},
 		Cipher:            machineKey,
@@ -98,7 +107,11 @@ func wireBackup(handler *api.Handler, backupService *backup.Service) {
 // UPS settings. Both are attempted and both failures reported. Kept as its
 // own function, following wireBackup's pattern, so a test can call exactly
 // what main.go calls. handler.UPS is read when the hook runs.
-func wireConfigImport(handler *api.Handler, topologyChanged func(ctx context.Context) error) {
+//
+// regenerateArray is the bare-metal restore's hook (doc 10 §1), which runs
+// before RegenerateConfig: see regenerateArrayFiles.
+func wireConfigImport(handler *api.Handler, topologyChanged func(ctx context.Context) error, regenerateArray func(ctx context.Context) error) {
+	handler.RegenerateArray = regenerateArray
 	handler.RegenerateConfig = func(ctx context.Context) error {
 		var errs []error
 		if err := topologyChanged(ctx); err != nil {
@@ -110,6 +123,21 @@ func wireConfigImport(handler *api.Handler, topologyChanged func(ctx context.Con
 			errs = append(errs, err)
 		}
 		return errors.Join(errs...)
+	}
+}
+
+// regenerateArrayFiles writes every disk mount unit, snapraid.conf and the
+// pool mount units from the array the database now describes, and mounts
+// nothing (job.RegenerateArrayMountsFromStore): a bare-metal restore brings
+// an array this installation never had, whose files no in-place import
+// needs. A restored database with no array has nothing to write.
+func regenerateArrayFiles(arrays *store.ArrayStore, shares *store.ShareStore, g *cfggen.Generator) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		err := job.RegenerateArrayMountsFromStore(ctx, arrays, shares, g, time.Now())
+		if errors.Is(err, store.ErrNoArray) {
+			return nil
+		}
+		return err
 	}
 }
 

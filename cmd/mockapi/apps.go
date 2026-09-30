@@ -361,13 +361,15 @@ func (h *handler) GetAppLogs(ctx context.Context, params apiv1.GetAppLogsParams)
 	return apiv1.GetAppLogsOK{Data: pr}, nil
 }
 
-// flushAppLogs flushes a container's log response after every write, so a
-// followed log shows each heartbeat as it is written instead of when the
-// response buffer fills — the production daemon does the same
+// flushAppLogs flushes a container's or a job's log response after every
+// write, so a followed log shows each heartbeat as it is written instead of
+// when the response buffer fills — the production daemon does the same
 // (internal/api.FlushLogStream).
 func flushAppLogs(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if f, ok := w.(http.Flusher); ok && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/apps/") && strings.HasSuffix(r.URL.Path, "/logs") {
+		isAppLogs := strings.HasPrefix(r.URL.Path, "/api/v1/apps/") && strings.HasSuffix(r.URL.Path, "/logs")
+		isJobLog := strings.HasPrefix(r.URL.Path, "/api/v1/jobs/") && strings.HasSuffix(r.URL.Path, "/log")
+		if f, ok := w.(http.Flusher); ok && r.Method == http.MethodGet && (isAppLogs || isJobLog) {
 			w = &flushingWriter{ResponseWriter: w, flusher: f}
 		}
 		next.ServeHTTP(w, r)

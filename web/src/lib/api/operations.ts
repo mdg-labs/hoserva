@@ -1,4 +1,9 @@
 import { hoservaClient, type components } from "@/lib/api/client";
+import type { ClientResult } from "@/lib/api/request";
+
+type BackupDestination = components["schemas"]["BackupDestination"];
+type CreateBackupDestinationRequest = components["schemas"]["CreateBackupDestinationRequest"];
+type RestoreDrill = components["schemas"]["RestoreDrill"];
 
 type ArrayDiskFilesystem = components["schemas"]["ArrayDiskFilesystem"];
 type CreateArrayRequest = components["schemas"]["CreateArrayRequest"];
@@ -514,4 +519,158 @@ export function putUPSSettings(body: UpdateUPSSettingsRequest) {
 
 export function postDoctorHostConfig(body: ApplyHostConfigRequest) {
   return hoservaClient.POST("/doctor/host-config", { body });
+}
+
+// Backup and restore settings.
+
+// A daemon without a backup service answers 501 `not_configured`; that is
+// a state the backup UI names, not a load failure, so it resolves to
+// `{ available: false }` and every other failure stays an error.
+export type Availability<T> = { available: true; value: T } | { available: false };
+
+const NOT_CONFIGURED_CODE = "not_configured";
+
+async function availableUnlessNotConfigured<T>(
+  call: Promise<ClientResult<T>>,
+): Promise<ClientResult<Availability<T>>> {
+  const result = await call;
+  if (result.error?.code === NOT_CONFIGURED_CODE) {
+    return { data: { available: false }, response: { ok: true } };
+  }
+  if (result.error !== undefined || result.response?.ok === false || result.data === undefined) {
+    return { error: result.error, response: { ok: false } };
+  }
+  return { data: { available: true, value: result.data }, response: { ok: true } };
+}
+
+export function getBackupDestinations(signal?: AbortSignal) {
+  return availableUnlessNotConfigured<{ destinations: BackupDestination[] }>(
+    hoservaClient.GET("/backup/destinations", { signal }),
+  );
+}
+
+export function postBackupDestination(body: CreateBackupDestinationRequest) {
+  return hoservaClient.POST("/backup/destinations", { body });
+}
+
+export function deleteBackupDestination(destinationId: string) {
+  return hoservaClient.DELETE("/backup/destinations/{destinationId}", {
+    params: { path: { destinationId } },
+  });
+}
+
+export function postBackupDestinationTest(destinationId: string) {
+  return hoservaClient.POST("/backup/destinations/{destinationId}/test", {
+    params: { path: { destinationId } },
+  });
+}
+
+export function getRestoreDrill(signal?: AbortSignal) {
+  return availableUnlessNotConfigured<RestoreDrill>(hoservaClient.GET("/backup/drill", { signal }));
+}
+
+export function postRestoreDrill() {
+  return hoservaClient.POST("/backup/drill");
+}
+
+export function postConfigExport() {
+  return hoservaClient.POST("/config/export", { parseAs: "blob" });
+}
+
+type AppdataBackupContainer = components["schemas"]["AppdataBackupContainer"];
+
+// `getAppdataBackup` answers 501 `not_configured` without a Docker Engine
+// client and 503 when the Engine is not reachable; both are states the
+// appdata section names, not load failures.
+export type AppdataBackupState =
+  | { state: "ready"; containers: AppdataBackupContainer[] }
+  | { state: "no_engine" }
+  | { state: "engine_unreachable"; message: string };
+
+const ENGINE_UNREACHABLE_STATUS = 503;
+
+export async function getAppdataBackup(signal?: AbortSignal): Promise<ClientResult<AppdataBackupState>> {
+  const result = await hoservaClient.GET("/appdata/backup", { signal });
+  if (result.error?.code === NOT_CONFIGURED_CODE) {
+    return { data: { state: "no_engine" }, response: { ok: true } };
+  }
+  if (result.response?.status === ENGINE_UNREACHABLE_STATUS) {
+    return {
+      data: { state: "engine_unreachable", message: result.error?.message ?? "" },
+      response: { ok: true },
+    };
+  }
+  if (result.error !== undefined || result.response?.ok === false || result.data === undefined) {
+    return { error: result.error, response: { ok: false } };
+  }
+  return { data: { state: "ready", containers: result.data.containers }, response: { ok: true } };
+}
+
+export function putAppdataBackupContainer(name: string, body: { stop: boolean; included: boolean }) {
+  return hoservaClient.PUT("/appdata/backup/containers/{name}", { params: { path: { name } }, body });
+}
+
+export function postAppdataBackup(containers?: string[]) {
+  return hoservaClient.POST("/appdata/backup", {
+    body: containers === undefined ? {} : { containers },
+  });
+}
+
+export function getAppdataArchives(signal?: AbortSignal) {
+  return availableUnlessNotConfigured(hoservaClient.GET("/appdata/backup/archives", { signal }));
+}
+
+export function postAppdataRestorePreview(body: { container: string; archive: string; destinationId: string }) {
+  return hoservaClient.POST("/appdata/backup/restore/preview", { body });
+}
+
+export function getAppdataRestorePreview(jobId: string, signal?: AbortSignal) {
+  return hoservaClient.GET("/appdata/backup/restore/preview/{jobId}", {
+    params: { path: { jobId } },
+    signal,
+  });
+}
+
+export function postAppdataRestore(body: { container: string; archive: string; destinationId: string }) {
+  return hoservaClient.POST("/appdata/backup/restore", { body: { ...body, confirm: true } });
+}
+
+// The generated body type calls the binary `archive` part a string; the
+// request itself is the FormData built here, which the client passes
+// through untouched.
+function configImportForm(archive: File, fields: Record<string, string>): FormData {
+  const form = new FormData();
+  form.append("archive", archive);
+  for (const [name, value] of Object.entries(fields)) {
+    form.append(name, value);
+  }
+  return form;
+}
+
+export function postConfigImportPreview(archive: File, passphrase: string, signal?: AbortSignal) {
+  const form = configImportForm(archive, passphrase === "" ? {} : { passphrase });
+  return hoservaClient.POST("/config/import/preview", {
+    body: { archive: archive.name },
+    bodySerializer: () => form,
+    signal,
+  });
+}
+
+export function postConfigImport(args: {
+  archive: File;
+  passphrase: string;
+  diskMapping: components["schemas"]["ConfigImportDiskMapping"] | null;
+}) {
+  const fields: Record<string, string> = { confirm: "true" };
+  if (args.passphrase !== "") {
+    fields.passphrase = args.passphrase;
+  }
+  if (args.diskMapping !== null) {
+    fields.diskMapping = JSON.stringify(args.diskMapping);
+  }
+  const form = configImportForm(args.archive, fields);
+  return hoservaClient.POST("/config/import", {
+    body: { archive: args.archive.name, confirm: true },
+    bodySerializer: () => form,
+  });
 }
