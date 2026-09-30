@@ -793,6 +793,17 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 	existing.ErrorCode = ""
 	existing.ErrorMessage = ""
 
+	// An interrupted job is terminal, so getJobLog does not follow it; once
+	// the job is queued or running it does. A run that never closed its log
+	// (the daemon stopped mid-job) is repaired here, before that, because
+	// the repair swaps the file a follower would already have open. This
+	// is the only path from interrupted back to queued or running.
+	if s.logs != nil {
+		if err := s.logs.Seal(id); err != nil {
+			log.Printf("job: repairing the log of job %s before it resumes: %v", id, err)
+		}
+	}
+
 	if err := s.store.UpdateStatus(ctx, id, existing.Status, existing.Progress, "", "", existing.StartedAt, existing.FinishedAt); err != nil {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("job: resuming job %s: %w", id, err)

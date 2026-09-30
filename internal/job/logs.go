@@ -1,6 +1,7 @@
 package job
 
 import (
+	"compress/flate"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -51,21 +52,125 @@ func (l *LogStore) path(id string) string {
 	return filepath.Join(l.Dir, id+".log.gz")
 }
 
-// Create opens id's log file for writing, gzip-compressed. Every Write is
-// flushed to the file, so Open on a still-running job's log decodes all
+// Create opens id's log file for appending, gzip-compressed, as a new gzip
+// member: a resumed job's log keeps the output of its earlier runs, and a
+// file of concatenated members is still one valid gzip stream. Every Write
+// is flushed to the file, so Open on a still-running job's log decodes all
 // output written so far (a reader sees io.ErrUnexpectedEOF at the end, as
 // the gzip trailer is absent). The returned WriteCloser's Close writes the
 // trailer and closes the underlying file — a caller that forgets to Close
 // leaves a gzip member without its trailer.
+//
+// Create never repairs an existing log: a member a previous run never closed
+// has no trailer, and a member appended after it would be read as more
+// deflate data. Seal repairs such a log, and must run before the job can be
+// seen as queued or running — Scheduler.Resume does — because Create runs
+// when the job starts, by which time a follower may already hold the file.
 func (l *LogStore) Create(id string) (io.WriteCloser, error) {
 	if err := os.MkdirAll(l.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("job log store: creating %s: %w", l.Dir, err)
 	}
-	f, err := os.Create(l.path(id))
+	f, err := os.OpenFile(l.path(id), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		return nil, fmt.Errorf("job log store: creating log for job %s: %w", id, err)
 	}
 	return &gzipWriteCloser{gz: gzip.NewWriter(f), f: f}, nil
+}
+
+// Seal makes id's log safe to append a gzip member to. A missing or empty
+// file, or one that decodes to a clean end, is left alone. Anything else is
+// rewritten, through a temporary file and a rename, to the output that
+// decodes before the damage. The rename replaces the file a follower may
+// already have open, so the caller must only Seal a log no job is running
+// or queued for.
+func (l *LogStore) Seal(id string) error {
+	path := l.path(id)
+	complete, err := logDecodesCleanly(path)
+	if err != nil {
+		return err
+	}
+	if complete {
+		return nil
+	}
+	return rewriteLog(path)
+}
+
+func isCorruptGzip(err error) bool {
+	var corrupt flate.CorruptInputError
+	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, gzip.ErrChecksum) ||
+		errors.Is(err, gzip.ErrHeader) || errors.As(err, &corrupt)
+}
+
+func logDecodesCleanly(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return true, nil
+		}
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return true, nil
+		}
+		if isCorruptGzip(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if _, err := io.Copy(io.Discard, gz); err != nil {
+		if isCorruptGzip(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func rewriteLog(path string) (err error) {
+	src, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = src.Close() }()
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+	out := gzip.NewWriter(tmp)
+	if gz, gerr := gzip.NewReader(src); gerr == nil {
+		if _, cerr := io.Copy(out, gz); cerr != nil && !isCorruptGzip(cerr) {
+			return cerr
+		}
+	} else if !isCorruptGzip(gerr) {
+		return gerr
+	}
+	if err = out.Close(); err != nil {
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.Sync()
 }
 
 type gzipWriteCloser struct {
