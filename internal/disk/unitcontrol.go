@@ -141,11 +141,11 @@ func (c ServiceUnitController) Start(ctx context.Context) error {
 
 // DirectMountController adapts Unit to internal/job.ArrayMount's shape
 // through DirectMounter rather than MountUnitController's systemctl calls
-// (#289): the loop-device lab has no init system (doc 06 §3), so a lab
-// test proving ArraySequence.Stop/Start against a disk-upgrade job's own
-// dependency on a real array stop needs this instead of
-// MountUnitController, the same way every other lab test already uses
-// DirectMounter in place of SystemdMounter.
+// (#289). It is the lab's stand-in for MountUnitController: the loop-device
+// lab has no init system (doc 06 §3), so a lab test proving
+// ArraySequence.Stop/Start against a disk-upgrade job's own dependency on a
+// real array stop uses this instead. hoservad does not construct it; array
+// slots use MountUnitController.
 type DirectMountController struct {
 	Unit   MountUnit
 	Runner Runner

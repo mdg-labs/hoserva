@@ -64,7 +64,8 @@ func (k KernelMounts) UnmountOnce(ctx context.Context, path string) error {
 }
 
 // Mount mounts unit.UUID at unit.Where by filesystem UUID, creating the
-// mountpoint if needed (DirectMounter.Mount).
+// mountpoint if needed (DirectMounter.Mount, which also confirms the UUID
+// is mounted there). The data-disk upgrade job mounts through it.
 func (k KernelMounts) Mount(ctx context.Context, unit MountUnit) error {
 	return DirectMounter{Runner: k.Runner}.Mount(ctx, unit)
 }
