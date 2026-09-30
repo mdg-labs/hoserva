@@ -113,6 +113,7 @@ func (g storageTargetTestGate) Ready() bool { return g.ready }
 func newTestStorageTargetSync(t *testing.T) *storageTargetSync {
 	t.Helper()
 	return &storageTargetSync{
+		MountpointGuard: noMountpointGuard,
 		Generator:       cfggen.NewGenerator(t.TempDir()),
 		Runner:          disk.NewFakeRunner(),
 		FlagPath:        filepath.Join(t.TempDir(), "storage-ready"),
@@ -306,6 +307,7 @@ func TestStorageTargetSync_Startup_RegeneratesArrayMountsFromStore(t *testing.T)
 	}
 
 	s := &storageTargetSync{
+		MountpointGuard: noMountpointGuard,
 		Generator:       generator,
 		Runner:          disk.NewFakeRunner(),
 		FlagPath:        filepath.Join(t.TempDir(), "storage-ready"),
@@ -407,6 +409,7 @@ func TestStorageTargetSync_Startup_ClearsAStaleFlagFirst(t *testing.T) {
 	}
 
 	s := &storageTargetSync{
+		MountpointGuard: noMountpointGuard,
 		Generator:       generator,
 		Runner:          disk.NewFakeRunner(),
 		FlagPath:        filepath.Join(t.TempDir(), "storage-ready"),
@@ -442,6 +445,7 @@ func TestStorageTargetSync_Startup_FailedWriteLeavesGateClosed(t *testing.T) {
 	}
 
 	s := &storageTargetSync{
+		MountpointGuard: noMountpointGuard,
 		Generator:       generator,
 		Runner:          disk.NewFakeRunner(),
 		FlagPath:        filepath.Join(t.TempDir(), "storage-ready"),
@@ -827,6 +831,7 @@ func TestStorageTargetSync_UpdateOrError_FailedWriteIsReported(t *testing.T) {
 	}
 
 	s := &storageTargetSync{
+		MountpointGuard: noMountpointGuard,
 		Generator:       generator,
 		Runner:          disk.NewFakeRunner(),
 		FlagPath:        filepath.Join(t.TempDir(), "storage-ready"),

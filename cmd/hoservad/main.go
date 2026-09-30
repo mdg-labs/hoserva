@@ -566,7 +566,7 @@ func run(cfg config) error {
 		Runner:     linuxDisks.Exec,
 		Store:      arrayStore,
 		Generator:  generator,
-		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		Mounter:    newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}),
 		ArrayReady: topologyChanged,
 	}))
 	registry.Register(job.TypeDiskAdd, false, job.RunDiskAdd(job.DiskAddDeps{
@@ -574,7 +574,7 @@ func run(cfg config) error {
 		Runner:     linuxDisks.Exec,
 		Store:      arrayStore,
 		Generator:  generator,
-		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		Mounter:    newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}),
 		ArrayReady: topologyChanged,
 	}))
 	// The replace and upgrade jobs resolve the parity engine per call: a
@@ -593,7 +593,7 @@ func run(cfg config) error {
 		Probe:      handler.BlankProbe,
 		Store:      arrayStore,
 		Generator:  generator,
-		Mounter:    disk.SystemdMounter{Runner: linuxDisks.Exec},
+		Mounter:    newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}),
 		Parity:     replaceParityEngine,
 		ArrayReady: topologyChanged,
 	}))
@@ -619,8 +619,8 @@ func run(cfg config) error {
 		Runner:         linuxDisks.Exec,
 		Store:          arrayStore,
 		Generator:      generator,
-		Mounter:        disk.SystemdMounter{Runner: linuxDisks.Exec},
-		UpgradeMounter: disk.DirectMounter{Runner: linuxDisks.Exec},
+		Mounter:        newArrayDiskMounter(linuxDisks.Exec, disk.SystemdMounter{Runner: linuxDisks.Exec}),
+		UpgradeMounter: newArrayDiskMounter(linuxDisks.Exec, disk.DirectMounter{Runner: linuxDisks.Exec}),
 		Parity:         replaceParityEngine,
 		ArrayReady:     topologyChanged,
 	}))

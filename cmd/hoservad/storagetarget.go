@@ -69,6 +69,10 @@ type storageTargetSync struct {
 	// StartupMountTimeout overrides startupMountTimeout — set only by
 	// this package's own tests, never in production.
 	StartupMountTimeout time.Duration
+	// MountpointGuard overrides disk.GuardMountpoint over Runner — set only
+	// by this package's own tests that name a production /mnt path, never
+	// in production.
+	MountpointGuard func(ctx context.Context, path string) error
 
 	mu      sync.Mutex
 	applied bool // false until Startup or Update has completed at least once
@@ -571,6 +575,7 @@ func (s *storageTargetSync) Startup(ctx context.Context, seq *job.ArraySequence)
 	defer s.mu.Unlock()
 
 	s.reconcileMountFailures(ctx, seq)
+	s.guardMountpoints(ctx, seq)
 	if err := s.clearFlag(); err != nil {
 		return err
 	}
@@ -720,6 +725,7 @@ func (s *storageTargetSync) updateTransition(ctx context.Context, seq *job.Array
 	defer s.mu.Unlock()
 
 	s.reconcileMountFailures(ctx, seq)
+	s.guardMountpoints(ctx, seq)
 
 	units := diskMountUnitNames(seq)
 	ready := gateReady(seq)
