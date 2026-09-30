@@ -193,7 +193,7 @@ func (h *handler) mockDestinationRefusal(dest backup.Destination) string {
 	}
 	if underPath(path, pool.CatchAllPath) {
 		h.mu.Lock()
-		mounted := mockPoolStatus(h.scenario).Mounted && !h.maintenance
+		mounted := h.poolMountedLocked()
 		h.mu.Unlock()
 		if !mounted {
 			return fmt.Sprintf("the pool is not mounted at %q", pool.CatchAllPath)

@@ -399,8 +399,20 @@ func (h *handler) AcknowledgeDegradedArray(ctx context.Context) (*apiv1.SystemSt
 	return mockSystemStatus(h.scenario, h.countActiveJobs(), h.maintenance, h.degradedAcknowledged), nil
 }
 
+// poolMountedLocked is this mock's stand-in for production's live mount
+// check of the pool root: the scenario has a pool at all and the array is
+// not stopped. GetPool and the backup destination test both read it, so the
+// two endpoints cannot disagree. Callers hold h.mu.
+func (h *handler) poolMountedLocked() bool {
+	return mockPoolStatus(h.scenario).Mounted && !h.maintenance
+}
+
 func (h *handler) GetPool(ctx context.Context) (*apiv1.PoolStatus, error) {
-	return mockPoolStatus(h.scenario), nil
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	status := mockPoolStatus(h.scenario)
+	status.Mounted = h.poolMountedLocked()
+	return status, nil
 }
 
 func (h *handler) ListDisks(ctx context.Context) (*apiv1.ListDisksOK, error) {
