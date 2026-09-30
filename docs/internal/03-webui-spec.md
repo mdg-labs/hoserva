@@ -391,7 +391,7 @@ Filters: category, maintainer, installed / not installed, verified / community.
 
 ### 5.3 `/apps/catalog/[id]` — Catalog app detail
 
-Full description, screenshots, icon, maintainer, project and support links, the raw template, and a **privilege summary** computed from the template: does it request privileged mode, host networking, the Docker socket, or host path mounts outside the pool. Each flagged in plain language with an explanation of the risk.
+Full description, screenshots, icon, maintainer, project and support links, the raw template, and a **privilege summary** computed from the template: does it request privileged mode, host networking, the host PID namespace, the host cgroup namespace, device cgroup rules, the Docker socket, or host path mounts outside the pool. Each flagged in plain language with an explanation of the risk.
 
 **Components:** header Card with Avatar and source `status-badge`; screenshots in a horizontal ScrollArea (`p-scroll-area-2`); project, support and donate links as link Buttons (`p-button-17`); raw template as `code-view`; privilege summary as `stacked-checks`, each flag a warning Alert (`p-alert-6`); primary *Install* Button.
 

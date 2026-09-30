@@ -133,8 +133,11 @@ Unraid templates conventionally pass `PUID=99` / `PGID=100` (`nobody:users` on U
 
 Arbitrary `docker run` flags as a raw string. Approach:
 
-1. **Parse** with a `docker run` flag parser, not a regex
-2. **Translate known flags** to Compose equivalents: `--restart`, `--memory`, `--cpus`, `--device`, `--cap-add`, `--cap-drop`, `--security-opt`, `--sysctl`, `--ulimit`, `--dns`, `--hostname`, `--tmpfs`, `--shm-size`, `--runtime`, `--gpus`, `--log-opt`
+1. **Parse** with a `docker run` flag parser, not a regex, then **resolve every flag to its long form** before anything is translated:
+   - A short flag becomes its `docker run` long form: `-v`→`--volume`, `-p`→`--publish`, `-e`→`--env`, `-u`→`--user`, `-h`→`--hostname`, `-m`→`--memory`, `-w`→`--workdir`, `-i`→`--interactive`, `-t`→`--tty`. A combined `-it` or `-ti` splits into `--interactive` and `--tty`.
+   - `--flag=value` and `--flag value` are the same flag with the same value, and so are `-m=512m`, `-m 512m` and `-m512m`.
+   - Any other short flag is unknown and handled by step 3.
+2. **Translate known flags** to Compose equivalents with the table below, which is keyed by long form only.
 3. **Never silently drop.** Unknown flags are emitted as a comment in the generated Compose file *and* surfaced as a warning in the install preview:
    ```yaml
    # Hoserva: could not translate the following Unraid ExtraParams:
@@ -142,6 +145,59 @@ Arbitrary `docker run` flags as a raw string. Approach:
    # Review and add the Compose equivalent manually if required.
    ```
 4. **Never interpolate into a shell.** These strings come from third parties; they are parsed into structured Compose fields, never concatenated into a command line.
+
+**Translate table** — every flag below counts as translated for the clean-conversion metric (Q36); a flag whose value cannot be expressed in its Compose field is untranslated and goes through step 3 like an unknown flag.
+
+| `docker run` flag | Compose field | Note |
+|---|---|---|
+| `--restart` | `restart` | |
+| `--memory` | `mem_limit` | |
+| `--memory-swap` | `memswap_limit` | |
+| `--cpus` | `cpus` | |
+| `--pids-limit` | `pids_limit` | |
+| `--user` | `user` | |
+| `--workdir` | `working_dir` | |
+| `--hostname` | `hostname` | |
+| `--group-add` | `group_add` | |
+| `--entrypoint` | `entrypoint` | A static override, split into a list of arguments and shown in the side-by-side review like any other field |
+| `--interactive` | `stdin_open` | |
+| `--tty` | `tty` | |
+| `--init` | `init` | |
+| `--read-only` | `read_only` | |
+| `--device` | `devices` | |
+| `--cap-add` | `cap_add` | |
+| `--cap-drop` | `cap_drop` | |
+| `--security-opt` | `security_opt` | |
+| `--sysctl` | `sysctls` | |
+| `--ulimit` | `ulimits` | |
+| `--dns` | `dns` | |
+| `--add-host` | `extra_hosts` | |
+| `--tmpfs` | `tmpfs` | |
+| `--shm-size` | `shm_size` | |
+| `--runtime` | `runtime` | |
+| `--gpus` | `deploy.resources.reservations.devices` | |
+| `--log-opt` | `logging.options` | |
+| `--stop-timeout` | `stop_grace_period` | Seconds converted to a duration |
+| `--health-cmd` | `healthcheck.test` | `["CMD-SHELL", <string>]` — see below |
+| `--health-interval`, `--health-timeout`, `--health-retries`, `--health-start-period` | `healthcheck.interval`, `.timeout`, `.retries`, `.start_period` | |
+| `--no-healthcheck` | `healthcheck.disable: true` | |
+| `--volume`, `--mount` | `volumes` | `--mount` becomes Compose long syntax; merged as below |
+| `--publish` | `ports` | Merged as below |
+| `--env` | `environment` | Merged as below; `--env KEY` with no value inherits from the host environment, which a Compose file cannot express, so it is untranslated |
+| `--pid` | `pid` | `host` and `container:<name>` are privilege-summary items |
+| `--cgroupns` | `cgroup` | `host` is a privilege-summary item |
+| `--device-cgroup-rule` | `device_cgroup_rules` | Always a privilege-summary item |
+
+**`--health-cmd` is data.** The string is carried into `healthcheck.test` as written. It is a command for the container's own engine to run inside the container; Hoserva never runs it on the host.
+
+**Merging with `<Config>` entries.** `--volume`, `--mount`, `--publish` and `--env` from `ExtraParams` add to the same `volumes`, `ports` and `environment` the `<Config>` entries produce. Their volume sources go through the same Path handling flags as a `<Config Type="Path">`: a source outside the pool and cache is flagged for manual review, not silently translated. Two entries with the same target are handled one way, whichever source they came from:
+
+- **Exact duplicate** (same container path and host path for a volume, same container port and protocol and host port for a port, same name and value for a variable): the `ExtraParams` copy is dropped and an informational note is shown.
+- **Same target, different value** (a volume from a different host path, a port from a different host port, a variable with a different value): the `<Config>` entry is kept, the `ExtraParams` one is left out of the generated file, and the conflict is a review warning listing both. Conflicting values are never silently resolved, and the warning means the conversion is not clean.
+
+**Privilege-widening flags.** `--pid=host`, `--pid=container:…`, `--cgroupns=host` and every `--device-cgroup-rule` translate, and each is a privilege-summary item in the same way as `<Privileged>`: the summary is computed from the generated Compose content (Q64), so `pid`, `cgroup` and `device_cgroup_rules` are named in it beside privileged mode, host networking and the Docker socket (§7, doc 03 §5.3, doc 01 §7).
+
+Flags outside the table — `--label`, `--env-file`, `--privileged`, `--cpu-shares`, `--stop-signal` and the rest — are unknown flags under step 3 until a later change to this table adds them.
 
 ### Other known-hard cases
 
@@ -223,7 +279,7 @@ x-hoserva:
 - **Inputs** are the only values the install form asks for. Each has a kind — `path`, `port`, `string`, `secret`, `timezone`, `device` — and a path also has a role (`appdata`, `share`, `media`, `downloads`) that drives share-aware path picking (doc 03 §5). A `device` input with role `gpu` offers the host's `/dev/dri` render devices; NVIDIA GPUs need the host driver and container toolkit as a prerequisite checked by `hoserva doctor`, and a GPU bound to a VM is never offered (Q82).
 - **Secrets** (`kind: secret`) are generated at install time and written only to the stack's `.env`.
 - **`revision`** increases with every change to a template. An installed stack records the source, id and revision it came from (§2), which is what "template update available" compares against.
-- **The privilege summary is computed from the Compose content** (doc 01 §7) — privileged mode, host networking, the Docker socket, paths outside the pool — never declared by the template, so a template cannot understate what it asks for.
+- **The privilege summary is computed from the Compose content** (doc 01 §7) — privileged mode, host networking, the host PID namespace, the host cgroup namespace, device cgroup rules, the Docker socket, paths outside the pool — never declared by the template, so a template cannot understate what it asks for.
 - **The schema is a versioned contract between two repositories.** The `x-hoserva` schema and its validator live in this repository (`internal/template/`), and Hoserva also publishes the schema as a versioned JSON Schema that third-party catalog authors can use too. The `schema:` number is the compatibility boundary, and a newer Hoserva keeps reading older schema versions.
 - **CI on every change to the catalog repository** runs Hoserva's own checker from a pinned Hoserva version — for example `hoserva template lint`, run through `go run …/cmd/hoserva@<pinned>` — and does not copy the rules. The checker covers the `x-hoserva` schema, path conventions and the privilege audit; the catalog CI adds `docker compose config` and image and tag existence, which need outside services and are the reason this CI does not gate a Hoserva release (doc 12 §7).
 
