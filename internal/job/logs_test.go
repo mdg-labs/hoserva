@@ -3,9 +3,12 @@ package job
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -229,5 +232,154 @@ func TestLogStore_CloseAfterFlushedWritesLeavesCompleteGzip(t *testing.T) {
 	}
 	if string(got) != "a\nb\n" {
 		t.Fatalf("log content = %q, want %q", got, "a\nb\n")
+	}
+}
+
+type followFlag struct{ done atomic.Bool }
+
+func (f *followFlag) finished(context.Context) (bool, error) { return f.done.Load(), nil }
+
+func readWithin(t *testing.T, r io.Reader, n int) string {
+	t.Helper()
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, n)
+		_, _ = io.ReadFull(r, buf)
+		got <- string(buf)
+	}()
+	select {
+	case s := <-got:
+		return s
+	case <-time.After(10 * time.Second):
+		t.Fatal("no output arrived while the job was still running")
+		return ""
+	}
+}
+
+func TestLogStore_FollowDeliversOutputWhileTheJobRunsAndEndsWithTheTrailer(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	w, err := l.Create("j")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	var flag followFlag
+	f := l.Follow(context.Background(), "j", flag.finished, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+	if _, err := io.WriteString(w, "one\n"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("gzip.NewReader on a running job's log: %v", err)
+	}
+	if got := readWithin(t, gz, 4); got != "one\n" {
+		t.Fatalf("first chunk = %q, want %q", got, "one\n")
+	}
+	if _, err := io.WriteString(w, "two\n"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := readWithin(t, gz, 4); got != "two\n" {
+		t.Fatalf("second chunk = %q, want %q", got, "two\n")
+	}
+	if _, err := io.WriteString(w, "three\n"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	flag.done.Store(true)
+	rest, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("a finished job's followed log must end with a clean gzip trailer: %v", err)
+	}
+	if string(rest) != "three\n" {
+		t.Fatalf("rest = %q, want %q", rest, "three\n")
+	}
+}
+
+func TestLogStore_FollowWaitsForALogThatDoesNotExistYet(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	var flag followFlag
+	f := l.Follow(context.Background(), "queued", flag.finished, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+
+	got := make(chan []byte, 1)
+	go func() {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			got <- nil
+			return
+		}
+		b, _ := io.ReadAll(gz)
+		got <- b
+	}()
+	time.Sleep(50 * time.Millisecond)
+	w, err := l.Create("queued")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := io.WriteString(w, "late\n"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	flag.done.Store(true)
+	select {
+	case b := <-got:
+		if string(b) != "late\n" {
+			t.Fatalf("output = %q, want %q", b, "late\n")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the follower never ended")
+	}
+}
+
+func TestLogStore_FollowOfAFinishedJobWithNoLogIsEmpty(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	var flag followFlag
+	flag.done.Store(true)
+	f := l.Follow(context.Background(), "gone", flag.finished, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+	if b, err := io.ReadAll(f); err != nil || len(b) != 0 {
+		t.Fatalf("ReadAll = %q, %v; want empty and nil", b, err)
+	}
+}
+
+func TestLogStore_FollowEndsWhenTheContextEnds(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	w, err := l.Create("j")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+	var flag followFlag
+	ctx, cancel := context.WithCancel(context.Background())
+	f := l.Follow(ctx, "j", flag.finished, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+
+	errc := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(f)
+		errc <- err
+	}()
+	cancel()
+	select {
+	case err := <-errc:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Read after cancel = %v, want context.Canceled", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a cancelled follower kept waiting")
+	}
+}
+
+func TestLogStore_FollowSurfacesAFinishedCheckError(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	boom := errors.New("store unavailable")
+	f := l.Follow(context.Background(), "j", func(context.Context) (bool, error) { return false, boom }, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+	if _, err := io.ReadAll(f); !errors.Is(err, boom) {
+		t.Fatalf("Read = %v, want the finished-check error", err)
 	}
 }

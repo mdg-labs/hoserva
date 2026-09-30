@@ -5,14 +5,15 @@ import (
 	"strings"
 )
 
-// FlushLogStream wraps next so a container's log response is flushed as
-// it is written. The generated server copies the log reader straight into
-// the response, which net/http buffers; without a flush after every write
-// a followed log would show nothing until the buffer filled or the
-// container exited. prefix is the API path prefix ("/api/v1").
+// FlushLogStream wraps next so a followed log response — a container's or
+// a job's — is flushed as it is written. The generated server copies the
+// log reader straight into the response, which net/http buffers; without a
+// flush after every write a followed log would show nothing until the
+// buffer filled or the container or job ended. prefix is the API path
+// prefix ("/api/v1").
 func FlushLogStream(prefix string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && isAppLogsPath(prefix, r.URL.Path) {
+		if r.Method == http.MethodGet && (isAppLogsPath(prefix, r.URL.Path) || isJobLogPath(prefix, r.URL.Path)) {
 			if f, ok := w.(http.Flusher); ok {
 				w = &flushingWriter{ResponseWriter: w, flusher: f}
 			}
@@ -29,6 +30,16 @@ func isAppLogsPath(prefix, path string) bool {
 		return false
 	}
 	id, ok := strings.CutSuffix(rest, "/logs")
+	return ok && id != "" && !strings.Contains(id, "/")
+}
+
+// isJobLogPath matches prefix + "/jobs/{jobId}/log".
+func isJobLogPath(prefix, path string) bool {
+	rest, ok := strings.CutPrefix(path, prefix+"/jobs/")
+	if !ok {
+		return false
+	}
+	id, ok := strings.CutSuffix(rest, "/log")
 	return ok && id != "" && !strings.Contains(id, "/")
 }
 

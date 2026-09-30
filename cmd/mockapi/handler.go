@@ -273,6 +273,9 @@ func (h *handler) ResumeJob(ctx context.Context, params apiv1.ResumeJobParams) (
 	return &job, nil
 }
 
+// GetJobLog serves the whole fixture log whether or not follow is set: every
+// mock job's log is already complete, which is what production serves for a
+// finished job.
 func (h *handler) GetJobLog(ctx context.Context, params apiv1.GetJobLogParams) (apiv1.GetJobLogOK, error) {
 	h.mu.Lock()
 	_, ok := h.jobs[params.JobId]

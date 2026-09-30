@@ -2,8 +2,11 @@ package job
 
 import (
 	"compress/gzip"
+	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -108,6 +111,78 @@ func (l *LogStore) Open(id string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("job log store: opening log for job %s: %w", id, err)
 	}
 	return f, nil
+}
+
+// Follow returns a reader over id's still-gzip-compressed log that keeps
+// yielding bytes as the job writes them, and ends with io.EOF once
+// finished reports true and the file has been read to its end. The job
+// closes its log (writing the gzip trailer) before its status turns
+// terminal, so reading to the end after a true finished carries the
+// trailer. A log that never appeared by then reads as empty. finished is
+// polled every poll while the reader is caught up with the file; ctx
+// ending or a finished error ends the read with that error. The log may
+// not exist yet (the job is still queued) — Follow waits for it.
+func (l *LogStore) Follow(ctx context.Context, id string, finished func(context.Context) (bool, error), poll time.Duration) io.ReadCloser {
+	return &logFollower{ctx: ctx, path: l.path(id), finished: finished, poll: poll}
+}
+
+type logFollower struct {
+	ctx      context.Context
+	path     string
+	f        *os.File
+	finished func(context.Context) (bool, error)
+	poll     time.Duration
+}
+
+func (r *logFollower) Read(p []byte) (int, error) {
+	for {
+		if err := r.ctx.Err(); err != nil {
+			return 0, err
+		}
+		done, err := r.finished(r.ctx)
+		if err != nil {
+			return 0, err
+		}
+		if r.f == nil {
+			f, err := os.Open(r.path)
+			switch {
+			case err == nil:
+				r.f = f
+			case errors.Is(err, fs.ErrNotExist):
+				if done {
+					return 0, io.EOF
+				}
+			default:
+				return 0, fmt.Errorf("job log store: opening %s: %w", r.path, err)
+			}
+		}
+		if r.f != nil {
+			n, err := r.f.Read(p)
+			if n > 0 {
+				return n, nil
+			}
+			if err != io.EOF {
+				return 0, fmt.Errorf("job log store: reading %s: %w", r.path, err)
+			}
+			if done {
+				return 0, io.EOF
+			}
+		}
+		t := time.NewTimer(r.poll)
+		select {
+		case <-r.ctx.Done():
+			t.Stop()
+			return 0, r.ctx.Err()
+		case <-t.C:
+		}
+	}
+}
+
+func (r *logFollower) Close() error {
+	if r.f == nil {
+		return nil
+	}
+	return r.f.Close()
 }
 
 // Prune enforces Q74's retention: files older than LogRetentionAge, then

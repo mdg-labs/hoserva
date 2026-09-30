@@ -1,7 +1,9 @@
 package main
 
 import (
+	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -831,7 +833,10 @@ func logsCmd() *cobra.Command {
 					return err
 				}
 				if follow {
-					return fmt.Errorf("--follow is not supported yet")
+					if jsonOutput {
+						return fmt.Errorf("--follow streams plain text and cannot be combined with --json")
+					}
+					return followJobLog(id)
 				}
 				log, err := c.GetJobLog(apiCtx(), apiv1.GetJobLogParams{JobId: id})
 				if err != nil {
@@ -864,6 +869,64 @@ func logsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&jobID, "job", "", "Job id")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Follow log output (requires --job)")
 	return cmd
+}
+
+// followJobLog prints a job's log as it grows. The server streams the log's
+// gzip file as the job writes it, so the body is decompressed on the fly
+// through a pipe. It returns nil when the server ends the stream (the job
+// finished) or the user interrupts, and an error when the transport breaks,
+// the server refuses, or the stream is not valid gzip. A stream the server
+// closed without the gzip trailer (a job whose log was never closed) ends
+// cleanly too: everything it carried was printed.
+func followJobLog(id uuid.UUID) error {
+	pr, pw := io.Pipe()
+	printed := make(chan error, 1)
+	go func() {
+		err := printGzip(pr, os.Stdout)
+		pr.CloseWithError(err)
+		printed <- err
+	}()
+
+	c, err := newStreamingAPIClient(pw)
+	if err != nil {
+		_ = pw.Close()
+		<-printed
+		return err
+	}
+	ctx, stop := signal.NotifyContext(apiCtx(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	_, callErr := c.GetJobLog(ctx, apiv1.GetJobLogParams{JobId: id, Follow: apiv1.NewOptBool(true)})
+	if callErr != nil {
+		pw.CloseWithError(callErr)
+	} else {
+		_ = pw.Close()
+	}
+	printErr := <-printed
+
+	if callErr != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return mapAPIErr(callErr)
+	}
+	if printErr != nil && !errors.Is(printErr, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("reading the job log: %w", printErr)
+	}
+	return nil
+}
+
+// printGzip decompresses src to dst as bytes arrive. A src that ends before
+// its first byte is an empty log, not an error.
+func printGzip(src io.Reader, dst io.Writer) error {
+	gz, err := gzip.NewReader(src)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	_, err = io.Copy(dst, gz)
+	return err
 }
 
 func configCmd() *cobra.Command {

@@ -266,9 +266,22 @@ paths:
     get:
       operationId: getJobLog
       summary: Download a job's captured stdout/stderr
-      description: Kept for 90 days (Q74).
+      description: >-
+        Kept for 90 days (Q74). With `follow` true on a job that has not
+        finished, the response stays open and carries the gzip stream of the
+        log as it grows (each write is flushed as it arrives, so a client
+        decompressing on the fly prints every line at once), and ends when
+        the job reaches a terminal state, when the client disconnects, or on
+        a read error; a clean end carries the gzip trailer. `follow` on a
+        finished job is the same as omitting it.
       tags: [jobs]
       x-hoserva-role: viewer
+      parameters:
+        - name: follow
+          in: query
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: The job's captured output, compressed.

@@ -9726,7 +9726,11 @@ func (s *Server) handleGetJobRequest(args [1]string, argsEscaped bool, w http.Re
 
 // handleGetJobLogRequest handles getJobLog operation.
 //
-// Kept for 90 days (Q74).
+// Kept for 90 days (Q74). With `follow` true on a job that has not finished, the response stays open
+// and carries the gzip stream of the log as it grows (each write is flushed as it arrives, so a client
+// decompressing on the fly prints every line at once), and ends when the job reaches a terminal state,
+// when the client disconnects, or on a read error; a clean end carries the gzip trailer. `follow` on a
+// finished job is the same as omitting it.
 //
 // GET /jobs/{jobId}/log
 func (s *Server) handleGetJobLogRequest(args [1]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
@@ -9888,6 +9892,10 @@ func (s *Server) handleGetJobLogRequest(args [1]string, argsEscaped bool, w http
 			Body:             nil,
 			RawBody:          rawBody,
 			Params: middleware.Parameters{
+				{
+					Name: "follow",
+					In:   "query",
+				}: params.Follow,
 				{
 					Name: "jobId",
 					In:   "path",

@@ -101,7 +101,7 @@ export interface paths {
         };
         /**
          * Download a job's captured stdout/stderr
-         * @description Kept for 90 days (Q74).
+         * @description Kept for 90 days (Q74). With `follow` true on a job that has not finished, the response stays open and carries the gzip stream of the log as it grows (each write is flushed as it arrives, so a client decompressing on the fly prints every line at once), and ends when the job reaches a terminal state, when the client disconnects, or on a read error; a clean end carries the gzip trailer. `follow` on a finished job is the same as omitting it.
          */
         get: operations["getJobLog"];
         put?: never;
@@ -4422,7 +4422,9 @@ export interface operations {
     };
     getJobLog: {
         parameters: {
-            query?: never;
+            query?: {
+                follow?: boolean;
+            };
             header?: never;
             path: {
                 jobId: components["parameters"]["JobId"];

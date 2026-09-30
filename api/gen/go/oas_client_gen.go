@@ -459,7 +459,11 @@ type Invoker interface {
 	GetJob(ctx context.Context, params GetJobParams) (*Job, error)
 	// GetJobLog invokes getJobLog operation.
 	//
-	// Kept for 90 days (Q74).
+	// Kept for 90 days (Q74). With `follow` true on a job that has not finished, the response stays open
+	// and carries the gzip stream of the log as it grows (each write is flushed as it arrives, so a client
+	// decompressing on the fly prints every line at once), and ends when the job reaches a terminal state,
+	// when the client disconnects, or on a read error; a clean end carries the gzip trailer. `follow` on a
+	// finished job is the same as omitting it.
 	//
 	// GET /jobs/{jobId}/log
 	GetJobLog(ctx context.Context, params GetJobLogParams) (GetJobLogOK, error)
@@ -7517,7 +7521,11 @@ func (c *Client) sendGetJob(ctx context.Context, params GetJobParams) (res *Job,
 
 // GetJobLog invokes getJobLog operation.
 //
-// Kept for 90 days (Q74).
+// Kept for 90 days (Q74). With `follow` true on a job that has not finished, the response stays open
+// and carries the gzip stream of the log as it grows (each write is flushed as it arrives, so a client
+// decompressing on the fly prints every line at once), and ends when the job reaches a terminal state,
+// when the client disconnects, or on a read error; a clean end carries the gzip trailer. `follow` on a
+// finished job is the same as omitting it.
 //
 // GET /jobs/{jobId}/log
 func (c *Client) GetJobLog(ctx context.Context, params GetJobLogParams) (GetJobLogOK, error) {
@@ -7584,6 +7592,27 @@ func (c *Client) sendGetJobLog(ctx context.Context, params GetJobLogParams) (res
 	}
 	pathParts[2] = "/log"
 	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeQueryParams"
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "follow" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "follow",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Follow.Get(); ok {
+				return e.EncodeValue(conv.BoolToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
 
 	stage = "EncodeRequest"
 	r, err := ht.NewRequest(ctx, "GET", u)

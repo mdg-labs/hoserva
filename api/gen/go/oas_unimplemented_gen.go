@@ -575,7 +575,11 @@ func (UnimplementedHandler) GetJob(ctx context.Context, params GetJobParams) (r 
 
 // GetJobLog implements getJobLog operation.
 //
-// Kept for 90 days (Q74).
+// Kept for 90 days (Q74). With `follow` true on a job that has not finished, the response stays open
+// and carries the gzip stream of the log as it grows (each write is flushed as it arrives, so a client
+// decompressing on the fly prints every line at once), and ends when the job reaches a terminal state,
+// when the client disconnects, or on a read error; a clean end carries the gzip trailer. `follow` on a
+// finished job is the same as omitting it.
 //
 // GET /jobs/{jobId}/log
 func (UnimplementedHandler) GetJobLog(ctx context.Context, params GetJobLogParams) (r GetJobLogOK, _ error) {

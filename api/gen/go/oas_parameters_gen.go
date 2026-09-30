@@ -1584,10 +1584,20 @@ func decodeGetJobParams(args [1]string, argsEscaped bool, r *http.Request) (para
 
 // GetJobLogParams is parameters of getJobLog operation.
 type GetJobLogParams struct {
-	JobId uuid.UUID
+	Follow OptBool `json:",omitempty,omitzero"`
+	JobId  uuid.UUID
 }
 
 func unpackGetJobLogParams(packed middleware.Parameters) (params GetJobLogParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "follow",
+			In:   "query",
+		}
+		if v, ok := packed[key]; ok {
+			params.Follow = v.(OptBool)
+		}
+	}
 	{
 		key := middleware.ParameterKey{
 			Name: "jobId",
@@ -1599,6 +1609,53 @@ func unpackGetJobLogParams(packed middleware.Parameters) (params GetJobLogParams
 }
 
 func decodeGetJobLogParams(args [1]string, argsEscaped bool, r *http.Request) (params GetJobLogParams, _ error) {
+	q := uri.NewQueryDecoder(r.URL.Query())
+	// Set default value for query: follow.
+	{
+		val := bool(false)
+		params.Follow.SetTo(val)
+	}
+	// Decode query: follow.
+	if err := func() error {
+		cfg := uri.QueryParameterDecodingConfig{
+			Name:    "follow",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.HasParam(cfg); err == nil {
+			if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+				var paramsDotFollowVal bool
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToBool(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotFollowVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.Follow.SetTo(paramsDotFollowVal)
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "follow",
+			In:   "query",
+			Err:  err,
+		}
+	}
 	// Decode path: jobId.
 	if err := func() error {
 		param := args[0]

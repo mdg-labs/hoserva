@@ -115,6 +115,16 @@ func TestScenariosServeEveryOperation(t *testing.T) {
 				} else if n == 0 {
 					t.Fatalf("GetJobLog(%s): empty body", job.ID)
 				}
+
+				followed, err := client.GetJobLog(ctx, apiv1.GetJobLogParams{JobId: job.ID, Follow: apiv1.NewOptBool(true)})
+				if err != nil {
+					t.Fatalf("GetJobLog(%s, follow): %v", job.ID, err)
+				}
+				if n, err := io.Copy(io.Discard, followed); err != nil {
+					t.Fatalf("GetJobLog(%s, follow): read: %v", job.ID, err)
+				} else if n == 0 {
+					t.Fatalf("GetJobLog(%s, follow): empty body", job.ID)
+				}
 			}
 
 			assertCancelAndResume(t, ctx, client, listed.Jobs)
