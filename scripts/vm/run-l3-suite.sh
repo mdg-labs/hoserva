@@ -1343,10 +1343,15 @@ config_backup_restore() {
 # no admin, and the socket alone serves the import before one exists — with
 # the disk mapping the preview gives. It then asserts the restored system
 # equals the recorded one (baremetal-state.py state) and that every file's
-# SHA-256 is unchanged. The steps after it run on the restored system, so a
-# restore that is subtly wrong fails them too. On failure it sets BM_REASON
-# and returns 1.
+# SHA-256 is unchanged. It then creates and deletes one more share on the
+# restored system: the new OS's package-default smb.conf is a file the
+# restored manifest never heard of, and a restore that does not take it over
+# leaves every share change refused with 409 unmanaged_config (#471). The
+# steps after it run on the restored system, so a restore that is subtly
+# wrong fails them too. On failure it sets BM_REASON and returns 1.
 BM_SHARE="hoserval3baremetal"
+BM_SHARE_AFTER="hoserval3baremetalafter"
+BM_SAMBA_CONF="/etc/samba/smb.conf"
 BM_SHARE_PATH="/mnt/user/$BM_SHARE"
 BM_USER="hoserval3baremetaluser"
 BM_CHAIN_TIME="05:47"
@@ -1528,6 +1533,12 @@ GUEST
     esac
   done <<<"$mount_table"
 
+  local smb_fresh
+  smb_fresh="$(vm_ssh "sudo sha256sum $BM_SAMBA_CONF | cut -d' ' -f1")" || smb_fresh=""
+  if [[ -z "$smb_fresh" ]]; then
+    BM_REASON="the freshly installed OS has no $BM_SAMBA_CONF, so the restore would prove nothing about taking over a host file the new OS already has"
+    return 1
+  fi
   if ! vm_scp "$archive" "hoserva@127.0.0.1:$BM_ARCHIVE_REMOTE"; then
     BM_REASON="could not copy the archive onto the fresh guest"
     return 1
@@ -1561,6 +1572,10 @@ GUEST
   fi
   if ! python3 "$script_dir/baremetal-state.py" report "$work/report.json"; then
     BM_REASON="the restore report is not a complete restore: $(cat "$work/report.json")"
+    return 1
+  fi
+  if ! grep -Fq "host_files_replaced" "$work/preview.json"; then
+    BM_REASON="the preview of the restore does not name the host files it replaces (no host_files_replaced note): $(cat "$work/preview.json")"
     return 1
   fi
   if ! array_login; then
@@ -1604,6 +1619,30 @@ $hash_diff"
   custom_after="$(vm_ssh "sudo cat $CONFIG_CUSTOM_FILE")" || custom_after=""
   if [[ "$custom_after" != *"$BM_CUSTOM_MARKER"* ]]; then
     BM_REASON="$CONFIG_CUSTOM_FILE is not the exported content after the restore (it holds: ${custom_after:-nothing})"
+    return 1
+  fi
+
+  # The restore replaced the OS's own smb.conf, and the copy it saved first is
+  # in the pre-import archive the report names.
+  if ! vm_ssh "sudo grep -Fq '[$BM_SHARE]' $BM_SAMBA_CONF"; then
+    BM_REASON="$BM_SAMBA_CONF does not hold the restored share $BM_SHARE: the restore did not take over the file the new OS already had"
+    return 1
+  fi
+  result="$(bm_api POST /shares "{\"name\":\"$BM_SHARE_AFTER\",\"cacheMode\":\"array-only\"}" 2>&1)" || result=""
+  if [[ "$result" != *"\"name\":\"$BM_SHARE_AFTER\""* ]]; then
+    BM_REASON="createShare($BM_SHARE_AFTER) after the restore did not return the expected share (a restore that leaves $BM_SAMBA_CONF unmanaged answers 409 unmanaged_config): $result"
+    return 1
+  fi
+  if ! vm_ssh "sudo grep -Fq '[$BM_SHARE_AFTER]' $BM_SAMBA_CONF"; then
+    BM_REASON="$BM_SAMBA_CONF does not list $BM_SHARE_AFTER after createShare succeeded"
+    return 1
+  fi
+  if ! bm_api DELETE "/shares/$BM_SHARE_AFTER" '{"confirm":true}' >/dev/null; then
+    BM_REASON="deleteShare($BM_SHARE_AFTER) after the restore was refused"
+    return 1
+  fi
+  if vm_ssh "sudo grep -Fq '[$BM_SHARE_AFTER]' $BM_SAMBA_CONF"; then
+    BM_REASON="$BM_SAMBA_CONF still lists $BM_SHARE_AFTER after deleteShare"
     return 1
   fi
 

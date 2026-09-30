@@ -9,7 +9,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/store"
 
@@ -204,6 +206,64 @@ func (b *BareMetal) SchemaUpgrade() bool { return b.from != b.to }
 // Discard removes the staged copy and everything the upgrade wrote beside it.
 func (b *BareMetal) Discard() { _ = os.RemoveAll(b.dir) }
 
+// HostFileDecisions is what the archive's host_config says about each host
+// file Hoserva writes (Samba and NFS), read from the staged database: the
+// decisions a restore leaves the new host's manifest without, since the
+// manifest lives beside the files on the OS disk and not in the archive. A
+// row for any other kind, or one with no row at all, is not a decision here.
+func (b *BareMetal) HostFileDecisions(ctx context.Context) ([]config.HostFileDecision, error) {
+	staged, err := openStaged(b.path, "ro")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = staged.Close() }()
+	rows, err := staged.QueryContext(ctx, `SELECT kind, decision FROM host_config ORDER BY kind`)
+	if err != nil {
+		return nil, fmt.Errorf("reading the archive's host-file decisions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []config.HostFileDecision
+	for rows.Next() {
+		var kind, decision string
+		if err := rows.Scan(&kind, &decision); err != nil {
+			return nil, fmt.Errorf("reading the archive's host-file decisions: %w", err)
+		}
+		if d, ok := config.HostFileDecisionFor(kind, decision); ok {
+			out = append(out, d)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the archive's host-file decisions: %w", err)
+	}
+	return out, nil
+}
+
+// NoteHostFilesReplaced is the code of the note a bare-metal preview carries
+// when the restore writes over files already on this host.
+const NoteHostFilesReplaced = "host_files_replaced"
+
+var hostFileLabels = map[string]string{
+	config.PathSamba: "Samba configuration",
+	config.PathNFS:   "NFS exports",
+}
+
+// HostFilesNote is the note that names each file a bare-metal restore will
+// replace, at its path under root, or false when it replaces none.
+func HostFilesNote(root string, replace []config.HostFileDecision) (ImportNote, bool) {
+	if len(replace) == 0 {
+		return ImportNote{}, false
+	}
+	names := make([]string, len(replace))
+	for i, d := range replace {
+		names[i] = fmt.Sprintf("%s (%s)", hostFileLabels[d.Path], filepath.Join(root, d.Path))
+	}
+	return ImportNote{
+		Code: NoteHostFilesReplaced,
+		Message: "These files already on this server will be replaced by ones generated from the restored configuration: " +
+			strings.Join(names, ", ") + ". Their current contents are saved in the backup taken before the restore.",
+	}, true
+}
+
 // Map is MapArrayDisks for the disks this archive records.
 func (b *BareMetal) Map(attached []disk.Disk) []MappedDisk {
 	return MapArrayDisks(b.recorded, attached)
@@ -230,6 +290,9 @@ func (b *BareMetal) Confirm(attached []disk.Disk, confirmed *DiskMapping) ([]Map
 type BareMetalPreview struct {
 	SchemaUpgrade bool
 	Disks         []MappedDisk
+	// HostFiles is the archive's decision for each host file Hoserva writes
+	// (BareMetal.HostFileDecisions).
+	HostFiles []config.HostFileDecision
 }
 
 // PreviewBareMetal is PreviewImport for a fresh install: the archive's
@@ -276,7 +339,11 @@ func PreviewBareMetal(ctx context.Context, live *sql.DB, paths Paths, stagingDir
 	if err := p.compare(ctx, live, staged, files); err != nil {
 		return ImportPreview{}, nil, err
 	}
-	return p, &BareMetalPreview{SchemaUpgrade: b.SchemaUpgrade(), Disks: mapped}, nil
+	hostFiles, err := b.HostFileDecisions(ctx)
+	if err != nil {
+		return ImportPreview{}, nil, err
+	}
+	return p, &BareMetalPreview{SchemaUpgrade: b.SchemaUpgrade(), Disks: mapped, HostFiles: hostFiles}, nil
 }
 
 func blockedBareMetalPreview(manifest Manifest, archiveSchema, liveSchema string, refusal ImportRefusal, paths Paths, stagingDir string, opts []FilesOption) (ImportPreview, *BareMetalPreview, error) {

@@ -182,3 +182,26 @@ func TestMockConfigImport_AnInstallationWithAnArrayRefusesAMappingAndShowsNoBare
 		t.Fatalf("preview = %+v (err %v), want no bareMetal block", p, err)
 	}
 }
+
+// The preview's host_files_replaced note promises a saved copy, so with every
+// backup destination removed the mock refuses the restore as production does.
+func TestMockConfigImport_FreshInstallWithoutABackupDestinationRefusesToReplaceHostFiles(t *testing.T) {
+	ctx := context.Background()
+	archive := mockBareMetalArchive(t)
+	mapping := `{"disks":[{"role":"data","roleIndex":1,"device":"/dev/sdb"}]}`
+	h, err := newHandler("fresh-install")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dests, err := h.ListBackupDestinations(ctx)
+	if err != nil || len(dests.Destinations) == 0 {
+		t.Fatalf("ListBackupDestinations = %+v, %v, want the default destinations", dests, err)
+	}
+	for _, d := range dests.Destinations {
+		if err := h.DeleteBackupDestination(ctx, apiv1.DeleteBackupDestinationParams{DestinationId: d.ID}); err != nil {
+			t.Fatalf("DeleteBackupDestination(%s): %v", d.ID, err)
+		}
+	}
+	_, err = h.ImportConfig(ctx, mockImport(archive, mapping))
+	mockErr(t, err, 409, "host_files_not_saved")
+}

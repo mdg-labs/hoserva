@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,6 +17,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	cfg "github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
@@ -131,8 +133,9 @@ func (b *bareMetalBox) attachSourceDisks() {
 // newSourceInstallation is another installation: its own machine key check
 // and recipient, a three-disk array, shares, users (one with TOTP) and
 // schedules, a notification channel with a sealed credential, and custom
-// config, templates and stacks. It returns it and the archive it exported.
-func newSourceInstallation(t *testing.T) (*importFilesEnv, []byte) {
+// config, templates and stacks, and a host_config row for each "kind=decision"
+// given. It returns it and the archive it exported.
+func newSourceInstallation(t *testing.T, hostConfig ...string) (*importFilesEnv, []byte) {
 	t.Helper()
 	src := newImportFilesEnv(t)
 	execAll(t, src.db, `DELETE FROM array_disks`)
@@ -153,6 +156,10 @@ func newSourceInstallation(t *testing.T) (*importFilesEnv, []byte) {
 	seedDisk(t, src.db, seededDisk{role: "data", index: 2, uuid: "uuid-d2", wwn: "wwn-d2"})
 	insertSentinelShare(t, src.db, "media")
 	insertSentinelShare(t, src.db, "photos")
+	for _, kd := range hostConfig {
+		kind, decision, _ := strings.Cut(kd, "=")
+		execAll(t, src.db, fmt.Sprintf(`INSERT INTO host_config (kind, decision, facts, applied_at) VALUES ('%s', '%s', '{}', '2026-09-01T00:00:00Z')`, kind, decision))
+	}
 	putTree(t, src.paths.ConfigRoot, exportedCustom)
 	putTree(t, src.paths.TemplatesDir, exportedTemplates)
 	putTree(t, src.paths.StacksDir, map[string]string{"web/docker-compose.yml": "exported compose", "web/meta.json": "exported meta"})
@@ -767,4 +774,271 @@ func TestImportConfig_BareMetal_ADiskMappingIsValidatedAndOnlyTakenWhereItApplie
 		e.h.RegenerateArray = func(context.Context) error { return nil }
 		box.assertRefusedWithNothingWritten(t, archive, mappingOf(), 409, "disk_mapping_not_applicable")
 	})
+}
+
+// hostBox is a fresh box whose OS came with a package-default smb.conf and
+// exports file, which its own manifest has never heard of: the state a
+// bare-metal restore lands on (#471).
+const (
+	packageSmbConf = "[global]\n   workgroup = WORKGROUP\n"
+	packageExports = "# /etc/exports: the package default\n"
+)
+
+func newHostBox(t *testing.T) *bareMetalBox {
+	t.Helper()
+	box := newBareMetalBox(t)
+	box.attachSourceDisks()
+	etc := filepath.Join(box.root, "etc")
+	box.h.Generator = cfg.NewGenerator(etc)
+	putTree(t, etc, map[string]string{cfg.PathSamba: packageSmbConf, cfg.PathNFS: packageExports})
+	return box
+}
+
+func (b *bareMetalBox) hostFile(rel string) string {
+	got, _ := os.ReadFile(filepath.Join(b.root, "etc", rel))
+	return string(got)
+}
+
+func (b *bareMetalBox) hostStatus(t *testing.T, rel string) cfg.Status {
+	t.Helper()
+	st, err := b.h.Generator.Check(context.Background(), rel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+func (b *bareMetalBox) mappingFor(t *testing.T, archive []byte) apiv1.OptString {
+	t.Helper()
+	bm, ok := b.preview(t, archive).BareMetal.Get()
+	if !ok {
+		t.Fatal("no bareMetal block")
+	}
+	return mappingJSON(bm.DiskMapping)
+}
+
+// extractPreImport unpacks the one pre-import archive and returns its tree.
+func (b *bareMetalBox) extractPreImport(t *testing.T) string {
+	t.Helper()
+	names := b.preImportArchives(t)
+	if len(names) != 1 {
+		t.Fatalf("pre-import archives = %v, want one", names)
+	}
+	tree, err := backup.ExtractVerifiedArchive(filepath.Join(b.dest, names[0]))
+	if err != nil {
+		t.Fatalf("the pre-import archive does not verify: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tree) })
+	return tree
+}
+
+func TestPreviewConfigImport_BareMetal_NamesTheHostFilesTheRestoreWillReplace(t *testing.T) {
+	_, archive := newSourceInstallation(t, "samba=import", "nfs=import")
+	box := newHostBox(t)
+	before := box.hostFile(cfg.PathSamba)
+
+	p := box.preview(t, archive)
+	var notes []apiv1.ConfigImportNote
+	for _, n := range p.Notes {
+		if n.Code == apiv1.ConfigImportNoteCode(backup.NoteHostFilesReplaced) {
+			notes = append(notes, n)
+		}
+	}
+	if len(notes) != 1 {
+		t.Fatalf("notes = %+v, want exactly one host_files_replaced", p.Notes)
+	}
+	for _, want := range []string{"Samba configuration (" + filepath.Join(box.root, "etc", "samba", "smb.conf") + ")", "NFS exports (" + filepath.Join(box.root, "etc", "exports") + ")"} {
+		if !strings.Contains(notes[0].Message, want) {
+			t.Errorf("note %q lacks %q", notes[0].Message, want)
+		}
+	}
+	if box.hostFile(cfg.PathSamba) != before || box.hostStatus(t, cfg.PathSamba) != cfg.StatusUnknown {
+		t.Error("the preview changed the host file or the manifest")
+	}
+}
+
+func TestPreviewConfigImport_BareMetal_NamesNothingItWillNotReplace(t *testing.T) {
+	for name, tc := range map[string]struct {
+		rows  []string
+		setup func(*bareMetalBox)
+	}{
+		"leave":       {rows: []string{"samba=leave", "nfs=leave"}},
+		"no decision": {},
+		"no file on host": {rows: []string{"samba=import"}, setup: func(b *bareMetalBox) {
+			if err := os.Remove(filepath.Join(b.root, "etc", cfg.PathSamba)); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(filepath.Join(b.root, "etc", cfg.PathNFS)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, archive := newSourceInstallation(t, tc.rows...)
+			box := newHostBox(t)
+			if tc.setup != nil {
+				tc.setup(box)
+			}
+			for _, n := range box.preview(t, archive).Notes {
+				if n.Code == apiv1.ConfigImportNoteCode(backup.NoteHostFilesReplaced) {
+					t.Errorf("unexpected note: %s", n.Message)
+				}
+			}
+		})
+	}
+}
+
+// The restore saves what it is about to replace, records the restored
+// decisions before the regeneration writes anything, and leaves a file the
+// archive marks leave, or has no decision for, exactly as it found it.
+func TestImportConfig_BareMetal_SavesThenTakesOverOnlyWhatTheArchiveImports(t *testing.T) {
+	_, archive := newSourceInstallation(t, "samba=import", "nfs=leave")
+	box := newHostBox(t)
+	var atRegen []cfg.Status
+	box.regenHook = func() {
+		atRegen = append(atRegen, box.hostStatus(t, cfg.PathSamba), box.hostStatus(t, cfg.PathNFS))
+	}
+
+	if _, err := box.h.ImportConfig(context.Background(), importMapped(archive, box.mappingFor(t, archive))); err != nil {
+		t.Fatalf("ImportConfig: %v", err)
+	}
+
+	tree := box.extractPreImport(t)
+	if got, err := os.ReadFile(filepath.Join(tree, "host", "samba", "smb.conf")); err != nil || string(got) != packageSmbConf {
+		t.Errorf("the pre-import archive's host/samba/smb.conf = %q, %v; want the replaced file", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(tree, "host", "exports")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the pre-import archive saved a file the restore leaves alone: %v", err)
+	}
+	if len(atRegen) != 2 || atRegen[0] != cfg.StatusManaged || atRegen[1] != cfg.StatusUnmanaged {
+		t.Errorf("manifest when the configs were regenerated = %v, want smb.conf managed and exports unmanaged already", atRegen)
+	}
+	if box.hostFile(cfg.PathNFS) != packageExports {
+		t.Errorf("a file the archive marks leave changed: %q", box.hostFile(cfg.PathNFS))
+	}
+	if err := box.h.Generator.Write(context.Background(), cfg.File{Path: cfg.PathSamba, Command: "c", Body: []byte("[media]\n")}, 1, time.Now()); err != nil {
+		t.Errorf("the taken-over file cannot be written: %v", err)
+	}
+	if err := box.h.Generator.Write(context.Background(), cfg.File{Path: cfg.PathNFS, Command: "c", Body: []byte("x")}, 1, time.Now()); !errors.Is(err, cfg.ErrUnmanaged) {
+		t.Errorf("Write of the left file = %v, want ErrUnmanaged", err)
+	}
+}
+
+func TestImportConfig_BareMetal_AKindWithNoDecisionStaysUnrecordedAndUntouched(t *testing.T) {
+	_, archive := newSourceInstallation(t, "samba=import")
+	box := newHostBox(t)
+	if _, err := box.h.ImportConfig(context.Background(), importMapped(archive, box.mappingFor(t, archive))); err != nil {
+		t.Fatalf("ImportConfig: %v", err)
+	}
+	if st := box.hostStatus(t, cfg.PathNFS); st != cfg.StatusUnknown || box.hostFile(cfg.PathNFS) != packageExports {
+		t.Errorf("exports: status %v, content %q; want unrecorded and untouched", st, box.hostFile(cfg.PathNFS))
+	}
+	if err := box.h.Generator.Write(context.Background(), cfg.File{Path: cfg.PathNFS, Command: "c", Body: []byte("x")}, 1, time.Now()); !errors.Is(err, cfg.ErrExistingHostFile) {
+		t.Errorf("Write of a file no decision covers = %v, want ErrExistingHostFile", err)
+	}
+}
+
+// A host file that cannot be saved in the pre-import archive stops the
+// restore before the hold, the database and the file itself are touched.
+func TestImportConfig_BareMetal_AHostFileThatCannotBeSavedRefusesTheRestoreUntouched(t *testing.T) {
+	_, archive := newSourceInstallation(t, "samba=import")
+	box := newHostBox(t)
+	smb := filepath.Join(box.root, "etc", cfg.PathSamba)
+	if err := os.Remove(smb); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(smb, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mapping := box.mappingFor(t, archive)
+	before := liveFingerprint(t, box.db) + configuredState(t, box.db)
+
+	_, err := box.h.ImportConfig(context.Background(), importMapped(archive, mapping))
+	if err == nil || !strings.Contains(err.Error(), "backing up before import") {
+		t.Fatalf("ImportConfig = %v, want the pre-import backup to refuse it", err)
+	}
+	if after := liveFingerprint(t, box.db) + configuredState(t, box.db); after != before {
+		t.Error("the live database changed")
+	}
+	if steps := box.steps(); len(steps) != 0 {
+		t.Errorf("regeneration ran %v", steps)
+	}
+	if st := box.hostStatus(t, cfg.PathSamba); st != cfg.StatusUnknown {
+		t.Errorf("the manifest recorded the file: %v", st)
+	}
+	if names := box.preImportArchives(t); len(names) != 0 {
+		t.Errorf("an archive without the file was kept: %v", names)
+	}
+}
+
+// With no backup destination enabled the pre-import backup is a no-op, which
+// for a restore that replaces a file means there would be no copy of it.
+func TestImportConfig_BareMetal_NoBackupDestinationRefusesToReplaceAHostFile(t *testing.T) {
+	_, archive := newSourceInstallation(t, "samba=import")
+	box := newHostBox(t)
+	mapping := box.mappingFor(t, archive)
+	box.h.Backup.Destinations = nil
+	before := liveFingerprint(t, box.db) + configuredState(t, box.db)
+
+	_, err := box.h.ImportConfig(context.Background(), importMapped(archive, mapping))
+	_ = importErr(t, err, 409, "host_files_not_saved")
+	if after := liveFingerprint(t, box.db) + configuredState(t, box.db); after != before {
+		t.Error("the live database changed")
+	}
+	if steps := box.steps(); len(steps) != 0 {
+		t.Errorf("regeneration ran %v", steps)
+	}
+	if st := box.hostStatus(t, cfg.PathSamba); st != cfg.StatusUnknown || box.hostFile(cfg.PathSamba) != packageSmbConf {
+		t.Errorf("the host file or the manifest changed: %v %q", st, box.hostFile(cfg.PathSamba))
+	}
+}
+
+// A restore that replaces nothing the host has saves nothing extra and
+// behaves as before.
+func TestImportConfig_BareMetal_WithNoHostFilesTheArchiveHoldsNone(t *testing.T) {
+	_, archive := newSourceInstallation(t)
+	box := newHostBox(t)
+	if _, err := box.h.ImportConfig(context.Background(), importMapped(archive, box.mappingFor(t, archive))); err != nil {
+		t.Fatalf("ImportConfig: %v", err)
+	}
+	tree := box.extractPreImport(t)
+	if _, err := os.Stat(filepath.Join(tree, "host")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a host/ directory was saved: %v", err)
+	}
+	if st := box.hostStatus(t, cfg.PathSamba); st != cfg.StatusUnknown {
+		t.Errorf("the manifest recorded a file: %v", st)
+	}
+}
+
+// An in-place restore is the host's own manifest's business: it neither
+// records nor saves a host file, whatever the archive's host_config says.
+func TestImportConfig_InPlaceLeavesTheHostManifestAndFilesAlone(t *testing.T) {
+	e := newImportFilesEnv(t)
+	execAll(t, e.db, `INSERT INTO host_config (kind, decision, facts, applied_at) VALUES ('samba', 'import', '{}', '2026-09-01T00:00:00Z')`)
+	archive := e.seedAndExport(t)
+	etc := filepath.Join(e.root, "etc")
+	e.h.Generator = cfg.NewGenerator(etc)
+	putTree(t, etc, map[string]string{cfg.PathSamba: packageSmbConf})
+
+	if _, err := e.h.ImportConfig(context.Background(), importReq(archive)); err != nil {
+		t.Fatalf("ImportConfig: %v", err)
+	}
+	if st, err := e.h.Generator.Check(context.Background(), cfg.PathSamba); err != nil || st != cfg.StatusUnknown {
+		t.Errorf("Check = %v, %v; an in-place restore recorded a host file", st, err)
+	}
+	if _, err := os.Stat(filepath.Join(etc, ".hoserva", "manifest.json")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("an in-place restore wrote a manifest: %v", err)
+	}
+	names := e.preImportArchives(t)
+	if len(names) != 1 {
+		t.Fatalf("pre-import archives = %v", names)
+	}
+	tree, err := backup.ExtractVerifiedArchive(filepath.Join(e.dest, names[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(tree) }()
+	if _, err := os.Stat(filepath.Join(tree, "host")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("an in-place restore saved host files: %v", err)
+	}
 }

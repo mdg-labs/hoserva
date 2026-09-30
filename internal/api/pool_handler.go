@@ -20,6 +20,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/pool"
@@ -582,9 +583,26 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if restoresEnvs {
 		runOpts = append(runOpts, backup.SealSecretsWith(envPassphrase))
 	}
+	// A bare-metal restore also replaces the host files the restored
+	// configuration imports that this host already has, which its own
+	// manifest never heard of (doc 10 §1): they are planned now, saved in the
+	// archive below, and only then recorded and written.
+	var hostFiles config.HostFilePlan
+	if bm != nil {
+		hostFiles, err = h.planHostFiles(ctx, bm.staged)
+		if err != nil {
+			return nil, err
+		}
+		if len(hostFiles.Replace) > 0 {
+			runOpts = append(runOpts, backup.CaptureHostFiles(h.Generator.Root, hostFilePaths(hostFiles.Replace)))
+		}
+	}
 	preImport, err := h.Backup.RunReasonArchive(ctx, backup.ReasonPreImport, runOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("backing up before import: %w", err)
+	}
+	if len(hostFiles.Replace) > 0 && preImport.Name == "" {
+		return nil, errHostFilesNotSaved
 	}
 	preImportSecrets := apiv1.ConfigImportPreImportSecretsNone
 	switch {
@@ -705,6 +723,11 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		failures = append(failures, err)
 	}
 	if bm != nil {
+		if h.Generator != nil {
+			if err := h.Generator.ReconcileHostFiles(finish, hostFiles.Record); err != nil {
+				failures = append(failures, fmt.Errorf("recording the restored host-file decisions: %w", err))
+			}
+		}
 		if err := h.RegenerateArray(finish); err != nil {
 			failures = append(failures, fmt.Errorf("regenerating the disk mount units and snapraid.conf from the restored array: %w", err))
 		}

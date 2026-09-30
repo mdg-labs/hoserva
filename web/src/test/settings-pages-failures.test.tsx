@@ -446,6 +446,7 @@ describe("Config restore failures", () => {
     ["job_in_progress", "A job is running, so the restore cannot start"],
     ["backup_passphrase_incorrect", "That passphrase does not open this archive"],
     ["archive_other_installation", "This archive was made by a different installation"],
+    ["host_files_not_saved", "There is nowhere to save this server's current Samba and NFS settings first"],
   ])("keeps the typed confirmation and names an apply refused as %s", async (code, title) => {
     restoreApi({ apply: () => fail(code, `apply says ${code}`) });
 

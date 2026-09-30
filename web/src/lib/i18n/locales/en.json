@@ -1392,6 +1392,7 @@
           "backup_passphrase_incorrect": "That passphrase does not open this archive",
           "disk_mapping_stale": "The attached disks changed since the preview",
           "disk_mapping_required": "The disk mapping has to be confirmed",
+          "host_files_not_saved": "There is nowhere to save this server's current Samba and NFS settings first",
           "not_configured": "This server has no backup service"
         },
         "blockers": {
@@ -1403,7 +1404,8 @@
         },
         "notes": {
           "sessions_replaced": "You will be signed out",
-          "array_state_kept": "The array keeps its current state"
+          "array_state_kept": "The array keeps its current state",
+          "host_files_replaced": "Files already on this server will be replaced"
         },
         "preview": {
           "archiveTitle": "About this archive",

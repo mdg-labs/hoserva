@@ -792,12 +792,14 @@ func (UnimplementedHandler) GetUserSharePermissions(ctx context.Context, params 
 // `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the
 // live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would
 // restore lands on a symbolic link or on something that is not a regular file, or it names a path
-// outside the directory it is restored into; nothing is followed). A failure to stage the files
-// answers 500 `import_failed` with nothing changed; a failure once the database has been replaced
-// answers 500 `import_failed` naming the pre-import archive to restore from and which of the file
-// categories were restored and which left as they were. The array's own state, running, in maintenance
-// mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a
-// stopped array to normal operation.
+// outside the directory it is restored into; nothing is followed). A bare-metal restore that would
+// replace a Samba or NFS file already on this server also refuses with 409 `host_files_not_saved` when
+// no backup destination is enabled to take the copy of it that the pre-import archive carries. A
+// failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the
+// database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from
+// and which of the file categories were restored and which left as they were. The array's own state,
+// running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an
+// import cannot return a stopped array to normal operation.
 //
 // On a fresh install, one with no array configured, whatever admin accounts it has, the import is the
 // bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array

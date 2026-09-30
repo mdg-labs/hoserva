@@ -34,6 +34,25 @@ type ArchiveOption func(*archiveOptions)
 type archiveOptions struct {
 	recipient   *Recipient
 	sealSecrets string
+	hostRoot    string
+	hostFiles   []string
+}
+
+// hostFilesDir is the archive directory holding the host files a restore is
+// about to replace, each at its path relative to the host's config root. It
+// is written only into the pre-import archive of a bare-metal restore; no
+// restore reads it back (the files it holds are the new host's, not the
+// configuration being restored), so it is there for a user to recover from.
+const hostFilesDir = "host"
+
+// WithHostFiles copies each of rels, relative to root, into the archive's
+// host/ directory. A file that cannot be read fails the build: the caller is
+// about to replace it, so a copy that is not there must stop it.
+func WithHostFiles(root string, rels []string) ArchiveOption {
+	return func(o *archiveOptions) {
+		o.hostRoot = root
+		o.hostFiles = rels
+	}
 }
 
 // WithSecretsPassphrase seals secrets.age under passphrase instead of the
@@ -104,6 +123,14 @@ func BuildArchive(ctx context.Context, db *sql.DB, paths Paths, src SecretSource
 	}
 	if err := copyTreeIfExists(paths.TemplatesDir, filepath.Join(stagingDir, "templates"), nil); err != nil {
 		return Manifest{}, err
+	}
+	for _, rel := range cfg.hostFiles {
+		if !filepath.IsLocal(rel) {
+			return Manifest{}, fmt.Errorf("host file %q is not inside the host's config root", rel)
+		}
+		if err := copyPath(filepath.Join(stagingDir, hostFilesDir, rel), filepath.Join(cfg.hostRoot, rel)); err != nil {
+			return Manifest{}, fmt.Errorf("saving host file %s: %w", rel, err)
+		}
 	}
 	if err := copySnapraidContent(paths.SnapraidContentPath, filepath.Join(stagingDir, "snapraid-content")); err != nil {
 		return Manifest{}, err

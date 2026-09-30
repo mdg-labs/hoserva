@@ -220,6 +220,18 @@ type RunOption func(*runOptions)
 
 type runOptions struct {
 	sealSecrets string
+	hostRoot    string
+	hostFiles   []string
+}
+
+// CaptureHostFiles saves each of rels, relative to root, in the archive
+// (WithHostFiles), so a change that replaces them leaves a copy. A file that
+// cannot be saved fails the run.
+func CaptureHostFiles(root string, rels []string) RunOption {
+	return func(o *runOptions) {
+		o.hostRoot = root
+		o.hostFiles = rels
+	}
 }
 
 // SealSecretsWith seals the archive's secrets.age under passphrase, and
@@ -255,7 +267,7 @@ func (s *Service) RunReasonArchive(ctx context.Context, reason Reason, opts ...R
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
-	manifest, err := BuildArchive(ctx, s.DB, s.Paths, s.Secrets, s.Cipher, s.Hostname, s.Version, now, staging, WithRecipient(s.Recipient), WithSecretsPassphrase(run.sealSecrets))
+	manifest, err := BuildArchive(ctx, s.DB, s.Paths, s.Secrets, s.Cipher, s.Hostname, s.Version, now, staging, WithRecipient(s.Recipient), WithSecretsPassphrase(run.sealSecrets), WithHostFiles(run.hostRoot, run.hostFiles))
 	if err != nil {
 		return WrittenArchive{}, err
 	}

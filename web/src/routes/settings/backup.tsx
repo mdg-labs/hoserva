@@ -1126,6 +1126,7 @@ const RESTORE_ERROR_CODES = [
   "backup_passphrase_incorrect",
   "disk_mapping_stale",
   "disk_mapping_required",
+  "host_files_not_saved",
   "not_configured",
 ];
 

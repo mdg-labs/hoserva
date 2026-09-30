@@ -2739,7 +2739,11 @@ paths:
         each difference), and 409 `restore_path_unsafe` (a file it would
         restore lands on a symbolic link or on something that is not a
         regular file, or it names a path outside the directory it is
-        restored into; nothing is followed). A failure to stage the files
+        restored into; nothing is followed). A bare-metal restore that
+        would replace a Samba or NFS file already on this server also
+        refuses with 409 `host_files_not_saved` when no backup destination
+        is enabled to take the copy of it that the pre-import archive
+        carries. A failure to stage the files
         answers 500 `import_failed` with nothing changed; a failure once the
         database has been replaced answers 500 `import_failed` naming the
         pre-import archive to restore from and which of the file categories
@@ -7675,11 +7679,15 @@ components:
     ConfigImportNote:
       type: object
       required: [code, message]
-      description: Something about an import that is true whatever the archive holds.
+      description: >-
+        Something about an import that holds whatever the archive contains, or,
+        for `host_files_replaced`, about what a bare-metal restore does to this
+        server's own files: it names each Samba or NFS file already on the
+        server that the restore replaces, which the backup taken first saves.
       properties:
         code:
           type: string
-          enum: [sessions_replaced, array_state_kept]
+          enum: [sessions_replaced, array_state_kept, host_files_replaced]
         message:
           type: string
 

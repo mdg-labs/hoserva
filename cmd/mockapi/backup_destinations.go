@@ -139,6 +139,21 @@ func (h *handler) DeleteBackupDestination(ctx context.Context, params apiv1.Dele
 	return nil
 }
 
+// mockHasEnabledBackupDestination is whether the pre-import archive of a
+// restore would be written anywhere: the mock's preview always names a host
+// file the restore replaces, so a bare-metal import without one is refused as
+// production refuses it.
+func (h *handler) mockHasEnabledBackupDestination() bool {
+	h.backupMu.Lock()
+	defer h.backupMu.Unlock()
+	for _, d := range h.backupDestinations {
+		if d.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *handler) removeBackupDestinationLocked(id string) bool {
 	for i, d := range h.backupDestinations {
 		if d.ID == id {

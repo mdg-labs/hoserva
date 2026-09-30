@@ -3132,7 +3132,9 @@ func (s *ConfigImportNotRestoredReason) UnmarshalText(data []byte) error {
 	}
 }
 
-// Something about an import that is true whatever the archive holds.
+// Something about an import that holds whatever the archive contains, or, for `host_files_replaced`,
+// about what a bare-metal restore does to this server's own files: it names each Samba or NFS file
+// already on the server that the restore replaces, which the backup taken first saves.
 // Ref: #/components/schemas/ConfigImportNote
 type ConfigImportNote struct {
 	Code    ConfigImportNoteCode `json:"code"`
@@ -3162,8 +3164,9 @@ func (s *ConfigImportNote) SetMessage(val string) {
 type ConfigImportNoteCode string
 
 const (
-	ConfigImportNoteCodeSessionsReplaced ConfigImportNoteCode = "sessions_replaced"
-	ConfigImportNoteCodeArrayStateKept   ConfigImportNoteCode = "array_state_kept"
+	ConfigImportNoteCodeSessionsReplaced  ConfigImportNoteCode = "sessions_replaced"
+	ConfigImportNoteCodeArrayStateKept    ConfigImportNoteCode = "array_state_kept"
+	ConfigImportNoteCodeHostFilesReplaced ConfigImportNoteCode = "host_files_replaced"
 )
 
 // AllValues returns all ConfigImportNoteCode values.
@@ -3171,6 +3174,7 @@ func (ConfigImportNoteCode) AllValues() []ConfigImportNoteCode {
 	return []ConfigImportNoteCode{
 		ConfigImportNoteCodeSessionsReplaced,
 		ConfigImportNoteCodeArrayStateKept,
+		ConfigImportNoteCodeHostFilesReplaced,
 	}
 }
 
@@ -3180,6 +3184,8 @@ func (s ConfigImportNoteCode) MarshalText() ([]byte, error) {
 	case ConfigImportNoteCodeSessionsReplaced:
 		return []byte(s), nil
 	case ConfigImportNoteCodeArrayStateKept:
+		return []byte(s), nil
+	case ConfigImportNoteCodeHostFilesReplaced:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -3194,6 +3200,9 @@ func (s *ConfigImportNoteCode) UnmarshalText(data []byte) error {
 		return nil
 	case ConfigImportNoteCodeArrayStateKept:
 		*s = ConfigImportNoteCodeArrayStateKept
+		return nil
+	case ConfigImportNoteCodeHostFilesReplaced:
+		*s = ConfigImportNoteCodeHostFilesReplaced
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)

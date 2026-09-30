@@ -1591,6 +1591,8 @@ func (s ConfigImportNoteCode) Validate() error {
 		return nil
 	case "array_state_kept":
 		return nil
+	case "host_files_replaced":
+		return nil
 	default:
 		return errors.Errorf("invalid value: %v", s)
 	}

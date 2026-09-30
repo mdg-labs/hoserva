@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/store"
 
@@ -528,6 +529,59 @@ func TestSealedColumns_CoverEveryBlobColumnOfTheSchema(t *testing.T) {
 	for col := range known {
 		if !found[col] {
 			t.Errorf("%s is listed but the schema has no such BLOB column", col)
+		}
+	}
+}
+
+func TestBareMetalHostFileDecisions_AreTheArchivesSambaAndNFSRowsOnly(t *testing.T) {
+	ctx := context.Background()
+	tree := archiveOfAnotherInstallation(t)
+	db, err := sql.Open("sqlite", filepath.Join(tree, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db,
+		`INSERT INTO host_config (kind, decision, facts, applied_at) VALUES
+			('samba', 'import', '{}', '2026-09-01T00:00:00Z'),
+			('nfs', 'leave', '{}', '2026-09-01T00:00:00Z'),
+			('fstab', 'import', '{}', '2026-09-01T00:00:00Z'),
+			('docker_images', 'import', '{}', '2026-09-01T00:00:00Z')`)
+	_ = db.Close()
+	live := openMigratedDB(t, filepath.Join(t.TempDir(), "live.db"))
+	seedInstallation(t, live, "box")
+
+	b, err := StageBareMetal(ctx, live, tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Discard()
+	got, err := b.HostFileDecisions(ctx)
+	if err != nil {
+		t.Fatalf("HostFileDecisions: %v", err)
+	}
+	want := []config.HostFileDecision{
+		{Path: config.PathNFS, Decision: config.DecisionLeave},
+		{Path: config.PathSamba, Decision: config.DecisionImport},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("HostFileDecisions = %+v, want %+v", got, want)
+	}
+}
+
+func TestHostFilesNote_NamesEachFileAtItsPathOnThisHost(t *testing.T) {
+	if _, ok := HostFilesNote("/etc", nil); ok {
+		t.Fatal("a restore that replaces nothing has a note")
+	}
+	note, ok := HostFilesNote("/etc", []config.HostFileDecision{
+		{Path: config.PathSamba, Decision: config.DecisionImport},
+		{Path: config.PathNFS, Decision: config.DecisionImport},
+	})
+	if !ok || note.Code != NoteHostFilesReplaced {
+		t.Fatalf("note = %+v, %v", note, ok)
+	}
+	for _, want := range []string{"Samba configuration (/etc/samba/smb.conf)", "NFS exports (/etc/exports)"} {
+		if !strings.Contains(note.Message, want) {
+			t.Errorf("message %q lacks %q", note.Message, want)
 		}
 	}
 }

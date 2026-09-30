@@ -631,7 +631,9 @@ func (h *handler) ExportConfig(ctx context.Context) (apiv1.ExportConfigOK, error
 // upload's own. It has no live database, so it never returns production's
 // 409 archive_other_installation or archive_array_mismatch
 // (backup.CheckImport), and the counts of what was restored are a fixed
-// sample.
+// sample. On a fresh install it refuses with 409 host_files_not_saved when
+// no backup destination is enabled, since its preview always names a host
+// file the restore replaces.
 func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) (*apiv1.ConfigImportReport, error) {
 	if !req.Confirm {
 		return nil, errConfirmRequired()
@@ -650,6 +652,9 @@ func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		bareMetalNotRestored, err = h.mockBareMetalNotRestored(ctx, tree, mapping)
 		if err != nil {
 			return nil, err
+		}
+		if !h.mockHasEnabledBackupDestination() {
+			return nil, &mockError{code: "host_files_not_saved", statusCode: 409, message: "this restore replaces files already on this server, and no backup destination took the copy of them that must come first; enable a backup destination and try again. Nothing was restored"}
 		}
 	} else if mapping != nil {
 		return nil, &mockError{code: "disk_mapping_not_applicable", statusCode: 409, message: "this installation has an array, so an import restores no disks and takes no diskMapping"}
@@ -763,6 +768,22 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 	if err != nil {
 		return nil, err
 	}
+	notes := []apiv1.ConfigImportNote{
+		{
+			Code:    apiv1.ConfigImportNoteCodeSessionsReplaced,
+			Message: "Active sign-in sessions are replaced by the archive's, so the current user is signed out.",
+		},
+		{
+			Code:    apiv1.ConfigImportNoteCodeArrayStateKept,
+			Message: "The array's current state, running, in maintenance mode or stopped, is kept: the import does not restore the archive's.",
+		},
+	}
+	if bareMetal.Set {
+		notes = append(notes, apiv1.ConfigImportNote{
+			Code:    apiv1.ConfigImportNoteCodeHostFilesReplaced,
+			Message: "These files already on this server will be replaced by ones generated from the restored configuration: Samba configuration (/etc/samba/smb.conf). Their current contents are saved in the backup taken before the restore.",
+		})
+	}
 	empty := []apiv1.ConfigImportChange{}
 	group := func(c apiv1.ConfigImportGroupCategory, added, changed, removed []apiv1.ConfigImportChange) apiv1.ConfigImportGroup {
 		return apiv1.ConfigImportGroup{Category: c, Added: added, Changed: changed, Removed: removed}
@@ -798,16 +819,7 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 			group(apiv1.ConfigImportGroupCategoryTemplates, empty, empty, empty),
 			group(apiv1.ConfigImportGroupCategoryStacks, empty, empty, empty),
 		},
-		Notes: []apiv1.ConfigImportNote{
-			{
-				Code:    apiv1.ConfigImportNoteCodeSessionsReplaced,
-				Message: "Active sign-in sessions are replaced by the archive's, so the current user is signed out.",
-			},
-			{
-				Code:    apiv1.ConfigImportNoteCodeArrayStateKept,
-				Message: "The array's current state, running, in maintenance mode or stopped, is kept: the import does not restore the archive's.",
-			},
-		},
+		Notes: notes,
 	}, nil
 }
 

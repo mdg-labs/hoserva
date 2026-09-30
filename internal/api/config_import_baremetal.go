@@ -7,6 +7,7 @@ import (
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/config"
 	"github.com/mdg-labs/hoserva/internal/disk"
 )
 
@@ -23,6 +24,7 @@ type bareMetalImport struct {
 var (
 	errDiskMappingRequired      = &apiError{code: "disk_mapping_required", statusCode: 409, message: backup.ErrDiskMappingRequired.Error()}
 	errDiskMappingNotApplicable = &apiError{code: "disk_mapping_not_applicable", statusCode: 409, message: "this installation has an array, so an import restores no disks and takes no diskMapping"}
+	errHostFilesNotSaved        = &apiError{code: "host_files_not_saved", statusCode: 409, message: "this restore replaces files already on this server, and no backup destination took the copy of them that must come first; enable a backup destination and try again. Nothing was restored"}
 	errNoLongerFresh            = &apiError{code: "disk_mapping_stale", statusCode: 409, message: "an array was configured on this installation after the disk mapping was confirmed; nothing was restored"}
 )
 
@@ -125,6 +127,33 @@ func diskMappingFromRequest(m apiv1.OptString) (*backup.DiskMapping, error) {
 	return &parsed, nil
 }
 
+// planHostFiles is what the archive's host_config means for the Samba and NFS
+// files already on this host (config.Generator.PlanHostFiles). A daemon with
+// no generator writes none, so has nothing to plan. A host file that cannot be
+// read refuses the restore, never reads as absent.
+func (h *Handler) planHostFiles(ctx context.Context, staged *backup.BareMetal) (config.HostFilePlan, error) {
+	if h.Generator == nil {
+		return config.HostFilePlan{}, nil
+	}
+	decisions, err := staged.HostFileDecisions(ctx)
+	if err != nil {
+		return config.HostFilePlan{}, fmt.Errorf("reading the archive's host-file decisions: %w", err)
+	}
+	plan, err := h.Generator.PlanHostFiles(ctx, decisions)
+	if err != nil {
+		return config.HostFilePlan{}, fmt.Errorf("checking the host files the restore would replace: %w", err)
+	}
+	return plan, nil
+}
+
+func hostFilePaths(files []config.HostFileDecision) []string {
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
+	}
+	return paths
+}
+
 // previewBareMetal is previewConfigImport on an installation with no array.
 func (h *Handler) previewBareMetal(ctx context.Context, tree string, passphrase apiv1.OptString) (*apiv1.ConfigImportPreview, error) {
 	attached, err := h.listAttachedDisks(ctx)
@@ -141,6 +170,15 @@ func (h *Handler) previewBareMetal(ctx context.Context, tree string, passphrase 
 		return nil, fmt.Errorf("previewing the import: %w", err)
 	case secretsErr != nil:
 		return nil, secretsErr
+	}
+	if bm != nil && h.Generator != nil {
+		plan, err := h.Generator.PlanHostFiles(ctx, bm.HostFiles)
+		if err != nil {
+			return nil, fmt.Errorf("checking the host files the restore would replace: %w", err)
+		}
+		if note, ok := backup.HostFilesNote(h.Generator.Root, plan.Replace); ok {
+			p.Notes = append(p.Notes, note)
+		}
 	}
 	out := configImportPreviewToAPI(p, secrets)
 	if bm != nil {

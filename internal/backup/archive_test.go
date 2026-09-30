@@ -124,3 +124,76 @@ func TestBuildArchive_NestedCustomConf(t *testing.T) {
 		t.Fatalf("nested custom file missing: %v", err)
 	}
 }
+
+func TestBuildArchive_SavesHostFilesUnderHostAndTheArchiveStillVerifies(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "live.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY);"); err != nil {
+		t.Fatal(err)
+	}
+	etc := filepath.Join(dir, "etc")
+	if err := os.MkdirAll(filepath.Join(etc, "samba"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(etc, "samba", "smb.conf"), []byte("[global]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	staging := filepath.Join(dir, "staging")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	m, err := BuildArchive(ctx, db, Paths{}, nil, nil, "host", "test", time.Now(), staging, WithHostFiles(etc, []string{"samba/smb.conf"}))
+	if err != nil {
+		t.Fatalf("BuildArchive: %v", err)
+	}
+	if _, ok := m.Checksums["host/samba/smb.conf"]; !ok {
+		t.Fatalf("checksums %v lack the host file", m.Checksums)
+	}
+	archive := filepath.Join(dir, "a.tar.zst")
+	if err := packArchive(staging, archive); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := ExtractVerifiedArchive(archive)
+	if err != nil {
+		t.Fatalf("an archive with host files does not verify: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tree) }()
+	if got, err := os.ReadFile(filepath.Join(tree, "host", "samba", "smb.conf")); err != nil || string(got) != "[global]\n" {
+		t.Fatalf("host/samba/smb.conf = %q, %v", got, err)
+	}
+}
+
+// A host file the caller is about to replace that cannot be saved stops the
+// archive: no archive is better than one that looks like a backup and lacks
+// the file.
+func TestBuildArchive_AHostFileThatCannotBeSavedFailsTheBuild(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "live.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY);"); err != nil {
+		t.Fatal(err)
+	}
+	etc := filepath.Join(dir, "etc")
+	if err := os.MkdirAll(filepath.Join(etc, "samba", "smb.conf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"samba/smb.conf", "exports", "../escape"} {
+		staging := filepath.Join(t.TempDir(), "staging")
+		if err := os.MkdirAll(staging, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := BuildArchive(ctx, db, Paths{}, nil, nil, "host", "test", time.Now(), staging, WithHostFiles(etc, []string{rel})); err == nil {
+			t.Errorf("BuildArchive with unsavable host file %q succeeded", rel)
+		}
+	}
+}

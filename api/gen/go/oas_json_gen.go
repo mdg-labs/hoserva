@@ -6481,6 +6481,8 @@ func (s *ConfigImportNoteCode) Decode(d *jx.Decoder) error {
 		*s = ConfigImportNoteCodeSessionsReplaced
 	case ConfigImportNoteCodeArrayStateKept:
 		*s = ConfigImportNoteCodeArrayStateKept
+	case ConfigImportNoteCodeHostFilesReplaced:
+		*s = ConfigImportNoteCodeHostFilesReplaced
 	default:
 		*s = ConfigImportNoteCode(v)
 	}
