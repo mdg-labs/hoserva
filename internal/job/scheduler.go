@@ -65,6 +65,11 @@ var (
 	// ErrJobAbortInProgress refuses a Cancel or Resume of a job whose
 	// abort is already running (doc 02 §4 UR7).
 	ErrJobAbortInProgress = errors.New("job: an abort of this job is already running")
+	// ErrJobResumeInProgress refuses a Cancel or a second Resume of a job
+	// whose Resume is still repairing its log outside s.mu. It is an
+	// ErrJobAbortInProgress too, so callers that already map that refusal
+	// map this one the same way.
+	ErrJobResumeInProgress error = resumeInProgressError{}
 	// ErrCancelRequested is what a data-disk upgrade's save of its
 	// releasing checkpoint returns when a Cancel won the race for it
 	// (doc 02 §4 E3, UR7): the checkpoint is not saved and Release never
@@ -87,8 +92,8 @@ var (
 	// underneath a job whose runner is still going (#402).
 	ErrDatabaseRestoreInProgress = errors.New("job: a database restore is in progress — jobs are refused until it completes")
 	// ErrJobsActiveForRestore refuses BeginDatabaseRestore while any job
-	// is queued or running, or while any job's Cancel abort is still
-	// running: a whole-database restore must never overwrite a live job's
+	// is queued or running, while any job's Cancel abort is still
+	// running, or while a Resume is still repairing a job's log: a whole-database restore must never overwrite a live job's
 	// row while its runner is still going, and must never start while
 	// abortAndCancel's own writes (manifest clearing, removal-state
 	// release, final status) could still land against the table it is
@@ -197,6 +202,11 @@ type Scheduler struct {
 	// or interrupted job) is running, so no Resume or second Cancel of it
 	// runs at the same time (doc 02 §4 UR7).
 	aborting map[string]bool
+	// resuming holds the id of every job whose Resume is repairing its log
+	// outside s.mu, so no second Resume or Cancel of it runs meanwhile. It
+	// is separate from aborting because BeginDatabaseRestore refuses on
+	// either, but only aborting is about a Cancel's abort.
+	resuming map[string]bool
 	// batteryHold is Q77's own on-battery hold: lighter than maintenance
 	// mode — it refuses only TypeMover and TypeSync (Submit and dispatch
 	// both check it) and never touches a job of any other type, unlike
@@ -268,6 +278,10 @@ type Scheduler struct {
 	// s.queue nor s.running, and Cancel needs its own way to recognize it
 	// instead of mis-reporting why it refuses.
 	dispatching map[string]*queuedJob
+	// beforeSealHook, when non-nil, is called by Resume outside s.mu right
+	// before it repairs the job's log, so a test can hold that step open
+	// deterministically. Never set outside a test.
+	beforeSealHook func(jobID string)
 }
 
 // NewScheduler wires a Scheduler to its persistence, log capture, event
@@ -282,6 +296,7 @@ func NewScheduler(store *Store, logs *LogStore, hub *Hub, registry *Registry) *S
 		registry: registry,
 		running:  make(map[string]*runningJob),
 		aborting: make(map[string]bool),
+		resuming: make(map[string]bool),
 	}
 }
 
@@ -641,6 +656,10 @@ func (s *Scheduler) Cancel(ctx context.Context, id string) (*Job, error) {
 		s.mu.Unlock()
 		return nil, ErrJobAbortInProgress
 	}
+	if s.resuming[id] {
+		s.mu.Unlock()
+		return nil, ErrJobResumeInProgress
+	}
 	s.aborting[id] = true
 	s.mu.Unlock()
 	defer s.releaseAbort(id)
@@ -710,10 +729,11 @@ func (s *Scheduler) releaseAbort(id string) {
 // (Q29) — always an explicit call, never automatic. The job's type must
 // still have a RunFunc bound through Registry.Register; a process restart
 // loses nothing here since the registry is rebuilt at startup, not
-// persisted. The job is read and started under s.mu, so a concurrent
-// Cancel's abort of the same job and this never both run (doc 02 §4
-// UR7). A data-disk upgrade resumed at releasing is not cancellable,
-// decided and persisted before the job is visible to Cancel.
+// persisted. The job is read and started under s.mu, and while its log is
+// repaired outside s.mu it is held in s.resuming, so a concurrent Cancel's
+// abort of the same job and this never both run (doc 02 §4 UR7). A
+// data-disk upgrade resumed at releasing is not cancellable, decided and
+// persisted before the job is visible to Cancel.
 //
 // Once the stored row itself says resumable and interrupted, it also
 // refuses with ErrJobAlreadyRunning if id's runner is still alive in
@@ -725,48 +745,40 @@ func (s *Scheduler) releaseAbort(id string) {
 // under the same id.
 func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 	s.mu.Lock()
-	if s.databaseRestore {
-		s.mu.Unlock()
-		return nil, ErrDatabaseRestoreInProgress
-	}
 	if s.aborting[id] {
 		s.mu.Unlock()
 		return nil, ErrJobAbortInProgress
 	}
-	existing, err := s.store.Get(ctx, id)
+	if s.resuming[id] {
+		s.mu.Unlock()
+		return nil, ErrJobResumeInProgress
+	}
+	existing, entry, err := s.resumableJobLocked(ctx, id)
 	if err != nil {
 		s.mu.Unlock()
 		return nil, err
 	}
-	if !existing.Resumable {
+
+	// An interrupted job is terminal, so getJobLog does not follow it; once
+	// the job is queued or running it does. A run that never closed its log
+	// (the daemon stopped mid-job) is repaired here, before that, because
+	// the repair swaps the file a follower would already have open. The
+	// repair decodes the whole log and may rewrite it, so it runs outside
+	// s.mu with id in s.resuming (which refuses a second Resume, a Cancel
+	// and a database restore), and every precondition is checked again
+	// once s.mu is back. This is the only path from interrupted back to
+	// queued or running.
+	if s.logs != nil {
+		s.resuming[id] = true
 		s.mu.Unlock()
-		return nil, ErrJobNotResumable
-	}
-	if existing.Status != StatusInterrupted {
-		s.mu.Unlock()
-		return nil, ErrJobNotInterrupted
-	}
-	if _, ok := s.running[id]; ok {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("%w: job %s", ErrJobAlreadyRunning, id)
-	}
-	entry, ok := s.registry.lookup(existing.Type)
-	if !ok {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("%w: %s", ErrJobTypeNotRegistered, existing.Type)
-	}
-	if existing.Type == TypeDiskUpgradeData {
-		if !s.maintenance {
+		s.sealLogForResume(id)
+		s.mu.Lock()
+		delete(s.resuming, id)
+		existing, entry, err = s.resumableJobLocked(ctx, id)
+		if err != nil {
 			s.mu.Unlock()
-			return nil, ErrArrayNotStopped
+			return nil, err
 		}
-	} else if s.maintenance {
-		s.mu.Unlock()
-		return nil, ErrMaintenanceMode
-	}
-	if s.batteryHold && isBatteryHeldType(existing.Type) {
-		s.mu.Unlock()
-		return nil, ErrOnBattery
 	}
 
 	cancellable := entry.cancellable
@@ -793,17 +805,6 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 	existing.ErrorCode = ""
 	existing.ErrorMessage = ""
 
-	// An interrupted job is terminal, so getJobLog does not follow it; once
-	// the job is queued or running it does. A run that never closed its log
-	// (the daemon stopped mid-job) is repaired here, before that, because
-	// the repair swaps the file a follower would already have open. This
-	// is the only path from interrupted back to queued or running.
-	if s.logs != nil {
-		if err := s.logs.Seal(id); err != nil {
-			log.Printf("job: repairing the log of job %s before it resumes: %v", id, err)
-		}
-	}
-
 	if err := s.store.UpdateStatus(ctx, id, existing.Status, existing.Progress, "", "", existing.StartedAt, existing.FinishedAt); err != nil {
 		s.mu.Unlock()
 		return nil, fmt.Errorf("job: resuming job %s: %w", id, err)
@@ -819,6 +820,72 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 
 	s.hub.Publish(&snapshot)
 	return &snapshot, nil
+}
+
+type resumeInProgressError struct{}
+
+func (resumeInProgressError) Error() string {
+	return "job: a resume of this job is already running"
+}
+
+func (resumeInProgressError) Is(target error) bool { return target == ErrJobAbortInProgress }
+
+// resumableJobLocked reads id's row and decides whether Resume may start
+// it now: every refusal Resume owns except the per-job in-flight markers.
+// The caller holds s.mu.
+func (s *Scheduler) resumableJobLocked(ctx context.Context, id string) (*Job, registryEntry, error) {
+	if s.databaseRestore {
+		return nil, registryEntry{}, ErrDatabaseRestoreInProgress
+	}
+	existing, err := s.store.Get(ctx, id)
+	if err != nil {
+		return nil, registryEntry{}, err
+	}
+	if !existing.Resumable {
+		return nil, registryEntry{}, ErrJobNotResumable
+	}
+	if existing.Status != StatusInterrupted {
+		return nil, registryEntry{}, ErrJobNotInterrupted
+	}
+	if _, ok := s.running[id]; ok {
+		return nil, registryEntry{}, fmt.Errorf("%w: job %s", ErrJobAlreadyRunning, id)
+	}
+	entry, ok := s.registry.lookup(existing.Type)
+	if !ok {
+		return nil, registryEntry{}, fmt.Errorf("%w: %s", ErrJobTypeNotRegistered, existing.Type)
+	}
+	if existing.Type == TypeDiskUpgradeData {
+		if !s.maintenance {
+			return nil, registryEntry{}, ErrArrayNotStopped
+		}
+	} else if s.maintenance {
+		return nil, registryEntry{}, ErrMaintenanceMode
+	}
+	if s.batteryHold && isBatteryHeldType(existing.Type) {
+		return nil, registryEntry{}, ErrOnBattery
+	}
+	return existing, entry, nil
+}
+
+// sealLogForResume repairs id's log for Resume, outside s.mu. A repair that
+// fails is logged and Resume continues, as before. Should Seal panic, the
+// caller never gets to clear s.resuming[id], so it is cleared here.
+func (s *Scheduler) sealLogForResume(id string) {
+	sealed := false
+	defer func() {
+		if !sealed {
+			s.mu.Lock()
+			delete(s.resuming, id)
+			s.mu.Unlock()
+		}
+	}()
+	if s.beforeSealHook != nil {
+		s.beforeSealHook(id)
+	}
+	if err := s.logs.Seal(id); err != nil {
+		log.Printf("job: repairing the log of job %s before it resumes: %v", id, err)
+	}
+	sealed = true
 }
 
 // persistMaintenanceLocked writes maintenance/arrayStopped to the
@@ -1111,7 +1178,8 @@ func (s *Scheduler) InMaintenance() bool {
 // doc 10 §1, #402): it refuses with ErrDatabaseRestoreInProgress if
 // another restore already holds it, and with ErrJobsActiveForRestore if
 // any job is currently queued or running, or if any job's Cancel abort is
-// still running (s.aborting non-empty) — checked under s.mu, so a job
+// still running (s.aborting non-empty) or any Resume is still repairing
+// its job's log (s.resuming non-empty) — checked under s.mu, so a job
 // whose Submit already completed (its row persisted) cannot be missed,
 // and no further Submit, Resume or Cancel can land once this returns,
 // since each takes the same lock and checks the same flag. Refusing while
@@ -1128,7 +1196,7 @@ func (s *Scheduler) BeginDatabaseRestore(ctx context.Context) (func(), error) {
 	if s.databaseRestore {
 		return nil, ErrDatabaseRestoreInProgress
 	}
-	if len(s.aborting) > 0 {
+	if len(s.aborting) > 0 || len(s.resuming) > 0 {
 		return nil, ErrJobsActiveForRestore
 	}
 	active, err := s.store.ListActive(ctx)
