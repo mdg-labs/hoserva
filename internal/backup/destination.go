@@ -65,7 +65,10 @@ type Destination struct {
 
 	LastSuccessfulBackupAt *time.Time
 	StaleAlertedAt         *time.Time
-	CreatedAt              time.Time
+	// EnabledAt is when the destination was last switched from disabled
+	// to enabled; nil until it first was.
+	EnabledAt *time.Time
+	CreatedAt time.Time
 }
 
 func (d Destination) isRemote() bool {

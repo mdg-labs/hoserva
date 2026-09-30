@@ -2629,6 +2629,55 @@ var contractCases = []contractCase{
 		},
 	},
 	{
+		op:   "UpdateBackupDestination",
+		name: "valid",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{
+				Enabled:   apiv1.NewOptBool(false),
+				Retention: apiv1.NewOptBackupRetention(apiv1.BackupRetention{Daily: 3, Weekly: 0, Monthly: 1}),
+			}, apiv1.UpdateBackupDestinationParams{DestinationId: "boot"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateBackupDestination",
+		name: "unknown_id",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{Enabled: apiv1.NewOptBool(false)}, apiv1.UpdateBackupDestinationParams{DestinationId: "nope"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateBackupDestination",
+		name: "retention_keeps_nothing",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{
+				Retention: apiv1.NewOptBackupRetention(apiv1.BackupRetention{}),
+			}, apiv1.UpdateBackupDestinationParams{DestinationId: "boot"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateBackupDestination",
+		name: "retention_over_the_bound",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{
+				Retention: apiv1.NewOptBackupRetention(apiv1.BackupRetention{Daily: 1001}),
+			}, apiv1.UpdateBackupDestinationParams{DestinationId: "boot"})
+			return err
+		},
+	},
+	{
+		op:   "UpdateBackupDestination",
+		name: "unknown_id_with_bad_retention",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{
+				Retention: apiv1.NewOptBackupRetention(apiv1.BackupRetention{}),
+			}, apiv1.UpdateBackupDestinationParams{DestinationId: "nope"})
+			return err
+		},
+	},
+	{
 		op:   "TestBackupDestination",
 		name: "valid",
 		run: func(ctx context.Context, h apiv1.Handler) error {

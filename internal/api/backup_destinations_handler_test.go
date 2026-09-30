@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/store"
 )
 
 // newDestinationHandler builds a Handler whose backup.Service persists
@@ -326,4 +328,241 @@ func TestSeedDestinations_AFailedSeedLeavesNothingAndARetrySeedsEveryDefault(t *
 	if dests, _ = svc.ListDestinations(ctx); len(dests) != 2 {
 		t.Fatalf("a seed over existing destinations changed them: %+v", dests)
 	}
+}
+
+func TestBackupDestinations_UpdateChangesEnabledAndRetentionInPlace(t *testing.T) {
+	ctx := context.Background()
+	h, svc, _ := newDestinationHandler(t, true)
+	created, err := h.CreateBackupDestination(ctx, s3Body())
+	if err != nil {
+		t.Fatal(err)
+	}
+	success := time.Date(2026, 9, 20, 3, 0, 0, 0, time.UTC)
+	if err := svc.Store.RecordBackupSuccess(ctx, created.ID, success); err != nil {
+		t.Fatal(err)
+	}
+
+	params := apiv1.UpdateBackupDestinationParams{DestinationId: created.ID}
+	got, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{
+		Enabled:   apiv1.NewOptBool(false),
+		Retention: apiv1.NewOptBackupRetention(apiv1.BackupRetention{Daily: 3, Weekly: 0, Monthly: 2}),
+	}, params)
+	if err != nil {
+		t.Fatalf("UpdateBackupDestination: %v", err)
+	}
+	if got.ID != created.ID || got.Enabled || got.Retention != (apiv1.BackupRetention{Daily: 3, Monthly: 2}) {
+		t.Fatalf("updated = %+v, want the same destination disabled with retention 3/0/2", got)
+	}
+	if !got.HasSecrets || !got.LastSuccessfulBackupAt.Set || !got.LastSuccessfulBackupAt.Value.Equal(success) || !got.Encrypt || got.Path != created.Path {
+		t.Fatalf("updated = %+v, want credentials, last success, path and encryption kept", got)
+	}
+
+	list, err := h.ListBackupDestinations(ctx)
+	if err != nil || len(list.Destinations) != 1 || list.Destinations[0].Enabled || list.Destinations[0].Retention.Daily != 3 {
+		t.Fatalf("list after update = %+v, %v", list, err)
+	}
+
+	back, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{Enabled: apiv1.NewOptBool(true)}, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !back.Enabled || back.Retention.Daily != 3 || back.Retention.Monthly != 2 {
+		t.Fatalf("enabled-only update = %+v, want the retention left alone", back)
+	}
+	noop, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{}, params)
+	if err != nil || !noop.Enabled || noop.Retention.Daily != 3 {
+		t.Fatalf("an empty update = %+v, %v, want the destination unchanged", noop, err)
+	}
+}
+
+func TestBackupDestinations_UpdateRefusals(t *testing.T) {
+	ctx := context.Background()
+	h, _, _ := newDestinationHandler(t, true)
+	created, err := h.CreateBackupDestination(ctx, s3Body())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{Enabled: apiv1.NewOptBool(true)}, apiv1.UpdateBackupDestinationParams{DestinationId: "nope"})
+	if ae := apiError(t, h, err); ae.StatusCode != 404 || ae.Response.Code != "backup_destination_not_found" {
+		t.Fatalf("unknown id = %d %q, want 404 backup_destination_not_found", ae.StatusCode, ae.Response.Code)
+	}
+
+	for name, r := range map[string]apiv1.BackupRetention{
+		"none kept":       {},
+		"over the bound":  {Daily: 1001},
+		"negative weekly": {Daily: 1, Weekly: -1},
+	} {
+		_, err = h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{
+			Enabled:   apiv1.NewOptBool(false),
+			Retention: apiv1.NewOptBackupRetention(r),
+		}, apiv1.UpdateBackupDestinationParams{DestinationId: created.ID})
+		if ae := apiError(t, h, err); ae.StatusCode != 400 || ae.Response.Code != "backup_destination_invalid" {
+			t.Fatalf("%s = %d %q, want 400 backup_destination_invalid", name, ae.StatusCode, ae.Response.Code)
+		}
+	}
+	list, _ := h.ListBackupDestinations(ctx)
+	if !list.Destinations[0].Enabled || list.Destinations[0].Retention.Daily != backup.DefaultRetentionDaily {
+		t.Fatalf("a refused update changed the destination: %+v", list.Destinations[0])
+	}
+
+	nh := &api.Handler{}
+	_, err = nh.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{}, apiv1.UpdateBackupDestinationParams{DestinationId: created.ID})
+	if ae := apiError(t, nh, err); ae.StatusCode != 501 {
+		t.Fatalf("without a backup service = %d, want 501", ae.StatusCode)
+	}
+}
+
+func TestBackupDestinations_UpdateReenableRestartsStaleness(t *testing.T) {
+	ctx := context.Background()
+	h, svc, _ := newDestinationHandler(t, true)
+	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
+	if err := svc.Store.CreateDestination(ctx, backup.Destination{ID: "paused", Name: "Paused", Type: backup.TypeLocal, Path: "/mnt/disks/paused", Enabled: false, CreatedAt: old.Add(-24 * time.Hour), LastSuccessfulBackupAt: &old, Retention: backup.Retention{Daily: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	params := apiv1.UpdateBackupDestinationParams{DestinationId: "paused"}
+
+	got, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{Enabled: apiv1.NewOptBool(true)}, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Stale {
+		t.Fatal("a destination switched back on after a week was reported stale at once")
+	}
+	if _, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{Enabled: apiv1.NewOptBool(false)}, params); err != nil {
+		t.Fatal(err)
+	}
+	again, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{Enabled: apiv1.NewOptBool(true)}, params)
+	if err != nil || again.Stale {
+		t.Fatalf("second re-enable = %+v, %v", again, err)
+	}
+}
+
+func TestBackupDestinationStore_UpdateTouchesOnlyTheGivenFields(t *testing.T) {
+	ctx := context.Background()
+	st := api.NewBackupDestinationStore(openTestDB(t))
+	created := time.Date(2026, 9, 20, 3, 0, 0, 0, time.UTC)
+	if err := st.CreateDestination(ctx, backup.Destination{ID: "d", Name: "D", Type: backup.TypeLocal, Path: "/d", Enabled: false, CreatedAt: created, Retention: backup.Retention{Daily: 7, Weekly: 4, Monthly: 6}}); err != nil {
+		t.Fatal(err)
+	}
+	alerted := created.Add(72 * time.Hour)
+	if err := st.MarkStaleAlerted(ctx, "d", nil, alerted); err != nil {
+		t.Fatal(err)
+	}
+	at := created.Add(200 * time.Hour)
+
+	enabled := true
+	if err := st.UpdateDestination(ctx, "d", backup.DestinationUpdate{Enabled: &enabled}, at); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.GetDestination(ctx, "d")
+	if !got.Enabled || got.Retention != (backup.Retention{Daily: 7, Weekly: 4, Monthly: 6}) {
+		t.Fatalf("after an enabled-only update: %+v, want the retention untouched", got)
+	}
+	if got.EnabledAt == nil || !got.EnabledAt.Equal(at) || got.StaleAlertedAt != nil {
+		t.Fatalf("after a re-enable: %+v, want enabledAt set and the stale alert cleared", got)
+	}
+
+	if err := st.MarkStaleAlerted(ctx, "d", nil, alerted); err != nil {
+		t.Fatal(err)
+	}
+	ret := backup.Retention{Daily: 1, Weekly: 1, Monthly: 1}
+	if err := st.UpdateDestination(ctx, "d", backup.DestinationUpdate{Retention: &ret, Enabled: &enabled}, at.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.GetDestination(ctx, "d")
+	if got.Retention != ret || !got.EnabledAt.Equal(at) || got.StaleAlertedAt == nil {
+		t.Fatalf("after enabling an enabled destination: %+v, want the clock and alert untouched", got)
+	}
+
+	if err := st.UpdateDestination(ctx, "nope", backup.DestinationUpdate{Enabled: &enabled}, at); !errors.Is(err, backup.ErrDestinationNotFound) {
+		t.Fatalf("UpdateDestination(unknown) = %v, want ErrDestinationNotFound", err)
+	}
+	if err := st.DeleteDestination(ctx, "d"); err != nil {
+		t.Fatalf("deleting a destination that has a re-enable record: %v", err)
+	}
+	if err := st.CreateDestination(ctx, backup.Destination{ID: "d", Name: "D", Type: backup.TypeLocal, Path: "/d", Enabled: true, CreatedAt: created}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.GetDestination(ctx, "d"); got.EnabledAt != nil {
+		t.Fatalf("a recreated destination inherited enabledAt %v", got.EnabledAt)
+	}
+}
+
+// A pooled connection from store.DSN has foreign_keys off, so the schema's
+// ON DELETE CASCADE cannot be what removes a re-enable record.
+func TestBackupDestinationStore_DeleteLeavesNoReenableRecordWithForeignKeysOff(t *testing.T) {
+	created := time.Date(2026, 9, 20, 3, 0, 0, 0, time.UTC)
+	at := created.Add(200 * time.Hour)
+	enabled := true
+
+	newReenabled := func(t *testing.T, id string) (*api.BackupDestinationStore, *sql.DB) {
+		t.Helper()
+		ctx := context.Background()
+		db := openTestDB(t)
+		db.SetMaxOpenConns(1)
+		if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+			t.Fatal(err)
+		}
+		var fk int
+		if err := db.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk); err != nil || fk != 0 {
+			t.Fatalf("foreign_keys = %d, %v; the test needs it off", fk, err)
+		}
+		st := api.NewBackupDestinationStore(db)
+		d := backup.Destination{ID: id, Name: "D", Type: backup.TypeLocal, Path: "/d", Enabled: false, CreatedAt: created}
+		if strings.HasPrefix(id, "external:") {
+			label := strings.TrimPrefix(id, "external:")
+			ext := store.ExternalDisk{Label: label, Device: "/dev/sde", Filesystem: "xfs", FSUUID: "uuid-" + label, Mountpoint: "/mnt/disks/" + label}
+			if err := st.PutExternalDisk(ctx, ext, &d); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := st.CreateDestination(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.UpdateDestination(ctx, id, backup.DestinationUpdate{Enabled: &enabled}, at); err != nil {
+			t.Fatal(err)
+		}
+		return st, db
+	}
+	assertClean := func(t *testing.T, db *sql.DB) {
+		t.Helper()
+		ctx := context.Background()
+		var orphans int
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM backup_destination_enabled`).Scan(&orphans); err != nil {
+			t.Fatal(err)
+		}
+		if orphans != 0 {
+			t.Fatalf("%d backup_destination_enabled rows left after the destination was deleted", orphans)
+		}
+		rows, err := db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = rows.Close() }()
+		if rows.Next() {
+			t.Fatal("foreign_key_check reports a violation after the delete")
+		}
+	}
+
+	t.Run("DeleteDestination", func(t *testing.T) {
+		st, db := newReenabled(t, "d")
+		if err := st.DeleteDestination(context.Background(), "d"); err != nil {
+			t.Fatal(err)
+		}
+		assertClean(t, db)
+	})
+	t.Run("DeleteDestination of an external disk's", func(t *testing.T) {
+		st, db := newReenabled(t, "external:usb")
+		if err := st.DeleteDestination(context.Background(), "external:usb"); err != nil {
+			t.Fatal(err)
+		}
+		assertClean(t, db)
+	})
+	t.Run("SetExternalDestination off", func(t *testing.T) {
+		st, db := newReenabled(t, "external:usb")
+		if err := st.SetExternalDestination(context.Background(), "usb", nil); err != nil {
+			t.Fatal(err)
+		}
+		assertClean(t, db)
+	})
 }

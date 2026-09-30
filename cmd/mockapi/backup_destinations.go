@@ -121,6 +121,43 @@ func (h *handler) CreateBackupDestination(ctx context.Context, req *apiv1.Create
 	return &out, nil
 }
 
+// UpdateBackupDestination validates the retention with the same
+// backup.ValidateRetention production runs, before it looks the id up, and
+// restarts the staleness clock of a destination switched back on.
+func (h *handler) UpdateBackupDestination(ctx context.Context, req *apiv1.UpdateBackupDestinationRequest, params apiv1.UpdateBackupDestinationParams) (*apiv1.BackupDestination, error) {
+	var retention *backup.Retention
+	if v, ok := req.Retention.Get(); ok {
+		r := backup.Retention{Daily: int(v.Daily), Weekly: int(v.Weekly), Monthly: int(v.Monthly)}
+		if err := backup.ValidateRetention(r); err != nil {
+			return nil, mapMockBackupDestinationError(err)
+		}
+		retention = &r
+	}
+
+	h.backupMu.Lock()
+	defer h.backupMu.Unlock()
+	for i := range h.backupDestinations {
+		d := &h.backupDestinations[i]
+		if d.ID != params.DestinationId {
+			continue
+		}
+		if v, ok := req.Enabled.Get(); ok {
+			if v && !d.Enabled {
+				now := time.Now().UTC()
+				d.EnabledAt = &now
+				d.StaleAlertedAt = nil
+			}
+			d.Enabled = v
+		}
+		if retention != nil {
+			d.Retention = *retention
+		}
+		out := mockBackupDestinationToAPI(*d, time.Now().UTC())
+		return &out, nil
+	}
+	return nil, &mockError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
+}
+
 func (h *handler) DeleteBackupDestination(ctx context.Context, params apiv1.DeleteBackupDestinationParams) error {
 	h.backupMu.Lock()
 	removed := h.removeBackupDestinationLocked(params.DestinationId)

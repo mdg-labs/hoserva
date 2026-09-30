@@ -128,6 +128,7 @@ const (
 	StopArrayOperation                      OperationName = "StopArray"
 	TestBackupDestinationOperation          OperationName = "TestBackupDestination"
 	UnlockUserOperation                     OperationName = "UnlockUser"
+	UpdateBackupDestinationOperation        OperationName = "UpdateBackupDestination"
 	UpdateExternalDiskOperation             OperationName = "UpdateExternalDisk"
 	UpdateGeneralSettingsOperation          OperationName = "UpdateGeneralSettings"
 	UpdateMaintenanceChainScheduleOperation OperationName = "UpdateMaintenanceChainSchedule"

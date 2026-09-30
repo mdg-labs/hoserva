@@ -94,6 +94,7 @@ var (
 	}
 	rn38AllowedHeaders = map[string]string{
 		"DELETE": "Authorization",
+		"PATCH":  "Authorization,Content-Type",
 	}
 	rn165AllowedHeaders = map[string]string{
 		"POST": "Authorization",
@@ -1365,12 +1366,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 								s.handleDeleteBackupDestinationRequest([1]string{
 									args[0],
 								}, elemIsEscaped, w, r)
+							case "PATCH":
+								s.handleUpdateBackupDestinationRequest([1]string{
+									args[0],
+								}, elemIsEscaped, w, r)
 							default:
 								s.notAllowed(w, r, notAllowedParams{
-									allowedMethods: "DELETE",
+									allowedMethods: "DELETE,PATCH",
 									allowedHeaders: rn38AllowedHeaders,
 									acceptPost:     "",
-									acceptPatch:    "",
+									acceptPatch:    "application/json",
 								})
 							}
 
@@ -5230,6 +5235,15 @@ func (s *Server) FindPath(method string, u *url.URL) (r Route, _ bool) {
 								r.name = DeleteBackupDestinationOperation
 								r.summary = "Remove a backup destination"
 								r.operationID = "deleteBackupDestination"
+								r.operationGroup = ""
+								r.pathPattern = "/backup/destinations/{destinationId}"
+								r.args = args
+								r.count = 1
+								return r, true
+							case "PATCH":
+								r.name = UpdateBackupDestinationOperation
+								r.summary = "Change a backup destination's enabled flag or retention"
+								r.operationID = "updateBackupDestination"
 								r.operationGroup = ""
 								r.pathPattern = "/backup/destinations/{destinationId}"
 								r.args = args

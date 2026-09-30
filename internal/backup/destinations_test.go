@@ -1020,3 +1020,177 @@ func TestRetention_LegacyArchivesArePrunedOnlyOnTheDefaultDestinations(t *testin
 		})
 	}
 }
+
+func TestUpdateDestination_ChangesEnabledAndRetentionAndKeepsTheRest(t *testing.T) {
+	rig := newRemoteRig(t)
+	ctx := context.Background()
+	remote, err := rig.svc.AddDestination(ctx, s3Request())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.store.RecordBackupSuccess(ctx, remote.ID, rig.now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := rig.svc.UpdateDestination(ctx, remote.ID, DestinationUpdate{
+		Enabled:   boolPtr(false),
+		Retention: &Retention{Daily: 3, Weekly: 0, Monthly: 1},
+	})
+	if err != nil {
+		t.Fatalf("UpdateDestination: %v", err)
+	}
+	if got.Enabled || got.Retention != (Retention{Daily: 3, Monthly: 1}) {
+		t.Fatalf("updated = %+v, want disabled with retention 3/0/1", got)
+	}
+	if len(got.SealedSecrets) == 0 || got.LastSuccessfulBackupAt == nil || got.Name != remote.Name || got.Path != remote.Path || !got.Encrypt {
+		t.Fatalf("updated = %+v, want credentials, last success, name, path and encryption kept", got)
+	}
+
+	only, err := rig.svc.UpdateDestination(ctx, remote.ID, DestinationUpdate{Enabled: boolPtr(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !only.Enabled || only.Retention != (Retention{Daily: 3, Monthly: 1}) {
+		t.Fatalf("enabled-only update = %+v, want the retention kept", only)
+	}
+}
+
+func TestUpdateDestination_RefusesWhatCreateRefuses(t *testing.T) {
+	rig := newRemoteRig(t)
+	ctx := context.Background()
+	remote, err := rig.svc.AddDestination(ctx, s3Request())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, r := range map[string]Retention{
+		"all zero":         {},
+		"negative":         {Daily: -1, Weekly: 1},
+		"daily too high":   {Daily: 1001},
+		"weekly too high":  {Weekly: 1001},
+		"monthly too high": {Monthly: 1001, Daily: 1},
+	} {
+		_, err := rig.svc.UpdateDestination(ctx, remote.ID, DestinationUpdate{Enabled: boolPtr(false), Retention: &r})
+		if !errors.Is(err, ErrInvalidDestination) {
+			t.Fatalf("%s: err = %v, want ErrInvalidDestination", name, err)
+		}
+	}
+	after, _ := rig.store.GetDestination(ctx, remote.ID)
+	if !after.Enabled || after.Retention != remote.Retention {
+		t.Fatalf("a refused update changed the destination: %+v", after)
+	}
+
+	_, err = rig.svc.UpdateDestination(ctx, "nope", DestinationUpdate{Enabled: boolPtr(false)})
+	if !errors.Is(err, ErrDestinationNotFound) {
+		t.Fatalf("unknown id: err = %v, want ErrDestinationNotFound", err)
+	}
+}
+
+func TestUpdateDestination_TheNextRunUsesTheNewValuesAndKeepsEveryArchive(t *testing.T) {
+	rig := newRemoteRig(t)
+	ctx := context.Background()
+	dir := filepath.Join(rig.root, "kept")
+	local, err := rig.svc.AddDestination(ctx, NewDestination{Name: "Local", Type: TypeLocal, Path: dir, Retention: &Retention{Daily: 10}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		day := rig.now.AddDate(0, 0, -i)
+		name := fmt.Sprintf("hoserva-config-%s-%s.tar.zst", rig.svc.installationID(), day.Format("2006-01-02T15-04-05"))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("old"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(filepath.Join(dir, name), day, day); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archives := func() int {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(entries)
+	}
+
+	if _, err := rig.svc.UpdateDestination(ctx, local.ID, DestinationUpdate{Enabled: boolPtr(false)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.svc.Run(ctx); err != nil {
+		t.Fatalf("Run with the only destination disabled: %v", err)
+	}
+	if n := archives(); n != 3 {
+		t.Fatalf("archives = %d after disabling and a run, want the 3 already there and nothing written", n)
+	}
+
+	if _, err := rig.svc.UpdateDestination(ctx, local.ID, DestinationUpdate{Enabled: boolPtr(true), Retention: &Retention{Daily: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.svc.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if n := archives(); n != 2 {
+		t.Fatalf("archives = %d, want the new one and the newest old one under the new retention", n)
+	}
+}
+
+func TestUpdateDestination_ReenablingRestartsTheStalenessClock(t *testing.T) {
+	rig := newRemoteRig(t)
+	ctx := context.Background()
+	created := rig.now.Add(-30 * 24 * time.Hour)
+	old := rig.now.Add(-8 * 24 * time.Hour)
+	if err := rig.store.CreateDestination(ctx, Destination{ID: "paused", Name: "Paused", Type: TypeLocal, Path: "/a", Enabled: false, CreatedAt: created, LastSuccessfulBackupAt: &old}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.store.CreateDestination(ctx, Destination{ID: "running", Name: "Running", Type: TypeLocal, Path: "/b", Enabled: true, CreatedAt: created, LastSuccessfulBackupAt: &old}); err != nil {
+		t.Fatal(err)
+	}
+	alerted := []string{}
+	alert := func(_ context.Context, name string, _ *time.Time) error {
+		alerted = append(alerted, name)
+		return nil
+	}
+
+	if _, err := rig.svc.UpdateDestination(ctx, "paused", DestinationUpdate{Enabled: boolPtr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rig.svc.CheckStaleDestinations(ctx, rig.now.Add(time.Minute), alert); err != nil {
+		t.Fatal(err)
+	}
+	if len(alerted) != 1 || alerted[0] != "Running" {
+		t.Fatalf("alerted = %v, want only the destination that was never paused", alerted)
+	}
+	if err := rig.svc.CheckStaleDestinations(ctx, rig.now.Add(49*time.Hour), alert); err != nil {
+		t.Fatal(err)
+	}
+	if !contains(alerted, "Paused") {
+		t.Fatalf("alerted = %v, want Paused once 48 hours have passed since it was switched on", alerted)
+	}
+
+	got, _ := rig.store.GetDestination(ctx, "running")
+	if _, err := rig.svc.UpdateDestination(ctx, "running", DestinationUpdate{Enabled: boolPtr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := rig.store.GetDestination(ctx, "running")
+	if after.EnabledAt != nil || (got.StaleAlertedAt == nil) != (after.StaleAlertedAt == nil) {
+		t.Fatalf("enabling an already enabled destination changed its staleness state: %+v", after)
+	}
+}
+
+func TestIsStale_CountsFromTheLaterOfLastSuccessAndReenable(t *testing.T) {
+	now := time.Date(2026, 9, 14, 3, 0, 0, 0, time.UTC)
+	old := now.Add(-72 * time.Hour)
+	recent := now.Add(-time.Hour)
+	for name, d := range map[string]Destination{
+		"success only":        {Enabled: true, CreatedAt: old, LastSuccessfulBackupAt: &old},
+		"re-enabled":          {Enabled: true, CreatedAt: old, LastSuccessfulBackupAt: &old, EnabledAt: &recent},
+		"re-enabled no runs":  {Enabled: true, CreatedAt: old, EnabledAt: &recent},
+		"success after start": {Enabled: true, CreatedAt: old, LastSuccessfulBackupAt: &recent, EnabledAt: &old},
+	} {
+		want := name == "success only"
+		if got := IsStale(d, now); got != want {
+			t.Errorf("%s: IsStale = %v, want %v", name, got, want)
+		}
+	}
+}

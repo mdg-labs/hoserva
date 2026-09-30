@@ -2951,6 +2951,38 @@ paths:
   /backup/destinations/{destinationId}:
     parameters:
       - $ref: '#/components/parameters/DestinationId'
+    patch:
+      operationId: updateBackupDestination
+      summary: Change a backup destination's enabled flag or retention
+      description: >-
+        Changes `enabled` and `retention` in place; a field left out is left
+        as it is. Its type, path, options and credentials cannot be
+        changed — remove the destination and add it again. Disabling never
+        removes an archive or the credentials, and the next backup run uses
+        the new values without a restart. Retention is bounded as in
+        `createBackupDestination` (each count 0 to 1000, at least one
+        archive kept) and, as always, applies only to archives this
+        installation wrote. Switching a disabled destination back on
+        restarts its staleness clock, so it is not reported stale until two
+        days after that. 404 `backup_destination_not_found` for an unknown
+        id; 400 `backup_destination_invalid` for a retention out of bounds.
+      tags: [backup]
+      x-hoserva-role: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBackupDestinationRequest'
+      responses:
+        "200":
+          description: The destination as it is now.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupDestination'
+        default:
+          $ref: '#/components/responses/Error'
     delete:
       operationId: deleteBackupDestination
       summary: Remove a backup destination
@@ -7466,6 +7498,14 @@ components:
           description: >-
             Opt-in for a local destination. A remote destination is always
             encrypted; sending false is refused.
+        retention:
+          $ref: '#/components/schemas/BackupRetention'
+
+    UpdateBackupDestinationRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
         retention:
           $ref: '#/components/schemas/BackupRetention'
 

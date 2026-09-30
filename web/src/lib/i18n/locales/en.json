@@ -1234,6 +1234,8 @@
         "testFailedUnknown": "The destination did not say why.",
         "testError": "Could not test {{name}}",
         "rcloneMissing": "rclone is not installed",
+        "edit": "Edit",
+        "editFor": "Edit {{name}}",
         "remove": "Remove",
         "removeFor": "Remove {{name}}",
         "removeTitle": "Remove {{name}}?",
@@ -1242,6 +1244,15 @@
         "removeConfirm": "Remove destination",
         "removeFailed": "Could not remove the destination",
         "removed": "Destination removed"
+      },
+      "editForm": {
+        "title": "Edit {{name}}",
+        "description": "Change whether backups are written here and how many archives are kept. Its type, folder or credentials cannot be changed: remove the destination and add it again.",
+        "enabledHint": "Turning a destination off keeps its archives and credentials; nothing new is written to it until you turn it back on. Turning it back on restarts the two-day stale check.",
+        "retentionHint": "How many archives to keep: the newest of each day, week and month. Only archives this Hoserva wrote are ever removed. A lower count takes effect at the next backup.",
+        "submit": "Save changes",
+        "saved": "Destination updated",
+        "failed": "Could not update the destination"
       },
       "addForm": {
         "title": "Add backup destination",

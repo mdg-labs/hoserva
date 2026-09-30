@@ -14036,6 +14036,32 @@ func (s *UPSSettings) SetRuntimeSeconds(val OptInt32) {
 // UnlockUserNoContent is response for UnlockUser operation.
 type UnlockUserNoContent struct{}
 
+// Ref: #/components/schemas/UpdateBackupDestinationRequest
+type UpdateBackupDestinationRequest struct {
+	Enabled   OptBool            `json:"enabled"`
+	Retention OptBackupRetention `json:"retention"`
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *UpdateBackupDestinationRequest) GetEnabled() OptBool {
+	return s.Enabled
+}
+
+// GetRetention returns the value of Retention.
+func (s *UpdateBackupDestinationRequest) GetRetention() OptBackupRetention {
+	return s.Retention
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *UpdateBackupDestinationRequest) SetEnabled(val OptBool) {
+	s.Enabled = val
+}
+
+// SetRetention sets the value of Retention.
+func (s *UpdateBackupDestinationRequest) SetRetention(val OptBackupRetention) {
+	s.Retention = val
+}
+
 // Release channel the update check reads from the signed index (Q67).
 // Ref: #/components/schemas/UpdateChannel
 type UpdateChannel string

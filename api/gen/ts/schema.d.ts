@@ -1706,7 +1706,11 @@ export interface paths {
         delete: operations["deleteBackupDestination"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Change a backup destination's enabled flag or retention
+         * @description Changes `enabled` and `retention` in place; a field left out is left as it is. Its type, path, options and credentials cannot be changed — remove the destination and add it again. Disabling never removes an archive or the credentials, and the next backup run uses the new values without a restart. Retention is bounded as in `createBackupDestination` (each count 0 to 1000, at least one archive kept) and, as always, applies only to archives this installation wrote. Switching a disabled destination back on restarts its staleness clock, so it is not reported stale until two days after that. 404 `backup_destination_not_found` for an unknown id; 400 `backup_destination_invalid` for a retention out of bounds.
+         */
+        patch: operations["updateBackupDestination"];
         trace?: never;
     };
     "/backup/destinations/{destinationId}/test": {
@@ -4025,6 +4029,10 @@ export interface components {
             enabled?: boolean;
             /** @description Opt-in for a local destination. A remote destination is always encrypted; sending false is refused. */
             encrypt?: boolean;
+            retention?: components["schemas"]["BackupRetention"];
+        };
+        UpdateBackupDestinationRequest: {
+            enabled?: boolean;
             retention?: components["schemas"]["BackupRetention"];
         };
         BackupDestinationTestResult: {
@@ -6621,6 +6629,33 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateBackupDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                destinationId: components["parameters"]["DestinationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateBackupDestinationRequest"];
+            };
+        };
+        responses: {
+            /** @description The destination as it is now. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupDestination"];
+                };
             };
             default: components["responses"]["Error"];
         };

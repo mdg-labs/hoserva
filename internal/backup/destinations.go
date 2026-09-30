@@ -56,6 +56,20 @@ type DestinationStore interface {
 	// returns ErrDestinationNotFound when the id is unknown or the time
 	// has moved on.
 	MarkStaleAlerted(ctx context.Context, id string, observed *time.Time, at time.Time) error
+	// UpdateDestination changes only the fields u sets, in one
+	// transaction, and returns ErrDestinationNotFound for an unknown id.
+	// Switching a disabled destination on records at as its EnabledAt and
+	// clears its stale-alert marker, so the staleness it was paused with
+	// is not carried over; any other update leaves both alone.
+	UpdateDestination(ctx context.Context, id string, u DestinationUpdate, at time.Time) error
+}
+
+// DestinationUpdate changes a destination in place. A nil field is left
+// as it is; type, path, options and credentials are never changed (remove
+// and re-add).
+type DestinationUpdate struct {
+	Enabled   *bool
+	Retention *Retention
 }
 
 // backendSpec describes what one remote destination type accepts, in
@@ -114,6 +128,18 @@ func invalidf(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidDestination, fmt.Sprintf(format, args...))
 }
 
+// ValidateRetention is the bound a destination's retention must meet, when
+// it is created and when it is changed.
+func ValidateRetention(r Retention) error {
+	if r.Daily < 0 || r.Weekly < 0 || r.Monthly < 0 || r.Daily > 1000 || r.Weekly > 1000 || r.Monthly > 1000 {
+		return invalidf("retention counts must be between 0 and 1000")
+	}
+	if r.Daily+r.Weekly+r.Monthly == 0 {
+		return invalidf("retention must keep at least one archive")
+	}
+	return nil
+}
+
 func cleanValue(field, v string) error {
 	if len(v) > 1024 {
 		return invalidf("%s is too long", field)
@@ -160,14 +186,10 @@ func PrepareDestination(nd NewDestination, existing []Destination, hasPassphrase
 		dest.Enabled = *nd.Enabled
 	}
 	if nd.Retention != nil {
-		r := *nd.Retention
-		if r.Daily < 0 || r.Weekly < 0 || r.Monthly < 0 || r.Daily > 1000 || r.Weekly > 1000 || r.Monthly > 1000 {
-			return Destination{}, invalidf("retention counts must be between 0 and 1000")
+		if err := ValidateRetention(*nd.Retention); err != nil {
+			return Destination{}, err
 		}
-		if r.Daily+r.Weekly+r.Monthly == 0 {
-			return Destination{}, invalidf("retention must keep at least one archive")
-		}
-		dest.Retention = r
+		dest.Retention = *nd.Retention
 	}
 
 	switch nd.Type {
@@ -374,8 +396,8 @@ func sameTarget(a, b Destination) bool {
 
 // IsStale reports whether an enabled destination has gone StaleAfter
 // without a successful backup, counted from its creation until its first
-// one. It reads only stored timestamps — it never looks at the
-// destination itself.
+// one, or from the last time it was switched on if that is later. It reads
+// only stored timestamps — it never looks at the destination itself.
 func IsStale(d Destination, now time.Time) bool {
 	if !d.Enabled {
 		return false
@@ -383,6 +405,9 @@ func IsStale(d Destination, now time.Time) bool {
 	ref := d.CreatedAt
 	if d.LastSuccessfulBackupAt != nil {
 		ref = *d.LastSuccessfulBackupAt
+	}
+	if d.EnabledAt != nil && d.EnabledAt.After(ref) {
+		ref = *d.EnabledAt
 	}
 	return now.Sub(ref) > StaleAfter
 }
@@ -537,6 +562,31 @@ func (s *Service) RemoveDestination(ctx context.Context, id string) error {
 	s.destMu.Lock()
 	defer s.destMu.Unlock()
 	return st.DeleteDestination(ctx, id)
+}
+
+// UpdateDestination changes a destination's enabled flag and retention in
+// place, validating the retention as AddDestination does before anything
+// is written. Disabling never removes an archive or the credentials, and
+// the next run reads the new values from the store. An update that sets
+// neither field changes nothing and returns the destination as it is.
+func (s *Service) UpdateDestination(ctx context.Context, id string, u DestinationUpdate) (Destination, error) {
+	st, err := s.requireStore()
+	if err != nil {
+		return Destination{}, err
+	}
+	if u.Retention != nil {
+		if err := ValidateRetention(*u.Retention); err != nil {
+			return Destination{}, err
+		}
+	}
+	s.destMu.Lock()
+	defer s.destMu.Unlock()
+	if u.Enabled != nil || u.Retention != nil {
+		if err := st.UpdateDestination(ctx, id, u, s.now()); err != nil {
+			return Destination{}, err
+		}
+	}
+	return st.GetDestination(ctx, id)
 }
 
 // StaleAlert publishes one stale-destination alert.

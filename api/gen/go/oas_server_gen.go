@@ -1221,6 +1221,19 @@ type Handler interface {
 	//
 	// POST /users/{username}/unlock
 	UnlockUser(ctx context.Context, params UnlockUserParams) error
+	// UpdateBackupDestination implements updateBackupDestination operation.
+	//
+	// Changes `enabled` and `retention` in place; a field left out is left as it is. Its type, path,
+	// options and credentials cannot be changed — remove the destination and add it again. Disabling
+	// never removes an archive or the credentials, and the next backup run uses the new values without a
+	// restart. Retention is bounded as in `createBackupDestination` (each count 0 to 1000, at least one
+	// archive kept) and, as always, applies only to archives this installation wrote. Switching a disabled
+	// destination back on restarts its staleness clock, so it is not reported stale until two days after
+	// that. 404 `backup_destination_not_found` for an unknown id; 400 `backup_destination_invalid` for a
+	// retention out of bounds.
+	//
+	// PATCH /backup/destinations/{destinationId}
+	UpdateBackupDestination(ctx context.Context, req *UpdateBackupDestinationRequest, params UpdateBackupDestinationParams) (*BackupDestination, error)
 	// UpdateExternalDisk implements updateExternalDisk operation.
 	//
 	// Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	apiv1 "github.com/mdg-labs/hoserva/api/gen/go"
 )
@@ -163,6 +164,42 @@ func TestMockTestBackupDestination_DestinationsOffTheMountedPathsAreUnaffected(t
 	for _, id := range []string{"boot", lookalike} {
 		if res := testDestination(t, h, id); !res.Success {
 			t.Fatalf("test of %q = %+v, want success: it is on neither mount", id, res)
+		}
+	}
+}
+
+func TestMockUpdateBackupDestination_ChangesInPlaceAndRestartsStaleness(t *testing.T) {
+	h, err := newHandler("healthy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	params := apiv1.UpdateBackupDestinationParams{DestinationId: "boot"}
+
+	h.backupMu.Lock()
+	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
+	for i := range h.backupDestinations {
+		if h.backupDestinations[i].ID == "boot" {
+			h.backupDestinations[i].Enabled = false
+			h.backupDestinations[i].LastSuccessfulBackupAt = &old
+		}
+	}
+	h.backupMu.Unlock()
+
+	got, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{
+		Enabled:   apiv1.NewOptBool(true),
+		Retention: apiv1.NewOptBackupRetention(apiv1.BackupRetention{Daily: 2, Weekly: 0, Monthly: 0}),
+	}, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Enabled || got.Retention.Daily != 2 || got.Stale {
+		t.Fatalf("updated = %+v, want enabled, retention 2/0/0 and not stale", got)
+	}
+	list, _ := h.ListBackupDestinations(ctx)
+	for _, d := range list.Destinations {
+		if d.ID == "boot" && (d.Retention.Daily != 2 || d.Stale) {
+			t.Fatalf("listed = %+v, want the update kept", d)
 		}
 	}
 }

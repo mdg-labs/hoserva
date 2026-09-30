@@ -110,6 +110,26 @@ func (h *Handler) CreateBackupDestination(ctx context.Context, req *apiv1.Create
 	return &out, nil
 }
 
+func (h *Handler) UpdateBackupDestination(ctx context.Context, req *apiv1.UpdateBackupDestinationRequest, params apiv1.UpdateBackupDestinationParams) (*apiv1.BackupDestination, error) {
+	svc, err := h.backupDestinations()
+	if err != nil {
+		return nil, err
+	}
+	var u backup.DestinationUpdate
+	if v, ok := req.Enabled.Get(); ok {
+		u.Enabled = &v
+	}
+	if v, ok := req.Retention.Get(); ok {
+		u.Retention = &backup.Retention{Daily: int(v.Daily), Weekly: int(v.Weekly), Monthly: int(v.Monthly)}
+	}
+	dest, err := svc.UpdateDestination(ctx, params.DestinationId, u)
+	if err != nil {
+		return nil, mapBackupDestinationError(err)
+	}
+	out := backupDestinationToAPI(dest, time.Now().UTC())
+	return &out, nil
+}
+
 func (h *Handler) DeleteBackupDestination(ctx context.Context, params apiv1.DeleteBackupDestinationParams) error {
 	svc, err := h.backupDestinations()
 	if err != nil {

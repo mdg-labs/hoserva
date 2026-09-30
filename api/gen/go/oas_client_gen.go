@@ -1242,6 +1242,19 @@ type Invoker interface {
 	//
 	// POST /users/{username}/unlock
 	UnlockUser(ctx context.Context, params UnlockUserParams) error
+	// UpdateBackupDestination invokes updateBackupDestination operation.
+	//
+	// Changes `enabled` and `retention` in place; a field left out is left as it is. Its type, path,
+	// options and credentials cannot be changed — remove the destination and add it again. Disabling
+	// never removes an archive or the credentials, and the next backup run uses the new values without a
+	// restart. Retention is bounded as in `createBackupDestination` (each count 0 to 1000, at least one
+	// archive kept) and, as always, applies only to archives this installation wrote. Switching a disabled
+	// destination back on restarts its staleness clock, so it is not reported stale until two days after
+	// that. 404 `backup_destination_not_found` for an unknown id; 400 `backup_destination_invalid` for a
+	// retention out of bounds.
+	//
+	// PATCH /backup/destinations/{destinationId}
+	UpdateBackupDestination(ctx context.Context, request *UpdateBackupDestinationRequest, params UpdateBackupDestinationParams) (*BackupDestination, error)
 	// UpdateExternalDisk invokes updateExternalDisk operation.
 	//
 	// Sets whether this disk's `/mnt/disks/<label>` mount is a local backup destination (doc 10 §1).
@@ -18171,6 +18184,159 @@ func (c *Client) sendUnlockUser(ctx context.Context, params UnlockUserParams) (r
 
 	stage = "DecodeResponse"
 	result, err := decodeUnlockUserResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// UpdateBackupDestination invokes updateBackupDestination operation.
+//
+// Changes `enabled` and `retention` in place; a field left out is left as it is. Its type, path,
+// options and credentials cannot be changed — remove the destination and add it again. Disabling
+// never removes an archive or the credentials, and the next backup run uses the new values without a
+// restart. Retention is bounded as in `createBackupDestination` (each count 0 to 1000, at least one
+// archive kept) and, as always, applies only to archives this installation wrote. Switching a disabled
+// destination back on restarts its staleness clock, so it is not reported stale until two days after
+// that. 404 `backup_destination_not_found` for an unknown id; 400 `backup_destination_invalid` for a
+// retention out of bounds.
+//
+// PATCH /backup/destinations/{destinationId}
+func (c *Client) UpdateBackupDestination(ctx context.Context, request *UpdateBackupDestinationRequest, params UpdateBackupDestinationParams) (*BackupDestination, error) {
+	res, err := c.sendUpdateBackupDestination(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendUpdateBackupDestination(ctx context.Context, request *UpdateBackupDestinationRequest, params UpdateBackupDestinationParams) (res *BackupDestination, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("updateBackupDestination"),
+		semconv.HTTPRequestMethodKey.String("PATCH"),
+		semconv.URLTemplateKey.String("/backup/destinations/{destinationId}"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, UpdateBackupDestinationOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [2]string
+	pathParts[0] = "/backup/destinations/"
+	{
+		// Encode "destinationId" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "destinationId",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.DestinationId))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PATCH", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeUpdateBackupDestinationRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, UpdateBackupDestinationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, UpdateBackupDestinationOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeUpdateBackupDestinationResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

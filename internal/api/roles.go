@@ -99,6 +99,7 @@ var operationRoles = map[apiv1.OperationName]Role{
 	apiv1.ListNotificationChannelsOperation:       RoleViewer,
 	apiv1.ListBackupDestinationsOperation:         RoleViewer,
 	apiv1.CreateBackupDestinationOperation:        RoleAdmin,
+	apiv1.UpdateBackupDestinationOperation:        RoleAdmin,
 	apiv1.DeleteBackupDestinationOperation:        RoleAdmin,
 	apiv1.TestBackupDestinationOperation:          RoleAdmin,
 	apiv1.GetRestoreDrillOperation:                RoleViewer,

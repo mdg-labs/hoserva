@@ -724,6 +724,18 @@ CREATE TABLE backup_destinations (
     created_at TEXT NOT NULL
 ) STRICT;
 
+-- The moment a backup destination was last switched from disabled to
+-- enabled (#447), one row per destination that ever was. Staleness counts
+-- from it when it is later than the destination's last success, so a
+-- destination paused for a week does not alert the minute it is switched
+-- back on. No row until the first re-enable. Deleting a destination deletes
+-- its row explicitly in the same transaction: a pooled connection has
+-- foreign_keys off, so the cascade is not a guarantee.
+CREATE TABLE backup_destination_enabled (
+    destination_id TEXT PRIMARY KEY REFERENCES backup_destinations (id) ON DELETE CASCADE,
+    enabled_at TEXT NOT NULL
+) STRICT;
+
 -- Appdata backup policy (#61, doc 10 §2): one row per container whose
 -- policy differs from the default (stopped for the backup, included in it).
 -- A container with no row uses the defaults. container is the Engine name,
