@@ -27,9 +27,12 @@ var (
 // immutable (doc 02 §1, Q69): "every mountpoint directory is made
 // immutable while empty, so a write to an unmounted path fails instead of
 // landing on the boot device." It is called when a disk's mountpoint is
-// first assigned (array setup, disk add, replace) and by the daemon's
-// idempotent pass over every slot, not on every mount/unmount cycle: the
-// immutable bit lives on the directory entry itself, which a later mount
+// first assigned (array setup, disk add, replace), by the daemon's
+// idempotent pass over every slot, and on the array stop/start path, where
+// the daemon guards each slot and the catch-all right after array stop has
+// unmounted them and again just before array start mounts them. The flag
+// survives a mount and an unmount without being set again: the immutable
+// bit lives on the directory entry itself, which a later mount
 // transparently shadows (a filesystem mount does not require, or clear,
 // its mountpoint's own flags) and a later unmount re-exposes unchanged,
 // still immutable. Calling it again on an already-immutable,
@@ -135,8 +138,9 @@ func SetImmutable(ctx context.Context, r Runner, path string, immutable bool) er
 
 // GuardMountpoint is EnsureEmptyMountpoint for a caller that may meet a
 // slot whose disk is already mounted — an idempotent pass over every slot
-// (startup, a topology rebuild) or a mount that is about to be skipped
-// anyway: a mounted path is left alone and reported as success, since the
+// (startup, a topology rebuild), a mount that is about to be skipped
+// anyway, or the array stop/start path, where a path guarded just before
+// array start may already be mounted: a mounted path is left alone and reported as success, since the
 // filesystem serving it needs no guard and chattr +i there would land on
 // the mounted filesystem's own root, not on the directory a stray write
 // would reach. Every other outcome — a non-empty directory
