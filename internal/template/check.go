@@ -3,7 +3,6 @@ package template
 import (
 	"fmt"
 	"path"
-	"regexp"
 	"sort"
 	"strings"
 )
@@ -67,22 +66,76 @@ func checkServices(t *Template) []Issue {
 	return nil
 }
 
-// interpolation matches Compose's $NAME, ${NAME} and ${NAME:-default}
-// forms; the first alternative is the $$ escape.
-var interpolation = regexp.MustCompile(`\$(?:(\$)|\{([A-Za-z_][A-Za-z0-9_]*)[^}]*\}|([A-Za-z_][A-Za-z0-9_]*))`)
-
+// references lists the variables Compose would interpolate in s: $NAME,
+// ${NAME} and ${NAME:-default}, where the default may itself interpolate.
+// $$ is the escape for a literal dollar sign.
 func references(s string) []string {
 	var out []string
-	for _, m := range interpolation.FindAllStringSubmatch(s, -1) {
+	scanReferences(s, &out)
+	return out
+}
+
+func scanReferences(s string, out *[]string) {
+	for i := 0; i < len(s); i++ {
+		if s[i] != '$' {
+			continue
+		}
+		rest := s[i+1:]
 		switch {
-		case m[1] != "":
-		case m[2] != "":
-			out = append(out, m[2])
+		case strings.HasPrefix(rest, "$"):
+			i++
+		case strings.HasPrefix(rest, "{"):
+			name := variableName(rest[1:])
+			if name == "" {
+				continue
+			}
+			*out = append(*out, name)
+			body := rest[1+len(name):]
+			end := closingBrace(body)
+			scanReferences(body[:end], out)
+			i += 2 + len(name) + end
 		default:
-			out = append(out, m[3])
+			if name := variableName(rest); name != "" {
+				*out = append(*out, name)
+				i += len(name)
+			}
 		}
 	}
-	return out
+}
+
+// variableName returns the leading [A-Za-z_][A-Za-z0-9_]* of s, or "".
+func variableName(s string) string {
+	n := 0
+	for n < len(s) {
+		c := s[n]
+		if c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || n > 0 && c >= '0' && c <= '9' {
+			n++
+			continue
+		}
+		break
+	}
+	return s[:n]
+}
+
+// closingBrace returns the index of the brace that closes a ${ whose
+// contents start at body[0], or len(body) when it is never closed.
+func closingBrace(body string) int {
+	depth := 0
+	for j := 0; j < len(body); j++ {
+		switch {
+		case strings.HasPrefix(body[j:], "$$"):
+			j++
+		case strings.HasPrefix(body[j:], "${"):
+			depth++
+			j++
+		case body[j] == '}':
+			if depth == 0 {
+				return j
+			}
+			depth--
+		}
+	}
+	return len(body)
 }
 
 // walkStrings calls fn for every string in v, with its path.
@@ -121,12 +174,41 @@ func checkReferences(t *Template) []Issue {
 		walkStrings(t.Compose[k], []string{k}, note)
 	}
 	note([]string{BlockKey, "webui"}, t.Block.WebUI)
+	// Install writes every input to the stack's .env, so a service that
+	// loads it receives them all (doc 04 §2).
+	allUsed := false
+	for _, svc := range t.services() {
+		allUsed = allUsed || loadsStackEnv(svc["env_file"])
+	}
 	for _, name := range sortedKeys(t.Block.Inputs) {
-		if t.Block.Inputs[name].Kind != KindDevice && !used[name] {
+		if t.Block.Inputs[name].Kind != KindDevice && !used[name] && !allUsed {
 			out = append(out, Issue{Path: []string{BlockKey, "inputs", name}, Message: "is declared but nothing in the template uses it"})
 		}
 	}
 	return out
+}
+
+// loadsStackEnv reports whether an env_file value, in any of Compose's
+// forms, names the stack's own .env and no other file counts.
+func loadsStackEnv(v any) bool {
+	isStackEnv := func(p any) bool {
+		s, ok := p.(string)
+		return ok && path.Clean(s) == ".env"
+	}
+	switch x := v.(type) {
+	case string:
+		return isStackEnv(x)
+	case []any:
+		for _, e := range x {
+			if m, ok := e.(map[string]any); ok {
+				e = m["path"]
+			}
+			if isStackEnv(e) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // checkPathDefaults keeps appdata on cache and media on the pool (doc 04 §7).

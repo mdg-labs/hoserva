@@ -36,7 +36,7 @@ type Block struct {
 	Icon       string           `json:"icon" yaml:"icon" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,description=File name of the icon next to compose.yaml."`
 	Docs       string           `json:"docs" yaml:"docs" jsonschema:"pattern=^https?://,description=Upstream documentation the template was written from."`
 	WebUI      string           `json:"webui,omitempty" yaml:"webui,omitempty" jsonschema:"pattern=^https?://,description=Address of the app's web interface. {host} stands for the server's address and ${INPUT} for an input."`
-	Inputs     map[string]Input `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema:"description=The only values the install form asks for. Each key is the variable name the Compose file references."`
+	Inputs     map[string]Input `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema:"description=The only values the install form asks for. Each key is a variable name. Every input except a device input must be used: referenced as ${NAME} in the Compose file or the webui address; or passed to a service through env_file: .env. A device input needs no reference."`
 }
 
 // Input is one value the install form asks for.

@@ -223,7 +223,7 @@
         ]
       },
       "type": "object",
-      "description": "The only values the install form asks for. Each key is the variable name the Compose file references.",
+      "description": "The only values the install form asks for. Each key is a variable name. Every input except a device input must be used: referenced as ${NAME} in the Compose file or the webui address; or passed to a service through env_file: .env. A device input needs no reference.",
       "propertyNames": {
         "pattern": "^[A-Z][A-Z0-9_]*$"
       }

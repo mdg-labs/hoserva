@@ -35,7 +35,17 @@ func Lint(dir string) ([]Finding, error) {
 	var out []Finding
 	found := 0
 	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if e.Type()&fs.ModeSymlink != 0 {
+			if f, ok := lintSymlink(dir, e.Name()); ok {
+				found++
+				out = append(out, f)
+			}
+			continue
+		}
+		if !e.IsDir() {
 			continue
 		}
 		found++
@@ -45,6 +55,16 @@ func Lint(dir string) ([]Finding, error) {
 		out = append(out, Finding{File: ".", Issue: Issue{Message: "no template directories found; expected <id>/" + ComposeFile}})
 	}
 	return out, nil
+}
+
+// lintSymlink reports a symbolic link that is, or may be, a template
+// directory. It is never followed: its target may lie outside the checkout.
+// A link to a plain file, such as a symlinked README, is not a template.
+func lintSymlink(dir, name string) (Finding, bool) {
+	if info, err := os.Stat(filepath.Join(dir, name)); err == nil && !info.IsDir() {
+		return Finding{}, false
+	}
+	return Finding{File: name, Issue: Issue{Message: "is a symbolic link, which is not followed; a template is a real directory <id>/" + ComposeFile}}, true
 }
 
 func lintTemplate(dir, id string) []Finding {

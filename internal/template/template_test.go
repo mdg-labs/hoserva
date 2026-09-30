@@ -139,6 +139,9 @@ func TestLintReportsMalformedTemplates(t *testing.T) {
 		{"PGID other than 100", "PGID: \"100\"", "PGID: \"10\"", "services.jellyfin.environment.PGID: must be \"100\""},
 		{"undeclared variable", "TZ: ${TZ}", "TZ: ${TZ}\n      EXTRA: ${NOT_DECLARED}", "${NOT_DECLARED}, which is not declared"},
 		{"unused input", "      - ${MEDIA}:/data/media\n", "", "x-hoserva.inputs.MEDIA: is declared but nothing"},
+		{"undeclared variable in a nested default", "TZ: ${TZ}", "TZ: ${TZ:-${NOT_DECLARED}}", "${NOT_DECLARED}, which is not declared"},
+		{"undeclared variable in a default after an escape", "TZ: ${TZ}", "TZ: ${TZ:-$$HOME/${NOT_DECLARED}}", "${NOT_DECLARED}, which is not declared"},
+		{"env_file other than the stack's .env does not use the inputs", "      - ${MEDIA}:/data/media\n", "    env_file: [other.env]\n", "x-hoserva.inputs.MEDIA: is declared but nothing"},
 		{"no services", "services:\n  jellyfin:", "services: {}\nunused:\n  jellyfin:", "a template needs at least one service"},
 	}
 	for _, tc := range cases {
@@ -216,5 +219,108 @@ func TestEveryFindingIsSortedAndStable(t *testing.T) {
 	second := lintStrings(t, dir)
 	if strings.Join(first, "\n") != strings.Join(second, "\n") {
 		t.Errorf("unstable output:\n%q\n%q", first, second)
+	}
+}
+
+func TestNestedDefaultCountsAsAUseOfTheInnerInput(t *testing.T) {
+	dir := catalogWith(t, "      - ${MEDIA}:/data/media\n", "      - ${APPDATA:-${MEDIA}}/media:/data/media\n")
+	if got := lintStrings(t, dir); len(got) != 0 {
+		t.Fatalf("an input used only inside a nested default is used, got:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+func TestReferencesParsesInterpolationForms(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want string
+	}{
+		{"${A:-${B}}", "A B"},
+		{"${A:-${B:-${C}}}/x", "A B C"},
+		{"${A:-x}/${B}", "A B"},
+		{"$A/$B", "A B"},
+		{"$$A ${B}", "B"},
+		{"${A:-$$B}", "A"},
+		{"${A:-$$}/${B}", "A B"},
+		{"${A:-${B}", "A B"},
+		{"${} $ ${1}", ""},
+	} {
+		if got := strings.Join(references(tc.in), " "); got != tc.want {
+			t.Errorf("references(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestInputsReachingAServiceOnlyThroughTheStackEnvFileAreUsed(t *testing.T) {
+	for _, tc := range []struct {
+		name, envFile string
+		clean         bool
+	}{
+		{"env_file .env as a string", "    env_file: .env\n", true},
+		{"env_file ./.env as a string", "    env_file: ./.env\n", true},
+		{"env_file .env in a list", "    env_file:\n      - .env\n", true},
+		{"env_file .env in the long form", "    env_file:\n      - path: .env\n        required: false\n", true},
+		{"env_file of another file does not count", "    env_file: other.env\n", false},
+		{"env_file of a parent directory's .env does not count", "    env_file: ../.env\n", false},
+		{"env_file .env.local does not count", "    env_file: .env.local\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := strings.Replace(readFixture(t), "    restart: unless-stopped\n", tc.envFile, 1)
+			src = strings.Replace(src, "      - ${MEDIA}:/data/media\n", "", 1)
+			got := lintStrings(t, catalogFrom(t, "jellyfin", src))
+			if tc.clean && len(got) != 0 {
+				t.Fatalf("the stack's .env carries every input, got:\n%s", strings.Join(got, "\n"))
+			}
+			if !tc.clean && !strings.Contains(strings.Join(got, "\n"), "x-hoserva.inputs.MEDIA: is declared but nothing") {
+				t.Fatalf("MEDIA is used by nothing, got:\n%s", strings.Join(got, "\n"))
+			}
+		})
+	}
+}
+
+func TestEnvFileStillHoldsReferencesToDeclaredInputs(t *testing.T) {
+	dir := catalogWith(t, "    restart: unless-stopped\n", "    env_file: .env\n    labels:\n      x: ${NOT_DECLARED}\n")
+	if got := strings.Join(lintStrings(t, dir), "\n"); !strings.Contains(got, "${NOT_DECLARED}, which is not declared") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLintReportsSymlinkedAndUnreadableEntries(t *testing.T) {
+	dir := catalogFrom(t, "jellyfin", readFixture(t))
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.Symlink("jellyfin", filepath.Join(dir, "alias")))
+	must(os.Symlink("absent", filepath.Join(dir, "dangling")))
+	must(os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o644))
+	must(os.Symlink("README.md", filepath.Join(dir, "NOTES.md")))
+	must(os.Symlink("jellyfin", filepath.Join(dir, ".hidden")))
+
+	got := lintStrings(t, dir)
+	want := []string{
+		"alias: is a symbolic link, which is not followed",
+		"dangling: is a symbolic link, which is not followed",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got:\n%s", strings.Join(got, "\n"))
+	}
+	for i, w := range want {
+		if !strings.HasPrefix(got[i], w) {
+			t.Errorf("finding %d = %q, want prefix %q", i, got[i], w)
+		}
+	}
+}
+
+func TestLintOfOnlyASymlinkedTemplateFails(t *testing.T) {
+	real := catalogFrom(t, "jellyfin", readFixture(t))
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join(real, "jellyfin"), filepath.Join(dir, "jellyfin")); err != nil {
+		t.Fatal(err)
+	}
+	got := lintStrings(t, dir)
+	if len(got) != 1 || !strings.HasPrefix(got[0], "jellyfin: is a symbolic link") {
+		t.Fatalf("got %q", got)
 	}
 }

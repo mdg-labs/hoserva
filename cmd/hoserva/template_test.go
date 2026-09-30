@@ -138,6 +138,47 @@ func TestTemplateLintCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("a symlinked template directory fails instead of being skipped", func(t *testing.T) {
+		dir := t.TempDir()
+		copyDir(t, templateFixtures, dir)
+		if err := os.Symlink("jellyfin", filepath.Join(dir, "alias")); err != nil {
+			t.Fatal(err)
+		}
+		stdout, _, exit := runLint(t, bin, dir)
+		if exit == 0 || !strings.Contains(stdout, "alias: is a symbolic link") {
+			t.Errorf("exit %d, stdout %q", exit, stdout)
+		}
+	})
+
+	t.Run("nested defaults and the stack's .env count as uses", func(t *testing.T) {
+		dir := t.TempDir()
+		copyDir(t, templateFixtures, dir)
+		file := filepath.Join(dir, "jellyfin", "compose.yaml")
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := strings.Replace(string(data), "      - ${MEDIA}:/data/media\n", "      - ${APPDATA:-${MEDIA}}/media:/data/media\n", 1)
+		if src == string(data) {
+			t.Fatal("fixture has no MEDIA volume")
+		}
+		if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if stdout, _, exit := runLint(t, bin, dir); exit != 0 {
+			t.Errorf("a nested default: exit %d\n%s", exit, stdout)
+		}
+
+		src = strings.Replace(src, "      - ${APPDATA:-${MEDIA}}/media:/data/media\n", "", 1)
+		src = strings.Replace(src, "    restart: unless-stopped\n", "    env_file: .env\n", 1)
+		if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if stdout, _, exit := runLint(t, bin, dir); exit != 0 {
+			t.Errorf("env_file .env: exit %d\n%s", exit, stdout)
+		}
+	})
+
 	t.Run("an unreadable directory is an error", func(t *testing.T) {
 		_, stderr, exit := runLint(t, bin, filepath.Join(t.TempDir(), "absent"))
 		if exit == 0 || !strings.Contains(stderr, "reading the catalog directory") {
