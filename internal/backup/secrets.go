@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -135,15 +136,19 @@ func decryptSecretsAge(data []byte, passphrase string) (*secretsPayload, error) 
 	}
 	r, err := age.Decrypt(bytes.NewReader(data), identity)
 	if err != nil {
-		return nil, fmt.Errorf("decrypting secrets.age: %w", err)
+		var noMatch *age.NoIdentityMatchError
+		if errors.As(err, &noMatch) {
+			return nil, fmt.Errorf("decrypting secrets.age: %w", ErrPassphraseIncorrect)
+		}
+		return nil, fmt.Errorf("decrypting secrets.age: %w", errors.Join(ErrSecretsUnreadable, err))
 	}
 	raw, err := io.ReadAll(r)
 	if err != nil {
-		return nil, fmt.Errorf("reading decrypted secrets payload: %w", err)
+		return nil, fmt.Errorf("reading decrypted secrets payload: %w", errors.Join(ErrSecretsUnreadable, err))
 	}
 	var payload secretsPayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, fmt.Errorf("parsing secrets payload: %w", err)
+		return nil, fmt.Errorf("parsing secrets payload: %w", errors.Join(ErrSecretsUnreadable, err))
 	}
 	return &payload, nil
 }

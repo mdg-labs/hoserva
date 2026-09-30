@@ -191,7 +191,7 @@ func ImportCategories() []string {
 // RestoreFiles would refuse, is a blocker; the comparison still runs unless
 // the schema versions differ. It reads the two databases and the files
 // RestoreFiles manages only (Q13).
-func PreviewImport(ctx context.Context, live *sql.DB, paths Paths, stagingDir string) (ImportPreview, error) {
+func PreviewImport(ctx context.Context, live *sql.DB, paths Paths, stagingDir string, opts ...FilesOption) (ImportPreview, error) {
 	manifest, err := readManifest(filepath.Join(stagingDir, "manifest.json"))
 	if err != nil {
 		return ImportPreview{}, fmt.Errorf("reading the archive's manifest: %w", err)
@@ -228,7 +228,7 @@ func PreviewImport(ctx context.Context, live *sql.DB, paths Paths, stagingDir st
 	if check.Refusal != nil {
 		p.Blockers = append(p.Blockers, *check.Refusal)
 	}
-	files, err := PlanFiles(stagingDir, paths)
+	files, err := PlanFiles(stagingDir, paths, opts...)
 	var unsafe *UnsafeRestorePathError
 	switch {
 	case errors.As(err, &unsafe):
@@ -264,6 +264,19 @@ func fileChanges(kind string, names []string) []ImportChange {
 		out[i] = ImportChange{Kind: kind, Name: n}
 	}
 	return out
+}
+
+// DiffImport compares the database at archiveDB, the staged state.db of a
+// verified archive whose schema version matches live's, with live, in
+// ImportCategories' database categories and PreviewImport's terms. Both
+// databases are only read.
+func DiffImport(ctx context.Context, live *sql.DB, archiveDB string) ([]ImportGroup, error) {
+	arc, err := openArchiveDB(archiveDB)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = arc.Close() }()
+	return diffConfig(ctx, live, arc)
 }
 
 func diffConfig(ctx context.Context, live, arc *sql.DB) ([]ImportGroup, error) {

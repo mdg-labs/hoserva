@@ -2617,6 +2617,159 @@ func (s *ConfigImportGroupCategory) UnmarshalText(data []byte) error {
 	}
 }
 
+// Ref: #/components/schemas/ConfigImportNotRestored
+type ConfigImportNotRestored struct {
+	Kind ConfigImportNotRestoredKind `json:"kind"`
+	// The stack whose `.env` file it is.
+	Name string `json:"name"`
+	// `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the archive's passphrase-protected section
+	// could not be opened (see `ConfigImportSecretsStatus`). `stack_not_in_archive`: that section holds an
+	// `.env` for a stack the archive has no files of. `left_in_place`: the `.env` on this machine was kept
+	// because the archive holds none for that stack.
+	Reason  ConfigImportNotRestoredReason `json:"reason"`
+	Message string                        `json:"message"`
+}
+
+// GetKind returns the value of Kind.
+func (s *ConfigImportNotRestored) GetKind() ConfigImportNotRestoredKind {
+	return s.Kind
+}
+
+// GetName returns the value of Name.
+func (s *ConfigImportNotRestored) GetName() string {
+	return s.Name
+}
+
+// GetReason returns the value of Reason.
+func (s *ConfigImportNotRestored) GetReason() ConfigImportNotRestoredReason {
+	return s.Reason
+}
+
+// GetMessage returns the value of Message.
+func (s *ConfigImportNotRestored) GetMessage() string {
+	return s.Message
+}
+
+// SetKind sets the value of Kind.
+func (s *ConfigImportNotRestored) SetKind(val ConfigImportNotRestoredKind) {
+	s.Kind = val
+}
+
+// SetName sets the value of Name.
+func (s *ConfigImportNotRestored) SetName(val string) {
+	s.Name = val
+}
+
+// SetReason sets the value of Reason.
+func (s *ConfigImportNotRestored) SetReason(val ConfigImportNotRestoredReason) {
+	s.Reason = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ConfigImportNotRestored) SetMessage(val string) {
+	s.Message = val
+}
+
+type ConfigImportNotRestoredKind string
+
+const (
+	ConfigImportNotRestoredKindStackEnv ConfigImportNotRestoredKind = "stack_env"
+)
+
+// AllValues returns all ConfigImportNotRestoredKind values.
+func (ConfigImportNotRestoredKind) AllValues() []ConfigImportNotRestoredKind {
+	return []ConfigImportNotRestoredKind{
+		ConfigImportNotRestoredKindStackEnv,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportNotRestoredKind) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportNotRestoredKindStackEnv:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportNotRestoredKind) UnmarshalText(data []byte) error {
+	switch ConfigImportNotRestoredKind(data) {
+	case ConfigImportNotRestoredKindStackEnv:
+		*s = ConfigImportNotRestoredKindStackEnv
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the archive's passphrase-protected section
+// could not be opened (see `ConfigImportSecretsStatus`). `stack_not_in_archive`: that section holds an
+// `.env` for a stack the archive has no files of. `left_in_place`: the `.env` on this machine was kept
+// because the archive holds none for that stack.
+type ConfigImportNotRestoredReason string
+
+const (
+	ConfigImportNotRestoredReasonNoSecrets           ConfigImportNotRestoredReason = "no_secrets"
+	ConfigImportNotRestoredReasonNoPassphrase        ConfigImportNotRestoredReason = "no_passphrase"
+	ConfigImportNotRestoredReasonPassphraseIncorrect ConfigImportNotRestoredReason = "passphrase_incorrect"
+	ConfigImportNotRestoredReasonStackNotInArchive   ConfigImportNotRestoredReason = "stack_not_in_archive"
+	ConfigImportNotRestoredReasonLeftInPlace         ConfigImportNotRestoredReason = "left_in_place"
+)
+
+// AllValues returns all ConfigImportNotRestoredReason values.
+func (ConfigImportNotRestoredReason) AllValues() []ConfigImportNotRestoredReason {
+	return []ConfigImportNotRestoredReason{
+		ConfigImportNotRestoredReasonNoSecrets,
+		ConfigImportNotRestoredReasonNoPassphrase,
+		ConfigImportNotRestoredReasonPassphraseIncorrect,
+		ConfigImportNotRestoredReasonStackNotInArchive,
+		ConfigImportNotRestoredReasonLeftInPlace,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportNotRestoredReason) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportNotRestoredReasonNoSecrets:
+		return []byte(s), nil
+	case ConfigImportNotRestoredReasonNoPassphrase:
+		return []byte(s), nil
+	case ConfigImportNotRestoredReasonPassphraseIncorrect:
+		return []byte(s), nil
+	case ConfigImportNotRestoredReasonStackNotInArchive:
+		return []byte(s), nil
+	case ConfigImportNotRestoredReasonLeftInPlace:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportNotRestoredReason) UnmarshalText(data []byte) error {
+	switch ConfigImportNotRestoredReason(data) {
+	case ConfigImportNotRestoredReasonNoSecrets:
+		*s = ConfigImportNotRestoredReasonNoSecrets
+		return nil
+	case ConfigImportNotRestoredReasonNoPassphrase:
+		*s = ConfigImportNotRestoredReasonNoPassphrase
+		return nil
+	case ConfigImportNotRestoredReasonPassphraseIncorrect:
+		*s = ConfigImportNotRestoredReasonPassphraseIncorrect
+		return nil
+	case ConfigImportNotRestoredReasonStackNotInArchive:
+		*s = ConfigImportNotRestoredReasonStackNotInArchive
+		return nil
+	case ConfigImportNotRestoredReasonLeftInPlace:
+		*s = ConfigImportNotRestoredReasonLeftInPlace
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Something about an import that is true whatever the archive holds.
 // Ref: #/components/schemas/ConfigImportNote
 type ConfigImportNote struct {
@@ -2695,8 +2848,9 @@ type ConfigImportPreview struct {
 	// One entry per category, in a fixed order, each listing what an import would add, change or remove.
 	// History and runtime tables (jobs, the audit log, spin events, notification deliveries and alerts,
 	// usage, mover and cache results) are not listed. Empty when the schema versions differ.
-	Groups []ConfigImportGroup `json:"groups"`
-	Notes  []ConfigImportNote  `json:"notes"`
+	Groups  []ConfigImportGroup `json:"groups"`
+	Secrets ConfigImportSecrets `json:"secrets"`
+	Notes   []ConfigImportNote  `json:"notes"`
 }
 
 // GetArchive returns the value of Archive.
@@ -2717,6 +2871,11 @@ func (s *ConfigImportPreview) GetBlockers() []ConfigImportBlocker {
 // GetGroups returns the value of Groups.
 func (s *ConfigImportPreview) GetGroups() []ConfigImportGroup {
 	return s.Groups
+}
+
+// GetSecrets returns the value of Secrets.
+func (s *ConfigImportPreview) GetSecrets() ConfigImportSecrets {
+	return s.Secrets
 }
 
 // GetNotes returns the value of Notes.
@@ -2744,9 +2903,305 @@ func (s *ConfigImportPreview) SetGroups(val []ConfigImportGroup) {
 	s.Groups = val
 }
 
+// SetSecrets sets the value of Secrets.
+func (s *ConfigImportPreview) SetSecrets(val ConfigImportSecrets) {
+	s.Secrets = val
+}
+
 // SetNotes sets the value of Notes.
 func (s *ConfigImportPreview) SetNotes(val []ConfigImportNote) {
 	s.Notes = val
+}
+
+// Ref: #/components/schemas/ConfigImportReport
+type ConfigImportReport struct {
+	// One entry per category, in a fixed order.
+	Restored []ConfigImportRestored `json:"restored"`
+	// Everything the import did not restore, each with why. Empty when everything in the archive was
+	// restored.
+	NotRestored []ConfigImportNotRestored `json:"notRestored"`
+	Secrets     ConfigImportSecretsStatus `json:"secrets"`
+	// The name of the archive of the configuration as it was before the import, which a restore can go
+	// back to. Empty when no backup destination was written to.
+	PreImportArchive string `json:"preImportArchive"`
+}
+
+// GetRestored returns the value of Restored.
+func (s *ConfigImportReport) GetRestored() []ConfigImportRestored {
+	return s.Restored
+}
+
+// GetNotRestored returns the value of NotRestored.
+func (s *ConfigImportReport) GetNotRestored() []ConfigImportNotRestored {
+	return s.NotRestored
+}
+
+// GetSecrets returns the value of Secrets.
+func (s *ConfigImportReport) GetSecrets() ConfigImportSecretsStatus {
+	return s.Secrets
+}
+
+// GetPreImportArchive returns the value of PreImportArchive.
+func (s *ConfigImportReport) GetPreImportArchive() string {
+	return s.PreImportArchive
+}
+
+// SetRestored sets the value of Restored.
+func (s *ConfigImportReport) SetRestored(val []ConfigImportRestored) {
+	s.Restored = val
+}
+
+// SetNotRestored sets the value of NotRestored.
+func (s *ConfigImportReport) SetNotRestored(val []ConfigImportNotRestored) {
+	s.NotRestored = val
+}
+
+// SetSecrets sets the value of Secrets.
+func (s *ConfigImportReport) SetSecrets(val ConfigImportSecretsStatus) {
+	s.Secrets = val
+}
+
+// SetPreImportArchive sets the value of PreImportArchive.
+func (s *ConfigImportReport) SetPreImportArchive(val string) {
+	s.PreImportArchive = val
+}
+
+// What one category of the import brought in: `added` was in the archive and not on this machine,
+// `changed` differed, `removed` was on this machine and not in the archive. What was identical is not
+// counted.
+// Ref: #/components/schemas/ConfigImportRestored
+type ConfigImportRestored struct {
+	// The categories of `ConfigImportGroup`, and `stack_env`, the stacks' `.env` files, counted by stack,
+	// of which `removed` is always 0.
+	Category ConfigImportRestoredCategory `json:"category"`
+	Added    int64                        `json:"added"`
+	Changed  int64                        `json:"changed"`
+	Removed  int64                        `json:"removed"`
+}
+
+// GetCategory returns the value of Category.
+func (s *ConfigImportRestored) GetCategory() ConfigImportRestoredCategory {
+	return s.Category
+}
+
+// GetAdded returns the value of Added.
+func (s *ConfigImportRestored) GetAdded() int64 {
+	return s.Added
+}
+
+// GetChanged returns the value of Changed.
+func (s *ConfigImportRestored) GetChanged() int64 {
+	return s.Changed
+}
+
+// GetRemoved returns the value of Removed.
+func (s *ConfigImportRestored) GetRemoved() int64 {
+	return s.Removed
+}
+
+// SetCategory sets the value of Category.
+func (s *ConfigImportRestored) SetCategory(val ConfigImportRestoredCategory) {
+	s.Category = val
+}
+
+// SetAdded sets the value of Added.
+func (s *ConfigImportRestored) SetAdded(val int64) {
+	s.Added = val
+}
+
+// SetChanged sets the value of Changed.
+func (s *ConfigImportRestored) SetChanged(val int64) {
+	s.Changed = val
+}
+
+// SetRemoved sets the value of Removed.
+func (s *ConfigImportRestored) SetRemoved(val int64) {
+	s.Removed = val
+}
+
+// The categories of `ConfigImportGroup`, and `stack_env`, the stacks' `.env` files, counted by stack,
+// of which `removed` is always 0.
+type ConfigImportRestoredCategory string
+
+const (
+	ConfigImportRestoredCategoryShares        ConfigImportRestoredCategory = "shares"
+	ConfigImportRestoredCategoryAccounts      ConfigImportRestoredCategory = "accounts"
+	ConfigImportRestoredCategorySchedules     ConfigImportRestoredCategory = "schedules"
+	ConfigImportRestoredCategoryNotifications ConfigImportRestoredCategory = "notifications"
+	ConfigImportRestoredCategoryBackup        ConfigImportRestoredCategory = "backup"
+	ConfigImportRestoredCategorySystem        ConfigImportRestoredCategory = "system"
+	ConfigImportRestoredCategoryCustomConfig  ConfigImportRestoredCategory = "custom_config"
+	ConfigImportRestoredCategoryTemplates     ConfigImportRestoredCategory = "templates"
+	ConfigImportRestoredCategoryStacks        ConfigImportRestoredCategory = "stacks"
+	ConfigImportRestoredCategoryStackEnv      ConfigImportRestoredCategory = "stack_env"
+)
+
+// AllValues returns all ConfigImportRestoredCategory values.
+func (ConfigImportRestoredCategory) AllValues() []ConfigImportRestoredCategory {
+	return []ConfigImportRestoredCategory{
+		ConfigImportRestoredCategoryShares,
+		ConfigImportRestoredCategoryAccounts,
+		ConfigImportRestoredCategorySchedules,
+		ConfigImportRestoredCategoryNotifications,
+		ConfigImportRestoredCategoryBackup,
+		ConfigImportRestoredCategorySystem,
+		ConfigImportRestoredCategoryCustomConfig,
+		ConfigImportRestoredCategoryTemplates,
+		ConfigImportRestoredCategoryStacks,
+		ConfigImportRestoredCategoryStackEnv,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportRestoredCategory) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportRestoredCategoryShares:
+		return []byte(s), nil
+	case ConfigImportRestoredCategoryAccounts:
+		return []byte(s), nil
+	case ConfigImportRestoredCategorySchedules:
+		return []byte(s), nil
+	case ConfigImportRestoredCategoryNotifications:
+		return []byte(s), nil
+	case ConfigImportRestoredCategoryBackup:
+		return []byte(s), nil
+	case ConfigImportRestoredCategorySystem:
+		return []byte(s), nil
+	case ConfigImportRestoredCategoryCustomConfig:
+		return []byte(s), nil
+	case ConfigImportRestoredCategoryTemplates:
+		return []byte(s), nil
+	case ConfigImportRestoredCategoryStacks:
+		return []byte(s), nil
+	case ConfigImportRestoredCategoryStackEnv:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportRestoredCategory) UnmarshalText(data []byte) error {
+	switch ConfigImportRestoredCategory(data) {
+	case ConfigImportRestoredCategoryShares:
+		*s = ConfigImportRestoredCategoryShares
+		return nil
+	case ConfigImportRestoredCategoryAccounts:
+		*s = ConfigImportRestoredCategoryAccounts
+		return nil
+	case ConfigImportRestoredCategorySchedules:
+		*s = ConfigImportRestoredCategorySchedules
+		return nil
+	case ConfigImportRestoredCategoryNotifications:
+		*s = ConfigImportRestoredCategoryNotifications
+		return nil
+	case ConfigImportRestoredCategoryBackup:
+		*s = ConfigImportRestoredCategoryBackup
+		return nil
+	case ConfigImportRestoredCategorySystem:
+		*s = ConfigImportRestoredCategorySystem
+		return nil
+	case ConfigImportRestoredCategoryCustomConfig:
+		*s = ConfigImportRestoredCategoryCustomConfig
+		return nil
+	case ConfigImportRestoredCategoryTemplates:
+		*s = ConfigImportRestoredCategoryTemplates
+		return nil
+	case ConfigImportRestoredCategoryStacks:
+		*s = ConfigImportRestoredCategoryStacks
+		return nil
+	case ConfigImportRestoredCategoryStackEnv:
+		*s = ConfigImportRestoredCategoryStackEnv
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ConfigImportSecrets
+type ConfigImportSecrets struct {
+	Status ConfigImportSecretsStatus `json:"status"`
+	// The stacks of the archive whose `.env` files would not be restored; empty when `status` is `opened`.
+	Stacks []string `json:"stacks"`
+}
+
+// GetStatus returns the value of Status.
+func (s *ConfigImportSecrets) GetStatus() ConfigImportSecretsStatus {
+	return s.Status
+}
+
+// GetStacks returns the value of Stacks.
+func (s *ConfigImportSecrets) GetStacks() []string {
+	return s.Stacks
+}
+
+// SetStatus sets the value of Status.
+func (s *ConfigImportSecrets) SetStatus(val ConfigImportSecretsStatus) {
+	s.Status = val
+}
+
+// SetStacks sets the value of Stacks.
+func (s *ConfigImportSecrets) SetStacks(val []string) {
+	s.Stacks = val
+}
+
+// `none`: the archive has no passphrase-protected section (it was built without a backup passphrase).
+// `opened`: the passphrase available opens it. `no_passphrase`: it has one and no passphrase is
+// available. `passphrase_incorrect`: it has one and the configured passphrase does not open it.
+// Ref: #/components/schemas/ConfigImportSecretsStatus
+type ConfigImportSecretsStatus string
+
+const (
+	ConfigImportSecretsStatusNone                ConfigImportSecretsStatus = "none"
+	ConfigImportSecretsStatusOpened              ConfigImportSecretsStatus = "opened"
+	ConfigImportSecretsStatusNoPassphrase        ConfigImportSecretsStatus = "no_passphrase"
+	ConfigImportSecretsStatusPassphraseIncorrect ConfigImportSecretsStatus = "passphrase_incorrect"
+)
+
+// AllValues returns all ConfigImportSecretsStatus values.
+func (ConfigImportSecretsStatus) AllValues() []ConfigImportSecretsStatus {
+	return []ConfigImportSecretsStatus{
+		ConfigImportSecretsStatusNone,
+		ConfigImportSecretsStatusOpened,
+		ConfigImportSecretsStatusNoPassphrase,
+		ConfigImportSecretsStatusPassphraseIncorrect,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportSecretsStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportSecretsStatusNone:
+		return []byte(s), nil
+	case ConfigImportSecretsStatusOpened:
+		return []byte(s), nil
+	case ConfigImportSecretsStatusNoPassphrase:
+		return []byte(s), nil
+	case ConfigImportSecretsStatusPassphraseIncorrect:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportSecretsStatus) UnmarshalText(data []byte) error {
+	switch ConfigImportSecretsStatus(data) {
+	case ConfigImportSecretsStatusNone:
+		*s = ConfigImportSecretsStatusNone
+		return nil
+	case ConfigImportSecretsStatusOpened:
+		*s = ConfigImportSecretsStatusOpened
+		return nil
+	case ConfigImportSecretsStatusNoPassphrase:
+		*s = ConfigImportSecretsStatusNoPassphrase
+		return nil
+	case ConfigImportSecretsStatusPassphraseIncorrect:
+		*s = ConfigImportSecretsStatusPassphraseIncorrect
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // Ref: #/components/schemas/ConfigureLetsEncryptRequest
@@ -4973,13 +5428,13 @@ func (s *HostConfigID) UnmarshalText(data []byte) error {
 	}
 }
 
-// ImportConfigNoContent is response for ImportConfig operation.
-type ImportConfigNoContent struct{}
-
 type ImportConfigReq struct {
 	Archive ht.MultipartFile `json:"archive"`
 	// Must be true — import is destructive.
 	Confirm bool `json:"confirm"`
+	// The backup passphrase the archive's `secrets.age` was sealed under. Optional: omitted, the
+	// configured backup passphrase is tried.
+	Passphrase OptString `json:"passphrase"`
 }
 
 // GetArchive returns the value of Archive.
@@ -4992,6 +5447,11 @@ func (s *ImportConfigReq) GetConfirm() bool {
 	return s.Confirm
 }
 
+// GetPassphrase returns the value of Passphrase.
+func (s *ImportConfigReq) GetPassphrase() OptString {
+	return s.Passphrase
+}
+
 // SetArchive sets the value of Archive.
 func (s *ImportConfigReq) SetArchive(val ht.MultipartFile) {
 	s.Archive = val
@@ -5000,6 +5460,11 @@ func (s *ImportConfigReq) SetArchive(val ht.MultipartFile) {
 // SetConfirm sets the value of Confirm.
 func (s *ImportConfigReq) SetConfirm(val bool) {
 	s.Confirm = val
+}
+
+// SetPassphrase sets the value of Passphrase.
+func (s *ImportConfigReq) SetPassphrase(val OptString) {
+	s.Passphrase = val
 }
 
 // Ref: #/components/schemas/Job
@@ -10648,6 +11113,9 @@ func (s *PreviewAppdataRestoreRequest) SetDestinationId(val string) {
 
 type PreviewConfigImportReq struct {
 	Archive ht.MultipartFile `json:"archive"`
+	// The backup passphrase the archive's `secrets.age` was sealed under. Optional: omitted, the
+	// configured backup passphrase is tried.
+	Passphrase OptString `json:"passphrase"`
 }
 
 // GetArchive returns the value of Archive.
@@ -10655,9 +11123,19 @@ func (s *PreviewConfigImportReq) GetArchive() ht.MultipartFile {
 	return s.Archive
 }
 
+// GetPassphrase returns the value of Passphrase.
+func (s *PreviewConfigImportReq) GetPassphrase() OptString {
+	return s.Passphrase
+}
+
 // SetArchive sets the value of Archive.
 func (s *PreviewConfigImportReq) SetArchive(val ht.MultipartFile) {
 	s.Archive = val
+}
+
+// SetPassphrase sets the value of Passphrase.
+func (s *PreviewConfigImportReq) SetPassphrase(val OptString) {
+	s.Passphrase = val
 }
 
 // One file a rebalance or evacuation plan moves (doc 09 §3-4).

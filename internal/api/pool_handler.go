@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -478,19 +479,23 @@ var errImportJobInProgress = &apiError{code: "job_in_progress", statusCode: 409,
 // and stacks in place and regenerating every managed config file from the
 // restored database (Handler.RegenerateConfig). A failure after the
 // database was restored is reported with the pre-import archive to go back
-// to. Restoring secrets.age and reporting what could not be restored is
-// #443.
-func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) error {
+// to. The passphrase-protected part of the archive, each stack's .env, is
+// staged and swapped in with the stacks (backup.WithStackEnvs) when the
+// passphrase given, or else the configured backup passphrase, opens
+// secrets.age; a passphrase given that does not is refused before anything
+// is written, and without one that does, everything else is restored and the
+// report says the .env files were not. The report is the answer.
+func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) (*apiv1.ConfigImportReport, error) {
 	if !req.Confirm {
-		return errConfirmRequired
+		return nil, errConfirmRequired
 	}
 	if !h.importConfigured() || h.RegenerateConfig == nil {
-		return errConfigImportNotConfigured
+		return nil, errConfigImportNotConfigured
 	}
 
 	staging, err := stageImportArchive(req.Archive.File)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 	stateDB := filepath.Join(staging, "state.db")
@@ -499,22 +504,35 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	// the pre-import backup below takes one of a destination's bounded
 	// pre-change retention slots (#401), so a refused retry must not reach it.
 	if err := checkImport(ctx, h.Backup.DB, stateDB); err != nil {
-		return err
+		return nil, err
+	}
+	secrets, err := h.resolveSecrets(ctx, staging, req.Passphrase)
+	if err != nil {
+		return nil, err
 	}
 	if h.Store != nil {
 		active, err := h.Store.ListActive(ctx)
 		if err != nil {
-			return fmt.Errorf("checking for active jobs before import: %w", err)
+			return nil, fmt.Errorf("checking for active jobs before import: %w", err)
 		}
 		if len(active) > 0 {
-			return errImportJobInProgress
+			return nil, errImportJobInProgress
 		}
 	}
 
 	// A file the restore would refuse is refused here too, before the
 	// backup below takes a retention slot.
-	if _, err := backup.PlanFiles(staging, h.Backup.Paths); err != nil {
-		return filesRefusal(err)
+	filesOpt := backup.WithStackEnvs(secrets.StackEnvs())
+	if _, err := backup.PlanFiles(staging, h.Backup.Paths, filesOpt); err != nil {
+		return nil, filesRefusal(err)
+	}
+	notRestored, err := backup.StackEnvsNotRestored(secrets, h.Backup.Paths)
+	if err != nil {
+		return nil, fmt.Errorf("listing the stack .env files the import leaves: %w", err)
+	}
+	dbChanges, err := backup.DiffImport(ctx, h.Backup.DB, stateDB)
+	if err != nil {
+		return nil, fmt.Errorf("comparing the archive's database with this installation's: %w", err)
 	}
 
 	// The archive's own queued/running job ids, read from the staged copy
@@ -525,7 +543,7 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	// queued or running.
 	restoredActiveIDs, err := readActiveJobIDs(ctx, "file:"+stateDB+"?mode=ro")
 	if err != nil {
-		return fmt.Errorf("reading the archive's active job ids: %w", err)
+		return nil, fmt.Errorf("reading the archive's active job ids: %w", err)
 	}
 
 	// The same config backup the pre-update chain runs (doc 10 §1),
@@ -535,7 +553,7 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	// is untouched.
 	preImport, err := h.Backup.RunReasonArchive(ctx, backup.ReasonPreImport)
 	if err != nil {
-		return fmt.Errorf("backing up before import: %w", err)
+		return nil, fmt.Errorf("backing up before import: %w", err)
 	}
 
 	// Acquired here, immediately before the restore, rather than at the
@@ -553,9 +571,9 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	release, err := h.Scheduler.BeginDatabaseRestore(ctx)
 	if err != nil {
 		if errors.Is(err, job.ErrJobsActiveForRestore) || errors.Is(err, job.ErrDatabaseRestoreInProgress) {
-			return errImportJobInProgress
+			return nil, errImportJobInProgress
 		}
-		return fmt.Errorf("beginning database restore: %w", err)
+		return nil, fmt.Errorf("beginning database restore: %w", err)
 	}
 	defer release()
 
@@ -563,7 +581,7 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	// finished during the upload or the backup above would otherwise be
 	// restored over.
 	if err := checkImport(ctx, h.Backup.DB, stateDB); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Every file the restore writes is copied next to its directory, and
@@ -572,14 +590,14 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if importBeforeStageHookForTest != nil {
 		importBeforeStageHookForTest(staging)
 	}
-	staged, err := backup.StageFiles(ctx, staging, h.Backup.Paths)
+	staged, err := backup.StageFiles(ctx, staging, h.Backup.Paths, filesOpt)
 	if err != nil {
 		var unsafe *backup.UnsafeRestorePathError
 		if errors.As(err, &unsafe) {
-			return filesRefusal(err)
+			return nil, filesRefusal(err)
 		}
 		log.Printf("hoservad: config import: staging the archive's files: %v", err)
-		return &apiError{code: "import_failed", statusCode: 500, message: fmt.Sprintf("the import did not start and nothing was changed: %v", err)}
+		return nil, &apiError{code: "import_failed", statusCode: 500, message: fmt.Sprintf("the import did not start and nothing was changed: %v", err)}
 	}
 	defer staged.Discard()
 
@@ -599,7 +617,7 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if importPostRestoreHookForTest != nil {
@@ -641,9 +659,66 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		msg := fmt.Sprintf("the database was restored but the import did not finish: %s. The configuration as it was before the import is in %s",
 			strings.Join(reasons, "; "), describePreImport(preImport))
 		log.Printf("hoservad: config import: %s", msg)
-		return &apiError{code: "import_failed", statusCode: 500, message: msg}
+		return nil, &apiError{code: "import_failed", statusCode: 500, message: msg}
 	}
-	return nil
+	return importReport(dbChanges, staged, notRestored, secrets.Status, preImport), nil
+}
+
+// resolveSecrets is what importConfig and previewConfigImport share for the
+// archive's passphrase-protected section: backup.ResolveSecrets with the
+// passphrase the request gave, if any, and the configured one otherwise, and
+// its failures as the errors both operations answer with.
+func (h *Handler) resolveSecrets(ctx context.Context, tree string, passphrase apiv1.OptString) (backup.SecretsOutcome, error) {
+	var explicit *string
+	if v, ok := passphrase.Get(); ok {
+		explicit = &v
+	}
+	out, err := backup.ResolveSecrets(ctx, tree, h.Backup.Secrets, explicit)
+	switch {
+	case errors.Is(err, backup.ErrPassphraseIncorrect):
+		return backup.SecretsOutcome{}, &apiError{code: "backup_passphrase_incorrect", statusCode: 400, message: "the passphrase does not open the archive's secrets.age"}
+	case errors.Is(err, backup.ErrSecretsUnreadable):
+		return backup.SecretsOutcome{}, &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
+	case err != nil:
+		return backup.SecretsOutcome{}, fmt.Errorf("opening the archive's secrets: %w", err)
+	}
+	return out, nil
+}
+
+// restoredCategories is the order a restore report lists its categories in:
+// the database's, then the files', then the stack .env files.
+var restoredCategories = slices.Concat(backup.ImportCategories(), []string{"stack_env"})
+
+func importReport(dbChanges []backup.ImportGroup, staged *backup.StagedFiles, notRestored []backup.NotRestored, secrets string, preImport backup.WrittenArchive) *apiv1.ConfigImportReport {
+	counts := map[string][3]int64{}
+	for _, g := range dbChanges {
+		counts[g.Category] = [3]int64{int64(len(g.Added)), int64(len(g.Changed)), int64(len(g.Removed))}
+	}
+	for _, c := range staged.Changes() {
+		counts[c.Category] = [3]int64{int64(len(c.Added)), int64(len(c.Replaced)), int64(len(c.Removed))}
+	}
+	env := staged.StackEnvChanges()
+	counts["stack_env"] = [3]int64{int64(len(env.Added)), int64(len(env.Replaced)), 0}
+
+	report := &apiv1.ConfigImportReport{
+		Restored:         make([]apiv1.ConfigImportRestored, len(restoredCategories)),
+		NotRestored:      make([]apiv1.ConfigImportNotRestored, len(notRestored)),
+		Secrets:          apiv1.ConfigImportSecretsStatus(secrets),
+		PreImportArchive: preImport.Name,
+	}
+	for i, c := range restoredCategories {
+		n := counts[c]
+		report.Restored[i] = apiv1.ConfigImportRestored{Category: apiv1.ConfigImportRestoredCategory(c), Added: n[0], Changed: n[1], Removed: n[2]}
+	}
+	for i, n := range notRestored {
+		report.NotRestored[i] = apiv1.ConfigImportNotRestored{
+			Kind:    apiv1.ConfigImportNotRestoredKind(n.Kind),
+			Name:    n.Name,
+			Reason:  apiv1.ConfigImportNotRestoredReason(n.Reason),
+			Message: n.Message,
+		}
+	}
+	return report
 }
 
 func describePreImport(a backup.WrittenArchive) string {
@@ -675,7 +750,7 @@ func (h *Handler) importConfigured() bool {
 // (backup.ExtractVerifiedArchive), which the caller removes; it removes the
 // upload itself. The import restores from this one tree. Structural
 // verification only (checksums, PRAGMA integrity_check): secrets.age, if
-// present, is neither required nor decrypted.
+// present, is neither required nor decrypted here (resolveSecrets opens it).
 func stageImportArchive(archive io.Reader) (tree string, err error) {
 	tmp, err := os.CreateTemp("", "hoserva-config-import-*.tar.zst")
 	if err != nil {
@@ -733,7 +808,7 @@ func checkImport(ctx context.Context, live *sql.DB, stateDB string) error {
 
 // PreviewConfigImport is importConfig's dry run (doc 10 §1): the same upload
 // and the same checks, then a comparison of the archive's database with the
-// live one, and nothing written — no database change, no pre-import backup,
+// live one and whether its secrets would restore, and nothing written — no database change, no pre-import backup,
 // no scheduler hold, and the staged copy is removed on every path.
 func (h *Handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewConfigImportReq) (*apiv1.ConfigImportPreview, error) {
 	if !h.importConfigured() {
@@ -745,19 +820,29 @@ func (h *Handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
-	p, err := backup.PreviewImport(ctx, h.Backup.DB, h.Backup.Paths, staging)
+	// Resolved first so a .env the import would refuse to write is a
+	// blocker, but its own refusal comes after the archive's, as
+	// importConfig's does.
+	secrets, secretsErr := h.resolveSecrets(ctx, staging, req.Passphrase)
+	p, err := backup.PreviewImport(ctx, h.Backup.DB, h.Backup.Paths, staging, backup.WithStackEnvs(secrets.StackEnvs()))
 	var unreadable *backup.UnreadableArchiveError
 	switch {
 	case errors.As(err, &unreadable):
 		return nil, &apiError{code: "invalid_archive", statusCode: 400, message: err.Error()}
 	case err != nil:
 		return nil, fmt.Errorf("previewing the import: %w", err)
+	case secretsErr != nil:
+		return nil, secretsErr
 	}
-	return configImportPreviewToAPI(p), nil
+	return configImportPreviewToAPI(p, secrets), nil
 }
 
-func configImportPreviewToAPI(p backup.ImportPreview) *apiv1.ConfigImportPreview {
+func configImportPreviewToAPI(p backup.ImportPreview, secrets backup.SecretsOutcome) *apiv1.ConfigImportPreview {
 	out := &apiv1.ConfigImportPreview{
+		Secrets: apiv1.ConfigImportSecrets{
+			Status: apiv1.ConfigImportSecretsStatus(secrets.Status),
+			Stacks: append([]string{}, secrets.Stacks...),
+		},
 		Archive: apiv1.ConfigImportArchive{
 			Timestamp:      p.Timestamp,
 			Host:           p.Host,

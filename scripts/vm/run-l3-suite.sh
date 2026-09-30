@@ -1130,7 +1130,8 @@ dump_hoserva_diagnostics() {
 # "massdel"/"hoserval3midsync" shares steps 3 and 5 already made), makes
 # two real, distinguishing changes on top of that export (delete the
 # share, add a throwaway user — each independently provable before the
-# import), imports the same archive back over the running config, and
+# import), imports the same archive back over the running config (HTTP 200
+# with a restore report whose notRestored is empty), and
 # asserts the delete was undone and the addition was wiped: exactly
 # "replaces the running configuration" doc 10 §1 promises, not a no-op
 # round trip that would pass even if importConfig did nothing. On failure
@@ -1271,10 +1272,19 @@ config_backup_restore() {
   fi
 
   echo "vm-suite[$HOSERVA_LAB_ID]: importing the exported archive back — in-place restore (doc 10 §1)"
-  local import_status
-  import_status="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -o /dev/null -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/import -F 'archive=@$export_remote;type=application/zstd' -F 'confirm=true'" 2>/dev/null)"
-  if [[ "$import_status" != "204" ]]; then
-    CONFIG_REASON="importConfig returned HTTP $import_status"
+  local import_response import_status import_report
+  import_response="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -w '\n%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/import -F 'archive=@$export_remote;type=application/zstd' -F 'confirm=true'" 2>/dev/null)"
+  import_status="${import_response##*$'\n'}"
+  import_report="${import_response%$'\n'*}"
+  if [[ "$import_status" != "200" ]]; then
+    CONFIG_REASON="importConfig returned HTTP $import_status, want 200 with the restore report: $import_report"
+    return 1
+  fi
+  # This round trip restores this installation's own archive, so nothing in
+  # it may be left out: a non-empty notRestored is an .env file or anything
+  # else the import could not put back.
+  if [[ "$import_report" != *'"notRestored":[]'* ]]; then
+    CONFIG_REASON="importConfig's restore report lists something it did not restore: $import_report"
     return 1
   fi
   if ! array_login; then

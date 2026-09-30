@@ -344,6 +344,22 @@ func encodeImportConfigRequest(
 			return errors.Wrap(err, "encode query")
 		}
 	}
+	{
+		// Encode "passphrase" form field.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "passphrase",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := request.Passphrase.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
+			}
+			return nil
+		}); err != nil {
+			return errors.Wrap(err, "encode query")
+		}
+	}
 	body, boundary := ht.CreateMultipartBody(func(w *multipart.Writer) error {
 		if err := request.Archive.WriteMultipart("archive", w); err != nil {
 			return errors.Wrap(err, "write \"archive\"")
@@ -463,6 +479,22 @@ func encodePreviewConfigImportRequest(
 	request := req
 
 	q := uri.NewFormEncoder(map[string]string{})
+	{
+		// Encode "passphrase" form field.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "passphrase",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := request.Passphrase.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
+			}
+			return nil
+		}); err != nil {
+			return errors.Wrap(err, "encode query")
+		}
+	}
 	body, boundary := ht.CreateMultipartBody(func(w *multipart.Writer) error {
 		if err := request.Archive.WriteMultipart("archive", w); err != nil {
 			return errors.Wrap(err, "write \"archive\"")

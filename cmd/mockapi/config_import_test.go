@@ -33,7 +33,7 @@ func TestMockConfigImport_RefusesAnUploadOverTheSizeLimit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			archive := ht.MultipartFile{File: bytes.NewReader(make([]byte, tc.size))}
 			_, previewErr := h.PreviewConfigImport(ctx, &apiv1.PreviewConfigImportReq{Archive: archive})
-			importErr := h.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: true, Archive: ht.MultipartFile{File: bytes.NewReader(make([]byte, tc.size))}})
+			_, importErr := h.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: true, Archive: ht.MultipartFile{File: bytes.NewReader(make([]byte, tc.size))}})
 			for op, err := range map[string]error{"PreviewConfigImport": previewErr, "ImportConfig": importErr} {
 				var me *mockError
 				if !errors.As(err, &me) || me.code != tc.wantCode || me.statusCode != tc.wantHTTP {

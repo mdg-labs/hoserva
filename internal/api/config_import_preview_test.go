@@ -258,7 +258,7 @@ func TestPreviewConfigImport_EveryImportRefusalIsABlocker(t *testing.T) {
 			if err != nil {
 				t.Fatalf("PreviewConfigImport: %v", err)
 			}
-			importErr := h.ImportConfig(context.Background(), importReq(archive))
+			_, importErr := h.ImportConfig(context.Background(), importReq(archive))
 			ae, ok := importErr.(*apiError)
 			if !ok || ae.code != tc.code || ae.statusCode != tc.status {
 				t.Fatalf("ImportConfig err = %v (%T), want (%d, %s)", importErr, importErr, tc.status, tc.code)
@@ -400,7 +400,7 @@ func TestPreviewConfigImport_RefusesWhatImportConfigRefuses(t *testing.T) {
 			tmp := setTempDir(t)
 
 			_, previewErr := h.PreviewConfigImport(context.Background(), previewReq(body))
-			importErr := h.ImportConfig(context.Background(), importReq(body))
+			_, importErr := h.ImportConfig(context.Background(), importReq(body))
 
 			for name, err := range map[string]error{"preview": previewErr, "import": importErr} {
 				ae, ok := err.(*apiError)

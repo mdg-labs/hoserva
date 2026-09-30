@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -37,8 +38,8 @@ var filesCategoryLabels = map[string]string{
 }
 
 // stackFileNames are the files of a stack the archive carries and a restore
-// manages; every other file in a stack's directory, its .env above all, is
-// never touched.
+// manages; every other file in a stack's directory is never touched. Its
+// .env is written only when the caller passes WithStackEnvs.
 var stackFileNames = []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml", "meta.json"}
 
 // FileChanges is what restoring one category replaces (in the archive and on
@@ -105,17 +106,38 @@ func labelList(categories []string) string {
 	return strings.Join(labels, ", ")
 }
 
-// FilesOption configures StageFiles. Only this package's tests set one.
+// FilesOption configures PlanFiles, StageFiles and RestoreFiles.
 type FilesOption func(*filesConfig)
 
 type filesConfig struct {
+	stackEnvs   []StackEnv
 	beforeStage func(dest string) error
 	afterStep   func(category string, step int) error
 }
 
+// WithStackEnvs also restores each of envs into StacksDir/<stack>/.env, mode
+// 0600, for the stacks the archive holds files of; an entry for any other
+// stack is ignored, and every other .env is left as it is. The files are
+// staged and swapped in with the stacks category, so a failure leaves every
+// .env and every stack file wholly as it was.
+func WithStackEnvs(envs []StackEnv) FilesOption {
+	return func(c *filesConfig) { c.stackEnvs = envs }
+}
+
+func newFilesConfig(opts []FilesOption) filesConfig {
+	var cfg filesConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return cfg
+}
+
+// archivedFile is a file to restore: one extracted from the archive tree at
+// src, or, for a stack .env, the body decrypted from secrets.age.
 type archivedFile struct {
-	src string
-	sum string
+	src  string
+	body []byte
+	sum  string
 }
 
 type liveFile struct {
@@ -129,14 +151,17 @@ type categoryPlan struct {
 	archive  map[string]archivedFile
 	live     map[string]liveFile
 	changes  FileChanges
+	// envs are the paths, in changes.Added or changes.Replaced, that are a
+	// stack's .env; Changes reports them apart from the stack's files.
+	envs []string
 }
 
 // PlanFiles reports what RestoreFiles would do with the verified archive
 // tree and paths, changing nothing. It is the check a preview and an import
 // share: an *UnsafeRestorePathError is a restore that would be refused. The
 // result always has the three categories, in a fixed order.
-func PlanFiles(tree string, paths Paths) ([]FileChanges, error) {
-	plans, err := buildPlans(tree, paths)
+func PlanFiles(tree string, paths Paths, opts ...FilesOption) ([]FileChanges, error) {
+	plans, err := buildPlans(tree, paths, newFilesConfig(opts).stackEnvs)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +172,20 @@ func plansChanges(plans []categoryPlan) []FileChanges {
 	out := make([]FileChanges, len(plans))
 	for i, p := range plans {
 		out[i] = p.changes
+		if len(p.envs) > 0 {
+			out[i].Added = withoutAny(p.changes.Added, p.envs)
+			out[i].Replaced = withoutAny(p.changes.Replaced, p.envs)
+		}
+	}
+	return out
+}
+
+func withoutAny(names, drop []string) []string {
+	out := []string{}
+	for _, n := range names {
+		if !slices.Contains(drop, n) {
+			out = append(out, n)
+		}
 	}
 	return out
 }
@@ -156,15 +195,17 @@ func plansChanges(plans []categoryPlan) []FileChanges {
 // stacks/<name>/ compose and meta.json files into paths.StacksDir, from
 // tree, an archive already extracted and verified by ExtractVerifiedArchive.
 // Afterwards each category matches the archive: files the archive lacks are
-// removed. It never touches a stack's .env, any other file of StacksDir or
+// removed. It never touches a stack's .env unless WithStackEnvs is given,
+// and then only the .env of a stack it names, any other file of StacksDir or
 // ConfigRoot, appdata, or a path outside those three directories. It returns
-// what it replaced, added and removed per category.
+// what it replaced, added and removed per category, a stack's .env not
+// among them.
 //
 // It is StageFiles followed by StagedFiles.Apply. A caller that must write
 // nothing until something else has succeeded stages first, does that other
 // work, and applies last.
-func RestoreFiles(ctx context.Context, tree string, paths Paths) ([]FileChanges, error) {
-	staged, err := StageFiles(ctx, tree, paths)
+func RestoreFiles(ctx context.Context, tree string, paths Paths, opts ...FilesOption) ([]FileChanges, error) {
+	staged, err := StageFiles(ctx, tree, paths, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -196,11 +237,8 @@ type stagedCategory struct {
 // changed after verification is never written. On an error nothing has
 // changed and the staging directories are removed.
 func StageFiles(ctx context.Context, tree string, paths Paths, opts ...FilesOption) (*StagedFiles, error) {
-	var cfg filesConfig
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-	plans, err := buildPlans(tree, paths)
+	cfg := newFilesConfig(opts)
+	plans, err := buildPlans(tree, paths, cfg.stackEnvs)
 	if err != nil {
 		return nil, err
 	}
@@ -219,8 +257,32 @@ func StageFiles(ctx context.Context, tree string, paths Paths, opts ...FilesOpti
 	return s, nil
 }
 
-// Changes is what Apply replaces, adds and removes, per category.
+// Changes is what Apply replaces, adds and removes, per category. A stack's
+// .env is not among the files; StackEnvChanges has those.
 func (s *StagedFiles) Changes() []FileChanges { return plansChanges(s.plans) }
+
+// EnvChanges names the stacks whose .env Apply adds and replaces. A stack
+// whose .env already holds what the archive does is in neither.
+type EnvChanges struct {
+	Added    []string
+	Replaced []string
+}
+
+// StackEnvChanges is what Apply does to stack .env files.
+func (s *StagedFiles) StackEnvChanges() EnvChanges {
+	out := EnvChanges{Added: []string{}, Replaced: []string{}}
+	for _, p := range s.plans {
+		for _, rel := range p.envs {
+			stack := strings.TrimSuffix(rel, "/.env")
+			if slices.Contains(p.changes.Added, rel) {
+				out.Added = append(out.Added, stack)
+			} else {
+				out.Replaced = append(out.Replaced, stack)
+			}
+		}
+	}
+	return out
+}
 
 // Discard removes the staging directories, and with them every file Apply
 // moved out of the way: after a successful Apply those are the replaced and
@@ -338,11 +400,15 @@ func sameFilesystem(dir string, other fs.FileInfo) error {
 }
 
 func copyVerified(src archivedFile, dst string, mode, dirMode fs.FileMode) (err error) {
-	in, err := os.OpenFile(src.src, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return fmt.Errorf("opening the extracted archive's file: %w", err)
+	var in io.Reader = bytes.NewReader(src.body)
+	if src.src != "" {
+		f, err := os.OpenFile(src.src, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			return fmt.Errorf("opening the extracted archive's file: %w", err)
+		}
+		defer func() { _ = f.Close() }()
+		in = f
 	}
-	defer func() { _ = in.Close() }()
 	if err := os.MkdirAll(filepath.Dir(dst), dirMode); err != nil {
 		return err
 	}
@@ -639,7 +705,7 @@ func checkDestination(root, rel string) error {
 	return nil
 }
 
-func buildPlans(tree string, paths Paths) ([]categoryPlan, error) {
+func buildPlans(tree string, paths Paths, stackEnvs []StackEnv) ([]categoryPlan, error) {
 	archived, err := archivedFiles(tree)
 	if err != nil {
 		return nil, err
@@ -698,12 +764,60 @@ func buildPlans(tree string, paths Paths) ([]categoryPlan, error) {
 				p.changes.Removed = append(p.changes.Removed, rel)
 			}
 		}
+		if cat == FilesStacks {
+			if err := p.planStackEnvs(stackEnvs); err != nil {
+				return nil, err
+			}
+		}
 		slices.Sort(p.changes.Added)
 		slices.Sort(p.changes.Replaced)
 		slices.Sort(p.changes.Removed)
 		plans = append(plans, p)
 	}
 	return plans, nil
+}
+
+// planStackEnvs adds the .env of each stack envs names that the archive holds
+// files of. It runs after the plan's other changes are decided, and .env is
+// never among a stack's live files, so a stack's .env is never removed.
+func (p *categoryPlan) planStackEnvs(envs []StackEnv) error {
+	archived := map[string]bool{}
+	for rel := range p.archive {
+		stack, _, _ := strings.Cut(rel, "/")
+		archived[stack] = true
+	}
+	seen := map[string]bool{}
+	for _, e := range envs {
+		if !archived[e.Stack] || len(e.Body) == 0 || seen[e.Stack] {
+			continue
+		}
+		seen[e.Stack] = true
+		rel := e.Stack + "/.env"
+		sum := sha256.Sum256(e.Body)
+		want := hex.EncodeToString(sum[:])
+		if err := checkDestination(p.root, rel); err != nil {
+			return err
+		}
+		live := filepath.Join(p.root, e.Stack, ".env")
+		if _, err := os.Lstat(live); errors.Is(err, fs.ErrNotExist) {
+			p.changes.Added = append(p.changes.Added, rel)
+		} else if err != nil {
+			return err
+		} else {
+			have, err := hashFile(live)
+			if err != nil {
+				return fmt.Errorf("reading %s: %w", live, err)
+			}
+			if have == want {
+				continue
+			}
+			p.changes.Replaced = append(p.changes.Replaced, rel)
+		}
+		p.archive[rel] = archivedFile{body: e.Body, sum: want}
+		p.envs = append(p.envs, rel)
+	}
+	slices.Sort(p.envs)
+	return nil
 }
 
 // archivedFiles lists, by category, the files the manifest lists under

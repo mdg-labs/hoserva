@@ -609,26 +609,101 @@ func (h *handler) ExportConfig(ctx context.Context) (apiv1.ExportConfigOK, error
 	return apiv1.ExportConfigOK{Data: bytes.NewReader([]byte("mock hoserva config export"))}, nil
 }
 
-func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) error {
+// ImportConfig never restores anything (doc 10 §1, ExportConfig's own
+// stub-bytes comment above) — but it validates the body with the same
+// backup.ExtractVerifiedArchive production's own ImportConfig runs first
+// (#269), so a non-archive upload is rejected the same way on both sides
+// (D18), and it opens the archive's secrets.age with the same
+// backup.ResolveSecrets, so a passphrase that does not open it is refused
+// the same way and the report's secrets and not-restored stacks are the
+// upload's own. It has no live database, so it never returns production's
+// 409 archive_other_installation or archive_array_mismatch
+// (backup.CheckImport), and the counts of what was restored are a fixed
+// sample.
+func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) (*apiv1.ConfigImportReport, error) {
 	if !req.Confirm {
-		return errConfirmRequired()
+		return nil, errConfirmRequired()
 	}
-	// The mock never restores anything (doc 10 §1, ExportConfig's own
-	// stub-bytes comment above) — but it validates the body with the
-	// same backup.VerifyArchiveForImport production's own ImportConfig
-	// runs first (#269), so a non-archive upload is rejected the same
-	// way on both sides (D18). It has no live database, so it never
-	// returns production's 409 archive_other_installation or
-	// archive_array_mismatch (backup.CheckImport).
-	return verifyMockArchive(req.Archive.File)
+	tree, err := stageMockArchive(req.Archive.File)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(tree) }()
+	secrets, err := h.resolveMockSecrets(ctx, tree, req.Passphrase)
+	if err != nil {
+		return nil, err
+	}
+	notRestored, err := backup.StackEnvsNotRestored(secrets, backup.Paths{})
+	if err != nil {
+		return nil, err
+	}
+
+	restored := func(c apiv1.ConfigImportRestoredCategory, added, changed, removed int64) apiv1.ConfigImportRestored {
+		return apiv1.ConfigImportRestored{Category: c, Added: added, Changed: changed, Removed: removed}
+	}
+	report := &apiv1.ConfigImportReport{
+		Restored: []apiv1.ConfigImportRestored{
+			restored(apiv1.ConfigImportRestoredCategoryShares, 1, 1, 0),
+			restored(apiv1.ConfigImportRestoredCategoryAccounts, 0, 0, 1),
+			restored(apiv1.ConfigImportRestoredCategorySchedules, 0, 1, 0),
+			restored(apiv1.ConfigImportRestoredCategoryNotifications, 0, 0, 0),
+			restored(apiv1.ConfigImportRestoredCategoryBackup, 0, 0, 0),
+			restored(apiv1.ConfigImportRestoredCategorySystem, 0, 0, 0),
+			restored(apiv1.ConfigImportRestoredCategoryCustomConfig, 0, 1, 0),
+			restored(apiv1.ConfigImportRestoredCategoryTemplates, 0, 0, 0),
+			restored(apiv1.ConfigImportRestoredCategoryStacks, 0, 0, 0),
+			restored(apiv1.ConfigImportRestoredCategoryStackEnv, int64(len(secrets.StackEnvs())), 0, 0),
+		},
+		NotRestored:      make([]apiv1.ConfigImportNotRestored, len(notRestored)),
+		Secrets:          apiv1.ConfigImportSecretsStatus(secrets.Status),
+		PreImportArchive: "hoserva-config-mock.pre-import.tar.zst",
+	}
+	for i, n := range notRestored {
+		report.NotRestored[i] = apiv1.ConfigImportNotRestored{
+			Kind:    apiv1.ConfigImportNotRestoredKind(n.Kind),
+			Name:    n.Name,
+			Reason:  apiv1.ConfigImportNotRestoredReason(n.Reason),
+			Message: n.Message,
+		}
+	}
+	return report, nil
+}
+
+func (h *handler) resolveMockSecrets(ctx context.Context, tree string, passphrase apiv1.OptString) (backup.SecretsOutcome, error) {
+	var explicit *string
+	if v, ok := passphrase.Get(); ok {
+		explicit = &v
+	}
+	h.notifyMu.Lock()
+	configured := h.backupPassphrase
+	h.notifyMu.Unlock()
+	src := &backup.ServiceSecretSource{BackupPassphraseFn: func(context.Context) (string, bool, error) {
+		return configured, configured != "", nil
+	}}
+	out, err := backup.ResolveSecrets(ctx, tree, src, explicit)
+	switch {
+	case errors.Is(err, backup.ErrPassphraseIncorrect):
+		return backup.SecretsOutcome{}, &mockError{code: "backup_passphrase_incorrect", statusCode: 400, message: "the passphrase does not open the archive's secrets.age"}
+	case errors.Is(err, backup.ErrSecretsUnreadable):
+		return backup.SecretsOutcome{}, errInvalidArchive(err)
+	case err != nil:
+		return backup.SecretsOutcome{}, err
+	}
+	return out, nil
 }
 
 // PreviewConfigImport validates the upload like ImportConfig and then
 // answers with a fixed sample: the mock has no live database to compare
 // the archive with, so the changes and the archive's identity are not read
-// from the upload.
+// from the upload. The secrets status is the upload's own.
 func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewConfigImportReq) (*apiv1.ConfigImportPreview, error) {
-	if err := verifyMockArchive(req.Archive.File); err != nil {
+	tree, err := stageMockArchive(req.Archive.File)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(tree) }()
+	secrets, err := h.resolveMockSecrets(ctx, tree, req.Passphrase)
+	if err != nil {
 		return nil, err
 	}
 	empty := []apiv1.ConfigImportChange{}
@@ -643,7 +718,11 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 			SchemaVersion:  "mock",
 		},
 		LiveSchemaVersion: "mock",
-		Blockers:          []apiv1.ConfigImportBlocker{},
+		Secrets: apiv1.ConfigImportSecrets{
+			Status: apiv1.ConfigImportSecretsStatus(secrets.Status),
+			Stacks: append([]string{}, secrets.Stacks...),
+		},
+		Blockers: []apiv1.ConfigImportBlocker{},
 		Groups: []apiv1.ConfigImportGroup{
 			group(apiv1.ConfigImportGroupCategoryShares,
 				[]apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindShare, Name: "photos"}},
@@ -678,28 +757,31 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 // upload beyond.
 var maxMockArchiveBytes int64 = 512 << 20
 
-func verifyMockArchive(archive io.Reader) error {
+// stageMockArchive reads the upload, refuses one that is too large or does
+// not verify, and returns the tree it extracted, which the caller removes.
+func stageMockArchive(archive io.Reader) (string, error) {
 	tmp, err := os.CreateTemp("", "mockapi-config-import-*.tar.zst")
 	if err != nil {
-		return err
+		return "", err
 	}
 	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
 	n, err := io.Copy(tmp, io.LimitReader(archive, maxMockArchiveBytes+1))
 	if err != nil {
 		_ = tmp.Close()
-		return err
+		return "", err
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return "", err
 	}
 	if n > maxMockArchiveBytes {
-		return errArchiveTooLarge()
+		return "", errArchiveTooLarge()
 	}
-	if err := backup.VerifyArchiveForImport(tmpPath); err != nil {
-		return errInvalidArchive(err)
+	tree, err := backup.ExtractVerifiedArchive(tmpPath)
+	if err != nil {
+		return "", errInvalidArchive(err)
 	}
-	return nil
+	return tree, nil
 }
 
 func (h *handler) StopArray(ctx context.Context, req *apiv1.StopArrayRequest) (*apiv1.SystemStatus, error) {

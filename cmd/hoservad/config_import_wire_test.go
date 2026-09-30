@@ -123,6 +123,9 @@ func TestWireConfigImport_ImportRegeneratesTheConfigsTheDatabaseDescribes(t *tes
 			TemplatesDir: filepath.Join(root, "state", "templates"),
 			StacksDir:    filepath.Join(root, "state", "stacks"),
 		},
+		Secrets: &backup.ServiceSecretSource{BackupPassphraseFn: func(context.Context) (string, bool, error) {
+			return "wire passphrase", true, nil
+		}},
 		Destinations: []backup.Destination{{ID: "boot", Name: "Boot device", Path: filepath.Join(root, "backups"), Enabled: true,
 			Retention: backup.Retention{Daily: 7, Weekly: 4, Monthly: 6}}},
 	})
@@ -161,7 +164,21 @@ func TestWireConfigImport_ImportRegeneratesTheConfigsTheDatabaseDescribes(t *tes
 	if err := os.WriteFile(customPath, []byte("archived custom\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	stackDir := filepath.Join(root, "state", "stacks", "web")
+	if err := os.MkdirAll(stackDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stackDir, "compose.yml"), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	envPath := filepath.Join(stackDir, ".env")
+	if err := os.WriteFile(envPath, []byte("TOKEN=archived\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	archive := exportArchive(t, handler)
+	if err := os.WriteFile(envPath, []byte("TOKEN=edited\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	// Then: the share is deleted, the UPS changed, the custom file edited.
 	if err := shares.Delete(ctx, "media"); err != nil {
@@ -184,8 +201,15 @@ func TestWireConfigImport_ImportRegeneratesTheConfigsTheDatabaseDescribes(t *tes
 	nut.calls = nil
 	topologyRuns = 0
 
-	if err := handler.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: true, Archive: ht.MultipartFile{File: bytes.NewReader(archive)}}); err != nil {
+	report, err := handler.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: true, Archive: ht.MultipartFile{File: bytes.NewReader(archive)}})
+	if err != nil {
 		t.Fatalf("ImportConfig: %v", err)
+	}
+	if report.Secrets != apiv1.ConfigImportSecretsStatusOpened || len(report.NotRestored) != 0 {
+		t.Errorf("report secrets = %s, notRestored = %+v, want the configured passphrase to have opened the archive's secrets", report.Secrets, report.NotRestored)
+	}
+	if got := readFileOrEmpty(envPath); got != "TOKEN=archived\n" {
+		t.Errorf("the stack's .env = %q, want the archived one restored with the configured passphrase", got)
 	}
 
 	if !strings.Contains(readFileOrEmpty(smbPath), "[media]") {
@@ -220,7 +244,7 @@ func TestWireConfigImport_AnImportWithoutTheHookIsRefused(t *testing.T) {
 	if handler.RegenerateConfig != nil {
 		t.Fatal("wireBackup set RegenerateConfig")
 	}
-	err := handler.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: true, Archive: ht.MultipartFile{File: bytes.NewReader([]byte("x"))}})
+	_, err := handler.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: true, Archive: ht.MultipartFile{File: bytes.NewReader([]byte("x"))}})
 	if got := handler.NewError(ctx, err); got.StatusCode != 501 || got.Response.Code != "not_configured" {
 		t.Fatalf("ImportConfig = %+v, want 501 not_configured", got)
 	}

@@ -155,7 +155,7 @@ func TestImportConfig_ReplacesRunningDatabaseWithoutCorruption(t *testing.T) {
 		t.Fatalf("inserting interim user: %v", err)
 	}
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 
@@ -231,7 +231,7 @@ func TestImportConfig_RefusesWhileJobActive(t *testing.T) {
 		t.Fatalf("seeding an active job: %v", err)
 	}
 
-	err := h.ImportConfig(ctx, importReq(archive))
+	_, err := h.ImportConfig(ctx, importReq(archive))
 	ae, ok := err.(*apiError)
 	if !ok {
 		t.Fatalf("ImportConfig err = %v (%T), want *apiError", err, err)
@@ -287,7 +287,7 @@ func TestImportConfig_RefusesJobSubmittedDuringPreImportBackup(t *testing.T) {
 		return time.Now().UTC()
 	}
 
-	err := h.ImportConfig(ctx, importReq(archive))
+	_, err := h.ImportConfig(ctx, importReq(archive))
 	ae, ok := err.(*apiError)
 	if !ok {
 		t.Fatalf("ImportConfig err = %v (%T), want *apiError", err, err)
@@ -325,7 +325,7 @@ func TestImportConfig_MarksPreImportSafetyBackup(t *testing.T) {
 	}}
 
 	archive := exportBytes(t, h)
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 
@@ -380,7 +380,7 @@ func TestImportConfig_RestoredRunningJobIsInterrupted(t *testing.T) {
 		t.Fatalf("finishing the seeded job before import: %v", err)
 	}
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 
@@ -392,7 +392,7 @@ func TestImportConfig_RestoredRunningJobIsInterrupted(t *testing.T) {
 		t.Fatalf("restored job status = %q, want %q", restored.Status, job.StatusInterrupted)
 	}
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("second ImportConfig, refused by the first import's own restored job: %v", err)
 	}
 }
@@ -422,7 +422,8 @@ func TestImportConfig_ConcurrentSubmitDuringRestoreIsRefused(t *testing.T) {
 
 	importErrCh := make(chan error, 1)
 	go func() {
-		importErrCh <- h.ImportConfig(ctx, importReq(archive))
+		_, err := h.ImportConfig(ctx, importReq(archive))
+		importErrCh <- err
 	}()
 
 	<-inRestore
@@ -485,7 +486,7 @@ func TestImportConfig_LeavesJobInsertedDuringRestoreWindowUntouched(t *testing.T
 	}
 	t.Cleanup(func() { importPostRestoreHookForTest = nil })
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 
@@ -514,7 +515,7 @@ func TestImportConfig_TruncatedArchiveIsRejected(t *testing.T) {
 	archive := exportBytes(t, h)
 	truncated := archive[:len(archive)/2]
 
-	err := h.ImportConfig(ctx, importReq(truncated))
+	_, err := h.ImportConfig(ctx, importReq(truncated))
 	assertInvalidArchive(t, err)
 }
 
@@ -531,7 +532,7 @@ func TestImportConfig_ChecksumMismatchIsRejected(t *testing.T) {
 	}
 	tampered := repackTarZst(t, staging)
 
-	err := h.ImportConfig(ctx, importReq(tampered))
+	_, err := h.ImportConfig(ctx, importReq(tampered))
 	assertInvalidArchive(t, err)
 }
 
@@ -548,7 +549,7 @@ func TestImportConfig_MissingStateDBIsRejected(t *testing.T) {
 	}
 	stripped := repackTarZst(t, staging)
 
-	err := h.ImportConfig(ctx, importReq(stripped))
+	_, err := h.ImportConfig(ctx, importReq(stripped))
 	assertInvalidArchive(t, err)
 }
 
@@ -581,7 +582,7 @@ func TestImportConfig_OlderSchemaVersionIsIncompatible(t *testing.T) {
 	resyncManifestChecksum(t, staging)
 	older := repackTarZst(t, staging)
 
-	err = h.ImportConfig(ctx, importReq(older))
+	_, err = h.ImportConfig(ctx, importReq(older))
 	assertIncompatibleArchive(t, err)
 }
 
@@ -616,7 +617,7 @@ func TestImportConfig_NewerSchemaVersionIsIncompatible(t *testing.T) {
 	resyncManifestChecksum(t, staging)
 	fromTheFuture := repackTarZst(t, staging)
 
-	err = h.ImportConfig(ctx, importReq(fromTheFuture))
+	_, err = h.ImportConfig(ctx, importReq(fromTheFuture))
 	assertIncompatibleArchive(t, err)
 }
 
@@ -652,7 +653,7 @@ func TestImportConfig_SecretsAgePresentButNoPassphraseStillImports(t *testing.T)
 		t.Fatalf("reading packed archive: %v", err)
 	}
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig(archive with secrets.age, no passphrase given anywhere): %v", err)
 	}
 }
@@ -966,7 +967,7 @@ func assertRefusedBeforeWriting(t *testing.T, h *Handler, db *sql.DB, archive []
 	}
 	before := liveFingerprint(t, db)
 
-	err := h.ImportConfig(context.Background(), importReq(archive))
+	_, err := h.ImportConfig(context.Background(), importReq(archive))
 	ae, ok := err.(*apiError)
 	if !ok {
 		t.Fatalf("ImportConfig err = %v (%T), want *apiError", err, err)
@@ -1036,7 +1037,7 @@ func TestImportConfig_RefusesWhenLiveMachineKeyCheckIsMissing(t *testing.T) {
 	archive := exportBytes(t, h)
 	execAll(t, db, `DELETE FROM machine_key_check`)
 
-	err := h.ImportConfig(ctx, importReq(archive))
+	_, err := h.ImportConfig(ctx, importReq(archive))
 	if err == nil {
 		t.Fatal("ImportConfig = nil, want a refusal")
 	}
@@ -1119,7 +1120,7 @@ func TestImportConfig_RefusesArrayChangeMadeBeforeTheRestoreHold(t *testing.T) {
 		return time.Now().UTC()
 	}
 
-	err := h.ImportConfig(ctx, importReq(archive))
+	_, err := h.ImportConfig(ctx, importReq(archive))
 	ae, ok := err.(*apiError)
 	if !ok || ae.statusCode != 409 || ae.code != "archive_array_mismatch" {
 		t.Fatalf("ImportConfig err = %v (%T), want 409 archive_array_mismatch", err, err)
@@ -1150,7 +1151,7 @@ func TestImportConfig_AcceptsArchiveWithIdenticalArray(t *testing.T) {
 	insertSentinelShare(t, db, "rolled-back")
 	execAll(t, db, `UPDATE array_disks SET device = '/dev/moved-after-reboot' WHERE role = 'data' AND role_index = 1`)
 
-	if err := h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig of an identical array: %v", err)
 	}
 	shares, err := store.NewShareStore(db).List(ctx)

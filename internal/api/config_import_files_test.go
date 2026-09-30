@@ -200,7 +200,7 @@ func TestImportConfig_RestoresTheFilesThenRegeneratesFromTheRestoredDatabase(t *
 	putTree(t, appdata, map[string]string{"c/data": "appdata"})
 	appdataBefore := dirSnapshot(t, appdata)
 
-	if err := e.h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := e.h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 
@@ -256,7 +256,7 @@ func TestImportConfig_RegeneratesUnderTheRestoreHold(t *testing.T) {
 
 	var submitErr error
 	e.regenHook = func() { _, submitErr = e.h.Scheduler.Submit(ctx, job.TypeSync, nil, nil) }
-	if err := e.h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := e.h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 	if !errors.Is(submitErr, job.ErrDatabaseRestoreInProgress) {
@@ -287,7 +287,7 @@ func TestImportConfig_AFileThatDoesNotStageLeavesTheDatabaseAndEveryDirectoryUnt
 	}
 	t.Cleanup(func() { importBeforeStageHookForTest = nil })
 
-	err := e.h.ImportConfig(ctx, importReq(archive))
+	_, err := e.h.ImportConfig(ctx, importReq(archive))
 	ae := importErr(t, err, 500, "import_failed")
 	if !strings.Contains(ae.message, "nothing was changed") {
 		t.Errorf("message = %q", ae.message)
@@ -306,7 +306,7 @@ func TestImportConfig_AFileThatDoesNotStageLeavesTheDatabaseAndEveryDirectoryUnt
 	}
 
 	importBeforeStageHookForTest = nil
-	if err := e.h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := e.h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("the retry: %v", err)
 	}
 	if got := dirSnapshot(t, e.paths.TemplatesDir)["app/template.json"]; got != "file exported template" {
@@ -338,7 +338,7 @@ func TestImportConfig_AFailureAfterTheDatabaseRestoreNamesEachCategoryAndThePreI
 	}
 	t.Cleanup(func() { importPostRestoreHookForTest = nil })
 
-	err := e.h.ImportConfig(ctx, importReq(archive))
+	_, err := e.h.ImportConfig(ctx, importReq(archive))
 	ae := importErr(t, err, 500, "import_failed")
 	archives := e.preImportArchives(t)
 	if len(archives) != 1 {
@@ -381,7 +381,7 @@ func TestImportConfig_AFailedRegenerationIsReportedWithThePreImportArchive(t *te
 	archive := e.seedAndExport(t)
 	e.regenErr = errors.New("smb.conf is not writable")
 
-	err := e.h.ImportConfig(ctx, importReq(archive))
+	_, err := e.h.ImportConfig(ctx, importReq(archive))
 	ae := importErr(t, err, 500, "import_failed")
 	archives := e.preImportArchives(t)
 	if len(archives) != 1 {
@@ -418,7 +418,7 @@ func TestImportConfig_RefusesToWriteThroughASymbolicLink(t *testing.T) {
 	dbBefore := liveFingerprint(t, e.db)
 	filesBefore := e.runtimeSnapshot(t)
 
-	err := e.h.ImportConfig(ctx, importReq(archive))
+	_, err := e.h.ImportConfig(ctx, importReq(archive))
 	ae := importErr(t, err, 409, "restore_path_unsafe")
 	if !strings.Contains(ae.message, "smb.custom.conf") {
 		t.Errorf("message = %q, want it to name the link", ae.message)
@@ -446,7 +446,8 @@ func TestImportConfig_WithoutARegenerationHookIsNotConfigured(t *testing.T) {
 	e.h.RegenerateConfig = nil
 	dbBefore := liveFingerprint(t, e.db)
 
-	_ = importErr(t, e.h.ImportConfig(context.Background(), importReq(archive)), 501, "not_configured")
+	_, err := e.h.ImportConfig(context.Background(), importReq(archive))
+	_ = importErr(t, err, 501, "not_configured")
 	if got := liveFingerprint(t, e.db); got != dbBefore {
 		t.Fatal("the database changed")
 	}
@@ -464,7 +465,7 @@ func TestImportConfig_FullApplyReplacesRunningDatabaseWithoutCorruption(t *testi
 		t.Fatal(err)
 	}
 
-	if err := e.h.ImportConfig(ctx, importReq(archive)); err != nil {
+	if _, err := e.h.ImportConfig(ctx, importReq(archive)); err != nil {
 		t.Fatalf("ImportConfig: %v", err)
 	}
 	if _, err := e.db.ExecContext(ctx,
@@ -555,7 +556,8 @@ func TestPreviewConfigImport_ALinkTheImportWouldRefuseIsABlocker(t *testing.T) {
 	if len(p.Blockers) != 1 || p.Blockers[0].Code != apiv1.ConfigImportBlockerCodeRestorePathUnsafe {
 		t.Fatalf("blockers = %+v", p.Blockers)
 	}
-	_ = importErr(t, e.h.ImportConfig(context.Background(), importReq(archive)), 409, "restore_path_unsafe")
+	_, err = e.h.ImportConfig(context.Background(), importReq(archive))
+	_ = importErr(t, err, 409, "restore_path_unsafe")
 }
 
 // Every category and every refusal the comparison can report is one the API

@@ -600,10 +600,16 @@ type Invoker interface {
 	// Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
 	// configuration: the database, the custom config files (`*.custom.conf`), the installed app templates
 	// and each stack's compose and `meta.json` files, after which every managed config file is regenerated
-	// from the restored database and the result applied to the running pool. Every refusal happens before
-	// anything is written, including the pre-import backup: 400 `invalid_archive` (it does not unpack or
-	// checksum, holds a file its manifest does not list or lacks one it lists, or holds a link, device,
-	// FIFO or duplicate entry), 400 `incompatible_archive` (another schema version), 409
+	// from the restored database and the result applied to the running pool. It also restores the
+	// passphrase-protected part of the archive, its stacks' `.env` files: with the optional `passphrase`
+	// if one is given, otherwise with the configured backup passphrase. Without a passphrase that opens
+	// it, everything else is restored and the report says the `.env` files were not. The answer is the
+	// restore report: what was restored per category, what was not and why, and the name of the pre-import
+	// archive. Every refusal happens before anything is written, including the pre-import backup: 400
+	// `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks
+	// one it lists, holds a link, device, FIFO or duplicate entry, or has a `secrets.age` that is not
+	// readable), 400 `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the
+	// archive's `secrets.age`), 400 `incompatible_archive` (another schema version), 409
 	// `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this
 	// installation's or is missing; a different installation's archive is restored only onto a fresh
 	// install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in
@@ -617,7 +623,7 @@ type Invoker interface {
 	// return a stopped array to normal operation.
 	//
 	// POST /config/import
-	ImportConfig(ctx context.Context, request *ImportConfigReq) error
+	ImportConfig(ctx context.Context, request *ImportConfigReq) (*ConfigImportReport, error)
 	// ListApiTokens invokes listApiTokens operation.
 	//
 	// Every account's tokens, most recently created first (doc 03 §7).
@@ -871,9 +877,13 @@ type Invoker interface {
 	// `archive_array_mismatch`, 409 `restore_path_unsafe`); `groups` compares the archive's database with
 	// the live one per category, and lists the custom config files, app templates and app stack files the
 	// import would replace, add and remove; it is empty when the archive's schema version differs, since
-	// the two cannot be compared. An archive that cannot be read is refused as `importConfig` refuses it
-	// (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with no config backup wired answers
-	// 501 `not_configured`. Nothing on a data disk is read.
+	// the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section
+	// and whether the passphrase available opens it, and if not, which stacks' `.env` files would not be
+	// restored. The optional `passphrase` is tried as `importConfig` tries it, and one that does not open
+	// the archive's `secrets.age` is refused as 400 `backup_passphrase_incorrect`. An archive that cannot
+	// be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`),
+	// and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is
+	// read.
 	//
 	// POST /config/import/preview
 	PreviewConfigImport(ctx context.Context, request *PreviewConfigImportReq) (*ConfigImportPreview, error)
@@ -9879,10 +9889,16 @@ func (c *Client) sendGetUserSharePermissions(ctx context.Context, params GetUser
 // Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running
 // configuration: the database, the custom config files (`*.custom.conf`), the installed app templates
 // and each stack's compose and `meta.json` files, after which every managed config file is regenerated
-// from the restored database and the result applied to the running pool. Every refusal happens before
-// anything is written, including the pre-import backup: 400 `invalid_archive` (it does not unpack or
-// checksum, holds a file its manifest does not list or lacks one it lists, or holds a link, device,
-// FIFO or duplicate entry), 400 `incompatible_archive` (another schema version), 409
+// from the restored database and the result applied to the running pool. It also restores the
+// passphrase-protected part of the archive, its stacks' `.env` files: with the optional `passphrase`
+// if one is given, otherwise with the configured backup passphrase. Without a passphrase that opens
+// it, everything else is restored and the report says the `.env` files were not. The answer is the
+// restore report: what was restored per category, what was not and why, and the name of the pre-import
+// archive. Every refusal happens before anything is written, including the pre-import backup: 400
+// `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks
+// one it lists, holds a link, device, FIFO or duplicate entry, or has a `secrets.age` that is not
+// readable), 400 `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the
+// archive's `secrets.age`), 400 `incompatible_archive` (another schema version), 409
 // `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this
 // installation's or is missing; a different installation's archive is restored only onto a fresh
 // install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in
@@ -9896,12 +9912,12 @@ func (c *Client) sendGetUserSharePermissions(ctx context.Context, params GetUser
 // return a stopped array to normal operation.
 //
 // POST /config/import
-func (c *Client) ImportConfig(ctx context.Context, request *ImportConfigReq) error {
-	_, err := c.sendImportConfig(ctx, request)
-	return err
+func (c *Client) ImportConfig(ctx context.Context, request *ImportConfigReq) (*ConfigImportReport, error) {
+	res, err := c.sendImportConfig(ctx, request)
+	return res, err
 }
 
-func (c *Client) sendImportConfig(ctx context.Context, request *ImportConfigReq) (res *ImportConfigNoContent, err error) {
+func (c *Client) sendImportConfig(ctx context.Context, request *ImportConfigReq) (res *ConfigImportReport, err error) {
 	otelAttrs := []attribute.KeyValue{
 		otelogen.OperationID("importConfig"),
 		semconv.HTTPRequestMethodKey.String("POST"),
@@ -13321,9 +13337,13 @@ func (c *Client) sendPreviewAppdataRestore(ctx context.Context, request *Preview
 // `archive_array_mismatch`, 409 `restore_path_unsafe`); `groups` compares the archive's database with
 // the live one per category, and lists the custom config files, app templates and app stack files the
 // import would replace, add and remove; it is empty when the archive's schema version differs, since
-// the two cannot be compared. An archive that cannot be read is refused as `importConfig` refuses it
-// (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with no config backup wired answers
-// 501 `not_configured`. Nothing on a data disk is read.
+// the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section
+// and whether the passphrase available opens it, and if not, which stacks' `.env` files would not be
+// restored. The optional `passphrase` is tried as `importConfig` tries it, and one that does not open
+// the archive's `secrets.age` is refused as 400 `backup_passphrase_incorrect`. An archive that cannot
+// be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`),
+// and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is
+// read.
 //
 // POST /config/import/preview
 func (c *Client) PreviewConfigImport(ctx context.Context, request *PreviewConfigImportReq) (*ConfigImportPreview, error) {

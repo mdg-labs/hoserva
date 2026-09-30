@@ -2363,17 +2363,31 @@ var contractCases = []contractCase{
 		op:   "ImportConfig",
 		name: "missing_confirm",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			return h.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: false})
+			_, err := h.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: false})
+			return err
 		},
 	},
 	{
 		op:   "ImportConfig",
 		name: "invalid_archive",
 		run: func(ctx context.Context, h apiv1.Handler) error {
-			return h.ImportConfig(ctx, &apiv1.ImportConfigReq{
+			_, err := h.ImportConfig(ctx, &apiv1.ImportConfigReq{
 				Confirm: true,
 				Archive: ht.MultipartFile{File: bytes.NewReader([]byte("not a tar.zst archive"))},
 			})
+			return err
+		},
+	},
+	{
+		op:   "ImportConfig",
+		name: "invalid_archive_with_passphrase",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ImportConfig(ctx, &apiv1.ImportConfigReq{
+				Confirm:    true,
+				Archive:    ht.MultipartFile{File: bytes.NewReader([]byte("not a tar.zst archive"))},
+				Passphrase: apiv1.NewOptString("a passphrase"),
+			})
+			return err
 		},
 	},
 

@@ -1630,7 +1630,7 @@ export interface paths {
         put?: never;
         /**
          * Import a config archive
-         * @description Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running configuration: the database, the custom config files (`*.custom.conf`), the installed app templates and each stack's compose and `meta.json` files, after which every managed config file is regenerated from the restored database and the result applied to the running pool. Every refusal happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks one it lists, or holds a link, device, FIFO or duplicate entry), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this installation's or is missing; a different installation's archive is restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would restore lands on a symbolic link or on something that is not a regular file, or it names a path outside the directory it is restored into; nothing is followed). A failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from and which of the file categories were restored and which left as they were. The array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a stopped array to normal operation.
+         * @description Restores from doc 10 §1's archive format. Requires `confirm: true` — this replaces the running configuration: the database, the custom config files (`*.custom.conf`), the installed app templates and each stack's compose and `meta.json` files, after which every managed config file is regenerated from the restored database and the result applied to the running pool. It also restores the passphrase-protected part of the archive, its stacks' `.env` files: with the optional `passphrase` if one is given, otherwise with the configured backup passphrase. Without a passphrase that opens it, everything else is restored and the report says the `.env` files were not. The answer is the restore report: what was restored per category, what was not and why, and the name of the pre-import archive. Every refusal happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link, device, FIFO or duplicate entry, or has a `secrets.age` that is not readable), 400 `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's `secrets.age`), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this installation's or is missing; a different installation's archive is restored only onto a fresh install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would restore lands on a symbolic link or on something that is not a regular file, or it names a path outside the directory it is restored into; nothing is followed). A failure to stage the files answers 500 `import_failed` with nothing changed; a failure once the database has been replaced answers 500 `import_failed` naming the pre-import archive to restore from and which of the file categories were restored and which left as they were. The array's own state, running, in maintenance mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a stopped array to normal operation.
          */
         post: operations["importConfig"];
         delete?: never;
@@ -1650,7 +1650,7 @@ export interface paths {
         put?: never;
         /**
          * Preview a config import
-         * @description Reads the same archive upload as `importConfig` and reports what an in-place import would change, without changing anything: it writes no database row, no pre-import archive, takes no job hold, and leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive, with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409 `archive_array_mismatch`, 409 `restore_path_unsafe`); `groups` compares the archive's database with the live one per category, and lists the custom config files, app templates and app stack files the import would replace, add and remove; it is empty when the archive's schema version differs, since the two cannot be compared. An archive that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is read.
+         * @description Reads the same archive upload as `importConfig` and reports what an in-place import would change, without changing anything: it writes no database row, no pre-import archive, takes no job hold, and leaves no file behind. `blockers` lists the refusals `importConfig` would return for this archive, with the same codes and messages (400 `incompatible_archive`, 409 `archive_other_installation`, 409 `archive_array_mismatch`, 409 `restore_path_unsafe`); `groups` compares the archive's database with the live one per category, and lists the custom config files, app templates and app stack files the import would replace, add and remove; it is empty when the archive's schema version differs, since the two cannot be compared. `secrets` says whether the archive has a passphrase-protected section and whether the passphrase available opens it, and if not, which stacks' `.env` files would not be restored. The optional `passphrase` is tried as `importConfig` tries it, and one that does not open the archive's `secrets.age` is refused as 400 `backup_passphrase_incorrect`. An archive that cannot be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`), and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is read.
          */
         post: operations["previewConfigImport"];
         delete?: never;
@@ -4144,6 +4144,16 @@ export interface components {
             /** @description The database schema version of the archive. */
             schemaVersion: string;
         };
+        /**
+         * @description `none`: the archive has no passphrase-protected section (it was built without a backup passphrase). `opened`: the passphrase available opens it. `no_passphrase`: it has one and no passphrase is available. `passphrase_incorrect`: it has one and the configured passphrase does not open it.
+         * @enum {string}
+         */
+        ConfigImportSecretsStatus: "none" | "opened" | "no_passphrase" | "passphrase_incorrect";
+        ConfigImportSecrets: {
+            status: components["schemas"]["ConfigImportSecretsStatus"];
+            /** @description The stacks of the archive whose `.env` files would not be restored; empty when `status` is `opened`. */
+            stacks: string[];
+        };
         ConfigImportPreview: {
             archive: components["schemas"]["ConfigImportArchive"];
             liveSchemaVersion: string;
@@ -4151,7 +4161,43 @@ export interface components {
             blockers: components["schemas"]["ConfigImportBlocker"][];
             /** @description One entry per category, in a fixed order, each listing what an import would add, change or remove. History and runtime tables (jobs, the audit log, spin events, notification deliveries and alerts, usage, mover and cache results) are not listed. Empty when the schema versions differ. */
             groups: components["schemas"]["ConfigImportGroup"][];
+            secrets: components["schemas"]["ConfigImportSecrets"];
             notes: components["schemas"]["ConfigImportNote"][];
+        };
+        /** @description What one category of the import brought in: `added` was in the archive and not on this machine, `changed` differed, `removed` was on this machine and not in the archive. What was identical is not counted. */
+        ConfigImportRestored: {
+            /**
+             * @description The categories of `ConfigImportGroup`, and `stack_env`, the stacks' `.env` files, counted by stack, of which `removed` is always 0.
+             * @enum {string}
+             */
+            category: "shares" | "accounts" | "schedules" | "notifications" | "backup" | "system" | "custom_config" | "templates" | "stacks" | "stack_env";
+            /** Format: int64 */
+            added: number;
+            /** Format: int64 */
+            changed: number;
+            /** Format: int64 */
+            removed: number;
+        };
+        ConfigImportNotRestored: {
+            /** @enum {string} */
+            kind: "stack_env";
+            /** @description The stack whose `.env` file it is. */
+            name: string;
+            /**
+             * @description `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the archive's passphrase-protected section could not be opened (see `ConfigImportSecretsStatus`). `stack_not_in_archive`: that section holds an `.env` for a stack the archive has no files of. `left_in_place`: the `.env` on this machine was kept because the archive holds none for that stack.
+             * @enum {string}
+             */
+            reason: "no_secrets" | "no_passphrase" | "passphrase_incorrect" | "stack_not_in_archive" | "left_in_place";
+            message: string;
+        };
+        ConfigImportReport: {
+            /** @description One entry per category, in a fixed order. */
+            restored: components["schemas"]["ConfigImportRestored"][];
+            /** @description Everything the import did not restore, each with why. Empty when everything in the archive was restored. */
+            notRestored: components["schemas"]["ConfigImportNotRestored"][];
+            secrets: components["schemas"]["ConfigImportSecretsStatus"];
+            /** @description The name of the archive of the configuration as it was before the import, which a restore can go back to. Empty when no backup destination was written to. */
+            preImportArchive: string;
         };
         AppdataRestorePreviewGroup: {
             /**
@@ -6404,16 +6450,20 @@ export interface operations {
                     archive: string;
                     /** @description Must be true — import is destructive. */
                     confirm: boolean;
+                    /** @description The backup passphrase the archive's `secrets.age` was sealed under. Optional: omitted, the configured backup passphrase is tried. */
+                    passphrase?: string;
                 };
             };
         };
         responses: {
-            /** @description Import completed. */
-            204: {
+            /** @description Import completed; what it restored and what it did not. */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ConfigImportReport"];
+                };
             };
             default: components["responses"]["Error"];
         };
@@ -6430,6 +6480,8 @@ export interface operations {
                 "multipart/form-data": {
                     /** Format: binary */
                     archive: string;
+                    /** @description The backup passphrase the archive's `secrets.age` was sealed under. Optional: omitted, the configured backup passphrase is tried. */
+                    passphrase?: string;
                 };
             };
         };
