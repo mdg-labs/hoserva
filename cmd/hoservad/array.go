@@ -181,7 +181,7 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 	// the pool down. Lab tests keep using pool.Mounter (direct exec).
 	seq.CatchAll = pool.MountController{
 		Mnt:     catchAll,
-		Mounter: pool.SystemdMounter{Runner: runner},
+		Mounter: guardedCatchAllMounter{inner: pool.SystemdMounter{Runner: runner}, runner: runner},
 	}
 
 	rows, err := shares.List(ctx)

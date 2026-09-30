@@ -15,6 +15,7 @@ import (
 
 	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
+	"github.com/mdg-labs/hoserva/internal/pool"
 	"github.com/mdg-labs/hoserva/internal/store"
 )
 
@@ -32,6 +33,9 @@ type immutableFilesystem struct {
 	immutable map[string]bool
 	calls     []disk.RunCall
 	chattrErr error
+
+	// catchAll is where newGuardTestSync redirects pool.CatchAllPath.
+	catchAll string
 }
 
 func newImmutableFilesystem() *immutableFilesystem {
@@ -72,11 +76,21 @@ func (f *immutableFilesystem) chattrsOf(flag string) []string {
 	return out
 }
 
+// newGuardTestSync installs the real disk.GuardMountpoint over fs, except
+// that the production catch-all path is redirected to fs.catchAll under the
+// test's own temp directory: the guard creates its directory, which no test
+// may do under /mnt.
 func newGuardTestSync(t *testing.T, fs *immutableFilesystem) *storageTargetSync {
 	t.Helper()
 	s := newTestStorageTargetSync(t)
 	s.Runner = fs
-	s.MountpointGuard = nil
+	fs.catchAll = filepath.Join(t.TempDir(), "user")
+	s.MountpointGuard = func(ctx context.Context, path string) error {
+		if path == pool.CatchAllPath {
+			path = fs.catchAll
+		}
+		return disk.GuardMountpoint(ctx, fs, path)
+	}
 	return s
 }
 
@@ -282,16 +296,265 @@ func TestStorageTargetSync_Update_GuardsTheSlotsARestoredArrayDescribes(t *testi
 
 	s.Update(ctx, seq)
 
-	if got := fs.chattrsOf("+i"); !containsAll(got, dirs...) || len(got) != len(dirs) {
-		t.Fatalf("chattr +i issued for %v, want exactly the restored slots %v", got, dirs)
+	wantGuarded := append(append([]string(nil), dirs...), fs.catchAll)
+	if got := fs.chattrsOf("+i"); !containsAll(got, wantGuarded...) || len(got) != len(wantGuarded) {
+		t.Fatalf("chattr +i issued for %v, want exactly the restored slots and the catch-all %v", got, wantGuarded)
 	}
-	for _, d := range dirs {
+	for _, d := range wantGuarded {
 		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
 			t.Fatalf("restored slot mountpoint %s was not created: %v", d, err)
 		}
 		if err := fs.write(d); !errors.Is(err, syscall.EPERM) {
 			t.Fatalf("write into restored, unmounted slot %s = %v, want EPERM", d, err)
 		}
+	}
+}
+
+func TestStorageTargetSync_Startup_GuardsTheUnmountedEmptyCatchAllBeforeMountingIt(t *testing.T) {
+	fs := newImmutableFilesystem()
+	s := newGuardTestSync(t, fs)
+	slot := slotDirs(t, "disk1")[0]
+	seq := &job.ArraySequence{
+		Gate:     storageTargetTestGate{ready: false},
+		Disks:    []job.ArrayMount{storageTargetTestMount{where: slot}},
+		CatchAll: storageTargetTestMount{where: pool.CatchAllPath},
+	}
+
+	if err := s.Startup(context.Background(), seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+
+	if got := fs.chattrsOf("+i"); !containsAll(got, slot, fs.catchAll) || len(got) != 2 {
+		t.Fatalf("chattr +i issued for %v, want the slot and the catch-all %s", got, fs.catchAll)
+	}
+}
+
+func TestStorageTargetSync_Startup_NeverGuardsAMountedCatchAll(t *testing.T) {
+	fs := newImmutableFilesystem()
+	s := newGuardTestSync(t, fs)
+	seq := &job.ArraySequence{
+		Gate:     storageTargetTestGate{ready: false},
+		CatchAll: storageTargetTestMount{where: "/proc"},
+	}
+
+	if err := s.Startup(context.Background(), seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+
+	if got := fs.chattrsOf("+i"); len(got) != 0 {
+		t.Fatalf("chattr +i issued for %v, want none: the catch-all is mounted", got)
+	}
+}
+
+func TestStorageTargetSync_Startup_AFailedChattrOnTheCatchAllDoesNotFailStartupOrHideTheSlots(t *testing.T) {
+	fs := newImmutableFilesystem()
+	fs.chattrErr = errors.New("operation not supported")
+	s := newGuardTestSync(t, fs)
+	slot := slotDirs(t, "disk1")[0]
+	seq := &job.ArraySequence{
+		Gate:     storageTargetTestGate{ready: false},
+		Disks:    []job.ArrayMount{storageTargetTestMount{where: slot}},
+		CatchAll: storageTargetTestMount{where: pool.CatchAllPath},
+	}
+
+	if err := s.Startup(context.Background(), seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+	if got := fs.chattrsOf("+i"); !containsAll(got, slot, fs.catchAll) {
+		t.Fatalf("chattr +i attempted for %v, want the slot and the catch-all both tried", got)
+	}
+}
+
+// The stopped-array data-loss scenario (doc 02 §1, Q69): the pool is
+// unmounted for a disk swap and a container or cron job outside Hoserva's
+// gated services writes under /mnt/user.
+func TestStorageTargetSync_Startup_AnUnmountedCatchAllRejectsWrites(t *testing.T) {
+	fs := newImmutableFilesystem()
+	s := newGuardTestSync(t, fs)
+	scheduler := newTestScheduler(t)
+	if err := scheduler.EnterMaintenance(context.Background()); err != nil {
+		t.Fatalf("EnterMaintenance: %v", err)
+	}
+	seq := &job.ArraySequence{
+		Gate:      storageTargetTestGate{ready: true},
+		CatchAll:  storageTargetTestMount{where: pool.CatchAllPath},
+		Scheduler: scheduler,
+	}
+
+	if err := s.Startup(context.Background(), seq); err != nil {
+		t.Fatalf("Startup: %v", err)
+	}
+
+	err := fs.write(fs.catchAll)
+	if !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("write into the unmounted catch-all = %v, want EPERM instead of landing on the boot device", err)
+	}
+	if entries, _ := os.ReadDir(fs.catchAll); len(entries) != 0 {
+		t.Fatalf("the unmounted catch-all holds %d entries after the refused write, want none", len(entries))
+	}
+}
+
+func TestStorageTargetSync_Update_GuardsTheCatchAllOnEveryRebuild(t *testing.T) {
+	fs := newImmutableFilesystem()
+	s := newGuardTestSync(t, fs)
+	seq := &job.ArraySequence{
+		Gate:     storageTargetTestGate{ready: false},
+		CatchAll: storageTargetTestMount{where: pool.CatchAllPath},
+	}
+
+	s.Update(context.Background(), seq)
+	s.Update(context.Background(), seq)
+
+	if got := fs.chattrsOf("+i"); len(got) != 2 || got[0] != fs.catchAll || got[1] != fs.catchAll {
+		t.Fatalf("chattr +i issued for %v, want the catch-all on each of the two Update passes", got)
+	}
+}
+
+// useCatchAllGuardOver installs the real disk.GuardMountpoint over fs as the
+// array stop/start path's catch-all guard, with pool.CatchAllPath redirected
+// to a directory under the test's own temp directory: nothing under /mnt is
+// created.
+func useCatchAllGuardOver(t *testing.T, fs *immutableFilesystem) {
+	t.Helper()
+	fs.catchAll = filepath.Join(t.TempDir(), "user")
+	prev := catchAllGuard
+	catchAllGuard = func(ctx context.Context, _ disk.Runner, path string) error {
+		if path == pool.CatchAllPath {
+			path = fs.catchAll
+		}
+		return disk.GuardMountpoint(ctx, fs, path)
+	}
+	t.Cleanup(func() { catchAllGuard = prev })
+}
+
+// The stopped-array data-loss scenario on the array stop path (doc 02 §1,
+// Q69): the daemon's own array sequence, built the way main.go builds it, is
+// stopped for a disk swap, and a container or cron job outside Hoserva's
+// gated services then writes under /mnt/user. Stop itself makes the catch-all
+// immutable once the pool is down, so the write fails instead of landing on
+// the boot device — including for a pool that was mounted through every
+// Startup and Update pass.
+func TestArraySequence_StopMakesTheUnmountedCatchAllRejectWrites(t *testing.T) {
+	ctx, h, _, _, _, disks, runner := newLiveArrayShutdownEnv(t)
+	createLiveArray(t, ctx, h, disks, runner)
+	fs := newImmutableFilesystem()
+	useCatchAllGuardOver(t, fs)
+
+	if err := h.CurrentArray().Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	if got := fs.chattrsOf("+i"); len(got) != 1 || got[0] != fs.catchAll {
+		t.Fatalf("chattr +i issued for %v, want exactly the catch-all %s", got, fs.catchAll)
+	}
+	if err := fs.write(fs.catchAll); !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("write into the stopped array's catch-all = %v, want EPERM instead of landing on the boot device", err)
+	}
+	if entries, _ := os.ReadDir(fs.catchAll); len(entries) != 0 {
+		t.Fatalf("the unmounted catch-all holds %d entries after the refused write, want none", len(entries))
+	}
+}
+
+type recordingLiveMounter struct {
+	events *[]string
+	failOn string
+}
+
+func (m recordingLiveMounter) Mount(_ context.Context, mnt pool.Mount) error {
+	*m.events = append(*m.events, "mount "+mnt.Where)
+	if m.failOn == "mount" {
+		return errors.New("mount failed")
+	}
+	return nil
+}
+
+func (m recordingLiveMounter) Unmount(_ context.Context, where string) error {
+	*m.events = append(*m.events, "unmount "+where)
+	if m.failOn == "unmount" {
+		return errors.New("unmount failed")
+	}
+	return nil
+}
+
+// catchAllOfNewArraySequence builds the array sequence the way main.go does
+// and swaps only the systemd mounter under the guard for a recorder, so
+// Start's own catch-all Mount can run without creating /mnt/user.
+func catchAllOfNewArraySequence(t *testing.T, events *[]string, failOn string) job.ArrayMount {
+	t.Helper()
+	ctx, h, _, _, _, disks, runner := newLiveArrayShutdownEnv(t)
+	createLiveArray(t, ctx, h, disks, runner)
+	mc, ok := h.CurrentArray().CatchAll.(pool.MountController)
+	if !ok {
+		t.Fatalf("CatchAll is %T, want pool.MountController", h.CurrentArray().CatchAll)
+	}
+	guarded, ok := mc.Mounter.(guardedCatchAllMounter)
+	if !ok {
+		t.Fatalf("CatchAll's mounter is %T, want guardedCatchAllMounter", mc.Mounter)
+	}
+	guarded.inner = recordingLiveMounter{events: events, failOn: failOn}
+	mc.Mounter = guarded
+	return mc
+}
+
+func TestArraySequence_GuardsTheCatchAllBeforeItMountsAgain(t *testing.T) {
+	var events []string
+	catchAll := catchAllOfNewArraySequence(t, &events, "")
+	prev := catchAllGuard
+	catchAllGuard = func(_ context.Context, _ disk.Runner, path string) error {
+		events = append(events, "guard "+path)
+		return nil
+	}
+	t.Cleanup(func() { catchAllGuard = prev })
+
+	if err := catchAll.Unmount(context.Background()); err != nil {
+		t.Fatalf("Unmount: %v", err)
+	}
+	if err := catchAll.Mount(context.Background()); err != nil {
+		t.Fatalf("Mount: %v", err)
+	}
+
+	want := []string{
+		"unmount " + pool.CatchAllPath, "guard " + pool.CatchAllPath,
+		"guard " + pool.CatchAllPath, "mount " + pool.CatchAllPath,
+	}
+	if len(events) != len(want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("events = %v, want %v", events, want)
+		}
+	}
+}
+
+func TestArraySequence_ACatchAllGuardFindingNeverFailsTheMountOrUnmount(t *testing.T) {
+	var events []string
+	catchAll := catchAllOfNewArraySequence(t, &events, "")
+	prev := catchAllGuard
+	catchAllGuard = func(context.Context, disk.Runner, string) error { return errors.New("operation not supported") }
+	t.Cleanup(func() { catchAllGuard = prev })
+
+	if err := catchAll.Unmount(context.Background()); err != nil {
+		t.Fatalf("Unmount with a failing guard: %v", err)
+	}
+	if err := catchAll.Mount(context.Background()); err != nil {
+		t.Fatalf("Mount with a failing guard: %v", err)
+	}
+}
+
+func TestArraySequence_ADeadUnmountLeavesTheCatchAllUnguarded(t *testing.T) {
+	var events []string
+	catchAll := catchAllOfNewArraySequence(t, &events, "unmount")
+	guards := 0
+	prev := catchAllGuard
+	catchAllGuard = func(context.Context, disk.Runner, string) error { guards++; return nil }
+	t.Cleanup(func() { catchAllGuard = prev })
+
+	if err := catchAll.Unmount(context.Background()); err == nil {
+		t.Fatal("Unmount succeeded, want the underlying failure")
+	}
+	if guards != 0 {
+		t.Fatalf("guard ran %d times after a failed unmount, want 0: the pool is still mounted", guards)
 	}
 }
 
