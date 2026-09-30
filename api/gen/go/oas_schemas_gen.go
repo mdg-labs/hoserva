@@ -2838,6 +2838,58 @@ func (s *ConfigImportNoteCode) UnmarshalText(data []byte) error {
 	}
 }
 
+// Which passphrase the pre-import archive's `secrets.age` is sealed with. `request`: the one given
+// with the import, which opened the imported archive's secrets. `configured`: the configured backup
+// passphrase. `none`: the pre-import archive has no `secrets.age`.
+// Ref: #/components/schemas/ConfigImportPreImportSecrets
+type ConfigImportPreImportSecrets string
+
+const (
+	ConfigImportPreImportSecretsNone       ConfigImportPreImportSecrets = "none"
+	ConfigImportPreImportSecretsRequest    ConfigImportPreImportSecrets = "request"
+	ConfigImportPreImportSecretsConfigured ConfigImportPreImportSecrets = "configured"
+)
+
+// AllValues returns all ConfigImportPreImportSecrets values.
+func (ConfigImportPreImportSecrets) AllValues() []ConfigImportPreImportSecrets {
+	return []ConfigImportPreImportSecrets{
+		ConfigImportPreImportSecretsNone,
+		ConfigImportPreImportSecretsRequest,
+		ConfigImportPreImportSecretsConfigured,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportPreImportSecrets) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportPreImportSecretsNone:
+		return []byte(s), nil
+	case ConfigImportPreImportSecretsRequest:
+		return []byte(s), nil
+	case ConfigImportPreImportSecretsConfigured:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportPreImportSecrets) UnmarshalText(data []byte) error {
+	switch ConfigImportPreImportSecrets(data) {
+	case ConfigImportPreImportSecretsNone:
+		*s = ConfigImportPreImportSecretsNone
+		return nil
+	case ConfigImportPreImportSecretsRequest:
+		*s = ConfigImportPreImportSecretsRequest
+		return nil
+	case ConfigImportPreImportSecretsConfigured:
+		*s = ConfigImportPreImportSecretsConfigured
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/ConfigImportPreview
 type ConfigImportPreview struct {
 	Archive           ConfigImportArchive `json:"archive"`
@@ -2923,7 +2975,8 @@ type ConfigImportReport struct {
 	Secrets     ConfigImportSecretsStatus `json:"secrets"`
 	// The name of the archive of the configuration as it was before the import, which a restore can go
 	// back to. Empty when no backup destination was written to.
-	PreImportArchive string `json:"preImportArchive"`
+	PreImportArchive string                       `json:"preImportArchive"`
+	PreImportSecrets ConfigImportPreImportSecrets `json:"preImportSecrets"`
 }
 
 // GetRestored returns the value of Restored.
@@ -2946,6 +2999,11 @@ func (s *ConfigImportReport) GetPreImportArchive() string {
 	return s.PreImportArchive
 }
 
+// GetPreImportSecrets returns the value of PreImportSecrets.
+func (s *ConfigImportReport) GetPreImportSecrets() ConfigImportPreImportSecrets {
+	return s.PreImportSecrets
+}
+
 // SetRestored sets the value of Restored.
 func (s *ConfigImportReport) SetRestored(val []ConfigImportRestored) {
 	s.Restored = val
@@ -2964,6 +3022,11 @@ func (s *ConfigImportReport) SetSecrets(val ConfigImportSecretsStatus) {
 // SetPreImportArchive sets the value of PreImportArchive.
 func (s *ConfigImportReport) SetPreImportArchive(val string) {
 	s.PreImportArchive = val
+}
+
+// SetPreImportSecrets sets the value of PreImportSecrets.
+func (s *ConfigImportReport) SetPreImportSecrets(val ConfigImportPreImportSecrets) {
+	s.PreImportSecrets = val
 }
 
 // What one category of the import brought in: `added` was in the archive and not on this machine,

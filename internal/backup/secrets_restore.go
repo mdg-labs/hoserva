@@ -73,6 +73,25 @@ type SecretsOutcome struct {
 
 	secrets       *Secrets
 	archiveStacks []string
+	passphrase    string
+	fromRequest   bool
+}
+
+// EnvPassphrase is the passphrase that opened the archive's secrets, and
+// whether it was the one given with the request rather than the configured
+// one, when the import restores at least one stack .env from them. ok is
+// false when it restores none: the secrets were not opened, or hold no .env
+// for a stack the archive has.
+func (o SecretsOutcome) EnvPassphrase() (passphrase string, fromRequest, ok bool) {
+	if o.secrets == nil {
+		return "", false, false
+	}
+	for _, e := range o.secrets.StackEnvs() {
+		if slices.Contains(o.archiveStacks, e.Stack) {
+			return o.passphrase, o.fromRequest, true
+		}
+	}
+	return "", false, false
 }
 
 // StackEnvs is what can be restored from the secrets section: nothing unless
@@ -138,6 +157,8 @@ func ResolveSecrets(ctx context.Context, tree string, src SecretSource, explicit
 	}
 	out.Status = SecretsOpened
 	out.secrets = secrets
+	out.passphrase = passphrase
+	out.fromRequest = explicit != nil
 	return out, nil
 }
 

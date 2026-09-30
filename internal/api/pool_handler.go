@@ -551,9 +551,27 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	// backup would otherwise take today's daily-tier slot and prune it
 	// (#401) — if it fails, the import is refused and the live database
 	// is untouched.
-	preImport, err := h.Backup.RunReasonArchive(ctx, backup.ReasonPreImport)
+	//
+	// When the import restores .env files, that archive's secrets.age is
+	// sealed with the passphrase that opened the imported archive's, so it
+	// holds every .env the import replaces whether or not a backup
+	// passphrase is configured.
+	var runOpts []backup.RunOption
+	envPassphrase, envFromRequest, restoresEnvs := secrets.EnvPassphrase()
+	if restoresEnvs {
+		runOpts = append(runOpts, backup.SealSecretsWith(envPassphrase))
+	}
+	preImport, err := h.Backup.RunReasonArchive(ctx, backup.ReasonPreImport, runOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("backing up before import: %w", err)
+	}
+	preImportSecrets := apiv1.ConfigImportPreImportSecretsNone
+	switch {
+	case !preImport.SecretsSealed:
+	case restoresEnvs && envFromRequest:
+		preImportSecrets = apiv1.ConfigImportPreImportSecretsRequest
+	default:
+		preImportSecrets = apiv1.ConfigImportPreImportSecretsConfigured
 	}
 
 	// Acquired here, immediately before the restore, rather than at the
@@ -661,7 +679,7 @@ func (h *Handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		log.Printf("hoservad: config import: %s", msg)
 		return nil, &apiError{code: "import_failed", statusCode: 500, message: msg}
 	}
-	return importReport(dbChanges, staged, notRestored, secrets.Status, preImport), nil
+	return importReport(dbChanges, staged, notRestored, secrets.Status, preImport, preImportSecrets), nil
 }
 
 // resolveSecrets is what importConfig and previewConfigImport share for the
@@ -689,7 +707,7 @@ func (h *Handler) resolveSecrets(ctx context.Context, tree string, passphrase ap
 // the database's, then the files', then the stack .env files.
 var restoredCategories = slices.Concat(backup.ImportCategories(), []string{"stack_env"})
 
-func importReport(dbChanges []backup.ImportGroup, staged *backup.StagedFiles, notRestored []backup.NotRestored, secrets string, preImport backup.WrittenArchive) *apiv1.ConfigImportReport {
+func importReport(dbChanges []backup.ImportGroup, staged *backup.StagedFiles, notRestored []backup.NotRestored, secrets string, preImport backup.WrittenArchive, preImportSecrets apiv1.ConfigImportPreImportSecrets) *apiv1.ConfigImportReport {
 	counts := map[string][3]int64{}
 	for _, g := range dbChanges {
 		counts[g.Category] = [3]int64{int64(len(g.Added)), int64(len(g.Changed)), int64(len(g.Removed))}
@@ -705,6 +723,7 @@ func importReport(dbChanges []backup.ImportGroup, staged *backup.StagedFiles, no
 		NotRestored:      make([]apiv1.ConfigImportNotRestored, len(notRestored)),
 		Secrets:          apiv1.ConfigImportSecretsStatus(secrets),
 		PreImportArchive: preImport.Name,
+		PreImportSecrets: preImportSecrets,
 	}
 	for i, c := range restoredCategories {
 		n := counts[c]

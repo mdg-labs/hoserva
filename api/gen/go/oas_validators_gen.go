@@ -1346,6 +1346,19 @@ func (s ConfigImportNoteCode) Validate() error {
 	}
 }
 
+func (s ConfigImportPreImportSecrets) Validate() error {
+	switch s {
+	case "none":
+		return nil
+	case "request":
+		return nil
+	case "configured":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
 func (s *ConfigImportPreview) Validate() error {
 	if s == nil {
 		return validate.ErrNilPointer
@@ -1523,6 +1536,17 @@ func (s *ConfigImportReport) Validate() error {
 	}(); err != nil {
 		failures = append(failures, validate.FieldError{
 			Name:  "secrets",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.PreImportSecrets.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "preImportSecrets",
 			Error: err,
 		})
 	}

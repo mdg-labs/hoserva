@@ -13467,24 +13467,27 @@ func (s *Server) handleGetUserSharePermissionsRequest(args [1]string, argsEscape
 // from the restored database and the result applied to the running pool. It also restores the
 // passphrase-protected part of the archive, its stacks' `.env` files: with the optional `passphrase`
 // if one is given, otherwise with the configured backup passphrase. Without a passphrase that opens
-// it, everything else is restored and the report says the `.env` files were not. The answer is the
-// restore report: what was restored per category, what was not and why, and the name of the pre-import
-// archive. Every refusal happens before anything is written, including the pre-import backup: 400
-// `invalid_archive` (it does not unpack or checksum, holds a file its manifest does not list or lacks
-// one it lists, holds a link, device, FIFO or duplicate entry, or has a `secrets.age` that is not
-// readable), 400 `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the
-// archive's `secrets.age`), 400 `incompatible_archive` (another schema version), 409
-// `job_in_progress`, 409 `archive_other_installation` (its machine key check value differs from this
-// installation's or is missing; a different installation's archive is restored only onto a fresh
-// install) and 409 `archive_array_mismatch` (its disks, their removal state or the relocation in
-// flight differ from the live array; the message names each difference), and 409 `restore_path_unsafe`
-// (a file it would restore lands on a symbolic link or on something that is not a regular file, or it
-// names a path outside the directory it is restored into; nothing is followed). A failure to stage the
-// files answers 500 `import_failed` with nothing changed; a failure once the database has been
-// replaced answers 500 `import_failed` naming the pre-import archive to restore from and which of the
-// file categories were restored and which left as they were. The array's own state, running, in
-// maintenance mode or stopped, is kept as it is, never restored from the archive, so an import cannot
-// return a stopped array to normal operation.
+// it, everything else is restored and the report says the `.env` files were not. When the import
+// restores `.env` files, the pre-import archive's own `secrets.age` is sealed with the passphrase that
+// opened the imported archive's, so it holds every `.env` the import replaces; a failure to write it
+// refuses the import. The answer is the restore report: what was restored per category, what was not
+// and why, the name of the pre-import archive and which passphrase seals its secrets. Every refusal
+// happens before anything is written, including the pre-import backup: 400 `invalid_archive` (it does
+// not unpack or checksum, holds a file its manifest does not list or lacks one it lists, holds a link,
+// device, FIFO or duplicate entry, or has a `secrets.age` that is not readable), 400
+// `backup_passphrase_incorrect` (a `passphrase` was given and it does not open the archive's
+// `secrets.age`), 400 `incompatible_archive` (another schema version), 409 `job_in_progress`, 409
+// `archive_other_installation` (its machine key check value differs from this installation's or is
+// missing; a different installation's archive is restored only onto a fresh install) and 409
+// `archive_array_mismatch` (its disks, their removal state or the relocation in flight differ from the
+// live array; the message names each difference), and 409 `restore_path_unsafe` (a file it would
+// restore lands on a symbolic link or on something that is not a regular file, or it names a path
+// outside the directory it is restored into; nothing is followed). A failure to stage the files
+// answers 500 `import_failed` with nothing changed; a failure once the database has been replaced
+// answers 500 `import_failed` naming the pre-import archive to restore from and which of the file
+// categories were restored and which left as they were. The array's own state, running, in maintenance
+// mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a
+// stopped array to normal operation.
 //
 // POST /config/import
 func (s *Server) handleImportConfigRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

@@ -211,12 +211,33 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 type WrittenArchive struct {
 	Name         string
 	Destinations []string
+	// SecretsSealed is whether the archive holds a secrets.age.
+	SecretsSealed bool
+}
+
+// RunOption changes how RunReasonArchive builds its archive.
+type RunOption func(*runOptions)
+
+type runOptions struct {
+	sealSecrets string
+}
+
+// SealSecretsWith seals the archive's secrets.age under passphrase, and
+// verifies it against that passphrase, instead of the configured backup
+// passphrase. The identity sidecar and an encrypted destination's artifacts
+// still use the configured one. Empty, it changes nothing.
+func SealSecretsWith(passphrase string) RunOption {
+	return func(o *runOptions) { o.sealSecrets = passphrase }
 }
 
 // RunReasonArchive is RunReason that also reports the archive it wrote, so
 // a caller guarding a destructive change can name the backup to restore
 // from. The result is empty when the run fails.
-func (s *Service) RunReasonArchive(ctx context.Context, reason Reason) (WrittenArchive, error) {
+func (s *Service) RunReasonArchive(ctx context.Context, reason Reason, opts ...RunOption) (WrittenArchive, error) {
+	var run runOptions
+	for _, opt := range opts {
+		opt(&run)
+	}
 	if !reason.valid() {
 		return WrittenArchive{}, fmt.Errorf("backup: unknown reason %q", reason)
 	}
@@ -234,7 +255,7 @@ func (s *Service) RunReasonArchive(ctx context.Context, reason Reason) (WrittenA
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
-	_, err = BuildArchive(ctx, s.DB, s.Paths, s.Secrets, s.Cipher, s.Hostname, s.Version, now, staging, WithRecipient(s.Recipient))
+	manifest, err := BuildArchive(ctx, s.DB, s.Paths, s.Secrets, s.Cipher, s.Hostname, s.Version, now, staging, WithRecipient(s.Recipient), WithSecretsPassphrase(run.sealSecrets))
 	if err != nil {
 		return WrittenArchive{}, err
 	}
@@ -269,10 +290,15 @@ func (s *Service) RunReasonArchive(ctx context.Context, reason Reason) (WrittenA
 			passphrase = p
 		}
 	}
-	if err := VerifyArchive(archivePath, passphrase); err != nil {
+	verifyWith := passphrase
+	if run.sealSecrets != "" {
+		verifyWith = run.sealSecrets
+	}
+	if err := VerifyArchive(archivePath, verifyWith); err != nil {
 		return WrittenArchive{}, fmt.Errorf("verifying archive: %w", err)
 	}
 
+	_, sealed := manifest.Checksums["secrets.age"]
 	var artifacts *encryptedArtifacts
 	var failures []error
 	var writtenTo []string
@@ -310,7 +336,7 @@ func (s *Service) RunReasonArchive(ctx context.Context, reason Reason) (WrittenA
 		for _, err := range failures {
 			s.log("%v", err)
 		}
-		return WrittenArchive{Name: name, Destinations: writtenTo}, nil
+		return WrittenArchive{Name: name, Destinations: writtenTo, SecretsSealed: sealed}, nil
 	}
 	if skipped {
 		return WrittenArchive{}, errors.Join(append([]error{fmt.Errorf("backup: every enabled destination was skipped or unavailable")}, failures...)...)

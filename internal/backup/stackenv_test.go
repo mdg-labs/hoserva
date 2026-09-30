@@ -23,7 +23,7 @@ func secretsTree(t *testing.T, files map[string]string, passphrase string, envs 
 	for stack, body := range envs {
 		stackEnvs = append(stackEnvs, StackEnv{Stack: stack, Body: []byte(body)})
 	}
-	sealed, err := buildSecretsAge(context.Background(), &FakeSecretSource{Passphrase: passphrase, HasPass: true}, FakeSecretCipher{}, stackEnvs)
+	sealed, err := buildSecretsAge(context.Background(), &FakeSecretSource{Passphrase: passphrase, HasPass: true}, FakeSecretCipher{}, stackEnvs, "")
 	if err != nil {
 		t.Fatal(err)
 	}

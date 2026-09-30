@@ -657,6 +657,7 @@ func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		NotRestored:      make([]apiv1.ConfigImportNotRestored, len(notRestored)),
 		Secrets:          apiv1.ConfigImportSecretsStatus(secrets.Status),
 		PreImportArchive: "hoserva-config-mock.pre-import.tar.zst",
+		PreImportSecrets: h.mockPreImportSecrets(secrets),
 	}
 	for i, n := range notRestored {
 		report.NotRestored[i] = apiv1.ConfigImportNotRestored{
@@ -667,6 +668,24 @@ func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 		}
 	}
 	return report, nil
+}
+
+// mockPreImportSecrets is which passphrase the pre-import archive's secrets
+// are sealed with, decided as production's ImportConfig does: the one that
+// opened the upload's secrets when the import restores .env files, else the
+// configured one, and none when there is none to seal with.
+func (h *handler) mockPreImportSecrets(secrets backup.SecretsOutcome) apiv1.ConfigImportPreImportSecrets {
+	_, fromRequest, restoresEnvs := secrets.EnvPassphrase()
+	if restoresEnvs && fromRequest {
+		return apiv1.ConfigImportPreImportSecretsRequest
+	}
+	h.notifyMu.Lock()
+	configured := h.backupPassphrase
+	h.notifyMu.Unlock()
+	if !restoresEnvs && configured == "" {
+		return apiv1.ConfigImportPreImportSecretsNone
+	}
+	return apiv1.ConfigImportPreImportSecretsConfigured
 }
 
 func (h *handler) resolveMockSecrets(ctx context.Context, tree string, passphrase apiv1.OptString) (backup.SecretsOutcome, error) {

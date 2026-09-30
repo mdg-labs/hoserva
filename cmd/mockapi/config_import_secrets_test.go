@@ -113,11 +113,13 @@ func TestMockConfigImport_TriesThePassphraseAsProductionDoes(t *testing.T) {
 		want       apiv1.ConfigImportSecretsStatus
 		wantStacks []string
 		wantEnvs   int64
+		wantSealed apiv1.ConfigImportPreImportSecrets
 	}{
-		{"explicit passphrase", "", &right, apiv1.ConfigImportSecretsStatusOpened, []string{}, 1},
-		{"configured passphrase", mockArchivePassphrase, nil, apiv1.ConfigImportSecretsStatusOpened, []string{}, 1},
-		{"no passphrase", "", nil, apiv1.ConfigImportSecretsStatusNoPassphrase, []string{"web"}, 0},
-		{"a wrong configured passphrase", "other", nil, apiv1.ConfigImportSecretsStatusPassphraseIncorrect, []string{"web"}, 0},
+		{"explicit passphrase", "", &right, apiv1.ConfigImportSecretsStatusOpened, []string{}, 1, apiv1.ConfigImportPreImportSecretsRequest},
+		{"explicit passphrase over a configured one", "other", &right, apiv1.ConfigImportSecretsStatusOpened, []string{}, 1, apiv1.ConfigImportPreImportSecretsRequest},
+		{"configured passphrase", mockArchivePassphrase, nil, apiv1.ConfigImportSecretsStatusOpened, []string{}, 1, apiv1.ConfigImportPreImportSecretsConfigured},
+		{"no passphrase", "", nil, apiv1.ConfigImportSecretsStatusNoPassphrase, []string{"web"}, 0, apiv1.ConfigImportPreImportSecretsNone},
+		{"a wrong configured passphrase", "other", nil, apiv1.ConfigImportSecretsStatusPassphraseIncorrect, []string{"web"}, 0, apiv1.ConfigImportPreImportSecretsConfigured},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -138,6 +140,9 @@ func TestMockConfigImport_TriesThePassphraseAsProductionDoes(t *testing.T) {
 			}
 			if report.Secrets != tc.want {
 				t.Errorf("report secrets = %s, want %s", report.Secrets, tc.want)
+			}
+			if report.PreImportSecrets != tc.wantSealed {
+				t.Errorf("preImportSecrets = %s, want %s", report.PreImportSecrets, tc.wantSealed)
 			}
 			var envs int64
 			for _, r := range report.Restored {

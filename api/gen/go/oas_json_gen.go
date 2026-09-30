@@ -5791,6 +5791,48 @@ func (s *ConfigImportNoteCode) UnmarshalJSON(data []byte) error {
 	return s.Decode(d)
 }
 
+// Encode encodes ConfigImportPreImportSecrets as json.
+func (s ConfigImportPreImportSecrets) Encode(e *jx.Encoder) {
+	e.Str(string(s))
+}
+
+// Decode decodes ConfigImportPreImportSecrets from json.
+func (s *ConfigImportPreImportSecrets) Decode(d *jx.Decoder) error {
+	if s == nil {
+		return errors.New("invalid: unable to decode ConfigImportPreImportSecrets to nil")
+	}
+	v, err := d.StrBytes()
+	if err != nil {
+		return err
+	}
+	// Try to use constant string.
+	switch ConfigImportPreImportSecrets(v) {
+	case ConfigImportPreImportSecretsNone:
+		*s = ConfigImportPreImportSecretsNone
+	case ConfigImportPreImportSecretsRequest:
+		*s = ConfigImportPreImportSecretsRequest
+	case ConfigImportPreImportSecretsConfigured:
+		*s = ConfigImportPreImportSecretsConfigured
+	default:
+		*s = ConfigImportPreImportSecrets(v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements stdjson.Marshaler.
+func (s ConfigImportPreImportSecrets) MarshalJSON() ([]byte, error) {
+	e := jx.Encoder{}
+	s.Encode(&e)
+	return e.Bytes(), nil
+}
+
+// UnmarshalJSON implements stdjson.Unmarshaler.
+func (s *ConfigImportPreImportSecrets) UnmarshalJSON(data []byte) error {
+	d := jx.DecodeBytes(data)
+	return s.Decode(d)
+}
+
 // Encode implements json.Marshaler.
 func (s *ConfigImportPreview) Encode(e *jx.Encoder) {
 	e.ObjStart()
@@ -6031,13 +6073,18 @@ func (s *ConfigImportReport) encodeFields(e *jx.Encoder) {
 		e.FieldStart("preImportArchive")
 		e.Str(s.PreImportArchive)
 	}
+	{
+		e.FieldStart("preImportSecrets")
+		s.PreImportSecrets.Encode(e)
+	}
 }
 
-var jsonFieldsNameOfConfigImportReport = [4]string{
+var jsonFieldsNameOfConfigImportReport = [5]string{
 	0: "restored",
 	1: "notRestored",
 	2: "secrets",
 	3: "preImportArchive",
+	4: "preImportSecrets",
 }
 
 // Decode decodes ConfigImportReport from json.
@@ -6107,6 +6154,16 @@ func (s *ConfigImportReport) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"preImportArchive\"")
 			}
+		case "preImportSecrets":
+			requiredBitSet[0] |= 1 << 4
+			if err := func() error {
+				if err := s.PreImportSecrets.Decode(d); err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"preImportSecrets\"")
+			}
 		default:
 			return d.Skip()
 		}
@@ -6117,7 +6174,7 @@ func (s *ConfigImportReport) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00001111,
+		0b00011111,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.

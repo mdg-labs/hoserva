@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -389,4 +390,166 @@ func TestPreviewConfigImport_ReportsWhetherTheSecretsWouldRestore(t *testing.T) 
 		_, err := e.h.PreviewConfigImport(ctx, previewReq(archive, &wrong))
 		_ = importErr(t, err, 400, "backup_passphrase_incorrect")
 	})
+}
+
+// preImportEnvs opens the secrets.age of the one pre-import archive on the
+// destination with passphrase and returns its stack .env files by stack.
+func (e *importFilesEnv) preImportEnvs(t *testing.T, passphrase string) map[string]string {
+	t.Helper()
+	names := e.preImportArchives(t)
+	if len(names) != 1 {
+		t.Fatalf("pre-import archives = %v", names)
+	}
+	tree, err := backup.ExtractVerifiedArchive(filepath.Join(e.dest, names[0]))
+	if err != nil {
+		t.Fatalf("extracting the pre-import archive: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tree) })
+	secrets, err := backup.ReadSecrets(tree, passphrase)
+	if err != nil {
+		t.Fatalf("opening the pre-import archive's secrets.age with the import's passphrase: %v", err)
+	}
+	out := map[string]string{}
+	for _, env := range secrets.StackEnvs() {
+		out[env.Stack] = string(env.Body)
+	}
+	return out
+}
+
+// The data-loss scenario: no backup passphrase is configured, so the
+// pre-import archive would have no secrets.age, and the import replaces the
+// live .env. The pre-import archive must hold the .env as it was.
+func TestImportConfig_ThePreImportArchiveKeepsTheEnvAnImportReplacesWhenNoPassphraseIsConfigured(t *testing.T) {
+	ctx := context.Background()
+	e := newImportFilesEnv(t)
+	archive := e.exportWithSecrets(t, &backup.FakeSecretSource{})
+
+	report, err := e.h.ImportConfig(ctx, withPassphrase(importReq(archive), importTestPassphrase))
+	if err != nil {
+		t.Fatalf("ImportConfig: %v", err)
+	}
+	if got := dirSnapshot(t, e.paths.StacksDir)["web/.env"]; got != "file TOKEN=exported" {
+		t.Fatalf("web/.env = %q, want the archive's (the import must have replaced the live one)", got)
+	}
+	if got := e.preImportEnvs(t, importTestPassphrase); !reflect.DeepEqual(got, map[string]string{"web": "TOKEN=live"}) {
+		t.Errorf("the pre-import archive's .env files = %v, want web's as it was", got)
+	}
+	if report.PreImportSecrets != apiv1.ConfigImportPreImportSecretsRequest {
+		t.Errorf("preImportSecrets = %q, want request", report.PreImportSecrets)
+	}
+}
+
+// The passphrase that opened the import seals the pre-import archive, whichever
+// it was, and the report names which.
+func TestImportConfig_ThePreImportArchiveIsSealedWithThePassphraseThatOpenedTheImport(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured backup.SecretSource
+		explicit   string
+		wantSealed string
+		want       apiv1.ConfigImportPreImportSecrets
+	}{
+		{"the configured one opened it", &backup.FakeSecretSource{Passphrase: importTestPassphrase, HasPass: true}, "", importTestPassphrase, apiv1.ConfigImportPreImportSecretsConfigured},
+		{"the request's opened it over a different configured one", &backup.FakeSecretSource{Passphrase: "another configured passphrase", HasPass: true}, importTestPassphrase, importTestPassphrase, apiv1.ConfigImportPreImportSecretsRequest},
+		{"the request's opened it with none configured", &backup.FakeSecretSource{}, importTestPassphrase, importTestPassphrase, apiv1.ConfigImportPreImportSecretsRequest},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newImportFilesEnv(t)
+			archive := e.exportWithSecrets(t, tc.configured)
+			req := importReq(archive)
+			if tc.explicit != "" {
+				req = withPassphrase(req, tc.explicit)
+			}
+
+			report, err := e.h.ImportConfig(context.Background(), req)
+			if err != nil {
+				t.Fatalf("ImportConfig: %v", err)
+			}
+			if got := e.preImportEnvs(t, tc.wantSealed); !reflect.DeepEqual(got, map[string]string{"web": "TOKEN=live"}) {
+				t.Errorf("the pre-import archive's .env files = %v, want web's as it was", got)
+			}
+			if report.PreImportSecrets != tc.want {
+				t.Errorf("preImportSecrets = %q, want %q", report.PreImportSecrets, tc.want)
+			}
+		})
+	}
+}
+
+// An import that restores no .env keeps the pre-import behaviour: nothing is
+// sealed under a passphrase that did not open anything.
+func TestImportConfig_AnImportThatRestoresNoEnvSealsThePreImportArchiveAsBefore(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("no passphrase configured", func(t *testing.T) {
+		e := newImportFilesEnv(t)
+		archive := e.exportWithSecrets(t, &backup.FakeSecretSource{})
+		report, err := e.h.ImportConfig(ctx, importReq(archive))
+		if err != nil {
+			t.Fatalf("ImportConfig: %v", err)
+		}
+		if report.Secrets != apiv1.ConfigImportSecretsStatusNoPassphrase || report.PreImportSecrets != apiv1.ConfigImportPreImportSecretsNone {
+			t.Errorf("secrets = %s, preImportSecrets = %s", report.Secrets, report.PreImportSecrets)
+		}
+		names := e.preImportArchives(t)
+		if len(names) != 1 {
+			t.Fatalf("pre-import archives = %v", names)
+		}
+		tree, err := backup.ExtractVerifiedArchive(filepath.Join(e.dest, names[0]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(tree) })
+		if _, err := backup.ReadSecrets(tree, importTestPassphrase); !errors.Is(err, backup.ErrNoSecrets) {
+			t.Errorf("ReadSecrets = %v, want the pre-import archive to have no secrets.age", err)
+		}
+	})
+
+	t.Run("a wrong passphrase configured", func(t *testing.T) {
+		e := newImportFilesEnv(t)
+		archive := e.exportWithSecrets(t, &backup.FakeSecretSource{Passphrase: "wrong configured passphrase", HasPass: true})
+		report, err := e.h.ImportConfig(ctx, importReq(archive))
+		if err != nil {
+			t.Fatalf("ImportConfig: %v", err)
+		}
+		if report.Secrets != apiv1.ConfigImportSecretsStatusPassphraseIncorrect || report.PreImportSecrets != apiv1.ConfigImportPreImportSecretsConfigured {
+			t.Errorf("secrets = %s, preImportSecrets = %s", report.Secrets, report.PreImportSecrets)
+		}
+		if got := e.preImportEnvs(t, "wrong configured passphrase"); !reflect.DeepEqual(got, map[string]string{"web": "TOKEN=live"}) {
+			t.Errorf("the pre-import archive's .env files = %v", got)
+		}
+	})
+}
+
+type unreadableSecrets struct{ backup.FakeSecretSource }
+
+func (unreadableSecrets) DatabaseSecrets(context.Context) ([]backup.DatabaseSecret, error) {
+	return nil, errors.New("secret store unavailable")
+}
+
+// A pre-import archive that cannot capture the live .env files refuses the
+// import before the database or any file is written.
+func TestImportConfig_APreImportArchiveThatCannotHoldTheEnvFilesRefusesTheImport(t *testing.T) {
+	ctx := context.Background()
+	e := newImportFilesEnv(t)
+	archive := e.exportWithSecrets(t, &unreadableSecrets{})
+	dbBefore := liveFingerprint(t, e.db)
+	filesBefore := e.runtimeSnapshot(t)
+
+	_, err := e.h.ImportConfig(ctx, withPassphrase(importReq(archive), importTestPassphrase))
+	if err == nil || !strings.Contains(err.Error(), "backing up before import") || !strings.Contains(err.Error(), "secret store unavailable") {
+		t.Fatalf("ImportConfig = %v, want the pre-import backup's failure", err)
+	}
+	if got := liveFingerprint(t, e.db); got != dbBefore {
+		t.Error("the database changed")
+	}
+	if got := e.runtimeSnapshot(t); !reflect.DeepEqual(got, filesBefore) {
+		t.Errorf("a runtime directory changed:\nbefore %v\nafter  %v", filesBefore, got)
+	}
+	if n := e.preImportArchives(t); len(n) != 0 {
+		t.Errorf("pre-import archives = %v, want none", n)
+	}
+	if e.regenCalls != 0 {
+		t.Error("RegenerateConfig ran for a refused import")
+	}
 }

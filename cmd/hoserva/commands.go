@@ -1102,6 +1102,20 @@ func printConfigImportReport(r *apiv1.ConfigImportReport) {
 		fmt.Println("\nNo pre-import archive was written: no backup destination was written to.")
 	} else {
 		fmt.Printf("\nThe configuration as it was before the import is in %s.\n", r.PreImportArchive)
+		fmt.Println(describePreImportSecrets(r.PreImportSecrets))
+	}
+}
+
+func describePreImportSecrets(s apiv1.ConfigImportPreImportSecrets) string {
+	switch s {
+	case apiv1.ConfigImportPreImportSecretsRequest:
+		return "Its secrets, with the stack .env files the import replaced, are sealed with the passphrase you gave for this import."
+	case apiv1.ConfigImportPreImportSecretsConfigured:
+		return "Its secrets are sealed with the configured backup passphrase."
+	case apiv1.ConfigImportPreImportSecretsNone:
+		return "It has no secrets section."
+	default:
+		return "Its secrets: " + string(s)
 	}
 }
 

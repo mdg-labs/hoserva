@@ -2702,9 +2702,14 @@ paths:
         part of the archive, its stacks' `.env` files: with the optional
         `passphrase` if one is given, otherwise with the configured backup
         passphrase. Without a passphrase that opens it, everything else is
-        restored and the report says the `.env` files were not. The answer is
+        restored and the report says the `.env` files were not. When the
+        import restores `.env` files, the pre-import archive's own
+        `secrets.age` is sealed with the passphrase that opened the imported
+        archive's, so it holds every `.env` the import replaces; a failure
+        to write it refuses the import. The answer is
         the restore report: what was restored per category, what was not and
-        why, and the name of the pre-import archive. Every refusal happens
+        why, the name of the pre-import archive and which passphrase seals its
+        secrets. Every refusal happens
         before anything is written, including the pre-import backup: 400
         `invalid_archive` (it does not unpack or checksum, holds a file its
         manifest does not list or lacks one it lists, holds a link,
@@ -7808,9 +7813,18 @@ components:
         message:
           type: string
 
+    ConfigImportPreImportSecrets:
+      type: string
+      enum: [none, request, configured]
+      description: >-
+        Which passphrase the pre-import archive's `secrets.age` is sealed
+        with. `request`: the one given with the import, which opened the
+        imported archive's secrets. `configured`: the configured backup
+        passphrase. `none`: the pre-import archive has no `secrets.age`.
+
     ConfigImportReport:
       type: object
-      required: [restored, notRestored, secrets, preImportArchive]
+      required: [restored, notRestored, secrets, preImportArchive, preImportSecrets]
       properties:
         restored:
           type: array
@@ -7832,6 +7846,8 @@ components:
             The name of the archive of the configuration as it was before
             the import, which a restore can go back to. Empty when no backup
             destination was written to.
+        preImportSecrets:
+          $ref: '#/components/schemas/ConfigImportPreImportSecrets'
 
     AppdataRestorePreviewGroup:
       type: object

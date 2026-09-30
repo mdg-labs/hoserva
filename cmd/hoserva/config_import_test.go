@@ -205,6 +205,7 @@ func testConfigImportReport() *apiv1.ConfigImportReport {
 		}},
 		Secrets:          apiv1.ConfigImportSecretsStatusNoPassphrase,
 		PreImportArchive: "hoserva-config-2026-09-01.pre-import.tar.zst",
+		PreImportSecrets: apiv1.ConfigImportPreImportSecretsConfigured,
 	}
 }
 
@@ -295,8 +296,30 @@ func TestConfigImport_JSONOutputIsTheReport(t *testing.T) {
 	if err := json.Unmarshal([]byte(printed), &got); err != nil {
 		t.Fatalf("output is not the report's JSON: %v\n%s", err, printed)
 	}
-	if len(got.NotRestored) != 1 || got.NotRestored[0].Name != "web" || got.PreImportArchive == "" {
+	if len(got.NotRestored) != 1 || got.NotRestored[0].Name != "web" || got.PreImportArchive == "" || got.PreImportSecrets != apiv1.ConfigImportPreImportSecretsConfigured {
 		t.Fatalf("decoded report = %+v", got)
+	}
+}
+
+func TestConfigImport_SaysWhichPassphraseSealsThePreImportArchivesSecrets(t *testing.T) {
+	for secrets, want := range map[apiv1.ConfigImportPreImportSecrets]string{
+		apiv1.ConfigImportPreImportSecretsRequest:    "sealed with the passphrase you gave for this import",
+		apiv1.ConfigImportPreImportSecretsConfigured: "sealed with the configured backup passphrase",
+		apiv1.ConfigImportPreImportSecretsNone:       "no secrets section",
+	} {
+		t.Run(string(secrets), func(t *testing.T) {
+			var request string
+			report := testConfigImportReport()
+			report.PreImportSecrets = secrets
+			sock := serveImport(t, report, map[string]string{}, &request)
+			printed, err := runAppCLI(t, sock, "config", "import", "--confirm", writeArchiveFile(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(printed, want) {
+				t.Fatalf("output does not contain %q:\n%s", want, printed)
+			}
+		})
 	}
 }
 

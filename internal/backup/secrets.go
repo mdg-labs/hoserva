@@ -57,19 +57,25 @@ type stackEnvEntry struct {
 
 // buildSecretsAge decrypts machine-key ciphertexts, collects stack .env
 // files, and re-encrypts the bundle under the backup passphrase with age
-// scrypt (Q28, Q80). When no passphrase is configured, secrets.age is
-// omitted entirely — a restore without it restores everything except
-// secrets, as doc 10 §1 describes.
-func buildSecretsAge(ctx context.Context, src SecretSource, cipher SecretCipher, stackEnvs []StackEnv) ([]byte, error) {
+// scrypt (Q28, Q80). sealWith, when not empty, is the passphrase to seal it
+// under instead of the configured one, which is what makes the pre-import
+// archive hold the .env files an import replaces when none is configured.
+// With neither, secrets.age is omitted entirely — a restore without it
+// restores everything except secrets, as doc 10 §1 describes.
+func buildSecretsAge(ctx context.Context, src SecretSource, cipher SecretCipher, stackEnvs []StackEnv, sealWith string) ([]byte, error) {
 	if src == nil {
 		return nil, nil
 	}
-	passphrase, ok, err := src.BackupPassphrase(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("reading backup passphrase: %w", err)
-	}
-	if !ok || passphrase == "" {
-		return nil, nil
+	passphrase := sealWith
+	if passphrase == "" {
+		p, ok, err := src.BackupPassphrase(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("reading backup passphrase: %w", err)
+		}
+		if !ok || p == "" {
+			return nil, nil
+		}
+		passphrase = p
 	}
 
 	dbSecrets, err := src.DatabaseSecrets(ctx)
