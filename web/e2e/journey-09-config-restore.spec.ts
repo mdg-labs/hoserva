@@ -157,6 +157,7 @@ function restoreErrorBanners(card: Locator): Locator {
   const informational = [
     catalogString("settings.backup.restore.notes.sessions_replaced"),
     catalogString("settings.backup.restore.notes.array_state_kept"),
+    catalogString("settings.backup.restore.notes.host_files_replaced"),
     catalogString("settings.backup.restore.preview.schemaDiffers"),
     catalogString("settings.backup.restore.report.signedOutTitle"),
   ];
