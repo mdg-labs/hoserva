@@ -36,6 +36,19 @@ type immutableFilesystem struct {
 
 	// catchAll is where newGuardTestSync redirects pool.CatchAllPath.
 	catchAll string
+	// slotRoot, when set, is where real redirects a /mnt/<slot> path.
+	slotRoot string
+}
+
+// real is the temp-directory stand-in for a production mountpoint.
+func (f *immutableFilesystem) real(path string) string {
+	switch {
+	case path == pool.CatchAllPath:
+		return f.catchAll
+	case f.slotRoot != "" && filepath.Dir(path) == "/mnt":
+		return filepath.Join(f.slotRoot, filepath.Base(path))
+	}
+	return path
 }
 
 func newImmutableFilesystem() *immutableFilesystem {
@@ -411,20 +424,19 @@ func TestStorageTargetSync_Update_GuardsTheCatchAllOnEveryRebuild(t *testing.T) 
 }
 
 // useCatchAllGuardOver installs the real disk.GuardMountpoint over fs as the
-// array stop/start path's catch-all guard, with pool.CatchAllPath redirected
-// to a directory under the test's own temp directory: nothing under /mnt is
-// created.
+// array stop/start path's guard, with pool.CatchAllPath and every array slot
+// under /mnt redirected to directories under the test's own temp directory
+// (fs.real): nothing under /mnt is created.
 func useCatchAllGuardOver(t *testing.T, fs *immutableFilesystem) {
 	t.Helper()
-	fs.catchAll = filepath.Join(t.TempDir(), "user")
-	prev := catchAllGuard
-	catchAllGuard = func(ctx context.Context, _ disk.Runner, path string) error {
-		if path == pool.CatchAllPath {
-			path = fs.catchAll
-		}
-		return disk.GuardMountpoint(ctx, fs, path)
+	root := t.TempDir()
+	fs.catchAll = filepath.Join(root, "user")
+	fs.slotRoot = root
+	prev := arrayPathGuard
+	arrayPathGuard = func(ctx context.Context, _ disk.Runner, path string) error {
+		return disk.GuardMountpoint(ctx, fs, fs.real(path))
 	}
-	t.Cleanup(func() { catchAllGuard = prev })
+	t.Cleanup(func() { arrayPathGuard = prev })
 }
 
 // The stopped-array data-loss scenario on the array stop path (doc 02 §1,
@@ -444,14 +456,113 @@ func TestArraySequence_StopMakesTheUnmountedCatchAllRejectWrites(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	if got := fs.chattrsOf("+i"); len(got) != 1 || got[0] != fs.catchAll {
-		t.Fatalf("chattr +i issued for %v, want exactly the catch-all %s", got, fs.catchAll)
+	want := []string{fs.catchAll}
+	for _, d := range h.CurrentArray().Disks {
+		want = append(want, fs.real(d.Where()))
+	}
+	if got := fs.chattrsOf("+i"); len(got) != len(want) || !containsAll(got, want...) {
+		t.Fatalf("chattr +i issued for %v, want exactly the catch-all and every slot %v", got, want)
 	}
 	if err := fs.write(fs.catchAll); !errors.Is(err, syscall.EPERM) {
 		t.Fatalf("write into the stopped array's catch-all = %v, want EPERM instead of landing on the boot device", err)
 	}
 	if entries, _ := os.ReadDir(fs.catchAll); len(entries) != 0 {
 		t.Fatalf("the unmounted catch-all holds %d entries after the refused write, want none", len(entries))
+	}
+}
+
+// The stopped-array data-loss scenario for the array slots (doc 02 §1, Q69):
+// every slot was mounted through each Startup and Update pass, so neither
+// made it immutable; the daemon's own array sequence, built the way main.go
+// builds it, is then stopped for a disk swap, and a host job writes to
+// /mnt/diskN. Stop makes each slot immutable once its disk is unmounted, so
+// the write fails instead of landing on the boot device.
+func TestArraySequence_StopMakesEveryUnmountedSlotRejectWrites(t *testing.T) {
+	ctx, h, _, _, _, disks, runner := newLiveArrayShutdownEnv(t)
+	createLiveArray(t, ctx, h, disks, runner)
+	fs := newImmutableFilesystem()
+	useCatchAllGuardOver(t, fs)
+	slots := h.CurrentArray().Disks
+	if len(slots) == 0 {
+		t.Fatal("the live array has no slots")
+	}
+
+	if err := h.CurrentArray().Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	for _, d := range slots {
+		dir := fs.real(d.Where())
+		if err := fs.write(dir); !errors.Is(err, syscall.EPERM) {
+			t.Fatalf("write into the stopped array's %s = %v, want EPERM instead of landing on the boot device", d.Where(), err)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+			t.Fatalf("the unmounted slot %s holds %d entries after the refused write, want none", d.Where(), len(entries))
+		}
+	}
+}
+
+// Mounted at Startup, then stopped, then started: the array start path
+// guards each slot before its own mount unit starts.
+func TestArraySequence_StartGuardsEverySlotBeforeItsMountUnitStarts(t *testing.T) {
+	ctx, h, _, _, _, disks, runner := newLiveArrayShutdownEnv(t)
+	createLiveArray(t, ctx, h, disks, runner)
+	seq := h.CurrentArray()
+	if err := seq.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	// The catch-all's systemd mounter would create /mnt/user; the slots'
+	// own mounts go through the FakeRunner.
+	var poolEvents []string
+	catchAll := seq.CatchAll.(pool.MountController)
+	guardedPool := catchAll.Mounter.(guardedCatchAllMounter)
+	guardedPool.inner = recordingLiveMounter{events: &poolEvents}
+	catchAll.Mounter = guardedPool
+	seq.CatchAll = catchAll
+
+	starts := func(where string) int {
+		n := 0
+		for _, c := range runner.Calls() {
+			if c.Name == "systemctl" && len(c.Args) == 2 && c.Args[0] == "start" && c.Args[1] == disk.UnitFileName(where) {
+				n++
+			}
+		}
+		return n
+	}
+	fs := newImmutableFilesystem()
+	fs.slotRoot = t.TempDir()
+	fs.catchAll = filepath.Join(fs.slotRoot, "user")
+	startsAtGuard := map[string]int{}
+	prev := arrayPathGuard
+	arrayPathGuard = func(ctx context.Context, _ disk.Runner, path string) error {
+		startsAtGuard[path] = starts(path)
+		return disk.GuardMountpoint(ctx, fs, fs.real(path))
+	}
+	t.Cleanup(func() { arrayPathGuard = prev })
+	before := map[string]int{}
+	for _, d := range seq.Disks {
+		before[d.Where()] = starts(d.Where())
+	}
+
+	if err := seq.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	for _, d := range seq.Disks {
+		where := d.Where()
+		got, guarded := startsAtGuard[where]
+		if !guarded {
+			t.Fatalf("Start never guarded slot %s", where)
+		}
+		if got != before[where] {
+			t.Fatalf("slot %s was guarded after its mount unit had already started (%d starts, %d before Start)", where, got, before[where])
+		}
+		if starts(where) != before[where]+1 {
+			t.Fatalf("slot %s mount unit started %d times during Start, want once", where, starts(where)-before[where])
+		}
+		if !fs.immutable[fs.real(where)] {
+			t.Fatalf("slot %s was not marked immutable", where)
+		}
 	}
 }
 
@@ -499,12 +610,12 @@ func catchAllOfNewArraySequence(t *testing.T, events *[]string, failOn string) j
 func TestArraySequence_GuardsTheCatchAllBeforeItMountsAgain(t *testing.T) {
 	var events []string
 	catchAll := catchAllOfNewArraySequence(t, &events, "")
-	prev := catchAllGuard
-	catchAllGuard = func(_ context.Context, _ disk.Runner, path string) error {
+	prev := arrayPathGuard
+	arrayPathGuard = func(_ context.Context, _ disk.Runner, path string) error {
 		events = append(events, "guard "+path)
 		return nil
 	}
-	t.Cleanup(func() { catchAllGuard = prev })
+	t.Cleanup(func() { arrayPathGuard = prev })
 
 	if err := catchAll.Unmount(context.Background()); err != nil {
 		t.Fatalf("Unmount: %v", err)
@@ -530,9 +641,9 @@ func TestArraySequence_GuardsTheCatchAllBeforeItMountsAgain(t *testing.T) {
 func TestArraySequence_ACatchAllGuardFindingNeverFailsTheMountOrUnmount(t *testing.T) {
 	var events []string
 	catchAll := catchAllOfNewArraySequence(t, &events, "")
-	prev := catchAllGuard
-	catchAllGuard = func(context.Context, disk.Runner, string) error { return errors.New("operation not supported") }
-	t.Cleanup(func() { catchAllGuard = prev })
+	prev := arrayPathGuard
+	arrayPathGuard = func(context.Context, disk.Runner, string) error { return errors.New("operation not supported") }
+	t.Cleanup(func() { arrayPathGuard = prev })
 
 	if err := catchAll.Unmount(context.Background()); err != nil {
 		t.Fatalf("Unmount with a failing guard: %v", err)
@@ -546,15 +657,145 @@ func TestArraySequence_ADeadUnmountLeavesTheCatchAllUnguarded(t *testing.T) {
 	var events []string
 	catchAll := catchAllOfNewArraySequence(t, &events, "unmount")
 	guards := 0
-	prev := catchAllGuard
-	catchAllGuard = func(context.Context, disk.Runner, string) error { guards++; return nil }
-	t.Cleanup(func() { catchAllGuard = prev })
+	prev := arrayPathGuard
+	arrayPathGuard = func(context.Context, disk.Runner, string) error { guards++; return nil }
+	t.Cleanup(func() { arrayPathGuard = prev })
 
 	if err := catchAll.Unmount(context.Background()); err == nil {
 		t.Fatal("Unmount succeeded, want the underlying failure")
 	}
 	if guards != 0 {
 		t.Fatalf("guard ran %d times after a failed unmount, want 0: the pool is still mounted", guards)
+	}
+}
+
+type recordingArrayMount struct {
+	where  string
+	events *[]string
+	failOn string
+}
+
+func (m recordingArrayMount) Where() string { return m.where }
+
+func (m recordingArrayMount) Mount(context.Context) error {
+	*m.events = append(*m.events, "mount "+m.where)
+	if m.failOn == "mount" {
+		return errors.New("mount failed")
+	}
+	return nil
+}
+
+func (m recordingArrayMount) Unmount(context.Context) error {
+	*m.events = append(*m.events, "unmount "+m.where)
+	if m.failOn == "unmount" {
+		return errors.New("unmount failed")
+	}
+	return nil
+}
+
+// slotsOfNewArraySequence builds the array sequence the way main.go does and
+// swaps only the mount unit controller under each slot's guard for a
+// recorder.
+func slotsOfNewArraySequence(t *testing.T, events *[]string, failOn string) []job.ArrayMount {
+	t.Helper()
+	ctx, h, _, _, _, disks, runner := newLiveArrayShutdownEnv(t)
+	createLiveArray(t, ctx, h, disks, runner)
+	var slots []job.ArrayMount
+	for i, d := range h.CurrentArray().Disks {
+		g, ok := d.(guardedSlotMount)
+		if !ok {
+			t.Fatalf("Disks[%d] is %T, want guardedSlotMount", i, d)
+		}
+		g.inner = recordingArrayMount{where: d.Where(), events: events, failOn: failOn}
+		slots = append(slots, g)
+	}
+	if len(slots) == 0 {
+		t.Fatal("the live array has no slots")
+	}
+	return slots
+}
+
+func TestArraySequence_GuardsEverySlotAfterItUnmountsAndBeforeItMountsAgain(t *testing.T) {
+	var events []string
+	slots := slotsOfNewArraySequence(t, &events, "")
+	prev := arrayPathGuard
+	arrayPathGuard = func(_ context.Context, _ disk.Runner, path string) error {
+		events = append(events, "guard "+path)
+		return nil
+	}
+	t.Cleanup(func() { arrayPathGuard = prev })
+
+	for _, s := range slots {
+		events = nil
+		if err := s.Unmount(context.Background()); err != nil {
+			t.Fatalf("Unmount %s: %v", s.Where(), err)
+		}
+		if err := s.Mount(context.Background()); err != nil {
+			t.Fatalf("Mount %s: %v", s.Where(), err)
+		}
+		w := s.Where()
+		want := []string{"unmount " + w, "guard " + w, "guard " + w, "mount " + w}
+		if len(events) != len(want) {
+			t.Fatalf("events = %v, want %v", events, want)
+		}
+		for i := range want {
+			if events[i] != want[i] {
+				t.Fatalf("events = %v, want %v", events, want)
+			}
+		}
+	}
+}
+
+func TestArraySequence_ASlotGuardFindingNeverFailsTheMountOrUnmount(t *testing.T) {
+	var events []string
+	slots := slotsOfNewArraySequence(t, &events, "")
+	prev := arrayPathGuard
+	arrayPathGuard = func(context.Context, disk.Runner, string) error { return errors.New("operation not supported") }
+	t.Cleanup(func() { arrayPathGuard = prev })
+
+	for _, s := range slots {
+		if err := s.Unmount(context.Background()); err != nil {
+			t.Fatalf("Unmount %s with a failing guard: %v", s.Where(), err)
+		}
+		if err := s.Mount(context.Background()); err != nil {
+			t.Fatalf("Mount %s with a failing guard: %v", s.Where(), err)
+		}
+	}
+}
+
+func TestArraySequence_ADeadSlotUnmountLeavesItUnguarded(t *testing.T) {
+	var events []string
+	slots := slotsOfNewArraySequence(t, &events, "unmount")
+	guards := 0
+	prev := arrayPathGuard
+	arrayPathGuard = func(context.Context, disk.Runner, string) error { guards++; return nil }
+	t.Cleanup(func() { arrayPathGuard = prev })
+
+	if err := slots[0].Unmount(context.Background()); err == nil {
+		t.Fatal("Unmount succeeded, want the underlying failure")
+	}
+	if guards != 0 {
+		t.Fatalf("guard ran %d times after a failed unmount, want 0: the disk is still mounted", guards)
+	}
+}
+
+func TestArraySequence_NeverGuardsAMountedSlot(t *testing.T) {
+	fs := newImmutableFilesystem()
+	prev := arrayPathGuard
+	arrayPathGuard = disk.GuardMountpoint
+	t.Cleanup(func() { arrayPathGuard = prev })
+	var events []string
+	slot := guardedSlotMount{inner: recordingArrayMount{where: "/proc", events: &events}, runner: fs}
+
+	if err := slot.Unmount(context.Background()); err != nil {
+		t.Fatalf("Unmount: %v", err)
+	}
+	if err := slot.Mount(context.Background()); err != nil {
+		t.Fatalf("Mount: %v", err)
+	}
+
+	if got := fs.chattrsOf("+i"); len(got) != 0 {
+		t.Fatalf("chattr +i issued for %v, want none: the slot is mounted", got)
 	}
 }
 

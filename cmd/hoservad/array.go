@@ -92,13 +92,16 @@ func newArraySequence(ctx context.Context, scheduler *job.Scheduler, arrays *sto
 			Role:    d.Role,
 			MountAt: d.Mountpoint,
 		})
-		diskMounts = append(diskMounts, disk.MountUnitController{
-			Unit: disk.MountUnit{
-				Where:      d.Mountpoint,
-				UUID:       d.FSUUID,
-				Filesystem: disk.FilesystemType(d.Filesystem),
+		diskMounts = append(diskMounts, guardedSlotMount{
+			inner: disk.MountUnitController{
+				Unit: disk.MountUnit{
+					Where:      d.Mountpoint,
+					UUID:       d.FSUUID,
+					Filesystem: disk.FilesystemType(d.Filesystem),
+				},
+				Runner: runner,
 			},
-			Runner: runner,
+			runner: runner,
 		})
 		switch d.Role {
 		case store.ArrayRoleData:
