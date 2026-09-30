@@ -40,8 +40,8 @@ full isolation from other agents working on other issues at the same time.
   "Deviations" rather than silently diverging.
 
 `LANDING_REPO = {{LANDING_REPO}}` (`mdg-labs/hoserva`, or
-`mdg-labs/hoserva-catalog`) — the repository your commits land in, on its
-branch `{{LANDING_BRANCH}}`. `HOSERVA_ROOT = {{HOSERVA_ROOT}}`: for a
+`mdg-labs/hoserva-catalog`) — the repository your commits land in; in both,
+the orchestrator lands on its `dev` branch. `HOSERVA_ROOT = {{HOSERVA_ROOT}}`: for a
 `mdg-labs/hoserva` landing it is `WORKSPACE` itself; for a
 `mdg-labs/hoserva-catalog` landing it is the real `mdg-labs/hoserva` repo,
 which holds the status scripts, `CLAUDE.md`, the design docs and the

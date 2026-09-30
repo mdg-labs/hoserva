@@ -24,14 +24,14 @@ never pass something because its neighbour was good.
 
 `WORKSPACE = {{WORKSPACE_PATH}}`
 `HOSERVA_LAB_ID = {{LAB_ID}}`
-`LANDING_REPO = {{LANDING_REPO}}` (branch `{{LANDING_BRANCH}}`)
+`LANDING_REPO = {{LANDING_REPO}}`
 `HOSERVA_ROOT = {{HOSERVA_ROOT}}`
 
 A throwaway clone where `task-executor` committed the changes above. You
 **inspect and run checks only** — never modify anything here, in the real
 repo, or anywhere else. Never push, never touch a remote or another clone.
 `LANDING_REPO` is where the commits land: `mdg-labs/hoserva`, or
-`mdg-labs/hoserva-catalog`. `HOSERVA_ROOT` is `WORKSPACE` for the former; for
+`mdg-labs/hoserva-catalog`, each on its `dev` branch. `HOSERVA_ROOT` is `WORKSPACE` for the former; for
 the latter it is the real `mdg-labs/hoserva` repo, which holds the status
 scripts, `CLAUDE.md`, the design docs and the known-escapes list — read and
 run from it, never write to it.
