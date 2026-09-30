@@ -8,9 +8,10 @@
 # name. So are the RFC 2606 / RFC 6761 reserved documentation names
 # (example.com/.net/.org and their subdomains, and the .example, .test and
 # .invalid TLDs): they can never resolve, so a placeholder address in UI copy
-# is not a request. The reserved-name entry is anchored on the URL's host, so
-# `example.com.evil.io`, `notexample.com` and `example.com@evil.io` still fail.
-# Anything else found here is a real regression.
+# is not a request. Every entry is anchored on the URL's host (and path, where
+# one is named), so `example.com.evil.io`, `notexample.com`,
+# `example.com@evil.io` and `evil.io/?x=localhost` still fail. Anything else
+# found here is a real regression.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,7 +19,8 @@ dist="${1:-$script_dir/../../web/dist}"
 
 label='[A-Za-z0-9-]+'
 reserved="^https?://(${label}\\.)*(example\\.(com|net|org)|example|test|invalid)\\.?(:[0-9]+)?([/?#].*)?\$"
-allowed="(www\\.w3\\.org|react\\.dev/errors|base-ui\\.com/production-error|react\\.i18next\\.com|reactrouter\\.com|^https?://github\\.com/ungap/url-search-params(\\.|[?#].*)?\$|^https?://fb\\.me/use-check-prop-types([?#].*)?\$|localhost|${reserved})"
+named="^https?://(www\\.w3\\.org|react\\.dev/errors|base-ui\\.com/production-error|react\\.i18next\\.com|reactrouter\\.com|localhost(:[0-9]+)?)([/?#].*)?\$"
+allowed="(${named}|^https?://github\\.com/ungap/url-search-params(\\.|[?#].*)?\$|^https?://fb\\.me/use-check-prop-types([?#].*)?\$|${reserved})"
 
 if [ ! -d "$dist" ]; then
   echo "check-web-outbound: $dist is not a directory — build the web app first" >&2
