@@ -192,7 +192,9 @@ test("mass deletion blocks the sync", async ({ page }) => {
     page.getByText(catalogString("parity.guard.blocked"), { exact: true }),
   );
   await expect(
-    page.locator(`[data-job-id="${refusedJob.id}"]`).getByText("failed", { exact: true }),
+    page
+      .locator(`[data-job-id="${refusedJob.id}"]`)
+      .getByText(catalogString("jobs.status.failed"), { exact: true }),
   ).toBeVisible();
 
   const afterResponse = await page.request.get("/api/v1/parity");
