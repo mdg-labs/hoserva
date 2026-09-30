@@ -624,11 +624,24 @@ func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if !req.Confirm {
 		return nil, errConfirmRequired()
 	}
+	mapping, err := mockDiskMappingFromRequest(req.DiskMapping)
+	if err != nil {
+		return nil, err
+	}
 	tree, err := stageMockArchive(req.Archive.File)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = os.RemoveAll(tree) }()
+	var bareMetalNotRestored []backup.NotRestored
+	if h.mockFresh() {
+		bareMetalNotRestored, err = h.mockBareMetalNotRestored(ctx, tree, mapping)
+		if err != nil {
+			return nil, err
+		}
+	} else if mapping != nil {
+		return nil, &mockError{code: "disk_mapping_not_applicable", statusCode: 409, message: "this installation has an array, so an import restores no disks and takes no diskMapping"}
+	}
 	secrets, err := h.resolveMockSecrets(ctx, tree, req.Passphrase)
 	if err != nil {
 		return nil, err
@@ -637,6 +650,7 @@ func (h *handler) ImportConfig(ctx context.Context, req *apiv1.ImportConfigReq) 
 	if err != nil {
 		return nil, err
 	}
+	notRestored = append(bareMetalNotRestored, notRestored...)
 
 	restored := func(c apiv1.ConfigImportRestoredCategory, added, changed, removed int64) apiv1.ConfigImportRestored {
 		return apiv1.ConfigImportRestored{Category: c, Added: added, Changed: changed, Removed: removed}
@@ -721,6 +735,18 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 		return nil, err
 	}
 	defer func() { _ = os.RemoveAll(tree) }()
+	var bareMetal apiv1.OptConfigImportBareMetal
+	blockers := []apiv1.ConfigImportBlocker{}
+	if h.mockFresh() {
+		bm, found, err := h.mockBareMetalPreview(ctx, tree)
+		if err != nil {
+			return nil, err
+		}
+		blockers = found
+		if bm != nil {
+			bareMetal = apiv1.NewOptConfigImportBareMetal(*bm)
+		}
+	}
 	secrets, err := h.resolveMockSecrets(ctx, tree, req.Passphrase)
 	if err != nil {
 		return nil, err
@@ -741,7 +767,8 @@ func (h *handler) PreviewConfigImport(ctx context.Context, req *apiv1.PreviewCon
 			Status: apiv1.ConfigImportSecretsStatus(secrets.Status),
 			Stacks: append([]string{}, secrets.Stacks...),
 		},
-		Blockers: []apiv1.ConfigImportBlocker{},
+		Blockers:  blockers,
+		BareMetal: bareMetal,
 		Groups: []apiv1.ConfigImportGroup{
 			group(apiv1.ConfigImportGroupCategoryShares,
 				[]apiv1.ConfigImportChange{{Kind: apiv1.ConfigImportChangeKindShare, Name: "photos"}},

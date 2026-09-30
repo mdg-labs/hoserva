@@ -54,11 +54,24 @@ func mockSecretsArchive(t *testing.T) []byte {
 	if _, err := backup.BuildArchive(context.Background(), db, backup.Paths{StacksDir: stacks}, src, backup.FakeSecretCipher{}, "host", "test", time.Now(), staging); err != nil {
 		t.Fatal(err)
 	}
+	return packMockArchive(t, staging)
+}
 
+// packMockArchive packs a staged archive tree into a .tar.zst.
+func packMockArchive(t *testing.T, staging string) []byte {
+	t.Helper()
+	b, err := packArchive(staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func packArchive(staging string) ([]byte, error) {
 	var buf bytes.Buffer
 	zw, err := zstd.NewWriter(&buf)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	tw := tar.NewWriter(zw)
 	err = filepath.WalkDir(staging, func(p string, d fs.DirEntry, err error) error {
@@ -80,15 +93,15 @@ func mockSecretsArchive(t *testing.T) []byte {
 		return err
 	})
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	if err := tw.Close(); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	if err := zw.Close(); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }
 
 func importUpload(archive []byte, passphrase *string) (*apiv1.ImportConfigReq, *apiv1.PreviewConfigImportReq) {

@@ -702,6 +702,12 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		// The regeneration step ImportConfig runs once the database is
 		// restored; an archive that does not verify is refused before it.
 		RegenerateConfig: func(context.Context) error { return nil },
+		// The bare-metal restore's extra hook (doc 10 §1): it writes the
+		// disk mount units and snapraid.conf, which nothing here has.
+		RegenerateArray: func(context.Context) error { return nil },
+	}
+	if scenario == "fresh-install" {
+		prepareContractBareMetal(t, db, h.Backup, dbPath)
 	}
 	// Appdata backup (#61) is the real service over this rig's own
 	// Docker fake and backup destinations. This rig has no cache disk in any
@@ -731,6 +737,21 @@ func newContractProductionHandler(t *testing.T, scenario string) *api.Handler {
 		return appdataSvc.RunPreview(ctx, id, backup.AppdataRestoreRequest{Container: p.Container, Archive: p.Archive, DestinationID: p.DestinationID}, out)
 	}))
 	return h
+}
+
+// prepareContractBareMetal readies the fresh-install rig for a bare-metal
+// restore that runs to the end: the installation's own backup recipient,
+// which the restore keeps beside the machine key check the rig already has,
+// and every path the restore writes under a temporary directory instead of
+// hoservad's own.
+func prepareContractBareMetal(t *testing.T, db *sql.DB, svc *backup.Service, dbPath string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO backup_recipient (id, public_recipient, wrapped_identity, check_value, created_at) VALUES (1, 'age1contract', x'bb', x'cc', '2026-09-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seeding the contract rig's backup recipient: %v", err)
+	}
+	paths := backup.DefaultPaths(t.TempDir(), t.TempDir())
+	paths.DBPath = dbPath
+	svc.Paths = paths
 }
 
 func contractBackupService(t *testing.T, db *sql.DB, dbPath string) *backup.Service {

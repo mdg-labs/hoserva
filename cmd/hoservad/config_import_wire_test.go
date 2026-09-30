@@ -133,7 +133,7 @@ func TestWireConfigImport_ImportRegeneratesTheConfigsTheDatabaseDescribes(t *tes
 	wireConfigImport(handler, func(ctx context.Context) error {
 		topologyRuns++
 		return shareService.ApplyTopology(ctx, false)
-	})
+	}, regenerateArrayFiles(arrays, shares, generator))
 
 	// The state at export time: a share with Samba and NFS, a UPS, a custom
 	// config file.
@@ -249,7 +249,7 @@ func TestWireConfigImport_AnImportWithoutTheHookIsRefused(t *testing.T) {
 		t.Fatalf("ImportConfig = %+v, want 501 not_configured", got)
 	}
 
-	wireConfigImport(handler, func(context.Context) error { return nil })
+	wireConfigImport(handler, func(context.Context) error { return nil }, nil)
 	if handler.RegenerateConfig == nil {
 		t.Fatal("wireConfigImport left RegenerateConfig unset")
 	}
@@ -260,7 +260,7 @@ func TestWireConfigImport_ReportsEveryFailureAndRunsBothParts(t *testing.T) {
 	handler := &api.Handler{}
 	ran := false
 	topologyErr := errors.New("share files not written")
-	wireConfigImport(handler, func(context.Context) error { ran = true; return topologyErr })
+	wireConfigImport(handler, func(context.Context) error { ran = true; return topologyErr }, nil)
 	err := handler.RegenerateConfig(context.Background())
 	if !ran || !errors.Is(err, topologyErr) || !strings.Contains(err.Error(), "UPS settings service is not configured") {
 		t.Fatalf("RegenerateConfig = %v (topology ran: %v), want both failures", err, ran)
@@ -281,7 +281,7 @@ func TestMain_WiresConfigImportWithTheStrictTopologyHook(t *testing.T) {
 		if !ok {
 			return true
 		}
-		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "wireConfigImport" && len(call.Args) == 2 {
+		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "wireConfigImport" && len(call.Args) == 3 {
 			if sel, ok := call.Args[1].(*ast.SelectorExpr); ok && sel.Sel.Name == "callArrayReady" {
 				found = true
 			}
@@ -289,6 +289,6 @@ func TestMain_WiresConfigImportWithTheStrictTopologyHook(t *testing.T) {
 		return true
 	})
 	if !found {
-		t.Fatal("main.go does not call wireConfigImport(handler, parityReg.callArrayReady)")
+		t.Fatal("main.go does not call wireConfigImport(handler, parityReg.callArrayReady, regenerateArrayFiles(...))")
 	}
 }

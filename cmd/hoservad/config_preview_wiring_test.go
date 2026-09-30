@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mdg-labs/hoserva/internal/api"
 	"github.com/mdg-labs/hoserva/internal/auth"
 	"github.com/mdg-labs/hoserva/internal/backup"
+	"github.com/mdg-labs/hoserva/internal/disk"
 	"github.com/mdg-labs/hoserva/internal/job"
 	"github.com/mdg-labs/hoserva/internal/notify"
 	"github.com/mdg-labs/hoserva/internal/store"
@@ -57,10 +59,19 @@ func TestConfigImportPreview_ServedByTheDaemonsHandler(t *testing.T) {
 		t.Fatalf("CreateFirstAdmin: %v", err)
 	}
 
+	// The box has an admin and no array, so its own export is previewed as a
+	// bare-metal restore, which needs the disk inventory and this box's
+	// recipient, as main.go wires them.
+	if _, err := backup.LoadOrGenerateRecipient(ctx, machineKey, api.NewBackupRecipientStore(db), time.Now); err != nil {
+		t.Fatalf("backup recipient: %v", err)
+	}
 	handler := &api.Handler{
 		Scheduler: job.NewScheduler(job.NewStore(db), job.NewLogStore(t.TempDir()), job.NewHub(), job.NewRegistry()),
+		Disks:     disk.NewFakeProvider(),
 	}
 	wireBackup(handler, &backup.Service{DB: db, Paths: backup.Paths{DBPath: dbPath}})
+	noop := func(context.Context) error { return nil }
+	wireConfigImport(handler, noop, noop)
 
 	unixServer, err := buildUnixServer(handler, authStore, job.NewHub(), notify.NewHub())
 	if err != nil {
@@ -117,9 +128,15 @@ func TestConfigImportPreview_ServedByTheDaemonsHandler(t *testing.T) {
 			Category string `json:"category"`
 		} `json:"groups"`
 		LiveSchemaVersion string `json:"liveSchemaVersion"`
+		BareMetal         *struct {
+			Disks []json.RawMessage `json:"disks"`
+		} `json:"bareMetal"`
 	}
 	if err := json.Unmarshal(respBody, &preview); err != nil {
 		t.Fatalf("decoding the preview: %v\n%s", err, respBody)
+	}
+	if preview.BareMetal == nil || len(preview.BareMetal.Disks) != 0 {
+		t.Fatalf("preview on a box with no array = %s, want a bareMetal block with no disks", respBody)
 	}
 	if len(preview.Blockers) != 0 || len(preview.Groups) != 9 || preview.LiveSchemaVersion == "" {
 		t.Fatalf("preview of the daemon's own export = %s, want no blockers, nine categories and a schema version", respBody)

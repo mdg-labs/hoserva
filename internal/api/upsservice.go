@@ -193,8 +193,10 @@ func (s *UPSService) Update(ctx context.Context, input UpdateUPSInput) (UPSView,
 
 // Regenerate rewrites the NUT files from the stored settings and reloads
 // the units, so the files match the database after a config import
-// replaced it (doc 10 §1, D4). With no stored settings it only removes the
-// managed NUT files and reloads nothing. It changes no row.
+// replaced it (doc 10 §1, D4). With no stored settings, or settings whose
+// password a bare-metal restore cleared because it was sealed under another
+// installation's machine key, it only removes the managed NUT files and
+// reloads nothing. It changes no row.
 func (s *UPSService) Regenerate(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -206,6 +208,9 @@ func (s *UPSService) Regenerate(ctx context.Context) error {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("settings: loading ups config: %w", err)
 		}
+		row = nil
+	}
+	if row != nil && len(activeUPSPassword(row)) == 0 {
 		row = nil
 	}
 	if err := s.restoreUPSGenerated(ctx, row); err != nil {
@@ -225,6 +230,15 @@ func (s *UPSService) Regenerate(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// activeUPSPassword is the sealed password the row's connection uses; it is
+// empty for a row whose password was cleared.
+func activeUPSPassword(row *UPSConfigRow) []byte {
+	if config.UPSConnection(row.Connection) == config.UPSConnectionUSB {
+		return row.MonitorPassword
+	}
+	return row.NetworkPassword
 }
 
 // rollbackUPS restores SQLite and the generated NUT files to previous

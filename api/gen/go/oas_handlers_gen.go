@@ -13489,6 +13489,21 @@ func (s *Server) handleGetUserSharePermissionsRequest(args [1]string, argsEscape
 // mode or stopped, is kept as it is, never restored from the archive, so an import cannot return a
 // stopped array to normal operation.
 //
+// On a fresh install, one with no array configured, whatever admin accounts it has, the import is the
+// bare-metal restore (doc 10 §1) of another installation's archive. It takes the archive's array
+// disks from `state.db` and matches each against the attached disks by identity; the mapping is what
+// `previewConfigImport` shows, and the import refuses with 409 `disk_mapping_required` without
+// `diskMapping`, the mapping the user confirmed, and with 409 `disk_mapping_stale` when it no longer
+// matches the attached disks. An archive from an older schema version is upgraded on a staged copy of
+// its database by the same migration runner a normal upgrade uses; one from a newer version is refused
+// with 409 `archive_newer_version`. This box's own machine key check and backup recipient are kept, so
+// `hoservad` starts, and every database secret sealed under the archive's key is cleared and reported
+// in `notRestored`. Only matched disks are mounted; an absent, replaced or ambiguous disk stays a row
+// of the restored array, unmounted, and is reported in `notRestored` (the replace flow adopts a
+// replacement disk), and no disk is ever formatted or partitioned. While no admin account exists this
+// operation and `previewConfigImport` are served on the Unix socket only; the TCP listener answers 409
+// `setup_required`.
+//
 // POST /config/import
 func (s *Server) handleImportConfigRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {
 	statusWriter := &codeRecorder{ResponseWriter: w}
@@ -19007,6 +19022,16 @@ func (s *Server) handlePreviewAppdataRestoreRequest(args [0]string, argsEscaped 
 // be read is refused as `importConfig` refuses it (400 `invalid_archive`, 413 `archive_too_large`),
 // and a daemon with no config backup wired answers 501 `not_configured`. Nothing on a data disk is
 // read.
+//
+// On a fresh install, one with no array configured, `bareMetal` reports the bare-metal restore (see
+// `importConfig`): whether the archive's database would be upgraded, and one entry per array disk the
+// archive records, with the attached disk it matched, or none, and a state of `matched`, `absent`,
+// `replaced` or `ambiguous`. `bareMetal.diskMapping` is the mapping to confirm, ready to send as
+// `importConfig`'s `diskMapping`. An archive from a newer schema version is a blocker
+// (`archive_newer_version`) with no `bareMetal`. The refusals for another installation's archive or a
+// different array (`archive_other_installation`, `archive_array_mismatch`) apply to an installation
+// that has an array only. While no admin account exists this operation is served on the Unix socket
+// only.
 //
 // POST /config/import/preview
 func (s *Server) handlePreviewConfigImportRequest(args [0]string, argsEscaped bool, w http.ResponseWriter, r *http.Request) {

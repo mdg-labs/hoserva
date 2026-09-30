@@ -401,3 +401,121 @@ func TestConfigImportPreview_SendsThePassphraseAndPrintsTheSecretsStatus(t *test
 		t.Errorf("output does not say the secrets restore:\n%s", printed)
 	}
 }
+
+func testBareMetalPreview() *apiv1.ConfigImportPreview {
+	p := testConfigImportPreview()
+	p.Blockers = []apiv1.ConfigImportBlocker{}
+	p.BareMetal = apiv1.NewOptConfigImportBareMetal(apiv1.ConfigImportBareMetal{
+		SchemaUpgrade: true,
+		Disks: []apiv1.ConfigImportDisk{
+			{Name: "data disk 1 (/mnt/disk1, WWN wwn-d1)", Role: apiv1.ArrayDiskRoleData, RoleIndex: 1, Mountpoint: "/mnt/disk1", State: apiv1.ConfigImportDiskStateMatched, Device: apiv1.NewOptString("/dev/sdb")},
+			{Name: "parity disk 1 (/mnt/parity1, WWN wwn-p1)", Role: apiv1.ArrayDiskRoleParity, RoleIndex: 1, Mountpoint: "/mnt/parity1", State: apiv1.ConfigImportDiskStateAbsent},
+			{Name: "data disk 2 (/mnt/disk2, WWN wwn-d2)", Role: apiv1.ArrayDiskRoleData, RoleIndex: 2, Mountpoint: "/mnt/disk2", State: apiv1.ConfigImportDiskStateReplaced, Device: apiv1.NewOptString("/dev/sdc")},
+		},
+		DiskMapping: apiv1.ConfigImportDiskMapping{Disks: []apiv1.ConfigImportDiskMappingEntry{{Role: apiv1.ArrayDiskRoleData, RoleIndex: 1, Device: "/dev/sdb"}}},
+	})
+	return p
+}
+
+func TestConfigImportPreview_ShowsTheDiskMappingOfABareMetalRestore(t *testing.T) {
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, testBareMetalPreview())
+	})
+	printed, err := runAppCLI(t, sock, "config", "import", "--preview", writeArchiveFile(t))
+	if err != nil {
+		t.Fatalf("config import --preview: %v", err)
+	}
+	for _, want := range []string{
+		"restores another installation's archive",
+		"upgraded first",
+		"data disk 1 (/mnt/disk1, WWN wwn-d1): matched, on /dev/sdb",
+		"parity disk 1 (/mnt/parity1, WWN wwn-p1): absent, not mounted",
+		"data disk 2 (/mnt/disk2, WWN wwn-d2): replaced (/dev/sdc), not mounted",
+		"the replace flow adopts a replacement disk",
+		"--confirm --disk-mapping-file <file>",
+		`"device": "/dev/sdb"`,
+	} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output does not contain %q:\n%s", want, printed)
+		}
+	}
+	if strings.Contains(printed, `"/dev/sdc"`) && strings.Contains(printed[strings.Index(printed, "{"):], "sdc") {
+		t.Errorf("the mapping to confirm names a disk that did not match:\n%s", printed)
+	}
+}
+
+func TestConfigImport_SendsTheConfirmedDiskMappingFromTheFile(t *testing.T) {
+	var request string
+	fields := map[string]string{}
+	sock := serveImport(t, testConfigImportReport(), fields, &request)
+	path := filepath.Join(t.TempDir(), "mapping.json")
+	if err := os.WriteFile(path, []byte(`{"disks":[{"role":"data","roleIndex":1,"device":"/dev/sdb"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runAppCLI(t, sock, "config", "import", "--confirm", "--disk-mapping-file", path, writeArchiveFile(t)); err != nil {
+		t.Fatalf("config import --confirm --disk-mapping-file: %v", err)
+	}
+	var sent apiv1.ConfigImportDiskMapping
+	if err := json.Unmarshal([]byte(fields["diskMapping"]), &sent); err != nil {
+		t.Fatalf("the diskMapping part = %q: %v", fields["diskMapping"], err)
+	}
+	if len(sent.Disks) != 1 || sent.Disks[0].Device != "/dev/sdb" || sent.Disks[0].Role != apiv1.ArrayDiskRoleData || sent.Disks[0].RoleIndex != 1 || fields["confirm"] != "true" {
+		t.Fatalf("fields = %v, want the confirmed mapping sent with confirm", fields)
+	}
+}
+
+func TestConfigImport_WithoutAMappingFileSendsNoDiskMapping(t *testing.T) {
+	var request string
+	fields := map[string]string{}
+	sock := serveImport(t, testConfigImportReport(), fields, &request)
+	if _, err := runAppCLI(t, sock, "config", "import", "--confirm", writeArchiveFile(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, sent := fields["diskMapping"]; sent {
+		t.Fatalf("a disk mapping was sent that the user never confirmed: %v", fields)
+	}
+}
+
+func TestConfigImport_ABadDiskMappingFileIsRefusedBeforeTheDaemonIsCalled(t *testing.T) {
+	called := false
+	sock := serveAppAPI(t, func(w http.ResponseWriter, r *http.Request) { called = true })
+	notJSON := filepath.Join(t.TempDir(), "not-json")
+	if err := os.WriteFile(notJSON, []byte("data 1 -> /dev/sdb"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, args := range map[string][]string{
+		"a file that is not a mapping": {"--confirm", "--disk-mapping-file", notJSON},
+		"a file that does not exist":   {"--confirm", "--disk-mapping-file", filepath.Join(t.TempDir(), "missing")},
+		"with --preview":               {"--preview", "--disk-mapping-file", notJSON},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := runAppCLI(t, sock, append([]string{"config", "import"}, append(args, writeArchiveFile(t))...)...)
+			if err == nil {
+				t.Fatal("the command succeeded")
+			}
+			if called {
+				t.Fatal("the daemon was called")
+			}
+		})
+	}
+}
+
+func TestConfigImport_TheReportNamesTheDisksAndSecretsARestoreLeftOut(t *testing.T) {
+	var request string
+	report := testConfigImportReport()
+	report.NotRestored = []apiv1.ConfigImportNotRestored{
+		{Kind: apiv1.ConfigImportNotRestoredKindDisk, Name: "parity disk 1 (/mnt/parity1, WWN wwn-p1)", Reason: apiv1.ConfigImportNotRestoredReasonDiskAbsent, Message: "the parity disk 1 is not mounted: no attached disk is it"},
+		{Kind: apiv1.ConfigImportNotRestoredKindDatabaseSecret, Name: "acme_config.dns_secret (nas.example.org)", Reason: apiv1.ConfigImportNotRestoredReasonSealedUnderOtherKey, Message: "cleared"},
+	}
+	sock := serveImport(t, report, map[string]string{}, &request)
+	printed, err := runAppCLI(t, sock, "config", "import", "--confirm", writeArchiveFile(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"disk parity disk 1 (/mnt/parity1, WWN wwn-p1) (disk_absent)", "database_secret acme_config.dns_secret (nas.example.org) (sealed_under_other_key)"} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("output does not contain %q:\n%s", want, printed)
+		}
+	}
+}

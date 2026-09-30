@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -2391,6 +2392,133 @@ var contractCases = []contractCase{
 		},
 	},
 
+	// The diskMapping field is read before the upload is, so a value that is
+	// not a mapping is refused the same way on both sides whatever the
+	// installation holds. The cases below it use a real archive from another
+	// installation (buildMockBareMetalArchive), built inside the case.
+	{
+		op:   "ImportConfig",
+		name: "invalid_disk_mapping",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ImportConfig(ctx, &apiv1.ImportConfigReq{
+				Confirm:     true,
+				Archive:     ht.MultipartFile{File: bytes.NewReader([]byte("not a tar.zst archive"))},
+				DiskMapping: apiv1.NewOptString("data 1 is on /dev/sdb"),
+			})
+			return err
+		},
+	},
+	{
+		op:   "ImportConfig",
+		name: "invalid_disk_mapping_role",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ImportConfig(ctx, &apiv1.ImportConfigReq{
+				Confirm:     true,
+				Archive:     ht.MultipartFile{File: bytes.NewReader([]byte("not a tar.zst archive"))},
+				DiskMapping: apiv1.NewOptString(`{"disks":[{"role":"spare","roleIndex":1,"device":"/dev/sdb"}]}`),
+			})
+			return err
+		},
+	},
+	{
+		op:   "ImportConfig",
+		name: "missing_confirm_with_a_disk_mapping",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.ImportConfig(ctx, &apiv1.ImportConfigReq{Confirm: false, DiskMapping: apiv1.NewOptString(`{"disks":[]}`)})
+			return err
+		},
+	},
+	{
+		op:       "ImportConfig",
+		name:     "valid_bare_metal_restore",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return contractImportBareMetal(ctx, h, contractMatchedMapping)
+		},
+	},
+	{
+		op:       "ImportConfig",
+		name:     "bare_metal_without_a_disk_mapping",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return contractImportBareMetal(ctx, h, "")
+		},
+	},
+	{
+		op:       "ImportConfig",
+		name:     "bare_metal_with_a_stale_disk_mapping",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return contractImportBareMetal(ctx, h, `{"disks":[{"role":"data","roleIndex":1,"device":"/dev/sdc"}]}`)
+		},
+	},
+	{
+		op:       "ImportConfig",
+		name:     "bare_metal_with_an_empty_disk_mapping",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return contractImportBareMetal(ctx, h, `{"disks":[]}`)
+		},
+	},
+	{
+		op:       "ImportConfig",
+		name:     "bare_metal_archive_from_a_newer_schema",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return contractImportBareMetal(ctx, h, contractMatchedMapping, contractNewerSchema)
+		},
+	},
+	{
+		op:       "ImportConfig",
+		name:     "disk_mapping_on_an_installation_with_an_array",
+		scenario: "healthy",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			return contractImportBareMetal(ctx, h, `{"disks":[]}`)
+		},
+	},
+	{
+		op:       "PreviewConfigImport",
+		name:     "valid_bare_metal_preview_shows_the_disk_mapping",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			p, err := contractPreviewBareMetal(ctx, h)
+			if err != nil {
+				return err
+			}
+			bm, ok := p.BareMetal.Get()
+			if !ok {
+				return errors.New("the preview has no bareMetal block")
+			}
+			states := map[apiv1.ConfigImportDiskState]string{}
+			for _, d := range bm.Disks {
+				states[d.State] = d.Device.Or("")
+			}
+			if len(bm.Disks) != 2 || len(p.Blockers) != 0 ||
+				states[apiv1.ConfigImportDiskStateMatched] != "/dev/sdb" ||
+				states[apiv1.ConfigImportDiskStateAbsent] != "" {
+				return fmt.Errorf("bareMetal disks = %+v, blockers = %+v, want data 1 matched on /dev/sdb, data 2 absent and no blocker", bm.Disks, p.Blockers)
+			}
+			if len(bm.DiskMapping.Disks) != 1 || bm.DiskMapping.Disks[0].Device != "/dev/sdb" || bm.DiskMapping.Disks[0].RoleIndex != 1 {
+				return fmt.Errorf("the mapping to confirm = %+v, want only data 1 on /dev/sdb", bm.DiskMapping)
+			}
+			return nil
+		},
+	},
+	{
+		op:       "PreviewConfigImport",
+		name:     "bare_metal_preview_of_a_newer_schema_is_a_blocker",
+		scenario: "fresh-install",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			p, err := contractPreviewBareMetal(ctx, h, contractNewerSchema)
+			if err != nil {
+				return err
+			}
+			if p.BareMetal.Set || len(p.Blockers) != 1 || p.Blockers[0].Code != apiv1.ConfigImportBlockerCodeArchiveNewerVersion {
+				return fmt.Errorf("bareMetal set = %v, blockers = %+v, want no bareMetal block and one archive_newer_version blocker", p.BareMetal.Set, p.Blockers)
+			}
+			return nil
+		},
+	},
 	{
 		op:   "PreviewConfigImport",
 		name: "invalid_archive",
@@ -2883,4 +3011,34 @@ func contractOrdinaryArchive(ctx context.Context, h apiv1.Handler, backup bool) 
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// contractMatchedMapping is the mapping a user confirms against the
+// fresh-install scenario: the archive's first data disk on the scenario's
+// first disk.
+const contractMatchedMapping = `{"disks":[{"role":"data","roleIndex":1,"device":"/dev/sdb"}]}`
+
+// contractNewerSchema marks an archive's database as written by a Hoserva
+// newer than any this build knows.
+const contractNewerSchema = `INSERT INTO schema_migrations (version, slug, checksum, applied_at) VALUES ('99999999999999', 'from_the_future', 'x', '2099-01-01T00:00:00Z')`
+
+func contractImportBareMetal(ctx context.Context, h apiv1.Handler, mapping string, extra ...string) error {
+	archive, err := buildMockBareMetalArchive(extra...)
+	if err != nil {
+		return fmt.Errorf("building the archive: %w", err)
+	}
+	req := &apiv1.ImportConfigReq{Confirm: true, Archive: ht.MultipartFile{File: bytes.NewReader(archive)}}
+	if mapping != "" {
+		req.DiskMapping = apiv1.NewOptString(mapping)
+	}
+	_, err = h.ImportConfig(ctx, req)
+	return err
+}
+
+func contractPreviewBareMetal(ctx context.Context, h apiv1.Handler, extra ...string) (*apiv1.ConfigImportPreview, error) {
+	archive, err := buildMockBareMetalArchive(extra...)
+	if err != nil {
+		return nil, fmt.Errorf("building the archive: %w", err)
+	}
+	return h.PreviewConfigImport(ctx, &apiv1.PreviewConfigImportReq{Archive: ht.MultipartFile{File: bytes.NewReader(archive)}})
 }

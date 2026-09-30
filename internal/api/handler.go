@@ -106,6 +106,12 @@ type Handler struct {
 	// import that skipped it would leave the generated files describing the
 	// database it replaced.
 	RegenerateConfig func(ctx context.Context) error
+	// RegenerateArray is the bare-metal restore's extra hook (doc 10 §1):
+	// the restored database names an array this installation never had, so
+	// before RegenerateConfig it writes the disk mount units and
+	// snapraid.conf from it, which an in-place import never needs (its
+	// array is unchanged). Nil refuses a bare-metal import with 501.
+	RegenerateArray func(ctx context.Context) error
 	// ExternalWriteGates is the per-disk gate Backup's writes to an external
 	// disk take a slot in (#454): eject closes it and waits for a write in
 	// flight before unmounting, and mount reopens it. It must be the same

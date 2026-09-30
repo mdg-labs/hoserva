@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 )
 
-// setupExemptPaths are the only two API operations reachable before an
-// admin account exists (#22's acceptance criteria) — the SPA's static
+// setupExemptPaths are the only two API operations reachable on every
+// listener before an admin account exists (#22's acceptance criteria;
+// ConfigImportPaths adds two on the Unix socket) — the SPA's static
 // assets are exempt too, but that is handled by cmd/hoservad mounting
 // this gate only in front of the "/api/v1" prefix, never in front of the
 // SPA-serving branch. login/logout/session/TOTP are deliberately not
@@ -33,18 +35,26 @@ const (
 	setupRequiredMessage = "no admin account exists yet — complete first-run setup first"
 )
 
+// ConfigImportPaths are the two operations, importConfig and
+// previewConfigImport, a bare-metal restore (doc 10 §1) has to reach before
+// the box it restores has an admin account. Only the Unix-socket listener
+// passes them to SetupGate: its peer is credential-checked (doc 01 §3),
+// while the TCP listener is open to the LAN, where an unclaimed box must
+// not accept an archive from whoever asks first.
+var ConfigImportPaths = []string{"/config/import", "/config/import/preview"}
+
 // SetupGate wraps next (the API mux) and refuses every request whose path
-// (with apiPrefix stripped) is not in setupExemptPaths while no admin
-// account exists yet — before the request ever reaches routing, security
-// or a handler method. apiPrefix is the same "/api/v1" prefix the
-// generated server itself is mounted under (apiv1.WithPathPrefix).
-func SetupGate(next http.Handler, checker AdminExistsChecker, apiPrefix string) http.Handler {
+// (with apiPrefix stripped) is not in setupExemptPaths, or in extraExempt,
+// while no admin account exists yet — before the request ever reaches
+// routing, security or a handler method. apiPrefix is the same "/api/v1"
+// prefix the generated server itself is mounted under (apiv1.WithPathPrefix).
+func SetupGate(next http.Handler, checker AdminExistsChecker, apiPrefix string, extraExempt ...string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if len(path) >= len(apiPrefix) && path[:len(apiPrefix)] == apiPrefix {
 			path = path[len(apiPrefix):]
 		}
-		if setupExemptPaths[path] {
+		if setupExemptPaths[path] || slices.Contains(extraExempt, path) {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -62,6 +62,9 @@ func newImportTestHandlerWithRegistry(t *testing.T) (*Handler, *job.Registry, *s
 		t.Fatalf("applying migrations: %v", err)
 	}
 	seedMachineKeyCheck(t, db, []byte("installation-a-check-value"))
+	// An installation with no array takes the bare-metal branch, so the
+	// in-place tests start from one that has an array.
+	seedDisk(t, db, seededDisk{role: "cache", index: 1, uuid: "uuid-c1", wwn: "wwn-c1"})
 
 	jobStore := job.NewStore(db)
 	logs := job.NewLogStore(t.TempDir())
@@ -1078,7 +1081,7 @@ func TestImportConfig_RefusesArchiveWhoseArrayDiffers(t *testing.T) {
 		assertRefusedBeforeWriting(t, h, db, archive, 409, "archive_array_mismatch", "removal_state", "relocation manifest", "/mnt/data2")
 	})
 
-	t.Run("exported when no array existed yet", func(t *testing.T) {
+	t.Run("exported before the rest of the array existed", func(t *testing.T) {
 		h, db, _ := newImportTestHandler(t)
 		archive := exportBytes(t, h)
 		seedArray(t, db)

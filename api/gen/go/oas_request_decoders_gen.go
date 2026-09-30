@@ -1831,6 +1831,65 @@ func (s *Server) decodeImportConfigRequest(r *http.Request) (
 			}
 		}
 		{
+			cfg := uri.QueryParameterDecodingConfig{
+				Name:    "diskMapping",
+				Style:   uri.QueryStyleForm,
+				Explode: true,
+			}
+			if err := q.HasParam(cfg); err == nil {
+				if err := q.DecodeParam(cfg, func(d uri.Decoder) error {
+					var requestDotDiskMappingVal string
+					if err := func() error {
+						val, err := d.DecodeValue()
+						if err != nil {
+							return err
+						}
+
+						c, err := conv.ToString(val)
+						if err != nil {
+							return err
+						}
+
+						requestDotDiskMappingVal = c
+						return nil
+					}(); err != nil {
+						return err
+					}
+					request.DiskMapping.SetTo(requestDotDiskMappingVal)
+					return nil
+				}); err != nil {
+					return req, rawBody, close, errors.Wrap(err, "decode \"diskMapping\"")
+				}
+				if err := func() error {
+					if value, ok := request.DiskMapping.Get(); ok {
+						if err := func() error {
+							if err := (validate.String{
+								MinLength:     1,
+								MinLengthSet:  true,
+								MaxLength:     65536,
+								MaxLengthSet:  true,
+								Email:         false,
+								Hostname:      false,
+								Regex:         nil,
+								MinNumeric:    0,
+								MinNumericSet: false,
+								MaxNumeric:    0,
+								MaxNumericSet: false,
+							}).Validate(string(value)); err != nil {
+								return errors.Wrap(err, "string")
+							}
+							return nil
+						}(); err != nil {
+							return err
+						}
+					}
+					return nil
+				}(); err != nil {
+					return req, rawBody, close, errors.Wrap(err, "validate")
+				}
+			}
+		}
+		{
 			if err := func() error {
 				files, ok := r.MultipartForm.File["archive"]
 				if !ok || len(files) < 1 {

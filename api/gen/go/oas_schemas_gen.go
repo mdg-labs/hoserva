@@ -2132,6 +2132,47 @@ func (s *ConfigImportArchive) SetSchemaVersion(val string) {
 	s.SchemaVersion = val
 }
 
+// The bare-metal restore of an archive onto a fresh install (doc 10 §1), present when the
+// installation has no array configured and the archive's schema is not newer.
+// Ref: #/components/schemas/ConfigImportBareMetal
+type ConfigImportBareMetal struct {
+	// The archive's database is older than the running schema and is upgraded, on a staged copy, by the
+	// migration runner.
+	SchemaUpgrade bool                    `json:"schemaUpgrade"`
+	Disks         []ConfigImportDisk      `json:"disks"`
+	DiskMapping   ConfigImportDiskMapping `json:"diskMapping"`
+}
+
+// GetSchemaUpgrade returns the value of SchemaUpgrade.
+func (s *ConfigImportBareMetal) GetSchemaUpgrade() bool {
+	return s.SchemaUpgrade
+}
+
+// GetDisks returns the value of Disks.
+func (s *ConfigImportBareMetal) GetDisks() []ConfigImportDisk {
+	return s.Disks
+}
+
+// GetDiskMapping returns the value of DiskMapping.
+func (s *ConfigImportBareMetal) GetDiskMapping() ConfigImportDiskMapping {
+	return s.DiskMapping
+}
+
+// SetSchemaUpgrade sets the value of SchemaUpgrade.
+func (s *ConfigImportBareMetal) SetSchemaUpgrade(val bool) {
+	s.SchemaUpgrade = val
+}
+
+// SetDisks sets the value of Disks.
+func (s *ConfigImportBareMetal) SetDisks(val []ConfigImportDisk) {
+	s.Disks = val
+}
+
+// SetDiskMapping sets the value of DiskMapping.
+func (s *ConfigImportBareMetal) SetDiskMapping(val ConfigImportDiskMapping) {
+	s.DiskMapping = val
+}
+
 // A refusal `importConfig` would return for this archive.
 // Ref: #/components/schemas/ConfigImportBlocker
 type ConfigImportBlocker struct {
@@ -2163,6 +2204,7 @@ type ConfigImportBlockerCode string
 
 const (
 	ConfigImportBlockerCodeIncompatibleArchive      ConfigImportBlockerCode = "incompatible_archive"
+	ConfigImportBlockerCodeArchiveNewerVersion      ConfigImportBlockerCode = "archive_newer_version"
 	ConfigImportBlockerCodeArchiveOtherInstallation ConfigImportBlockerCode = "archive_other_installation"
 	ConfigImportBlockerCodeArchiveArrayMismatch     ConfigImportBlockerCode = "archive_array_mismatch"
 	ConfigImportBlockerCodeRestorePathUnsafe        ConfigImportBlockerCode = "restore_path_unsafe"
@@ -2172,6 +2214,7 @@ const (
 func (ConfigImportBlockerCode) AllValues() []ConfigImportBlockerCode {
 	return []ConfigImportBlockerCode{
 		ConfigImportBlockerCodeIncompatibleArchive,
+		ConfigImportBlockerCodeArchiveNewerVersion,
 		ConfigImportBlockerCodeArchiveOtherInstallation,
 		ConfigImportBlockerCodeArchiveArrayMismatch,
 		ConfigImportBlockerCodeRestorePathUnsafe,
@@ -2182,6 +2225,8 @@ func (ConfigImportBlockerCode) AllValues() []ConfigImportBlockerCode {
 func (s ConfigImportBlockerCode) MarshalText() ([]byte, error) {
 	switch s {
 	case ConfigImportBlockerCodeIncompatibleArchive:
+		return []byte(s), nil
+	case ConfigImportBlockerCodeArchiveNewerVersion:
 		return []byte(s), nil
 	case ConfigImportBlockerCodeArchiveOtherInstallation:
 		return []byte(s), nil
@@ -2199,6 +2244,9 @@ func (s *ConfigImportBlockerCode) UnmarshalText(data []byte) error {
 	switch ConfigImportBlockerCode(data) {
 	case ConfigImportBlockerCodeIncompatibleArchive:
 		*s = ConfigImportBlockerCodeIncompatibleArchive
+		return nil
+	case ConfigImportBlockerCodeArchiveNewerVersion:
+		*s = ConfigImportBlockerCodeArchiveNewerVersion
 		return nil
 	case ConfigImportBlockerCodeArchiveOtherInstallation:
 		*s = ConfigImportBlockerCodeArchiveOtherInstallation
@@ -2476,6 +2524,266 @@ func (s *ConfigImportChangeKind) UnmarshalText(data []byte) error {
 	}
 }
 
+// One array disk the archive records, and what it matched.
+// Ref: #/components/schemas/ConfigImportDisk
+type ConfigImportDisk struct {
+	// What a user calls it: the role and index, its mountpoint and the identity it was recorded with.
+	Name       string        `json:"name"`
+	Role       ArrayDiskRole `json:"role"`
+	RoleIndex  int64         `json:"roleIndex"`
+	Mountpoint string        `json:"mountpoint"`
+	// The filesystem UUID the archive records for the slot.
+	FsUuid       string                `json:"fsUuid"`
+	Wwn          OptString             `json:"wwn"`
+	Serial       OptString             `json:"serial"`
+	ByIdName     OptString             `json:"byIdName"`
+	WeakIdentity bool                  `json:"weakIdentity"`
+	SizeBytes    OptInt64              `json:"sizeBytes"`
+	State        ConfigImportDiskState `json:"state"`
+	// The attached disk it matched, or the disk holding its filesystem when `replaced`; absent for
+	// `absent` and `ambiguous`.
+	Device OptString `json:"device"`
+}
+
+// GetName returns the value of Name.
+func (s *ConfigImportDisk) GetName() string {
+	return s.Name
+}
+
+// GetRole returns the value of Role.
+func (s *ConfigImportDisk) GetRole() ArrayDiskRole {
+	return s.Role
+}
+
+// GetRoleIndex returns the value of RoleIndex.
+func (s *ConfigImportDisk) GetRoleIndex() int64 {
+	return s.RoleIndex
+}
+
+// GetMountpoint returns the value of Mountpoint.
+func (s *ConfigImportDisk) GetMountpoint() string {
+	return s.Mountpoint
+}
+
+// GetFsUuid returns the value of FsUuid.
+func (s *ConfigImportDisk) GetFsUuid() string {
+	return s.FsUuid
+}
+
+// GetWwn returns the value of Wwn.
+func (s *ConfigImportDisk) GetWwn() OptString {
+	return s.Wwn
+}
+
+// GetSerial returns the value of Serial.
+func (s *ConfigImportDisk) GetSerial() OptString {
+	return s.Serial
+}
+
+// GetByIdName returns the value of ByIdName.
+func (s *ConfigImportDisk) GetByIdName() OptString {
+	return s.ByIdName
+}
+
+// GetWeakIdentity returns the value of WeakIdentity.
+func (s *ConfigImportDisk) GetWeakIdentity() bool {
+	return s.WeakIdentity
+}
+
+// GetSizeBytes returns the value of SizeBytes.
+func (s *ConfigImportDisk) GetSizeBytes() OptInt64 {
+	return s.SizeBytes
+}
+
+// GetState returns the value of State.
+func (s *ConfigImportDisk) GetState() ConfigImportDiskState {
+	return s.State
+}
+
+// GetDevice returns the value of Device.
+func (s *ConfigImportDisk) GetDevice() OptString {
+	return s.Device
+}
+
+// SetName sets the value of Name.
+func (s *ConfigImportDisk) SetName(val string) {
+	s.Name = val
+}
+
+// SetRole sets the value of Role.
+func (s *ConfigImportDisk) SetRole(val ArrayDiskRole) {
+	s.Role = val
+}
+
+// SetRoleIndex sets the value of RoleIndex.
+func (s *ConfigImportDisk) SetRoleIndex(val int64) {
+	s.RoleIndex = val
+}
+
+// SetMountpoint sets the value of Mountpoint.
+func (s *ConfigImportDisk) SetMountpoint(val string) {
+	s.Mountpoint = val
+}
+
+// SetFsUuid sets the value of FsUuid.
+func (s *ConfigImportDisk) SetFsUuid(val string) {
+	s.FsUuid = val
+}
+
+// SetWwn sets the value of Wwn.
+func (s *ConfigImportDisk) SetWwn(val OptString) {
+	s.Wwn = val
+}
+
+// SetSerial sets the value of Serial.
+func (s *ConfigImportDisk) SetSerial(val OptString) {
+	s.Serial = val
+}
+
+// SetByIdName sets the value of ByIdName.
+func (s *ConfigImportDisk) SetByIdName(val OptString) {
+	s.ByIdName = val
+}
+
+// SetWeakIdentity sets the value of WeakIdentity.
+func (s *ConfigImportDisk) SetWeakIdentity(val bool) {
+	s.WeakIdentity = val
+}
+
+// SetSizeBytes sets the value of SizeBytes.
+func (s *ConfigImportDisk) SetSizeBytes(val OptInt64) {
+	s.SizeBytes = val
+}
+
+// SetState sets the value of State.
+func (s *ConfigImportDisk) SetState(val ConfigImportDiskState) {
+	s.State = val
+}
+
+// SetDevice sets the value of Device.
+func (s *ConfigImportDisk) SetDevice(val OptString) {
+	s.Device = val
+}
+
+// The mapping of the archive's array disks to the attached disks that a user confirms: one entry per
+// `matched` disk, and none for any other. An empty list confirms an archive that records no array
+// disks, or that none of its disks is attached.
+// Ref: #/components/schemas/ConfigImportDiskMapping
+type ConfigImportDiskMapping struct {
+	Disks []ConfigImportDiskMappingEntry `json:"disks"`
+}
+
+// GetDisks returns the value of Disks.
+func (s *ConfigImportDiskMapping) GetDisks() []ConfigImportDiskMappingEntry {
+	return s.Disks
+}
+
+// SetDisks sets the value of Disks.
+func (s *ConfigImportDiskMapping) SetDisks(val []ConfigImportDiskMappingEntry) {
+	s.Disks = val
+}
+
+// Ref: #/components/schemas/ConfigImportDiskMappingEntry
+type ConfigImportDiskMappingEntry struct {
+	Role      ArrayDiskRole `json:"role"`
+	RoleIndex int64         `json:"roleIndex"`
+	// The attached disk the slot was matched to.
+	Device string `json:"device"`
+}
+
+// GetRole returns the value of Role.
+func (s *ConfigImportDiskMappingEntry) GetRole() ArrayDiskRole {
+	return s.Role
+}
+
+// GetRoleIndex returns the value of RoleIndex.
+func (s *ConfigImportDiskMappingEntry) GetRoleIndex() int64 {
+	return s.RoleIndex
+}
+
+// GetDevice returns the value of Device.
+func (s *ConfigImportDiskMappingEntry) GetDevice() string {
+	return s.Device
+}
+
+// SetRole sets the value of Role.
+func (s *ConfigImportDiskMappingEntry) SetRole(val ArrayDiskRole) {
+	s.Role = val
+}
+
+// SetRoleIndex sets the value of RoleIndex.
+func (s *ConfigImportDiskMappingEntry) SetRoleIndex(val int64) {
+	s.RoleIndex = val
+}
+
+// SetDevice sets the value of Device.
+func (s *ConfigImportDiskMappingEntry) SetDevice(val string) {
+	s.Device = val
+}
+
+// `matched`: exactly one attached disk carries the recorded identity (WWN, else serial; a
+// weak-identity disk by filesystem UUID and size, Q21) and its filesystem is the recorded one.
+// `absent`: no attached disk is it. `replaced`: the identity or the filesystem differs, either an
+// attached disk holds the recorded filesystem with another identity or the disk with the recorded
+// identity holds another filesystem. `ambiguous`: more than one attached disk matches, a disk and its
+// clone. A disk that is not `matched` stays a row of the restored array with its recorded filesystem,
+// is never mounted or adopted by the restore, and leaves the array degraded.
+// Ref: #/components/schemas/ConfigImportDiskState
+type ConfigImportDiskState string
+
+const (
+	ConfigImportDiskStateMatched   ConfigImportDiskState = "matched"
+	ConfigImportDiskStateAbsent    ConfigImportDiskState = "absent"
+	ConfigImportDiskStateReplaced  ConfigImportDiskState = "replaced"
+	ConfigImportDiskStateAmbiguous ConfigImportDiskState = "ambiguous"
+)
+
+// AllValues returns all ConfigImportDiskState values.
+func (ConfigImportDiskState) AllValues() []ConfigImportDiskState {
+	return []ConfigImportDiskState{
+		ConfigImportDiskStateMatched,
+		ConfigImportDiskStateAbsent,
+		ConfigImportDiskStateReplaced,
+		ConfigImportDiskStateAmbiguous,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ConfigImportDiskState) MarshalText() ([]byte, error) {
+	switch s {
+	case ConfigImportDiskStateMatched:
+		return []byte(s), nil
+	case ConfigImportDiskStateAbsent:
+		return []byte(s), nil
+	case ConfigImportDiskStateReplaced:
+		return []byte(s), nil
+	case ConfigImportDiskStateAmbiguous:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ConfigImportDiskState) UnmarshalText(data []byte) error {
+	switch ConfigImportDiskState(data) {
+	case ConfigImportDiskStateMatched:
+		*s = ConfigImportDiskStateMatched
+		return nil
+	case ConfigImportDiskStateAbsent:
+		*s = ConfigImportDiskStateAbsent
+		return nil
+	case ConfigImportDiskStateReplaced:
+		*s = ConfigImportDiskStateReplaced
+		return nil
+	case ConfigImportDiskStateAmbiguous:
+		*s = ConfigImportDiskStateAmbiguous
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
 // Ref: #/components/schemas/ConfigImportGroup
 type ConfigImportGroup struct {
 	Category ConfigImportGroupCategory `json:"category"`
@@ -2620,12 +2928,19 @@ func (s *ConfigImportGroupCategory) UnmarshalText(data []byte) error {
 // Ref: #/components/schemas/ConfigImportNotRestored
 type ConfigImportNotRestored struct {
 	Kind ConfigImportNotRestoredKind `json:"kind"`
-	// The stack whose `.env` file it is.
+	// The stack whose `.env` file it is (`stack_env`), the array disk by its `ConfigImportDisk.name`
+	// (`disk`), or the table and column of a database secret cleared by a bare-metal restore, with the row
+	// it was in (`database_secret`).
 	Name string `json:"name"`
 	// `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the archive's passphrase-protected section
 	// could not be opened (see `ConfigImportSecretsStatus`). `stack_not_in_archive`: that section holds an
 	// `.env` for a stack the archive has no files of. `left_in_place`: the `.env` on this machine was kept
-	// because the archive holds none for that stack.
+	// because the archive holds none for that stack. `disk_absent`, `disk_replaced` and `disk_ambiguous`:
+	// a bare-metal restore did not match the array disk (see `ConfigImportDiskState`), so it stays a row
+	// of the restored array, unmounted, and the array is degraded: nothing mounts, matched disks included,
+	// until the degraded array is acknowledged or the replace flow (doc 09 §4) adopts a replacement disk.
+	// `sealed_under_other_key`: the secret was sealed under the machine key of the installation the
+	// archive came from, which this machine does not have, so a bare-metal restore cleared it.
 	Reason  ConfigImportNotRestoredReason `json:"reason"`
 	Message string                        `json:"message"`
 }
@@ -2673,13 +2988,17 @@ func (s *ConfigImportNotRestored) SetMessage(val string) {
 type ConfigImportNotRestoredKind string
 
 const (
-	ConfigImportNotRestoredKindStackEnv ConfigImportNotRestoredKind = "stack_env"
+	ConfigImportNotRestoredKindStackEnv       ConfigImportNotRestoredKind = "stack_env"
+	ConfigImportNotRestoredKindDisk           ConfigImportNotRestoredKind = "disk"
+	ConfigImportNotRestoredKindDatabaseSecret ConfigImportNotRestoredKind = "database_secret"
 )
 
 // AllValues returns all ConfigImportNotRestoredKind values.
 func (ConfigImportNotRestoredKind) AllValues() []ConfigImportNotRestoredKind {
 	return []ConfigImportNotRestoredKind{
 		ConfigImportNotRestoredKindStackEnv,
+		ConfigImportNotRestoredKindDisk,
+		ConfigImportNotRestoredKindDatabaseSecret,
 	}
 }
 
@@ -2687,6 +3006,10 @@ func (ConfigImportNotRestoredKind) AllValues() []ConfigImportNotRestoredKind {
 func (s ConfigImportNotRestoredKind) MarshalText() ([]byte, error) {
 	switch s {
 	case ConfigImportNotRestoredKindStackEnv:
+		return []byte(s), nil
+	case ConfigImportNotRestoredKindDisk:
+		return []byte(s), nil
+	case ConfigImportNotRestoredKindDatabaseSecret:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -2699,6 +3022,12 @@ func (s *ConfigImportNotRestoredKind) UnmarshalText(data []byte) error {
 	case ConfigImportNotRestoredKindStackEnv:
 		*s = ConfigImportNotRestoredKindStackEnv
 		return nil
+	case ConfigImportNotRestoredKindDisk:
+		*s = ConfigImportNotRestoredKindDisk
+		return nil
+	case ConfigImportNotRestoredKindDatabaseSecret:
+		*s = ConfigImportNotRestoredKindDatabaseSecret
+		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
@@ -2707,7 +3036,12 @@ func (s *ConfigImportNotRestoredKind) UnmarshalText(data []byte) error {
 // `no_secrets`, `no_passphrase` and `passphrase_incorrect`: the archive's passphrase-protected section
 // could not be opened (see `ConfigImportSecretsStatus`). `stack_not_in_archive`: that section holds an
 // `.env` for a stack the archive has no files of. `left_in_place`: the `.env` on this machine was kept
-// because the archive holds none for that stack.
+// because the archive holds none for that stack. `disk_absent`, `disk_replaced` and `disk_ambiguous`:
+// a bare-metal restore did not match the array disk (see `ConfigImportDiskState`), so it stays a row
+// of the restored array, unmounted, and the array is degraded: nothing mounts, matched disks included,
+// until the degraded array is acknowledged or the replace flow (doc 09 §4) adopts a replacement disk.
+// `sealed_under_other_key`: the secret was sealed under the machine key of the installation the
+// archive came from, which this machine does not have, so a bare-metal restore cleared it.
 type ConfigImportNotRestoredReason string
 
 const (
@@ -2716,6 +3050,10 @@ const (
 	ConfigImportNotRestoredReasonPassphraseIncorrect ConfigImportNotRestoredReason = "passphrase_incorrect"
 	ConfigImportNotRestoredReasonStackNotInArchive   ConfigImportNotRestoredReason = "stack_not_in_archive"
 	ConfigImportNotRestoredReasonLeftInPlace         ConfigImportNotRestoredReason = "left_in_place"
+	ConfigImportNotRestoredReasonDiskAbsent          ConfigImportNotRestoredReason = "disk_absent"
+	ConfigImportNotRestoredReasonDiskReplaced        ConfigImportNotRestoredReason = "disk_replaced"
+	ConfigImportNotRestoredReasonDiskAmbiguous       ConfigImportNotRestoredReason = "disk_ambiguous"
+	ConfigImportNotRestoredReasonSealedUnderOtherKey ConfigImportNotRestoredReason = "sealed_under_other_key"
 )
 
 // AllValues returns all ConfigImportNotRestoredReason values.
@@ -2726,6 +3064,10 @@ func (ConfigImportNotRestoredReason) AllValues() []ConfigImportNotRestoredReason
 		ConfigImportNotRestoredReasonPassphraseIncorrect,
 		ConfigImportNotRestoredReasonStackNotInArchive,
 		ConfigImportNotRestoredReasonLeftInPlace,
+		ConfigImportNotRestoredReasonDiskAbsent,
+		ConfigImportNotRestoredReasonDiskReplaced,
+		ConfigImportNotRestoredReasonDiskAmbiguous,
+		ConfigImportNotRestoredReasonSealedUnderOtherKey,
 	}
 }
 
@@ -2741,6 +3083,14 @@ func (s ConfigImportNotRestoredReason) MarshalText() ([]byte, error) {
 	case ConfigImportNotRestoredReasonStackNotInArchive:
 		return []byte(s), nil
 	case ConfigImportNotRestoredReasonLeftInPlace:
+		return []byte(s), nil
+	case ConfigImportNotRestoredReasonDiskAbsent:
+		return []byte(s), nil
+	case ConfigImportNotRestoredReasonDiskReplaced:
+		return []byte(s), nil
+	case ConfigImportNotRestoredReasonDiskAmbiguous:
+		return []byte(s), nil
+	case ConfigImportNotRestoredReasonSealedUnderOtherKey:
 		return []byte(s), nil
 	default:
 		return nil, errors.Errorf("invalid value: %q", s)
@@ -2764,6 +3114,18 @@ func (s *ConfigImportNotRestoredReason) UnmarshalText(data []byte) error {
 		return nil
 	case ConfigImportNotRestoredReasonLeftInPlace:
 		*s = ConfigImportNotRestoredReasonLeftInPlace
+		return nil
+	case ConfigImportNotRestoredReasonDiskAbsent:
+		*s = ConfigImportNotRestoredReasonDiskAbsent
+		return nil
+	case ConfigImportNotRestoredReasonDiskReplaced:
+		*s = ConfigImportNotRestoredReasonDiskReplaced
+		return nil
+	case ConfigImportNotRestoredReasonDiskAmbiguous:
+		*s = ConfigImportNotRestoredReasonDiskAmbiguous
+		return nil
+	case ConfigImportNotRestoredReasonSealedUnderOtherKey:
+		*s = ConfigImportNotRestoredReasonSealedUnderOtherKey
 		return nil
 	default:
 		return errors.Errorf("invalid value: %q", data)
@@ -2900,9 +3262,10 @@ type ConfigImportPreview struct {
 	// One entry per category, in a fixed order, each listing what an import would add, change or remove.
 	// History and runtime tables (jobs, the audit log, spin events, notification deliveries and alerts,
 	// usage, mover and cache results) are not listed. Empty when the schema versions differ.
-	Groups  []ConfigImportGroup `json:"groups"`
-	Secrets ConfigImportSecrets `json:"secrets"`
-	Notes   []ConfigImportNote  `json:"notes"`
+	Groups    []ConfigImportGroup      `json:"groups"`
+	Secrets   ConfigImportSecrets      `json:"secrets"`
+	Notes     []ConfigImportNote       `json:"notes"`
+	BareMetal OptConfigImportBareMetal `json:"bareMetal"`
 }
 
 // GetArchive returns the value of Archive.
@@ -2935,6 +3298,11 @@ func (s *ConfigImportPreview) GetNotes() []ConfigImportNote {
 	return s.Notes
 }
 
+// GetBareMetal returns the value of BareMetal.
+func (s *ConfigImportPreview) GetBareMetal() OptConfigImportBareMetal {
+	return s.BareMetal
+}
+
 // SetArchive sets the value of Archive.
 func (s *ConfigImportPreview) SetArchive(val ConfigImportArchive) {
 	s.Archive = val
@@ -2963,6 +3331,11 @@ func (s *ConfigImportPreview) SetSecrets(val ConfigImportSecrets) {
 // SetNotes sets the value of Notes.
 func (s *ConfigImportPreview) SetNotes(val []ConfigImportNote) {
 	s.Notes = val
+}
+
+// SetBareMetal sets the value of BareMetal.
+func (s *ConfigImportPreview) SetBareMetal(val OptConfigImportBareMetal) {
+	s.BareMetal = val
 }
 
 // Ref: #/components/schemas/ConfigImportReport
@@ -5498,6 +5871,13 @@ type ImportConfigReq struct {
 	// The backup passphrase the archive's `secrets.age` was sealed under. Optional: omitted, the
 	// configured backup passphrase is tried.
 	Passphrase OptString `json:"passphrase"`
+	// The JSON of a `ConfigImportDiskMapping`: the mapping the user confirmed, which is
+	// `previewConfigImport`'s `bareMetal.diskMapping` as it was shown. Required when the installation has
+	// no array (409 `disk_mapping_required` without it) and refused with 409 `disk_mapping_not_applicable`
+	// otherwise, since an import into an array restores no disks. Sent as a JSON string, not a JSON part,
+	// because the generated clients send an empty part for an unset optional object; one that is not a
+	// valid mapping is refused as 400 `invalid_disk_mapping`.
+	DiskMapping OptString `json:"diskMapping"`
 }
 
 // GetArchive returns the value of Archive.
@@ -5515,6 +5895,11 @@ func (s *ImportConfigReq) GetPassphrase() OptString {
 	return s.Passphrase
 }
 
+// GetDiskMapping returns the value of DiskMapping.
+func (s *ImportConfigReq) GetDiskMapping() OptString {
+	return s.DiskMapping
+}
+
 // SetArchive sets the value of Archive.
 func (s *ImportConfigReq) SetArchive(val ht.MultipartFile) {
 	s.Archive = val
@@ -5528,6 +5913,11 @@ func (s *ImportConfigReq) SetConfirm(val bool) {
 // SetPassphrase sets the value of Passphrase.
 func (s *ImportConfigReq) SetPassphrase(val OptString) {
 	s.Passphrase = val
+}
+
+// SetDiskMapping sets the value of DiskMapping.
+func (s *ImportConfigReq) SetDiskMapping(val OptString) {
+	s.DiskMapping = val
 }
 
 // Ref: #/components/schemas/Job
@@ -8646,6 +9036,52 @@ func (o OptBool) Get() (v bool, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptBool) Or(d bool) bool {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptConfigImportBareMetal returns new OptConfigImportBareMetal with value set to v.
+func NewOptConfigImportBareMetal(v ConfigImportBareMetal) OptConfigImportBareMetal {
+	return OptConfigImportBareMetal{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptConfigImportBareMetal is optional ConfigImportBareMetal.
+type OptConfigImportBareMetal struct {
+	Value ConfigImportBareMetal
+	Set   bool
+}
+
+// IsSet returns true if OptConfigImportBareMetal was set.
+func (o OptConfigImportBareMetal) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptConfigImportBareMetal) Reset() {
+	var v ConfigImportBareMetal
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptConfigImportBareMetal) SetTo(v ConfigImportBareMetal) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptConfigImportBareMetal) Get() (v ConfigImportBareMetal, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptConfigImportBareMetal) Or(d ConfigImportBareMetal) ConfigImportBareMetal {
 	if v, ok := o.Get(); ok {
 		return v
 	}

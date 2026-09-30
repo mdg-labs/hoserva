@@ -102,3 +102,43 @@ func TestUPSRegenerateReportsAFailedReload(t *testing.T) {
 		t.Fatalf("Regenerate = %v, want the reload failure", err)
 	}
 }
+
+// A bare-metal restore clears the password sealed under the archive's machine
+// key. Regenerate must not fail the restore over settings it cannot decrypt:
+// it removes the managed NUT files, as it does with no settings, reloads
+// nothing and leaves the row for the user to enter the password again.
+func TestUPSRegenerateWithAClearedPasswordRemovesTheManagedFilesAndKeepsTheRow(t *testing.T) {
+	ctx, h, upsStore, g, nut, _ := newUPSTestEnv(t)
+	if _, err := h.UpdateUPSSettings(ctx, &apiv1.UpdateUPSSettingsRequest{
+		Connection:      apiv1.UPSConnectionUsb,
+		Driver:          apiv1.NewOptString("usbhid-ups"),
+		Port:            apiv1.NewOptString("auto"),
+		MonitorPassword: apiv1.NewOptString("stored-pass"),
+	}); err != nil {
+		t.Fatalf("UpdateUPSSettings: %v", err)
+	}
+	row, err := upsStore.Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.MonitorPassword, row.NetworkPassword = []byte{}, []byte{}
+	if err := upsStore.Upsert(ctx, *row); err != nil {
+		t.Fatal(err)
+	}
+	nut.calls = nil
+
+	if err := h.UPS.Regenerate(ctx); err != nil {
+		t.Fatalf("Regenerate = %v, want the cleared password to leave the settings unusable, not the restore failed", err)
+	}
+	for _, p := range []string{config.PathNUTConf, config.PathUPSConf, config.PathUPSDUsers, config.PathUPSMonConf} {
+		if _, err := os.Stat(filepath.Join(g.Root, p)); !os.IsNotExist(err) {
+			t.Errorf("%s still exists (%v)", p, err)
+		}
+	}
+	if len(nut.calls) != 0 {
+		t.Errorf("NUT reloads = %v, want none", nut.calls)
+	}
+	if kept, err := upsStore.Get(ctx); err != nil || kept.Driver != "usbhid-ups" {
+		t.Errorf("the settings row = %+v (err %v), want it kept with its driver", kept, err)
+	}
+}
