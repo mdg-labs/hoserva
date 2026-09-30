@@ -66,10 +66,9 @@ var (
 	// abort is already running (doc 02 §4 UR7).
 	ErrJobAbortInProgress = errors.New("job: an abort of this job is already running")
 	// ErrJobResumeInProgress refuses a Cancel or a second Resume of a job
-	// whose Resume is still repairing its log outside s.mu. It is an
-	// ErrJobAbortInProgress too, so callers that already map that refusal
-	// map this one the same way.
-	ErrJobResumeInProgress error = resumeInProgressError{}
+	// whose Resume is still repairing its log outside s.mu. It is not an
+	// ErrJobAbortInProgress: the job is being resumed, not aborted.
+	ErrJobResumeInProgress = errors.New("job: a resume of this job is already running")
 	// ErrCancelRequested is what a data-disk upgrade's save of its
 	// releasing checkpoint returns when a Cancel won the race for it
 	// (doc 02 §4 E3, UR7): the checkpoint is not saved and Release never
@@ -821,14 +820,6 @@ func (s *Scheduler) Resume(ctx context.Context, id string) (*Job, error) {
 	s.hub.Publish(&snapshot)
 	return &snapshot, nil
 }
-
-type resumeInProgressError struct{}
-
-func (resumeInProgressError) Error() string {
-	return "job: a resume of this job is already running"
-}
-
-func (resumeInProgressError) Is(target error) bool { return target == ErrJobAbortInProgress }
 
 // resumableJobLocked reads id's row and decides whether Resume may start
 // it now: every refusal Resume owns except the per-job in-flight markers.

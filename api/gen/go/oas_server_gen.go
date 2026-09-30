@@ -106,7 +106,8 @@ type Handler interface {
 	// with the running job and records its outcome once it has unmounted everything. A queued or
 	// interrupted upgrade is unwound first; if that fails it stays interrupted and the call is refused
 	// with `disk_upgrade_cleanup_failed`, naming what is still mounted. `job_abort_in_progress` refuses a
-	// second cancel while one runs.
+	// second cancel while one runs. `job_resume_in_progress` refuses a cancel while a resume of the same
+	// job is still repairing its log; retry in a moment.
 	//
 	// POST /jobs/{jobId}/cancel
 	CancelJob(ctx context.Context, params CancelJobParams) (*Job, error)
@@ -1005,9 +1006,10 @@ type Handler interface {
 	// upgrade) persist a checkpoint to resume from (Q29). Jobs are never resumed automatically after a
 	// restart — this operation is always an explicit user action. A data-disk upgrade resumes only in
 	// maintenance mode (doc 02 §4 E5); one resumed at its releasing checkpoint is not cancellable.
-	// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it. Resuming an
-	// interrupted mover job is refused with 409 `on_battery` while the on-battery hold is active (doc 02
-	// §6, Q77).
+	// Refused with `job_abort_in_progress` while a cancel of the same job is unwinding it, and with
+	// `job_resume_in_progress` while another resume of the same job is still repairing its log (retry in a
+	// moment). Resuming an interrupted mover job is refused with 409 `on_battery` while the on-battery
+	// hold is active (doc 02 §6, Q77).
 	//
 	// POST /jobs/{jobId}/resume
 	ResumeJob(ctx context.Context, params ResumeJobParams) (*Job, error)

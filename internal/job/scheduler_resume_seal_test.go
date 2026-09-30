@@ -125,9 +125,9 @@ func TestScheduler_ResumeWhileSealingRefusesASecondResumeAndACancel(t *testing.T
 
 	second := h.resumeAsync()
 	err := waitDone(t, "second Resume", second)
-	if !errors.Is(err, ErrJobResumeInProgress) || !errors.Is(err, ErrJobAbortInProgress) {
+	if !errors.Is(err, ErrJobResumeInProgress) || errors.Is(err, ErrJobAbortInProgress) {
 		release()
-		t.Fatalf("second Resume while sealing = %v, want ErrJobResumeInProgress (also ErrJobAbortInProgress)", err)
+		t.Fatalf("second Resume while sealing = %v, want ErrJobResumeInProgress and not ErrJobAbortInProgress", err)
 	}
 
 	cancelled := make(chan error, 1)

@@ -362,6 +362,8 @@ func mapSchedulerError(id uuid.UUID, err error) error {
 		return &apiError{code: "job_not_cancellable", statusCode: 409, message: fmt.Sprintf("job %s: the data-disk upgrade is past its release decision and has committed to the new disk — resume it to finish", id)}
 	case errors.Is(err, job.ErrJobNotCancellable):
 		return &apiError{code: "job_not_cancellable", statusCode: 409, message: fmt.Sprintf("job %s does not support cancellation", id)}
+	case errors.Is(err, job.ErrJobResumeInProgress):
+		return &apiError{code: "job_resume_in_progress", statusCode: 409, message: fmt.Sprintf("job %s is being resumed right now — try again in a moment", id)}
 	case errors.Is(err, job.ErrJobAbortInProgress):
 		return &apiError{code: "job_abort_in_progress", statusCode: 409, message: fmt.Sprintf("job %s is being aborted right now", id)}
 	case errors.Is(err, job.ErrDiskUpgradeCleanupFailed):
