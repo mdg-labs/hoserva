@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/mdg-labs/hoserva/main/internal/template/schema/v1.json",
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "enum": [
+        1
+      ],
+      "description": "Schema version of this block. A newer Hoserva keeps reading older versions."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Template id. Equals the name of the directory holding compose.yaml."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Increases with every change to the template."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Name shown in the catalog."
+    },
+    "categories": {
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      },
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Catalog categories."
+    },
+    "icon": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "File name of the icon next to compose.yaml."
+    },
+    "docs": {
+      "type": "string",
+      "pattern": "^https?://",
+      "description": "Upstream documentation the template was written from."
+    },
+    "webui": {
+      "type": "string",
+      "pattern": "^https?://",
+      "description": "Address of the app's web interface. {host} stands for the server's address and ${INPUT} for an input."
+    },
+    "inputs": {
+      "additionalProperties": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "path",
+              "port",
+              "string",
+              "secret",
+              "timezone",
+              "device"
+            ],
+            "description": "What the value is."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "appdata",
+              "share",
+              "media",
+              "downloads",
+              "gpu"
+            ],
+            "description": "Required for path (appdata/share/media/downloads) and device (gpu) inputs; not allowed for other kinds."
+          },
+          "default": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "description": "Preset value. A secret has none; it is generated at install time."
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Plain-language name shown in the install form."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Help text shown in the install form."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "path"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "default": {
+                  "pattern": "^/",
+                  "type": "string"
+                },
+                "role": {
+                  "enum": [
+                    "appdata",
+                    "share",
+                    "media",
+                    "downloads"
+                  ]
+                }
+              },
+              "required": [
+                "role"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "device"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "role": {
+                  "const": "gpu"
+                }
+              },
+              "required": [
+                "role"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "port",
+                    "string",
+                    "secret",
+                    "timezone"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "role"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "port"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "default": {
+                  "maximum": 65535,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "secret"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "default"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "type": "object",
+      "description": "The only values the install form asks for. Each key is the variable name the Compose file references.",
+      "propertyNames": {
+        "pattern": "^[A-Z][A-Z0-9_]*$"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "revision",
+    "title",
+    "categories",
+    "icon",
+    "docs"
+  ],
+  "title": "Hoserva x-hoserva template block, schema version 1"
+}

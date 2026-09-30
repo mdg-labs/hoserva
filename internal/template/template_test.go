@@ -1,0 +1,220 @@
+package template
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+var update = flag.Bool("update", false, "rewrite schema/v1.json from the Go definition")
+
+const fixtureDir = "testdata/catalog"
+
+func readFixture(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(fixtureDir, "jellyfin", ComposeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// catalogWith writes a one-template catalog whose compose.yaml is the
+// fixture with old replaced by new, and returns its directory.
+func catalogWith(t *testing.T, old, replacement string) string {
+	t.Helper()
+	src := readFixture(t)
+	if !strings.Contains(src, old) {
+		t.Fatalf("fixture does not contain %q", old)
+	}
+	return catalogFrom(t, "jellyfin", strings.Replace(src, old, replacement, 1))
+}
+
+func catalogFrom(t *testing.T, id, compose string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, id), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id, ComposeFile), []byte(compose), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	icon, err := os.ReadFile(filepath.Join(fixtureDir, "jellyfin", "icon.svg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id, "icon.svg"), icon, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func lintStrings(t *testing.T, dir string) []string {
+	t.Helper()
+	found, err := Lint(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, len(found))
+	for i, f := range found {
+		out[i] = f.String()
+	}
+	return out
+}
+
+func TestSchemaFileIsCurrent(t *testing.T) {
+	want, err := JSONSchema(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join("schema", "v1.json")
+	if *update {
+		if err := os.WriteFile(file, want, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("%s differs from the schema generated from the Go definition; regenerate it with `go test ./internal/template -run TestSchemaFileIsCurrent -update` and explain the diff in the commit", file)
+	}
+	if !json.Valid(got) {
+		t.Fatalf("%s is not valid JSON", file)
+	}
+}
+
+func TestVersion1TemplateValidatesWithCurrentValidator(t *testing.T) {
+	got := lintStrings(t, fixtureDir)
+	if len(got) != 0 {
+		t.Fatalf("the version-1 fixture must lint clean, got:\n%s", strings.Join(got, "\n"))
+	}
+	tpl, issues := Parse([]byte(readFixture(t)))
+	if tpl == nil {
+		t.Fatalf("Parse: %v", issues)
+	}
+	b := tpl.Block
+	if b.Schema != 1 || b.ID != "jellyfin" || b.Revision != 1 || b.Title != "Jellyfin" {
+		t.Errorf("block fields: %+v", b)
+	}
+	if in := b.Inputs["APPDATA"]; in.Kind != KindPath || in.Role != RoleAppdata || in.Default != "/mnt/cache/appdata" {
+		t.Errorf("APPDATA input: %+v", in)
+	}
+	if in := b.Inputs["TRANSCODE_GPU"]; in.Kind != KindDevice || in.Role != RoleGPU {
+		t.Errorf("TRANSCODE_GPU input: %+v", in)
+	}
+	if got := SupportedVersions(); len(got) == 0 || got[0] != 1 {
+		t.Errorf("SupportedVersions = %v, want to include 1", got)
+	}
+}
+
+func TestLintReportsMalformedTemplates(t *testing.T) {
+	cases := []struct {
+		name, old, replacement string
+		want                   string
+	}{
+		{"missing title", "  title: Jellyfin\n", "", "missing property 'title'"},
+		{"wrong kind", "WEBUI_PORT: { kind: port,", "WEBUI_PORT: { kind: number,", "x-hoserva.inputs.WEBUI_PORT.kind"},
+		{"unknown field", "  revision: 1\n", "  revision: 1\n  colour: blue\n", "additional properties 'colour' not allowed"},
+		{"revision zero", "  revision: 1\n", "  revision: 0\n", "x-hoserva.revision"},
+		{"unsupported schema version", "  schema: 1\n", "  schema: 2\n", "schema version 2 is not supported; this Hoserva reads 1"},
+		{"missing schema version", "  schema: 1\n", "", "x-hoserva.schema: is required"},
+		{"path without role", "{ kind: path, role: appdata, default", "{ kind: path, default", "missing property 'role'"},
+		{"role on a string", "TZ:         { kind: timezone }", "TZ:         { kind: timezone, role: appdata }", "x-hoserva.inputs.TZ"},
+		{"port out of range", "{ kind: port, default: 8096 }", "{ kind: port, default: 70000 }", "x-hoserva.inputs.WEBUI_PORT.default"},
+		{"secret with a default", "TZ:         { kind: timezone }", "TZ:         { kind: timezone }\n    TOKEN: { kind: secret, default: abc }", "x-hoserva.inputs.TOKEN"},
+		{"device with a path role", "{ kind: device, role: gpu,", "{ kind: device, role: appdata,", "x-hoserva.inputs.TRANSCODE_GPU"},
+		{"lowercase input name", "TZ:         { kind: timezone }", "tz:         { kind: timezone }", "'tz' does not match pattern"},
+		{"appdata off cache", "default: /mnt/cache/appdata }", "default: /srv/appdata }", "appdata belongs on cache"},
+		{"appdata escaping cache", "default: /mnt/cache/appdata }", "default: /mnt/cache/../disk1 }", "appdata belongs on cache"},
+		{"media off the pool", "default: /mnt/user/media,", "default: /mnt/disk1/media,", "media belongs on the pool"},
+		{"relative bind", "- ${APPDATA}/jellyfin:/config", "- ./config:/config", "is relative"},
+		{"bind from a port input", "- ${MEDIA}:/data/media", "- ${WEBUI_PORT}:/data/media", "not a path input"},
+		{"PUID other than 99", "PUID: \"99\"", "PUID: \"1000\"", "services.jellyfin.environment.PUID: must be \"99\""},
+		{"PGID other than 100", "PGID: \"100\"", "PGID: \"10\"", "services.jellyfin.environment.PGID: must be \"100\""},
+		{"undeclared variable", "TZ: ${TZ}", "TZ: ${TZ}\n      EXTRA: ${NOT_DECLARED}", "${NOT_DECLARED}, which is not declared"},
+		{"unused input", "      - ${MEDIA}:/data/media\n", "", "x-hoserva.inputs.MEDIA: is declared but nothing"},
+		{"no services", "services:\n  jellyfin:", "services: {}\nunused:\n  jellyfin:", "a template needs at least one service"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := lintStrings(t, catalogWith(t, tc.old, tc.replacement))
+			if len(got) == 0 {
+				t.Fatal("lint passed a malformed template")
+			}
+			joined := strings.Join(got, "\n")
+			if !strings.Contains(joined, tc.want) {
+				t.Fatalf("findings do not mention %q:\n%s", tc.want, joined)
+			}
+			if !strings.HasPrefix(got[0], "jellyfin/compose.yaml: ") {
+				t.Errorf("finding does not name its file: %q", got[0])
+			}
+		})
+	}
+}
+
+func TestLintFindingsCarryLineNumbers(t *testing.T) {
+	got := lintStrings(t, catalogWith(t, "WEBUI_PORT: { kind: port,", "WEBUI_PORT: { kind: number,"))
+	if len(got) == 0 || !strings.Contains(got[0], "line 28: x-hoserva.inputs.WEBUI_PORT.kind") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLintNotYAMLAndMissingBlock(t *testing.T) {
+	if got := lintStrings(t, catalogFrom(t, "app", "services: [")); len(got) != 1 || !strings.Contains(got[0], "not valid YAML") {
+		t.Errorf("malformed YAML: %q", got)
+	}
+	if got := lintStrings(t, catalogFrom(t, "app", "services:\n  app:\n    image: x:1\n")); len(got) != 1 || !strings.Contains(got[0], "no x-hoserva block") {
+		t.Errorf("no block: %q", got)
+	}
+}
+
+func TestLintDirectoryConventions(t *testing.T) {
+	src := readFixture(t)
+
+	got := lintStrings(t, catalogFrom(t, "plex", src))
+	if !strings.Contains(strings.Join(got, "\n"), `is "jellyfin" but the directory is named "plex"`) {
+		t.Errorf("id/directory mismatch not reported: %q", got)
+	}
+
+	dir := catalogFrom(t, "jellyfin", src)
+	if err := os.Remove(filepath.Join(dir, "jellyfin", "icon.svg")); err != nil {
+		t.Fatal(err)
+	}
+	if got := lintStrings(t, dir); len(got) != 1 || !strings.Contains(got[0], `names "icon.svg", which is not a file`) {
+		t.Errorf("missing icon: %q", got)
+	}
+
+	dir = catalogFrom(t, "jellyfin", src)
+	if err := os.MkdirAll(filepath.Join(dir, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := lintStrings(t, dir); len(got) != 1 || got[0] != "empty/compose.yaml: compose.yaml is missing" {
+		t.Errorf("missing compose.yaml: %q", got)
+	}
+
+	if got := lintStrings(t, t.TempDir()); len(got) != 1 || !strings.Contains(got[0], "no template directories found") {
+		t.Errorf("empty catalog: %q", got)
+	}
+
+	if _, err := Lint(filepath.Join(t.TempDir(), "absent")); err == nil {
+		t.Error("an unreadable catalog directory must be an error, not a clean lint")
+	}
+}
+
+func TestEveryFindingIsSortedAndStable(t *testing.T) {
+	dir := catalogWith(t, "PUID: \"99\"", "PUID: \"1\"")
+	first := lintStrings(t, dir)
+	second := lintStrings(t, dir)
+	if strings.Join(first, "\n") != strings.Join(second, "\n") {
+		t.Errorf("unstable output:\n%q\n%q", first, second)
+	}
+}
