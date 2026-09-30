@@ -20,7 +20,7 @@
 # (ARRAY_ADMIN_USERNAME/ARRAY_ADMIN_PASSWORD/ARRAY_SMB_SHARE) so this
 # script never hardcodes a second, possibly-diverging copy of run-l3-
 # suite.sh's own constants. Runs before array-sequence-check.sh (step
-# 13/13, issue #146), which permanently detaches an array disk — this
+# 14/14, issue #146), which permanently detaches an array disk — this
 # script needs every array disk still present and the array still
 # mounted.
 #

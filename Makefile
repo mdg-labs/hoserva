@@ -272,7 +272,7 @@ $(error invalid L3_STEPS: must not contain '$$' — no Make or shell expansion s
 endif
 export L3_STEPS
 
-.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-outbound-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
+.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-outbound-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -708,6 +708,13 @@ vm-restore:
 vm-deploy:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-deploy)" >&2; exit 1; }
 	scripts/vm/deploy.sh
+
+# Replaces only this lab's VM's OS disk with a fresh image and installs
+# Hoserva on it (a bare-metal reinstall); every array disk is kept. DEB=
+# and TAG= are vm-deploy's.
+vm-reinstall-os:
+	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-reinstall-os)" >&2; exit 1; }
+	scripts/vm/reinstall-os.sh
 
 vm-destroy:
 	@test -n "$$HOSERVA_LAB_ID" || { echo "set HOSERVA_LAB_ID (e.g. HOSERVA_LAB_ID=dev make vm-destroy)" >&2; exit 1; }

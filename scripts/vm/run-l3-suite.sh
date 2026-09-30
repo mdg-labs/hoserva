@@ -3,7 +3,8 @@
 # Q79): install, onboarding, array setup, array stop/start with a live
 # share (issue #268), storage-target boot ordering (issue #372), disk
 # yank and reconstruction, `virsh destroy` mid-sync recovery, reboot
-# persistence, config backup/restore, spindown, network confirm-or-revert
+# persistence, config backup/restore, bare-metal restore onto a fresh OS
+# disk, spindown, network confirm-or-revert
 # (issue #114), the array stop/start sequence (issue #146), and the UPS
 # on-battery/power-restored/low-battery flow against NUT's own dummy-ups
 # driver (issue #250).
@@ -40,14 +41,15 @@ source "$script_dir/lib.sh"
 L3_STEP_ORDER=(
   array-stop-start smb-stop-start pool-restart storage-target
   maintenance-gate disk-yank midsync-destroy reboot-persistence
-  config-backup-restore playwright spindown spindown-30min nfs-export
+  config-backup-restore bare-metal-restore playwright spindown
+  spindown-30min nfs-export
   immutable-mountpoint network-revert array-sequence ups
 )
 declare -A L3_STEP_PREREQS=(
   [array-stop-start]="" [smb-stop-start]="" [pool-restart]=""
   [storage-target]="" [maintenance-gate]="" [disk-yank]=""
   [midsync-destroy]="" [reboot-persistence]="" [config-backup-restore]=""
-  [playwright]="" [spindown]="" [spindown-30min]="" [nfs-export]=""
+  [bare-metal-restore]="" [playwright]="" [spindown]="" [spindown-30min]="" [nfs-export]=""
   [immutable-mountpoint]="" [network-revert]="" [array-sequence]="" [ups]=""
 )
 # Exactly the label text each step's own pass/fail/not_yet call below
@@ -63,6 +65,7 @@ declare -A L3_STEP_LABELS=(
   [midsync-destroy]="virsh destroy mid-sync recovery"
   [reboot-persistence]="reboot persistence"
   [config-backup-restore]="config backup and restore"
+  [bare-metal-restore]="bare-metal restore onto a fresh OS"
   [playwright]="Playwright journeys"
   [spindown]="spindown: SMART-poll IO-neutrality"
   [spindown-30min]="spindown: 30-min flat counters with a running pool"
@@ -87,7 +90,7 @@ L3_GROUP_SPINDOWN=(spindown)
 L3_GROUP_REST=(
   array-stop-start smb-stop-start pool-restart storage-target
   maintenance-gate disk-yank midsync-destroy reboot-persistence
-  config-backup-restore playwright spindown-30min nfs-export
+  config-backup-restore bare-metal-restore playwright spindown-30min nfs-export
   immutable-mountpoint network-revert array-sequence ups
 )
 
@@ -1120,11 +1123,10 @@ dump_hoserva_diagnostics() {
   echo "vm-suite[$HOSERVA_LAB_ID]: === end guest diagnostics ==="
 }
 
-# config_backup_restore (step 7, doc 10 §1) is doc 10's *in-place* restore
+# config_backup_restore (step 8, doc 10 §1) is doc 10's *in-place* restore
 # ("rolling back a bad config change") — not the bare-metal restore flow
 # (doc 10 §1's numbered steps 1-6, a freshly installed system with no
-# admin session to authenticate importConfig's own x-hoserva-role: admin,
-# and explicitly out of scope for this issue as #65). It exports the array
+# admin session), which bare_metal_restore (step 9) runs. It exports the array
 # this suite already built (step 3: the admin account, the array's
 # disk-role assignment, and a dedicated share this function creates fresh
 # for itself — see CONFIG_TEST_SHARE below for why, rather than the
@@ -1155,7 +1157,6 @@ CONFIG_CUSTOM_ARCHIVED="# hoserva-l3-archived-custom"
 CONFIG_CUSTOM_EDITED="# hoserva-l3-edited-after-export"
 
 config_backup_restore() {
-  CONFIG_NOT_YET=0
   if ! array_login; then
     CONFIG_REASON="login as the L3 admin failed ahead of config export"
     return 1
@@ -1206,22 +1207,6 @@ config_backup_restore() {
   echo "vm-suite[$HOSERVA_LAB_ID]: exporting the config archive"
   local export_remote="/tmp/hoserva-l3-config-export.tar.zst" export_status
   export_status="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -o $export_remote -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/export" 2>/dev/null)"
-  if [[ "$export_status" == "501" ]]; then
-    # internal/api/pool_handler.go's ExportConfig/ImportConfig 501 with
-    # "not_configured" whenever api.Handler.Backup is nil — and
-    # cmd/hoservad/main.go builds a real *backup.Service (backupService,
-    # already wired into the nightly maintenance chain and the
-    # pre-self-update backup) but never assigns it to handler.Backup.
-    # Confirmed empirically running this exact suite against a real
-    # array with real shares and users: every export/import call 501s
-    # regardless of onboarding or array state. Out of scope here
-    # (cmd/hoservad/, not scripts/vm/) — this is CONFIG_NOT_YET, not a
-    # FAIL, because no test setup on this side of the API can make it
-    # succeed; it needs the one-line wiring fix in cmd/hoservad/main.go.
-    CONFIG_REASON="POST /config/export returned 501 not_configured — api.Handler.Backup (internal/api/handler.go) is never assigned in cmd/hoservad/main.go, even though backupService is built there and used by the nightly chain and pre-update backup; exportConfig/importConfig (internal/api/pool_handler.go) 501 unconditionally until that one wiring line is added"
-    CONFIG_NOT_YET=1
-    return 1
-  fi
   if [[ "$export_status" != "200" ]]; then
     CONFIG_REASON="exportConfig returned HTTP $export_status"
     return 1
@@ -1347,7 +1332,285 @@ config_backup_restore() {
   return 0
 }
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 1/13 install ==="
+# bare_metal_restore (step 9, doc 10 §1, doc 06 §4's "OS is disposable"
+# claim from doc 01 §6) restores onto a freshly installed system, which
+# config_backup_restore's in-place restore over a running daemon cannot
+# show. It builds a share holding checksummed files, a user, non-default
+# schedules and a custom config file on the array this suite already built,
+# exports the config, copies the archive off the guest, replaces the VM's OS
+# disk with a fresh one while keeping every array disk (reinstall-os.sh),
+# and runs `hoserva config import` over the Unix socket — a fresh install has
+# no admin, and the socket alone serves the import before one exists — with
+# the disk mapping the preview gives. It then asserts the restored system
+# equals the recorded one (baremetal-state.py state) and that every file's
+# SHA-256 is unchanged. The steps after it run on the restored system, so a
+# restore that is subtly wrong fails them too. On failure it sets BM_REASON
+# and returns 1.
+BM_SHARE="hoserval3baremetal"
+BM_SHARE_PATH="/mnt/user/$BM_SHARE"
+BM_USER="hoserval3baremetaluser"
+BM_CHAIN_TIME="05:47"
+BM_CHAIN_SCRUB_DAY=3
+BM_JOB_ID="container_update_check"
+BM_JOB_TIME="05:31"
+BM_FILE_COUNT=24
+BM_CUSTOM_MARKER="# hoserva-l3-bare-metal-custom"
+BM_ARCHIVE_REMOTE="/tmp/hoserva-l3-bare-metal-export.tar.zst"
+BM_MAPPING_REMOTE="/tmp/hoserva-l3-bare-metal-disk-mapping.json"
+
+# bm_api METHOD PATH [JSON] calls the guest's own API with the L3 admin's
+# session and fails on any HTTP error status (curl -f), so a refused call is
+# never read as an empty body. JSON must not contain a single quote.
+bm_api() {
+  local method=$1 api_path=$2 body=${3:-}
+  if [[ -n "$body" ]]; then
+    vm_ssh "curl -sfk -b $ARRAY_COOKIE_JAR -X $method https://127.0.0.1:8008/api/v1$api_path -H 'Content-Type: application/json' -d '$body'"
+  else
+    vm_ssh "curl -sfk -b $ARRAY_COOKIE_JAR -X $method https://127.0.0.1:8008/api/v1$api_path"
+  fi
+}
+
+# bm_capture_state DIR writes the API bodies and mount table
+# baremetal-state.py reads into DIR, and its comparable summary to
+# DIR/state.txt.
+bm_capture_state() {
+  local dir=$1
+  mkdir -p -- "$dir"
+  bm_api GET /shares >"$dir/shares.json" || return 1
+  bm_api GET /users >"$dir/users.json" || return 1
+  bm_api GET /settings/schedules >"$dir/schedules.json" || return 1
+  bm_api GET /pool >"$dir/pool.json" || return 1
+  vm_ssh 'findmnt -rn -o TARGET,FSTYPE,SOURCE' >"$dir/mounts.txt" || return 1
+  python3 "$script_dir/baremetal-state.py" state "$dir" >"$dir/state.txt"
+}
+
+# bm_file_hashes prints "<sha256>  <path>" for every file under the share,
+# sorted by path. NUL-delimited so names with spaces survive.
+bm_file_hashes() {
+  vm_ssh "sudo bash -c 'cd $BM_SHARE_PATH && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum'"
+}
+
+bare_metal_restore() {
+  local work="$VM_STATE_DIR/bare-metal"
+  local archive="$work/export.tar.zst"
+  rm -rf -- "$work"
+  mkdir -p -- "$work"
+
+  if ! array_login; then
+    BM_REASON="login as the L3 admin failed ahead of the export"
+    return 1
+  fi
+  if ! ensure_pool_mounted; then
+    BM_REASON="pool is not mounted, cannot create $BM_SHARE"
+    return 1
+  fi
+
+  # A share imported from the host's Samba config (array setup) has no mount
+  # of its own until the array next starts, while every share has one after a
+  # boot or a restore. One stop and start puts the recorded state where a
+  # boot would, whichever steps ran before this one.
+  local result
+  result="$(bm_api POST /array/stop '{"confirm":true}' 2>/dev/null)" || result=""
+  if [[ "$result" != *'"maintenanceMode":true'* ]]; then
+    BM_REASON="array/stop ahead of the export did not report maintenanceMode:true: $result"
+    return 1
+  fi
+  result="$(bm_api POST /array/start 2>/dev/null)" || result=""
+  if [[ "$result" != *'"maintenanceMode":false'* ]]; then
+    BM_REASON="array/start ahead of the export did not report maintenanceMode:false: $result"
+    return 1
+  fi
+  if ! ensure_pool_mounted; then
+    BM_REASON="pool is not mounted after the array stop and start ahead of the export"
+    return 1
+  fi
+
+  result="$(bm_api POST /shares "{\"name\":\"$BM_SHARE\",\"cacheMode\":\"array-only\"}" 2>/dev/null)" || result=""
+  if [[ "$result" != *"\"name\":\"$BM_SHARE\""* ]]; then
+    BM_REASON="createShare($BM_SHARE) did not return the expected share: $result"
+    return 1
+  fi
+  result="$(bm_api POST /users "{\"username\":\"$BM_USER\",\"role\":\"viewer\"}" 2>/dev/null)" || result=""
+  if [[ "$result" != *"\"username\":\"$BM_USER\""* ]]; then
+    BM_REASON="createUser($BM_USER) did not return the expected account: $result"
+    return 1
+  fi
+  if ! bm_api PUT /settings/schedules/chain "{\"startTime\":\"$BM_CHAIN_TIME\",\"weeklyScrubDay\":$BM_CHAIN_SCRUB_DAY}" >/dev/null; then
+    BM_REASON="updateMaintenanceChainSchedule($BM_CHAIN_TIME, day $BM_CHAIN_SCRUB_DAY) was refused"
+    return 1
+  fi
+  if ! bm_api PUT "/settings/schedules/jobs/$BM_JOB_ID" "{\"enabled\":false,\"frequency\":\"monthly\",\"time\":\"$BM_JOB_TIME\"}" >/dev/null; then
+    BM_REASON="updateScheduledJob($BM_JOB_ID) was refused"
+    return 1
+  fi
+  if ! vm_ssh "echo '$BM_CUSTOM_MARKER' | sudo tee $CONFIG_CUSTOM_FILE >/dev/null"; then
+    BM_REASON="could not write the custom config file $CONFIG_CUSTOM_FILE ahead of the export"
+    return 1
+  fi
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: writing $((BM_FILE_COUNT + 3)) files of random content through $BM_SHARE_PATH"
+  if ! vm_ssh "sudo env BM_DIR=$BM_SHARE_PATH BM_COUNT=$BM_FILE_COUNT bash -s" <<'GUEST'; then
+set -euo pipefail
+cd "$BM_DIR"
+for i in $(seq 1 "$BM_COUNT"); do
+  mkdir -p "d$((i % 4))"
+  head -c $((i * 7919 + 1)) /dev/urandom >"d$((i % 4))/file-$i.bin"
+done
+: >empty.bin
+head -c 3145728 /dev/urandom >big.bin
+head -c 4099 /dev/urandom >"name with spaces.bin"
+sync
+GUEST
+    BM_REASON="could not write the test files into $BM_SHARE_PATH"
+    return 1
+  fi
+
+  local hashes_before hashes_after
+  hashes_before="$(bm_file_hashes)" || hashes_before=""
+  local -a hash_lines=()
+  mapfile -t hash_lines <<<"$hashes_before"
+  if (( ${#hash_lines[@]} != BM_FILE_COUNT + 3 )); then
+    BM_REASON="expected $((BM_FILE_COUNT + 3)) checksummed files under $BM_SHARE_PATH before the export, found ${#hash_lines[@]}"
+    return 1
+  fi
+
+  if ! bm_capture_state "$work/before"; then
+    BM_REASON="could not record the system's state before the export (see baremetal-state.py output above)"
+    return 1
+  fi
+  if ! grep -Fq "\"$BM_SHARE\"" "$work/before/state.txt" || ! grep -Fq "\"$BM_USER\"" "$work/before/state.txt" \
+    || ! grep -Fq "\"$BM_CHAIN_TIME\"" "$work/before/state.txt" || ! grep -Fq "\"$BM_JOB_TIME\"" "$work/before/state.txt"; then
+    BM_REASON="the recorded state does not hold the share, user and schedules this step created, so comparing against it would prove nothing"
+    return 1
+  fi
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: exporting the config archive and copying it off the guest"
+  local export_status
+  export_status="$(vm_ssh "curl -sk -b $ARRAY_COOKIE_JAR -o $BM_ARCHIVE_REMOTE -w '%{http_code}' -X POST https://127.0.0.1:8008/api/v1/config/export" 2>/dev/null)" || export_status=""
+  if [[ "$export_status" != "200" ]]; then
+    BM_REASON="exportConfig returned HTTP ${export_status:-nothing}"
+    return 1
+  fi
+  if ! vm_scp "hoserva@127.0.0.1:$BM_ARCHIVE_REMOTE" "$archive"; then
+    BM_REASON="could not copy the exported archive off the guest"
+    return 1
+  fi
+  local archive_sha
+  archive_sha="$(sha256sum "$archive" | cut -d' ' -f1)"
+  if [[ ! -s "$archive" ]]; then
+    BM_REASON="the exported archive is empty"
+    return 1
+  fi
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: replacing the VM's OS disk and installing Hoserva fresh (reinstall-os.sh)"
+  if ! DEB="${DEB:-}" TAG="${TAG:-}" "$script_dir/reinstall-os.sh"; then
+    BM_REASON="reinstall-os.sh failed — see its output above"
+    return 1
+  fi
+  if ! vm_ssh "test ! -e $ARRAY_COOKIE_JAR"; then
+    BM_REASON="$ARRAY_COOKIE_JAR exists after the reinstall (or the guest is unreachable), so the guest is not running from a fresh OS disk"
+    return 1
+  fi
+  local mount_table target fstype
+  mount_table="$(vm_ssh 'findmnt -rn -o TARGET,FSTYPE')" || mount_table=""
+  if [[ -z "$mount_table" ]]; then
+    BM_REASON="could not read the guest's mount table after the reinstall"
+    return 1
+  fi
+  while read -r target fstype; do
+    case "$fstype" in
+      ext4 | xfs | fuse.mergerfs)
+        if [[ "$target" == /mnt/* ]]; then
+          BM_REASON="$target is already mounted on the freshly installed OS, so the restore would prove nothing about mounting the array"
+          return 1
+        fi
+        ;;
+    esac
+  done <<<"$mount_table"
+
+  if ! vm_scp "$archive" "hoserva@127.0.0.1:$BM_ARCHIVE_REMOTE"; then
+    BM_REASON="could not copy the archive onto the fresh guest"
+    return 1
+  fi
+  local archive_sha_guest
+  archive_sha_guest="$(vm_ssh "sha256sum $BM_ARCHIVE_REMOTE | cut -d' ' -f1")" || archive_sha_guest=""
+  if [[ "$archive_sha_guest" != "$archive_sha" ]]; then
+    BM_REASON="the archive on the fresh guest (sha256 ${archive_sha_guest:-unreadable}) is not the one exported (sha256 $archive_sha)"
+    return 1
+  fi
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: previewing the bare-metal import over the Unix socket"
+  if ! vm_ssh "sudo hoserva --json config import --preview $BM_ARCHIVE_REMOTE" >"$work/preview.json" 2>"$work/preview.err"; then
+    BM_REASON="hoserva config import --preview failed on the fresh install: $(cat "$work/preview.err")"
+    return 1
+  fi
+  local mapping
+  if ! mapping="$(python3 "$script_dir/baremetal-state.py" mapping "$work/preview.json" "$work/before/pool.json")"; then
+    BM_REASON="the preview's disk mapping is not one to confirm (see baremetal-state.py output above)"
+    return 1
+  fi
+  if ! printf '%s' "$mapping" | vm_ssh "sudo tee $BM_MAPPING_REMOTE >/dev/null"; then
+    BM_REASON="could not write the disk mapping file on the guest"
+    return 1
+  fi
+
+  echo "vm-suite[$HOSERVA_LAB_ID]: importing with the confirmed disk mapping — bare-metal restore (doc 10 §1)"
+  if ! vm_ssh "sudo hoserva --json config import --confirm --disk-mapping-file $BM_MAPPING_REMOTE $BM_ARCHIVE_REMOTE" >"$work/report.json" 2>"$work/import.err"; then
+    BM_REASON="hoserva config import failed: $(cat "$work/import.err") $(cat "$work/report.json")"
+    return 1
+  fi
+  if ! python3 "$script_dir/baremetal-state.py" report "$work/report.json"; then
+    BM_REASON="the restore report is not a complete restore: $(cat "$work/report.json")"
+    return 1
+  fi
+  if ! array_login; then
+    BM_REASON="login as the L3 admin failed after the bare-metal import — the admin account was not restored"
+    return 1
+  fi
+
+  local pool_deadline=$((SECONDS + 60)) pool_after=""
+  while (( SECONDS < pool_deadline )); do
+    pool_after="$(bm_api GET /pool 2>/dev/null)" || pool_after=""
+    [[ "$pool_after" == *'"mounted":true'* ]] && break
+    sleep 2
+  done
+  if [[ "$pool_after" != *'"mounted":true'* ]]; then
+    BM_REASON="the pool is not mounted within 60s of the bare-metal import: $pool_after"
+    return 1
+  fi
+
+  if ! bm_capture_state "$work/after"; then
+    BM_REASON="could not record the system's state after the import (see baremetal-state.py output above)"
+    return 1
+  fi
+  if [[ "$(<"$work/before/state.txt")" != "$(<"$work/after/state.txt")" ]]; then
+    local state_diff
+    state_diff="$(diff -u "$work/before/state.txt" "$work/after/state.txt" | head -60 || true)"
+    BM_REASON="shares, users, schedules, pool disk roles or pool mounts differ after the restore:
+$state_diff"
+    return 1
+  fi
+
+  hashes_after="$(bm_file_hashes)" || hashes_after=""
+  if [[ "$hashes_after" != "$hashes_before" ]]; then
+    local hash_diff
+    hash_diff="$(diff -u <(printf '%s\n' "$hashes_before") <(printf '%s\n' "$hashes_after") | head -40 || true)"
+    BM_REASON="file checksums under $BM_SHARE_PATH changed across the restore:
+$hash_diff"
+    return 1
+  fi
+
+  local custom_after
+  custom_after="$(vm_ssh "sudo cat $CONFIG_CUSTOM_FILE")" || custom_after=""
+  if [[ "$custom_after" != *"$BM_CUSTOM_MARKER"* ]]; then
+    BM_REASON="$CONFIG_CUSTOM_FILE is not the exported content after the restore (it holds: ${custom_after:-nothing})"
+    return 1
+  fi
+
+  return 0
+}
+
+echo "vm-suite[$HOSERVA_LAB_ID]: === 1/14 install ==="
 if vm_domain_exists "$VM_DOMAIN"; then
   "$script_dir/destroy-vm.sh"
 fi
@@ -1366,7 +1629,7 @@ else
   fail "install" "deploy.sh failed — see its own output above (on the dev host this is expected: dpkg-buildpackage/debhelper/fakeroot are deliberately not installed here, per scripts/release/build-deb.sh's own header comment; a hosted CI runner has them)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 2/13 onboarding ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 2/14 onboarding ==="
 if vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   SETUP_STATUS="$(vm_ssh "curl -sk https://127.0.0.1:8008/api/v1/setup/status" 2>/dev/null || true)"
   if [[ "$SETUP_STATUS" == *'"adminExists":false'* ]]; then
@@ -1405,7 +1668,7 @@ else
   not_yet "existing host config" "no running domain (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 3/13 array setup ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 3/14 array setup ==="
 if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if array_setup; then
     pass "array setup"
@@ -1416,7 +1679,7 @@ else
   not_yet "array setup" "no active hoservad on the guest (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 4/13 array stop/start with a live share (issue #268) ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 4/14 array stop/start with a live share (issue #268) ==="
 if ! l3_step_selected array-stop-start; then
   l3_skip "${L3_STEP_LABELS[array-stop-start]}"
 elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
@@ -1481,7 +1744,7 @@ else
   not_yet "maintenance gate closes on array stop" "no active hoservad on the guest (install or array setup above did not complete — see step 1 and step 3)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 5/13 disk yank and reconstruction ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 5/14 disk yank and reconstruction ==="
 if ! l3_step_selected disk-yank; then
   l3_skip "${L3_STEP_LABELS[disk-yank]}"
 elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
@@ -1494,7 +1757,7 @@ else
   not_yet "disk yank and reconstruction" "no active hoservad on the guest (install or array setup above did not complete — see step 1 and step 3)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 6/13 virsh destroy mid-sync recovery ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 6/14 virsh destroy mid-sync recovery ==="
 if ! l3_step_selected midsync-destroy; then
   l3_skip "${L3_STEP_LABELS[midsync-destroy]}"
 elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
@@ -1533,7 +1796,7 @@ else
   not_yet "virsh destroy mid-sync recovery" "no active hoservad on the guest (install or array setup above did not complete)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 7/13 reboot persistence ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 7/14 reboot persistence ==="
 if ! l3_step_selected reboot-persistence; then
   l3_skip "${L3_STEP_LABELS[reboot-persistence]}"
 elif vm_domain_running "$VM_DOMAIN"; then
@@ -1598,14 +1861,12 @@ else
   not_yet "reboot persistence" "no running domain (install step above did not complete)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 8/13 config backup and restore ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 8/14 config backup and restore ==="
 if ! l3_step_selected config-backup-restore; then
   l3_skip "${L3_STEP_LABELS[config-backup-restore]}"
 elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if config_backup_restore; then
     pass "config backup and restore"
-  elif [[ "$CONFIG_NOT_YET" == "1" ]]; then
-    not_yet "config backup and restore" "$CONFIG_REASON"
   else
     fail "config backup and restore" "$CONFIG_REASON"
   fi
@@ -1613,7 +1874,23 @@ else
   not_yet "config backup and restore" "no active hoservad on the guest (install or array setup above did not complete)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 9/13 Playwright journeys ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 9/14 bare-metal restore onto a fresh OS (doc 10 §1) ==="
+if ! l3_step_selected bare-metal-restore; then
+  l3_skip "${L3_STEP_LABELS[bare-metal-restore]}"
+elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
+  if bare_metal_restore; then
+    pass "bare-metal restore onto a fresh OS"
+  else
+    if vm_domain_running "$VM_DOMAIN"; then
+      dump_hoserva_diagnostics "bare-metal restore onto a fresh OS"
+    fi
+    fail "bare-metal restore onto a fresh OS" "$BM_REASON"
+  fi
+else
+  not_yet "bare-metal restore onto a fresh OS" "no active hoservad on the guest (install or array setup above did not complete)"
+fi
+
+echo "vm-suite[$HOSERVA_LAB_ID]: === 10/14 Playwright journeys ==="
 if ! l3_step_selected playwright; then
   l3_skip "${L3_STEP_LABELS[playwright]}"
 else
@@ -1635,7 +1912,7 @@ else
   fi
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 10/13 spindown: SMART-poll IO-neutrality ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 11/14 spindown: SMART-poll IO-neutrality ==="
 if ! l3_step_selected spindown; then
   l3_skip "${L3_STEP_LABELS[spindown]}"
 elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
@@ -1648,11 +1925,11 @@ else
   not_yet "spindown: SMART-poll IO-neutrality" "no active hoservad on the guest (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 11/13 spindown: 30-min flat counters with a running pool ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 12/14 spindown: 30-min flat counters with a running pool ==="
 if ! l3_step_selected spindown-30min; then
   l3_skip "${L3_STEP_LABELS[spindown-30min]}"
 else
-  not_yet "spindown: 30-min flat counters with a running pool" "array setup (step 3, #258) now gives this a real mergerfs/SnapRAID pool with a mounted share to test against — that half of the old gap is closed — but hoservad still does not run internal/disk's SMART poller or internal/parity's change journal on a timer (both exist as Go packages, issue #24, but cmd/hoservad/main.go wires neither into a scheduled job). spindown-check.sh (step 10) already stands in for that missing scheduler by looping the poller's own smartctl command directly against the array's already-mounted disks; doing the same loop against this step's live pool would still only be standing in for the scheduler, not proving hoservad's own 30-minute window produces zero drive writes with a pool mounted underneath it — re-check once cmd/hoservad/main.go wires the SMART poller and change journal on a timer"
+  not_yet "spindown: 30-min flat counters with a running pool" "array setup (step 3, #258) now gives this a real mergerfs/SnapRAID pool with a mounted share to test against — that half of the old gap is closed — but hoservad still does not run internal/disk's SMART poller or internal/parity's change journal on a timer (both exist as Go packages, issue #24, but cmd/hoservad/main.go wires neither into a scheduled job). spindown-check.sh (step 11) already stands in for that missing scheduler by looping the poller's own smartctl command directly against the array's already-mounted disks; doing the same loop against this step's live pool would still only be standing in for the scheduler, not proving hoservad's own 30-minute window produces zero drive writes with a pool mounted underneath it — re-check once cmd/hoservad/main.go wires the SMART poller and change journal on a timer"
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === NFS export mount (issue #47) ==="
@@ -1681,7 +1958,7 @@ else
   not_yet "immutable mountpoint guard" "no running domain (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 12/13 network confirm-or-revert (Q75) ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 13/14 network confirm-or-revert (Q75) ==="
 if ! l3_step_selected network-revert; then
   l3_skip "${L3_STEP_LABELS[network-revert]}"
 elif vm_domain_running "$VM_DOMAIN"; then
@@ -1694,7 +1971,7 @@ else
   not_yet "network confirm-or-revert" "no running domain (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 13/13 array stop/start sequence: missing disk at boot, service stops before unmount ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 14/14 array stop/start sequence: missing disk at boot, service stops before unmount ==="
 if ! l3_step_selected array-sequence; then
   l3_skip "${L3_STEP_LABELS[array-sequence]}"
 elif vm_domain_running "$VM_DOMAIN"; then
