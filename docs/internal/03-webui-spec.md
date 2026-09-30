@@ -385,7 +385,9 @@ Filters: category, maintainer, installed / not installed, verified / community.
 
 **Source indicator** on every entry — Hoserva curated or user-added repository. Users should know where a template came from.
 
-**Components:** search InputGroup (`p-input-group-20`); category `multi-pick`; installed and verified filters as a ToggleGroup (`p-toggle-group-4`), since they are clearable filters; a grid of Cards (`p-card-1`) with the app icon as an Avatar with fallback (`p-avatar-1`) and a source `status-badge`; Pagination with page size (`p-pagination-3`); `empty-state` for no results.
+**Check for updates.** A header action runs one conditional catalog request now and shows the time of the last check beside it. The result appears as a toast: new templates, updated templates, unchanged, or failed with the reason. It works even when both automatic refresh triggers are off (doc 04 §7, Q65), and the grid refreshes when the check completes, whether it was started here or by the background interval or check-on-open (announced on `/api/v1/events`).
+
+**Components:** search InputGroup (`p-input-group-20`); *Check for updates* Button in the page header with the last-checked time as muted text and the outcome as a promise `feedback-toast`; category `multi-pick`; installed and verified filters as a ToggleGroup (`p-toggle-group-4`), since they are clearable filters; a grid of Cards (`p-card-1`) with the app icon as an Avatar with fallback (`p-avatar-1`) and a source `status-badge`; Pagination with page size (`p-pagination-3`); `empty-state` for no results.
 
 ### 5.3 `/apps/catalog/[id]` — Catalog app detail
 
@@ -499,7 +501,9 @@ All recurring jobs in one place: the nightly maintenance chain, SMART self-tests
 
 Per job: enabled, cron-like schedule with a human-readable preview ("every day at 02:00"), and the next run time. Conflict detection covers jobs scheduled outside the chain — per doc 01 §4's mutually exclusive classes, when two scheduled windows overlap and the scheduler would refuse to run them together (e.g. two Parity jobs at once, or two Array-write jobs on the same disks).
 
-**Components:** the nightly chain as `stacked-checks` with one `setting-switch` per step and no reordering control; every other job as a Card with an enable Switch, frequency Select, time Input, the human-readable preview and the next run; conflicts as a warning `banner`.
+**Catalog refresh** is a setting, not a schedule entry: a Card with an interval Select (off, every hour, every 6 hours, every 12 hours, daily — daily by default, each with random jitter) and a `setting-switch` for checking when the catalog is opened (on by default; at most one check per 15 minutes). It has no cron preview and no conflict detection, and it is stored on the `schema_info` settings row rather than as a `schedule_jobs` entry (Q65). With both off, Hoserva contacts the catalog host only when *Check for updates* is pressed on `/apps/catalog` (§5.2).
+
+**Components:** the nightly chain as `stacked-checks` with one `setting-switch` per step and no reordering control; every other job as a Card with an enable Switch, frequency Select, time Input, the human-readable preview and the next run; conflicts as a warning `banner`; the *Catalog refresh* Card with the interval Select and a `setting-switch`.
 
 ### 8.5 `/settings/backup`
 Full design in doc 10.

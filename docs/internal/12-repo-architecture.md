@@ -1,6 +1,6 @@
 # Hoserva — Repository Architecture
 
-## Recommendation: monorepo. Single repository, no exceptions in v1.
+## Recommendation: monorepo, with the curated template catalog in its own repository.
 
 ---
 
@@ -22,7 +22,9 @@ This will be built entirely with Claude Code, and that strengthens the monorepo 
 - **One `CLAUDE.md`.** Conventions, architecture rules, and the decision log live in one place the agent always has. Duplicating that across repos guarantees drift.
 - **Refactors stay tractable.** Renaming a domain concept across backend, API, and UI is a single mechanical change an agent can complete and verify.
 
-**Exception, later:** the template catalog and the docs site are genuine candidates for separate repos, because they have external contributors, different review standards, and different release cadence. Split them out when that becomes true, not before.
+**Exception, from the start:** the curated template catalog lives in its own repository, `mdg-labs/hoserva-catalog` (Q39). It was split before any template existed, because that costs a docs change where splitting later means moving history, CI, issues and labels under contributors already using the old layout. Template requests and template PRs are also a different kind of work with a different review bar, so they get their own tracker and this repository's issues stay the product plan (`CLAUDE.md`, "Issues are the plan"). The catalog's CI depends on outside services (registry image and tag checks, `docker compose config`) and must not gate a Hoserva release. The `x-hoserva` schema and its validator stay here (`internal/template/`), and the catalog repository's CI runs Hoserva's own checker from a pinned version (doc 04 §7).
+
+**Exception, later:** the docs site is a genuine candidate for a separate repo, because it will have external contributors, different review standards, and different release cadence. Split it out when that becomes true, not before.
 
 ---
 
@@ -83,8 +85,6 @@ hoserva/
 │   ├── src/lib/api/            the only API access: the generated TS client from api/gen
 │   └── fixtures/               shared with backend tests
 │
-├── templates/                  curated app catalog: <id>/compose.yaml + icon (doc 04 §7, Q39, Q64)
-│
 ├── scripts/
 │   ├── devenv/                 loop-device harness + lab container (doc 06 §3)
 │   ├── vm/                     VM lifecycle and snapshots
@@ -114,6 +114,8 @@ hoserva/
 **Generated API types are committed.** Not generated at build time. Committing them means the diff is visible in review — an accidentally breaking API change shows up as a large generated diff, which is exactly the signal wanted. It also means an agent can read the current types without running a generator first.
 
 **`openapi.yaml` is hand-written and authoritative (D18).** The Go server interfaces, the Go client the CLI uses and the TypeScript client the UI uses all generate from it, so a handler that doesn't match the spec fails to compile and neither client can call anything the spec doesn't declare. The alternative (generating the spec from Go code) makes the contract a side effect of the implementation, which is backwards when the CLI, the UI, and third parties all consume it: a renamed struct field would silently change the public API, and the mock server and frontend would have to wait for backend code.
+
+**The catalog is not in this tree.** Templates live in `mdg-labs/hoserva-catalog` (§1, Q39), and this repository pins the published archive it embeds (doc 04 §7). Tests that need curated templates read that pinned snapshot; the project-authored Unraid corpus in `testdata/unraid-templates/` stays here.
 
 **Fixtures are shared.** `web/fixtures/` is consumed by both the mock API server and backend tests. They cannot drift because breaking one breaks both.
 
@@ -280,7 +282,7 @@ Split when a component acquires **external contributors with a different review 
 | Component | Split when |
 |---|---|
 | `site/` | Community starts contributing guides — different review standards, different cadence |
-| Template catalog | First external template PR — needs its own CI, its own review process, and should not gate a Hoserva release |
+| Template catalog | **Split from the start** (`mdg-labs/hoserva-catalog`, Q39) — it needs its own CI, its own review process and its own issue tracker, and must not gate a Hoserva release. Nothing existed to move, so the split cost a docs change |
 | Anything else | Probably never |
 
-Both splits are easy later and premature now. Neither is on the critical path for v1.
+The site split stays easy later and premature now, and is not on the critical path for v1. The catalog split was cheapest before the first template existed.
