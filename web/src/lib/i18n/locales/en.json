@@ -623,6 +623,7 @@
       "appdata_restore": "Appdata restore",
       "appdata_restore_preview": "Appdata restore preview",
       "restore_drill": "Restore drill",
+      "config_backup": "Config backup",
       "container_update": "Container update",
       "container_recreate": "Container recreate",
       "acme_issue": "Certificate issue",

@@ -211,8 +211,19 @@ func (s *Service) RunReason(ctx context.Context, reason Reason) error {
 type WrittenArchive struct {
 	Name         string
 	Destinations []string
+	// Failed lists the destinations a step failed on while the run still
+	// wrote another: a write that did not land, or one that landed and
+	// then failed to record its success or to prune. A destination can be
+	// in both lists.
+	Failed []DestinationFailure
 	// SecretsSealed is whether the archive holds a secrets.age.
 	SecretsSealed bool
+}
+
+// DestinationFailure is one destination's failed step in a run.
+type DestinationFailure struct {
+	Destination string
+	Err         error
 }
 
 // RunOption changes how RunReasonArchive builds its archive.
@@ -314,6 +325,7 @@ func (s *Service) RunReasonArchive(ctx context.Context, reason Reason, opts ...R
 	var artifacts *encryptedArtifacts
 	var failures []error
 	var writtenTo []string
+	var failed []DestinationFailure
 	wrote := false
 	skipped := false
 	for _, dest := range dests {
@@ -325,6 +337,7 @@ func (s *Service) RunReasonArchive(ctx context.Context, reason Reason, opts ...R
 		if why != "" {
 			s.log("skipping destination %q: %s", dest.ID, why)
 			skipped = true
+			failed = append(failed, DestinationFailure{Destination: destinationLabel(dest), Err: errors.New(why)})
 			continue
 		}
 		written, err := s.writeDestination(ctx, dest, archivePath, name, passphrase, now, &artifacts)
@@ -335,6 +348,7 @@ func (s *Service) RunReasonArchive(ctx context.Context, reason Reason, opts ...R
 		}
 		if err != nil {
 			failures = append(failures, err)
+			failed = append(failed, DestinationFailure{Destination: destinationLabel(dest), Err: err})
 		}
 	}
 
@@ -348,7 +362,7 @@ func (s *Service) RunReasonArchive(ctx context.Context, reason Reason, opts ...R
 		for _, err := range failures {
 			s.log("%v", err)
 		}
-		return WrittenArchive{Name: name, Destinations: writtenTo, SecretsSealed: sealed}, nil
+		return WrittenArchive{Name: name, Destinations: writtenTo, Failed: failed, SecretsSealed: sealed}, nil
 	}
 	if skipped {
 		return WrittenArchive{}, errors.Join(append([]error{fmt.Errorf("backup: every enabled destination was skipped or unavailable")}, failures...)...)

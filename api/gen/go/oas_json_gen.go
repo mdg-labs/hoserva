@@ -13011,6 +13011,8 @@ func (s *JobType) Decode(d *jx.Decoder) error {
 		*s = JobTypeAppdataRestorePreview
 	case JobTypeRestoreDrill:
 		*s = JobTypeRestoreDrill
+	case JobTypeConfigBackup:
+		*s = JobTypeConfigBackup
 	case JobTypeContainerUpdate:
 		*s = JobTypeContainerUpdate
 	case JobTypeContainerRecreate:

@@ -1619,6 +1619,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/config/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Back up the config to the destinations now
+         * @description Queues a `config_backup` job (service class): the config archive the nightly chain writes, taken now. It writes one archive to every enabled backup destination, verifies it, and prunes each destination's own retention, counting the archive like a scheduled one — it never takes the slot of a pre-import, pre-update or pre-topology archive. It is serialized with the other config backups, so one asked for while another runs queues rather than failing. The job succeeds when at least one destination was written and its log names each destination written and each that failed (the stale-destination alert covers one that keeps failing), and fails, with a `config_backup_failed` notification, when none was. Refused with 409 `backup_no_destination` before anything is queued while no destination is enabled, and with 501 `not_configured` when this daemon has no backup service. To download an archive instead of writing one to the destinations, use `exportConfig`.
+         */
+        post: operations["runConfigBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/config/import": {
         parameters: {
             query?: never;
@@ -2529,7 +2549,7 @@ export interface components {
          * @description Every job type named in doc 01 §4's mutually-exclusive-class table.
          * @enum {string}
          */
-        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
+        JobType: "sync" | "scrub" | "fix" | "check" | "rebalance" | "evacuation" | "share_relocation" | "mover" | "vm_disk_relocation" | "disk_format" | "disk_add" | "disk_remove" | "disk_replace" | "disk_upgrade_data" | "disk_upgrade_parity" | "pool_remount" | "appdata_backup" | "appdata_restore" | "appdata_restore_preview" | "restore_drill" | "config_backup" | "container_update" | "container_recreate" | "acme_issue" | "vm_start" | "vm_stop" | "vm_create" | "vm_delete" | "vm_snapshot" | "vm_clone" | "vm_migration_import";
         /**
          * @description The mutually exclusive job class the scheduler enforces (doc 01 §4).
          * @enum {string}
@@ -6495,6 +6515,27 @@ export interface operations {
                 };
                 content: {
                     "application/zstd": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    runConfigBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queued or running config backup job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
             default: components["responses"]["Error"];

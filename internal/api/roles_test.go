@@ -242,6 +242,7 @@ func TestOperationRolesCoversEveryGeneratedOperation(t *testing.T) {
 		apiv1.RemoveAppOperation,
 		apiv1.GetAppLogsOperation,
 		apiv1.GetAppStatsOperation,
+		apiv1.RunConfigBackupOperation,
 		apiv1.ListBackupDestinationsOperation,
 		apiv1.CreateBackupDestinationOperation,
 		apiv1.UpdateBackupDestinationOperation,

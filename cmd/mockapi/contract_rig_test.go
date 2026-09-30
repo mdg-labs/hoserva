@@ -161,6 +161,7 @@ var contractProductionRunFuncs = []job.Type{
 	job.TypeACMEIssue,
 	job.TypeContainerRecreate,
 	job.TypeRestoreDrill,
+	job.TypeConfigBackup,
 }
 
 // contractDiskFromInventory converts one of mockDiskInventory's own

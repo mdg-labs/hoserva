@@ -1345,6 +1345,24 @@ func (UnimplementedHandler) RollbackUpdate(ctx context.Context, req *ConfirmUpda
 	return r, ht.ErrNotImplemented
 }
 
+// RunConfigBackup implements runConfigBackup operation.
+//
+// Queues a `config_backup` job (service class): the config archive the nightly chain writes, taken
+// now. It writes one archive to every enabled backup destination, verifies it, and prunes each
+// destination's own retention, counting the archive like a scheduled one — it never takes the slot
+// of a pre-import, pre-update or pre-topology archive. It is serialized with the other config backups,
+// so one asked for while another runs queues rather than failing. The job succeeds when at least one
+// destination was written and its log names each destination written and each that failed (the
+// stale-destination alert covers one that keeps failing), and fails, with a `config_backup_failed`
+// notification, when none was. Refused with 409 `backup_no_destination` before anything is queued
+// while no destination is enabled, and with 501 `not_configured` when this daemon has no backup
+// service. To download an archive instead of writing one to the destinations, use `exportConfig`.
+//
+// POST /config/backup
+func (UnimplementedHandler) RunConfigBackup(ctx context.Context) (r *Job, _ error) {
+	return r, ht.ErrNotImplemented
+}
+
 // RunDoctor implements runDoctor operation.
 //
 // Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity

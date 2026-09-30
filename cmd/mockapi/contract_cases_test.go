@@ -2724,6 +2724,41 @@ var contractCases = []contractCase{
 		},
 	},
 
+	// --- Config backup on demand (#450): the refusals and the job
+	// submission; what the job then writes is production's own tests. ---
+	{
+		op:   "RunConfigBackup",
+		name: "valid_queues_the_backup",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			_, err := h.RunConfigBackup(ctx)
+			return err
+		},
+	},
+	{
+		op:   "RunConfigBackup",
+		name: "refused_with_no_enabled_destination",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			for _, id := range []string{"boot", "pool"} {
+				if _, err := h.UpdateBackupDestination(ctx, &apiv1.UpdateBackupDestinationRequest{Enabled: apiv1.NewOptBool(false)}, apiv1.UpdateBackupDestinationParams{DestinationId: id}); err != nil {
+					return err
+				}
+			}
+			_, err := h.RunConfigBackup(ctx)
+			return err
+		},
+	},
+	{
+		op:   "RunConfigBackup",
+		name: "refused_in_maintenance_mode",
+		run: func(ctx context.Context, h apiv1.Handler) error {
+			if _, err := h.StopArray(ctx, &apiv1.StopArrayRequest{Confirm: true}); err != nil {
+				return err
+			}
+			_, err := h.RunConfigBackup(ctx)
+			return err
+		},
+	},
+
 	// --- Appdata backup (#61): the scope, the refusals and the job
 	// submission; what a job then does is production's own tests. ---
 	{

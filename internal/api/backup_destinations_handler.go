@@ -20,6 +20,8 @@ func mapBackupDestinationError(err error) error {
 		return &apiError{code: "backup_destination_exists", statusCode: 409, message: err.Error()}
 	case errors.Is(err, backup.ErrDestinationNotFound):
 		return &apiError{code: "backup_destination_not_found", statusCode: 404, message: "no backup destination with that id"}
+	case errors.Is(err, backup.ErrNoEnabledDestination):
+		return &apiError{code: "backup_no_destination", statusCode: 409, message: err.Error()}
 	case errors.Is(err, backup.ErrRcloneMissing):
 		return &apiError{code: "rclone_missing", statusCode: 424, message: err.Error()}
 	default:

@@ -35,6 +35,7 @@ const (
 	TypeAppdataRestore        Type = "appdata_restore"
 	TypeAppdataRestorePreview Type = "appdata_restore_preview"
 	TypeRestoreDrill          Type = "restore_drill"
+	TypeConfigBackup          Type = "config_backup"
 	TypeContainerUpdate       Type = "container_update"
 	TypeContainerRecreate     Type = "container_recreate"
 	TypeACMEIssue             Type = "acme_issue"
@@ -115,6 +116,7 @@ var classOf = map[Type]Class{
 	TypeAppdataRestore:        ClassService,
 	TypeAppdataRestorePreview: ClassService,
 	TypeRestoreDrill:          ClassService,
+	TypeConfigBackup:          ClassService,
 	TypeContainerUpdate:       ClassService,
 	TypeContainerRecreate:     ClassService,
 	TypeACMEIssue:             ClassService,

@@ -1055,6 +1055,21 @@ type Invoker interface {
 	//
 	// POST /settings/updates/rollback
 	RollbackUpdate(ctx context.Context, request *ConfirmUpdateRequest) (*UpdateStatus, error)
+	// RunConfigBackup invokes runConfigBackup operation.
+	//
+	// Queues a `config_backup` job (service class): the config archive the nightly chain writes, taken
+	// now. It writes one archive to every enabled backup destination, verifies it, and prunes each
+	// destination's own retention, counting the archive like a scheduled one — it never takes the slot
+	// of a pre-import, pre-update or pre-topology archive. It is serialized with the other config backups,
+	// so one asked for while another runs queues rather than failing. The job succeeds when at least one
+	// destination was written and its log names each destination written and each that failed (the
+	// stale-destination alert covers one that keeps failing), and fails, with a `config_backup_failed`
+	// notification, when none was. Refused with 409 `backup_no_destination` before anything is queued
+	// while no destination is enabled, and with 501 `not_configured` when this daemon has no backup
+	// service. To download an archive instead of writing one to the destinations, use `exportConfig`.
+	//
+	// POST /config/backup
+	RunConfigBackup(ctx context.Context) (*Job, error)
 	// RunDoctor invokes runDoctor operation.
 	//
 	// Docker, mergerfs, SnapRAID, mounts, parity freshness, SMART, free space and permission sanity
@@ -15414,6 +15429,140 @@ func (c *Client) sendRollbackUpdate(ctx context.Context, request *ConfirmUpdateR
 
 	stage = "DecodeResponse"
 	result, err := decodeRollbackUpdateResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RunConfigBackup invokes runConfigBackup operation.
+//
+// Queues a `config_backup` job (service class): the config archive the nightly chain writes, taken
+// now. It writes one archive to every enabled backup destination, verifies it, and prunes each
+// destination's own retention, counting the archive like a scheduled one — it never takes the slot
+// of a pre-import, pre-update or pre-topology archive. It is serialized with the other config backups,
+// so one asked for while another runs queues rather than failing. The job succeeds when at least one
+// destination was written and its log names each destination written and each that failed (the
+// stale-destination alert covers one that keeps failing), and fails, with a `config_backup_failed`
+// notification, when none was. Refused with 409 `backup_no_destination` before anything is queued
+// while no destination is enabled, and with 501 `not_configured` when this daemon has no backup
+// service. To download an archive instead of writing one to the destinations, use `exportConfig`.
+//
+// POST /config/backup
+func (c *Client) RunConfigBackup(ctx context.Context) (*Job, error) {
+	res, err := c.sendRunConfigBackup(ctx)
+	return res, err
+}
+
+func (c *Client) sendRunConfigBackup(ctx context.Context) (res *Job, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("runConfigBackup"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/config/backup"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, RunConfigBackupOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/config/backup"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:SessionCookie"
+			switch err := c.securitySessionCookie(ctx, RunConfigBackupOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SessionCookie\"")
+			}
+		}
+		{
+			stage = "Security:ApiToken"
+			switch err := c.securityApiToken(ctx, RunConfigBackupOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ApiToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeRunConfigBackupResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

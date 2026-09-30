@@ -47,6 +47,7 @@ func rootCmd() *cobra.Command {
 		moverCmd(),
 		jobsCmd(),
 		logsCmd(),
+		backupCmd(),
 		configCmd(),
 		doctorCmd(),
 		userCmd(),

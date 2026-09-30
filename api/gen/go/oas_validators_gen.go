@@ -3204,6 +3204,8 @@ func (s JobType) Validate() error {
 		return nil
 	case "restore_drill":
 		return nil
+	case "config_backup":
+		return nil
 	case "container_update":
 		return nil
 	case "container_recreate":

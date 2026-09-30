@@ -108,6 +108,7 @@ const (
 	RevokeApiTokenOperation                 OperationName = "RevokeApiToken"
 	RevokeSessionOperation                  OperationName = "RevokeSession"
 	RollbackUpdateOperation                 OperationName = "RollbackUpdate"
+	RunConfigBackupOperation                OperationName = "RunConfigBackup"
 	RunDoctorOperation                      OperationName = "RunDoctor"
 	RunParityDiffOperation                  OperationName = "RunParityDiff"
 	SendTestNotificationOperation           OperationName = "SendTestNotification"
