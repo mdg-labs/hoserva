@@ -272,7 +272,7 @@ $(error invalid L3_STEPS: must not contain '$$' — no Make or shell expansion s
 endif
 export L3_STEPS
 
-.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-outbound-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
+.PHONY: build test test-unit test-go test-integration test-lab packaging-test lint lint-go clean mock lab-up lab-seed lab-destroy lab-verify-refusal lab-snapraid-check lab-require-id gen api-check web-build web-check-outbound web-scan-outbound web-outbound-test web-lint web-typecheck web-test db-migration db-check vm-up vm-snapshot vm-restore vm-deploy vm-reinstall-os vm-destroy vm-suite vm-suite-plan vm-soak hooks-install
 
 # One-time local setup (CONTRIBUTING.md, doc 13 Q2): every commit needs a
 # DCO Signed-off-by trailer. This points git at the repo-tracked hook
@@ -292,9 +292,12 @@ web-build:
 	cd web && $(NPM) run build
 	@test -f web/dist/index.html || { echo "web-build: web/dist/index.html is missing after 'npm run build' — the embed (web/embed.go) would ship a placeholder, not the app" >&2; exit 1; }
 
-# Q49: the built app embeds no outbound request. CI's web job runs this same
-# target.
+# Q49: the built app embeds no outbound request. web-scan-outbound scans an
+# existing web/dist only — CI's web job, which has just built it, runs that.
 web-check-outbound: web-build
+	scripts/devenv/check-web-outbound.sh web/dist
+
+web-scan-outbound:
 	scripts/devenv/check-web-outbound.sh web/dist
 
 build: web-build
