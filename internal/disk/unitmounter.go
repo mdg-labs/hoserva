@@ -28,7 +28,8 @@ type DirectMounter struct {
 // Mount creates unit.Where if needed and mounts UUID=unit.UUID there.
 // A disk already mounted at unit.Where by that same UUID is success, so
 // a create-array retry after a partial apply does not fail as a second
-// format would.
+// format would. Success is only returned once the mount table shows
+// unit.UUID at unit.Where, whatever mount's exit status was.
 func (m DirectMounter) Mount(ctx context.Context, unit MountUnit) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -42,6 +43,11 @@ func (m DirectMounter) Mount(ctx context.Context, unit MountUnit) error {
 			return nil
 		}
 		return fmt.Errorf("disk: mounting %s at %s: %w", unit.UUID, unit.Where, err)
+	}
+	// nofail makes mount(8) exit 0 when no device carries the UUID, so the
+	// exit status alone does not say the filesystem is there.
+	if err := ConfirmMountedUUID(ctx, m.Runner, unit.Where, unit.UUID); err != nil {
+		return fmt.Errorf("disk: mounting %s at %s exited 0 but the filesystem is not mounted there: %w", unit.UUID, unit.Where, err)
 	}
 	return nil
 }

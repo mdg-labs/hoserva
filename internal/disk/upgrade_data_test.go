@@ -809,3 +809,84 @@ func TestRunDataDiskUpgrade_CopyErrorSavesLastCompletedPath(t *testing.T) {
 		t.Fatalf("checkpoint after the copy error = %+v, want copying at movies with NewUUID 1111-uuid", last)
 	}
 }
+
+// kernelMountsMounter adapts KernelMounts, the mounter hoservad wires into
+// the upgrade jobs, to UnitMounter. Unmount succeeds without doing anything
+// so a run that wrongly got past the mount is not stopped by it.
+type kernelMountsMounter struct{ k KernelMounts }
+
+func (m kernelMountsMounter) Mount(ctx context.Context, u MountUnit) error {
+	return m.k.Mount(ctx, u)
+}
+
+func (m kernelMountsMounter) Unmount(context.Context, MountUnit) error {
+	return nil
+}
+
+// The new disk's UUID is not visible when the staging mount runs, so
+// `mount -o nofail` exits 0 without mounting. In hoservad ConfirmMounted and
+// StagingMounted check the mount table after the mount; here they are
+// scripted to agree that all is well, so the mounter's own answer is what
+// stops the run.
+func TestRunDataDiskUpgrade_MountOfAbsentFilesystemFailsBeforeAnyCopy(t *testing.T) {
+	cases := []struct {
+		name  string
+		phase DataDiskUpgradePhase
+		// resumeUnmounted makes the first StagingMounted answer "no",
+		// which is what sends a resume into its re-mount.
+		resumeUnmounted bool
+	}{
+		{name: "formatting", phase: ""},
+		{name: "resume into copying", phase: DataDiskUpgradePhaseCopying, resumeUnmounted: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oldWhere := t.TempDir()
+			staging := t.TempDir()
+			buildUpgradeTestTree(t, oldWhere)
+
+			fakes := newRunDataDiskUpgradeFakes(t, "/dev/fake-new", "1111-uuid")
+			fakes.runner.Script("mount", []string{"-t", "xfs", "-o", "defaults,nofail", "-U", "1111-uuid", staging}, nil, nil)
+			fakes.runner.Script("findmnt", []string{"-n", "-o", "UUID", staging}, nil, errors.New("exit status 1"))
+			fakes.mounter = nil
+			deps := fakes.deps()
+			deps.Mounter = kernelMountsMounter{k: KernelMounts{Runner: fakes.runner}}
+			if tc.resumeUnmounted {
+				var calls int
+				deps.StagingMounted = func(string) (bool, error) {
+					calls++
+					return calls > 1, nil
+				}
+			}
+
+			spec := DataDiskUpgradeSpec{
+				Old:           MountUnit{Where: oldWhere, UUID: "old-uuid", Filesystem: XFS},
+				New:           DiskAddition{Device: "/dev/fake-new", Filesystem: XFS},
+				NewFilesystem: XFS,
+				Staging:       staging,
+			}
+			var cp []byte
+			if tc.phase != "" {
+				cp = mustMarshalDataDiskUpgradeCheckpoint(t, DataDiskUpgradeCheckpoint{Phase: tc.phase, NewUUID: "1111-uuid"})
+			}
+
+			_, err := RunDataDiskUpgrade(context.Background(), spec, deps, DataDiskUpgradeHooks{}, cp)
+			if err == nil {
+				t.Fatal("RunDataDiskUpgrade: nil error although the new filesystem was never mounted")
+			}
+			if !strings.Contains(err.Error(), "1111-uuid") {
+				t.Fatalf("error = %q, want it to name the missing filesystem UUID", err)
+			}
+			entries, rerr := os.ReadDir(staging)
+			if rerr != nil {
+				t.Fatalf("reading staging dir: %v", rerr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("staging holds %d entries: the copy wrote onto the unmounted directory", len(entries))
+			}
+			if fakes.diffCalls != 0 || fakes.releaseCalls != 0 {
+				t.Fatalf("diff calls = %d, release calls = %d, want the run stopped before either", fakes.diffCalls, fakes.releaseCalls)
+			}
+		})
+	}
+}
