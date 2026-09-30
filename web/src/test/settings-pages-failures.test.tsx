@@ -317,3 +317,203 @@ describe("Settings pages load failures", () => {
     expect(await screen.findByText("general refresh unavailable")).toBeInTheDocument();
   });
 });
+
+describe("Config restore failures", () => {
+  const PREVIEW = {
+    archive: { timestamp: "2026-09-01T03:00:00Z", host: "old-nas", hoservaVersion: "0.4.0", schemaVersion: "12" },
+    liveSchemaVersion: "12",
+    blockers: [],
+    groups: [],
+    secrets: { status: "opened", stacks: [] },
+    notes: [],
+  };
+
+  function ok(data: unknown) {
+    return Promise.resolve({ data, response: { ok: true } });
+  }
+
+  function fail(code: string, message: string) {
+    return Promise.resolve({ error: { code, message }, response: { ok: false } });
+  }
+
+  function restoreApi(responses: { preview?: () => unknown; apply?: () => unknown }): void {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/backup/destinations") {
+        return ok({ destinations: [] });
+      }
+      if (path === "/backup/drill") {
+        return ok({});
+      }
+      if (path === "/settings/general") {
+        return ok({ backupPassphraseSet: true });
+      }
+      return notFound();
+    });
+    mockPost.mockImplementation((path: string) => {
+      if (path === "/config/import/preview") {
+        return (responses.preview ?? (() => ok(PREVIEW)))();
+      }
+      if (path === "/config/import") {
+        return (responses.apply ?? (() => fail("internal", "unexpected")))();
+      }
+      return notFound();
+    });
+  }
+
+  async function preview(): Promise<void> {
+    render(
+      <MemoryRouter>
+        <BackupSettingsPage />
+      </MemoryRouter>,
+    );
+    fireEvent.change(await screen.findByLabelText("Config backup archive"), {
+      target: { files: [new File(["x"], "a.tar.zst")] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Preview restore" }));
+  }
+
+  async function openApply(): Promise<HTMLElement> {
+    await preview();
+    fireEvent.click(await screen.findByRole("button", { name: "Restore this configuration" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "restore" } });
+    return dialog;
+  }
+
+  beforeEach(() => {
+    cleanup();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      addEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: false,
+      media: query,
+      onchange: null,
+      removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+  });
+
+  it.each([
+    ["invalid_archive", "This file is not a readable config backup"],
+    ["archive_too_large", "This archive is too large to restore"],
+    ["incompatible_archive", "This archive is from an incompatible version"],
+    ["archive_newer_version", "This archive is from a newer Hoserva version"],
+    ["archive_other_installation", "This archive was made by a different installation"],
+    ["archive_array_mismatch", "This archive describes a different array"],
+    ["backup_passphrase_incorrect", "That passphrase does not open this archive"],
+    ["job_in_progress", "A job is running, so the restore cannot start"],
+    ["not_configured", "This server has no backup service"],
+  ])("names a preview refused as %s and shows no preview", async (code, title) => {
+    restoreApi({ preview: () => fail(code, `server says ${code}`) });
+
+    await preview();
+
+    expect(await screen.findByText(title)).toBeInTheDocument();
+    expect(screen.getByText(`server says ${code}`)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restore this configuration" })).not.toBeInTheDocument();
+  });
+
+  it("names a preview that failed for another reason with the server's message", async () => {
+    restoreApi({ preview: () => fail("internal", "could not stage the archive") });
+
+    await preview();
+
+    expect(await screen.findByText("Could not preview the archive")).toBeInTheDocument();
+    expect(screen.getByText("could not stage the archive")).toBeInTheDocument();
+  });
+
+  it("names a preview whose request was rejected, and one answered without a body", async () => {
+    restoreApi({ preview: () => Promise.reject(new Error("network down")) });
+
+    await preview();
+
+    expect(await screen.findByText("Could not preview the archive")).toBeInTheDocument();
+    expect(screen.getByText("network down")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restore this configuration" })).not.toBeInTheDocument();
+
+    cleanup();
+    restoreApi({ preview: () => Promise.resolve({ response: { ok: true } }) });
+
+    await preview();
+
+    expect(await screen.findByText("Could not preview the archive")).toBeInTheDocument();
+    expect(screen.getByText("The server answered without a preview.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restore this configuration" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["job_in_progress", "A job is running, so the restore cannot start"],
+    ["backup_passphrase_incorrect", "That passphrase does not open this archive"],
+    ["archive_other_installation", "This archive was made by a different installation"],
+  ])("keeps the typed confirmation and names an apply refused as %s", async (code, title) => {
+    restoreApi({ apply: () => fail(code, `apply says ${code}`) });
+
+    const dialog = await openApply();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restore" }));
+
+    expect(await within(dialog).findByText(title)).toBeInTheDocument();
+    expect(within(dialog).getByText(`apply says ${code}`)).toBeInTheDocument();
+    expect(within(dialog).getByRole("textbox")).toHaveValue("restore");
+    expect(within(dialog).getByRole("button", { name: "Restore" })).toBeEnabled();
+    expect(screen.queryByText("The restore is finished and you were signed out")).not.toBeInTheDocument();
+  });
+
+  it("offers a new preview when the disk mapping went stale, and runs it", async () => {
+    restoreApi({ apply: () => fail("disk_mapping_stale", "sdb is no longer attached") });
+
+    const dialog = await openApply();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restore" }));
+
+    expect(await within(dialog).findByText("The attached disks changed since the preview")).toBeInTheDocument();
+    const previewsBefore = mockPost.mock.calls.filter((call) => call[0] === "/config/import/preview").length;
+    fireEvent.click(within(dialog).getByRole("button", { name: "Preview again" }));
+
+    await waitFor(() =>
+      expect(mockPost.mock.calls.filter((call) => call[0] === "/config/import/preview").length).toBe(
+        previewsBefore + 1,
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("names an apply whose request was rejected and does not show a report", async () => {
+    restoreApi({ apply: () => Promise.reject(new Error("connection reset")) });
+
+    const dialog = await openApply();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restore" }));
+
+    expect(await within(dialog).findByText("The restore failed")).toBeInTheDocument();
+    expect(within(dialog).getByText("connection reset")).toBeInTheDocument();
+    expect(screen.queryByText("What was restored")).not.toBeInTheDocument();
+  });
+
+  it("does not show a restore that succeeded without a report as a success", async () => {
+    restoreApi({ apply: () => Promise.resolve({ response: { ok: true } }) });
+
+    const dialog = await openApply();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restore" }));
+
+    expect(await within(dialog).findByText("The restore failed")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "The server did not return a restore report. Check the destinations for the backup made before the restore.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("What was restored")).not.toBeInTheDocument();
+  });
+
+  it("keeps the dialog open and the restore button busy while the restore runs", async () => {
+    let finish: (value: unknown) => void = () => {};
+    restoreApi({ apply: () => new Promise((resolve) => (finish = resolve)) });
+
+    const dialog = await openApply();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled());
+    fireEvent.keyDown(dialog, { key: "Escape" });
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    finish({ data: { restored: [], notRestored: [], secrets: "none", preImportArchive: "", preImportSecrets: "none" }, response: { ok: true } });
+    expect(await screen.findByText("The restore is finished and you were signed out")).toBeInTheDocument();
+  });
+});

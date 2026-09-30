@@ -1,5 +1,5 @@
 import { Archive } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
@@ -8,13 +8,16 @@ import { ConfirmDialog } from "@/components/patterns/confirm";
 import { DataTable, type DataTableColumn } from "@/components/patterns/data-table";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { showFeedbackToast } from "@/components/patterns/feedback-toast";
+import { FileUpload } from "@/components/patterns/file-upload";
 import { FormOverlay } from "@/components/patterns/form-overlay";
+import { GroupedResults, type ResultGroup } from "@/components/patterns/grouped-results";
 import { jobStatusLabel } from "@/components/patterns/job-status";
 import { LoadingBlock } from "@/components/patterns/loading";
 import { NumberUnit } from "@/components/patterns/number-unit";
 import { SecretInput } from "@/components/patterns/secret-input";
 import { SettingSwitch } from "@/components/patterns/setting-switch";
 import { StatusBadge } from "@/components/patterns/status-badge";
+import { TypedConfirm } from "@/components/patterns/typed-confirm";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardDescription, CardHeader, CardPanel, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
@@ -31,6 +34,8 @@ import {
   postBackupDestination,
   postBackupDestinationTest,
   postConfigExport,
+  postConfigImport,
+  postConfigImportPreview,
   postRestoreDrill,
   putGeneralSettings,
   type Availability,
@@ -41,6 +46,11 @@ import { useApiQuery, type UseApiQueryResult } from "@/lib/api/use-api-query";
 type BackupDestination = components["schemas"]["BackupDestination"];
 type BackupDestinationType = components["schemas"]["BackupDestinationType"];
 type BackupDestinationTestResult = components["schemas"]["BackupDestinationTestResult"];
+type ConfigImportBareMetal = components["schemas"]["ConfigImportBareMetal"];
+type ConfigImportChange = components["schemas"]["ConfigImportChange"];
+type ConfigImportDisk = components["schemas"]["ConfigImportDisk"];
+type ConfigImportPreview = components["schemas"]["ConfigImportPreview"];
+type ConfigImportReport = components["schemas"]["ConfigImportReport"];
 type CreateBackupDestinationRequest = components["schemas"]["CreateBackupDestinationRequest"];
 type GeneralSettings = components["schemas"]["GeneralSettings"];
 type Job = components["schemas"]["Job"];
@@ -104,6 +114,8 @@ const NAME_ID = "backup-dest-name";
 const PATH_ID = "backup-dest-path";
 const PASSPHRASE_ID = "backup-passphrase";
 const PASSPHRASE_CONFIRM_ID = "backup-passphrase-confirm";
+const RESTORE_FILE_ID = "backup-restore-archive";
+const RESTORE_PASSPHRASE_ID = "backup-restore-passphrase";
 const NEW_PASSWORD_AUTOCOMPLETE = "new-password";
 
 function fieldId(key: string): string {
@@ -1063,6 +1075,552 @@ function RestoreDrillCard(): React.ReactElement {
   );
 }
 
+type TFn = (key: string, options?: Record<string, unknown>) => string;
+
+const LABELS = {
+  categories: "categories",
+  kinds: "kinds",
+  blockers: "blockers",
+  notes: "notes",
+  secretStatuses: "secrets.statuses",
+  secretHints: "secrets.hints",
+  diskStates: "disks.states",
+  reasons: "reasons",
+  notRestoredKinds: "notRestoredKinds",
+  preImportSecrets: "report.preImportSecrets",
+} as const;
+
+const CHANGE_ADDED = "added";
+const CHANGE_CHANGED = "changed";
+const CHANGE_REMOVED = "removed";
+const ARCHIVE_ACCEPT = ".zst";
+const OFF_AUTOCOMPLETE = "off";
+
+function enumLabel(group: string, value: string, t: TFn): string {
+  return t(`settings.backup.restore.${group}.${value}`, { defaultValue: value });
+}
+
+const RESTORE_ERROR_CODES = [
+  "invalid_archive",
+  "archive_too_large",
+  "incompatible_archive",
+  "archive_other_installation",
+  "archive_array_mismatch",
+  "archive_newer_version",
+  "restore_path_unsafe",
+  "job_in_progress",
+  "backup_passphrase_incorrect",
+  "disk_mapping_stale",
+  "disk_mapping_required",
+  "not_configured",
+];
+
+function restoreFailureTitle(code: string | undefined, fallback: string, t: TFn): string {
+  if (code !== undefined && RESTORE_ERROR_CODES.includes(code)) {
+    return t(`settings.backup.restore.errors.${code}`);
+  }
+  return fallback;
+}
+
+type RestoreFailure = { code: string | undefined; message: string };
+
+const DISK_STATE_TONE: Record<ConfigImportDisk["state"], "success" | "warning" | "error"> = {
+  matched: "success",
+  absent: "warning",
+  replaced: "warning",
+  ambiguous: "error",
+};
+
+function changeLabel(change: ConfigImportChange, t: TFn): string {
+  const kind = enumLabel(LABELS.kinds, change.kind, t);
+  return change.name === "" ? kind : t("settings.backup.restore.preview.changeItem", { kind, name: change.name });
+}
+
+function RestoreChanges({ preview }: { preview: ConfigImportPreview }): React.ReactElement {
+  const { t } = useTranslation();
+  if (preview.archive.schemaVersion !== preview.liveSchemaVersion) {
+    return (
+      <Banner
+        tone="info"
+        title={t("settings.backup.restore.preview.schemaDiffers")}
+        description={t("settings.backup.restore.preview.schemaDiffersHint", {
+          archive: preview.archive.schemaVersion,
+          live: preview.liveSchemaVersion,
+        })}
+      />
+    );
+  }
+  const categories = preview.groups.filter(
+    (group) => group.added.length + group.changed.length + group.removed.length > 0,
+  );
+  if (categories.length === 0) {
+    return <p className="text-muted-foreground text-sm">{t("settings.backup.restore.preview.noChanges")}</p>;
+  }
+  return (
+    <div className="flex flex-col gap-4">
+      {categories.map((category) => {
+        const groups: ResultGroup[] = [
+          { id: CHANGE_ADDED, label: t("settings.backup.restore.preview.added"), items: category.added },
+          { id: CHANGE_CHANGED, label: t("settings.backup.restore.preview.changed"), items: category.changed },
+          { id: CHANGE_REMOVED, label: t("settings.backup.restore.preview.removed"), items: category.removed },
+        ]
+          .filter((entry) => entry.items.length > 0)
+          .map((entry) => ({
+            id: entry.id,
+            label: entry.label,
+            count: entry.items.length,
+            defaultOpen: true,
+            items: entry.items.map((change) => changeLabel(change, t)),
+          }));
+        return (
+          <div key={category.category} className="flex flex-col gap-2">
+            <p className="font-medium text-sm">{enumLabel(LABELS.categories, category.category, t)}</p>
+            <GroupedResults groups={groups} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RestoreSecrets({ secrets }: { secrets: ConfigImportPreview["secrets"] }): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="font-medium text-sm">{t("settings.backup.restore.secrets.title")}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge tone={secrets.status === "opened" || secrets.status === "none" ? "success" : "warning"}>
+          {enumLabel(LABELS.secretStatuses, secrets.status, t)}
+        </StatusBadge>
+      </div>
+      <p className="text-muted-foreground text-sm">{enumLabel(LABELS.secretHints, secrets.status, t)}</p>
+      {secrets.stacks.length > 0 ? (
+        <div className="flex flex-col gap-1 text-sm">
+          <p>{t("settings.backup.restore.secrets.stacksNotRestored")}</p>
+          <ul className="list-disc ps-5 text-muted-foreground">
+            {secrets.stacks.map((stack) => (
+              <li key={stack}>{stack}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RestoreDiskMapping({
+  bareMetal,
+  confirmed,
+  onConfirmedChange,
+}: {
+  bareMetal: ConfigImportBareMetal;
+  confirmed: boolean;
+  onConfirmedChange: (confirmed: boolean) => void;
+}): React.ReactElement {
+  const { t } = useTranslation();
+  const columns: DataTableColumn<ConfigImportDisk>[] = [
+    {
+      id: "disk",
+      header: t("settings.backup.restore.disks.columns.disk"),
+      cell: (row) => (
+        <div className="flex flex-col">
+          <span className="font-medium">{row.name}</span>
+          <span className="text-muted-foreground text-xs">{row.mountpoint}</span>
+        </div>
+      ),
+    },
+    {
+      id: "attached",
+      header: t("settings.backup.restore.disks.columns.attached"),
+      cell: (row) => row.device ?? t("settings.backup.restore.disks.noneAttached"),
+    },
+    {
+      id: "state",
+      header: t("settings.backup.restore.disks.columns.state"),
+      cell: (row) => (
+        <StatusBadge tone={DISK_STATE_TONE[row.state]}>{enumLabel(LABELS.diskStates, row.state, t)}</StatusBadge>
+      ),
+    },
+  ];
+  const unmatched = bareMetal.disks.filter((disk) => disk.state !== "matched").length;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="font-medium text-sm">{t("settings.backup.restore.disks.title")}</p>
+      <p className="text-muted-foreground text-sm">
+        {bareMetal.schemaUpgrade
+          ? t("settings.backup.restore.disks.schemaUpgrade")
+          : t("settings.backup.restore.disks.schemaSame")}
+      </p>
+      {bareMetal.disks.length === 0 ? (
+        <p className="text-muted-foreground text-sm">{t("settings.backup.restore.disks.none")}</p>
+      ) : (
+        <DataTable rows={bareMetal.disks} getRowKey={(row) => row.name} columns={columns} />
+      )}
+      {unmatched > 0 ? (
+        <Banner
+          tone="warning"
+          title={t("settings.backup.restore.disks.unmatchedTitle", { count: unmatched })}
+          description={t("settings.backup.restore.disks.unmatchedDescription")}
+        />
+      ) : null}
+      <SettingSwitch
+        label={t("settings.backup.restore.disks.confirm")}
+        description={t("settings.backup.restore.disks.confirmHint")}
+        checked={confirmed}
+        onCheckedChange={onConfirmedChange}
+      />
+    </div>
+  );
+}
+
+function RestorePreview({
+  preview,
+  mappingConfirmed,
+  onMappingConfirmedChange,
+}: {
+  preview: ConfigImportPreview;
+  mappingConfirmed: boolean;
+  onMappingConfirmedChange: (confirmed: boolean) => void;
+}): React.ReactElement {
+  const { t, i18n } = useTranslation();
+  return (
+    <div className="flex flex-col gap-4 border-t pt-4">
+      <div className="flex flex-col gap-1">
+        <p className="font-medium text-sm">{t("settings.backup.restore.preview.archiveTitle")}</p>
+        <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
+          <dt className="text-muted-foreground">{t("settings.backup.restore.preview.madeAt")}</dt>
+          <dd>{formatDateTime(preview.archive.timestamp, i18n.language)}</dd>
+          <dt className="text-muted-foreground">{t("settings.backup.restore.preview.host")}</dt>
+          <dd>{preview.archive.host}</dd>
+          <dt className="text-muted-foreground">{t("settings.backup.restore.preview.version")}</dt>
+          <dd>{preview.archive.hoservaVersion}</dd>
+        </dl>
+      </div>
+      {preview.blockers.map((blocker, index) => (
+        <Banner
+          key={`${blocker.code}-${index}`}
+          tone="error"
+          title={enumLabel(LABELS.blockers, blocker.code, t)}
+          description={blocker.message}
+        />
+      ))}
+      {preview.notes.map((note) => (
+        <Banner
+          key={note.code}
+          tone="info"
+          title={enumLabel(LABELS.notes, note.code, t)}
+          description={note.message}
+        />
+      ))}
+      <RestoreChanges preview={preview} />
+      <RestoreSecrets secrets={preview.secrets} />
+      {preview.bareMetal ? (
+        <RestoreDiskMapping
+          bareMetal={preview.bareMetal}
+          confirmed={mappingConfirmed}
+          onConfirmedChange={onMappingConfirmedChange}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function RestoreReport({ report }: { report: ConfigImportReport }): React.ReactElement {
+  const { t } = useTranslation();
+  const columns: DataTableColumn<ConfigImportReport["restored"][number]>[] = [
+    {
+      id: "category",
+      header: t("settings.backup.restore.report.columns.category"),
+      cell: (row) => enumLabel(LABELS.categories, row.category, t),
+    },
+    { id: "added", header: t("settings.backup.restore.report.columns.added"), cell: (row) => row.added },
+    { id: "changed", header: t("settings.backup.restore.report.columns.changed"), cell: (row) => row.changed },
+    { id: "removed", header: t("settings.backup.restore.report.columns.removed"), cell: (row) => row.removed },
+  ];
+  return (
+    <div className="flex flex-col gap-4">
+      <Banner
+        tone="info"
+        title={t("settings.backup.restore.report.signedOutTitle")}
+        description={t("settings.backup.restore.report.signedOutDescription")}
+        action={
+          <Button size="sm" variant="outline" render={<a href="/login" />}>
+            {t("settings.backup.restore.report.signIn")}
+          </Button>
+        }
+      />
+      <div className="flex flex-col gap-2">
+        <p className="font-medium text-sm">{t("settings.backup.restore.report.restoredTitle")}</p>
+        <DataTable rows={report.restored} getRowKey={(row) => row.category} columns={columns} />
+      </div>
+      <div className="flex flex-col gap-2">
+        <p className="font-medium text-sm">{t("settings.backup.restore.report.notRestoredTitle")}</p>
+        {report.notRestored.length === 0 ? (
+          <p className="text-muted-foreground text-sm">{t("settings.backup.restore.report.nothingLeftOut")}</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {report.notRestored.map((item) => (
+              <li key={`${item.kind}-${item.name}`} className="flex flex-col gap-1 rounded-lg border p-3 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">
+                    {t("settings.backup.restore.report.notRestoredItem", {
+                      kind: enumLabel(LABELS.notRestoredKinds, item.kind, t),
+                      name: item.name,
+                    })}
+                  </span>
+                  <StatusBadge tone="warning">{enumLabel(LABELS.reasons, item.reason, t)}</StatusBadge>
+                </div>
+                <span className="text-muted-foreground">{item.message}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="flex flex-col gap-1">
+        <p className="font-medium text-sm">{t("settings.backup.restore.report.safetyArchiveTitle")}</p>
+        <p className="text-muted-foreground text-sm">
+          {report.preImportArchive === ""
+            ? t("settings.backup.restore.report.noSafetyArchive")
+            : t("settings.backup.restore.report.safetyArchive", { archive: report.preImportArchive })}
+        </p>
+        <p className="text-muted-foreground text-sm">
+          {enumLabel(LABELS.preImportSecrets, report.preImportSecrets, t)}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ConfigRestoreCard(): React.ReactElement {
+  const { t } = useTranslation();
+  const [file, setFile] = useState<File | null>(null);
+  const [passphrase, setPassphrase] = useState("");
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [preview, setPreview] = useState<ConfigImportPreview | null>(null);
+  const [previewFailure, setPreviewFailure] = useState<RestoreFailure | null>(null);
+  const [mappingConfirmed, setMappingConfirmed] = useState(false);
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [applyFailure, setApplyFailure] = useState<RestoreFailure | null>(null);
+  const [report, setReport] = useState<ConfigImportReport | null>(null);
+  const previewAbort = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      previewAbort.current?.abort();
+    },
+    [],
+  );
+
+  function discardPreview(): void {
+    previewAbort.current?.abort();
+    previewAbort.current = null;
+    setPreviewBusy(false);
+    setPreview(null);
+    setPreviewFailure(null);
+    setMappingConfirmed(false);
+  }
+
+  function handleFileChange(next: File | null): void {
+    discardPreview();
+    setFile(next);
+  }
+
+  function handlePassphraseChange(next: string): void {
+    discardPreview();
+    setPassphrase(next);
+  }
+
+  async function handlePreview(): Promise<void> {
+    if (file === null) {
+      return;
+    }
+    discardPreview();
+    const controller = new AbortController();
+    previewAbort.current = controller;
+    setPreviewBusy(true);
+    const outcome = await request<ConfigImportPreview>(
+      () => postConfigImportPreview(file, passphrase, controller.signal),
+      t("settings.backup.restore.previewFailed"),
+    );
+    if (controller.signal.aborted) {
+      return;
+    }
+    setPreviewBusy(false);
+    if (!outcome.ok) {
+      setPreviewFailure({ code: outcome.code, message: outcome.message });
+      return;
+    }
+    if (outcome.data === undefined) {
+      setPreviewFailure({ code: undefined, message: t("settings.backup.restore.previewEmpty") });
+      return;
+    }
+    setPreview(outcome.data);
+  }
+
+  async function handleApply(): Promise<void> {
+    if (file === null || preview === null) {
+      return;
+    }
+    setApplyBusy(true);
+    setApplyFailure(null);
+    try {
+      const outcome = await request<ConfigImportReport>(
+        () => postConfigImport({ archive: file, passphrase, diskMapping: preview.bareMetal?.diskMapping ?? null }),
+        t("settings.backup.restore.apply.failed"),
+      );
+      if (!outcome.ok) {
+        setApplyFailure({ code: outcome.code, message: outcome.message });
+        return;
+      }
+      if (outcome.data === undefined) {
+        setApplyFailure({ code: undefined, message: t("settings.backup.restore.apply.noReport") });
+        return;
+      }
+      setPassphrase("");
+      setApplyOpen(false);
+      setReport(outcome.data);
+    } finally {
+      setApplyBusy(false);
+    }
+  }
+
+  function closeApply(): void {
+    setApplyOpen(false);
+    setConfirmText("");
+    setApplyFailure(null);
+  }
+
+  const phrase = t("settings.backup.restore.apply.phrase");
+  const canApply =
+    preview !== null &&
+    preview.blockers.length === 0 &&
+    (preview.bareMetal === undefined || mappingConfirmed);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t("settings.backup.restore.title")}</CardTitle>
+        <CardDescription>{t("settings.backup.restore.description")}</CardDescription>
+      </CardHeader>
+      <CardPanel className="flex flex-col gap-4">
+        {report !== null ? (
+          <RestoreReport report={report} />
+        ) : (
+          <>
+            <FileUpload
+              id={RESTORE_FILE_ID}
+              label={t("settings.backup.restore.archive")}
+              description={t("settings.backup.restore.archiveHint")}
+              accept={ARCHIVE_ACCEPT}
+              disabled={previewBusy || applyBusy}
+              onChange={handleFileChange}
+            />
+            <Field>
+              <FieldLabel htmlFor={RESTORE_PASSPHRASE_ID}>{t("settings.backup.restore.passphrase")}</FieldLabel>
+              <SecretInput
+                id={RESTORE_PASSPHRASE_ID}
+                value={passphrase}
+                onChange={handlePassphraseChange}
+                autoComplete={OFF_AUTOCOMPLETE}
+              />
+              <FieldDescription>{t("settings.backup.restore.passphraseHint")}</FieldDescription>
+            </Field>
+            <div>
+              <Button loading={previewBusy} disabled={file === null} onClick={() => void handlePreview()}>
+                {t("settings.backup.restore.previewAction")}
+              </Button>
+            </div>
+            {previewFailure ? (
+              <Banner
+                tone="error"
+                title={restoreFailureTitle(previewFailure.code, t("settings.backup.restore.previewFailed"), t)}
+                description={previewFailure.message}
+              />
+            ) : null}
+            {preview ? (
+              <>
+                <RestorePreview
+                  preview={preview}
+                  mappingConfirmed={mappingConfirmed}
+                  onMappingConfirmedChange={setMappingConfirmed}
+                />
+                <div>
+                  <Button variant="destructive" disabled={!canApply} onClick={() => setApplyOpen(true)}>
+                    {t("settings.backup.restore.apply.action")}
+                  </Button>
+                </div>
+              </>
+            ) : null}
+          </>
+        )}
+      </CardPanel>
+
+      <FormOverlay
+        open={applyOpen}
+        onOpenChange={(open) => {
+          if (!open && !applyBusy) {
+            closeApply();
+          }
+        }}
+        title={t("settings.backup.restore.apply.title")}
+        description={t("settings.backup.restore.apply.description")}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" disabled={applyBusy} onClick={closeApply}>
+              {t("settings.actions.cancel")}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              loading={applyBusy}
+              disabled={confirmText !== phrase}
+              onClick={() => void handleApply()}
+            >
+              {t("settings.backup.restore.apply.confirm")}
+            </Button>
+          </div>
+        }
+      >
+        {applyFailure ? (
+          <Banner
+            tone="error"
+            title={restoreFailureTitle(applyFailure.code, t("settings.backup.restore.apply.failed"), t)}
+            description={applyFailure.message}
+            action={
+              applyFailure.code === "disk_mapping_stale" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    closeApply();
+                    void handlePreview();
+                  }}
+                >
+                  {t("settings.backup.restore.apply.previewAgain")}
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : null}
+        <TypedConfirm
+          phrase={phrase}
+          value={confirmText}
+          onChange={setConfirmText}
+          title={t("settings.backup.restore.apply.confirmTitle")}
+          items={[
+            t("settings.backup.restore.apply.itemReplace"),
+            t("settings.backup.restore.apply.itemSignedOut"),
+            t("settings.backup.restore.apply.itemSafetyArchive"),
+          ]}
+        />
+      </FormOverlay>
+    </Card>
+  );
+}
+
 export function BackupSettingsPage(): React.ReactElement {
   const { t } = useTranslation();
   const generalQuery = useApiQuery<GeneralSettings>({
@@ -1078,6 +1636,7 @@ export function BackupSettingsPage(): React.ReactElement {
     <div className="flex flex-col gap-6">
       <DestinationsSection passphraseSet={passphraseSet} onNeedPassphrase={() => setPassphraseOpen(true)} />
       <ConfigBackupCard general={generalQuery} onEditPassphrase={() => setPassphraseOpen(true)} />
+      <ConfigRestoreCard />
       <RestoreDrillCard />
       {passphraseOpen ? (
         <PassphraseOverlay

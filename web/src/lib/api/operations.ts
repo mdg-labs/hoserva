@@ -576,3 +576,43 @@ export function postRestoreDrill() {
 export function postConfigExport() {
   return hoservaClient.POST("/config/export", { parseAs: "blob" });
 }
+
+// The generated body type calls the binary `archive` part a string; the
+// request itself is the FormData built here, which the client passes
+// through untouched.
+function configImportForm(archive: File, fields: Record<string, string>): FormData {
+  const form = new FormData();
+  form.append("archive", archive);
+  for (const [name, value] of Object.entries(fields)) {
+    form.append(name, value);
+  }
+  return form;
+}
+
+export function postConfigImportPreview(archive: File, passphrase: string, signal?: AbortSignal) {
+  const form = configImportForm(archive, passphrase === "" ? {} : { passphrase });
+  return hoservaClient.POST("/config/import/preview", {
+    body: { archive: archive.name },
+    bodySerializer: () => form,
+    signal,
+  });
+}
+
+export function postConfigImport(args: {
+  archive: File;
+  passphrase: string;
+  diskMapping: components["schemas"]["ConfigImportDiskMapping"] | null;
+}) {
+  const fields: Record<string, string> = { confirm: "true" };
+  if (args.passphrase !== "") {
+    fields.passphrase = args.passphrase;
+  }
+  if (args.diskMapping !== null) {
+    fields.diskMapping = JSON.stringify(args.diskMapping);
+  }
+  const form = configImportForm(args.archive, fields);
+  return hoservaClient.POST("/config/import", {
+    body: { archive: args.archive.name, confirm: true },
+    bodySerializer: () => form,
+  });
+}

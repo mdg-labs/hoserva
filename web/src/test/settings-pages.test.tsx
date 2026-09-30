@@ -1257,3 +1257,369 @@ describe("Backup settings page", () => {
     expect(screen.queryByText("Restore drill queued")).not.toBeInTheDocument();
   });
 });
+
+const EMPTY_CHANGES: unknown[] = [];
+
+function importPreview(overrides: Record<string, unknown> = {}) {
+  return {
+    archive: {
+      timestamp: "2026-09-01T03:00:00Z",
+      host: "old-nas",
+      hoservaVersion: "0.4.0",
+      schemaVersion: "12",
+    },
+    liveSchemaVersion: "12",
+    blockers: [],
+    groups: [
+      {
+        category: "shares",
+        added: [{ kind: "share", name: "photos" }],
+        changed: [{ kind: "share", name: "media" }],
+        removed: EMPTY_CHANGES,
+      },
+      { category: "accounts", added: EMPTY_CHANGES, changed: EMPTY_CHANGES, removed: [{ kind: "user", name: "guest" }] },
+      { category: "system", added: EMPTY_CHANGES, changed: EMPTY_CHANGES, removed: EMPTY_CHANGES },
+    ],
+    secrets: { status: "opened", stacks: [] },
+    notes: [
+      { code: "sessions_replaced", message: "Active sign-in sessions are replaced by the archive's." },
+      { code: "array_state_kept", message: "The array's current state is kept." },
+    ],
+    ...overrides,
+  };
+}
+
+function bareMetalPreview(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaUpgrade: true,
+    disks: [
+      {
+        name: "Data disk 1 (/mnt/disk1)",
+        role: "data",
+        roleIndex: 1,
+        mountpoint: "/mnt/disk1",
+        fsUuid: "uuid-1",
+        weakIdentity: false,
+        state: "matched",
+        device: "/dev/sdb",
+      },
+      {
+        name: "Data disk 2 (/mnt/disk2)",
+        role: "data",
+        roleIndex: 2,
+        mountpoint: "/mnt/disk2",
+        fsUuid: "uuid-2",
+        weakIdentity: false,
+        state: "absent",
+      },
+    ],
+    diskMapping: { disks: [{ role: "data", roleIndex: 1, device: "/dev/sdb" }] },
+    ...overrides,
+  };
+}
+
+function importReport(overrides: Record<string, unknown> = {}) {
+  return {
+    restored: [
+      { category: "shares", added: 1, changed: 1, removed: 0 },
+      { category: "accounts", added: 0, changed: 0, removed: 1 },
+    ],
+    notRestored: [
+      {
+        kind: "stack_env",
+        name: "jellyfin",
+        reason: "no_passphrase",
+        message: "no passphrase was available to open the .env files",
+      },
+    ],
+    secrets: "no_passphrase",
+    preImportArchive: "hoserva-config-pre-import-2026-09-29.tar.zst",
+    preImportSecrets: "configured",
+    ...overrides,
+  };
+}
+
+function multipartFields(call: unknown[]): FormData {
+  const options = call[1] as { bodySerializer: () => FormData };
+  return options.bodySerializer();
+}
+
+function mockRestoreApi(responses: { preview?: Promise<unknown>; apply?: Promise<unknown> } = {}): void {
+  mockBackupApi();
+  mockPost.mockImplementation((path: string) => {
+    if (path === "/config/import/preview") {
+      return responses.preview ?? apiOk(importPreview());
+    }
+    if (path === "/config/import") {
+      return responses.apply ?? apiOk(importReport());
+    }
+    return Promise.resolve({ data: null, response: { ok: false } });
+  });
+}
+
+async function previewArchive(passphrase?: string): Promise<void> {
+  const archive = new File(["x"], "hoserva-config-old.tar.zst");
+  fireEvent.change(await screen.findByLabelText("Config backup archive"), { target: { files: [archive] } });
+  if (passphrase !== undefined) {
+    fireEvent.change(screen.getByLabelText("Backup passphrase (optional)"), { target: { value: passphrase } });
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Preview restore" }));
+}
+
+async function confirmRestore(): Promise<HTMLElement> {
+  fireEvent.click(await screen.findByRole("button", { name: "Restore this configuration" }));
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "restore" } });
+  return dialog;
+}
+
+describe("Config restore on the backup page", () => {
+  beforeEach(() => {
+    cleanup();
+    mockGet.mockReset();
+    mockPost.mockReset();
+    mockToast.mockReset();
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      addEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+      matches: false,
+      media: query,
+      onchange: null,
+      removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+  });
+
+  it("does not call the API until the preview button is used", async () => {
+    mockRestoreApi();
+
+    renderWithToast(<BackupSettingsPage />);
+    expect(await screen.findByRole("button", { name: "Preview restore" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Config backup archive"), {
+      target: { files: [new File(["x"], "a.tar.zst")] },
+    });
+
+    expect(screen.getByRole("button", { name: "Preview restore" })).toBeEnabled();
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("sends the archive and passphrase as a multipart upload and shows who made it and what would change", async () => {
+    mockRestoreApi();
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive("correct horse");
+
+    expect(await screen.findByText("old-nas")).toBeInTheDocument();
+    expect(screen.getByText("0.4.0")).toBeInTheDocument();
+    const call = mockPost.mock.calls.find((entry) => entry[0] === "/config/import/preview") as unknown[];
+    const form = multipartFields(call);
+    expect((form.get("archive") as File).name).toBe("hoserva-config-old.tar.zst");
+    expect(form.get("passphrase")).toBe("correct horse");
+
+    expect(screen.getByText("Shares")).toBeInTheDocument();
+    expect(screen.getByText("Share: photos")).toBeInTheDocument();
+    expect(screen.getByText("Share: media")).toBeInTheDocument();
+    expect(screen.getByText("User: guest")).toBeInTheDocument();
+    expect(screen.getByText("Added from the archive")).toBeInTheDocument();
+    expect(screen.getByText("Removed, because it is not in the archive")).toBeInTheDocument();
+    expect(screen.queryByText("System settings")).not.toBeInTheDocument();
+    expect(screen.getByText("You will be signed out")).toBeInTheDocument();
+    expect(screen.getByText("Active sign-in sessions are replaced by the archive's.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore this configuration" })).toBeEnabled();
+  });
+
+  it("omits the passphrase part when none was entered", async () => {
+    mockRestoreApi();
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    await screen.findByText("old-nas");
+    const call = mockPost.mock.calls.find((entry) => entry[0] === "/config/import/preview") as unknown[];
+    expect(multipartFields(call).has("passphrase")).toBe(false);
+  });
+
+  it("says when an archive differs from the current configuration in nothing", async () => {
+    mockRestoreApi({ preview: apiOk(importPreview({ groups: [] })) });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    expect(await screen.findByText("Nothing in this archive differs from the current configuration.")).toBeInTheDocument();
+  });
+
+  it("says the changes cannot be listed when the schema versions differ", async () => {
+    mockRestoreApi({
+      preview: apiOk(
+        importPreview({ groups: [], archive: { ...importPreview().archive, schemaVersion: "9" } }),
+      ),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    expect(await screen.findByText("The changes cannot be listed")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing in this archive differs from the current configuration.")).not.toBeInTheDocument();
+  });
+
+  it("shows each blocker as an error with its message and keeps the restore disabled", async () => {
+    mockRestoreApi({
+      preview: apiOk(
+        importPreview({
+          blockers: [
+            { code: "archive_other_installation", message: "the archive was made by another installation" },
+            { code: "archive_array_mismatch", message: "disk 3 is not in the live array" },
+          ],
+        }),
+      ),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    expect(await screen.findByText("This archive was made by a different installation")).toBeInTheDocument();
+    expect(screen.getByText("the archive was made by another installation")).toBeInTheDocument();
+    expect(screen.getByText("This archive describes a different array")).toBeInTheDocument();
+    expect(screen.getByText("disk 3 is not in the live array")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore this configuration" })).toBeDisabled();
+  });
+
+  it.each([
+    ["none", "No secrets section", []],
+    ["opened", "Secrets open", []],
+    ["no_passphrase", "No passphrase available", ["jellyfin", "nextcloud"]],
+    ["passphrase_incorrect", "Passphrase does not open it", ["jellyfin"]],
+  ])("shows secrets status %s and the stacks whose .env files would not be restored", async (status, label, stacks) => {
+    mockRestoreApi({ preview: apiOk(importPreview({ secrets: { status, stacks } })) });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    expect(await screen.findByText(label)).toBeInTheDocument();
+    for (const stack of stacks) {
+      expect(screen.getByText(stack)).toBeInTheDocument();
+    }
+    if (stacks.length === 0) {
+      expect(screen.queryByText("The .env files of these apps would not be restored:")).not.toBeInTheDocument();
+    }
+  });
+
+  it("restores in place through a typed confirmation, without a disk mapping, and shows the report", async () => {
+    mockRestoreApi();
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive("correct horse");
+    fireEvent.click(await screen.findByRole("button", { name: "Restore this configuration" }));
+    const dialog = await screen.findByRole("dialog");
+    const restoreButton = within(dialog).getByRole("button", { name: "Restore" });
+    expect(restoreButton).toBeDisabled();
+    expect(within(dialog).getByText("You will be signed out when the restore finishes.")).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "restore" } });
+    expect(restoreButton).toBeEnabled();
+    fireEvent.click(restoreButton);
+
+    expect(await screen.findByText("The restore is finished and you were signed out")).toBeInTheDocument();
+    const call = mockPost.mock.calls.find((entry) => entry[0] === "/config/import") as unknown[];
+    const form = multipartFields(call);
+    expect(form.get("confirm")).toBe("true");
+    expect(form.get("passphrase")).toBe("correct horse");
+    expect(form.has("diskMapping")).toBe(false);
+    expect((form.get("archive") as File).name).toBe("hoserva-config-old.tar.zst");
+
+    expect(screen.getByRole("link", { name: "Go to sign in" })).toHaveAttribute("href", "/login");
+    expect(screen.getByText("What was restored")).toBeInTheDocument();
+    expect(screen.getByText("jellyfin", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText("No passphrase")).toBeInTheDocument();
+    expect(screen.getByText("no passphrase was available to open the .env files")).toBeInTheDocument();
+    expect(
+      screen.getByText("The configuration as it was before is saved as hoserva-config-pre-import-2026-09-29.tar.zst."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Preview restore" })).not.toBeInTheDocument();
+  });
+
+  it("says when everything was restored and no safety archive was written", async () => {
+    mockRestoreApi({ apply: apiOk(importReport({ notRestored: [], preImportArchive: "", preImportSecrets: "none" })) });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+    await confirmRestore();
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    expect(await screen.findByText("Everything in the archive was restored.")).toBeInTheDocument();
+    expect(screen.getByText("No backup destination was written to before the restore.")).toBeInTheDocument();
+  });
+
+  it("shows the schema decision and the disk mapping of a fresh box and requires confirming it", async () => {
+    mockRestoreApi({ preview: apiOk(importPreview({ bareMetal: bareMetalPreview() })) });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    expect(await screen.findByText("Data disk 1 (/mnt/disk1)")).toBeInTheDocument();
+    expect(
+      screen.getByText("The archive is from an older version. Its data is upgraded to this version while it is restored."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("/dev/sdb")).toBeInTheDocument();
+    expect(screen.getByText("Matched")).toBeInTheDocument();
+    expect(screen.getByText("Not attached")).toBeInTheDocument();
+    expect(screen.getByText("1 disk is not matched")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore this configuration" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("switch", { name: "This disk mapping is right" }));
+    expect(screen.getByRole("button", { name: "Restore this configuration" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("switch", { name: "This disk mapping is right" }));
+    expect(screen.getByRole("button", { name: "Restore this configuration" })).toBeDisabled();
+  });
+
+  it("sends the mapping it showed as diskMapping when restoring a fresh box", async () => {
+    mockRestoreApi({ preview: apiOk(importPreview({ bareMetal: bareMetalPreview() })) });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+    fireEvent.click(await screen.findByRole("switch", { name: "This disk mapping is right" }));
+    await confirmRestore();
+    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    await screen.findByText("The restore is finished and you were signed out");
+    const call = mockPost.mock.calls.find((entry) => entry[0] === "/config/import") as unknown[];
+    expect(JSON.parse(multipartFields(call).get("diskMapping") as string)).toEqual({
+      disks: [{ role: "data", roleIndex: 1, device: "/dev/sdb" }],
+    });
+  });
+
+  it("names the replaced and ambiguous disk states and says when the archive records no disks", async () => {
+    const disk = (state: string, index: number) => ({
+      ...bareMetalPreview().disks[0],
+      name: `Disk ${index}`,
+      roleIndex: index,
+      state,
+    });
+    mockRestoreApi({
+      preview: apiOk(
+        importPreview({
+          bareMetal: bareMetalPreview({ schemaUpgrade: false, disks: [disk("replaced", 1), disk("ambiguous", 2)] }),
+        }),
+      ),
+    });
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+
+    expect(await screen.findByText("Replaced")).toBeInTheDocument();
+    expect(screen.getByText("Ambiguous")).toBeInTheDocument();
+    expect(screen.getByText("2 disks are not matched")).toBeInTheDocument();
+    expect(screen.getByText("The archive's data format matches this version and is restored as it is.")).toBeInTheDocument();
+  });
+
+  it("discards the preview when the archive or the passphrase changes", async () => {
+    mockRestoreApi();
+
+    renderWithToast(<BackupSettingsPage />);
+    await previewArchive();
+    await screen.findByText("old-nas");
+
+    fireEvent.change(screen.getByLabelText("Backup passphrase (optional)"), { target: { value: "x" } });
+
+    expect(screen.queryByText("old-nas")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Restore this configuration" })).not.toBeInTheDocument();
+  });
+});

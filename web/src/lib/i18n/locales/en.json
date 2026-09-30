@@ -1370,6 +1370,190 @@
         "saveFailed": "Could not save the passphrase",
         "saved": "Backup passphrase saved"
       },
+      "restore": {
+        "title": "Restore",
+        "description": "Bring back your Hoserva settings from a config backup: to undo a change on this server, or to set up a new server from an archive. You see what would change before anything is applied.",
+        "archive": "Config backup archive",
+        "archiveHint": "A hoserva-config file, downloaded from this page or found on a backup destination.",
+        "passphrase": "Backup passphrase (optional)",
+        "passphraseHint": "Opens the secrets in the archive, such as the .env files of your apps. Leave it empty to use this server's backup passphrase.",
+        "previewAction": "Preview restore",
+        "previewFailed": "Could not preview the archive",
+        "previewEmpty": "The server answered without a preview.",
+        "errors": {
+          "invalid_archive": "This file is not a readable config backup",
+          "archive_too_large": "This archive is too large to restore",
+          "incompatible_archive": "This archive is from an incompatible version",
+          "archive_newer_version": "This archive is from a newer Hoserva version",
+          "archive_other_installation": "This archive was made by a different installation",
+          "archive_array_mismatch": "This archive describes a different array",
+          "restore_path_unsafe": "This archive would write to an unsafe location",
+          "job_in_progress": "A job is running, so the restore cannot start",
+          "backup_passphrase_incorrect": "That passphrase does not open this archive",
+          "disk_mapping_stale": "The attached disks changed since the preview",
+          "disk_mapping_required": "The disk mapping has to be confirmed",
+          "not_configured": "This server has no backup service"
+        },
+        "blockers": {
+          "incompatible_archive": "This archive is from an incompatible version",
+          "archive_newer_version": "This archive is from a newer Hoserva version",
+          "archive_other_installation": "This archive was made by a different installation",
+          "archive_array_mismatch": "This archive describes a different array",
+          "restore_path_unsafe": "This archive would write to an unsafe location"
+        },
+        "notes": {
+          "sessions_replaced": "You will be signed out",
+          "array_state_kept": "The array keeps its current state"
+        },
+        "preview": {
+          "archiveTitle": "About this archive",
+          "madeAt": "Made",
+          "host": "Server",
+          "version": "Hoserva version",
+          "schemaDiffers": "The changes cannot be listed",
+          "schemaDiffersHint": "The archive's data format ({{archive}}) differs from this server's ({{live}}), so the two cannot be compared. The restore still checks the archive before it changes anything.",
+          "noChanges": "Nothing in this archive differs from the current configuration.",
+          "added": "Added from the archive",
+          "changed": "Changed to the archive's version",
+          "removed": "Removed, because it is not in the archive",
+          "changeItem": "{{kind}}: {{name}}"
+        },
+        "categories": {
+          "shares": "Shares",
+          "accounts": "Accounts",
+          "schedules": "Schedules",
+          "notifications": "Notifications",
+          "backup": "Backup settings",
+          "system": "System settings",
+          "custom_config": "Custom config files",
+          "templates": "App templates",
+          "stacks": "App stacks",
+          "stack_env": "App secrets (.env files)"
+        },
+        "kinds": {
+          "share": "Share",
+          "share_user_permission": "Share access for a user",
+          "share_group_permission": "Share access for a group",
+          "user": "User",
+          "user_group": "User group",
+          "user_group_member": "Group membership",
+          "api_token": "API token",
+          "schedule_chain": "Nightly maintenance schedule",
+          "schedule_job": "Scheduled job",
+          "notification_channel": "Notification channel",
+          "notification_route": "Notification route",
+          "notification_severity": "Notification severity setting",
+          "notification_quiet_hours": "Quiet hours",
+          "backup_destination": "Backup destination",
+          "appdata_backup_container": "Appdata backup setting",
+          "backup_recipient": "Backup encryption key",
+          "acme": "Certificate settings",
+          "ups": "UPS settings",
+          "array_settings": "Array settings",
+          "host_config": "Host configuration decision",
+          "external_disk": "External disk",
+          "hostname": "Host name",
+          "timezone": "Time zone",
+          "backup_passphrase": "Backup passphrase",
+          "update_channel": "Update channel",
+          "update_check": "Update check setting",
+          "custom_config_file": "Custom config file",
+          "template_file": "App template",
+          "stack_file": "App stack file"
+        },
+        "secrets": {
+          "title": "Secrets",
+          "stacksNotRestored": "The .env files of these apps would not be restored:",
+          "statuses": {
+            "none": "No secrets section",
+            "opened": "Secrets open",
+            "no_passphrase": "No passphrase available",
+            "passphrase_incorrect": "Passphrase does not open it"
+          },
+          "hints": {
+            "none": "This archive was made without a backup passphrase, so it holds no secrets. Everything else is restored.",
+            "opened": "The passphrase opens the archive's secrets, so the .env files of your apps are restored too.",
+            "no_passphrase": "The archive holds secrets, and no passphrase is available to open them. Enter the passphrase above, or everything else is restored without them.",
+            "passphrase_incorrect": "This server's backup passphrase does not open the archive's secrets. Enter the passphrase the archive was made with, or everything else is restored without them."
+          }
+        },
+        "disks": {
+          "title": "Array disks",
+          "schemaUpgrade": "The archive is from an older version. Its data is upgraded to this version while it is restored.",
+          "schemaSame": "The archive's data format matches this version and is restored as it is.",
+          "none": "The archive records no array disks.",
+          "noneAttached": "No disk attached",
+          "columns": {
+            "disk": "Disk in the archive",
+            "attached": "Attached disk",
+            "state": "Match"
+          },
+          "states": {
+            "matched": "Matched",
+            "absent": "Not attached",
+            "replaced": "Replaced",
+            "ambiguous": "Ambiguous"
+          },
+          "unmatchedTitle_one": "{{count}} disk is not matched",
+          "unmatchedTitle_other": "{{count}} disks are not matched",
+          "unmatchedDescription": "A disk that is not matched stays in the restored array but is not mounted, and the array starts degraded. Nothing is formatted or partitioned. Add the replacement disk afterwards.",
+          "confirm": "This disk mapping is right",
+          "confirmHint": "Only matched disks are mounted. Confirm the table above before you restore."
+        },
+        "apply": {
+          "action": "Restore this configuration",
+          "title": "Restore this configuration",
+          "description": "This replaces the settings on this server with the ones in the archive.",
+          "confirmTitle": "Replace this server's configuration",
+          "phrase": "restore",
+          "itemReplace": "Shares, users, schedules, destinations, app templates and app stacks are replaced by the archive's.",
+          "itemSignedOut": "You will be signed out when the restore finishes.",
+          "itemSafetyArchive": "A backup of the current configuration is written first, so you can go back.",
+          "confirm": "Restore",
+          "failed": "The restore failed",
+          "noReport": "The server did not return a restore report. Check the destinations for the backup made before the restore.",
+          "previewAgain": "Preview again"
+        },
+        "report": {
+          "signedOutTitle": "The restore is finished and you were signed out",
+          "signedOutDescription": "The archive's sign-in sessions replaced the current ones. Sign in again to continue.",
+          "signIn": "Go to sign in",
+          "restoredTitle": "What was restored",
+          "columns": {
+            "category": "Category",
+            "added": "Added",
+            "changed": "Changed",
+            "removed": "Removed"
+          },
+          "notRestoredTitle": "What was not restored",
+          "notRestoredItem": "{{kind}}: {{name}}",
+          "nothingLeftOut": "Everything in the archive was restored.",
+          "safetyArchiveTitle": "Backup made before the restore",
+          "safetyArchive": "The configuration as it was before is saved as {{archive}}.",
+          "noSafetyArchive": "No backup destination was written to before the restore.",
+          "preImportSecrets": {
+            "none": "That backup holds no secrets.",
+            "request": "That backup's secrets are sealed with the passphrase you entered.",
+            "configured": "That backup's secrets are sealed with this server's backup passphrase."
+          }
+        },
+        "notRestoredKinds": {
+          "stack_env": "App secrets",
+          "disk": "Array disk",
+          "database_secret": "Stored secret"
+        },
+        "reasons": {
+          "no_secrets": "Archive has no secrets",
+          "no_passphrase": "No passphrase",
+          "passphrase_incorrect": "Wrong passphrase",
+          "stack_not_in_archive": "App not in the archive",
+          "left_in_place": "Kept as it was",
+          "disk_absent": "Disk not attached",
+          "disk_replaced": "Disk replaced",
+          "disk_ambiguous": "Disk ambiguous",
+          "sealed_under_other_key": "Sealed under another server's key"
+        }
+      },
       "drill": {
         "title": "Restore drill",
         "description": "Checks that your newest backup on each destination can really be restored. It fetches the archive, opens it the way a restore would and verifies it, then throws everything away. Nothing is written to a destination.",
