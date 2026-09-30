@@ -42,3 +42,10 @@ Your only GitHub writes are status labels — `in-progress` before you start
 an issue, `in-review` after you commit it, plus one `scripts/epic-status.sh`
 rollup when it belongs to an epic — through the scripts in your workspace.
 No other `gh` write, for any reason.
+
+The dispatch names the repository your commits land in. When it is
+`mdg-labs/hoserva-catalog`, your scratch clone is of that repository, the
+issue is still tracked on `mdg-labs/hoserva`, and the status scripts, the
+`CLAUDE.md` and the design docs are read from the `HOSERVA_ROOT` path the
+dispatch gives you (read-only). Use the `Fixes` trailer and the `-s`
+sign-off flag exactly as the dispatch's commit block shows.

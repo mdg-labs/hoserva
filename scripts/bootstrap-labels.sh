@@ -7,11 +7,49 @@
 # `gh label create --force` updates colour and description on an existing
 # label instead of failing, so re-running after editing this file is the way
 # to change a label.
+#
+# Two sets: this repository's (the default) and the template catalog
+# repository's, a small one for template requests. Select one with the
+# argument `hoserva` or `catalog`, or by GH_REPO=mdg-labs/hoserva-catalog.
+# `--dry-run` prints the selected set's names without calling gh.
 set -euo pipefail
 
-REPO=${GH_REPO:-mdg-labs/hoserva}
+die() { printf '%s\n' "$*" >&2; exit 1; }
 
-labels=(
+SET=""
+DRY_RUN=0
+for arg in "$@"; do
+  case $arg in
+    hoserva | catalog) SET=$arg ;;
+    --dry-run) DRY_RUN=1 ;;
+    *) die "usage: $0 [hoserva|catalog] [--dry-run]" ;;
+  esac
+done
+
+if [[ -z $SET ]]; then
+  case ${GH_REPO:-} in
+    mdg-labs/hoserva-catalog) SET=catalog ;;
+    *) SET=hoserva ;;
+  esac
+fi
+
+case $SET in
+  catalog) REPO=${GH_REPO:-mdg-labs/hoserva-catalog} ;;
+  *) REPO=${GH_REPO:-mdg-labs/hoserva} ;;
+esac
+
+[[ $SET == hoserva && $REPO == mdg-labs/hoserva-catalog ]] && die "refusing the hoserva label set on $REPO"
+[[ $SET == catalog && $REPO == mdg-labs/hoserva ]] && die "refusing the catalog label set on $REPO"
+
+catalog_labels=(
+  # name|colour|description
+  "new-app|0e8a16|Request a template for an app the catalog does not have"
+  "template-update|1d76db|Change to an existing template: new version, settings, fix"
+  "broken-template|d73a4a|A catalog template does not deploy or run as described"
+  "needs-upstream-docs|fbca04|Waiting on the app's upstream documentation, which templates are written from"
+)
+
+hoserva_labels=(
   # name|colour|description
   "feat|0e8a16|New capability"
   "bug|d73a4a|Something isn't working"
@@ -46,8 +84,18 @@ labels=(
   "status:cancelled|8b4513|Closed as not planned, or as a duplicate"
 )
 
+if [[ $SET == catalog ]]; then
+  labels=("${catalog_labels[@]}")
+else
+  labels=("${hoserva_labels[@]}")
+fi
+
 for entry in "${labels[@]}"; do
   IFS='|' read -r name colour description <<<"$entry"
+  if ((DRY_RUN)); then
+    printf '%s\n' "$name"
+    continue
+  fi
   gh label create "$name" --repo "$REPO" --color "$colour" --description "$description" --force >/dev/null
   printf '%s\n' "$name"
 done
