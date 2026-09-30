@@ -19,6 +19,7 @@ existing line by adding its PR number.
 - **wiring** — settings persisted but nothing reads them at runtime (schedules, create policy) — PR 182, 199
 - **wiring** — a second, independent path bypasses the one Hoserva owns (NUT `SHUTDOWNCMD` skipping the clean array stop) — PR 254
 - **wiring** — test or check script that no `make` target or CI job runs — #42, PR 221
+- **wiring** — a CI step calls a `make` target whose prerequisites redo the job's own earlier install and build, doubling the job's cost — PR 474
 - **scope** — API/CLI option accepted and silently ignored (`--follow`, `--json`, `dryRun`/`confirm`/`percent` payload) — PR 174
 - **scope** — stub or sample data presented as real (sample diff rows, hard-coded "Confirmed", `Mounted` from disk count) — PR 174, 187, 210
 - **scope** — feature covers only the first or common case (first NIC only, common timezones only, cache disks missing from a step) — PR 182, 213
@@ -71,6 +72,7 @@ existing line by adding its PR number.
 - **ui-states** — stale response overwrites the current selection (open A, open B, A's response lands) — PR 195, 228
 - **ui-states** — error rendered behind an open dialog or overlay — PR 216, 228, 382
 - **ui-states** — a dialog, overlay or panel dismissable (Escape, backdrop, Cancel) while its request runs, so the later failure lands on a closed surface — PR 382
+- **drift** — a UI rule derived from one flow's backend contract (schema versions differ → no change groups) applied unchanged to a second flow whose backend does send that data, so the page hides what the server returned — PR 474
 - **ui-copy** — help text implies an operation leaves the system ready for a physical step (pull the disk) when a further required step remains — PR 370
 - **ui-states** — unknown value rendered as zero (`?? 0`), so missing data reads as an empty disk or 0% — PR 337
 - **i18n** — raw API enum shown instead of a catalog label for every value but the one the author tested — PR 337
@@ -87,6 +89,7 @@ existing line by adding its PR number.
 - **doc-drift** — a command example in a skill or prompt drops a required operand (`issue-edit --body-file` with no issue number or file), so an agent following it literally fails — PR 412
 - **doc-drift** — a design doc states an external source's conditions more broadly than the source does (an advisory's exploit trigger), so a reader misjudges the exposure — PR 433
 - **doc-drift** — a code comment still describes behaviour a later fix removed, inviting the next change to put it back — PR 394
+- **doc-drift** — a function's doc promises a cost bound its loop does not keep (a status query "only while caught up" run on every chunk), so a large stream pays a database read per buffer — PR 474
 - **mirror-drift** — a client-side mirror of backend rendering applies a looser check than the Go code for an edge input (an IPv4-mapped address bracketed as IPv6) — PR 357
 - **validation** — mode selected by a flag's non-empty value rather than its presence, so an empty value falls through to the default path (`-ups-notify ""` starting a second daemon) — PR 337
 - **validation** — a required phrase checked anywhere in a document instead of inside the section it must appear in — PR 337
@@ -96,7 +99,7 @@ existing line by adding its PR number.
 - **validation** — a list input split in a way that silently drops entries (bash `read` stops at the first newline and drops a trailing empty field) instead of refusing the malformed input — PR 403
 
 ## Security
-- **security** — host or URL checked by substring instead of parsed host; redirects not validated — PR 201, 228
+- **security** — host or URL checked by substring instead of parsed host (including allowlist entries left unanchored beside anchored ones); redirects not validated — PR 201, 228, 474
 - **security** — destructive CLI command that sends `confirm: true` itself — PR 193, 201
 - **security** — secret-bearing URL or credential echoed into a persisted error string — PR 166
 - **security** — user or state values written into a config format without escaping control characters — PR 254
@@ -104,6 +107,7 @@ existing line by adding its PR number.
 ## Tests
 - **tests** — test passes vacuously (placeholder absence as success, `|| true` on the poll, assertion against an unintended path, `.first()` matching an older record, a tool exit code shared by "blank" and "could not open", a precondition gate refusing before the injected failure is reached) — PR 159, 163, 231, 337, 403, 421, 430
 - **tests** — a short real deadline also bounds setup I/O ahead of the code under test (the SQLite write entering maintenance), so on a loaded runner the error comes from the setup step and an `errors.Is` check still passes; trip the deadline once the step under test is reached and assert its own error text — PR 433
+- **tests** — an end-to-end failure detector defined as "any banner but this list of informational ones", not extended when the change adds a new informational note, so the expected note fails the journey — PR 474
 - **tests** — unsynchronized read of state written by another goroutine — PR 166, 246
 - **tests** — exact equality between two separately sampled system values — PR 236
 - **tests** — parallel labs compile test binaries into one directory, so one lab replaces another's binary — PR 344
