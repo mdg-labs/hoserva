@@ -4,7 +4,9 @@
 # share (issue #268), storage-target boot ordering (issue #372), disk
 # yank and reconstruction, `virsh destroy` mid-sync recovery, reboot
 # persistence, config backup/restore, bare-metal restore onto a fresh OS
-# disk, spindown, network confirm-or-revert
+# disk, the Playwright journeys (journey 9 — config export, fresh install
+# and restore through the UI — as its own step after them), spindown,
+# network confirm-or-revert
 # (issue #114), the array stop/start sequence (issue #146), and the UPS
 # on-battery/power-restored/low-battery flow against NUT's own dummy-ups
 # driver (issue #250).
@@ -41,7 +43,7 @@ source "$script_dir/lib.sh"
 L3_STEP_ORDER=(
   array-stop-start smb-stop-start pool-restart storage-target
   maintenance-gate disk-yank midsync-destroy reboot-persistence
-  config-backup-restore bare-metal-restore playwright spindown
+  config-backup-restore bare-metal-restore playwright journey-9 spindown
   spindown-30min nfs-export
   immutable-mountpoint network-revert array-sequence ups
 )
@@ -49,7 +51,7 @@ declare -A L3_STEP_PREREQS=(
   [array-stop-start]="" [smb-stop-start]="" [pool-restart]=""
   [storage-target]="" [maintenance-gate]="" [disk-yank]=""
   [midsync-destroy]="" [reboot-persistence]="" [config-backup-restore]=""
-  [bare-metal-restore]="" [playwright]="" [spindown]="" [spindown-30min]="" [nfs-export]=""
+  [bare-metal-restore]="" [playwright]="" [journey-9]="" [spindown]="" [spindown-30min]="" [nfs-export]=""
   [immutable-mountpoint]="" [network-revert]="" [array-sequence]="" [ups]=""
 )
 # Exactly the label text each step's own pass/fail/not_yet call below
@@ -67,6 +69,7 @@ declare -A L3_STEP_LABELS=(
   [config-backup-restore]="config backup and restore"
   [bare-metal-restore]="bare-metal restore onto a fresh OS"
   [playwright]="Playwright journeys"
+  [journey-9]="Playwright journey 9: config restore"
   [spindown]="spindown: SMART-poll IO-neutrality"
   [spindown-30min]="spindown: 30-min flat counters with a running pool"
   [nfs-export]="NFS export mount"
@@ -90,7 +93,7 @@ L3_GROUP_SPINDOWN=(spindown)
 L3_GROUP_REST=(
   array-stop-start smb-stop-start pool-restart storage-target
   maintenance-gate disk-yank midsync-destroy reboot-persistence
-  config-backup-restore bare-metal-restore playwright spindown-30min nfs-export
+  config-backup-restore bare-metal-restore playwright journey-9 spindown-30min nfs-export
   immutable-mountpoint network-revert array-sequence ups
 )
 
@@ -221,16 +224,16 @@ if [[ "${L3_PLAN:-}" == "1" ]]; then
   exit 0
 fi
 
-# Array setup (step 3) and journey 5's own fixture (seeded ahead of step 8,
-# doc 06 §4) share this L3 admin session and cookie jar — the same account
+# Array setup (step 3) and journey 5's own fixture (seeded ahead of the
+# playwright step, doc 06 §4) share this L3 admin session and cookie jar — the same account
 # step 2's onboarding creates.
 ARRAY_ADMIN_USERNAME="hoserva-l3"
 ARRAY_ADMIN_PASSWORD="hoserva-l3-suite-password"
 ARRAY_COOKIE_JAR="/tmp/hoserva-l3-suite-cookies.txt"
 
 # The array's own virtio device names, set once by array_setup (step 3)
-# from the live domain XML and reused by midsync_throttle_devices (step 6,
-# issue #352) — never rediscovered a second time for the same domain.
+# from the live domain XML and reused by midsync_throttle_devices (the
+# midsync-destroy step, issue #352) — never rediscovered a second time for the same domain.
 ARRAY_PARITY_DEV=""
 ARRAY_DATA1_DEV=""
 ARRAY_DATA2_DEV=""
@@ -348,7 +351,7 @@ array_setup() {
     return 1
   fi
   echo "vm-suite[$HOSERVA_LAB_ID]: array devices: parity=/dev/$parity_dev data1=/dev/$data1_dev data2=/dev/$data2_dev"
-  # Not local: midsync_throttle_devices (step 6, issue #352) reuses these
+  # Not local: midsync_throttle_devices (midsync-destroy, issue #352) reuses these
   # same three device names to cap I/O on the guest's own array disks —
   # rediscovering them from the domain XML a second time there would just
   # duplicate this parsing loop for no benefit.
@@ -605,7 +608,7 @@ FIXTURE
   return 0
 }
 
-# midsync_destroy (step 5, doc 02 §2, doc 06 §4) proves the "power loss
+# midsync_destroy (the midsync-destroy step, doc 02 §2, doc 06 §4) proves the "power loss
 # mid-sync" row of doc 02 §6's failure-mode table for real: it seeds real
 # bulk data, starts a sync, destroys the guest, boots it back, and asserts
 # (doc 01 §4) that RecoverFromRestart left the job interrupted, that
@@ -1018,7 +1021,7 @@ midsync_destroy() {
   return 0
 }
 
-# midsync_ensure_synced (issue #352) is step 6's own "finally", called
+# midsync_ensure_synced (issue #352) is the midsync-destroy step's own "finally", called
 # once after the whole midsync_destroy loop regardless of how it ended.
 # The failing CI run this issue's second attempt investigated showed
 # exactly why this matters: an iteration whose own mid-flight check never
@@ -1026,9 +1029,9 @@ midsync_destroy() {
 # MIDSYNC_REASON describes it — the sync it seeded keeps running on the
 # guest and completes for real, durably resyncing all of that iteration's
 # bulk data, then midsync_destroy returns 1 without ever reaching its own
-# resync-and-verify tail. Step 6 reported FAIL, correctly, but left the
+# resync-and-verify tail. The step reported FAIL, correctly, but left the
 # array in whatever state that accidental real sync produced — and
-# journey 5's own baseline sync (step 8, seed_journey5_fixture) then ran
+# journey 5's own baseline sync (the playwright step's seed_journey5_fixture) then ran
 # against it unconditionally, on the same array, with no check in between
 # that it was starting from a state its own diff logic could make sense
 # of. This never deletes anything (a removal-heavy path here is exactly
@@ -1068,7 +1071,7 @@ midsync_ensure_synced() {
   fi
 
   local parity_result
-  echo "vm-suite[$HOSERVA_LAB_ID]: step 6 did not end on a verified re-sync — running one cleanup sync so journey 5's own baseline (step 8) starts from a clean array"
+  echo "vm-suite[$HOSERVA_LAB_ID]: step 6 did not end on a verified re-sync — running one cleanup sync so journey 5's own baseline (the playwright step) starts from a clean array"
   if ! vm_ssh "sudo mkdir -p '$MIDSYNC_SHARE_PATH' && echo hoserva-352-cleanup | sudo tee '$MIDSYNC_SHARE_PATH/cleanup-marker.txt' >/dev/null"; then
     MIDSYNC_REASON="step 6 cleanup: could not write a marker file into $MIDSYNC_SHARE_PATH ahead of the cleanup sync"
     return 1
@@ -1097,12 +1100,13 @@ midsync_ensure_synced() {
   return 0
 }
 
-# dump_hoserva_diagnostics (steps 6 and 7 only) captures hoservad's own
+# dump_hoserva_diagnostics (the midsync-destroy, reboot-persistence,
+# bare-metal-restore and journey-9 steps only) captures hoservad's own
 # service state, boot journal, any stuck systemd jobs and disk1's own
 # mount unit on a failure here — the same guest-side dump disk-yank-
 # check.sh's own EXIT trap runs (issue #386, this round), so a nightly
-# failure in either of the two steps that run right after a disk yank
-# and replace is diagnosable from the log alone. Best-effort: a guest
+# failure in a step that runs after a disk yank and replace, or after
+# an OS reinstall, is diagnosable from the log alone. Best-effort: a guest
 # that is not reachable here has bigger problems the caller already
 # reports.
 dump_hoserva_diagnostics() {
@@ -1130,7 +1134,7 @@ dump_hoserva_diagnostics() {
 # this suite already built (step 3: the admin account, the array's
 # disk-role assignment, and a dedicated share this function creates fresh
 # for itself — see CONFIG_TEST_SHARE below for why, rather than the
-# "massdel"/"hoserval3midsync" shares steps 3 and 5 already made), makes
+# "massdel"/"hoserval3midsync" shares array setup and midsync-destroy already made), makes
 # two real, distinguishing changes on top of that export (delete the
 # share, add a throwaway user — each independently provable before the
 # import), imports the same archive back over the running config (HTTP 200
@@ -1166,8 +1170,8 @@ config_backup_restore() {
     return 1
   fi
 
-  # A share created *now*, not one carried over from step 3 or step 5:
-  # step 5's own virsh destroy has already rebooted the guest once by
+  # A share created *now*, not one carried over from array setup or the
+  # midsync-destroy step: that step's own virsh destroy has already rebooted the guest once by
   # this point, and — confirmed empirically running this exact suite,
   # against a share that had never been touched by any reboot versus one
   # that had — a share's own per-share mergerfs mount does not come back
@@ -1649,7 +1653,7 @@ $hash_diff"
   return 0
 }
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 1/14 install ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 1/15 install ==="
 if vm_domain_exists "$VM_DOMAIN"; then
   "$script_dir/destroy-vm.sh"
 fi
@@ -1668,7 +1672,7 @@ else
   fail "install" "deploy.sh failed — see its own output above (on the dev host this is expected: dpkg-buildpackage/debhelper/fakeroot are deliberately not installed here, per scripts/release/build-deb.sh's own header comment; a hosted CI runner has them)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 2/14 onboarding ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 2/15 onboarding ==="
 if vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   SETUP_STATUS="$(vm_ssh "curl -sk https://127.0.0.1:8008/api/v1/setup/status" 2>/dev/null || true)"
   if [[ "$SETUP_STATUS" == *'"adminExists":false'* ]]; then
@@ -1707,7 +1711,7 @@ else
   not_yet "existing host config" "no running domain (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 3/14 array setup ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 3/15 array setup ==="
 if vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
   if array_setup; then
     pass "array setup"
@@ -1718,7 +1722,7 @@ else
   not_yet "array setup" "no active hoservad on the guest (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 4/14 array stop/start with a live share (issue #268) ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 4/15 array stop/start with a live share (issue #268) ==="
 if ! l3_step_selected array-stop-start; then
   l3_skip "${L3_STEP_LABELS[array-stop-start]}"
 elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
@@ -1783,7 +1787,7 @@ else
   not_yet "maintenance gate closes on array stop" "no active hoservad on the guest (install or array setup above did not complete — see step 1 and step 3)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 5/14 disk yank and reconstruction ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 5/15 disk yank and reconstruction ==="
 if ! l3_step_selected disk-yank; then
   l3_skip "${L3_STEP_LABELS[disk-yank]}"
 elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
@@ -1796,7 +1800,7 @@ else
   not_yet "disk yank and reconstruction" "no active hoservad on the guest (install or array setup above did not complete — see step 1 and step 3)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 6/14 virsh destroy mid-sync recovery ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 6/15 virsh destroy mid-sync recovery ==="
 if ! l3_step_selected midsync-destroy; then
   l3_skip "${L3_STEP_LABELS[midsync-destroy]}"
 elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
@@ -1818,7 +1822,7 @@ elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva'
   # specific failure path that leaves it accidentally, durably resynced
   # for real (the sync this run seeded simply ran to completion before
   # midsync_wait_mid_flight ever confirmed it mid-flight) — must not hand
-  # journey 5's own baseline sync (step 8) a starting state that is not a
+  # journey 5's own baseline sync (the playwright step) a starting state that is not a
   # clean array, since a real sync's own diff there depends on nothing
   # having changed here that it does not already know about.
   if ! midsync_ensure_synced; then
@@ -1835,7 +1839,7 @@ else
   not_yet "virsh destroy mid-sync recovery" "no active hoservad on the guest (install or array setup above did not complete)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 7/14 reboot persistence ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 7/15 reboot persistence ==="
 if ! l3_step_selected reboot-persistence; then
   l3_skip "${L3_STEP_LABELS[reboot-persistence]}"
 elif vm_domain_running "$VM_DOMAIN"; then
@@ -1900,7 +1904,7 @@ else
   not_yet "reboot persistence" "no running domain (install step above did not complete)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 8/14 config backup and restore ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 8/15 config backup and restore ==="
 if ! l3_step_selected config-backup-restore; then
   l3_skip "${L3_STEP_LABELS[config-backup-restore]}"
 elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
@@ -1913,7 +1917,7 @@ else
   not_yet "config backup and restore" "no active hoservad on the guest (install or array setup above did not complete)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 9/14 bare-metal restore onto a fresh OS (doc 10 §1) ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 9/15 bare-metal restore onto a fresh OS (doc 10 §1) ==="
 if ! l3_step_selected bare-metal-restore; then
   l3_skip "${L3_STEP_LABELS[bare-metal-restore]}"
 elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
@@ -1929,7 +1933,7 @@ else
   not_yet "bare-metal restore onto a fresh OS" "no active hoservad on the guest (install or array setup above did not complete)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 10/14 Playwright journeys ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 10/15 Playwright journeys ==="
 if ! l3_step_selected playwright; then
   l3_skip "${L3_STEP_LABELS[playwright]}"
 else
@@ -1951,7 +1955,34 @@ else
   fi
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 11/14 spindown: SMART-poll IO-neutrality ==="
+# Journey 9 replaces the VM's OS disk and installs Hoserva fresh, so it runs
+# in its own Playwright project after the generic one (never in the same
+# process): the specs of the `playwright` step above must not meet a
+# reinstalled box, and nothing before this step may depend on the state a
+# half-finished journey 9 leaves. It runs whether or not hoservad is active
+# — a box that is not serving makes the spec fail on its own first sign-in,
+# where a skip would hide it. HOSERVA_E2E_REINSTALL_CMD is always set here,
+# so the spec's skip for an unset variable never applies to this step.
+echo "vm-suite[$HOSERVA_LAB_ID]: === 11/15 Playwright journey 9: config export, fresh install and restore through the UI ==="
+if ! l3_step_selected journey-9; then
+  l3_skip "${L3_STEP_LABELS[journey-9]}"
+elif [[ ! -x "$script_dir/run-playwright.sh" ]]; then
+  fail "Playwright journey 9: config restore" "scripts/vm/run-playwright.sh is missing or not executable"
+elif [[ ! -x "$script_dir/reinstall-os.sh" ]]; then
+  fail "Playwright journey 9: config restore" "scripts/vm/reinstall-os.sh is missing or not executable"
+elif HOSERVA_E2E_BASE_URL="https://127.0.0.1:$VM_HTTPS_PORT" \
+  HOSERVA_E2E_REINSTALL_CMD="$script_dir/reinstall-os.sh" \
+  DEB="${DEB:-}" TAG="${TAG:-}" \
+  "$script_dir/run-playwright.sh" journey-9; then
+  pass "Playwright journey 9: config restore"
+else
+  if vm_domain_running "$VM_DOMAIN"; then
+    dump_hoserva_diagnostics "Playwright journey 9"
+  fi
+  fail "Playwright journey 9: config restore" "see web/'s own Playwright report above — a failure here can leave the box freshly reinstalled or half-restored, so later steps may fail because of it"
+fi
+
+echo "vm-suite[$HOSERVA_LAB_ID]: === 12/15 spindown: SMART-poll IO-neutrality ==="
 if ! l3_step_selected spindown; then
   l3_skip "${L3_STEP_LABELS[spindown]}"
 elif vm_domain_running "$VM_DOMAIN" && vm_ssh 'sudo systemctl is-active hoserva' >/dev/null 2>&1; then
@@ -1964,11 +1995,11 @@ else
   not_yet "spindown: SMART-poll IO-neutrality" "no active hoservad on the guest (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 12/14 spindown: 30-min flat counters with a running pool ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 13/15 spindown: 30-min flat counters with a running pool ==="
 if ! l3_step_selected spindown-30min; then
   l3_skip "${L3_STEP_LABELS[spindown-30min]}"
 else
-  not_yet "spindown: 30-min flat counters with a running pool" "array setup (step 3, #258) now gives this a real mergerfs/SnapRAID pool with a mounted share to test against — that half of the old gap is closed — but hoservad still does not run internal/disk's SMART poller or internal/parity's change journal on a timer (both exist as Go packages, issue #24, but cmd/hoservad/main.go wires neither into a scheduled job). spindown-check.sh (step 11) already stands in for that missing scheduler by looping the poller's own smartctl command directly against the array's already-mounted disks; doing the same loop against this step's live pool would still only be standing in for the scheduler, not proving hoservad's own 30-minute window produces zero drive writes with a pool mounted underneath it — re-check once cmd/hoservad/main.go wires the SMART poller and change journal on a timer"
+  not_yet "spindown: 30-min flat counters with a running pool" "array setup (step 3, #258) now gives this a real mergerfs/SnapRAID pool with a mounted share to test against — that half of the old gap is closed — but hoservad still does not run internal/disk's SMART poller or internal/parity's change journal on a timer (both exist as Go packages, issue #24, but cmd/hoservad/main.go wires neither into a scheduled job). spindown-check.sh (the spindown step) already stands in for that missing scheduler by looping the poller's own smartctl command directly against the array's already-mounted disks; doing the same loop against this step's live pool would still only be standing in for the scheduler, not proving hoservad's own 30-minute window produces zero drive writes with a pool mounted underneath it — re-check once cmd/hoservad/main.go wires the SMART poller and change journal on a timer"
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === NFS export mount (issue #47) ==="
@@ -1997,7 +2028,7 @@ else
   not_yet "immutable mountpoint guard" "no running domain (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 13/14 network confirm-or-revert (Q75) ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 14/15 network confirm-or-revert (Q75) ==="
 if ! l3_step_selected network-revert; then
   l3_skip "${L3_STEP_LABELS[network-revert]}"
 elif vm_domain_running "$VM_DOMAIN"; then
@@ -2010,7 +2041,7 @@ else
   not_yet "network confirm-or-revert" "no running domain (install step above did not complete — see step 1)"
 fi
 
-echo "vm-suite[$HOSERVA_LAB_ID]: === 14/14 array stop/start sequence: missing disk at boot, service stops before unmount ==="
+echo "vm-suite[$HOSERVA_LAB_ID]: === 15/15 array stop/start sequence: missing disk at boot, service stops before unmount ==="
 if ! l3_step_selected array-sequence; then
   l3_skip "${L3_STEP_LABELS[array-sequence]}"
 elif vm_domain_running "$VM_DOMAIN"; then

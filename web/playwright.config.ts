@@ -11,7 +11,8 @@ import { defineConfig } from "@playwright/test";
 // Makefile. The setup project signs in as the L3 admin
 // (HOSERVA_E2E_USERNAME / HOSERVA_E2E_PASSWORD, defaulting to the
 // credentials run-l3-suite.sh posts to POST /setup/admin) and writes
-// storageState for the chromium project.
+// storageState for the chromium project. The journey-9 project is selected
+// on its own (`--project=journey-9`, scripts/vm/run-playwright.sh).
 const baseURL = process.env.HOSERVA_E2E_BASE_URL ?? "http://127.0.0.1:5173";
 
 export default defineConfig({
@@ -39,9 +40,25 @@ export default defineConfig({
     {
       name: "chromium",
       dependencies: ["setup"],
+      testIgnore: /journey-09-/,
       use: {
         browserName: "chromium",
         storageState: "e2e/.auth/user.json",
+      },
+    },
+    // Journey 9 replaces the VM's OS disk and onboards the fresh install
+    // itself, so it has no stored session and no dependency on the setup
+    // project, and nothing else runs against the box it leaves behind.
+    // run-l3-suite.sh runs it as its own step after the chromium project;
+    // the reinstall and restore together need far more than the default
+    // per-test and per-assertion limits.
+    {
+      name: "journey-9",
+      testMatch: /journey-09-.*\.spec\.ts/,
+      timeout: 40 * 60_000,
+      expect: { timeout: 30_000 },
+      use: {
+        browserName: "chromium",
       },
     },
   ],

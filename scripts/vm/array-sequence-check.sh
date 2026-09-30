@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `make vm-suite` step 14 (issue #146, doc 02 §1, §4, Q69, Q70): the two
+# `make vm-suite` array-sequence step (issue #146, doc 02 §1, §4, Q69, Q70): the two
 # L3 scenarios issue #109's own L2 test
 # (internal/job/array_lab_test.go) explicitly left blocked — real
 # physical disk mount/unmount through a real systemd .mount unit (the
