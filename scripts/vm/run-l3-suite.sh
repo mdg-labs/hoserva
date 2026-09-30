@@ -41,14 +41,14 @@ L3_STEP_ORDER=(
   array-stop-start smb-stop-start pool-restart storage-target
   maintenance-gate disk-yank midsync-destroy reboot-persistence
   config-backup-restore playwright spindown spindown-30min nfs-export
-  network-revert array-sequence ups
+  immutable-mountpoint network-revert array-sequence ups
 )
 declare -A L3_STEP_PREREQS=(
   [array-stop-start]="" [smb-stop-start]="" [pool-restart]=""
   [storage-target]="" [maintenance-gate]="" [disk-yank]=""
   [midsync-destroy]="" [reboot-persistence]="" [config-backup-restore]=""
   [playwright]="" [spindown]="" [spindown-30min]="" [nfs-export]=""
-  [network-revert]="" [array-sequence]="" [ups]=""
+  [immutable-mountpoint]="" [network-revert]="" [array-sequence]="" [ups]=""
 )
 # Exactly the label text each step's own pass/fail/not_yet call below
 # uses as STEP_NAMES's entry, so a skipped step's summary row lines up
@@ -67,6 +67,7 @@ declare -A L3_STEP_LABELS=(
   [spindown]="spindown: SMART-poll IO-neutrality"
   [spindown-30min]="spindown: 30-min flat counters with a running pool"
   [nfs-export]="NFS export mount"
+  [immutable-mountpoint]="immutable mountpoint guard"
   [network-revert]="network confirm-or-revert"
   [array-sequence]="array stop/start sequence"
   [ups]="UPS on-battery/power-restored/low-battery"
@@ -87,7 +88,7 @@ L3_GROUP_REST=(
   array-stop-start smb-stop-start pool-restart storage-target
   maintenance-gate disk-yank midsync-destroy reboot-persistence
   config-backup-restore playwright spindown-30min nfs-export
-  network-revert array-sequence ups
+  immutable-mountpoint network-revert array-sequence ups
 )
 
 # L3_LIST_STEPS/L3_LIST_GROUPS (issue #392): pure data queries against the
@@ -1665,6 +1666,19 @@ elif vm_domain_running "$VM_DOMAIN"; then
   fi
 else
   not_yet "NFS export mount" "no running domain (install step above did not complete — see step 1)"
+fi
+
+echo "vm-suite[$HOSERVA_LAB_ID]: === immutable mountpoint guard on a real kernel (Q69, issue #463) ==="
+if ! l3_step_selected immutable-mountpoint; then
+  l3_skip "${L3_STEP_LABELS[immutable-mountpoint]}"
+elif vm_domain_running "$VM_DOMAIN"; then
+  if "$script_dir/immutable-mountpoint-check.sh"; then
+    pass "immutable mountpoint guard"
+  else
+    fail "immutable mountpoint guard" "see immutable-mountpoint-check.sh output above (issue #463) — the guard did not refuse a write into an unmounted slot, or a disk did not mount onto it"
+  fi
+else
+  not_yet "immutable mountpoint guard" "no running domain (install step above did not complete — see step 1)"
 fi
 
 echo "vm-suite[$HOSERVA_LAB_ID]: === 12/13 network confirm-or-revert (Q75) ==="
