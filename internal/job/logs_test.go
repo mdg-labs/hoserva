@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -371,6 +372,35 @@ func TestLogStore_FollowEndsWhenTheContextEnds(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("a cancelled follower kept waiting")
+	}
+}
+
+func TestLogStore_FollowAsksFinishedOnlyOnceCaughtUp(t *testing.T) {
+	l := NewLogStore(t.TempDir())
+	var out bytes.Buffer
+	for i := range 4096 {
+		out.WriteString("line " + strconv.Itoa(i*7919) + "\n")
+	}
+	writeLogRun(t, l, "j", out.String(), true)
+	var calls atomic.Int32
+	finished := func(context.Context) (bool, error) {
+		calls.Add(1)
+		return true, nil
+	}
+	f := l.Follow(context.Background(), "j", finished, 5*time.Millisecond)
+	defer func() { _ = f.Close() }()
+	buf := make([]byte, 64)
+	for {
+		_, err := f.Read(buf)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("finished was consulted %d times reading a finished log, want 1 (only once caught up)", n)
 	}
 }
 

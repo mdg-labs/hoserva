@@ -237,15 +237,14 @@ type logFollower struct {
 	f        *os.File
 	finished func(context.Context) (bool, error)
 	poll     time.Duration
+	// done is set once finished reported true; the file is read to its end
+	// once more after that, so the trailer written before it is not missed.
+	done bool
 }
 
 func (r *logFollower) Read(p []byte) (int, error) {
 	for {
 		if err := r.ctx.Err(); err != nil {
-			return 0, err
-		}
-		done, err := r.finished(r.ctx)
-		if err != nil {
 			return 0, err
 		}
 		if r.f == nil {
@@ -254,9 +253,6 @@ func (r *logFollower) Read(p []byte) (int, error) {
 			case err == nil:
 				r.f = f
 			case errors.Is(err, fs.ErrNotExist):
-				if done {
-					return 0, io.EOF
-				}
 			default:
 				return 0, fmt.Errorf("job log store: opening %s: %w", r.path, err)
 			}
@@ -269,9 +265,17 @@ func (r *logFollower) Read(p []byte) (int, error) {
 			if err != io.EOF {
 				return 0, fmt.Errorf("job log store: reading %s: %w", r.path, err)
 			}
-			if done {
-				return 0, io.EOF
-			}
+		}
+		if r.done {
+			return 0, io.EOF
+		}
+		done, err := r.finished(r.ctx)
+		if err != nil {
+			return 0, err
+		}
+		if done {
+			r.done = true
+			continue
 		}
 		t := time.NewTimer(r.poll)
 		select {
